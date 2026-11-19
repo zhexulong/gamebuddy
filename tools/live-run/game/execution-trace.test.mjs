@@ -15,6 +15,8 @@ import test from "node:test";
 import {
   executedActionIds,
   executionTraceInvariant,
+  oneRowPerProgram,
+  oneSubmissionPerProgram,
   programExecutionRows,
   readExecutionTrace,
   writeProgramExecutionTrace,
@@ -84,6 +86,18 @@ test("two flat dispatches and one three-node program are five rows, each saying 
     rows: 5,
     expectedRows: 5,
     unobservedPrograms: 0,
+    // No submission list was handed over, so the retry reading says `not_measured` rather than inventing a zero.
+    refusals: [],
+    oneRow: {
+      ok: true,
+      submissions: null,
+      programs: 1,
+      rows: 1,
+      unidentified: 0,
+      duplicated: 0,
+      duplicatedPrograms: [],
+      line: "submissions not_measured · programs 1 · rows 1 · duplicated 0",
+    },
   });
   // The program rows name the program and the node, so a measurement can attribute the execution and never guess.
   assert.deepEqual(programRows, [
@@ -387,4 +401,115 @@ test("a trace that lost the executions its own manifest counted is a named viola
     assert.equal(merged.violations[0].declaredCount, 5);
     assert.equal(merged.violations[0].actual, 4);
   });
+});
+
+// A REFUSAL IS AN ANSWER, AND A RETRY IS THE SAME PROGRAM.
+//
+// Measured 2026-11-19 (`round77`): `result.executionTrace` came back
+// `{ ok: false, sumsAgree: false, flat: 3, program: 473, programDispatches: 477, rows: 476, expectedRows: 480,
+//   unobservedPrograms: 2 }` on a run that had lost nothing. Two of the "unobserved" programs were plans the Mod REFUSED
+// at submission (42 and 35 edges against a cap of 32: `accepted: false`, `rejected_by_mod`), and 4 of the 477 counted
+// dispatches were two programs submitted twice (`accepted` then `idempotent`) whose journal was therefore read twice.
+const ROUND77_REFUSED = Object.freeze([
+  Object.freeze({ programId: "plan_172_29d21b6cffac1213", accepted: false, observed: false, observation: "rejected_by_mod", dispatched: null, executions: [] }),
+  Object.freeze({ programId: "plan_680_e1f502d99d744bc9", accepted: false, observed: false, observation: "rejected_by_mod", dispatched: null, executions: [] }),
+]);
+
+test("a submission the Mod refused is a refusal, not a lost execution log", () => {
+  const programRows = programExecutionRows([...ROUND77_REFUSED]);
+  const invariant = executionTraceInvariant({
+    actionTrace: [],
+    programOutcomes: ROUND77_REFUSED,
+    programRows,
+    programSubmissions: ROUND77_REFUSED,
+  });
+  assert.equal(invariant.unobservedPrograms, 0, "the Mod answered, so nothing went unread");
+  assert.equal(invariant.ok, true, `a refusal must not block the run; got ${JSON.stringify(invariant)}`);
+  assert.equal(invariant.sumsAgree, true, "and it contributes no rows, so the sums still agree");
+  assert.deepEqual(
+    invariant.refusals.map((entry) => entry.programId),
+    ["plan_172_29d21b6cffac1213", "plan_680_e1f502d99d744bc9"],
+    "the trace says WHICH submissions were refused, instead of counting them as evidence it never got",
+  );
+  assert.equal(invariant.refusals[0].observation, "rejected_by_mod", "and the Mod's own reason travels with each");
+
+  // The other side of the same rule, so the relaxation cannot swallow a real hole: a program the Mod TOOK whose journal
+  // nobody could read is still absent evidence and still fails the trace.
+  const unread = executionTraceInvariant({
+    actionTrace: [],
+    programOutcomes: [
+      { programId: "plan_taken_but_unreadable", accepted: true, observed: false, observation: "read_failed:bridge_disconnected" },
+    ],
+    programRows: [],
+    programSubmissions: [{ programId: "plan_taken_but_unreadable", code: "accepted", accepted: true }],
+  });
+  assert.equal(unread.unobservedPrograms, 1);
+  assert.equal(unread.ok, false);
+  assert.deepEqual(unread.refusals, []);
+});
+
+test("a program submitted twice is one program: one outcome row, and the dispatches counted once", () => {
+  // round77's own two retried ids, with the executions the Mod's journal reported for them.
+  const duplicated = [
+    observedProgram("plan_122_0442da48ca242b09", [{ nodeId: "n01", nodeAttempt: 1, cursor: 1 }]),
+    observedProgram("plan_753_4e7cba07f9ad18a9", [
+      { nodeId: "n01", nodeAttempt: 1, cursor: 1 },
+      { nodeId: "n02", nodeAttempt: 1, cursor: 2 },
+      { nodeId: "n03", nodeAttempt: 1, cursor: 3 },
+    ]),
+    observedProgram("plan_122_0442da48ca242b09", [{ nodeId: "n01", nodeAttempt: 1, cursor: 1 }]),
+    observedProgram("plan_753_4e7cba07f9ad18a9", [
+      { nodeId: "n01", nodeAttempt: 1, cursor: 1 },
+      { nodeId: "n02", nodeAttempt: 1, cursor: 2 },
+      { nodeId: "n03", nodeAttempt: 1, cursor: 3 },
+    ]),
+  ];
+  const submissions = [
+    { programId: "plan_122_0442da48ca242b09", code: "accepted", accepted: true },
+    { programId: "plan_753_4e7cba07f9ad18a9", code: "accepted", accepted: true },
+    { programId: "plan_122_0442da48ca242b09", code: "idempotent", accepted: false },
+    { programId: "plan_753_4e7cba07f9ad18a9", code: "idempotent", accepted: false },
+  ];
+
+  // THE GATE, RED ON THE SHAPE THAT SHIPPED: four submissions, two programs, four rows.
+  const before = oneRowPerProgram({ programSubmissions: submissions, programOutcomes: duplicated });
+  assert.equal(before.ok, false, "two rows for one program is a doubled reading, never a bigger run");
+  assert.deepEqual(
+    before.duplicatedPrograms,
+    ["plan_122_0442da48ca242b09", "plan_753_4e7cba07f9ad18a9"],
+    "the gate names the ids it found",
+  );
+  assert.equal(
+    before.line,
+    "submissions 4 · programs 2 · rows 4 · duplicated 2",
+    "and prints the population it decided that on",
+  );
+
+  // THE FIX, AND THE SAME GATE GREEN: the reader folds the retry into the accepted submission before it queries.
+  const once = oneSubmissionPerProgram(submissions);
+  assert.deepEqual(once.retried, ["plan_122_0442da48ca242b09", "plan_753_4e7cba07f9ad18a9"]);
+  assert.deepEqual(
+    once.submissions.map((submission) => submission.code),
+    ["accepted", "accepted"],
+    "the ACCEPTED half of each retry is the one kept, because it is the one the Mod took",
+  );
+  const outcomes = once.submissions.map((submission) =>
+    observedProgram(
+      submission.programId,
+      submission.programId === "plan_122_0442da48ca242b09"
+        ? [{ nodeId: "n01", nodeAttempt: 1, cursor: 1 }]
+        : [
+            { nodeId: "n01", nodeAttempt: 1, cursor: 1 },
+            { nodeId: "n02", nodeAttempt: 1, cursor: 2 },
+            { nodeId: "n03", nodeAttempt: 1, cursor: 3 },
+          ],
+    ),
+  );
+  const programRows = programExecutionRows(outcomes);
+  const after = executionTraceInvariant({ actionTrace: [], programOutcomes: outcomes, programRows, programSubmissions: submissions });
+  assert.equal(after.program, 4, "the rows are the four executions that happened");
+  assert.equal(after.programDispatches, 4, "and the programs' own counts are the same four - each program one read");
+  assert.equal(after.sumsAgree, true, "which is what makes the arithmetic agree");
+  assert.equal(after.ok, true);
+  assert.equal(after.oneRow.line, "submissions 4 · programs 2 · rows 2 · duplicated 0");
 });

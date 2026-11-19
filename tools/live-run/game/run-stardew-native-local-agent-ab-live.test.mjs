@@ -43,7 +43,12 @@ import {
   readLaunchPhaseHandover,
   writeLaunchPhaseHandover,
 } from "../core/launch-phase.mjs";
-import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
+import {
+  executedActionIds,
+  executionTraceInvariant,
+  oneSubmissionPerProgram,
+  programExecutionRows,
+} from "./execution-trace.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
   COMPANION_SLEEP_REFUSED,
@@ -3031,6 +3036,19 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
     rows: 3,
     expectedRows: 3,
     unobservedPrograms: 0,
+    // THE COUNTERPART OF `unobservedPrograms`, and the one-row gate beside it: a submission the Mod REFUSED is an
+    // answer, not a hole, and one program may not occupy two rows. Both print the population they were decided on.
+    refusals: [],
+    oneRow: {
+      ok: true,
+      submissions: 1,
+      programs: 0,
+      rows: 0,
+      unidentified: 0,
+      duplicated: 0,
+      duplicatedPrograms: [],
+      line: "submissions 1 · programs 0 · rows 0 · duplicated 0",
+    },
   });
 });
 test("a run whose work all went through programs publishes a non-empty attempted list", async () => {
@@ -3291,6 +3309,17 @@ test("an error that escapes the run still publishes the work it had already reco
       rows: 3,
       expectedRows: 3,
       unobservedPrograms: 0,
+      refusals: [],
+      oneRow: {
+        ok: true,
+        submissions: 1,
+        programs: 0,
+        rows: 0,
+        unidentified: 0,
+        duplicated: 0,
+        duplicatedPrograms: [],
+        line: "submissions 1 · programs 0 · rows 0 · duplicated 0",
+      },
     },
     "the trace counts are the trace's own, on this path too",
   );
@@ -3519,6 +3548,7 @@ test("an unobserved program is not a program that dispatched nothing", async () 
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SURFACE_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
     programNodeOutcomes,
+    oneSubmissionPerProgram,
   });
   const failing = await readProgramOutcomes({
     submissions: [{ programId: "p_unreadable", accepted: true }],
@@ -3569,6 +3599,7 @@ test("a program that dispatched three nodes reports dispatched: 3, and its node 
   const readProgramOutcomes = extractRunnerFunction(RUNNER_SURFACE_SOURCE, "readProgramOutcomes", {
     executionsFromJournalEvents,
     programNodeOutcomes,
+    oneSubmissionPerProgram,
   });
   const events = [
     { cursor: 1, programId: "p1", kind: "admitted", nodeId: "a" },

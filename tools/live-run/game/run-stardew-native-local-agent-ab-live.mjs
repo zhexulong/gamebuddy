@@ -200,6 +200,7 @@ import {
 import {
   executionTraceInvariant,
   FLAT_EXECUTION_VIA,
+  oneSubmissionPerProgram,
   PROGRAM_TRACE_FILE,
   programExecutionRows,
   writeProgramExecutionTrace,
@@ -3525,6 +3526,14 @@ client.execute = async (request) => {
  * them would turn a read failure into a measured zero. A `programId` the Mod never minted (a rejected submit) reads
  * `not_found` and is likewise `observed: false`, with `accepted: false` saying why.
  *
+ * WHAT A REFUSAL IS, AND IS NOT. The Mod answering `not_found` with `accepted: false` is a VERSION it gave, not evidence
+ * it lost: the candidate was refused at submission (`round77`'s two over-cap plans), nothing was dispatched, and there
+ * is no execution log to be missing. The reader publishes that as `accepted: false` and the trace's own reading
+ * (`execution-trace.mjs`) counts it as a refusal rather than as an unobserved program.
+ *
+ * ONE READ PER PROGRAM, because one program has one outcome: `oneSubmissionPerProgram` folds a retried submission into
+ * the accepted one before anything is queried - see there for the pair of round77 ids that were read twice.
+ *
  * The bridge is the PRIMARY source and stays so: it is the Mod's answer for the run that is happening, and a bridge that
  * answers - even `not_found` - is never second-guessed by a file. But the bridge is also the evidence that disappears
  * first: measured 2026-10-27, the game exited during a `pickup_item` dispatch, every status query threw
@@ -3536,7 +3545,14 @@ client.execute = async (request) => {
  */
 async function readProgramOutcomes({ submissions, statusQuery, eventsQuery, journal = null }) {
   const records = [];
-  for (const submission of submissions) {
+  // ONE PROGRAM, ONE READ. `programId` identifies a program, not an attempt at submitting one: a submit whose answer
+  // never arrived is retried with the same candidate and the Mod answers `idempotent`, so iterating the submission list
+  // asked the Mod's journal about that program twice and wrote two `observed: true` outcomes for it - each with the full
+  // execution count, so the counts were summed twice while the rows were deduped. Measured 2026-11-19 (`round77`):
+  // `plan_122_0442da48ca242b09` and `plan_753_4e7cba07f9ad18a9` were each submitted `accepted` then `idempotent`, and
+  // the run published `programDispatches: 477` against 473 rows.
+  const oncePerProgram = oneSubmissionPerProgram(submissions);
+  for (const submission of oncePerProgram.submissions) {
     const programId = typeof submission?.programId === "string" ? submission.programId : null;
     const accepted = submission?.accepted === true;
     // One shape per REASON, because the reasons are not the same fact. `dispatched: null` keeps meaning "not
@@ -4590,6 +4606,14 @@ try {
     });
     // A lifecycle that reported a failure for a night the world crossed is stated on the run's own log, beside them.
     for (const entry of assessment.lifecycleDisagreements) console.error("MULTIDAY_LIFECYCLE", entry.code);
+    // EVERY WAY A DAY CAN END, AGAINST WHAT THE LEDGER COVERS, printed with the numbers it is computed from: `missing 0`
+    // beside `examined 3` is a reading, and `missing 0` alone is also what an empty population prints. `witnessed-by`
+    // names which kinds the population is made of (`sleep` = her own `day_advanced` receipt, `pass_out` = the engine's),
+    // because a run she ended every night of and a run the engine took every night of are different findings.
+    console.error(
+      "MULTIDAY_NIGHTS",
+      `endings examined ${String(assessment.worldNights.examined ?? "not_measured")} · recorded ${String(assessment.worldNights.recorded)} · missing ${String(assessment.worldNights.missing ?? "not_measured")} · witnessed-by ${(assessment.worldNights.witnessedBy ?? []).join(",") || "nobody"}`,
+    );
     multidayOutcome = Object.freeze({
       // What the LEDGER covers: the nights a watcher stood over, plus the nights only the world witnessed.
       crossings: reconciliation.recorded,
@@ -5210,6 +5234,9 @@ try {
           actionTrace,
           programOutcomes: programOutcomesAtTeardown,
           programRows: programExecutionRows(programOutcomesAtTeardown),
+          // The submissions this run sent, so the one-row-per-program reading can say how many submissions became how
+          // many programs (a retried submit is neither a second program nor a second row).
+          programSubmissions,
         });
   const observation = buildRunObservation({
     prompt,
@@ -5742,7 +5769,7 @@ async function buildRunResult({
   programOutcomes = carried ?? (await sampleProgramOutcomes());
   const programRows = programExecutionRows(programOutcomes);
   const executionTrace =
-    carriedExecutionTrace ?? executionTraceInvariant({ actionTrace, programOutcomes, programRows });
+    carriedExecutionTrace ?? executionTraceInvariant({ actionTrace, programOutcomes, programRows, programSubmissions });
   // What the run tried and what it achieved, read from BOTH channels once the program record is in hand. Derived
   // HERE, above the verdict, because `action_breadth` is a clause: the breadth a run publishes and the breadth its
   // verdict is decided on are then one object instead of two derivations that can disagree - and the crashed path,
@@ -5874,6 +5901,11 @@ async function buildRunResult({
   // happened" beside its own dispatches.
   lastKnownProgramDispatches = executionTrace.programDispatches;
   if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
+  // ONE PROGRAM HAS ONE ROW, printed every run with the numbers it is computed from: `duplicated 0` beside
+  // `submissions 114 · programs 112` is a reading, and `duplicated 0` alone is also what a reader who never looked would
+  // print. The difference between the first two numbers is the retries, which are neither a second program nor a second
+  // row - the shape round77 read as `programDispatches 477` against 473 rows.
+  console.error("EXECUTION_TRACE_LEDGER", `a_trace_row_is_one_program: ${executionTrace.oneRow.line}`);
   // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
   // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
   // violation is logged by name before anything is published - and read before the run cost account below, which divides

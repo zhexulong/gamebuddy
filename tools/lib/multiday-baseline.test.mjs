@@ -1165,7 +1165,7 @@ test("a pass-out the world published is counted and named, and is not given to t
   );
   assert.deepEqual(
     { ...result.worldNights },
-    { examined: 1, recorded: 0, missing: 1, watched: 2 },
+    { examined: 1, recorded: 0, missing: 1, watched: 2, witnessedBy: [NIGHT_CAUSE_PASS_OUT] },
     "the gate prints its own population: one ending, none recorded, two nights the watcher stood over",
   );
   assert.equal(result.unobservedNights, 2, "and neither recorded night is attributed to the engine by it");
@@ -1494,7 +1494,7 @@ test("a night the world ended after the watcher stopped is recorded with its cau
   assert.equal(result.passOutNights, 1, "the night the engine took is counted once, from the record it now has");
   assert.deepEqual(
     { ...result.worldNights },
-    { examined: 1, recorded: 1, missing: 0, watched: 2 },
+    { examined: 1, recorded: 1, missing: 0, watched: 2, witnessedBy: [NIGHT_CAUSE_PASS_OUT] },
     "and the gate prints its population: nothing missing, over two nights the watcher stood over",
   );
 
@@ -1508,5 +1508,156 @@ test("a night the world ended after the watcher stopped is recorded with its cau
   assert.ok(
     codes(skipped).includes(`a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_PASS_OUT}:7`),
     `a night nothing recorded must be named by cause and by day; got ${JSON.stringify(codes(skipped))}`,
+  );
+});
+
+// A NIGHT SHE CHOSE TO END IS WITNESSED BY HER OWN RECEIPT, NOT BY A PASS-OUT FACT.
+//
+// Measured 2026-11-19 (`round77`, `.live-runs/game-ladder/2026-11-19T04-46-54-502Z-multiday_routine`): three
+// `day_started` facts (`_5`, `_6`, `_7`) beside three `sleep` receipts that each reached `day_advanced` (`day_before`
+// 4, 5 and 6) and NOT ONE `night_ended_*` fact - the Mod mints that fact only for the engine's 2:00 pass-out, so a
+// reader made of `night_ended_*` alone answered `[]` (`examined 0`, `missing 0`) about a run that had three nights. The
+// third night - the CLOSING day's - then belonged to no record, `crossings` stopped at 2, and the assessment said
+// `day_count_disagrees_with_the_world:2 != 3` while every artifact agreed the world had opened three days.
+//
+// The entries below are that run's own: the day start that opened each day, in arrival order with the receipt that
+// ended the night before it, trimmed to the fields the ledger reads.
+const ROUND77_FACTS = Object.freeze([
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_5" }),
+  Object.freeze({
+    type: "execution_receipt",
+    reasonCode: "day_advanced",
+    requestId: "bdb7b8ca012546a0918090f6b97b5aa6",
+    worldFactPayload: Object.freeze({
+      actionId: "sleep",
+      state: "succeeded",
+      reasonCode: "day_advanced",
+      evidence: Object.freeze({
+        detail: EVIDENCE({ dayBefore: 4, daysBefore: 5, dayAfter: 5, daysAfter: 6 }),
+      }),
+    }),
+  }),
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_6" }),
+  Object.freeze({
+    type: "execution_receipt",
+    reasonCode: "day_advanced",
+    requestId: "e3fdf97bd9ac4a03933253753633df8e",
+    worldFactPayload: Object.freeze({
+      actionId: "sleep",
+      state: "succeeded",
+      reasonCode: "day_advanced",
+      evidence: Object.freeze({
+        detail: EVIDENCE({ dayBefore: 5, daysBefore: 6, dayAfter: 6, daysAfter: 7 }),
+      }),
+    }),
+  }),
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_7" }),
+  Object.freeze({
+    type: "execution_receipt",
+    reasonCode: "day_advanced",
+    requestId: "9a8d0de8ed314ddfa0bbfa78c37c0505",
+    worldFactPayload: Object.freeze({
+      actionId: "sleep",
+      state: "succeeded",
+      reasonCode: "day_advanced",
+      evidence: Object.freeze({
+        detail: EVIDENCE({ dayBefore: 6, daysBefore: 7, dayAfter: 7, daysAfter: 8 }),
+      }),
+    }),
+  }),
+]);
+
+test("a night her own sleep ended is an ending with a cause, exactly as a pass-out is", () => {
+  // TWO SPELLINGS, ONE SHAPE. The pass-out fact and the `day_advanced` receipt both answer "this night ended, on this
+  // day, for this cause" - and the day is the engine's own `TotalDays` in both, so nothing downstream has to convert.
+  assert.deepEqual(
+    worldNightEndingsFromFacts([
+      { type: "world_fact", worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_4" },
+    ]).map((ending) => ({ ...ending })),
+    [{ day: 4, cause: NIGHT_CAUSE_PASS_OUT }],
+  );
+  assert.deepEqual(
+    worldNightEndingsFromFacts(ROUND77_FACTS).map((ending) => ({ ...ending })),
+    [
+      { day: 4, cause: NIGHT_CAUSE_SLEEP },
+      { day: 5, cause: NIGHT_CAUSE_SLEEP },
+      { day: 6, cause: NIGHT_CAUSE_SLEEP },
+    ],
+    "three nights she ended, read from the receipts that carried the crossing",
+  );
+  // A receipt that says the day advanced through SOMETHING ELSE is not attributed to her sleep: the action is the
+  // witness, and a receipt that names none is skipped rather than guessed (the night it crossed is then reported
+  // missing, which is the loud direction).
+  assert.deepEqual(
+    worldNightEndingsFromFacts([
+      { type: "execution_receipt", reasonCode: "day_advanced", worldFactPayload: { actionId: "enter_exit" } },
+      { type: "execution_receipt", reasonCode: "day_advanced", evidence: { detail: "day_before=4" } },
+    ]),
+    [],
+  );
+});
+
+test("the third night of round77 was hers, and the ledger now counts it instead of disagreeing with the world", () => {
+  const worldEndings = worldNightEndingsFromFacts(ROUND77_FACTS);
+  const watchedRecords = [
+    DAY({
+      day: 1,
+      terminal: {
+        requestId: "bdb7b8ca012546a0918090f6b97b5aa6",
+        evidence: EVIDENCE({ dayBefore: 4, daysBefore: 5, dayAfter: 5, daysAfter: 6 }),
+      },
+      after: { dayOfMonth: 6, timeOfDay: 610, seasonIndex: 0 },
+    }),
+    DAY({
+      day: 2,
+      terminal: {
+        requestId: "e3fdf97bd9ac4a03933253753633df8e",
+        evidence: EVIDENCE({ dayBefore: 5, daysBefore: 6, dayAfter: 6, daysAfter: 7 }),
+      },
+      after: { dayOfMonth: 7, timeOfDay: 610, seasonIndex: 0 },
+    }),
+  ];
+  const reconciliation = reconcileDaysWithTheWorld({ dayRecords: watchedRecords, worldNightEndings: worldEndings });
+  assert.equal(reconciliation.watched, 2, "the loop stood over two nights");
+  assert.equal(reconciliation.recorded, 3, "and the ledger covers the three the run lived");
+  assert.equal(reconciliation.missing, 1, "the third was reconciled rather than watched");
+  assert.equal(reconciliation.records[2].cause, NIGHT_CAUSE_SLEEP, "and it says how it ended");
+  assert.equal(reconciliation.records[2].endedDayOfMonth, 7, "the ending day is the `dayOfMonth` every record carries");
+  assert.equal(reconciliation.records[2].watched, false, "nobody was watching it");
+
+  const result = assessMultiDayBaseline({
+    dayRecords: reconciliation.records,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(ROUND77_FACTS),
+    worldNightEndings: worldEndings,
+  });
+  assert.ok(
+    !codes(result).some((code) => code.startsWith("day_count_disagrees_with_the_world")),
+    `three records and three world days agree; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.ok(
+    !codes(result).some((code) => code.startsWith("a_night_the_world_had_is_not_missing_from_the_record")),
+    `the reconciled night IS recorded; got ${JSON.stringify(codes(result))}`,
+  );
+  assert.deepEqual(
+    { ...result.worldNights },
+    { examined: 3, recorded: 3, missing: 0, watched: 2, witnessedBy: [NIGHT_CAUSE_SLEEP] },
+    "the gate prints its own population, and which kind of witness it is made of",
+  );
+  assert.equal(result.passOutNights, 0, "no night of this run was the engine's");
+
+  // AND THE NIGHT IS STILL NAMED WHEN THE RECORD DOES NOT COVER IT: reconciliation is the fix, not a rule that stopped
+  // firing. This is round77's own ledger before the reconciliation ran.
+  const unreconciled = assessMultiDayBaseline({
+    dayRecords: watchedRecords,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(ROUND77_FACTS),
+    worldNightEndings: worldEndings,
+  });
+  assert.ok(
+    codes(unreconciled).includes(
+      `a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_SLEEP}:7`,
+    ),
+    `a night nothing recorded is named by cause and by day; got ${JSON.stringify(codes(unreconciled))}`,
   );
 });

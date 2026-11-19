@@ -129,6 +129,15 @@ export const NIGHT_CAUSE_PASS_OUT = "pass_out";
 export const NIGHT_CAUSE_SLEEP = "sleep";
 
 /**
+ * The action whose `day_advanced` receipt is HER crossing of a night.
+ *
+ * The cause and the action id are the same word by coincidence of naming, not by meaning: `sleep` is the published
+ * action id (the one a plan's node carries) and `sleep` is what the night's cause is called. They are spelled apart so
+ * that renaming the cause cannot silently stop the witness being read.
+ */
+const SLEEP_ACTION_ID = "sleep";
+
+/**
  * Her own `sleep` started the night and the CALENDAR carried the crossing.
  *
  * The distinction from `sleep` is not a weaker version of it - it is which witness reported the crossing. Her
@@ -410,7 +419,7 @@ export function worldDayStartsFromFacts(facts) {
 }
 
 /**
- * THE WORLD'S OWN NIGHT ENDINGS, read off the Mod's `night_ended_*` world facts.
+ * EVERY NIGHT THE RUN'S OWN RECORD SAYS ENDED, as `{ day, cause }` in ONE base.
  *
  * The Mod mints the fact that says HOW a night ended, because nothing else can: the engine's 2:00 pass-out is not an
  * event (`Farmer.cs:3408` checks `timeOfDay >= 2600` and calls `Game1.PassOutNewDay()`, which resets `passedOut`
@@ -419,31 +428,77 @@ export function worldDayStartsFromFacts(facts) {
  * is still at 26:00, and the runner records the fact verbatim as
  * `{ worldFactKind: "night_ended_pass_out", worldFactPayload: { eventId: "night_ended_pass_out_day_6", ... } }`.
  *
- * WHAT `N` IS. The day the night ENDED (`StardewSalientEventHooks.cs:89`: "the actor collapsed on `totalDays` and wakes
- * on `totalDays + 1`"), in the same `Game1.Date.TotalDays` the `day_started_day_<n>` facts use. So this night ended
- * day `N` and opened day `N + 1` - which is how a pass-out is also a CROSSING, and why a run whose `day_started` fact
- * for `N + 1` was never delivered (measured 2026-11-07, `round39`: no `day_started_day_7` exists, only the pass-out)
- * still has a witness that the world moved on.
+ * TWO SPELLINGS OF ONE NIGHT, READ HERE SO THEY CANNOT DIVERGE. A night she chose to end is witnessed by her `sleep`
+ * action's own receipt (`reasonCode: "day_advanced"`), not by a `night_ended_*` fact - the Mod mints that fact only for
+ * the engine's pass-out. Measured 2026-11-19 (`round77`): three `day_started` facts (`_5`, `_6`, `_7`) beside three
+ * `sleep` receipts reaching `day_advanced` (`day_before=4`, `5`, `6`) and NOT ONE `night_ended_*` fact, and this reader
+ * returned `[]` - so the third night, the one the closing day's turn ended, belonged to no record and the ledger read
+ * `crossings: 2` while the world had opened three days. Both spellings are now endings with a cause, extracted together,
+ * so nothing downstream has to know which channel a night came through.
  *
- * Deduplicated by (day, cause): a redelivered fact is the same night. A fact whose minted id does not carry the day is
- * skipped rather than guessed, exactly as `worldDayStartsFromFacts` refuses one whose id is not the minted shape.
+ * WHAT `N` IS. The day the night ENDED, as the engine's own `Game1.Date.TotalDays`: the `night_ended_pass_out_day_<N>`
+ * fact names the day the actor collapsed on (`StardewSalientEventHooks.cs:89`: "the actor collapsed on `totalDays` and
+ * wakes on `totalDays + 1`"), and a `sleep` receipt carries the same number as `day_before` beside the `day_after` it
+ * crossed into. That is why a night is also a CROSSING (`ending.day + 1` is the day that opened) and why a run whose
+ * `day_started` fact for `N + 1` was never delivered (measured 2026-11-07, `round39`: no `day_started_day_7` exists,
+ * only the pass-out) still has a witness that the world moved on.
+ *
+ * Deduplicated by (day, cause): a redelivered fact, or the same receipt read twice, is the same night. A fact whose
+ * minted id does not carry the day is skipped rather than guessed, exactly as `worldDayStartsFromFacts` refuses one
+ * whose id is not the minted shape.
  */
 export function worldNightEndingsFromFacts(facts) {
   const endings = [];
   for (const fact of Array.isArray(facts) ? facts : []) {
-    if (!isPlainObject(fact)) continue;
-    const kind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
-    if (typeof kind !== "string" || !kind.startsWith("night_ended_")) continue;
-    const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
-    const match = /^night_ended_([a-z_]+)_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
-    if (match === null) continue;
-    const cause = match[1];
-    const day = Number.parseInt(match[2], 10);
-    if (!Number.isInteger(day)) continue;
-    if (endings.some((entry) => entry.day === day && entry.cause === cause)) continue;
-    endings.push(Object.freeze({ day, cause }));
+    const ending = nightEndingOf(fact);
+    if (ending === null) continue;
+    if (endings.some((entry) => entry.day === ending.day && entry.cause === ending.cause)) continue;
+    endings.push(Object.freeze(ending));
   }
   return endings;
+}
+
+/**
+ * HOW ONE ENTRY IN THE RUN'S FACT LOG SAYS A NIGHT ENDED, or `null` when it says nothing about a night.
+ *
+ * THE POPULATION OF THIS FUNCTION IS THE POPULATION OF THE GATE. "Every way a day can end" is not a list maintained
+ * anywhere else: it is exactly the shapes read here, so a shape added to this switch is a shape the ledger accounts for
+ * without a second edit - and one that is dropped here makes `a_night_the_world_had_is_not_missing_from_the_record`
+ * red rather than silently unmeasured.
+ */
+function nightEndingOf(fact) {
+  if (!isPlainObject(fact)) return null;
+  const worldKind = fact.worldFactKind ?? fact.kind ?? fact.payload?.kind;
+  if (typeof worldKind === "string" && worldKind.startsWith("night_ended_")) {
+    const eventId = fact.eventId ?? fact.worldFactPayload?.eventId ?? "";
+    const match = /^night_ended_([a-z_]+)_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
+    if (match === null) return null;
+    const day = Number.parseInt(match[2], 10);
+    return Number.isInteger(day) ? { day, cause: match[1] } : null;
+  }
+  return sleepCrossingOf(fact);
+}
+
+/**
+ * THE NIGHT HER OWN `sleep` ENDED, read off the receipt that carries the crossing.
+ *
+ * `reasonCode: "day_advanced"` IS the Mod saying a lifecycle crossed a night (`multiday-loop.mjs`'s `CROSSING_REASON`,
+ * the same word `crossingsFromEvidence` filters by), and `sleep` is the one action that starts that lifecycle - the
+ * action id other readers of this fact already name (`run-verdicts.mjs`, `multiday-day-scope.mjs`).
+ *
+ * `day_before` and not `dayBefore`: the engine's `day_of_month` and its `TotalDays` are two numbers that agree only by
+ * coincidence in spring of year one, and this ledger compares endings by `TotalDays`. A receipt whose evidence carries
+ * no `day_before` names no day and is skipped, so the night it crossed is reported missing rather than attributed to
+ * whatever day happened to be current.
+ */
+function sleepCrossingOf(receipt) {
+  if (receipt.reasonCode !== CROSSING_OUTCOME.reasonCode) return null;
+  const payload = isPlainObject(receipt.worldFactPayload) ? receipt.worldFactPayload : {};
+  const actionId = receipt.actionId ?? receipt.action ?? payload.actionId ?? null;
+  if (actionId !== SLEEP_ACTION_ID) return null;
+  const facts = parseReceiptEvidence(receipt.evidence ?? payload.evidence);
+  const day = Number.parseInt(facts.day_before ?? "", 10);
+  return Number.isInteger(day) ? { day, cause: NIGHT_CAUSE_SLEEP } : null;
 }
 
 /**
@@ -452,6 +507,8 @@ export function worldNightEndingsFromFacts(facts) {
  * The loop watches the nights it was asked for; the CLOSING day's turn can still end in a night, and by then no watcher
  * is running (`runMultiDayLoop`). Measured 2026-11-18 (`round76`): the pass-out landed inside that closing turn, so the
  * ledger read `crossings: 2` beside three world days while `round-verdict` counted the third from the run's own evidence.
+ * Measured again 2026-11-19 (`round77`) with the other spelling: that closing night was her own `sleep`, witnessed only
+ * by the `day_advanced` receipt its lifecycle carried.
  *
  * `watched: false` and the CAUSE are the two things this record exists to say. A night nobody watched and cannot say how
  * it ended is two silences, and `day` is `null` rather than invented: the loop's day numbers are its own iterations and
@@ -474,16 +531,17 @@ export function worldWitnessedNightRecord(ending) {
 }
 
 /**
- * EVERY NIGHT THIS RUN HAD, as the ledger of it: the ones the watcher saw, plus the ones only the world witnessed.
+ * EVERY NIGHT THIS RUN HAD, as the ledger of it: the ones the watcher saw, plus the ones only the record witnessed.
  *
  * The two counts are reported SEPARATELY and never merged into one number, because they answer different questions:
  * `watched` is how many nights the loop stood over, and `recorded` is how many the ledger covers. A reader who sees
  * `recorded 3 · watched 2` knows the third night was reconciled rather than observed, and a reader who sees only
  * `crossings 3` does not.
  *
- * A night is reconciled only when NO record's own ending day is the day the world ended it: the world's ending for a
- * night the watcher already recorded is that record's cause, which the baseline matches by day and which must not be
- * added twice.
+ * A night is reconciled only when NO record's own ending day is the day the record ended it: the ending for a night the
+ * watcher already recorded is that record's cause, which the baseline matches by day and which must not be added twice.
+ * Both spellings of an ending come from `worldNightEndingsFromFacts`, so which channel a night came through cannot
+ * change how it is reconciled.
  */
 export function reconcileDaysWithTheWorld({ dayRecords = [], worldNightEndings = null } = {}) {
   if (!Array.isArray(dayRecords)) {
@@ -517,11 +575,12 @@ export function reconcileDaysWithTheWorld({ dayRecords = [], worldNightEndings =
 /**
  * The calendar day (1..28) the night ENDED on, from whichever witness carried the crossing.
  *
- * Two shapes, one question. A receipt-witnessed night carries the engine's own totals, so its `dayBefore` is a
- * `TotalDays`; a calendar-witnessed night carries the runner's `after.dayBefore`, which is a `dayOfMonth`. Both are
- * "the day the night started on", which is the day it ended. `null` when neither was published: a night whose ending
- * day nobody recorded cannot be matched against the world's facts, and guessing would attribute a pass-out to the
- * wrong night - which is worse than saying nothing.
+ * THREE SHAPES, ONE QUESTION. A receipt-witnessed night carries the engine's own totals, so its `dayBefore` is a
+ * `TotalDays`; a calendar-witnessed night carries the runner's `after.dayBefore`, which is a `dayOfMonth`; and a record
+ * whose snapshot published no `dayBefore` at all still carries the receipt it crossed with, whose `day_before` is the
+ * same `TotalDays`. All three are "the day the night started on", which is the day it ended. `null` when none was
+ * published: a night whose ending day nobody recorded cannot be matched against the world's endings, and guessing would
+ * attribute a pass-out to the wrong night - which is worse than saying nothing.
  */
 function nightEndedDayOfMonth(night, record) {
   // THE WORLD'S OWN READING FIRST. A record's `after.dayBefore` is the `dayOfMonth` the watch began on - the world's own
@@ -531,7 +590,15 @@ function nightEndedDayOfMonth(night, record) {
   if (isFiniteNumber(record?.endedDayOfMonth)) return record.endedDayOfMonth;
   if (isFiniteNumber(record?.after?.dayBefore)) return record.after.dayBefore;
   if (isFiniteNumber(night?.dayBefore)) return dayOfMonthForTotalDays(night.dayBefore);
-  return null;
+  // THE RECORD'S OWN RECEIPT, WHEN THE SNAPSHOT CARRIED NO `dayBefore`.
+  //
+  // Measured 2026-11-19 (`round77`): both watched day records published `after.dayOfMonth` and NO `after.dayBefore`, so
+  // this function answered `null` for every night the watcher saw - nothing a world ending could be matched to. It went
+  // unnoticed while the only endings were pass-outs the watcher had also seen; the moment her own receipts became
+  // endings, every one of them read as a night no record covered. The receipt's `day_before` is the same number the
+  // classified night carries, read from the record the accounting is already walking.
+  const carried = Number.parseInt(parseReceiptEvidence(record?.terminal?.evidence).day_before ?? "", 10);
+  return Number.isInteger(carried) ? dayOfMonthForTotalDays(carried) : null;
 }
 
 /**
@@ -1028,8 +1095,14 @@ export function assessMultiDayBaseline({
   // on day 6 of the month was looking at two different bases - the engine's own count of days played, and the calendar.
   // `round76`'s `worldNightEndings: [{ day: 6 }]` was a pass-out on day 7 of the month.
   //
-  // THE GATE'S POPULATION IS EVERY WAY A DAY CAN END, and it is printed with all four numbers, because `0 missing`
-  // beside `examined 3` is a reading and `0 missing` alone is not.
+  // THE GATE'S POPULATION IS EVERY WAY A DAY CAN END - a `night_ended_*` fact, a `sleep` receipt whose reason is
+  // `day_advanced`, and any cause the Mod mints that this ledger has not met - and it is printed with all four numbers,
+  // because `0 missing` beside `examined 3` is a reading and `0 missing` alone is not.
+  //
+  // THE THIRD NIGHT OF `round77` IS WHY THE SECOND SPELLING IS IN IT. That run's three nights were all her own sleep: its
+  // timeline held three `day_started` facts and three `day_advanced` receipts, and not one `night_ended_*` fact - so a
+  // population made of `night_ended_*` alone was EMPTY (`examined 0`), `missing 0` agreed with itself, and the closing
+  // day's night belonged to no record at all.
   let worldEndingsExamined = null;
   let worldEndingsRecorded = null;
   for (const ending of worldEndings ?? []) {
@@ -1105,11 +1178,18 @@ export function assessMultiDayBaseline({
     // EVERY WAY A DAY CAN END, AGAINST WHAT THE RECORD COVERS: the gate's own population, printed with the criterion so
     // `0 missing` never travels alone. `watched` is how many records the loop stood over; the difference is the nights
     // reconciled from the world's own ending, and it is a reading about the WATCH rather than about the run.
+    //
+    // `witnessedBy` names WHICH endings the population is made of (`sleep` = her own `day_advanced` receipt, `pass_out`
+    // = the engine's own `night_ended_pass_out` fact, `other` = a cause the Mod mints that this ledger has not met
+    // yet). A gate that counted three endings without saying which kind witnessed them could not tell a run she ended
+    // every night of from one the engine took three times - the two are not the same reading, and the second is a
+    // finding about her night routine.
     worldNights: Object.freeze({
       examined: worldEndingsExamined,
       recorded: worldEndingsRecorded,
       missing: worldEndingsExamined === null ? null : worldEndingsExamined - worldEndingsRecorded,
       watched: dayRecords.filter((record) => isPlainObject(record) && record.watched !== false).length,
+      witnessedBy: worldEndings === null ? null : Object.freeze([...new Set(worldEndings.map((entry) => entry.cause))].sort()),
     }),
     // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
     // `null` when nobody supplied the facts (which is not "the world said nothing"). A reader must be able to see WHICH

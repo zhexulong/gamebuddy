@@ -30,6 +30,45 @@ import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 /** The parallel trace file, in the same run directory as the flat one. */
 export const PROGRAM_TRACE_FILE = "programTrace.jsonl";
 
+/**
+ * ONE SUBMISSION PER PROGRAM, keeping the half the Mod took.
+ *
+ * A `programId` names a PROGRAM, not an attempt at submitting one. A submit whose answer never arrived is retried with
+ * the same candidate and the Mod answers `idempotent` - measured 2026-11-19 (`round77`): `plan_122_0442da48ca242b09`
+ * (1 node) and `plan_753_4e7cba07f9ad18a9` (3 nodes) were each submitted twice, `accepted` then `idempotent`. Iterating
+ * the submission list therefore asked the Mod's journal about the same program twice and wrote two `observed: true`
+ * outcomes for it, which the row identity below dedupes but the `dispatched` sum does not: that run published
+ * `programDispatches: 477` against 473 rows and `sumsAgree: false` for 110 programs that all ran exactly once.
+ *
+ * The ACCEPTED half is the one kept, and it is kept in the position the first submission took, so the read order is the
+ * order this run submitted. A submission with no `programId` cannot be grouped and is kept as its own record: two null
+ * ids are not one program.
+ *
+ * `retried` names the ids that were submitted more than once, so the number of submissions and the number of programs
+ * can differ without either of them being wrong.
+ */
+export function oneSubmissionPerProgram(submissions) {
+  const kept = [];
+  const retried = [];
+  const indexByProgram = new Map();
+  for (const submission of Array.isArray(submissions) ? submissions : []) {
+    const programId = typeof submission?.programId === "string" ? submission.programId : null;
+    if (programId === null) {
+      kept.push(submission);
+      continue;
+    }
+    const at = indexByProgram.get(programId);
+    if (at === undefined) {
+      indexByProgram.set(programId, kept.length);
+      kept.push(submission);
+      continue;
+    }
+    if (submission?.accepted === true && kept[at]?.accepted !== true) kept[at] = submission;
+    if (!retried.includes(programId)) retried.push(programId);
+  }
+  return Object.freeze({ submissions: Object.freeze(kept), retried: Object.freeze(retried) });
+}
+
 /** How the execution reached the game: a request frame the runner sent, or a node the Mod dispatched natively. */
 export const FLAT_EXECUTION_VIA = "flat";
 export const PROGRAM_EXECUTION_VIA = "program";
@@ -150,39 +189,106 @@ function nodeKey(programId, nodeId) {
 }
 
 /**
+ * ONE PROGRAM HAS ONE OUTCOME ROW, and this is the reading that says so.
+ *
+ * The population is the run's own record: the outcome rows it read, and the submissions it sent. `duplicated` is every
+ * `programId` carrying more than one of those rows - which is not a bigger run but a doubled reading of one program, and
+ * summing it produces a `programDispatches` no trace can agree with (`round77`: 477 against 473 rows, two ids of four
+ * executions between them). `submissions` and `programs` are printed beside it because their DIFFERENCE is the only
+ * proof a retry happened at all: equal numbers are a run with no retries, and a difference with `duplicated 0` is a
+ * retry that was folded into the program it names.
+ *
+ * `submissions` is `null` when the caller did not hand over its submission list - not measured, never zero.
+ */
+export function oneRowPerProgram({ programSubmissions = null, programOutcomes = [] } = {}) {
+  const outcomes = Array.isArray(programOutcomes) ? programOutcomes : [];
+  const rowsByProgram = new Map();
+  let unidentified = 0;
+  for (const outcome of outcomes) {
+    const programId = typeof outcome?.programId === "string" ? outcome.programId : null;
+    if (programId === null) {
+      unidentified += 1;
+      continue;
+    }
+    rowsByProgram.set(programId, (rowsByProgram.get(programId) ?? 0) + 1);
+  }
+  const duplicatedPrograms = Object.freeze(
+    [...rowsByProgram].filter(([, rows]) => rows > 1).map(([programId]) => programId),
+  );
+  const submissions = Array.isArray(programSubmissions) ? programSubmissions.length : null;
+  return Object.freeze({
+    ok: duplicatedPrograms.length === 0,
+    submissions,
+    programs: rowsByProgram.size,
+    rows: outcomes.length,
+    unidentified,
+    duplicated: duplicatedPrograms.length,
+    duplicatedPrograms,
+    // THE GATE'S LINE, built HERE so the reading and what it prints cannot be two spellings of one count.
+    line:
+      `submissions ${submissions === null ? "not_measured" : String(submissions)} · programs ${String(rowsByProgram.size)}` +
+      ` · rows ${String(outcomes.length)} · duplicated ${String(duplicatedPrograms.length)}`,
+  });
+}
+
+/**
  * The row-count invariant, and what it was measured from.
  *
  * `ok` compares the rows this run is about to publish against the counts the programs themselves reported, so a
  * program whose executions were lost on the way into the trace cannot pass as a smaller run. `rows` is what a
  * measurement sees and `expectedRows` is what the flat dispatches plus the observed program executions say.
+ *
+ * TWO KINDS OF "NOT OBSERVED", AND THEY ARE NOT ONE NUMBER. A program the Mod TOOK whose journal could not be read is
+ * absent evidence: the run's record has a hole in it. A submission the Mod answered `accepted: false` is a REFUSAL - the
+ * Mod looked at the candidate and named why it would not run it (`rejected_by_mod`, after the edge cap refused a plan),
+ * and nothing was ever dispatched for it to have lost. Measured 2026-11-19 (`round77`): `plan_172_29d21b6cffac1213`
+ * (42 edges) and `plan_680_e1f502d99d744bc9` (35 edges) were both refused at submission, both counted as
+ * `unobservedPrograms`, and the run was blocked for an execution log nobody had lost.
  */
-export function executionTraceInvariant({ actionTrace, programOutcomes, programRows }) {
+export function executionTraceInvariant({ actionTrace, programOutcomes, programRows, programSubmissions = null }) {
   const flat = Array.isArray(actionTrace) ? actionTrace.length : 0;
-  const observed = (programOutcomes ?? []).filter((outcome) => outcome?.observed === true);
+  const outcomes = Array.isArray(programOutcomes) ? programOutcomes : [];
+  const observed = outcomes.filter((outcome) => outcome?.observed === true);
   const programDispatches = observed.reduce(
     (total, outcome) => total + (Number.isInteger(outcome.dispatched) ? outcome.dispatched : 0),
     0,
   );
   const program = Array.isArray(programRows) ? programRows.length : 0;
-  const unobservedPrograms = (programOutcomes ?? []).filter((outcome) => outcome?.observed !== true).length;
+  const refusals = Object.freeze(
+    outcomes
+      .filter((outcome) => outcome?.observed !== true && outcome?.accepted === false)
+      .map((outcome) =>
+        Object.freeze({
+          programId: typeof outcome.programId === "string" ? outcome.programId : null,
+          observation: typeof outcome.observation === "string" ? outcome.observation : "rejected_by_mod",
+        }),
+      ),
+  );
+  const unobservedPrograms = outcomes.filter(
+    (outcome) => outcome?.observed !== true && outcome?.accepted !== false,
+  ).length;
+  const oneRow = oneRowPerProgram({ programSubmissions, programOutcomes: outcomes });
   return Object.freeze({
-    // Two facts, both required. The first was there: every OBSERVED program's executions are in the trace. The
-    // second is not the same question and was missing: a program the Mod reported but the trace never saw is
-    // absent evidence, and calling that a complete trace is how 14 programs could vanish behind `ok: true`.
-    // Complete means both: the observed programs' executions are all present, AND nothing was left unobserved.
-    // The first alone is not completeness - it is completeness OF WHAT WE COULD READ, which is how fourteen
-    // programs vanished behind `ok: true` on 2026-10-25 while`unobservedPrograms` said 14.
-    ok: program === programDispatches && unobservedPrograms === 0,
-    // Kept separate so a reader can tell "the numbers agree" from "we saw everything". A program whose journal
-    // could not be read still contributes no rows and does not make the observed sums disagree; it is simply
-    // absent evidence, and this field is where that lives.
+    // Three facts, all required. The first: every OBSERVED program's executions are in the trace. The second: nothing
+    // the Mod took was left unread. The third: no program is counted twice. Complete means all three; the first alone
+    // is completeness OF WHAT WE COULD READ, which is how fourteen programs vanished behind `ok: true` on 2026-10-25
+    // while `unobservedPrograms` said 14.
+    ok: program === programDispatches && unobservedPrograms === 0 && oneRow.ok,
+    // Kept separate so a reader can tell "the numbers agree" from "we saw everything". A program whose journal could
+    // not be read still contributes no rows and does not make the observed sums disagree; it is simply absent evidence,
+    // and this field is where that lives.
     sumsAgree: program === programDispatches,
     flat,
     program,
     programDispatches,
     rows: flat + program,
     expectedRows: flat + programDispatches,
+    // Programs the Mod took and whose journal nobody could read: a hole in the record.
     unobservedPrograms,
+    // Submissions the Mod refused, BY NAME: not evidence that went missing, an answer that was given.
+    refusals,
+    // One program, one row - and the numbers it is computed from, including how many submissions produced them.
+    oneRow,
   });
 }
 
