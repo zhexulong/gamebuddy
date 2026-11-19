@@ -189,13 +189,36 @@ test("the multi-day result publishes the wake account the verdict reads", () => 
   assert.match(RUNNER_SOURCE, /stallWakes:/u);
   assert.match(RUNNER_SOURCE, /suppressedByReason:/u);
   assert.match(RUNNER_SOURCE, /suppressed: wakesSuppressed/u);
-  // THE SILENCE, PUBLISHED. A quiet bound no longer guarantees a prompt, so the run has to say how long nothing asked
-  // her anything and which decision did the leaving; without it a companion left alone for ten minutes is
-  // indistinguishable from one that was busy.
-  assert.match(RUNNER_SOURCE, /noWakeForMs: noWake\.forMs/u);
-  assert.match(RUNNER_SOURCE, /noWakeLastReason: noWake\.lastReason/u);
+  // THE SILENCE, PUBLISHED - and the two spans it is made of, each under its own name. `noWakeForMs` is the run's
+  // silence, read from the turn stream; `dayLoopWithheldWakeMs` is the day loop's own share of the wait. Publishing one
+  // under the other's name is the defect this pair replaces: measured 2026-11-19 (`round77`), `noWakeForMs: 712856` on a
+  // run whose 171 turn openings were never more than 175,201 ms apart.
+  assert.match(RUNNER_SOURCE, /noWakeForMs: silence\.longestMs/u);
+  assert.match(RUNNER_SOURCE, /noWakeTurns: silence\.turns/u);
+  assert.match(RUNNER_SOURCE, /dayLoopWithheldWakeMs: withheldWake\.forMs/u);
+  assert.match(RUNNER_SOURCE, /dayLoopWithheldWakeReason: withheldWake\.lastReason/u);
+  // AND MEASURED FROM THE TURN STREAM, not from this loop's own wake accounting: the real `turnGap` runs here, against a
+  // record whose turns the loop never issued.
+  const turnGap = extractRunnerFunction(RUNNER_SURFACE_SOURCE, "turnGap", { sessionEntries });
+  const at = (offsetMs) => new Date(Date.UTC(2026, 10, 19, 4, 46, 54) + offsetMs).toISOString();
+  const entry = (offsetMs, role) =>
+    `${JSON.stringify({ type: "message", timestamp: at(offsetMs), message: { role, content: [] } })}\n`;
+  const gaps = turnGap(
+    `${JSON.stringify({ type: "session", version: 3, timestamp: at(0) })}\n${entry(1_000, "user")}${entry(30_000, "assistant")}${entry(90_000, "user")}${entry(100_000, "user")}{half-written\n`,
+  );
+  assert.equal(gaps.turns, 3, "every user message is one turn opened, and the assistant's reply is not one");
+  assert.equal(gaps.longestMs, 89_000, "the longest stretch between two turn openings, not the run's wall clock");
+  assert.equal(turnGap("").longestMs, null, "a record with no turn has no interval to measure, not a zero");
+  assert.equal(turnGap(entry(5_000, "user")).turns, 1);
+  assert.equal(turnGap(entry(5_000, "user")).longestMs, null, "one turn is not an interval");
+  assert.equal(
+    turnGap(`${entry(5_000, "user")}${entry(5_000, "user")}`).longestMs,
+    0,
+    "two openings at one instant is a measured zero",
+  );
   assert.match(RUNNER_SOURCE, /"MULTIDAY_NO_WAKE"/u);
-  assert.match(RUNNER_SOURCE, /no_wake_for_ms:\$\{String\(noWake\.forMs\)\}:\$\{String\(noWake\.lastReason/u);
+  assert.match(RUNNER_SOURCE, /no_wake_for_ms:\$\{String\(silence\.longestMs\)\}:\$\{String\(silence\.turns\)\}/u);
+  assert.match(RUNNER_SOURCE, /day_loop_withheld_wake_ms:\$\{String\(withheldWake\.forMs\)\}/u);
   // The span the objective branch read travels with them: a run that published `objective_unreachable_for_today: 1`
   // must be readable against the number that licensed it, and that number exists nowhere else.
   assert.match(RUNNER_SOURCE, /objectiveSpanMs/u);

@@ -724,7 +724,9 @@ test("the verdict prices the wakes: how many per objective, and the model's shar
           total: 6,
           suppressed: 3,
           noWakeForMs: 92_000,
-          noWakeLastReason: "waiting_for_the_world",
+          noWakeTurns: 41,
+          dayLoopWithheldWakeMs: 180_000,
+          dayLoopWithheldWakeReason: "waiting_for_the_world",
           suppressedByReason: { body_still_working: 2, objective_met: 1 },
           byReason: { day_start: 1, continuation: 2, stall_wake: 0, day_end_offer: 1, player_input: 0 },
         },
@@ -740,8 +742,12 @@ test("the verdict prices the wakes: how many per objective, and the model's shar
       assert.match(block, /prompt_turns_by_reason\s+6 prompt turns/u);
       assert.match(block, /day_start 1, continuation 2, stall_wake 0, day_end_offer 1, player_input 0/u);
       assert.match(block, /suppressions_by_reason\s+3: body_still_working 2, objective_met 1/u);
-      // THE SILENCE, IN THE FORM THE RUNNER PUBLISHES IT: how long she was left alone, and which decision did the leaving.
-      assert.match(block, /no_wake_for_ms\s+no_wake_for_ms:92000:waiting_for_the_world/u);
+      // THE SILENCE, IN THE FORM THE RUNNER PUBLISHES IT: how long she was left alone, read from the turn stream, and the
+      // day loop's own share of the wait beside it - never one published as the other.
+      assert.match(
+        block,
+        /no_wake_for_ms\s+no_wake_for_ms:92000 over 41 turn openings - the longest stretch with no turn opened; the day loop withheld its own wake for up to 180000 ms \(waiting_for_the_world\)/u,
+      );
     },
   ));
 

@@ -998,14 +998,53 @@ const recordWake = (reason) => {
 const recordWakeSuppression = (reason) => {
   wakeAccount.suppressed[reason] = (wakeAccount.suppressed[reason] ?? 0) + 1;
 };
-// HOW LONG THE COMPANION WAS LEFT ALONE, AND BY WHICH ANSWER.
+// HOW LONG THE DAY LOOP WITHHELD ITS OWN WAKE, AND BY WHICH ANSWER.
 //
-// A quiet bound used to guarantee she was asked again every twenty seconds. Nothing does that now, so a long stretch with
-// no turn opened is a READING rather than an absence - `no_wake_for_ms:<ms>:<reason>` - because a silence the harness chose
-// (`waiting_for_the_world`) and a silence it could not end (a stall nobody published) must not read alike in the account.
+// A quiet bound used to guarantee she was asked again every twenty seconds. Nothing does that now, so a long stretch in
+// which THIS LOOP issued no wake is a READING rather than an absence - `day_loop_withheld_wake_ms:<ms>:<reason>` - because
+// a silence the harness chose (`waiting_for_the_world`) and a silence it could not end (a stall nobody published) must not
+// read alike in the account.
+//
+// IT IS NOT "HOW LONG SHE WAS NOT WOKEN", and it used to be published as if it were. The Host's fact pump opens turns of
+// its own from the facts the Mod publishes, so the loop can withhold for many minutes while she is working continuously:
+// measured 2026-11-19 (`round77`), `noWakeForMs: 712856` / `noWakeLastReason: waiting_for_the_world` on a run whose
+// session shows 171 turn openings and never more than 175,201 ms between two of them. The span the name claims is read
+// from the turn stream itself (`turnGap` below); this counter is the harness's own share of the wait.
 // `forMs` is the longest such stretch of the whole run, and `lastReason` is the decision that was in force when it
 // reached that length. Reset, not accumulated, the moment a turn opens.
-const noWake = { sinceMs: null, forMs: 0, lastReason: null };
+const withheldWake = { sinceMs: null, forMs: 0, lastReason: null };
+/**
+ * How long she was not woken: the longest gap between two turn openings in a session record, and how many there were.
+ *
+ * EVERY user message in the record is one turn opened - the prompt the Host delivered, whether this loop issued it or the
+ * fact pump did - so the record is the one authority for the whole run's silence. Fewer than two openings is no interval
+ * at all: `longestMs` is `null` rather than a zero that would read as a measured silence (the same answer
+ * `medianPromptTurnIntervalMs` gives for a cadence it cannot measure).
+ */
+function turnGap(sessionRaw) {
+  const openings = [];
+  for (const entry of sessionEntries(sessionRaw)) {
+    if (entry?.type !== "message" || entry?.message?.role !== "user") continue;
+    const atMs = Date.parse(entry.timestamp ?? "");
+    if (Number.isFinite(atMs)) openings.push(atMs);
+  }
+  openings.sort((left, right) => left - right);
+  let longestMs = null;
+  for (let index = 1; index < openings.length; index += 1) {
+    const gapMs = openings[index] - openings[index - 1];
+    if (longestMs === null || gapMs > longestMs) longestMs = gapMs;
+  }
+  return Object.freeze({ longestMs, turns: openings.length });
+}
+/** A session record's text, or the empty record when this run bound none: an unreadable record is not a neighbour's. */
+function readSessionRaw(sessionPath) {
+  if (typeof sessionPath !== "string" || sessionPath.length === 0) return "";
+  try {
+    return readFileSync(sessionPath, "utf8");
+  } catch {
+    return "";
+  }
+}
 // What the companion could actually see during the session. Sampled WHILE the
 // session runs (the surface a turn can rely on), never read after teardown: the
 // post-run snapshot is empty in practice, which silently emptied the audit's
@@ -4312,19 +4351,21 @@ try {
               // at all. Either way the next move is not hers yet, so the harness waits and asks again rather than paying a
               // model turn to find out that it had nothing to say.
               recordWakeSuppression(wake.reason);
-              // AND THE WAIT IS MEASURED, so a companion left alone for a long stretch says so instead of looking exactly
+              // AND THE WAIT IS MEASURED, so the harness's own share of the silence is visible instead of looking exactly
               // like a run whose turns were all paid for.
-              noWake.sinceMs ??= Date.now();
-              const aloneForMs = Date.now() - noWake.sinceMs;
-              if (aloneForMs > noWake.forMs) {
-                noWake.forMs = aloneForMs;
-                noWake.lastReason = wake.reason;
+              withheldWake.sinceMs ??= Date.now();
+              const aloneForMs = Date.now() - withheldWake.sinceMs;
+              if (aloneForMs > withheldWake.forMs) {
+                withheldWake.forMs = aloneForMs;
+                withheldWake.lastReason = wake.reason;
               }
               await new Promise((resolve) => setTimeout(resolve, WAKE_POLL_MS));
               continue;
             }
-            // A turn is opening: the stretch with nobody asking her anything is over.
-            noWake.sinceMs = null;
+            // A turn is opening: the stretch with nobody asking her anything is over. A turn the PUMP opens does not
+            // pass through here, which is why this counter is published as the day loop's own withholding and not as
+            // the run's silence.
+            withheldWake.sinceMs = null;
             turns += 1;
             recordWake(wake.reason);
             if (wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday)
@@ -4554,6 +4595,11 @@ try {
     );
     const wakesIssued = Object.values(wakeByReason).reduce((total, count) => total + count, 0);
     const wakesSuppressed = Object.values(wakeSuppressedByReason).reduce((total, count) => total + count, 0);
+    // THE RUN'S SILENCE, from the turn stream: every user message in this run's own session record is one turn opened, so
+    // the longest gap between two of them is the span "how long she was not woken" names - across the day loop AND the
+    // Host's pump. A record this run cannot bind is `null`, never a zero that would read as a measured silence.
+    const runSessionPath = findRunSessionJsonl(gameSessionPaths.sessionDir).path ?? null;
+    const silence = turnGap(readSessionRaw(runSessionPath));
     console.error(
       "MULTIDAY_WAKES",
       JSON.stringify({
@@ -4561,15 +4607,21 @@ try {
         byReason: wakeByReason,
         suppressed: wakesSuppressed,
         suppressedByReason: wakeSuppressedByReason,
-        noWakeForMs: noWake.forMs,
-        noWakeLastReason: noWake.lastReason,
+        noWakeForMs: silence.longestMs,
+        noWakeTurns: silence.turns,
+        dayLoopWithheldWakeMs: withheldWake.forMs,
+        dayLoopWithheldWakeReason: withheldWake.lastReason,
         objectiveSpanMs,
       }),
     );
-    // THE LONGEST STRETCH NOTHING ASKED HER ANYTHING, in one line. `no_wake_for_ms:<ms>:<reason>` says how long she was
-    // left alone and which decision did the leaving - `waiting_for_the_world` is a choice the harness made, and it must
-    // not read like a stall nobody could end.
-    console.error("MULTIDAY_NO_WAKE", `no_wake_for_ms:${String(noWake.forMs)}:${String(noWake.lastReason ?? "none")}`);
+    // THE TWO SPANS, EACH NAMED FOR WHAT IT MEASURES. `no_wake_for_ms` is the run's silence, read from the turn stream;
+    // `day_loop_withheld_wake_ms` is this loop's own share of the wait, by the decision that chose it. They are different
+    // quantities and publishing one under the other's name is how `round77` reported eleven minutes alone on a run whose
+    // turns were never two minutes apart.
+    console.error(
+      "MULTIDAY_NO_WAKE",
+      `no_wake_for_ms:${String(silence.longestMs)}:${String(silence.turns)} day_loop_withheld_wake_ms:${String(withheldWake.forMs)}:${String(withheldWake.lastReason ?? "none")}`,
+    );
     // WHETHER SHE SAID SHE WAS GOING TO BED AND DID NOT, read from the turn stream before the night is judged.
     //
     // Measured 2026-11-13 (`round47`): the farmhouse was entered at 22:00, she said 「就睡」 and 「这就躺平」 and 「这觉才算
@@ -4642,10 +4694,16 @@ try {
         staleWorldWakes: wakeByReason[WAKE_REASON.staleWorld] ?? 0,
         suppressed: wakesSuppressed,
         suppressedByReason: Object.freeze(wakeSuppressedByReason),
-        // THE SILENCE, NAMED. The quiet bound that used to guarantee a prompt every twenty seconds is gone, so the
-        // longest stretch with no turn is a reading of THIS run: `0` with no reason is a run that was never left waiting.
-        noWakeForMs: noWake.forMs,
-        noWakeLastReason: noWake.lastReason,
+        // THE SILENCE, NAMED, from the turn stream: the longest stretch between two turn openings in this run's own
+        // session record, and how many openings that span was measured over (`0` turns with `null` ms is "no record",
+        // never "no silence").
+        noWakeForMs: silence.longestMs,
+        noWakeTurns: silence.turns,
+        // THE DAY LOOP'S OWN SHARE OF THE WAIT, by reason: what the harness chose not to ask. This is NOT the silence -
+        // the Host's pump opens turns from fact batches while the loop waits - and it must not be published as if it
+        // were.
+        dayLoopWithheldWakeMs: withheldWake.forMs,
+        dayLoopWithheldWakeReason: withheldWake.lastReason,
         // The run's own prompt-turn cadence, which is the span the objective branch read: `null` when the run issued
         // fewer than two prompt turns, and then no stall could be stated from it.
         objectiveSpanMs,

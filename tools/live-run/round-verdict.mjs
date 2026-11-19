@@ -1155,13 +1155,18 @@ function formatEfficiency(report) {
     }`,
   );
   // THE SILENCE, NAMED. The quiet bound that used to guarantee a prompt every twenty seconds is gone, so the longest
-  // stretch with no turn is a reading of the run rather than an absence - and `waiting_for_the_world` says the harness
-  // chose it, while a stall nobody published would have said so by its own reason.
+  // stretch between turns is a reading of the run rather than an absence - and it comes from the TURN STREAM, which is
+  // the only place that holds the turns the Host's fact pump opened as well as the harness's own. The day loop's own
+  // withholding is printed beside it and never as it: a harness that withheld a wake while the pump kept her working
+  // has not left her alone, and publishing one number under the other's name is how `round77` reported eleven minutes
+  // of silence on a run whose turns were never two minutes apart.
   push(
     `  ${label("no_wake_for_ms")} ${
       report.wakes === null
         ? notMeasured("result.json multiday.wakes was not published by this run")
-        : `no_wake_for_ms:${String(report.wakes.noWakeForMs)}:${String(report.wakes.noWakeLastReason ?? "none")} - the longest stretch with no turn opened, and the decision in force when it ended`
+        : report.wakes.noWakeForMs === undefined || report.wakes.noWakeForMs === null
+          ? notMeasured("multiday.wakes published no readable turn stream, so no silence was measured")
+          : `no_wake_for_ms:${String(report.wakes.noWakeForMs)} over ${String(report.wakes.noWakeTurns)} turn openings - the longest stretch with no turn opened; the day loop withheld its own wake for up to ${String(report.wakes.dayLoopWithheldWakeMs ?? "not_measured")} ms (${String(report.wakes.dayLoopWithheldWakeReason ?? "no reason")}) while the Host's pump woke her from fact batches`
     }`,
   );
   push(

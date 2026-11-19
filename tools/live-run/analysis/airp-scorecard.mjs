@@ -13,7 +13,7 @@
 //
 // Usage: node tools/live-run/analysis/airp-scorecard.mjs [runDir]
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const RUNS_ROOT = ".live-runs/game-ladder";
@@ -61,9 +61,8 @@ function findSessionFiles(runDir, result) {
     .sort();
 }
 
-function readSessions(runDir, result) {
+function parseSessionLines(files) {
   const records = [];
-  const files = findSessionFiles(runDir, result);
   const seen = new Set();
   for (const path of files) {
     for (const line of readFileSync(path, "utf8").split("\n")) {
@@ -79,6 +78,26 @@ function readSessions(runDir, result) {
     }
   }
   return records;
+}
+
+function readSessions(runDir, result) {
+  return parseSessionLines(findSessionFiles(runDir, result));
+}
+
+/**
+ * The one session record THIS run wrote, bound by the name the run itself published.
+ *
+ * `result.toolTiming.record` is the file the runner read its turns from, so a reading taken from any other file is a
+ * reading of a neighbour's run - the defect `agent-session-record.mjs` names above `findRunSessionJsonl`. A run that
+ * publishes no record name, or whose name is not under its own directory, answers WHY instead of borrowing one.
+ */
+function boundSessionFiles(runDir, result) {
+  const files = findSessionFiles(runDir, result);
+  const record = typeof result?.toolTiming?.record === "string" ? result.toolTiming.record : null;
+  if (record === null) return { files: [], reason: "not_measured:the bundle names no session record" };
+  const own = files.filter((path) => (path.split(/[\\/]/u).pop() ?? "") === record);
+  if (own.length === 0) return { files: [], reason: `not_measured:${record} is not under this run` };
+  return { files: own, reason: null };
 }
 
 function toolCalls(records) {
@@ -133,6 +152,33 @@ function playerInputs(records) {
   return inputs;
 }
 
+/**
+ * Every turn opening in a session record, in order: one per user message.
+ *
+ * A user message IS a turn opening - the prompt the Host delivered, whether the day loop issued it or the fact pump did -
+ * which makes the record the only authority for "when was she last woken" that spans both layers.
+ */
+function turnOpenings(records) {
+  const times = [];
+  for (const record of records) {
+    const message = record?.message ?? record;
+    if (message?.role !== "user") continue;
+    const at = record.timestamp ? Date.parse(record.timestamp) : Number.NaN;
+    if (Number.isFinite(at)) times.push(at);
+  }
+  return times.sort((left, right) => left - right);
+}
+
+/** The longest stretch between two turn openings, or `null` when the record holds fewer than two. */
+function longestGapMs(times) {
+  let longest = null;
+  for (let index = 1; index < times.length; index += 1) {
+    const gap = times[index] - times[index - 1];
+    if (longest === null || gap > longest) longest = gap;
+  }
+  return longest;
+}
+
 const runDir = process.argv[2] ?? latestRun();
 if (runDir === null) {
   console.log("airp scorecard: no run directory under " + RUNS_ROOT);
@@ -159,21 +205,48 @@ say("verdict", `${result.state ?? "unknown"}${result.failure?.reasonCode ? " / "
 const purposes = Array.isArray(result.taskPurposes) ? result.taskPurposes : [];
 const days = purposes.length > 0 ? Math.max(...purposes.map((entry) => entry.day ?? 1)) : 0;
 say("days with a declared task", `${days} (${purposes.map((entry) => entry.taskId ?? "?").join(", ") || "none"})`);
-const taskVerdict = result.multiday?.assessment?.taskPurpose ?? result.taskPurposeVerdict ?? null;
+// WHICH OF THEM WERE ACHIEVED, read from the field the artifact publishes. This read
+// `result.multiday?.assessment?.taskPurpose ?? result.taskPurposeVerdict`, and no runner has ever published either: a
+// bundle carrying three judged tasks printed `not_measured` while `result.taskPurposes` held all three verdicts. The
+// tally prints each entry's OWN state and reason code, so `not_achieved` is never rounded into `unproven`.
+const achieved = purposes.filter((entry) => entry.state === "achieved");
+const unachieved = purposes.filter((entry) => entry.state !== "achieved");
+const reasonTally = (entries) => {
+  const counts = new Map();
+  for (const entry of entries) {
+    const code = `${entry.state ?? "no_state"}:${entry.reasonCode ?? "no_reason_code"}`;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .map(([code, count]) => `${code}×${count}`);
+};
 say(
   "task checklist progress",
-  taskVerdict === null
-    ? "not_measured:bundle carries no task-purpose verdict"
-    : `${taskVerdict.state ?? "?"}${taskVerdict.reasonCode ? " / " + taskVerdict.reasonCode : ""}`,
+  purposes.length === 0
+    ? "not_measured:bundle declares no taskPurposes"
+    : `${purposes.length} tasks · achieved ${achieved.length} · unproven ${unachieved.length}${
+        unachieved.length === 0 ? "" : ` (${reasonTally(unachieved).join(", ")})`
+      }`,
 );
 
 // --- 2. First mistake, and whether the run recovered ---------------------------------------------------------------
 const outcomes = Array.isArray(result.programOutcomes) ? result.programOutcomes : [];
 let firstBad = null;
 let goodBeforeBad = 0;
+// A NODE'S IDENTITY IS ITS PROGRAM AND ITS NODE ID. `nodeId` is `n01`, `n02`, ... in EVERY program, so a map keyed on it
+// alone kept whichever program was submitted last: on `round77` 594 submitted nodes collapsed into 39 keys, and 391 of
+// the 527 outcome rows were attributed to an action their own program never ran. Half an identity is not an identity.
+const identityOf = (programId, nodeId) => `${programId ?? "?"}\u0000${nodeId ?? "?"}`;
 const actionOfNode = new Map();
+const nodeIdOnly = new Set();
+let submittedNodes = 0;
 for (const submission of result.programSubmissions ?? []) {
-  for (const node of submission.nodes ?? []) actionOfNode.set(node.nodeId, node.actionId);
+  for (const node of submission.nodes ?? []) {
+    submittedNodes += 1;
+    nodeIdOnly.add(node.nodeId);
+    actionOfNode.set(identityOf(submission.programId, node.nodeId), node.actionId);
+  }
 }
 outcomes.forEach((outcome, index) => {
   for (const node of outcome.nodeOutcomes ?? []) {
@@ -183,7 +256,7 @@ outcomes.forEach((outcome, index) => {
       firstBad = {
         index,
         nodeId: node.nodeId,
-        actionId: actionOfNode.get(node.nodeId) ?? "?",
+        actionId: actionOfNode.get(identityOf(outcome.programId, node.nodeId)) ?? "?",
         state,
         reason: node.rejectionCode ?? node.failureCode ?? null,
       };
@@ -191,6 +264,13 @@ outcomes.forEach((outcome, index) => {
     if (!bad) goodBeforeBad += 1;
   }
 });
+// What the old key cost, measured on this bundle: every submitted node it collapsed into another node's identity.
+say(
+  "node identity",
+  submittedNodes === 0
+    ? "not_measured:no program submissions in this bundle"
+    : `${submittedNodes} submitted nodes · ${actionOfNode.size} (programId, nodeId) identities · ${nodeIdOnly.size} nodeId-only keys · duplicated ${submittedNodes - nodeIdOnly.size}`,
+);
 if (firstBad === null) {
   say("first mistake", outcomes.length === 0 ? "not_measured:no programs executed" : "none recorded");
 } else {
@@ -198,7 +278,9 @@ if (firstBad === null) {
     .slice(firstBad.index + 1)
     .some((outcome) =>
       (outcome.nodeOutcomes ?? []).some(
-        (node) => actionOfNode.get(node.nodeId) === firstBad.actionId && node.state === "succeeded",
+        (node) =>
+          actionOfNode.get(identityOf(outcome.programId, node.nodeId)) === firstBad.actionId &&
+          node.state === "succeeded",
       ),
     );
   say(
@@ -321,7 +403,81 @@ say(
     : `${attempted} attempted of ${addressable ?? "not_measured (no snapshot census)"} addressable`,
 );
 
-// --- 9. Declared blind spots -----------------------------------------------------------------------------------------
+// --- 9. The silence she was left in, and the gate that keeps a span honest --------------------------------------------
+// `noWakeForMs` claims "how long she was not woken". The authority for being woken is the turn stream, and every turn in
+// this run is not the harness's: the Host's fact pump opens turns too. On `round77` the artifact reported 712,856 ms of
+// "no wake" while the session's own turns were never more than 175,201 ms apart, so the number measured the day loop's
+// own withholding and was named for the whole run's silence.
+const bound = boundSessionFiles(runDir, result);
+const openings = bound.files.length === 0 ? null : turnOpenings(parseSessionLines(bound.files));
+const measuredGapMs = openings === null ? null : longestGapMs(openings);
+say(
+  "longest stretch with no turn",
+  measuredGapMs === null
+    ? `${bound.reason ?? "not_measured:this run's session record holds fewer than two turn openings"}`
+    : `${measuredGapMs} ms across ${openings.length} turn openings`,
+);
+
+// THE GATE. A span field's NAME says which interval it claims, and the interval a `noWake<…>Ms` name claims is measured
+// from the turn stream above. The population is derived from the published field names, never listed: a field added
+// tomorrow whose name claims a silence is examined without editing this, and one whose derivation is not declared here
+// fails as misnamed rather than passing because nobody wrote a rule for it. `dayLoopWithheldWakeMs` is NOT in the
+// population and not exempted from anything: its name claims what the day loop did, and the day loop may withhold for
+// longer than she was silent - the pump is what kept waking her.
+const WAKE_SILENCE_SPAN = /^noWake[A-Za-z0-9]*Ms$/u;
+const spanDerivations = new Map([
+  [
+    "noWakeForMs",
+    {
+      claims: "the longest stretch with no turn opened",
+      measure: () => measuredGapMs,
+      evidence: () =>
+        openings === null ? bound.reason : `the ${openings.length} turn openings in this run's own session record`,
+    },
+  ],
+]);
+const wakes = result.multiday?.wakes ?? null;
+const spanFields =
+  wakes === null
+    ? []
+    : Object.keys(wakes)
+        .filter((key) => WAKE_SILENCE_SPAN.test(key))
+        .sort();
+const misnamed = [];
+const blocked = [];
+let measuredWhatItNames = 0;
+for (const field of spanFields) {
+  const derivation = spanDerivations.get(field);
+  const published = wakes[field];
+  if (derivation === undefined) {
+    misnamed.push({ name: field, detail: "its name claims a wake-silence span and no derivation here measures it" });
+    continue;
+  }
+  const derived = derivation.measure();
+  if (derived === null) {
+    blocked.push({ name: field, detail: derivation.evidence() });
+    continue;
+  }
+  if (published === derived) measuredWhatItNames += 1;
+  else
+    misnamed.push({
+      name: field,
+      detail: `${String(published)} ms published; ${derivation.claims} is ${String(derived)} ms, from ${derivation.evidence()}`,
+    });
+}
+const gate = `fields examined ${spanFields.length} · measured-what-it-names ${measuredWhatItNames} · misnamed ${misnamed.length}`;
+const gateLines = misnamed.map(
+  (field) => `a_reported_span_is_the_span_its_name_claims:${field.name} - ${field.detail}`,
+);
+for (const field of blocked)
+  gateLines.push(`a_reported_span_is_the_span_its_name_claims:blocked - ${field.name} - ${field.detail}`);
+gateLines.push(
+  spanFields.length === 0
+    ? `a_reported_span_is_the_span_its_name_claims:blocked - ${gate} · this bundle publishes no wake-silence span${wakes === null ? " (no multiday.wakes)" : ""}`
+    : `a_reported_span_is_the_span_its_name_claims ${gate}`,
+);
+
+// --- 10. Declared blind spots ----------------------------------------------------------------------------------------
 say("second launch", "not_measured:the harness destroys the run; no returning player sample exists");
 say("human rating", "not_measured:no raters; see .tmp/airp-evaluation-rubric.md for the blind-transcript protocol");
 
@@ -329,4 +485,7 @@ console.log(lines.join("\n"));
 
 const missing = lines.filter((line) => line.includes("not_measured")).length;
 console.log(`\nexamined ${lines.length} metrics, ${missing} not measured in this artifact`);
-process.exit(0);
+console.log(gateLines.join("\n"));
+// A misnamed span fails this reading, so a bundle whose account says it left her alone for eleven minutes when it did not
+// cannot exit clean.
+if (misnamed.length > 0) process.exitCode = 1;
