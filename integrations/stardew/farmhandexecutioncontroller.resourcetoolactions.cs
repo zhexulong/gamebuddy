@@ -170,24 +170,98 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
-            "break_rock", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            "break_rock", requestId, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
-            authorize: null,
             gate: location =>
             {
                 if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
-                    return new TileTargetRefusal(toolRefusal, $"slot={slot}");
-                return DescribeRockSourceRefusal(location, targetX, targetY, expectedTargetId);
+                    return TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, $"slot={slot}"));
+                return AnswerRockSource(location, targetX, targetY, expectedTargetId);
             },
-            inReach: IsTileWithinToolReach,
-            execute: (executionId, admittedRequestId) => this.ExecuteBreakRock(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId));
+            execute: (executionId, admittedRequestId) => this.ExecuteBreakRock(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
+            authorize: null,
+            inReach: IsTileWithinToolReach);
 
-    private static TileTargetRefusal? DescribeRockSourceRefusal(GameLocation location, int targetX, int targetY, string expectedTargetId) =>
-        location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? rock)
-            && NativeItemPredicates.IsBreakableStone(rock)
-            && string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)
-                ? null
-                : new TileTargetRefusal("rock_target_changed", $"target={targetX},{targetY}");
+    /// <summary>The three answers <see cref="ResolveRockSource"/> can give about one rock identity.</summary>
+    private enum RockSourceAnswer
+    {
+        Stands,
+        Changed,
+        Settled,
+    }
+
+    /// <summary>One rock identity's live answer, with what the tile carries now so a receipt can name it.</summary>
+    private readonly record struct RockSourceResolution(RockSourceAnswer Answer, string LiveTargetId, string Occupant);
+
+    /// <summary>
+    /// What the live object layer answers about the rock a request named. Three answers, and they must not collapse into
+    /// one:
+    ///
+    /// <list type="bullet">
+    /// <item><see cref="RockSourceAnswer.Stands"/> - the identity the request carries is the stone standing on the named
+    /// tile, so the swing is this request's work.</item>
+    /// <item><see cref="RockSourceAnswer.Changed"/> - something else stands there (a different breakable stone, or an
+    /// object that is not a stone at all), so the identity the caller remembers no longer describes the tile. Retrying
+    /// is wrong and re-observing is right; the receipt names both identities.</item>
+    /// <item><see cref="RockSourceAnswer.Settled"/> - the tile holds nothing. For a rock that is not "the target
+    /// moved": <c>BuildRockSourceTargetId</c> hashes the LOCATION, the TILE and the item, so a stone that had moved would
+    /// carry a different id and a request naming this id could never find it anywhere else. An empty tile at the named
+    /// identity therefore means the stone is already out of the world - which is exactly what `break_rock` exists to
+    /// produce - so the request's own outcome already holds.</item>
+    /// </list>
+    ///
+    /// <para>
+    /// WHY THAT LAST ANSWER IS NOT A REFUSAL. Measured `round77`: `plan_562` broke seven rocks (timeline 402-408, tiles
+    /// `51,17` … `39,21`) and `plan_619` then dispatched one `break_rock` node per tile from a snapshot taken before that
+    /// settlement, each with the identity that snapshot had published. All seven refused `rock_target_changed` (409-415),
+    /// and `plan_783`'s node refused the same way for `34,9` four facts after `plan_562` broke that one too (514, 518).
+    /// Eight refusals for eight tiles that were already clear, in a plan whose remaining nodes then succeeded: the caller
+    /// spent eight nodes learning that the work it had asked for was done. The same shape `dismiss_modal` answers with
+    /// `nothing_to_dismiss`. A pickup still refuses its own gone case (`item_target_gone`), because a pickup's postcondition
+    /// is the item IN THE PACK - "there is nothing there" is a real failure of that request, and it is a different fact
+    /// from this one.
+    /// </para>
+    /// </summary>
+    private static RockSourceResolution ResolveRockSource(GameLocation location, int targetX, int targetY, string expectedTargetId)
+    {
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock))
+            return new RockSourceResolution(RockSourceAnswer.Settled, "none", "none");
+        if (!NativeItemPredicates.IsBreakableStone(rock))
+            return new RockSourceResolution(RockSourceAnswer.Changed, "none", rock.QualifiedItemId);
+        string liveTargetId = BuildRockSourceTargetId(location, targetX, targetY, rock);
+        return string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal)
+            ? new RockSourceResolution(RockSourceAnswer.Stands, liveTargetId, rock.QualifiedItemId)
+            : new RockSourceResolution(RockSourceAnswer.Changed, liveTargetId, rock.QualifiedItemId);
+    }
+
+    /// <summary>
+    /// The pre-approach half of <see cref="ResolveRockSource"/>: the tile the swing must reach, the refusal the caller is
+    /// owed, or the outcome that already holds. The BODY asks the same resolver after its approach walk, so a stone that
+    /// left while the actor walked is answered by the same three-way rule rather than by a second reading of the tile.
+    /// </summary>
+    private static TileTargetGate AnswerRockSource(GameLocation location, int targetX, int targetY, string expectedTargetId)
+    {
+        RockSourceResolution live = ResolveRockSource(location, targetX, targetY, expectedTargetId);
+        return live.Answer switch
+        {
+            RockSourceAnswer.Stands => TileTargetGate.Resolved(targetX, targetY),
+            RockSourceAnswer.Settled => TileTargetGate.Settled(
+                ExecutionState.Succeeded,
+                RockSourceAlreadySettled,
+                $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none"),
+            _ => TileTargetGate.Refused(new TileTargetRefusal(
+                "rock_target_changed",
+                $"target={expectedTargetId};named_tile={targetX},{targetY};actual={live.LiveTargetId};occupant={live.Occupant}")),
+        };
+    }
+
+    /// <summary>
+    /// The terminal for a rock the world no longer holds. Named after the family's own word for what is left
+    /// (`rock_source_broken` / `rock_source_damaged` are the swings), so a reader sees "this source is out of the world"
+    /// under the code that says so instead of inferring it from a change refusal.
+    /// </summary>
+    private const string RockSourceAlreadySettled = "rock_source_gone";
 
     private LocalExecutionReceipt ExecuteBreakRock(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)
     {
@@ -202,7 +276,15 @@ internal sealed partial class ExecutionManager
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
             GameLocation location = Game1.player.currentLocation;
             Vector2 tile = new(targetX, targetY);
-            if (!location.objects.TryGetValue(tile, out StardewValley.Object? rock) || !NativeItemPredicates.IsBreakableStone(rock) || !string.Equals(BuildRockSourceTargetId(location, targetX, targetY, rock), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={targetX},{targetY}");
+            RockSourceResolution live = ResolveRockSource(location, targetX, targetY, expectedTargetId);
+            // THE SAME THREE-WAY ANSWER AS THE PRE-APPROACH GATE. This body is reached by a request that was admitted
+            // before the walk and may have waited through one, so the world has had a second chance to settle the rock
+            // (another actor's swing, the engine's own debris pass).
+            if (live.Answer is RockSourceAnswer.Settled)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, RockSourceAlreadySettled, $"target={expectedTargetId};named_tile={targetX},{targetY};tile=none");
+            if (live.Answer is RockSourceAnswer.Changed)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "rock_target_changed", $"target={expectedTargetId};named_tile={targetX},{targetY};actual={live.LiveTargetId};occupant={live.Occupant}");
+            StardewValley.Object rock = location.objects[tile];
             int before = rock.MinutesUntilReady;
             float staminaBefore = Game1.player.Stamina;
             // THE EXPECTED COST IS READ BEFORE THE SWING, because the swing can grant the mining level it depends on.

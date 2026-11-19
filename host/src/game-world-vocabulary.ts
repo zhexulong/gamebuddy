@@ -35,7 +35,7 @@ const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
  * `位置` would hide where she is standing.
  * </p>
  */
-const LOCATION_NAMES_ZH: Record<string, string> = {
+export const LOCATION_NAMES_ZH: Readonly<Record<string, string>> = Object.freeze({
   Farm: "农场",
   FarmHouse: "农舍",
   Town: "镇上",
@@ -74,7 +74,7 @@ const LOCATION_NAMES_ZH: Record<string, string> = {
   IslandSouth: "南岛",
   IslandNorth: "北岛",
   IslandFarmHouse: "海岛小屋",
-};
+});
 
 /** The spoken name of a map, falling back to the engine's own for a place this table has not met yet. */
 export function formatGameLocation(location: string | undefined, zh: boolean): string {
@@ -879,6 +879,35 @@ export function renderGameEnvironmentFactsObservation(
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
+ * The target families whose label NAMES A PLACE, with the map it names and the role word that follows that name.
+ *
+ * ONE WORD PER PLACE, AND IT IS THE WORLD'S. MEASURED `round77`, day 2: the block printed `矿洞入口` over the mine
+ * entrance, she copied the place word out of it as `stardew_find_destination("矿洞")`, and the answer was
+ * `乔迪，肯特和山姆的家` - a villager's house - because no destination declares 矿洞. The game calls that place 矿井
+ * (`Data/Locations["Mine"].DisplayName`, `StringsFromCSFiles:MapPage.cs.11098`), which is the name the Mod's
+ * destination directory publishes as that place's canonical label and the name `位置:` already prints when she is
+ * standing in it. 矿洞 was THIS file's own word: a word no derivation from location data can produce, and a word the
+ * search index cannot hold is a place she cannot ask for.
+ *
+ * SO THE CATALOGUE'S SPELLING WINS, and it is spelled once: a label is `LOCATION_NAMES_ZH`'s name for the place plus
+ * the role of the thing standing there, so no entry can coin a second word for the place. The alignment lives here
+ * because the Host owns the words she reads while the Mod owns the names it matches - and a synonym table on the Mod
+ * side would have to grow a row for the next place, which design 3.1 already rejected.
+ *
+ * `world-state-place-word-findability.test.ts` reads the word the block ACTUALLY prints back through this table, so a
+ * family declared here without its label, or a label spelled by hand, fails there naming the word and the place.
+ */
+export const TARGET_FAMILY_PLACES = Object.freeze({
+  mineElevatorFloorTargets: Object.freeze({ map: "Mine", role: "电梯" }),
+  mineEntranceTargets: Object.freeze({ map: "Mine", role: "入口" }),
+});
+
+/** `<the world's own name for the place><the role>`: how a label names a place without inventing a word for it. */
+function placeLabel(place: Readonly<{ map: string; role: string }>): string {
+  return `${gameLocationName(place.map, true)}${place.role}`;
+}
+
+/**
  * The Chinese noun for every coordinate family the wire publishes.
  *
  * THE POPULATION IS THE WIRE'S ROW SHAPE, not this table and not a name suffix: `fact-brief.private.test.ts` reads
@@ -942,7 +971,7 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   cookingRecipeTargets: "可做的菜",
   cookingStationTargets: "灶台",
   shopTargets: "商店",
-  mineElevatorFloorTargets: "矿洞电梯",
+  mineElevatorFloorTargets: placeLabel(TARGET_FAMILY_PLACES.mineElevatorFloorTargets),
   animalDoorTargets: "畜舍门",
   fishPondTargets: "鱼塘",
   buildingChestTargets: "建筑里的箱子",
@@ -966,7 +995,7 @@ export const TARGET_FAMILY_LABELS: Readonly<Record<string, string>> = Object.fre
   mailboxTargets: "邮箱",
   raftTargets: "木筏",
   horseTargets: "马",
-  mineEntranceTargets: "矿洞入口",
+  mineEntranceTargets: placeLabel(TARGET_FAMILY_PLACES.mineEntranceTargets),
 });
 
 /**

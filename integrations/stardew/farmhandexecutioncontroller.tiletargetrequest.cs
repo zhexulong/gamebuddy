@@ -24,15 +24,35 @@ internal sealed partial class ExecutionManager
     /// one) because there is nothing to walk to: the target is gone or cannot be acted on, which is a different answer
     /// from "walk closer".
     /// </para>
+    ///
+    /// <para>
+    /// A SETTLEMENT (<see cref="Settled"/>) is the third answer, and it is neither of those: the target is not there to
+    /// act on BECAUSE the state the request asked for already holds. A rock the plan meant to break but an earlier
+    /// settlement already broke, a modal that is already closed - the question "is it in the state I wanted" is
+    /// answered yes, and refusing it costs the caller a turn to re-observe a world that already agrees with it. Measured
+    /// `round77`: seven `break_rock` nodes of `plan_619` named the seven tiles `plan_562` had broken nine seconds
+    /// earlier, and one more named tile `34,9`, broken four facts before it; all eight were refused and all eight were
+    /// already done. The gate mints the terminal because it is the only half that can read the live world, and the seam
+    /// mints no walk to a tile there is nothing left to do on.
+    /// </para>
     /// </summary>
-    private readonly record struct TileTargetGate(int X, int Y, TileTargetRefusal? Refusal)
+    private readonly record struct TileTargetGate(int X, int Y, TileTargetRefusal? Refusal, TileTargetSettlement? Settlement = null)
     {
         /// <summary>The target resolved: the actor must reach this tile to act on it.</summary>
         internal static TileTargetGate Resolved(int x, int y) => new(x, y, null);
 
         /// <summary>The target cannot be acted on: this is the refusal the action owes, and no tile is walked to.</summary>
         internal static TileTargetGate Refused(TileTargetRefusal refusal) => new(0, 0, refusal);
+
+        /// <summary>
+        /// The target is already in the state the request asked for: this terminal, and no refusal and no walk.
+        /// </summary>
+        internal static TileTargetGate Settled(ExecutionState state, string reasonCode, string evidence) =>
+            new(0, 0, null, new TileTargetSettlement(state, reasonCode, evidence));
     }
+
+    /// <summary>One gate's answer that the request's own outcome already holds, ready to be minted as the terminal.</summary>
+    private readonly record struct TileTargetSettlement(ExecutionState State, string ReasonCode, string Evidence);
 
     private LocalExecutionReceipt RequestLocalTileTarget(
         string actionId,
@@ -53,6 +73,8 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
         GameLocation location = Game1.player.currentLocation;
         TileTargetGate answer = gate(location);
+        if (answer.Settlement is TileTargetSettlement settled)
+            return this.RememberTerminal(requestId, executionId, settled.State, settled.ReasonCode, settled.Evidence);
         if (answer.Refusal is TileTargetRefusal refusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
         if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))

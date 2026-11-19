@@ -221,8 +221,35 @@ public sealed class LevelUpMilestoneChoiceTests
         {
             ExecutionManager manager = CreateManager(CreateActor(1001, new Point(4, 5)));
 
-            InvokeRespondLevelUp(manager, "req_not_level_up", 4, 5, "branch_a")
-                .ReasonCode.Should().Be("modal_not_level_up");
+            LocalExecutionReceipt receipt = InvokeRespondLevelUp(manager, "req_not_level_up", 4, 5, "branch_a");
+
+            receipt.ReasonCode.Should().Be("modal_not_level_up");
+            // The code is now reserved for THIS fact: a menu is holding the body and it is not the level-up menu. It
+            // always names the menu it found, which is what keeps it apart from the already-settled terminal.
+            receipt.Evidence.Should().Be("modal_type=NonLevelUpMenuStub");
+        });
+    }
+
+    /// <summary>
+    /// THE MENU THAT IS ALREADY GONE. `round77` (timeline 278): `plan_393`'s `respond_level_up` node arrived after an
+    /// earlier settlement had closed the `LevelUpMenu`, found `modal_type=none`, and failed `modal_not_level_up` - a node
+    /// spent on a level-up that was already settled. "Nothing is asking" is the outcome the request asked for, and it is
+    /// answered the way the sibling `dismiss_modal` answers the same world (`nothing_to_dismiss` / `modal=none`).
+    /// </summary>
+    [Fact]
+    public void ALevelUpThatIsAlreadySettled_IsTheOutcomeAndNotARefusal()
+    {
+        RunWithNoMenu(() =>
+        {
+            // The pair is still pending on the actor: the menu is what left, not the level-up. That is the shape the
+            // run recorded, and it is why a refusal here told the caller nothing it could act on.
+            ExecutionManager manager = CreateManager(CreateActor(1001, new Point(3, 1)));
+
+            LocalExecutionReceipt receipt = InvokeRespondLevelUp(manager, "req_already_settled", 3, 1, "confirm");
+
+            receipt.State.Should().Be(ExecutionState.Succeeded, "there is nothing to answer, so the request has nothing left to do");
+            receipt.ReasonCode.Should().Be("nothing_to_answer");
+            receipt.Evidence.Should().Be("modal=none");
         });
     }
 
@@ -373,7 +400,7 @@ public sealed class LevelUpMilestoneChoiceTests
         return menu;
     }
 
-    private static void RunWithMenu(IClickableMenu menu, Action action)
+    private static void RunWithMenu(IClickableMenu? menu, Action action)
     {
         FieldInfo menuField = typeof(Game1).GetField("_activeClickableMenu", BindingFlags.NonPublic | BindingFlags.Static)!;
         object? menuBefore = menuField.GetValue(null);
@@ -393,6 +420,9 @@ public sealed class LevelUpMilestoneChoiceTests
             Game1.eventUp = eventUpBefore;
         }
     }
+
+    /// <summary>No menu at all: the world `respond_level_up` measured on `round77` arrived in.</summary>
+    private static void RunWithNoMenu(Action action) => RunWithMenu(null, action);
 
     private sealed class NonLevelUpMenuStub : IClickableMenu
     {

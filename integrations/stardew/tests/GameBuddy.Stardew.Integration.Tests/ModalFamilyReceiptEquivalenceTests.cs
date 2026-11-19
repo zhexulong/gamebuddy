@@ -118,7 +118,11 @@ public sealed class ModalFamilyReceiptEquivalenceTests
         ["answer/key_not_offered"] = new Published("Rejected", "response_key_not_offered", "modal_type=DialogueBox;question=true;response_key=是;offered_keys=Yes,No", "offered_keys=Yes,No", "<null>", 1, false),
         ["answer/sleep_prompt"] = new Published("Rejected", "native_sleep_prompt_owned_by_sleep", "modal_type=DialogueBox;question=true;response_key=Yes;question_key=Sleep;owning_action=sleep", "Answering Yes here ends the day. Dispatch `sleep` instead - it answers this prompt and crosses the night with a receipt.", "<null>", 1, false),
         ["answer/actor_not_actionable"] = new Published("Rejected", "player_not_actionable", "actor=bound;location=none", "<null>", "<null>", 1, false),
-        ["levelup/no_level_up_menu"] = new Published("Rejected", "modal_not_level_up", "modal_type=none", "<null>", "<null>", 1, false),
+        // NOT A REFACTOR ROW: `nothing_to_answer` replaces the pre-extraction `Rejected`/`modal_not_level_up`/`modal_type=none`
+        // deliberately. Measured `round77` (timeline 278), the level-up menu had already been closed by an earlier
+        // settlement and the node failed for it. "Nothing is asking" is the outcome, and the refusal keeps only the
+        // wrong-menu case, which always names the menu it found.
+        ["levelup/no_level_up_menu"] = new Published("Succeeded", "nothing_to_answer", "modal=none", "<null>", "<null>", 1, false),
         ["levelup/expected_pair_missing"] = new Published("Rejected", "level_up_expected_pair_mismatch", "expected_pair=missing", "<null>", "<null>", 1, false),
         ["levelup/readings_disagree"] = new Published("Rejected", "level_up_pair_readings_disagree", "menu_pair=0@1;new_levels_head=none", "<null>", "<null>", 1, false),
         ["levelup/expected_pair_mismatch"] = new Published("Rejected", "level_up_expected_pair_mismatch", "menu_pair=0@1;expected_pair=7@9", "<null>", "<null>", 1, false),

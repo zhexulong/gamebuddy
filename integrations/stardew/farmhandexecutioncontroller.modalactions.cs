@@ -474,12 +474,33 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             return admissionRejection;
 
         if (Game1.activeClickableMenu is not LevelUpMenu menu)
+        {
+            // NOTHING IS ASKING A QUESTION, SO THERE IS NOTHING TO ANSWER - and that is the outcome, not a failure.
+            //
+            // Measured `round77` (timeline 278): `plan_393` dispatched `respond_level_up` after an earlier settlement
+            // had already closed the `LevelUpMenu`, `modal_type=none`, and the node failed `modal_not_level_up` for a
+            // level-up that was already settled. The absence of a menu is a fact about the WORLD, and a request for
+            // "settle the level-up that is being shown" is already where it asked to be when none is being shown; the
+            // sibling `dismiss_modal` answers the same shape with `nothing_to_dismiss` (`Succeeded`, `modal=none`).
+            //
+            // THE NAME IS THE SIBLING'S WORD, not `already_answered`: this receipt cannot see whether an answer was
+            // already given (a `respond_level_up` that arrives before the menu is raised reads exactly the same), and
+            // claiming a settlement this body did not perform - and cannot observe - is exactly what a receipt must not
+            // do. `nothing_to_answer` states the one fact that was read.
+            //
+            // WHAT IT CANNOT BE CONFUSED WITH: `modal_not_level_up` stays the failure for a DIFFERENT box holding the
+            // body (a `DialogueBox`, the end-of-night settlement summary), and after this change that code always
+            // carries `modal_type=<name>` - never `none` - so the two terminals differ in state AND in evidence, and a
+            // reader that sees `modal_type=none` cannot be looking at the refusal.
+            if (Game1.activeClickableMenu is null)
+                return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "nothing_to_answer", "modal=none");
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "modal_not_level_up",
-                $"modal_type={Game1.activeClickableMenu?.GetType().Name ?? "none"}");
+                $"modal_type={Game1.activeClickableMenu.GetType().Name}");
+        }
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);

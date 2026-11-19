@@ -114,11 +114,13 @@ public sealed class RockSourceSwingOutcomeTests
         DiscoveryBody(controller).Should().Contain("NativeItemPredicates.IsBreakableStone(",
             "the radar and the action must not disagree about which rocks exist");
 
-        // Two revalidations: the pre-approach one and the execution body's own, which must both admit the target the
-        // radar published. The pre-approach one asks the positive predicate (its refusal is "not a breakable stone"),
-        // so the shared spelling is the call itself, not the sign in front of it.
-        CountOccurrences(tools, "NativeItemPredicates.IsBreakableStone(rock)")
-            .Should().Be(2, "both break_rock revalidations ask the same predicate");
+        // ONE RESOLVER, TWO CALLERS. Both revalidations (the pre-approach gate and the execution body's own) ask the
+        // same three-way resolver, so the positive predicate is spelled once and the two sites cannot drift about which
+        // rocks exist. A second spelling would be a second authority over "is this a stone".
+        CountOccurrences(tools, "NativeItemPredicates.IsBreakableStone(")
+            .Should().Be(1, "one resolver decides what a stone is; both revalidations ask it");
+        CountOccurrences(tools, "ResolveRockSource(")
+            .Should().Be(3, "the resolver's own declaration plus the gate and the execution body that ask it");
 
         // The whole CALL, closing parens included: a prefix would still match a `&& item.MinutesUntilReady == 1`
         // appended after it, which is the exact regression this pins.
