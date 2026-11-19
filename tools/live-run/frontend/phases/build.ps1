@@ -28,9 +28,10 @@ if (-not (Test-Path (Join-Path $RuntimeDir 'node.exe'))) { Log "  RUNTIME DIR DO
 
 # NU1900 is the NuGet audit saying it could not READ the vulnerability database. The Mod build demotes
 # exactly that code (integrations/stardew/Directory.Build.props) so an unreachable source cannot fail a
-# build whose packages are all cached; counting it here is what makes the demotion OBSERVABLE rather than
-# a silent pass. Two lines are printed for the two readings this build can take, and neither claims the
-# audit ran when nothing said it could not.
+# build whose packages are all cached; printing the count is what makes the demotion OBSERVABLE rather
+# than a silent pass. The reading is taken where the step that produces it ends, not at the end of the
+# phase, because a build that goes on to fail for an unrelated reason - measured 2026-11-20: an offline
+# `pnpm deploy` of the runtime closure - must still record whether the audit could run.
 $auditReports = 0
 
 Log "=== 1. host typecheck ==="
@@ -56,6 +57,11 @@ $sw.Stop()
 Log ("  Mod build exit=" + $LASTEXITCODE + " elapsed=" + [int]$sw.Elapsed.TotalSeconds + "s")
 $auditReports += @($r | Where-Object { $_ -match 'NU1900' }).Count
 $r | Select-Object -Last 6 | ForEach-Object { Log ("  | " + $_) }
+if ($auditReports -gt 0) {
+  Log ("NUGET-AUDIT: not_run - NU1900 reported on " + $auditReports + " line(s) of the Mod build, so the vulnerability database was unreachable; every package came from the global packages folder; a vulnerability the audit FINDS (NU1901..NU1904) is still an error in this tree")
+} else {
+  Log "NUGET-AUDIT: no_unreachable_source_reported - nothing in the Mod build said the vulnerability database was unreachable, which is NOT a reading that it was consulted and found nothing"
+}
 $modDll = Join-Path $Worktree "integrations\stardew\bin\Release\net6.0\GameBuddy.Stardew.dll"
 Log ("  Mod dll present=" + (Test-Path $modDll))
 if (-not (Test-Path $modDll)) { Log "DONE-BUILD-FAIL"; exit 1 }
@@ -84,7 +90,6 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 $g = node (Join-Path $Worktree "host\scripts\build-desktop-launcher-test-generation.mjs") $OutRoot $RuntimeDir --full-runtime-tree 2>&1
 $sw.Stop()
 Log ("  generation build exit=" + $LASTEXITCODE + " elapsed=" + [int]$sw.Elapsed.TotalSeconds + "s")
-$auditReports += @($g | Where-Object { $_ -match 'NU1900' }).Count
 $g | Select-Object -Last 15 | ForEach-Object { Log ("  | " + $_) }
 if ($LASTEXITCODE -ne 0) { Log "DONE-BUILD-FAIL"; exit 1 }
 
@@ -112,11 +117,6 @@ $dirty = (git -C $Worktree diff --name-only HEAD --ignore-submodules=all)
 Log ("  worktree changed files after build=[" + ($dirty -join ',') + "]")
 if (@($dirty).Count -gt 0) { Log "  WORKTREE DIRTY AFTER BUILD"; $ok = $false }
 if (-not (Test-Path $cur)) { $ok = $false }
-if ($auditReports -gt 0) {
-  Log ("NUGET-AUDIT: not_run · NU1900 reported on " + $auditReports + " line(s) of this build, so the vulnerability database was unreachable · every package came from a local cache (the pin's helper caches + the global packages folder) · a vulnerability the audit FINDS (NU1901..NU1904) is still an error in this tree")
-} else {
-  Log "NUGET-AUDIT: no_unreachable_source_reported · nothing in this build said the vulnerability database was unreachable, which is NOT a reading that it was consulted and found nothing"
-}
 Log ("  ok=" + $ok)
 if (-not $ok) { Log "DONE-BUILD-FAIL"; exit 1 }
 Log "DONE-BUILD"
