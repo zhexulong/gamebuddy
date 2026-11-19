@@ -21,6 +21,22 @@
  *   as `TavernProblemError`; any opaque protocol failure throws
  *   `TavernProtocolError` and never echoes raw body text.
  *
+ * ## What the `/api/tavern/v1/` prefix means, and what it does not
+ *
+ * It is tavern-*named*, not tavern-dependent: there is no mounted Chat behind it. Every route below
+ * is answered by the management mount (`host/src/tavern-management-dialogue-web.ts`), which admits
+ * the browser session the shell already has - on the composed shell that is the composed broker's
+ * own session, verified through its capability, the same token every Game and Chat command carries -
+ * and then gates on the profile's declared route id and on the Host store behind the route
+ * (`PlayerPreferenceStore`, `ModelProfileStore`). No route reads a conversation.
+ *
+ * So a surface's own settings are the player's, not a Chat's. The Game surface's thinking level
+ * (`SurfaceModelSettings surface="game"`) is written on that one session, and the write lands with no
+ * conversation readable at all; the token is readable off the composed root's Chat half only because
+ * `TavernStateSnapshotV1` - the wire's Chat snapshot - is where the session is published, which is a
+ * fact about the root's shape rather than about ownership. Measured, both halves, in
+ * `tests/game-thinking-level-uses-the-shells-own-session.spec.ts`.
+ *
  * There is no SSE, polling, timer, storage, generated handle, local list or
  * mock anywhere in this module.
  */
