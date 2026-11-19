@@ -58,8 +58,9 @@ namespace GameBuddy.Stardew;
 //     never a ReferenceEquals;
 //   * the same-item-id-on-the-same-tile case adds NOTHING and still returns true
 //     (:7025-7031 `if (value10.QualifiedItemId != base.QualifiedItemId)`), so an
-//     occupied tile is refused by name (`place_owned_object_tile_occupied`) instead of
-//     being able to report a success the native call never produced.
+//     occupied tile is refused by name (`place_owned_object_tile_occupied`) - by the
+//     execution half, at the moment the world is read as it will be written - instead
+//     of being able to report a success the native call never produced.
 //
 // Tapppers take the SAME branch (a tapper is a bigCraftable): the tapper write is
 // :6566-6584 — `IsTapper()` -> `location.objects.Add(vector, obj)` (:6576),
@@ -202,7 +203,6 @@ internal sealed partial class ExecutionManager
         if (!TryDescribePlacementSource(slot, expectedQualifiedItemId, out StardewValley.Object? source, out string sourceRefusal, out string sourceEvidence))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, sourceRefusal, sourceEvidence);
 
-        Vector2 tile = new(targetX, targetY);
         if (!string.Equals(BuildOwnedObjectPlacementTargetId(location, slot, source!.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
             return this.RememberTerminal(
                 requestId,
@@ -210,17 +210,16 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "place_owned_object_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId};live={BuildOwnedObjectPlacementTargetId(location, slot, source.QualifiedItemId)}");
-        if (location.objects.ContainsKey(tile))
-            return this.RememberTerminal(
-                requestId,
-                executionId,
-                ExecutionState.Rejected,
-                "place_owned_object_tile_occupied",
-                $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};occupant={location.objects[tile]?.QualifiedItemId ?? "unknown"}");
-        // 5.2: out of the native placement reach, walk in rather than refuse. The
-        // reach here is the game's own (`Utility.isWithinTileWithLeeway`,
-        // Utility.cs:5737), not an invented one; every position-independent check above
-        // is re-run in the shared execution body after the walk.
+        // THIS HALF ANSWERS WHAT A REQUEST CAN KNOW ABOUT ITSELF, AND NOTHING ABOUT THE DESTINATION. Its two facts are the
+        // SOURCE - the named slot really holds that item, which is what the published identity is built from - and the
+        // distance, which is a walk rather than an answer (5.2: out of the native placement reach, walk in; the reach is
+        // the game's own, `Utility.isWithinTileWithLeeway`, Utility.cs:5737). Whether the DESTINATION may receive this
+        // item belongs to the execution half alone: both halves of that question (is something already keyed on the tile,
+        // and would the game admit a placement here) are read off a world this half is about to change by walking, and
+        // `Utility.playerCanPlaceItemHere` cannot even be asked from here - its own reach term is false for the body that
+        // is about to walk. The occupancy test used to be spelled in both halves, which is two owners for one question
+        // and the stale one deciding. The source itself is re-proved at the write, because the pack can change while she
+        // walks.
         if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1))
         {
             return this.TryBeginToolApproach(
@@ -253,6 +252,10 @@ internal sealed partial class ExecutionManager
                 ExecutionState.Rejected,
                 "place_owned_object_target_changed",
                 $"target={targetX},{targetY};location={location.NameOrUniqueName};slot={slot};item={source.QualifiedItemId};published={expectedTargetId};live={BuildOwnedObjectPlacementTargetId(location, slot, source.QualifiedItemId)}");
+        // THE PLACEMENT QUESTION IS THIS HALF'S, AND IT IS ASKED HERE ONCE. This is the only point in the request's life
+        // at which the world is read as it will be written: the body has arrived, so the reach term of the game's own
+        // predicate is satisfiable, and nothing between this line and the native call moves her again. The request half
+        // states neither half of it, for the reason written there.
         if (location.objects.ContainsKey(tile))
             return this.RememberTerminal(
                 requestId,

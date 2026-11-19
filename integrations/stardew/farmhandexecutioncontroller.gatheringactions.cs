@@ -196,6 +196,27 @@ internal sealed partial class ExecutionManager
         int magnetRadius = MagneticPickupReach.ReachPixels(Game1.player);
         Vector2 magnetSubject = MagneticPickupReach.Subject(target.Value.Debris);
         (int X, int Y) actorTile = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+        // WHY THIS WALK IS NOT THE SHARED APPROACH LEG - judged, because the capability matrix reports this as the one
+        // reach-leg action naming none of the three. The shared leg (`TryBeginToolApproach` -> `CompleteToolApproach`) is
+        // built from two facts, and this action's are different ones:
+        //   * WHAT DECIDES THE STAND TILE. `Debris.playerInRange` (Debris.cs:582-595) is a PIXEL rectangle of
+        //     `farmer.GetAppliedMagneticRadius()` around the body's standing pixel, re-asked on every update (:678). The
+        //     shared leg answers `IsTileWithinChebyshevRadius(..., 1)` around the target tile instead, which is the
+        //     narrower spelling of one reach: a chunk can lie where nobody can stand - a rock-pool edge, a doorway, the
+        //     tile under an object - and still be collectable from the tile beside it. `MagneticPickupReach`'s own
+        //     remarks record what the tile rule cost (`no_native_path`, `no_reachable_approach`, `item_target_moved` for
+        //     chunks that had not moved), so migrating this walk would reintroduce that defect rather than remove one.
+        //   * WHAT SETTLES THE REQUEST. There is no arrival execute to hand the leg: `Debris.updateChunks` collects the
+        //     chunk itself, on its own update, once the body is inside that rectangle (:652-655, delivered by
+        //     `addItemToInventoryBool` at :485, the chunk leaving `Chunks` at :793). The frame loop settles on the engine's
+        //     own facts - the chunk gone with the stack in the pack, `BrokenItemPickupPrecondition` naming which of the
+        //     engine's two guards the body no longer satisfies, or the bounded magnet window - so an arrival execute would
+        //     be a second authority over a write already performed.
+        // The TRAVEL is not bespoke: it is the shared movement primitive (`LocalMoveSpec` + `this.controller.TryStart`),
+        // and `RecordControllerTransition` keeps the pickup seat alive when the walk ends. The exception is the stand-tile
+        // geometry and the settlement. It DISAPPEARS if drop collection ever becomes tile-shaped - the engine gating
+        // collection on a tile distance, which would make the ring and an arrival execute the right rule - and it dies
+        // mechanically the moment this handler names one of the three legs, because the matrix's no-leg entry then fails.
         (int X, int Y)? standTile = MagneticPickupReach.WithinMagnet(magnetSubject, Game1.player.StandingPixel, magnetRadius)
             ? actorTile
             : MagneticPickupReach.SelectStandTile(
