@@ -20,6 +20,10 @@
  * </p>
  *
  * <ol>
+ *  <li><b>the preset's `main` (when mounted on Game)</b> - the generation preset's system entry, prepended ahead of the
+ *    surface block by `runtime-core.internal.ts` (`withPresetMain` + `renderPresetMainSegment`); on Chat the assembly seam
+ *    joins it to the leading system message (`preset-request-segments.ts`). Tone, length, pacing, roleplay scope and
+ *    the chain-of-thought language live THERE, so putting `main` first matches SillyTavern's `Main Prompt` position.</li>
  *  <li><b>the surface block</b> - the Game conduct (`game-surface-prompt-floor.ts`) or the Chat block
  *    (`chat-surface-block.ts`). The surface's writer, not the framework's.</li>
  *  <li><b>the identity block</b> - the card's fields: her name, role, continuity, the persona fields the card wrote, and
@@ -33,10 +37,6 @@
  *    so a card moved after that slot reds instead of being argued with.</li>
  *  <li><b>the player's own addition</b> - `renderPlayerPromptAddition`, the player's words between the same kind of
  *    Host-owned markers. A fourth writer: neither the card's words nor the preset's.</li>
- *  <li><b>the preset's `main`</b> - the generation preset's system entry. On Game `runtime-core.internal.ts` appends it
- *    (`renderPresetMainSegment`); on Chat the assembly seam joins it to the leading system message
- *    (`preset-request-segments.ts`). Tone, length, pacing, roleplay scope and the chain-of-thought language are all
- *    stated THERE, by the preset, because the preset owns every rule about when, whether and how much she speaks.</li>
  *  <li><b>world info, the transcript, then the post-history instructions</b> - placed by the preset assembly
  *    (`preset-request-segments.ts`) and the card's `post_history_instructions`
  *    (`post-history-instructions.ts`).</li>

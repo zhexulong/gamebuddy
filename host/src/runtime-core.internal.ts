@@ -1035,7 +1035,8 @@ export async function createGameCompanionRuntime(
 }
 
 /**
- * The Game system prompt with the generation preset's `main` entry appended, and the overlap report the pair earns.
+ * The Game system prompt with the generation preset's `main` entry prepended at position 0, and the overlap report the
+ * pair earns.
  *
  * Two properties this function exists to keep:
  *
@@ -1048,7 +1049,7 @@ function withPresetMain(floor: string, preset: GameSessionPreset | null): string
   if (preset === null) return floor;
   for (const overlap of presetOverlaps({ preset, floor })) process.stderr.write(`${formatPresetOverlap(overlap)}\n`);
   const segment = renderPresetMainSegment(preset.main);
-  return segment.length === 0 ? floor : `${floor}\n${segment}`;
+  return segment.length === 0 ? floor : `${segment}\n\n${floor}`;
 }
 
 /**

@@ -354,29 +354,49 @@ test("the player's stored Game prompt addition reaches the compiled Game prompt,
 });
 
 /**
- * The preset's `main` entry reaches the prompt the Game runtime INSTALLS, and never the Chat one.
+ * The preset's `main` entry reaches the prompt the Game runtime INSTALLS at position 0, and never the Chat one.
  *
  * This is the wiring assertion, not the reader's: `gameSessionPreset` could answer perfectly and the runtime could
- * still never append the segment. Reading `runtime.session.systemPrompt` is reading what the mounted session holds,
+ * still never prepend the segment. Reading `runtime.session.systemPrompt` is reading what the mounted session holds,
  * which is the same fact `game-surface-prompt-floor.test.ts` measures against for a preset-less root.
  *
- * The preset's `main` names a SYSTEM segment (`system_prompt: true` in `before`), so the system prompt is where it
- * belongs - and it arrives framed UNDER the floor, never in place of it.
+ * The preset's `main` names a SYSTEM segment (`system_prompt: true` in `before`), so it opens the Game system prompt
+ * ahead of the surface floor, identity block, card directives and player addition, with no adversarial precedence prose.
  */
-test("the shipped preset's `main` entry reaches the compiled Game prompt, framed under the floor, and not the Chat one", async () => {
+test("the shipped preset's `main` entry reaches the compiled Game prompt ahead of the floor, and not the Chat one", async () => {
   const addition = "收完土豆再去矿洞。";
   const game = await mountedSystemPrompt("game", addition, { mountPreset: true });
-  assert.match(game, /<<<PRESET MAIN>>>/u, "a mounted preset's main entry must reach the installed Game prompt");
-  assert.match(game, /【预设总纲（Preset Main）】/u);
+  assert.match(game, /^<<<PRESET MAIN>>>\n/u, "a mounted preset's main entry must open the installed Game prompt");
+  assert.doesNotMatch(game, /【预设总纲（Preset Main）】/u);
+  const presetDoc = JSON.parse(readFileSync(SHIPPED_COMPANION_PRESET_PATH, "utf8")) as {
+    prompts: readonly { identifier: string; content: string }[];
+  };
+  const expectedMainFirstLine =
+    (presetDoc.prompts.find((p) => p.identifier === "main")?.content ?? "")
+      .split("\n")[0]
+      ?.replace(/\{\{user\}\}/gu, "你")
+      .replace(/\{\{char\}\}/gu, DEFAULT_COMPANION_PRESET.profile.identity.name) ?? "";
   assert.ok(
-    game.includes("你正在和自小一起长大的发小"),
-    `the preset's own first line must ride inside the frame; the prompt carried ${JSON.stringify(game.slice(-400))}`,
+    expectedMainFirstLine.length > 0 && game.includes(expectedMainFirstLine),
+    `the preset's own first line (${JSON.stringify(expectedMainFirstLine)}) must ride inside the frame; prompt head: ${JSON.stringify(game.slice(0, 400))}`,
   );
-  // Under the floor, not over it: the frame's ordering clause is part of the same appended block.
-  assert.match(game, /cannot add to, take away from, or loosen what is stated above/u);
+  assert.doesNotMatch(game, /cannot add to, take away from, or loosen what is stated above/u);
+  assert.doesNotMatch(game, /what is stated above (?:wins|still holds)/u);
   assert.ok(
     game.indexOf("<<<PRESET MAIN>>>") < game.indexOf("<<<END PRESET MAIN>>>"),
     "the delimiter must open before it closes",
+  );
+  assert.ok(
+    game.indexOf("<<<END PRESET MAIN>>>") < game.indexOf("<world-state>"),
+    "the preset main block must precede the Game surface floor",
+  );
+  assert.ok(
+    game.indexOf("<world-state>") < game.indexOf("<<<CARD DIRECTIVES"),
+    "the Game surface floor must precede the card directives",
+  );
+  assert.ok(
+    game.indexOf("<<<CARD DIRECTIVES") < game.indexOf("<<<PLAYER DIRECTIVES"),
+    "the card directives must precede the player's own addition",
   );
 
   const chat = await mountedSystemPrompt("chat", addition, { mountPreset: true });
