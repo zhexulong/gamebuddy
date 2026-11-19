@@ -2115,8 +2115,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// player (<c>Chest.cs:766-772</c>), so a pair that could not take from it was refusing a container the player uses.
     /// </para>
     /// <para>
-    /// "Is it a container" and "may the pair address it" stay two predicates on purpose: repainting a mini shipping bin
-    /// is legitimate, and the colour family keeps addressing it.
+    /// "Is it a container" and "may the pair address it" stay two predicates on purpose, and the colour family asks a
+    /// third question again: a mini shipping bin is neither storage nor colourable (the engine builds no picker for a
+    /// `MiniShippingBin`, `ItemGrabMenu.CanHaveColorPicker`, `ItemGrabMenu.cs:603-610`), while a Junimo chest is storage
+    /// and not colourable, so neither of these two answers may stand in for it.
     /// </para>
     /// </summary>
     private static bool IsStorageContainer(StardewValley.Objects.Chest chest)

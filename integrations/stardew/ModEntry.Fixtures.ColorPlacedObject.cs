@@ -36,7 +36,7 @@ public sealed partial class ModEntry
     /// chest already carries (`color_already_set`), so the starting state has to be known and
     /// different from the request. A save that happens to own a chest carries whatever it was left
     /// with, so the fixture sets the colour and then asserts the result THROUGH THE PRODUCT'S OWN
-    /// predicate (`ExecutionManager.TryDescribePlacedChest`) so the Given and the product cannot
+    /// predicate (`ExecutionManager.TryDescribeColorableChest`) so the Given and the product cannot
     /// disagree. The colour itself comes from the game's own palette
     /// (`DiscreteColorPicker.getColorFromSelection`), never from a literal here.
     ///
@@ -77,8 +77,8 @@ public sealed partial class ModEntry
                 + $"occupant={location.objects[spot.Value.StandingTile]?.QualifiedItemId ?? "unknown"}");
 
         Chest chest = new(playerChest: true, spot.Value.TargetTile);
-        if (!ExecutionManager.TryDescribePlacedChest(chest, out Chest? colorable) || !ReferenceEquals(colorable, chest))
-            throw new InvalidOperationException($"fixture_native_local_color_placed_object_not_a_chest:item={chest.QualifiedItemId}");
+        if (!ExecutionManager.TryDescribeColorableChest(chest, out Chest? colorable) || !ReferenceEquals(colorable, chest))
+            throw new InvalidOperationException($"fixture_native_local_color_placed_object_not_colourable:item={chest.QualifiedItemId}");
         if (!IsFixtureOwnedOrdinaryChest(chest))
             throw new InvalidOperationException("fixture_native_local_color_placed_object_chest_invalid");
 
@@ -89,7 +89,7 @@ public sealed partial class ModEntry
         if (!location.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? placed) || !ReferenceEquals(placed, chest))
             throw new InvalidOperationException("fixture_native_local_color_placed_object_placement_failed");
         // Asserts the Given THROUGH THE PRODUCT'S OWN predicate: the same question the handler asks.
-        if (!ExecutionManager.TryDescribePlacedChest(placed, out Chest? asserted) || !ReferenceEquals(asserted, chest))
+        if (!ExecutionManager.TryDescribeColorableChest(placed, out Chest? asserted) || !ReferenceEquals(asserted, chest))
             throw new InvalidOperationException("fixture_native_local_color_placed_object_given_not_colorable");
         if (chest.playerChoiceColor.Value.Equals(Color.Black) || !chest.playerChoiceColor.Value.Equals(fixtureColor))
             throw new InvalidOperationException(

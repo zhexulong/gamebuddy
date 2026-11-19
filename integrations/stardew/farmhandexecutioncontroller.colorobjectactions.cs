@@ -57,8 +57,35 @@ namespace GameBuddy.Stardew;
 // `0 .. DiscreteColorPicker.totalColors - 1` - the game's own input domain for this write. The
 // bound is read from the game on the game thread and never hardcoded.
 //
+// WHAT SHE MAY RECOLOUR, and why this family asks its own question. Two facts decide it, both the
+// engine's:
+//
+//   Menus/ItemGrabMenu.cs:603-610   CanHaveColorPicker()  - the picker exists only for a `Chest`
+//                                   whose SpecialChestType is None or BigChest, and not a fridge.
+//   Chest.cs:773-792 / :766-772     the picker is reached from the `playerChest` branch of
+//                                   `checkForAction`; a giftbox dumps its contents instead and a
+//                                   world chest opens through the `!playerChest` branch (:794-807).
+//   Chest.cs:1257-1303              `draw` paints `playerChoiceColor` only in its `playerChest`
+//                                   branches; anything else takes the plain sprite path (:1315-1347),
+//                                   so a colour written to a world chest is a field nobody sees.
+//
+// So colour-addressable (the picker's own set) and hers-to-recolour (`playerChest`) are two
+// questions, and `TryDescribeColorableChest` answers both. This is NOT the count predicate return:
+// `TryDescribePlacedChest` answers "is this world object a chest" for `SummarizeChests` and the
+// location's container walk, and that widening was the 2026-11-19 fix - a room's chests are a room
+// inventory, while recolouring is a claim about one box being hers. `IsStorageContainer` is a third
+// question again (a Junimo chest is storage and not colourable), so the three predicates stay three
+// and none of them is reached through another's answer.
+//
+// THE GIFT BOX IS REFUSED ON ITS OWN FACT, not only because the engine builds it with
+// `playerChest == false` (`FarmHouse.cs:142`). Its contents are handed over and the box destroyed on
+// the first interaction (`dumpContents` removes it, `Chest.cs:725-736`; `checkForAction` removes it
+// once empty, `:829-831`), so a colour on one is a field on a box that is about to stop existing -
+// there is nothing for the colour to be true about a turn later.
+//
 // REFUSALS (per the frozen card `design/tasks/active/cards/card-color-placed-object-boundary.md`
-// §8) are named after the fact they read: no `Chest` at the tile (`color_target_unavailable`), a
+// §8) are named after the fact they read: no colour target at the tile (`color_target_unavailable`,
+// whether nothing is there or what is there is not hers to repaint - the evidence names which), a
 // different chest id (`color_target_moved`), another location (`color_target_location_mismatch`),
 // out of the interaction radius (`color_target_out_of_range`), an index outside the palette
 // (`invalid_color_selection`), the colour it already carries (`color_already_set`), a write whose
@@ -182,14 +209,17 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The one place that answers "is this world object a chest?", asked by the location's container walk (and so by
-    /// the chest summary) and by this action's discovery, execution body and fixture Given alike.
+    /// The one place that answers "is this world object a chest?", asked by the location's container walk and so by the
+    /// chest summary. The colour family asks it through <see cref="TryDescribeColorableChest"/> below and the container
+    /// actions through `IsStorageContainer`, so no reader of "is it a chest" is handed that answer as something else.
     ///
     /// <para>
-    /// A chest is a placed <c>Chest</c> - the game's own type, which is the guard the native repaint carries too
-    /// (`DiscreteColorPicker.cs:75` is `if (itemToDrawColored is Chest chest)`). WHAT a chest is and WHICH chests an
-    /// action may open are two questions: this answers the first, and <see cref="IsOwnedOrdinaryChest"/> answers the
-    /// second for `chest_store`/`chest_retrieve`.
+    /// A chest is a placed <c>Chest</c> - the game's own type. WHAT a chest is, WHICH chests an action may open
+    /// (<see cref="IsStorageContainer"/>) and WHICH chests she may recolour (<see cref="TryDescribeColorableChest"/>)
+    /// are three questions: this answers the first, and the other two are asked after it rather than derived from it.
+    /// That is deliberate - measured 2026-11-19 (`round79`), answering "is it a chest" was taken for an answer to "may
+    /// she repaint it", and the first act of day one was `color_placed_object` on the farmhouse's starter gift box,
+    /// which is a `Chest` the engine shows no picker for and never paints a colour on.
     /// </para>
     /// <para>
     /// The split has to be this one. Measured 2026-11-18 (`round76`, the FarmHouse): the summary counted the room's
@@ -202,6 +232,40 @@ internal sealed partial class ExecutionManager
     {
         chest = placed as Chest;
         return chest is not null;
+    }
+
+    /// <summary>
+    /// The one place that answers "may she recolour this world object?", asked by discovery, the execution body and the
+    /// fixture Given alike. It asks the identity question first through <see cref="TryDescribePlacedChest"/>, then the two
+    /// facts the engine's own colour path is gated on: the picker can be built for this chest
+    /// (`ItemGrabMenu.CanHaveColorPicker`, `ItemGrabMenu.cs:603-610` - `None` or `BigChest`, never a fridge), and the
+    /// chest is one the player placed, the only branch whose `draw` paints `playerChoiceColor` (`Chest.cs:1257-1303`) and
+    /// the only branch `checkForAction` reaches the picker from (`Chest.cs:773-792`).
+    ///
+    /// <para>
+    /// A GIFT BOX IS REFUSED BY ITS OWN FLAG: its branch hands the contents over and destroys the box on the first
+    /// interaction (`Chest.cs:725-736`), and `checkForAction` removes the box once it is empty (`:829-831`), so a colour on
+    /// one would be a change to an object that is about to stop existing. Every gift box the shipped constructor makes is
+    /// also `playerChest == false` (`FarmHouse.cs:142`), which the test above already refuses; the flag is checked
+    /// separately because it is the fact that survives a save file or a mod building both flags at once.
+    /// </para>
+    ///
+    /// <para>
+    /// MEASURED 2026-11-19 (`round79`, the FarmHouse, the first turn of day one): this family addressed every `Chest`, so
+    /// the first thing she did was `color_placed_object` on the starter gift box at (3,7), selection 3 - the
+    /// parsnip-seed box painted cyan - and the receipt said `placed_object_recolored`. `draw` never reads
+    /// `playerChoiceColor` for a world chest (`Chest.cs:1315-1347`), so the write succeeded and the claim was false.
+    /// </para>
+    /// </summary>
+    internal static bool TryDescribeColorableChest(StardewValley.Object? placed, out Chest? chest)
+    {
+        chest = null;
+        if (!TryDescribePlacedChest(placed, out Chest? candidate)) return false;
+        if (!candidate!.playerChest.Value) return false;
+        if (candidate.giftbox.Value) return false;
+        if (candidate.SpecialChestType is not (Chest.SpecialChestTypes.None or Chest.SpecialChestTypes.BigChest)) return false;
+        chest = candidate;
+        return true;
     }
 
     /// <summary>
@@ -223,7 +287,12 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal static string FormatColor(Color color) => $"{color.R},{color.G},{color.B}";
 
-    private static ColorTargetResolution ResolveColorTarget(GameLocation location, int x, int y, string expectedTargetId)
+    /// <summary>
+    /// Re-derives the named chest on the game thread through the colour admission discovery reads too, so an execution can
+    /// only address a target the same observation would have published. Every mismatch is a NAMED refusal, never a silent
+    /// re-target.
+    /// </summary>
+    internal static ColorTargetResolution ResolveColorTarget(GameLocation location, int x, int y, string expectedTargetId)
     {
         Vector2 tile = new(x, y);
         if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is null)
@@ -231,10 +300,15 @@ internal sealed partial class ExecutionManager
                 "color_target_unavailable",
                 $"tile={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};tile_object=none");
 
-        if (!TryDescribePlacedChest(placed, out Chest? colorable))
+        if (!TryDescribeColorableChest(placed, out Chest? colorable))
             return ColorTargetResolution.Reject(
                 "color_target_unavailable",
-                $"tile={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};tile_object={placed.QualifiedItemId};object_type={placed.GetType().Name}");
+                $"tile={x},{y};location={location.NameOrUniqueName};published={expectedTargetId};"
+                + $"tile_object={placed.QualifiedItemId};object_type={placed.GetType().Name};"
+                + (placed is Chest refused
+                    ? $"player_chest={refused.playerChest.Value.ToString().ToLowerInvariant()};"
+                      + $"giftbox={refused.giftbox.Value.ToString().ToLowerInvariant()};special_chest_type={refused.SpecialChestType}"
+                    : "not_a_chest"));
 
         string identity = $"target={expectedTargetId};tile={x},{y};location={location.NameOrUniqueName}";
         Chest chest = colorable!;
@@ -253,10 +327,10 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The chests the actor can name right now, projected read-only from live state: every `Chest`
-    /// in the current location within the shared discovery radius, with the colour it currently
-    /// carries. Nothing is synthesized: whatever the game placed is published, and the caller reads
-    /// the same colour the write will change.
+    /// The chests she may recolour right now, projected read-only from live state: every chest
+    /// <see cref="TryDescribeColorableChest"/> admits in the current location within the shared discovery radius, with the
+    /// colour it currently carries. Nothing is synthesized: whatever the game placed and made hers is published, and the
+    /// caller reads the same colour the write will change.
     /// </summary>
     internal static IReadOnlyList<BridgeColorTarget> DiscoverColorTargets(Farmer player)
     {
@@ -268,7 +342,7 @@ internal sealed partial class ExecutionManager
             if (result.Count >= ColorTargetLimit)
                 break;
             Vector2 tile = pair.Key;
-            if (pair.Value is null || !TryDescribePlacedChest(pair.Value, out Chest? chest))
+            if (pair.Value is null || !TryDescribeColorableChest(pair.Value, out Chest? chest))
                 continue;
             if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
@@ -284,7 +358,7 @@ internal sealed partial class ExecutionManager
 
     private const int ColorTargetLimit = 16;
 
-    private sealed record ColorTargetResolution(
+    internal sealed record ColorTargetResolution(
         bool Accepted,
         string ReasonCode,
         string Evidence,

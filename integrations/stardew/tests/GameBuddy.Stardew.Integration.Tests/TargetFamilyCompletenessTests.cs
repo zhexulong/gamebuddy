@@ -248,12 +248,19 @@ public sealed class TargetFamilyCompletenessTests
     /// </para>
     /// <para>
     /// THE POPULATION IS THE LOCATION'S OBJECT LAYER, counted here from the world rather than listed: every `Chest` the
-    /// walk can yield that is storage is a chest both projections must name. One of the two below is the farmhouse's
-    /// starter gift chest shape - placed by the WORLD, `playerChest == false` - which is exactly the chest the two
-    /// predicates used to split on. The kinds the count leaves out (a mini shipping bin's sale goods, an enricher's
-    /// fertilizer slot, an auto-loader's machine feed) are named beside `IsStorageContainer` and measured kind by kind in
+    /// walk can yield that is storage is a chest the count must include. One of the two below is the farmhouse's starter
+    /// gift chest shape - placed by the WORLD, `playerChest == false` - which is exactly the chest the two predicates used
+    /// to split on. The kinds the count leaves out (a mini shipping bin's sale goods, an enricher's fertilizer slot, an
+    /// auto-loader's machine feed) are named beside `IsStorageContainer` and measured kind by kind in
     /// `EveryChestKindTheSummaryCountsIsAChestKindTheContainerActionsAdmit`, which is why this case can hold only
     /// storage chests.
+    /// </para>
+    /// <para>
+    /// THE COLOUR ROWS ARE A SUBSET, NOT A SECOND OPINION. Since 2026-11-19 they answer "may she recolour it"
+    /// (`TryDescribeColorableChest`), which is narrower than "is it a chest in this room": the world chest below is
+    /// counted and is not a colour target, and that is the shape round79 acted on. So the invariant this holds is
+    /// one-directional - every tile a row family names is inside the count - and the direction matters: a count smaller
+    /// than the rows is the ghost, a row narrower than the count is a fact about ownership.
     /// </para>
     /// </summary>
     [Fact]
@@ -277,10 +284,12 @@ public sealed class TargetFamilyCompletenessTests
             .ToList();
 
         summary.ChestCount.Should().Be(population.Count, "the summary counts every storage chest the object layer holds");
-        named.Should().Contain(
-            population,
-            "the colour family names every `Chest`, so the count's population is a subset of it - this case holds only "
-            + "storage chests, and the kinds the count leaves out are measured by the agreement gate");
+        population.Should().Contain(named, "every colour target is a chest the count counted: the count is the room's, the rows are the part of it she may repaint");
+        named.Should().Contain((2, 2), "the chest the player placed is a colour target");
+        named.Should().NotContain(
+            (3, 2),
+            "the world chest is not hers to recolour (`TryDescribeColorableChest`), and the count above still counts it - "
+            + "that one-directional split is the whole fix, so neither half may be read off the other");
         summary.ItemCount.Should().Be(16, "1 + 15: what the room holds, whichever predicate placed the container");
     }
 
@@ -377,6 +386,124 @@ public sealed class TargetFamilyCompletenessTests
             kinds.Add(new ChestKind($"{special}/player", special, PlayerChest: true, Giftbox: false));
         kinds.Add(new ChestKind("None/world", StardewValley.Objects.Chest.SpecialChestTypes.None, PlayerChest: false, Giftbox: false));
         kinds.Add(new ChestKind("giftbox", StardewValley.Objects.Chest.SpecialChestTypes.None, PlayerChest: false, Giftbox: true));
+        return kinds;
+    }
+
+    /// <summary>
+    /// GATE `a_colour_target_is_something_she_may_recolour:&lt;kind&gt;`.
+    ///
+    /// <para>
+    /// ONE OBJECT, TWO ANSWERS THAT MUST AGREE. The colour family's job is to hand the model a tile it may repaint, and
+    /// `color_placed_object`'s job is to accept exactly those. Measured 2026-11-19 (`round79`, the FarmHouse, the first
+    /// turn of day one): the target list named the farmhouse's starter gift box at (3,7), so the FIRST thing she did was
+    /// paint the parsnip-seed box cyan - `color_selection=3` -> `0,170,170` - and the receipt claimed
+    /// `placed_object_recolored`. The count fix before it (`245493da`) had widened the same walk to every placed `Chest`,
+    /// which was right for a room inventory and wrong for a repaint: the engine shows no picker for a world chest
+    /// (`ItemGrabMenu.cs:603-610`, `Chest.cs:773-792`) and paints no colour on one (`Chest.cs:1315-1347`), so the write
+    /// changed a field nothing reads.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS THE ENGINE'S OWN KIND AXIS, derived rather than listed: every `Chest.SpecialChestTypes` member
+    /// crossed with the two facts that enum does not carry and the engine distinguishes anyway - `playerChest` and
+    /// `giftbox` - plus the one shape that makes the giftbox flag its own answer (a player chest carrying `giftbox`,
+    /// which no constructor builds today, so without that row this gate could not tell whether the flag is read or the
+    /// ownership test is doing all the work). The admission side is the PRODUCTION resolution the body itself runs
+    /// (`ResolveColorTarget`), not a second copy of the predicate.
+    /// </para>
+    /// <para>
+    /// A KIND IS FINE WHEN ADVERTISED == ADMITTED. A target advertised and then refused is what round79's next turn
+    /// found from the other side (`color_already_set` on a box she had just painted), and a chest admitted when it is not
+    /// hers is the same defect read backwards: the model is told about a box the engine will not paint. Both fail here by
+    /// name with the kind and the refusal code.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AColourTargetIsSomethingSheMayRecolour()
+    {
+        IReadOnlyList<ChestKind> kinds = ColourChestKinds();
+        int addressable = 0;
+        int admitted = 0;
+        List<string> disagreements = new();
+        foreach (ChestKind kind in kinds)
+        {
+            using TargetFamilyWorld world = TargetFamilyWorld.Create();
+            world.StandAt(1, 2);
+            StardewValley.Objects.Chest placed = world.PlaceChestOfKind(kind.Special, kind.PlayerChest, kind.Giftbox, x: 2, y: 2);
+
+            bool advertised = ((IReadOnlyList<BridgeColorTarget>)world.DiscoverFamily("DiscoverColorTargets"))
+                .Any(target => target.X == 2 && target.Y == 2);
+            ExecutionManager.ColorTargetResolution resolution =
+                ExecutionManager.ResolveColorTarget(world.Farm, 2, 2, ExecutionManager.BuildColorTargetId(world.Farm, 2, 2, placed));
+            if (advertised) addressable++;
+            if (resolution.Accepted) admitted++;
+            if (advertised != resolution.Accepted)
+                disagreements.Add($"{kind.Name}: colour-addressable={advertised}, admitted={resolution.Accepted}, code={resolution.ReasonCode}");
+        }
+
+        string line =
+            $"kinds examined {kinds.Count} ({string.Join(",", kinds.Select(kind => kind.Name))}) · "
+            + $"colour-addressable {addressable} · admitted {admitted} · refused {kinds.Count - addressable}";
+        this.output.WriteLine(line + (disagreements.Count == 0 ? string.Empty : ": " + string.Join(" | ", disagreements)));
+
+        addressable.Should().BeGreaterThan(0, "a colour family that advertises nothing would agree with itself: " + line);
+        disagreements.Should().BeEmpty(
+            "a target advertised and then refused, or one admitted when it is not hers, is one defect named by its kind: " + line);
+        admitted.Should().BeGreaterThan(0, "a family that admits nothing is not a working action: " + line);
+    }
+
+    /// <summary>
+    /// THE FALSIFIER FOR `a_colour_target_is_something_she_may_recolour`, replayed as the world round79 acted on.
+    ///
+    /// <para>
+    /// (3,7) IS the farmhouse's starter gift box - `FarmHouse.AddStarterGiftBox` puts it there
+    /// (`FarmHouse.cs:160-180`) with the parsnip seeds in it - and it must not appear in the colour targets. The owned
+    /// chest beside it must, so this is not a gate that can pass by publishing nothing. The count must still be 2: the
+    /// fix narrows the repaint family, never the room inventory, and a case that only asserted the first half would be
+    /// satisfied by reinstating the very count defect `245493da` removed.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void RoundSeventyNineStarterGiftChestIsNotAColourTargetAndAnOwnedChestStillIs()
+    {
+        using var world = TargetFamilyWorld.Create();
+        StardewValley.Objects.Chest giftBox = world.PlaceChestOfKind(
+            StardewValley.Objects.Chest.SpecialChestTypes.None,
+            playerChest: false,
+            giftbox: true,
+            x: 3,
+            y: 7,
+            items: new[] { new ChestItem("(O)472", 15) });
+        giftBox.giftboxIsStarterGift.Value = true;
+        world.PlaceOrdinaryChest(x: 5, y: 7, items: new[] { new ChestItem(DiamondQualifiedItemId, 1) });
+        world.StandAt(4, 7);
+
+        var named = ((IReadOnlyList<BridgeColorTarget>)world.DiscoverFamily("DiscoverColorTargets"))
+            .Select(target => (target.X, target.Y))
+            .ToList();
+
+        named.Should().Contain((5, 7), "an owned chest at any tile is still a colour target");
+        named.Should().NotContain(
+            (3, 7),
+            "the starter gift box is refused by its own facts - `playerChest == false` and `giftbox == true` - because the "
+            + "engine shows no picker for it and destroys it on first open, so a colour on it is a claim about a box that is "
+            + "about to stop existing");
+
+        BridgeChestsSummary summary = world.ChestsSummary();
+        summary.ChestCount.Should().Be(2, "the count is still the room's: two chests stand here");
+        summary.ItemCount.Should().Be(16, "15 parsnip seeds + 1 diamond, wherever they are stored");
+    }
+
+    /// <summary>
+    /// The colour family's kind axis: <see cref="ChestKinds"/> plus the one shape that makes the giftbox flag its own
+    /// answer. Every gift box a shipped constructor builds is also `playerChest == false` (`FarmHouse.cs:142`), so a
+    /// population without this row would leave the flag unmeasured - a fact nobody tests is a fact nobody has.
+    /// </summary>
+    private static IReadOnlyList<ChestKind> ColourChestKinds()
+    {
+        List<ChestKind> kinds = new(ChestKinds())
+        {
+            new ChestKind("giftbox/player", StardewValley.Objects.Chest.SpecialChestTypes.None, PlayerChest: true, Giftbox: true),
+        };
         return kinds;
     }
 
