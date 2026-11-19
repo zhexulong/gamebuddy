@@ -5,12 +5,16 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  DEFAULT_ACTION_POLICY,
   MOD_DESCRIPTOR_REQUIREMENTS,
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
   STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS,
+  UNPROVEN_VISIBILITY_DECLARATIONS,
   isDescriptorDerivedActionId,
   isModDescriptorComplete,
+  unprovenVisibilityDeclaration,
+  visibleActionsFromModCatalog,
 } from "./action-registry.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
@@ -364,6 +368,91 @@ function mountedToolNames(published: readonly SurfaceAction[]): readonly string[
 function toolNameFor(actionId: string): string | undefined {
   return (STARDEW_ACTION_TOOL_NAMES as Readonly<Record<string, string>>)[actionId];
 }
+
+/**
+ * EVERYTHING THE AGENT CAN SEE, HELD TO ONE PROPERTY: it has a live proof, or a declared reason.
+ *
+ * `design/architecture/game-action-model.md:44` gives visibility exactly one door - `live_verified`, earned by a real
+ * live run on the target version - and `visibleActionsFromModCatalog` has two. The second is the descriptor-derived
+ * carve-out: an enrolled action whose Mod-owned descriptor is complete is admitted while its lifecycle still says
+ * `experimental`. That is the honest description of the second door, and `UNPROVEN_VISIBILITY_DECLARATIONS` is where
+ * each action that walks through it is named, with the reason it may and the condition that retires the row.
+ *
+ * The gate is a BIJECTION between that table and the carve-out's actual population, so it fails in both directions and
+ * by name rather than by count:
+ *
+ *   `an_action_the_agent_can_see_has_a_live_proof_or_a_declared_reason:<action>`
+ *       visible, no live proof in its lifecycle, and no row. The model can call it and nobody wrote down why.
+ *   `declared_row_outlived_its_reason:<action>`
+ *       a row whose action has since earned its live proof (or left the surface altogether). An exemption must expire.
+ *
+ * The population is the Mod's own published surface, and "has a live proof" is the lifecycle byte - which is not taken
+ * on faith here either: `tools/check-stardew-action-promotion.mjs` re-derives `live_verified` from the recorded live
+ * runs in `host/src/test-fixtures/stardew-live-receipts.json` and the target-version evidence directory, so the fact
+ * this gate reads is the fact that gate checks.
+ */
+test("an action the Agent can see has a live proof or a declared reason", (t) => {
+  const registrations = registrationsFor(loadActionSurface());
+  const capabilities = registrations
+    .filter((registration) => registration.kind === "execution")
+    .map((registration) => registration.actionId);
+  const visible = visibleActionsFromModCatalog(registrations, capabilities, DEFAULT_ACTION_POLICY);
+
+  const liveVerified: string[] = [];
+  const reviewed: string[] = [];
+  const carveOut: string[] = [];
+  const unexplained: string[] = [];
+  for (const action of visible) {
+    if (action.lifecycle === "live_verified") liveVerified.push(action.actionId);
+    else if (action.lifecycle === "published") reviewed.push(action.actionId);
+    else if (unprovenVisibilityDeclaration(action.actionId) !== undefined) carveOut.push(action.actionId);
+    else unexplained.push(action.actionId);
+  }
+
+  const failures: string[] = unexplained.map(
+    (actionId) => `an_action_the_agent_can_see_has_a_live_proof_or_a_declared_reason:${actionId}`,
+  );
+
+  const lifecycleOf = new Map(registrations.map((registration) => [registration.actionId, registration.lifecycle]));
+  const visibleIds = new Set(visible.map((action) => action.actionId));
+  for (const declaration of UNPROVEN_VISIBILITY_DECLARATIONS) {
+    const { actionId } = declaration;
+    if (declaration.reason.trim().length === 0 || declaration.deleteWhen.trim().length === 0) {
+      failures.push(`declared_row_states_no_reason_or_no_expiry:${actionId}`);
+      continue;
+    }
+    if (!visibleIds.has(actionId)) {
+      failures.push(
+        `declared_row_outlived_its_reason:${actionId}:the surface admits no such action, so the row excuses nothing`,
+      );
+      continue;
+    }
+    const lifecycle = lifecycleOf.get(actionId);
+    if (lifecycle === "live_verified" || lifecycle === "published") {
+      failures.push(
+        `declared_row_outlived_its_reason:${actionId}:its own lifecycle is now \`${lifecycle}\`, so delete the row and let its live proof admit it`,
+      );
+    }
+  }
+
+  // The population, printed so a green run states what it examined instead of agreeing with itself: a surface that
+  // quietly emptied would otherwise be indistinguishable from one where every action earned its proof.
+  t.diagnostic(
+    `actions visible ${String(visible.length)} · live_verified ${String(liveVerified.length)} · published ${String(
+      reviewed.length,
+    )} · carve-out ${String(carveOut.length)} (declared) · unexplained ${String(unexplained.length)}` +
+      (carveOut.length === 0
+        ? " · the declaration is empty because every visible action holds a live proof"
+        : ` · carve-out names [${carveOut.join(", ")}]`) +
+      (unexplained.length === 0 ? "" : ` · unexplained names [${unexplained.join(", ")}]`),
+  );
+  // Zero population is BLOCKED, never green: a surface that admits nothing makes every count above agree on nothing.
+  assert.ok(
+    visible.length > 0,
+    "blocked: the published surface admits no action at all, so this gate examines nothing",
+  );
+  assert.deepEqual(failures, [], "the visibility the model is handed is not accounted for");
+});
 
 test("the mounted descriptor-derived set is exactly the published set whose arm opens", () => {
   const published = loadActionSurface();

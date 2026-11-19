@@ -1370,6 +1370,65 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
 }
 
 /**
+ * One action the Agent may see BEFORE the live run that the visibility gate requires - with the reason it may, and
+ * the condition that retires the row.
+ *
+ * <p>
+ * The reason is not a formality, and it is the honest description of what the descriptor-derived carve-out in
+ * `visibleActionsFromModCatalog` buys: a declared action has a COMPLETE Mod-owned descriptor, so the Host builds a real
+ * typed tool for it and the model can call it, and it has NO live proof - nothing on the target game version has ever
+ * produced its own native result and receipt. `design/architecture/game-action-model.md:44` gives visibility exactly
+ * one door, `live_verified`; this table is the second door written down instead of left implicit.
+ * </p>
+ *
+ * <p>
+ * `deleteWhen` is the expiry, and it is a real one: `live_verified` is re-derived from recorded live runs by
+ * `tools/check-stardew-action-promotion.mjs` rather than taken on faith from the lifecycle byte, so the row retires
+ * exactly when the action earns the proof the row exists to stand in for. `action-registry-consistency.test.ts` holds
+ * this table and the carve-out's actual population to each other in BOTH directions and fails by name: an action the
+ * carve-out admits that no row explains, and a row whose action has since earned its live proof (or left the surface).
+ * </p>
+ */
+export type UnprovenVisibilityDeclaration = Readonly<{
+  actionId: StardewDescriptorDerivedActionId;
+  reason: string;
+  deleteWhen: string;
+}>;
+
+/**
+ * Every action that may be visible without its live proof, one row each. Typed against the enrollment list, so a row
+ * for an action the descriptor gate does not carry is a compile error rather than a row that excuses nothing.
+ */
+export const UNPROVEN_VISIBILITY_DECLARATIONS = Object.freeze([
+  {
+    actionId: "place_item_on_pedestal",
+    reason:
+      "its descriptor is complete - the tile, the backpack slot, the item's wire identity and the opaque " +
+      "`empty_pedestal` target, `effect: write`, postcondition `pedestal_item_placed` - so the Host mounts a working " +
+      "tool for it, while no live run has ever returned `pedestal_item_placed` on the target version",
+    deleteWhen:
+      "its Mod registration reaches `live_verified`, which admits it on its own live proof and makes this row dead",
+  },
+  {
+    actionId: "put_item_in_fish_tank",
+    reason:
+      "its descriptor is complete the same way (postcondition `fish_tank_item_deposited`), so the model can call a " +
+      "live-write action that has never produced a real native result on the target version",
+    deleteWhen:
+      "its Mod registration reaches `live_verified`, which admits it on its own live proof and makes this row dead",
+  },
+] as const satisfies readonly UnprovenVisibilityDeclaration[]);
+
+const UNPROVEN_VISIBILITY_DECLARATION_BY_ACTION: ReadonlyMap<string, UnprovenVisibilityDeclaration> = new Map(
+  UNPROVEN_VISIBILITY_DECLARATIONS.map((declaration) => [declaration.actionId, declaration]),
+);
+
+/** The one way anything asks whether an action may be visible before its live proof, and why it may. */
+export function unprovenVisibilityDeclaration(actionId: string): UnprovenVisibilityDeclaration | undefined {
+  return UNPROVEN_VISIBILITY_DECLARATION_BY_ACTION.get(actionId);
+}
+
+/**
  * Intersect local typed-adapter availability with the authenticated Mod
  * registration catalog, fresh capabilities, and a restrictive policy. The
  * Mod owns registration identity, family, version, and lifecycle; the Host
@@ -1392,12 +1451,19 @@ export function visibleActionsFromModCatalog(
 
   for (const registration of registrations) {
     const adapter = adapters.get(registration.actionId);
-    // Two admission paths. The ordinary one is lifecycle: `published` or
-    // `live_verified` means the action already proved itself, either with a live
-    // run (live_verified) or with the full publication process behind it. The
-    // other is the descriptor-derived carve-out, which lets a still-Experimental
-    // action out only once its Mod-owned descriptor is complete.
-    const isAdmittedDescriptorDerived =
+    // Two admission paths, and only one of them is a live proof.
+    //
+    // The ordinary one is lifecycle: `published` or `live_verified` means the action already proved itself, either
+    // with a live run (live_verified) or with the full publication process behind it.
+    //
+    // The other is the descriptor-derived carve-out: an enrolled action whose Mod-owned descriptor is complete comes
+    // out while its lifecycle still says `experimental`, which is to say WITHOUT the live run the visibility gate is
+    // made of. It deliberately does not consult `UNPROVEN_VISIBILITY_DECLARATIONS`: withdrawing this door would take
+    // most of the surface out of the model's reach in one edit, and that is the owner's decision, not a lane's. The
+    // table makes the door ACCOUNTABLE instead - every action it lets out is named there with the reason it may be
+    // and the condition that retires the row, and `action-registry-consistency.test.ts` fails by name on an action
+    // this branch admits that no row explains.
+    const isVisibleWithoutLiveProof =
       isDescriptorDerivedActionId(registration.actionId) &&
       isModDescriptorComplete(registration.actionId, registration.descriptor);
     if (
@@ -1405,7 +1471,7 @@ export function visibleActionsFromModCatalog(
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
       (registration.lifecycle !== "published" &&
         registration.lifecycle !== "live_verified" &&
-        !isAdmittedDescriptorDerived) ||
+        !isVisibleWithoutLiveProof) ||
       registration.kind !== "execution" ||
       !live.has(adapter.requiredCapability) ||
       deniedActions.has(registration.actionId) ||
