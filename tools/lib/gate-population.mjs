@@ -49,8 +49,13 @@ const GATE_SCRIPT = CI_COVERAGE_NAMESPACE;
  * beside the two: only `test:` carries the meta-gate's obligation to state a falsifier.
  */
 const TEST_SCRIPT = /^test:/u;
-/** A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`. */
-const COMMAND_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|tsx|ts|cjs|js|ps1|py)/gu;
+/**
+ * A path a command runs: that gate's entry points. Longest extension first, or `main.tsx` resolves to `main.ts`, and the
+ * lookahead is load-bearing in the other direction: without it `native-multiplayer-sensitivity.v1.json` matched as
+ * `...v1.js`, so a gate whose only argument is a checked-in JSON contract was reported as "entry not readable as source"
+ * over a file that does not exist (measured 2026-11-19 on `check:stardew-native-multiplayer-sensitivity`).
+ */
+const COMMAND_PATH = /[\w.-]+(?:\/[\w.-]+)+\.(?:mjs|tsx|ts|cjs|js|ps1|py)(?![\w.])/gu;
 /** A command may change directory first; its paths then resolve from there, not from the repository root. */
 const COMMAND_CWD = /^(?:cd|pushd)\s+(\S+)\s*&&/u;
 

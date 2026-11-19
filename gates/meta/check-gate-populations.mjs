@@ -22,7 +22,11 @@
  *   `gate_without_population`            nothing the gate prints counts the objects it examined. A run over zero
  *                                        objects then prints exactly what a run over nine hundred prints.
  *   `gate_skip_can_pass`                 its population can all skip, and an all-skip run exits 0. `node --test` prints
- *                                        `# pass 0` and exits 0, which is the same green as a suite that measured.
+ *                                        `# pass 0` and exits 0, which is the same green as a suite that measured. The
+ *                                        claim is quantified - EVERY case of every suite the command runs - because a
+ *                                        suite that runs five of its six cases cannot report a pass over nothing, and
+ *                                        reading one skip as that answer is how this rule called thirteen honest suites
+ *                                        silent on 2026-11-19.
  *   `gate_pairs_a_subset_and_passes`     it names a subset it could not pair (`unpaired`, `unmatched`, `unmeasured`)
  *                                        and never compares that count against zero, so the count cannot reach the
  *                                        verdict - it can only reach the prose.
@@ -36,6 +40,13 @@
  * population is 330 gates, including C# compiles and live-run verifiers, so a rung that ran them would cost hours and
  * would fail for every reason a gate can fail. The rule is therefore a property of the gate's own report contract, and
  * the three gates above are the proof it catches the shape that shipped three times.
+ *
+ * WHAT `gate_skip_can_pass` DOES NOT SEE, stated because the narrowing is deliberate: a suite where most cases skip
+ * but at least one always runs - `test:gameplay-capability-catalog`, whose ten catalog cases skip without the design
+ * mount - is not reported, although the catalog can be effectively unmeasured by a run that exits 0. Catching that
+ * shape needs the other half of this gate's vocabulary (`publishesNotMeasured`: the suite decides before the runner and
+ * says it measured nothing) to be required of every suite that can skip ANY case, which is a rule about ~50 more suites
+ * than the one this gate was written for. It is named here rather than silently half-covered.
  *
  * POPULATION. Derived, never listed: `tools/lib/gate-population.mjs` is the ONE derivation of "what is a gate" (every
  * `package.json` script in the `audit:`/`check:`/`test:` namespace plus every `tools/check-*.mjs` file no script
@@ -176,6 +187,35 @@ export const SUBSET_WORDS = Object.freeze([
 
 /** A skip a suite can take, in the forms `node --test` accepts: the option, the call, the case-level flag. */
 const SKIP_CAPABLE = /\bskip\s*:\s*[^,}]+|\.skip\(|\bskipUnless\b|\bskipIf\b/u;
+
+/**
+ * The runner's own declaration shapes, as this tree writes them: `test(`, `it(`, `nodeTest(` and their `.skip` forms.
+ *
+ * The name list is the population of the rule below, so a case written through another alias is a declaration this
+ * reader does not see - stated as a limit rather than papered over.
+ */
+const TEST_DECLARATION = /^[ \t]*(?:test|it|nodeTest|nodeIt)(?:[ \t]*\.[ \t]*(?:skip|only|todo))?[ \t]*\(/gmu;
+
+/**
+ * Can EVERY case in this suite skip? That is the claim `gate_skip_can_pass` makes, and reading any single skip as an
+ * answer to it calls a suite that runs five of its six cases the same thing as one that can run none.
+ *
+ * Measured 2026-11-19 on the tree: `test:hand-written-schema-constants` has six declarations and one conditional skip
+ * (a pre-fix revision missing from a shallow clone) and was reported as `gate_skip_can_pass`, while
+ * `test:stardew-loop-closure` - eight declarations, all eight carrying `decompileSkipReason`, the shape that really
+ * does report a pass over nothing - is the member this rule exists for.
+ *
+ * A case can skip when a skip sits between its own declaration and the next one, which is where both shapes put it:
+ * `test(name, { skip: reason }, body)` in the options, and `t.skip(reason)` at the top of the body.
+ */
+export function canAllSkip(source) {
+  const declarations = [...source.matchAll(TEST_DECLARATION)];
+  if (declarations.length === 0) return false;
+  return declarations.every((declaration, index) => {
+    const end = index + 1 < declarations.length ? declarations[index + 1].index : source.length;
+    return SKIP_CAPABLE.test(source.slice(declaration.index, end));
+  });
+}
 
 /** A gate that publishes a not-measured verdict of its own: a marker plus the exit path that carries it. */
 const NOT_MEASURED_MARKER = /(?:_not_measured|_skipped|not_measured|allowEmpty)/u;
@@ -414,8 +454,7 @@ export function classifyGate({ id, command, entryFiles, sources }) {
   // A suite file run directly still prints the runner's `# tests N` report, so it answers the population question the
   // same way `node --test` does - and it inherits the same all-skip pass.
   const runnerReports = RUNS_NODE_TEST.test(command) || everyEntryIsSuite;
-  const skippable =
-    suites.length > 0 && suites.every((file) => SKIP_CAPABLE.test(sources[entryFiles.indexOf(file)] ?? ""));
+  const skippable = suites.length > 0 && suites.every((file) => canAllSkip(sources[entryFiles.indexOf(file)] ?? ""));
   // Three ways a gate can say what it measured, and the third is the strongest: a not-measured verdict is a gate telling
   // a reader the measurement did not happen, which is the distinction this whole check is about.
   if (!(runnerReports || publishesPopulation(code) || publishesNotMeasured(code)))

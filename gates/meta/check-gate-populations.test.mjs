@@ -28,6 +28,7 @@ import {
   baselineDocument,
   baselineKey,
   blankStringLiterals,
+  canAllSkip,
   classifyGate,
   describeCensus,
   judgeGates,
@@ -37,6 +38,7 @@ import {
   reconcile,
   subsetCounts,
 } from "./check-gate-populations.mjs";
+import { deriveGatePopulation } from "../../tools/lib/gate-population.mjs";
 import { blankComments } from "../../tools/prelive.mjs";
 
 const GATE = fileURLToPath(new URL("./check-gate-populations.mjs", import.meta.url));
@@ -66,7 +68,15 @@ function withTree({ scripts, files }, body) {
 }
 
 function runGate(root, ...extra) {
-  const result = spawnSync(process.execPath, [GATE, "--root", root, ...extra], { encoding: "utf8" });
+  // `GIT_CEILING_DIRECTORIES` stops git's search for a repository ABOVE the throwaway tree. Without it this case is a
+  // reading of the machine rather than of the fixture: measured 2026-11-19, `os.tmpdir()` here is
+  // `C:\Users\long\AppData\Local\Temp`, the user's home is itself a git repository, and every fixture file was listed
+  // as untracked - so the index-derived population was empty and the gate said `population_empty` instead of the
+  // reading the case asserts. A fixture that depends on the checkout's surroundings is not repeatable.
+  const result = spawnSync(process.execPath, [GATE, "--root", root, ...extra], {
+    encoding: "utf8",
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: tmpdir() },
+  });
   return { status: result.status, stdout: String(result.stdout), stderr: String(result.stderr) };
 }
 
@@ -115,6 +125,19 @@ test("a report key from the shared non-vacuity judge counts as a population", ()
   assert.equal(publishesPopulation("console.log(`probe: ${findings.length} findings`);"), false);
 });
 
+test("a checked-in .json argument is not read as the .js entry beside it", () => {
+  // Measured 2026-11-19: `COMMAND_PATH` had no boundary after its extension, so `native-multiplayer-sensitivity.v1.json`
+  // matched as `...v1.js` and the gate's only entry became a file that does not exist - reported by the census as
+  // `entry not readable as source`, which is a reading about this derivation rather than about the gate.
+  const scripts = { "check:contract": "node tools/check-contract.mjs --register contracts/x.v1.json" };
+  const files = { "tools/check-contract.mjs": ["process.stdout.write(`files examined ${0}\\n`);"] };
+  withTree({ scripts, files }, (root) => {
+    const population = deriveGatePopulation({ root });
+    const gate = population.scripts.find((entry) => entry.id === "check:contract");
+    assert.deepEqual(gate.entryFiles, ["tools/check-contract.mjs"], "the .json is an argument, not an entry");
+  });
+});
+
 test("an all-skip suite with nothing deciding before the runner is gate_skip_can_pass", () => {
   const finding = classifyGate({
     id: "test:probe",
@@ -124,6 +147,30 @@ test("an all-skip suite with nothing deciding before the runner is gate_skip_can
   });
   assert.equal(finding?.code, "gate_skip_can_pass");
   assert.match(finding.detail, /node --test/);
+});
+
+test("a suite that can skip only one of its cases cannot report a pass over nothing", () => {
+  // The claim is quantified, and reading one skip as the answer to it called thirteen suites silent on 2026-11-19 -
+  // `test:hand-written-schema-constants` runs five of its six cases whatever the clone holds.
+  const allSkip = classifyGate({
+    id: "test:probe",
+    command: "node --test tools/probe.test.mjs",
+    entryFiles: ["tools/probe.test.mjs"],
+    sources: [["test('a', { skip: missing() }, () => {});", "test('b', { skip: missing() }, () => {});"].join("\n")],
+  });
+  assert.equal(allSkip?.code, "gate_skip_can_pass", "every case can skip, which is the class");
+  const oneSkips = classifyGate({
+    id: "test:probe",
+    command: "node --test tools/probe.test.mjs",
+    entryFiles: ["tools/probe.test.mjs"],
+    sources: [["test('a', { skip: missing() }, () => {});", "test('b', () => { assert.ok(measured); });"].join("\n")],
+  });
+  assert.equal(oneSkips, null, "one case always runs, so an all-skip run is impossible");
+  assert.equal(canAllSkip("test('a', { skip: why() }, () => {});\ntest('b', () => {});"), false);
+  assert.equal(canAllSkip("test('a', { skip: why() }, () => {});\ntest('b', { skip: why() }, () => {});"), true);
+  // FALSIFIER: a case written through a shape this reader does not name is no proof of anything, so an empty
+  // declaration population answers `false` rather than `every`-over-nothing.
+  assert.equal(canAllSkip("t.test('a', () => { t.skip(why); });"), false);
 });
 
 test("a suite behind a decider that can refuse is not skip_can_pass", () => {
