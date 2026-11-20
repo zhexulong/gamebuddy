@@ -11,6 +11,7 @@ import { pathToFileURL } from "node:url";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { driveGuardianRecoveryConversation } from "./desktop-runtime-bootstrap.internal.js";
+import { MAX_GUARDIAN_WIRE_BYTES } from "./desktop-runtime-bootstrap.internal.js";
 import type {
   DesktopGuardianRecovery,
   DesktopGuardianRecoveryTransport,
@@ -21,6 +22,10 @@ import { ContainmentRoleAlreadyContainedError } from "../../containment/runtime/
 // both share is proven against the refusal the engine actually throws instead of
 // against a copy of its message.
 import { openRecoverableStardewBootstrapOwner } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import {
+  createStardewChildEnvironment,
+  STARDEW_CHILD_ENVIRONMENT_MAX_BYTES,
+} from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
@@ -504,17 +509,22 @@ test("desktop bootstrap helper survives a refused attempt and serves the next on
   );
 });
 
-// A command this side refuses BEFORE writing it is not the wire's loss.
+// The launch frame is the one large document this channel carries: the role's encoded launch plan.
 //
-// The launch frame is the one large document this channel carries: the role environment holds the Host's
-// PATH, and a developer machine's PATH is 17 069 characters, which makes the native plan 19 331 bytes,
-// its base64url 25 775 and the frame 26 393 - over the 16 384-byte bound this channel and the Desktop's
-// own broker both enforce. The wire answers that frame with `guardian_wire_too_long` and writes nothing.
-// Ending the authenticated session there turns one refused frame into the loss of the Guardian the attempt
-// just armed: the broker ends the Guardian's control session with the socket, so a launch that dispatched
-// nothing still cost the attempt its Guardian (measured 2026-11-21, `.tmp/lane-guardexit.md`: `arm_attempt`
-// answered, no `launch_role` ever reached the peer, and the Guardian was ended 36 ms after the refusal
-// reached the panel).
+// Measured 2026-11-21 on the failing machine: the Host forwarded its own PATH into the role environment,
+// and 17 069 characters of PATH made the native plan 19 331 bytes, its base64url 25 775 and the frame
+// 26 393 - over the 16 384-byte bound this channel and the Desktop's own broker both enforce. The wire
+// answered with `guardian_wire_too_long` and wrote nothing, and ending the authenticated session there
+// turned one refused frame into the loss of the Guardian the attempt had just armed (the broker ends the
+// Guardian's control session with the socket: `arm_attempt` answered, no `launch_role` ever reached the
+// peer, and the Guardian was ended 36 ms after the refusal reached the panel - `.tmp/lane-guardexit.md`).
+//
+// Two things are read here, and they are different claims:
+//   1. a plan too large to send is refused BEFORE it is written and does not cost the attempt its session;
+//   2. the plan the product actually builds - with a 17 069+ character PATH in the parent it builds the
+//      role environment from - is not that plan, and `launch_role` reaches the peer inside the bound.
+// The first uses a plan too large for ANY environment (its arguments are data); the second is the
+// product's own environment, built here by the real `createStardewChildEnvironment`.
 test("desktop bootstrap helper keeps the authenticated session when it refuses a command it never wrote", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("oversized-launch-frame");
@@ -537,6 +547,90 @@ test("desktop bootstrap helper keeps the authenticated session when it refuses a
   );
   assert.match(result.stderr, /wire_oversized_followup:contained/);
 });
+
+/**
+ * The parent PATH the failing machine had, as directory entries: 17 069 characters of it reached the
+ * role environment before this lane, and that one variable is what made the launch frame unsendable.
+ */
+function developerMachinePath(): string {
+  return Array.from({ length: 560 }, (_, index) => `C:\\Program Files\\toolchain-${index}\\bin`).join(";");
+}
+
+test("a role environment built from a 17 069-character PATH still fits the launch frame", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const parentPath = developerMachinePath();
+  assert.ok(
+    parentPath.length >= 17_069,
+    `this gate has to reproduce the measured failure: ${parentPath.length} characters of PATH is not 17 069`,
+  );
+
+  // The product's own builder, on the environment the Host really runs in.
+  const previousPath = process.env.PATH;
+  process.env.PATH = parentPath;
+  let environment: Readonly<Record<string, string>>;
+  try {
+    environment = createStardewChildEnvironment("wire-long-path-generation");
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+
+  // 1. The role sees no PATH at all, and what it does see is inside its stated budget. Nothing the role
+  //    launches resolves a name: the Guardian creates it by absolute image, in the game's own directory.
+  assert.equal(
+    Object.hasOwn(environment, "PATH"),
+    false,
+    `the role environment must not carry the Host's PATH: it carried ${environment.PATH?.length} characters`,
+  );
+  const environmentBytes = Buffer.byteLength(JSON.stringify(environment), "utf8");
+  assert.ok(
+    environmentBytes <= STARDEW_CHILD_ENVIRONMENT_MAX_BYTES,
+    `the role environment is ${environmentBytes} bytes against its stated budget of ${STARDEW_CHILD_ENVIRONMENT_MAX_BYTES}`,
+  );
+
+  // 2. The launch reaches the peer on that environment, and the frame it travelled in fits the bound this
+  //    channel shares with the Desktop broker - read from the broker's own source, not from a second copy.
+  const result = await runWireFixture("long-path-role-environment", { launchEnvironment: environment });
+  assert.match(
+    result.stderr,
+    /wire_long_path_launch:accepted/,
+    `the product's launch must be accepted: ${result.stderr}`,
+  );
+  assert.deepEqual(
+    result.sessions.map((session) => session.map((request) => request.operation)),
+    [["hello", "arm_attempt", "launch_role", "contain_role"]],
+    "the launch must reach the peer the attempt armed: `launch_role` is missing from the operations it read",
+  );
+  const launchFrame = result.frameBytes.find((frame) => frame.operation === "launch_role");
+  assert.ok(launchFrame !== undefined, "the peer read no launch_role frame to measure");
+  const brokerBound = desktopBrokerWireBound();
+  t.diagnostic(
+    `role environment ${environmentBytes} B of ${STARDEW_CHILD_ENVIRONMENT_MAX_BYTES}; launch_role frame ` +
+      `${launchFrame.bytes} B of ${brokerBound}; parent PATH ${parentPath.length} characters`,
+  );
+  assert.ok(
+    launchFrame.bytes <= brokerBound,
+    `the launch frame is ${launchFrame.bytes} bytes against the ${brokerBound}-byte bound the Host and the ` +
+      `Desktop broker share (the role environment is ${environmentBytes}); 17 069 characters of PATH forwarded ` +
+      "into the role environment is what made this frame 26 393 bytes and ended one launch before it was written",
+  );
+});
+
+/** The Desktop broker's own frame bound, read from the file that declares it. */
+function desktopBrokerWireBound(): number {
+  const source = readFileSync(
+    resolve(packageRoot, "..", "desktop", "GameBuddy.Desktop", "DesktopHostBootstrapBroker.cs"),
+    "utf8",
+  );
+  const declared = /private const int MaxWireBytes = ([\d_]+);/u.exec(source);
+  if (declared === null) throw new Error("desktop_broker_frame_bound_not_declared");
+  assert.equal(
+    Number(declared[1]!.replaceAll("_", "")),
+    MAX_GUARDIAN_WIRE_BYTES,
+    "the Host's session bound and the Desktop broker's own must be one number",
+  );
+  return MAX_GUARDIAN_WIRE_BYTES;
+}
 
 test("desktop bootstrap helper rejects malformed arm input before writing arm_attempt", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
@@ -677,6 +771,7 @@ async function runWireFixture(
     | "peer-disconnect"
     | "lost-session-rearm"
     | "oversized-launch-frame"
+    | "long-path-role-environment"
     | "settled-session"
     | "settled-session-owner-quit"
     | "settle-and-rearm"
@@ -685,7 +780,13 @@ async function runWireFixture(
     | "termination-failure"
     | "invalid-surface"
     | "invalid-nonce",
-  options: Readonly<{ surface?: string; nonceSha256?: string; modOutcome?: string }> = {},
+  options: Readonly<{
+    surface?: string;
+    nonceSha256?: string;
+    modOutcome?: string;
+    /** The role environment the product built; the long-PATH scenario passes the real one. */
+    launchEnvironment?: Readonly<Record<string, string>>;
+  }> = {},
 ): Promise<{
   requests: Record<string, unknown>[];
   acknowledgement: string | undefined;
@@ -700,6 +801,8 @@ async function runWireFixture(
   workerExitedNaturally: boolean;
   /** The requests of each authenticated session the Host opened, in the order it opened them. */
   sessions: Record<string, unknown>[][];
+  /** Every frame the peer read, in order, with its exact size in bytes including the newline. */
+  frameBytes: readonly Readonly<{ operation: string; bytes: number }>[];
   /**
    * The child's exit code read while it was still expected to be serving - after the
    * scenario's own session close, before this harness asks it to leave. `null` is
@@ -772,6 +875,13 @@ async function runWireFixture(
   const moduleDirectory = join(rootLayout.programRoot, "generation");
   const endpoint = `\\\\.\\pipe\\GameBuddy.HostGuardian.${bootstrapId}`;
   const requests: Record<string, unknown>[] = [];
+  /**
+   * Every frame the peer READ, with its exact size including the newline.
+   *
+   * The bound this channel enforces is a byte count, so a gate that says a launch fits has to read
+   * the bytes the peer actually received rather than re-derive them from the frame's fields.
+   */
+  const frameBytes: Readonly<{ operation: string; bytes: number }>[] = [];
   const sessions: Record<string, unknown>[][] = [];
   let connected = false;
   let containRoles = 0;
@@ -831,6 +941,7 @@ async function runWireFixture(
         requests.push(request);
         session.push(request);
         const operation = request.operation;
+        frameBytes.push(Object.freeze({ operation: String(operation), bytes: newline + 1 }));
         if ((scenario === "recovery-success" || scenario === "recovery-role-rejected") && operation !== "hello") {
           // Answered at the positions the Desktop broker answers: one
           // acknowledgement for the gate, one for the post-CAS + native recover
@@ -1000,6 +1111,17 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     const containmentContract = join(moduleDirectory, "containment", "runtime", "contract", "game-runtime.js");
     await mkdir(dirname(containmentContract), { recursive: true });
     await cp(compiledArtifact("containment", "runtime", "contract", "game-runtime.js"), containmentContract);
+    // The session contract is a runtime import now (the refusal wrapper it declares is what the wire
+    // spells and the contained runtime strips), so the fixture ships it like the other modules the
+    // artifact entry imports.
+    const guardianSessionContract = join(
+      moduleDirectory,
+      "containment",
+      "auth",
+      "desktop-guardian-session.internal.js",
+    );
+    await mkdir(dirname(guardianSessionContract), { recursive: true });
+    await cp(compiledArtifact("containment", "auth", "desktop-guardian-session.internal.js"), guardianSessionContract);
     const composerCorePath = join(
       moduleDirectory,
       "games",
@@ -1070,8 +1192,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         executable: "C:\\Program Files\\GameBuddy\\roles\\RoleRootFixture.exe",
         cwd: "C:\\Program Files\\GameBuddy",
         arguments: ["--signal", "C:\\tmp\\wire.txt"],
-        environment: {
-          PATH: "C:\\Windows\\System32",
+        environment: options.launchEnvironment ?? {
           SystemRoot: "C:\\Windows",
           WINDIR: "C:\\Windows",
           TEMP: "C:\\Windows\\Temp",
@@ -1276,7 +1397,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       exitCodeWhileServing = worker.exitCode;
       worker.kill("SIGTERM");
       await withTimeout(workerClose, 10_000, "settle-and-rearm cleanup");
-    } else if (scenario === "success" || scenario === "recovery-success") {
+    } else if (scenario === "success" || scenario === "recovery-success" || scenario === "long-path-role-environment") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
     } else if (scenario === "recovery-role-rejected") {
@@ -1304,6 +1425,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     return {
       requests,
       sessions,
+      frameBytes,
       acknowledgement,
       lines: frames?.lines ?? [],
       statuses: frames?.statuses ?? [],
@@ -1365,6 +1487,48 @@ function reportAndStop(error) {
 }
 
 async function drive(session) {
+  if (scenario === "long-path-role-environment") {
+    // The launch exactly as the product performs it, on the environment the product itself builds for
+    // a Host whose own PATH is a developer machine's: runWireFixture builds it from a 17 069+ character
+    // parent PATH through the real createStardewChildEnvironment. The peer counts the bytes of the
+    // frame it reads, so "the launch reached the peer and fits" is a measurement here.
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    await platform.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      armFacts: fixture.armFacts,
+      authorization: { executable: fixture.approvedExecutable },
+    });
+    try {
+      await platform.launch({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        deadlineUnixMs: Date.now() + 60000,
+        role: "player_host",
+        authorization: fixture.launchFacts,
+      });
+      process.stderr.write("wire_long_path_launch:accepted\\n");
+    } catch (error) {
+      process.stderr.write("wire_long_path_launch:refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
+    try {
+      await platform.contain({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 123,
+        role: "player_host",
+      });
+      process.stderr.write("wire_long_path_followup:contained\\n");
+    } catch (error) {
+      process.stderr.write("wire_long_path_followup:refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
+    return;
+  }
   if (scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed") {
     const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
     const platform = createDesktopGuardianGameRuntimePlatform(session);
@@ -1620,14 +1784,16 @@ async function drive(session) {
     return;
   }
   if (scenario === "oversized-launch-frame") {
-    // The launch frame at the size the product really builds it. Only PATH differs from the fixture's
-    // launch facts, and only because a real Host forwards its own PATH into the role environment
-    // (createStardewChildEnvironment): the measured 17 069-character PATH of the machine that failed
-    // the launch is what makes the plan 19 331 B, its base64url 25 775 B and the frame 26 393 B - over
-    // this channel's bound. The filler is one repeated character because only the size is measured.
+    // A launch plan the product CAN build and this channel cannot carry: a plan's arguments are data
+    // (a transaction path, a flag value), and enough of them put the frame over the bound. What this
+    // scenario reads is the consequence - guardian_wire_too_long is decided before a byte is
+    // written, so the session that armed the attempt has to survive it.
     const launchFacts = Object.freeze({
       ...fixture.launchFacts,
-      environment: Object.freeze({ ...fixture.launchFacts.environment, PATH: "x".repeat(17_069) }),
+      arguments: Object.freeze([
+        ...fixture.launchFacts.arguments,
+        ...Array.from({ length: 6 }, () => "x".repeat(3_000)),
+      ]),
     });
     const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
     const platform = createDesktopGuardianGameRuntimePlatform(session);
