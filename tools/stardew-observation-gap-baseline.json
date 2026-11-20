@@ -43,6 +43,11 @@
       "reason": "its target IS the raw `x`/`y` pair, which is the address itself; there is no opaque id to publish and no family to read"
     },
     {
+      "kind": "addressability",
+      "id": "sweep_scythe",
+      "reason": "the named `x`/`y` is the address, and there is no candidate list to publish: `ExecuteSweepScythe` (farmhandexecutioncontroller.resourcetoolactions.cs:1451) reads the arc's occupancy from the live location at execution time (`MeleeSweepOccupancy.Read`, :1494-1521), so the engine's own tiles are the only authority on what a swing reaches. A published family would be a second, unused copy of it, and the refusals already name the occupant (`sweep_arc_misses_target`, `sweep_would_destroy`, `TargetNotScytheWork`), so a stale row would be refused by name rather than swung at"
+    },
+    {
       "kind": "mutation",
       "id": "accept_daily_quest:canBeCancelled",
       "reason": "`BridgeDailyQuestTarget` carries the quest's id, type and title; the acceptance counters the handler writes are quest bookkeeping the snapshot does not carry"

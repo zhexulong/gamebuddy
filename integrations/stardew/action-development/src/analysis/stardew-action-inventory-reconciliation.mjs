@@ -571,14 +571,19 @@ export const METHOD_VERDICTS = Object.freeze({
     "the confirm branch calls the public FishPond.ClearPond (PondQueryMenu.cs:135), and that seam is now the REGISTERED, live-verified `clear_fish_pond` action - measured live: the pond empties (occupants 1 -> 0, fish type -> none), the fish land on the ground as items, and a stale target is refused by name. The menu is only where a player expresses it, so this unit is COVERED rather than a missing primitive.",
     "Menus/PondQueryMenu.cs:135",
   ),
-  // `DiscreteColorPicker.receiveLeftClick@57` was a `newPrimitive("color_placed_object", ...)` row here
-  // ("the weakest entry, and the one whose bucket is most worth re-checking"). The bucket has now been
-  // re-checked: `color_placed_object` is a REGISTERED action whose native seam IS
-  // `StardewValley.Menus/DiscreteColorPicker.cs::receiveLeftClick` - the very unit this row proposed.
-  // The candidates tool therefore lists that unit under `matchedWithRegistered`, it is no longer a row of
-  // the remaining-actions report, and completeness rule 4 (method_verdict_not_in_candidate_pool) failed the
-  // run rather than carrying a verdict for a unit that had left the pool. Same outcome as `clear_fish_pond`
-  // below: the intent is covered, so it is no longer a missing primitive.
+  // RESTORED 2026-11-18 with the answer it had before, because the register changed shape underneath it.
+  // The unit originally carried `newPrimitive("color_placed_object")`; that row was retired when the action
+  // was registered with `DiscreteColorPicker.cs::receiveLeftClick` as its native seam, so the candidates
+  // tool listed the unit under `matchedWithRegistered` and it left the pool (same outcome as
+  // `clear_fish_pond` below). Since 995d1ca9 that action's seam is `mod_owned` with
+  // `Chest.playerChoiceColor` as its declared authority, so no native seam claims this unit any more and it
+  // came back owing a verdict. The intent is still registered and live-verified, and the field this unit
+  // writes is exactly the authority that action names.
+  "DiscreteColorPicker.receiveLeftClick@57": merge(
+      ["color_placed_object"],
+      "the swatch branch assigns `chest.playerChoiceColor.Value` and resets the lid frame (DiscreteColorPicker.cs:77-78), the one field `color_placed_object` is registered on (`Chest.playerChoiceColor`, live_verified) - a saved Net field on a placed object, so the colour survives a save. The swatch grid is where the player expresses it; the transaction is already an action.",
+      "Menus/DiscreteColorPicker.cs:77",
+    ),
   "Billboard.receiveLeftClick@360": newPrimitive(
       "accept_daily_quest",
       "MIXED in one member: the board is mostly calendar/quest browsing, and the acceptQuestButton branch writes the quest log and acceptedDailyQuest (:371-372). The world-changing half is what an action would carry.",
@@ -706,6 +711,10 @@ export const METHOD_VERDICTS = Object.freeze({
       reason: "an overlay that changes tabs and closes (TutorialMenu.cs:70, :84). It advances an event pointer at :87, but that is the script's own progress, not a capability the actor exercises.",
       anchor: "Menus/TutorialMenu.cs:84",
     },
+  "Torch.performRemoveAction@184": pending(
+      "Two callers, and the unit does not say which one owns it: the torch's own off-branch (Torch.cs:107, inside `checkForAction`, whose unit the nine predicates reject with P4/P6 so it is never a candidate) and the object-removal paths (GameLocation.cs:7739-7741 and Pickaxe.cs:171, which is `remove_placed_item`'s postcondition). What it writes is the placed torch's own light switch - `isOn.Value = false` plus the tile's ambient sound - so a companion is handed the switch and no way to read it: the schema's `isOn` belongs to `lanternSlot`, the HELD lantern, a different subject. Two readings and no evidence in the tree to choose between them: a placed torch's light is a target extension of `toggle_tool_light` (the pattern the fridge, island-bin and pet-bowl extensions already set), or a placed torch's light is scenery the companion never needs to report. Reading it as `remove_placed_item` alone would be a false coverage claim, because the torch-off branch never leaves the world.",
+      "Torch.cs:184-190",
+    ),
 
 });
 

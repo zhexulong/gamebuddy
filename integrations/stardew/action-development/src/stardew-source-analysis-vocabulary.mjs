@@ -25,15 +25,35 @@
 /**
  * Method names that can carry a player-visible native mutation.
  *
- * Union of two sources, both required:
- *   ① shape names found by reading the target tree (the base set)
- *   ② method names appearing as registered action seams (so a registered seam can
- *      never be missed even if its name is not one of the obvious shapes)
+ * The test every entry passes: the engine calls the method BECAUSE THE PLAYER DID SOMETHING -
+ * opened a menu, swung a tool, answered a dialogue, took an object out of the world. It is not
+ * "any method that writes a saved field": `update(GameTime)` writes position and animation state
+ * on nearly every object and is called because TIME PASSED, not because anyone acted, and it is
+ * not an exit a companion can ever be asked to drive. That distinction is the whole rule, and it
+ * is why this list is not derived from the register's seam names any more: a seam name is an
+ * identity, not a shape. `open_geode` names `GeodeMenu.update(GameTime)` as the settlement of the
+ * geode animation, and one seam was enough to admit 245 `update` declarations - every menu,
+ * critter, monster, projectile and location tick in the assembly - as candidate units. A
+ * registered seam is therefore admitted by its own declaration identity (member plus declaring
+ * file) in `stardew-action-candidates.mjs`, so it still cannot be missed while a same-named method
+ * in an unrelated class is not dragged in with it.
  *
  * `leftClick`/`leftClicked`/`clicked` were added after tracing
  * `Game1.pressUseToolButton → GameLocation.leftClick → Building.leftClicked`:
  * `ShippingBin.leftClicked()` is the **menu-free** shipping entry point, and the
  * earlier hand-written list missed the whole family.
+ * `receiveLeftClick` belongs to that family and is listed on its own evidence: the 2026-10-11
+ * tier-B sweep read all 32 units it admitted and four of them became registered primitives
+ * (`build_farm_building` from `CarpenterMenu`, `donate_bundle_item` from `JunimoNoteMenu`,
+ * `dye_item` from `DyeMenu`, `claim` from the reward menus). A menu's click handler is where a
+ * player expresses an intent that has no keyboard-free public seam of its own, which is why those
+ * verdicts exist; admitting it only as a side effect of one registered seam would have deleted
+ * them.
+ * `shake` and `performRemoveAction` are the two halves of the same statement - the player acted on
+ * an object - and both carry registered seams (`harvest_bush`, `shake_tree`, `harvest_fruit_tree`;
+ * `move_placed_furniture`), so they were already in the swept population. `answerDialogue` is the
+ * player's answer to a dialogue, which `answer_dialogue`, `ride_bus` and `use_mine_ladder` all
+ * settle on.
  */
 export const STARDEW_INTERACTION_SHAPES = Object.freeze([
   "checkAction",
@@ -63,6 +83,10 @@ export const STARDEW_INTERACTION_SHAPES = Object.freeze([
   "leftClick",
   "leftClicked",
   "clicked",
+  "receiveLeftClick",
+  "shake",
+  "performRemoveAction",
+  "answerDialogue",
 ]);
 
 /**

@@ -70,10 +70,20 @@ for (const action of register.actions)
     if (seam.kind !== "native") continue;
     registered.push({ actionId: action.actionId, member: memberNameOfSignature(seam.signature), file: seam.file });
   }
-const registeredMembers = new Set(registered.map((r) => r.member));
 const registeredKeys = new Set(registered.map((r) => `${r.member}::${baseName(r.file)}`));
 
-const wanted = new Set([...INTERACTION_SHAPES, ...registeredMembers]);
+/**
+ * 一个单位进入候选池的条件：方法名是声明的交互形状，**或**它恰好是某个已注册 action 指名的那份声明
+ * （成员名 + 声明所在文件）。
+ *
+ * 第二条曾经只按**名字**放行（`registeredMembers` 并入形状集合），于是单个已注册 seam 就把自己的方法名
+ * 变成整棵游戏程序集的形状过滤器：`open_geode` 把 `GeodeMenu.update(GameTime)` 登记为 seam（那是金椰子
+ * 动画的结算点），`update` 是引擎里几乎每个对象都会 override 的每帧 tick，100 个 `update` 单位因此进入候选池，
+ * 其中 81 个在 B 档要求逐条裁定时无人欠过裁定。seam 的身份是 register 指名的那份声明，不是与它同名的
+ * 每一个方法；按身份放行，`GeodeMenu.update` 仍然在（它确有 seam），`Background.update` 不在。
+ */
+const isCandidateExit = (name, file) =>
+  INTERACTION_SHAPES.includes(name) || registeredKeys.has(`${name}::${baseName(file)}`);
 
 // ---- 枚举 (出口, 实现类) ---------------------------------------------------
 
@@ -104,7 +114,7 @@ for (const f of files) {
     if (!clsName) continue;
     for (const m of collect(cls, "method_declaration")) {
       const name = m.childForFieldName("name")?.text;
-      if (!(name && wanted.has(name))) continue;
+      if (!(name && isCandidateExit(name, f))) continue;
       units.push({ member: name, class: clsName, file: rel, line: m.startPosition.row + 1 });
     }
   }
