@@ -2215,6 +2215,92 @@ test("a call that needed no step is named as such, and the step beside it is not
 });
 
 /**
+ * ONE EQUIP PER PROGRAMME.
+ *
+ * Measured 2026-11-20 (`round83`): a 32-node weed programme carried 12 `equip_tool` nodes and every one of them answered
+ * `already_equipped` - the scythe went into the hand at the programme's first equip and stayed there, because each work
+ * node restores the selection it found. Across `round82`'s 16 accepted programmes 28 of 43 equip nodes were that same
+ * no-op, and no programme's tool sequence ever changed: one hand, one change, repeated until the work ran out.
+ *
+ * A FROZEN SNAPSHOT CANNOT BE ASKED WHAT THE PROGRAMME ITSELF DID. `currentToolSlot` answers "what was in hand when the
+ * plan was written" for the whole compile, so a helper that reads it re-establishes the same hand once per unit of work.
+ * The property is the count: N calls for one tool, ONE step.
+ */
+test("one equip per programme: asking for the same tool at every work node writes one equip step", () => {
+  const result = compile(
+    `
+for (const weed of snapshot.weedTargets ?? []) {
+  const slot = builder.equipFor('cut_weeds');
+  builder.cut_weeds({ x: weed.x, y: weed.y, slot, expectedTargetId: weed.targetId });
+}
+`,
+    {
+      // The axe is in hand, so the FIRST call has real work to do and the three after it do not.
+      currentToolSlot: 0,
+      toolSlots: [
+        { slot: 0, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
+        { slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" },
+      ],
+      weedTargets: [
+        { targetId: "weed_01", location: "Farm", x: 5, y: 6, health: 1 },
+        { targetId: "weed_02", location: "Farm", x: 6, y: 6, health: 1 },
+        { targetId: "weed_03", location: "Farm", x: 7, y: 6, health: 1 },
+        { targetId: "weed_04", location: "Farm", x: 8, y: 6, health: 1 },
+      ],
+    },
+  );
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["equip_tool", "cut_weeds", "cut_weeds", "cut_weeds", "cut_weeds"],
+    "four cuts need the scythe in hand once, so the programme carries one equip step and four cuts",
+  );
+  assert.deepEqual(
+    accountOf(result).noStepNeeded,
+    ["n03:equip_for:already_held", "n05:equip_for:already_held", "n07:equip_for:already_held"],
+    "the three repeats are named as calls that had nothing to do, not dropped silently",
+  );
+  // Every cut still names the slot `equipFor` answered: collapsing the repeats must not lose the half the plan uses.
+  for (const node of nodesOf(result).filter((candidate) => candidate.actionId === "cut_weeds"))
+    assert.deepEqual(node.arguments.slot, { type: "integer", canonicalValue: "3" });
+});
+
+/**
+ * The other side of the same rule: the hand the programme establishes MOVES.
+ *
+ * A guard that collapsed every equip after the first would be as wrong as the one that never collapsed anything - the
+ * second tool is not in hand until its own step runs, so it owes a step of its own.
+ */
+test("one equip per programme: a second tool still owes its own equip step", () => {
+  const result = compile(
+    `const scythe = builder.equipFor('cut_weeds');
+builder.cut_weeds({ x: 5, y: 6, slot: scythe, expectedTargetId: 'weed_01' });
+const hoe = builder.equipFor('dig_artifact_spot');
+builder.dig_artifact_spot({ x: 7, y: 6, slot: hoe, expectedTargetId: 'artifact_spot_01' });`,
+    {
+      currentToolSlot: 0,
+      toolSlots: [
+        { slot: 0, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
+        { slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" },
+        { slot: 5, label: "(T)Hoe", upgradeLevel: 0, category: "hoe" },
+      ],
+    },
+  );
+  assert.deepEqual(
+    nodesOf(result).map((node) => {
+      const declared = node.arguments.tool;
+      return [node.actionId, declared?.type === "string" ? declared.canonicalValue : null];
+    }),
+    [
+      ["equip_tool", "scythe"],
+      ["cut_weeds", null],
+      ["equip_tool", "hoe"],
+      ["dig_artifact_spot", null],
+    ],
+  );
+  assert.deepEqual(accountOf(result).noStepNeeded, [], "neither call found its tool already in hand");
+});
+
+/**
  * `cut_weeds` declares `tool:scythe` on the surface, so the helper must honour that claim. When the pack publishes the
  * category the slot is resolved and no equip step is written (the tool is in hand); when the pack publishes no
  * categories the refusal names the CATEGORY it could not resolve - never "requirement undeclared", which would be a
@@ -3705,13 +3791,19 @@ function publicationAnchorFindings(family: string, reason: string): readonly str
   const prefix = `a_row_a_plan_iterates_says_when_iterating_it_is_work:${family}:published-as-work`;
   const cited = PUBLICATION_CITATION.exec(reason);
   if (cited === null) return [`${prefix} (the reason cites no \`<file>.cs:<from>-<to>\`)`];
-  const source = readFileSync(resolve(hostRoot, `../integrations/stardew/${cited[1] as string}.cs`), "utf8").split("\n");
+  const source = readFileSync(resolve(hostRoot, `../integrations/stardew/${cited[1] as string}.cs`), "utf8").split(
+    "\n",
+  );
   const from = Number(cited[2]);
   const to = Number(cited[3]);
   if (!(from >= 1 && to >= from && to <= source.length))
-    return [`${prefix} (${cited[1] as string}.cs has ${String(source.length)} lines, and the reason cites ${String(from)}-${String(to)})`];
+    return [
+      `${prefix} (${cited[1] as string}.cs has ${String(source.length)} lines, and the reason cites ${String(from)}-${String(to)})`,
+    ];
   const citedLines = source.slice(from - 1, to).join("\n");
-  const symbols = [...reason.replace(cited[0], "").matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/gu)].map((match) => match[1] as string);
+  const symbols = [...reason.replace(cited[0], "").matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/gu)].map(
+    (match) => match[1] as string,
+  );
   const anchored = symbols.filter((symbol) => citedLines.includes(symbol));
   if (anchored.length > 0) return [];
   return [
@@ -3737,7 +3829,11 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work: every family the rec
     [],
     `these families are iterated by a recipe that never says when iterating them is work: ${reading.bare.join(", ")}`,
   );
-  assert.deepEqual(reading.expired, [], `these conditions outlived the loops that named them: ${reading.expired.join(", ")}`);
+  assert.deepEqual(
+    reading.expired,
+    [],
+    `these conditions outlived the loops that named them: ${reading.expired.join(", ")}`,
+  );
   assert.deepEqual(
     unprintedGuardFindings(reading),
     [],
@@ -3805,7 +3901,11 @@ test("round81_composition: the recipe's own soil loop writes no till node over a
     "and the answer says so by name rather than submitting an empty programme",
   );
   const bare = compile(loop, { enabledActionIds: ["till_soil"], soilTiles: patch(false) });
-  assert.notEqual(bare.status, "refused", `the same loop over ground the Hoe admits composes work: ${String(bare.status)}`);
+  assert.notEqual(
+    bare.status,
+    "refused",
+    `the same loop over ground the Hoe admits composes work: ${String(bare.status)}`,
+  );
   assert.ok(
     nodesOf(bare).every((node) => node.actionId === "till_soil"),
     "and every node it writes is the till the rows asked for",
@@ -3831,7 +3931,8 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
   );
   // An entry cannot outlive its loop.
   assert.deepEqual(
-    iteratedFamilyReading(description, { ...PLAN_ITERATION_CONDITIONS, machineTargets: { rowField: "machineType" } }).expired,
+    iteratedFamilyReading(description, { ...PLAN_ITERATION_CONDITIONS, machineTargets: { rowField: "machineType" } })
+      .expired,
     ["machineTargets"],
     "a condition for a family the recipe no longer iterates is red by that family's own name",
   );
@@ -3839,7 +3940,9 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
   // shape, and the reading names the family and the field the guard asks about.
   assert.deepEqual(
     unprintedGuardFindings(iteratedFamilyReading(description), { colorTargets: { field: "color", label: "色" } }),
-    ["a_row_a_plan_iterates_says_when_iterating_it_is_work:soilTiles:hoeDirt (the recipe guards on it and a row prints no state at all)"],
+    [
+      "a_row_a_plan_iterates_says_when_iterating_it_is_work:soilTiles:hoeDirt (the recipe guards on it and a row prints no state at all)",
+    ],
     "a loop whose guarded state no row prints is the composition defect itself, named by family and field",
   );
   // And a `publishedAsWork` reason has to cite Mod source that really carries the symbols it names.
@@ -3857,7 +3960,10 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
     "a citation that names a range not containing what it cites does not anchor the reason",
   );
   assert.deepEqual(
-    publicationAnchorFindings("cropTargets", (PLAN_ITERATION_CONDITIONS.cropTargets as { publishedAsWork: string }).publishedAsWork),
+    publicationAnchorFindings(
+      "cropTargets",
+      (PLAN_ITERATION_CONDITIONS.cropTargets as { publishedAsWork: string }).publishedAsWork,
+    ),
     [],
     "the shipped reason denotes the Mod code that publishes only rows needing the work",
   );

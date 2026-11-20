@@ -1700,6 +1700,16 @@ type PlanScriptState = {
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
+   * The slot the PROGRAMME has put in hand, or `undefined` until the first `equipFor` asks.
+   *
+   * The snapshot is frozen for the whole compile, so it answers "what was in hand when the plan was written" and never
+   * changes. An equip step written ten nodes up is state the snapshot cannot see, and a helper that re-read the snapshot
+   * re-established the same hand once per unit of work: measured 2026-11-20 (`round82`), 28 of the 43 `equip_tool` nodes
+   * in 16 accepted programmes answered `already_equipped`, and no programme's tool sequence ever changed - one hand, one
+   * change, repeated until the work ran out.
+   */
+  heldSlot?: number | null;
+  /**
    * The nodes the compiler inserted, in program order, each one `<actionId>` beside the id it was minted with.
    *
    * Kept in full here and narrowed once, where the plan is built: the bound is how many an answer can afford to spell
@@ -1815,10 +1825,14 @@ function equipForAction(
       state,
       requirementOf(action),
     );
+  // The hand this PROGRAMME will have by the time the action runs, not the one the snapshot froze: an equip step written
+  // ten nodes up has already put the tool in hand, and answering from the compile-time snapshot put it there again. The
+  // snapshot seeds this once, and every equip step written below moves it on.
+  if (state.heldSlot === undefined) state.heldSlot = publishedToolSlot(snapshot);
   // The tool the action must name is already in hand, so the plan is the action alone - which is a call that had nothing
   // to do, not a call that was ignored: an author who cannot tell those apart cannot tell whether the compiler saw her
   // `equipFor` at all.
-  if (publishedToolSlot(snapshot) === slot) {
+  if (state.heldSlot === slot) {
     state.noStepNeeded.push(`${planStepName(state.builderCalls)}:equip_for:already_held`);
     return slot;
   }
@@ -1828,6 +1842,7 @@ function equipForAction(
   // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
   // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
   emitPlanNode(equip, { tool: category }, snapshot, actions, state);
+  state.heldSlot = slot;
   return slot;
 }
 
