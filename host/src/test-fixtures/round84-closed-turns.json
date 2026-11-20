@@ -1,0 +1,338 @@
+{
+ "source": "round84 · .live-runs/game-ladder/2026-11-20T13-52-51-386Z-multiday_routine/{result.json, run-trace.json} · tools/_multiday_routine-round84-live-runner.log · read 2026-11-20; the account is the run's own final GAME_TURN_ACCOUNT line, the turns are its `delivery` spans, the waits its `wait.idle` spans, and the clock facts its BRIDGE_FACT lines (trace milliseconds fitted to the run's own `executions[].atMs`, median residual 9134 ms over 329 admissions)",
+ "run": "2026-11-20T13-52-51-386Z-multiday_routine",
+ "account": {
+  "turnsOpened": 82,
+  "closedWithNothing": 26,
+  "byShape": {
+   "player_input:body_held": 1,
+   "player_input:nothing_pending": 1,
+   "world_fact:world_stale": 11,
+   "world_fact:body_held": 7,
+   "world_fact:nothing_pending": 5,
+   "due:world_stale": 1
+  }
+ },
+ "traced": {
+  "turns": 83,
+  "closedWithNothing": 27,
+  "closedWithNothingAndAWaitedTurn": 26,
+  "idleReasons": [
+   "body_still_working",
+   "nothing_owed"
+  ]
+ },
+ "turns": [
+  {
+   "batchId": "53cebc5d-3593-46c6-a3a2-5368cce2b8be",
+   "presented": [
+    "companion_arrival:companion_arrival"
+   ],
+   "waitedMs": 54,
+   "nextOpenedBy": "fact:3b14533c-8cfe-4c12-8d1a-41fe6ff00894",
+   "idle": []
+  },
+  {
+   "batchId": "424f2a21-7866-4a9b-ae96-c482e9ca41c0",
+   "presented": [
+    "program_settlement:plan_14_bb0ef279f15a4ca4"
+   ],
+   "waitedMs": 203756,
+   "nextOpenedBy": "time_milestone:time_milestone_day_4_1200",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 4579
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 30051
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 59981
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 60014
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 49097
+    }
+   ]
+  },
+  {
+   "batchId": "40a3fde4-a230-4583-a93a-c875f719b8ae",
+   "presented": [],
+   "waitedMs": 94,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "2ed0360e-b92d-4f24-8a1d-c86567e102df",
+   "presented": [],
+   "waitedMs": 82,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "9088eb64-f6af-4d9e-8684-1de1dc546290",
+   "presented": [],
+   "waitedMs": 99,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "66afbeac-2431-4527-9da7-d6dee000e8b7",
+   "presented": [],
+   "waitedMs": 8,
+   "nextOpenedBy": "unattributed:stardew_observe",
+   "idle": []
+  },
+  {
+   "batchId": "759d7448-7c2d-474d-b5da-2adf3032c084",
+   "presented": [
+    "program_settlement:plan_22_cef66135058e8f36"
+   ],
+   "waitedMs": 12,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "4a958c4e-4d7a-46ec-8d10-69345cbab13c",
+   "presented": [],
+   "waitedMs": 29,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "96bbd890-3fda-4ed8-b9a0-79e80eef6e3b",
+   "presented": [],
+   "waitedMs": 16,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "0414bc64-4e5d-41a4-aaf9-5648c8fa14c8",
+   "presented": [],
+   "waitedMs": 1580,
+   "nextOpenedBy": "modal_presented:modal_shown_18896_11",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 1542
+    }
+   ]
+  },
+  {
+   "batchId": "be352cf6-1417-4d5a-90d0-0eb6256089d6",
+   "presented": [],
+   "waitedMs": 2702,
+   "nextOpenedBy": "modal_presented:modal_shown_19261_15",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 2678
+    }
+   ]
+  },
+  {
+   "batchId": "02d2d89d-fcbf-49dd-8cc0-12442ec7e995",
+   "presented": [],
+   "waitedMs": 6095,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 6088
+    }
+   ]
+  },
+  {
+   "batchId": "0e4aad84-d0f1-4da5-87a0-41bb9c1c1326",
+   "presented": [],
+   "waitedMs": 5,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "d7ffe61e-04cf-4512-8945-0f5fc837622b",
+   "presented": [],
+   "waitedMs": 7,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "db51429c-841e-4d3b-9f55-d2b6d997e16f",
+   "presented": [],
+   "waitedMs": 1492,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 1468
+    }
+   ]
+  },
+  {
+   "batchId": "2e2d9788-9269-4931-ac5f-fe15a2ca699d",
+   "presented": [],
+   "waitedMs": 6,
+   "nextOpenedBy": "unattributed:no_span",
+   "idle": []
+  },
+  {
+   "batchId": "853c12d9-40a7-4148-826b-7052fc88f701",
+   "presented": [],
+   "waitedMs": 119,
+   "nextOpenedBy": "fact:97d4249e-56d8-4f62-901d-28a72efe460d",
+   "idle": []
+  },
+  {
+   "batchId": "40230d7a-d4f4-425d-9136-e8b8066daef5",
+   "presented": [
+    "fact:cb811f0d-fdb3-4267-97d7-4908721a95ee"
+   ],
+   "waitedMs": 1350,
+   "nextOpenedBy": "program_settlement:plan_37_5d8930f5175c33fc",
+   "idle": [
+    {
+     "reason": "body_still_working",
+     "ms": 345
+    },
+    {
+     "reason": "body_still_working",
+     "ms": 685
+    },
+    {
+     "reason": "body_still_working",
+     "ms": 270
+    }
+   ]
+  },
+  {
+   "batchId": "a79ba817-8411-4eb4-b4b4-5ebca311409d",
+   "presented": [
+    "program_settlement:plan_37_5d8930f5175c33fc"
+   ],
+   "waitedMs": 30183,
+   "nextOpenedBy": "fact:2de90f6a-d685-4287-b38d-251d02766ab8",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 30137
+    }
+   ]
+  },
+  {
+   "batchId": "b6c11ffb-47f3-4ae2-8f94-cc72ccc2d042",
+   "presented": [
+    "program_settlement:plan_43_c72e8776268bc5ee"
+   ],
+   "waitedMs": 84592,
+   "nextOpenedBy": "time_milestone:time_milestone_day_4_1800",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 27210
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 57340
+    }
+   ]
+  },
+  {
+   "batchId": "98ad4ee5-8067-4c56-8197-500034f845a3",
+   "presented": [
+    "program_settlement:plan_49_77bbc2e5b9101ef9"
+   ],
+   "waitedMs": 129891,
+   "nextOpenedBy": "time_milestone:time_milestone_day_4_2200",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 13351
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 60016
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 56489
+    }
+   ]
+  },
+  {
+   "batchId": "c0cbf7f0-a0b2-4b23-97ff-6113b8341cce",
+   "presented": [
+    "fact:893d67ec-9072-40ac-975c-9f07574448c0"
+   ],
+   "waitedMs": 33,
+   "nextOpenedBy": "unattributed:stardew_plan_work|stardew_observe",
+   "idle": []
+  },
+  {
+   "batchId": "c75b8338-2d41-4a1c-88fe-9f3dd0f05ecd",
+   "presented": [],
+   "waitedMs": 45,
+   "nextOpenedBy": "unattributed:stardew_plan_work",
+   "idle": []
+  },
+  {
+   "batchId": "af49a8b5-17ef-4c96-90a1-9f23affaabaf",
+   "presented": [
+    "program_settlement:plan_91_4ce46c6991175778"
+   ],
+   "waitedMs": 67,
+   "nextOpenedBy": "program_settlement:plan_115_5d10d5cc52483b31",
+   "idle": []
+  },
+  {
+   "batchId": "af2f030c-3616-4896-9e03-a7de647c15f8",
+   "presented": [
+    "program_settlement:plan_178_fbcbbc562834b66e"
+   ],
+   "waitedMs": 92164,
+   "nextOpenedBy": "time_milestone:time_milestone_day_5_1200",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 58569
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 33573
+    }
+   ]
+  },
+  {
+   "batchId": "9e4b7129-f057-4996-ad04-c3dab3bad2ab",
+   "presented": [
+    "program_settlement:plan_192_9effff83d391c543"
+   ],
+   "waitedMs": 231473,
+   "nextOpenedBy": "time_milestone:time_milestone_day_5_1800",
+   "idle": [
+    {
+     "reason": "nothing_owed",
+     "ms": 53749
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 60015
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 60015
+    },
+    {
+     "reason": "nothing_owed",
+     "ms": 57660
+    }
+   ]
+  }
+ ]
+}

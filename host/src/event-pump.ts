@@ -515,6 +515,90 @@ export function turnWithoutActionToken(opener: TurnOpening, reason: TurnWithoutA
 }
 
 /**
+ * What the pump is waiting for after a turn that closed with nothing, in the three conditions those turns measured.
+ *
+ * <p>
+ * MEASURED 2026-11-20 (`round84`, 34 minutes, its own account line): 82 turns opened and `turn_closed_without_action 26`
+ * - `world_fact:world_stale 11`, `world_fact:body_held 7`, `world_fact:nothing_pending 5`, `player_input:body_held 1`,
+ * `player_input:nothing_pending 1`, `due:world_stale 1`. FIVE of those turns were then woken by THE GAME'S OWN CLOCK:
+ * `424f2a21` after **203.8 s** (`time_milestone_day_4_1200`), `b6c11ffb` after 84.6 s (`_1800`), `98ad4ee5` after 129.9 s
+ * (`_2200`), `af2f030c` after 92.2 s (`day_5_1200`), `9e4b7129` after 231.5 s (`day_5_1800`) - **741.9 s** in which the
+ * Host's whole reading of the interval was `wait.idle (reason: "nothing_owed")`.
+ * </p>
+ * <p>
+ * THE SHAPE SAYS WHY THE TURN CLOSED; THIS SAYS WHAT THE WAIT IS. `nothing_owed` answers "is a turn owed" - a question
+ * about this instant - and the run needed the other one: which condition the turn measured, and what would change it. The
+ * mapping is the empty-turn reason's own, so the two readings cannot disagree about the turn: a reading the turn did not
+ * bring means the wait is a READING (that is 12 of the 26, and the cure that goes and asks for one already exists,
+ * `#beginAgedReadingAsk`); a body the engine holds means the wait is the BODY; and a fresh reading with a free body means
+ * nothing on the pump's side is missing, so the wait is the world's own next word.
+ * </p>
+ * <p>
+ * A NAME AND NOT A TURN. Naming the wait decides nothing about whether a turn opens: a reading is standing state
+ * (`TURN_OPENING`) and an idle companion that spoke to itself every 42 s is the defect `round45` measured. What the name
+ * buys is that a silence has a reason a run can print, and a moment at which the pump is asked again.
+ * </p>
+ */
+export const CLOSED_WITH_NOTHING_WAIT_FOR = Object.freeze({
+  /** The reading the turn did not bring: absent, aged, or superseded by a world that moved after it was read. */
+  freshReading: "a_fresh_reading",
+  /** The engine's own admission gate answered `actionable: false`, so the body could not take a command. */
+  freeBody: "a_free_body",
+  /** Nothing stood in the way: the only opener left is the world's own next word. */
+  nextWorldFact: "the_world_s_next_fact",
+});
+
+export const CLOSED_WITH_NOTHING_WAIT_FORS = Object.freeze(Object.values(CLOSED_WITH_NOTHING_WAIT_FOR));
+
+export type ClosedWithNothingWaitFor = (typeof CLOSED_WITH_NOTHING_WAIT_FORS)[number];
+
+/**
+ * The wait the last delivered turn left, or nothing when that turn acted.
+ *
+ * <p>
+ * THREE FIELDS, each `undefined` in exactly one situation: no turn has closed with nothing (`shape`), so there is no wait
+ * to name and no moment to look - which is a different answer from naming one and looking at `0`.
+ * </p>
+ */
+export type ClosedWithNothingWait = Readonly<{
+  /** `<opener>:<reason>`, the same key the account counts this turn under; `undefined` when the last turn acted. */
+  shape: TurnWithoutActionShape | undefined;
+  /** What the wait is, in the closed list above. */
+  waitingFor: ClosedWithNothingWaitFor | undefined;
+  /** When the pump is asked again: `0` means there is something to ask the world for, so ask now. */
+  lookAgainInMs: number | undefined;
+}>;
+
+/** The ONE reading of what a turn that closed with `reason` waits for - the counter's condition, not a second guess. */
+export function closedWithNothingWaitFor(reason: TurnWithoutActionReason): ClosedWithNothingWaitFor {
+  if (reason === TURN_WITHOUT_ACTION_REASON.bodyHeld) return CLOSED_WITH_NOTHING_WAIT_FOR.freeBody;
+  if (reason === TURN_WITHOUT_ACTION_REASON.nothingPending) return CLOSED_WITH_NOTHING_WAIT_FOR.nextWorldFact;
+  // `no_reading`, `world_stale` and `world_moved_since_reading` are one wait: a picture the turn could act on. Two names
+  // for them would be two reasons the account already tells apart, spelled a third time.
+  return CLOSED_WITH_NOTHING_WAIT_FOR.freshReading;
+}
+
+/**
+ * How long after such a turn the pump is asked again.
+ *
+ * <p>
+ * `0` IS NOT A SPIN. The three reading conditions (and the body, which only a fresh reading can show free) have something
+ * to DO - `#beginAgedReadingAsk` goes and asks the integration for a reading on the next flush - so the honest answer is
+ * "ask me now rather than at the next fact". `round84` is what the other answer costs: the cure spent its three asks seven
+ * times (`auto_observe_unavailable 7 {refresh_attempts_spent: 7}`) across 55 aged readings, and 11 turns still closed
+ * `world_stale` in front of a reader who had no way to see it happening.
+ * </p>
+ * <p>
+ * `nothing_pending` has nothing to do on the pump's side, so its look is one measured turn (`MEASURED_TURN_CADENCE_MS`) -
+ * the same cadence the carry and the backlog bounds are built from, so the bound is the product's own measurement rather
+ * than a number invented here.
+ * </p>
+ */
+export function closedWithNothingLookAgainMs(reason: TurnWithoutActionReason): number {
+  return closedWithNothingWaitFor(reason) === CLOSED_WITH_NOTHING_WAIT_FOR.nextWorldFact ? MEASURED_TURN_CADENCE_MS : 0;
+}
+
+/**
  * Silence in the unit Pi writes it: the ASSISTANT TURN - one assistant record inside a delivered batch.
  *
  * <p>
@@ -2305,6 +2389,15 @@ export class CompanionEventPump {
   readonly #emptyTurnsByShape: Record<TurnWithoutActionShape, number> = initializedEmptyTurns();
   #emptyTurns = 0;
   /**
+   * The last delivered turn that closed with nothing: the shape it was counted under, its condition, and when it ended.
+   *
+   * Set and cleared where `#emptyTurns` is counted, so "which turn left this wait" and "which turn is in the histogram"
+   * are one moment rather than two that can drift. `undefined` is the honest reading for a pump whose last turn acted.
+   */
+  #lastClosedWithNothing:
+    | Readonly<{ shape: TurnWithoutActionShape; reason: TurnWithoutActionReason; atMs: number }>
+    | undefined;
+  /**
    * Turns that produced work and delivered no speech, one count per opener, beside `#emptyTurns`.
    *
    * The two counters answer one question between them - did a delivered turn spend itself on speech, or on work it did not
@@ -2663,6 +2756,7 @@ export class CompanionEventPump {
       for (const producer of FACT_PRODUCERS) this.#notOwedByProducer[reason][producer] = 0;
     for (const shape of emptyTurnShapes()) this.#emptyTurnsByShape[shape] = 0;
     this.#emptyTurns = 0;
+    this.#lastClosedWithNothing = undefined;
     for (const opener of SILENT_SETTLED_OPENINGS) this.#silentSettledByOpener[opener] = 0;
     this.#silentSettledTurns = 0;
     this.#settledWithExecutionInFlight = 0;
@@ -4782,6 +4876,7 @@ export class CompanionEventPump {
   ): void {
     if (outcome !== "completed") {
       this.#turnsWithoutWork = 0;
+      this.#lastClosedWithNothing = undefined;
       return;
     }
     const producedSpeech = turnProducedSpeech(this.turnProduction);
@@ -4789,9 +4884,15 @@ export class CompanionEventPump {
     const inFlight = this.hasExecutionInFlight;
     if (inFlight) this.#settledWithExecutionInFlight += 1;
     if (this.turnProduction === TURN_PRODUCTION.spoke && !inFlight) {
-      const shape = turnWithoutActionShape(opening, this.#emptyTurnReason(broughtObservation));
+      const reason = this.#emptyTurnReason(broughtObservation);
+      const shape = turnWithoutActionShape(opening, reason);
       this.#emptyTurns += 1;
       this.#emptyTurnsByShape[shape] += 1;
+      // THE SAME MOMENT ANSWERS THE NEXT QUESTION (`closedWithNothing`): this is the turn the wait after it belongs to, so
+      // the name and the count cannot describe two different turns.
+      this.#lastClosedWithNothing = Object.freeze({ shape, reason, atMs: this.#now() });
+    } else {
+      this.#lastClosedWithNothing = undefined;
     }
     if (producedWork && !producedSpeech && opening !== TURN_OPENING.playerInput) {
       this.#silentSettledTurns += 1;
@@ -4804,6 +4905,34 @@ export class CompanionEventPump {
     }
     this.#turnsWithoutWork =
       this.turnProduction === TURN_PRODUCTION.spoke && !inFlight ? this.#turnsWithoutWork + 1 : 0;
+  }
+
+  /**
+   * What the wait after the last delivered turn is, when that turn closed with nothing - and when the pump is asked again.
+   *
+   * <p>
+   * THE READING THAT REPLACES A BARE `nothing_owed`. That word answered "is a turn owed" about the instant, and `round84`
+   * spent 741.9 s of its silence under it while five turns waited for the game's clock: `plan_14`'s settlement bought
+   * 203.8 s and `time_milestone_day_4_1200` was what ended it. Nothing in any artifact said what those intervals were
+   * waiting for, because nothing had been asked.
+   * </p>
+   * <p>
+   * READING, NOT DELIVERY, exactly as `carriedBacklog` and `narrationWithoutWork` are split from their `take*` methods:
+   * nothing is minted, enqueued or delivered here, and reading it cannot open a turn. A caller decides what to do with a
+   * name and a moment; the pump's own contribution is that the answer is the condition the turn measured rather than a
+   * second account of it (`closedWithNothingWaitFor`).
+   * </p>
+   */
+  public get closedWithNothing(): ClosedWithNothingWait {
+    const wait = this.#lastClosedWithNothing;
+    if (wait === undefined) return Object.freeze({ shape: undefined, waitingFor: undefined, lookAgainInMs: undefined });
+    return Object.freeze({
+      shape: wait.shape,
+      waitingFor: closedWithNothingWaitFor(wait.reason),
+      // A bound that has passed reads `0` rather than a negative number: "the look is due" is a state, and `undefined`
+      // already means something else (no wait at all).
+      lookAgainInMs: Math.max(0, closedWithNothingLookAgainMs(wait.reason) - (this.#now() - wait.atMs)),
+    });
   }
 
   /**
