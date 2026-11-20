@@ -1502,13 +1502,23 @@ test("round77 day 2: a refusal of an action the criterion does not read is not `
       !steps.has(refused.actionId),
       `${refused.actionId} IS a step of mine_ladder_to_depth, so this fixture no longer describes round77's day 2`,
     );
-  // Both shapes are refused by the Host, and both are right to be: `reached=adjacent` does not claim the requested tile,
-  // and `modal=none` is nothing dismissed. A refusal is about its own action and says nothing about the purpose.
+  // `dismiss_modal` is refused by the Host and is right to be: `modal=none` is nothing dismissed. **The `move_to_tile` fixture is no
+  // longer a refusal** - `6b1a6f9f` made an adjacent arrival a real arrival (`arrival=warp_adjacent;reached=adjacent`), because the
+  // action's own declaration says the honest walk is the tile beside the subject and `approach_out_of_reach` is what refuses an
+  // out-of-radius substitution. So one of round77's two shapes became a success, and this test now says so rather than pinning the
+  // old verdict: the property it protects - a refusal of an action the criterion does not read is not `the run cannot tell` - is
+  // carried by `dismiss_modal` alone.
   assert.deepEqual(
     purposeReceipts(receipts)
       .refused.map((entry) => entry.actionId)
       .sort(),
-    ["dismiss_modal", "move_to_tile"],
+    ["dismiss_modal"],
+  );
+  assert.deepEqual(
+    purposeReceipts([ROUND77_MOVE_ARRIVED_ADJACENT])
+      .refused.map((entry) => entry.actionId),
+    [],
+    "an adjacent arrival is an arrival since 6b1a6f9f - if this reds, the contract narrowed and round77's fixture is a refusal again",
   );
   const judged = judgeTaskPurpose("mine_ladder_to_depth", receipts);
   assert.equal(
