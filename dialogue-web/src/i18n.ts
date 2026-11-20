@@ -47,7 +47,7 @@ const en = {
   gameStatusConnected: "Game connected",
   gameStatusConnecting: "Game connecting",
   gameStatusDisconnected: "Game disconnected",
-  gameStatusNoSession: "No game session",
+  gameStatusNoSession: "No game yet",
   voiceUnavailable: "Voice unavailable",
   voiceReady: "Companion's voice is ready",
   voiceSpeaking: "Companion speaking…",
@@ -72,46 +72,49 @@ const en = {
   openingChat: "Opening chat…",
   gameState: "Game state",
   gameSetup: "Set up Stardew Valley",
-  gameSetupFailed: "Game setup could not be verified. The latest authoritative game state is shown.",
+  gameSetupFailed: "Game setup could not be verified. What this page shows is the last state it read from the game.",
   gameActivation: "Enable companion play",
   gameActivationInProgress: "Enabling companion play…",
-  gameActivationFailed: "Companion play could not be enabled. The latest authoritative game state is shown.",
+  gameActivationFailed:
+    "Companion play could not be enabled. What this page shows is the last state it read from the game.",
   gameActivationNotConfigured:
-    "Companion play needs a Stardew Valley installation set up for this session, and none is yet. Choose your game folder in Game installation on this page, then enable companion play again.",
+    "Companion play needs a Stardew Valley installation, and none is set up yet. Choose your game folder in Game installation on this page, then enable companion play again.",
   gameActivationUnavailable: "This build cannot enable companion play. Update GameBuddy or reload the page.",
   gameActivationRequired: "Companion play is not ready yet. Enable companion play, then try again.",
   gameInstallationRequired:
     "Companion play needs a Stardew Valley installation first. Choose your game folder in Game installation on this page, and this step offers companion play once it is registered.",
   gameStop: "Stop game",
-  gameStopFailed: "The game stop result is uncertain. The latest authoritative game state is shown.",
+  gameStopFailed: "The game stop result is uncertain. What this page shows is the last state it read from the game.",
   gameDisconnect: "Disconnect game",
-  gameDisconnectFailed: "The game could not be disconnected. Its attachment was retained.",
+  gameDisconnectFailed: "The game could not be disconnected; it is still connected.",
   gameResume: "Resume game",
   gameResumeInProgress: "Resuming the game connection...",
-  gameResumeFailed: "The game could not be resumed. The latest authoritative game state is shown.",
+  gameResumeFailed: "The game could not be resumed. What this page shows is the last state it read from the game.",
   gameResumeUnavailable: "The game could not be resumed right now. Reload the page or try again later.",
   gameActionsPaused: "Game actions are paused.",
   gameReopen: "Resume actions",
   gameReopenInProgress: "Resuming game actions...",
-  gameReopenFailed: "The game actions could not be resumed. The latest authoritative game state is shown.",
+  gameReopenFailed:
+    "The game actions could not be resumed. What this page shows is the last state it read from the game.",
   gameReopenUnavailable: "The game actions could not be resumed right now. Reload the page or try again later.",
   gameRetry: "Retry",
   gameResumeCancel: "Cancel",
   gameResumeCancelInProgress: "Cancelling the reconnect...",
-  gameResumeCancelFailed: "The reconnect could not be cancelled. The latest authoritative game state is shown.",
+  gameResumeCancelFailed:
+    "The reconnect could not be cancelled. What this page shows is the last state it read from the game.",
   gameCreate: "Start new game",
-  gameCreateFormTitle: "Start a new game session",
+  gameCreateFormTitle: "Start a new game",
   gameCreateIntegration: "Game integration",
-  gameCreateContinuityBinding: "Continuity binding",
-  gameCreateContinuityBindingHint:
-    "Optional. Leave empty to create the session without binding it to your continuity identity.",
-  gameCreateInProgress: "Creating the game session...",
+  gameCreateContinuityBinding: "Shared memory",
+  gameCreateContinuityBindingHint: "Optional. Leave empty to play this game without sharing memory with a chat.",
+  gameCreateInProgress: "Setting up your game...",
   gameCreateFailed:
-    "The game session could not be created. No partial session was left behind; the latest authoritative game state is shown.",
-  gameCreateUnavailable: "The game session could not be created right now. Reload the page or try again.",
+    "Your game could not be set up. Nothing half-finished was left behind; what this page shows is the last state it read from the game.",
+  gameCreateUnavailable: "Your game could not be set up right now. Reload the page or try again.",
   gameSyncing: "Syncing the game connection...",
   gameLaunch: "Start the game",
-  gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
+  gameLaunchFailed:
+    "The game launch result is uncertain. What this page shows is the last state it read from the game.",
   // The two states whose step is not a control on this page. Both name what the player can see - a
   // start that did not go through, an ending that happened - and the step left to them; the layer
   // that holds the state (`launchTerminal` in `stardew-production-lifecycle-coordinator.internal.ts`)
@@ -167,7 +170,7 @@ const en = {
   stardewCabinsReread: "Just read again: this is still the answer.",
   stardewCabinsRefresh: "Read cabins again",
   stardewCabinsAwaitingSession:
-    "There is no game session to read cabins from yet. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
+    "There is no game running yet, so there are no cabins to read. Finish steps 1 and 2 above: loading the farm is what puts her cabin in play, and confirming one here is what moves her in.",
   stardewCabinConfirm: "Confirm cabin",
   // The panel's own post-launch asking, which is why the refresh control the handoff already offers
   // is a second chance rather than the only path. `reading` names the attempt so a screen that keeps
@@ -952,18 +955,18 @@ const en = {
   // code added to the contract fails the gate until it has words here.
   gameProblemUnavailableTitle: "The game did not go ahead",
   gameProblemUnavailableDetail:
-    "GameBuddy could not carry out this step of the game. The latest authoritative game state is shown; check Game installation, then try again.",
+    "GameBuddy could not carry out this step of the game. What this page shows is the last state it read from the game; check Game installation, then try again.",
   // The one templated game pair. `game_unavailable` is the wrapper the Host answers with when a
   // step of the game's own lifecycle failed, and the bounded `stardew_*` cause it registers is
   // what says which step: without a cause, the generic sentence above is the whole truth.
   gameProblemUnavailableCauseDetail:
-    "GameBuddy could not carry out this step of the game (registered cause {{cause}}). The latest authoritative game state is shown; check Game installation, then try again.",
+    "GameBuddy could not carry out this step of the game (registered cause {{cause}}). What this page shows is the last state it read from the game; check Game installation, then try again.",
   gameProblemPrerequisitesMissingTitle: "Companion play is not ready yet",
   gameProblemPrerequisitesMissingDetail:
-    "GameBuddy has not staged this session's game yet. Enable companion play first, then try this again.",
+    "GameBuddy has not started a game for you yet. Enable companion play first, then try this again.",
   gameProblemInstanceGoneTitle: "That game is gone",
   gameProblemInstanceGoneDetail:
-    "The game instance this page named is no longer the current one - it stopped or was replaced. Reload the game page to see what is running now.",
+    "The game this page was showing is no longer the one running - it stopped or was replaced. Reload the game page to see what is running now.",
   gameProblemAttachmentMovedTitle: "The game connection moved",
   gameProblemAttachmentMovedDetail:
     "The game attached or detached since the page read it, so this action was not applied. Reload the game page to see the current connection, then try again.",
@@ -973,25 +976,25 @@ const en = {
   gameProblemCabinChoiceStaleTitle: "That cabin choice expired",
   gameProblemCabinChoiceStaleDetail:
     "The cabin you picked is no longer one of the choices offered - the list moved, or that choice was already used. Read the cabins again and choose one.",
-  gameProblemHandoffUncertainTitle: "The cabin handoff is not confirmed",
+  gameProblemHandoffUncertainTitle: "Her cabin is not confirmed yet",
   gameProblemHandoffUncertainDetail:
-    "GameBuddy could not confirm which cabin was handed over, so do not confirm again. Wait for recovery, or reload the game page to see the authoritative state.",
-  gameProblemRuntimeUnavailableTitle: "The game's runtime is not available",
+    "GameBuddy could not confirm which cabin she moved into, so do not confirm again. Wait for recovery, or reload the game page to see what the game reports.",
+  gameProblemRuntimeUnavailableTitle: "GameBuddy's side of the game is not running",
   gameProblemRuntimeUnavailableDetail:
-    "The runtime that runs the game's side of this session is not running, so the action did not go on. Reload the game page, then start the game again.",
+    "The part of GameBuddy that plays your game is not running, so the action did not go on. Reload the game page, then start the game again.",
   // The launch that never reached the game. Unlike the pair above, the Host knows the command did
   // not run: the connection that starts the game's own process was not there, so nothing started.
   // The step names the launch control itself - a fresh attempt opens a fresh connection - and only
   // then the restart, because that connection lives inside this Host's own process.
   gameProblemLaunchUnreachableTitle: "The launch did not reach the game",
   gameProblemLaunchUnreachableDetail:
-    "GameBuddy's own connection to the part that starts the game ended before the game started, so this launch started nothing and will not be repeated. Press Start the game again; if it ends the same way, quit GameBuddy from the tray icon and open it again.",
-  gameProblemStorageUnavailableTitle: "The game session could not be stored",
+    "The part of GameBuddy that starts the game stopped before the game started, so this launch started nothing and will not be repeated. Press Start the game again; if it ends the same way, quit GameBuddy from the tray icon and open it again.",
+  gameProblemStorageUnavailableTitle: "GameBuddy could not save your game",
   gameProblemStorageUnavailableDetail:
-    "GameBuddy could not write this session's game record, so the game session was not created. Reload the game page and try again.",
+    "GameBuddy could not save this game, so it was not set up. Reload the game page and try again.",
   gameProblemEndgameSettlementTitle: "The game was not settled",
   gameProblemEndgameSettlementDetail:
-    "The endgame request reached the game, but its settlement did not complete, so the game may still be running. Reload the game page and check before ending it again.",
+    "The endgame request reached the game, but it did not finish shutting down, so the game may still be running. Reload the game page and check before ending it again.",
   gameProblemClosedTitle: "This game page has ended",
   gameProblemClosedDetail:
     "GameBuddy ended this game page, so there is nothing left to act on. Open the game again from GameBuddy.",
@@ -1018,9 +1021,9 @@ const en = {
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
     "Stardew Valley gave GameBuddy a farm it can join, but no cabin in it that your companion may use. Have Robin build one; Read cabins again once it is built.",
-  gameProblemRegistrationHeldTitle: "The last GameBuddy session still holds this game",
+  gameProblemRegistrationHeldTitle: "GameBuddy still has this game open from last time",
   gameProblemRegistrationHeldDetail:
-    "GameBuddy could not start a new session because the previous one still holds this game. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
+    "GameBuddy could not start a new game because the last one still holds it. If Stardew Valley is still running, close it. Close GameBuddy completely, open it again, then play with your companion.",
 
   // The two `game.create` refusals the player can answer. Both used to arrive as
   // `state_unavailable`, i.e. as "reload and try again" - and retrying the create fails
@@ -1165,17 +1168,17 @@ const en = {
   gameStateUnavailable: "Game state is unavailable for this profile.",
   gameGroupConnection: "Connection",
   gameGroupNextStep: "Next step",
-  gameGroupSession: "Session",
+  gameGroupSession: "This game",
   gameGroupRecovery: "Recovery",
 
   // Game facts. Every value is a localized player outcome; the raw Host enum
   // (`connected_idle`, `state_unavailable`, ...) is never rendered (design/104 §10).
   gameFactConnection: "Connection",
-  gameFactInstance: "Instance",
+  gameFactInstance: "Game",
   gameFactWorld: "World",
   gameFactSave: "Save",
   gameFactCompatibility: "Compatibility",
-  gameFactCapabilities: "Capabilities",
+  gameFactCapabilities: "Abilities",
   gameFactExecution: "Execution",
   gameFactOutcome: "Last result",
   gameValueNone: "None",
@@ -1285,7 +1288,7 @@ const en = {
   // lives, and the Mod is loaded from the real folder. The sentence names the shapes a player
   // actually has - a desktop shortcut, a Mod Organizer 2 instance - and what to pick instead.
   gameInstallationReparsePoint:
-    "That folder is a shortcut, a junction or a virtual folder (for example a Mod Organizer 2 instance). Choose the game's real installation folder, the one that holds Stardew Valley.exe itself, not a link to it.",
+    "That folder is a shortcut, a junction or a virtual folder (for example a folder managed by Mod Organizer 2). Choose the game's real installation folder, the one that holds Stardew Valley.exe itself, not a link to it.",
   // A registration that did not finish, for a reason that is not about the folder: GameBuddy is
   // closing, or the write itself failed. It says only that, and asks for the one thing that can
   // work - the sentence used to tell the player to choose another game folder, which named a cause
@@ -1338,8 +1341,8 @@ const en = {
   // (`game.state.read`), read-only, and the panel says so rather than showing an
   // empty box.
   gameDiagnostics: "Game data and diagnostics",
-  gameDiagnosticsPublished: "Published by the Host, read-only: the instance and session projection.",
-  gameDiagnosticsJson: "Instance and session projection, as published",
+  gameDiagnosticsPublished: "Read-only, published by GameBuddy: the game and this run of it.",
+  gameDiagnosticsJson: "The game and this run of it, as published",
   gameDiagnosticsUnavailable: "No game data is published for this profile, so there is nothing to show.",
   // The one control that holds the app bar's trailing peers on a 400 px strip.
   appBarMore: "More",
@@ -1365,8 +1368,8 @@ const en = {
   gameBoardCompanionAbsent: "No companion has taken a cabin in your farm yet.",
   gameBoardAbilitiesPublished: "{{count}} things published",
   gameBoardAbilitiesUnpublished: "Nothing published yet",
-  gameBoardAbilitiesPublishedDetail: "These are the abilities the game itself reported for this session.",
-  gameBoardAbilitiesUnpublishedDetail: "The game has not reported any ability for this session.",
+  gameBoardAbilitiesPublishedDetail: "These are the abilities the game itself reported.",
+  gameBoardAbilitiesUnpublishedDetail: "The game has not reported any ability yet.",
   gameBoardActingActive: "Your companion may act in your farm.",
   gameBoardActingPaused: "Your companion waits for your word before acting.",
   gameBoardActingUnavailable: "Your companion has no way into your farm yet.",
@@ -1379,7 +1382,7 @@ const en = {
   // player who says that first step is already behind them is offered it here.
   gameGuideStepOneAlternate: "Already enabled companion play?",
   // What each staging control is for.
-  gameActivationHint: "Gets the companion ready to play in this session.",
+  gameActivationHint: "Gets the companion ready to play in your game.",
   gameSetupHint: "Prepares Stardew Valley and the companion's mod.",
   gameGuideStepTwoTitle: "Start the game",
   gameGuideStepTwoDetail:
@@ -1395,7 +1398,7 @@ const en = {
   gameEndgameConfirmYes: "End the game",
   gameEndgameConfirmNo: "Keep playing",
   gameEndgameInProgress: "Ending the game...",
-  gameEndgameFailed: "The game could not be ended. The latest authoritative game state is shown.",
+  gameEndgameFailed: "The game could not be ended. What this page shows is the last state it read from the game.",
 
   // --- chat selection lane: switching the mounted Chat is turn-level ---
   chatSelectSwitchedNotice: "Chat switched.",
@@ -1548,7 +1551,7 @@ const zh: Messages = {
   gameStatusConnected: "游戏已连接",
   gameStatusConnecting: "游戏连接中",
   gameStatusDisconnected: "游戏未连接",
-  gameStatusNoSession: "尚无游戏会话",
+  gameStatusNoSession: "还没有游戏",
   voiceUnavailable: "语音不可用",
   voiceReady: "角色的声音已就绪",
   voiceSpeaking: "角色正在说话…",
@@ -1564,10 +1567,10 @@ const zh: Messages = {
   openingChat: "正在读取聊天…",
   gameState: "游戏状态",
   gameSetup: "设置《星露谷物语》",
-  gameSetupFailed: "无法验证游戏设置结果；当前显示的是最新权威游戏状态。",
+  gameSetupFailed: "无法验证游戏设置结果；这里显示的是最近一次从游戏读到的状态。",
   gameActivation: "启用伙伴陪玩",
   gameActivationInProgress: "正在启用伙伴陪玩…",
-  gameActivationFailed: "无法启用伙伴陪玩；当前显示的是最新权威游戏状态。",
+  gameActivationFailed: "无法启用伙伴陪玩；这里显示的是最近一次从游戏读到的状态。",
   gameActivationNotConfigured:
     "伙伴陪玩需要先确定《星露谷物语》的安装位置，而现在还没有。请在本页的「游戏安装」里选择游戏文件夹，然后再次启用伙伴陪玩。",
   gameActivationUnavailable: "当前版本无法启用伙伴陪玩。请更新 GameBuddy 或重新加载页面。",
@@ -1575,33 +1578,33 @@ const zh: Messages = {
   gameInstallationRequired:
     "伙伴陪玩需要先有一个《星露谷物语》安装。请在本页的「游戏安装」里选好游戏目录；登记完成后，这一步就会出现伙伴陪玩的按钮。",
   gameStop: "停止游戏",
-  gameStopFailed: "游戏停止结果尚不确定；当前显示的是最新权威游戏状态。",
+  gameStopFailed: "游戏停止结果尚不确定；这里显示的是最近一次从游戏读到的状态。",
   gameDisconnect: "断开游戏连接",
   gameDisconnectFailed: "无法断开游戏连接；当前连接已保留。",
   gameResume: "恢复游戏连接",
   gameResumeInProgress: "正在恢复游戏连接...",
-  gameResumeFailed: "无法恢复游戏连接;当前显示的是最新权威游戏状态。",
+  gameResumeFailed: "无法恢复游戏连接;这里显示的是最近一次从游戏读到的状态。",
   gameResumeUnavailable: "目前无法恢复游戏连接。请重新加载页面,或稍后重试。",
   gameActionsPaused: "游戏行动已暂停。",
   gameReopen: "恢复行动",
   gameReopenInProgress: "正在恢复游戏行动...",
-  gameReopenFailed: "无法恢复游戏行动;当前显示的是最新权威游戏状态。",
+  gameReopenFailed: "无法恢复游戏行动;这里显示的是最近一次从游戏读到的状态。",
   gameReopenUnavailable: "目前无法恢复游戏行动。请重新加载页面,或稍后重试。",
   gameRetry: "重试",
   gameResumeCancel: "取消",
   gameResumeCancelInProgress: "正在取消重新连接...",
-  gameResumeCancelFailed: "无法取消重新连接；当前显示的是最新权威游戏状态。",
+  gameResumeCancelFailed: "无法取消重新连接；这里显示的是最近一次从游戏读到的状态。",
   gameCreate: "开始新游戏",
-  gameCreateFormTitle: "开始新游戏会话",
+  gameCreateFormTitle: "开始新游戏",
   gameCreateIntegration: "游戏集成",
-  gameCreateContinuityBinding: "连续性绑定",
-  gameCreateContinuityBindingHint: "可选。留空表示创建不绑定连续性身份的会话。",
-  gameCreateInProgress: "正在创建游戏会话...",
-  gameCreateFailed: "无法创建游戏会话；未留下任何可恢复的部分会话，当前显示的是最新权威游戏状态。",
-  gameCreateUnavailable: "目前无法创建游戏会话。请重新加载页面，或稍后重试。",
+  gameCreateContinuityBinding: "共享记忆",
+  gameCreateContinuityBindingHint: "可选。留空表示这次游戏不与任何聊天共享记忆。",
+  gameCreateInProgress: "正在准备游戏...",
+  gameCreateFailed: "无法创建游戏；没有留下半成品，这里显示的是最近一次从游戏读到的状态。",
+  gameCreateUnavailable: "目前无法准备游戏。请重新加载页面，或稍后重试。",
   gameSyncing: "正在同步游戏连接...",
   gameLaunch: "启动游戏",
-  gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
+  gameLaunchFailed: "游戏启动结果不确定；这里显示的是最近一次从游戏读到的状态。",
   gameLaunchQuarantined:
     "这次启动没有成功，GameBuddy 要重新打开才能清掉它留下的状态：本页没有任何控件能做到，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘退出 GameBuddy（Quit GameBuddy），再重新打开。",
   gameEndedQuarantined:
@@ -1617,7 +1620,7 @@ const zh: Messages = {
   stardewCabinsReread: "刚刚又读了一次：现在的结果仍然是这样。",
   stardewCabinsRefresh: "再读一次小屋",
   stardewCabinsAwaitingSession:
-    "还没有可以读取小屋的游戏会话。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
+    "游戏还没在运行，所以还没有小屋可读。先完成上面第 1、2 步；农场载入后，属于她的小屋就已经在那里了，在这里确认哪一间，她才住进去。",
   stardewCabinConfirm: "确认小屋",
   stardewCabinsLaunchReading: "游戏正在启动，正在自动为你读取小屋：第 {{attempt}} / {{attempts}} 次。",
   stardewCabinsLaunchFound: "游戏还在启动，她的小屋已经就绪：在下面确认哪一间是她的，她就住进去。",
@@ -2155,14 +2158,14 @@ const zh: Messages = {
   problemConnectionLimitReachedDetail: "GameBuddy 能保存的连接数量有限。请先删掉一个，再添加新的。",
   gameProblemUnavailableTitle: "游戏没有进行下去",
   gameProblemUnavailableDetail:
-    "GameBuddy 无法完成这一步游戏操作。下面是当前权威的游戏状态；请检查「游戏安装」，再试一次。",
+    "GameBuddy 无法完成这一步游戏操作。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
   gameProblemUnavailableCauseDetail:
-    "GameBuddy 无法完成这一步游戏操作（登记的原因：{{cause}}）。下面是当前权威的游戏状态；请检查「游戏安装」，再试一次。",
-  gameProblemPrerequisitesMissingTitle: "陪伴游览还没有准备好",
-  gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为这次会话准备好游戏。请先启用陪伴游览，再重试。",
+    "GameBuddy 无法完成这一步游戏操作（登记的原因：{{cause}}）。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
+  gameProblemPrerequisitesMissingTitle: "伙伴陪玩还没有准备好",
+  gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为你启动游戏。请先启用伙伴陪玩，再重试。",
   gameProblemInstanceGoneTitle: "那个游戏已经不在了",
   gameProblemInstanceGoneDetail:
-    "这个页面指的游戏实例已经不是当前的那个了 —— 它停止了，或被替换了。请重新加载游戏页面，看看现在运行的是哪一个。",
+    "这个页面之前显示的游戏已经不是现在运行的那个了 —— 它停止了，或被替换了。请重新加载游戏页面，看看现在运行的是哪一个。",
   gameProblemAttachmentMovedTitle: "游戏连接已经变化",
   gameProblemAttachmentMovedDetail:
     "页面读取之后，游戏已经连接或断开了，所以这次操作没有被执行。请重新加载游戏页面，看清当前的连接，再试一次。",
@@ -2172,21 +2175,21 @@ const zh: Messages = {
   gameProblemCabinChoiceStaleTitle: "那个小屋选择已经失效",
   gameProblemCabinChoiceStaleDetail:
     "你选的小屋已经不在可选的列表里了 —— 列表变了，或者那个选择已经被用掉。请重新读取小屋列表，再选一个。",
-  gameProblemHandoffUncertainTitle: "小屋的交接还没有确认",
+  gameProblemHandoffUncertainTitle: "她的小屋还没有确认",
   gameProblemHandoffUncertainDetail:
-    "GameBuddy 无法确认交接的是哪个小屋，所以请不要再次确认。等待恢复，或重新加载游戏页面查看权威状态。",
-  gameProblemRuntimeUnavailableTitle: "游戏的运行时不可用",
+    "GameBuddy 无法确认她住进了哪个小屋，所以请不要再次确认。等待恢复，或重新加载游戏页面查看游戏现在报告的状态。",
+  gameProblemRuntimeUnavailableTitle: "GameBuddy 里负责游戏的那一部分没有在运行",
   gameProblemRuntimeUnavailableDetail:
-    "运行这次会话中游戏那一侧的运行时没有在运行，所以这次操作没有进行下去。请重新加载游戏页面，再启动游戏。",
+    "GameBuddy 里替你玩游戏的那一部分没有在运行，所以这次操作没有进行下去。请重新加载游戏页面，再启动游戏。",
   // 这次启动根本没有抵达游戏：Host 自己那条用来启动游戏进程的连接不在，或在启动之前就结束了。
   // 与上一条不同，Host 知道命令没有执行过，所以这是拒绝而不是“结果不确定”。
   // 下一步是先再启动一次（新的一次会开一条新连接），仍然如此才需要退出 GameBuddy 重开。
   gameProblemLaunchUnreachableTitle: "这次启动没有连到游戏",
   gameProblemLaunchUnreachableDetail:
-    "GameBuddy 自己那条用来启动游戏的连接，在游戏开始之前就结束了，所以这次启动什么也没有启动，也不会重放。请再按一次「启动游戏」；如果还是这样结束，请从托盘图标退出 GameBuddy，重新打开后再试。",
-  gameProblemStorageUnavailableTitle: "游戏会话没能保存",
+    "GameBuddy 里负责启动游戏的那一部分，在游戏开始之前就结束了，所以这次启动什么也没有启动，也不会重放。请再按一次「启动游戏」；如果还是这样结束，请从托盘图标退出 GameBuddy，重新打开后再试。",
+  gameProblemStorageUnavailableTitle: "GameBuddy 无法保存你的游戏",
   gameProblemStorageUnavailableDetail:
-    "GameBuddy 无法写入这次会话的游戏记录，所以游戏会话没有创建。请重新加载游戏页面，再试一次。",
+    "GameBuddy 无法保存这次游戏的记录，所以游戏没有建起来。请重新加载游戏页面，再试一次。",
   gameProblemEndgameSettlementTitle: "游戏没有完成收尾",
   gameProblemEndgameSettlementDetail:
     "结束游戏的请求已经到达游戏，但收尾没有完成，游戏可能仍在运行。请重新加载游戏页面确认状态，再决定是否再次结束。",
@@ -2212,9 +2215,9 @@ const zh: Messages = {
   gameProblemCabinMissingTitle: "这个农场还没有伙伴可住的小屋",
   gameProblemCabinMissingDetail:
     "《星露谷物语》把可以加入的农场告诉了 GameBuddy，但里面没有伙伴可以用的小屋。请让罗宾建一间；建好后再读一次小屋。",
-  gameProblemRegistrationHeldTitle: "上一次 GameBuddy 会话仍占着这个游戏",
+  gameProblemRegistrationHeldTitle: "GameBuddy 还占着上一次的游戏",
   gameProblemRegistrationHeldDetail:
-    "GameBuddy 无法开始新的会话，因为上一次会话仍占着这个游戏。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伙伴陪玩。",
+    "GameBuddy 无法开始新的游戏，因为上一次的还占着它。如果《星露谷物语》还在运行，请先关闭它。请完全关闭 GameBuddy，重新打开，然后再启动伙伴陪玩。",
 
   // 两条玩家可以自己处理的 `game.create` 拒绝。它们以前都落在 `state_unavailable`，
   // 也就是“重新加载再试一次”—— 而两条都重试创建只会得到同样的结果，所以各自说出真正能解决的那一步。
@@ -2338,17 +2341,17 @@ const zh: Messages = {
   gameStateUnavailable: "当前配置下没有游戏状态。",
   gameGroupConnection: "连接",
   gameGroupNextStep: "下一步",
-  gameGroupSession: "当前会话",
+  gameGroupSession: "这次游戏",
   gameGroupRecovery: "恢复",
 
   // 游戏事实。每个取值都是本地化的玩家结果，绝不显示 Host 原始枚举
   // （`connected_idle`、`state_unavailable` 等，design/104 §10）。
   gameFactConnection: "连接",
-  gameFactInstance: "实例",
+  gameFactInstance: "游戏",
   gameFactWorld: "世界",
   gameFactSave: "存档",
   gameFactCompatibility: "兼容性",
-  gameFactCapabilities: "可用能力",
+  gameFactCapabilities: "能力",
   gameFactExecution: "执行",
   gameFactOutcome: "最近结果",
   gameValueNone: "无",
@@ -2427,7 +2430,7 @@ const zh: Messages = {
   gameInstallationNotStardewInstallation:
     "这个文件夹不是《星露谷物语》的安装位置。请选择包含 Stardew Valley.exe 的那个游戏文件夹。",
   gameInstallationReparsePoint:
-    "这个文件夹是快捷方式、目录联接（junction）或虚拟文件夹（例如 Mod Organizer 2 的实例）。请选择游戏真正的安装文件夹，也就是直接包含 Stardew Valley.exe 的那个文件夹，而不是指向它的链接。",
+    "这个文件夹是快捷方式、目录联接（junction）或虚拟文件夹（例如由 Mod Organizer 2 管理的文件夹）。请选择游戏真正的安装文件夹，也就是直接包含 Stardew Valley.exe 的那个文件夹，而不是指向它的链接。",
   gameInstallationSelectionUnavailable: "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
@@ -2448,8 +2451,8 @@ const zh: Messages = {
   gameInstallationHintPathHidden: "安装路径不显示。",
 
   gameDiagnostics: "游戏数据与诊断",
-  gameDiagnosticsPublished: "由 Host 发布，只读：实例与会话投影。",
-  gameDiagnosticsJson: "按发布内容呈现的实例与会话投影",
+  gameDiagnosticsPublished: "由 GameBuddy 发布，只读：游戏与它这次运行。",
+  gameDiagnosticsJson: "按发布内容呈现的游戏与它这次运行",
   gameDiagnosticsUnavailable: "该档案未发布游戏数据，因此没有可显示的内容。",
   appBarMore: "更多",
 
@@ -2467,8 +2470,8 @@ const zh: Messages = {
   gameBoardCompanionAbsent: "农场里还没有伙伴住进小屋。",
   gameBoardAbilitiesPublished: "已公布 {{count}} 件事",
   gameBoardAbilitiesUnpublished: "还没有公布",
-  gameBoardAbilitiesPublishedDetail: "这些是游戏为这次会话报上来的能力。",
-  gameBoardAbilitiesUnpublishedDetail: "游戏还没有为这次会话报上能力。",
+  gameBoardAbilitiesPublishedDetail: "这些是游戏自己报上来的能力。",
+  gameBoardAbilitiesUnpublishedDetail: "游戏还没有报上任何能力。",
   gameBoardActingActive: "伙伴可以在你的农场里动手。",
   gameBoardActingPaused: "伙伴会先等你发话再动手。",
   gameBoardActingUnavailable: "伙伴还没有接到你的农场。",
@@ -2477,7 +2480,7 @@ const zh: Messages = {
   gameGuideStepOneDetail:
     "如果还没选过游戏目录，请先在本页的「游戏安装」里选好，然后按下面唯一的那个按钮。这一步只是把伙伴和她的模组准备好，不会启动任何东西；启动游戏是下一步。",
   gameGuideStepOneAlternate: "已经启用伙伴陪玩？",
-  gameActivationHint: "让伙伴为这次会话做好准备。",
+  gameActivationHint: "让伙伴为这次游戏做好准备。",
   gameSetupHint: "准备好《星露谷物语》和伙伴模组。",
   gameGuideStepTwoTitle: "启动游戏",
   gameGuideStepTwoDetail: "按下面的按钮，《星露谷物语》就会启动。农场请在游戏里载入。",
@@ -2492,7 +2495,7 @@ const zh: Messages = {
   gameEndgameConfirmYes: "结束游戏",
   gameEndgameConfirmNo: "继续游玩",
   gameEndgameInProgress: "正在结束游戏...",
-  gameEndgameFailed: "无法结束游戏；当前显示的是最新权威游戏状态。",
+  gameEndgameFailed: "无法结束游戏；这里显示的是最近一次从游戏读到的状态。",
 
   // --- 会话选择 lane：挂载会话的切换是 turn 级的 ---
   chatSelectSwitchedNotice: "已切换会话。",
