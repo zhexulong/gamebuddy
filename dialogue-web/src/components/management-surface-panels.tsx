@@ -1338,6 +1338,28 @@ type SamplerTemperatureView =
   | Readonly<{ kind: "ready"; record: TavernSamplerPreferenceV1; pending: boolean }>;
 
 /**
+ * The way back from a settings read that did not answer.
+ *
+ * A read that failed used to end the group: the connection section and the model editors were not
+ * rendered at all, and the two panels that did keep their section answered with one sentence and no
+ * control, so the only way to try again was to reload the page - which threw away every other group's
+ * read with it. A failed read is a transient fact about one request, not a fact about this build, and
+ * the press below is the read taken again (`problemRetryRead`, the same words the Chat's own failed
+ * read uses in this file).
+ */
+function ReadAgain({
+  labels,
+  marker,
+  onRetry,
+}: Readonly<{ labels: Messages; marker: string; onRetry: () => void }>): ReactElement {
+  return (
+    <button type="button" className="small-button" data-settings-read-retry={marker} onClick={onRetry}>
+      {labels.problemRetryRead}
+    </button>
+  );
+}
+
+/**
  * The player's own addition to the Game companion's instructions: one field, one bound, and
  * the sentence saying when it lands.
  *
@@ -1357,12 +1379,15 @@ function GamePromptAdditionPanel({
   labels,
   onChange,
   onSave,
+  onRetry,
 }: Readonly<{
   view: GamePromptAdditionView;
   draft: string;
   labels: Messages;
   onChange: (next: string) => void;
   onSave: () => void;
+  /** The read this group's own state came from, taken again. */
+  onRetry: () => void;
 }>): ReactElement {
   return (
     <section
@@ -1373,8 +1398,18 @@ function GamePromptAdditionPanel({
       <h2>{labels.gamePromptAdditionTitle}</h2>
       <p>{labels.gamePromptAdditionHint}</p>
       {view.kind === "loading" && <p>{labels.loading}</p>}
-      {view.kind === "unavailable" && <p>{labels.gamePromptAdditionUnavailable}</p>}
-      {view.kind === "error" && <p>{labels.failure}</p>}
+      {view.kind === "unavailable" && (
+        <>
+          <p>{labels.gamePromptAdditionUnavailable}</p>
+          <ReadAgain labels={labels} marker="game-prompt-addition" onRetry={onRetry} />
+        </>
+      )}
+      {view.kind === "error" && (
+        <>
+          <p>{labels.failure}</p>
+          <ReadAgain labels={labels} marker="game-prompt-addition" onRetry={onRetry} />
+        </>
+      )}
       {view.kind === "ready" && (
         <>
           <label className="management-settings-label" htmlFor="game-prompt-addition">
@@ -1427,12 +1462,15 @@ function SamplerTemperaturePanel({
   labels,
   onChange,
   onSave,
+  onRetry,
 }: Readonly<{
   view: SamplerTemperatureView;
   draft: string;
   labels: Messages;
   onChange: (next: string) => void;
   onSave: () => void;
+  /** The read this group's own state came from, taken again. */
+  onRetry: () => void;
 }>): ReactElement {
   const parsed = parseSamplingTemperature(draft);
   return (
@@ -1444,8 +1482,18 @@ function SamplerTemperaturePanel({
       <h2>{labels.samplingTemperatureTitle}</h2>
       <p>{labels.samplingTemperatureHint}</p>
       {view.kind === "loading" && <p>{labels.loading}</p>}
-      {view.kind === "unavailable" && <p>{labels.samplingTemperatureUnavailable}</p>}
-      {view.kind === "error" && <p>{labels.failure}</p>}
+      {view.kind === "unavailable" && (
+        <>
+          <p>{labels.samplingTemperatureUnavailable}</p>
+          <ReadAgain labels={labels} marker="sampler-temperature" onRetry={onRetry} />
+        </>
+      )}
+      {view.kind === "error" && (
+        <>
+          <p>{labels.failure}</p>
+          <ReadAgain labels={labels} marker="sampler-temperature" onRetry={onRetry} />
+        </>
+      )}
       {view.kind === "ready" && (
         <>
           <label className="management-settings-label" htmlFor="sampler-temperature">
@@ -1651,6 +1699,16 @@ export function SettingsSurfacePanel({
   const [promptAdditionView, setPromptAdditionView] = useState<GamePromptAdditionView>({ kind: "loading" });
   const [samplerView, setSamplerView] = useState<SamplerTemperatureView>({ kind: "loading" });
   /**
+   * How many times the player has asked the four settings reads to be taken again.
+   *
+   * The reads live in one effect (`[api, csrfToken]`), and a failure used to have no way back: the
+   * connection section and the model editors were simply not rendered, so a transient failure read as
+   * "this build does not offer it" and the only escape was reloading the page. This is that way back -
+   * one counter for the four groups, because they are one surface's reads and one press re-takes all of
+   * them.
+   */
+  const [settingsReads, setSettingsReads] = useState(0);
+  /**
    * The temperature field's own text, with `""` standing for "follow the preset".
    *
    * A string and not a number: the player types through states no number can hold (`""`, `"0."`), and a
@@ -1698,6 +1756,22 @@ export function SettingsSurfacePanel({
   // mount's own concern and never re-run this load.
   const mountUiLocaleRef = useRef(uiLocale);
   const { inline, report } = useSurfaceNotice(onNotice);
+
+  /**
+   * Takes the four settings reads again, in place.
+   *
+   * The groups go back to their reading state rather than to nothing, so each region stays where it is
+   * and says it is reading again instead of vanishing while the read runs - the shape every other
+   * settings group already has (`languageView`, `appearanceView` and `voiceView` each render their own
+   * loading line inside a section that is always there).
+   */
+  const retrySettingsReads = (): void => {
+    setConnectionView({ kind: "loading" });
+    setModelProfilesView({ kind: "loading" });
+    setPromptAdditionView({ kind: "loading" });
+    setSamplerView({ kind: "loading" });
+    setSettingsReads((reads) => reads + 1);
+  };
 
   useEffect(() => {
     let active = true;
@@ -1844,7 +1918,7 @@ export function SettingsSurfacePanel({
     return () => {
       active = false;
     };
-  }, [api, csrfToken]);
+  }, [api, csrfToken, settingsReads]);
 
   /**
    * Writes the companion language. It is the player's own BCP-47 tag, so nothing
@@ -2233,10 +2307,7 @@ export function SettingsSurfacePanel({
         {/* The surface's identity column: how the companion looks, what language she speaks, and the model connection
             with the two profiles that configure it. */}
         <div className="settings-track" data-settings-track="companion">
-          {connectionView.kind === "ready" && (
-            // Rendered only when the mounted profile actually published the
-            // connection routes; a profile without them never shows a control that
-            // could not work.
+          {connectionView.kind === "ready" ? (
             <ConnectionSettingsPanel
               connectionView={connectionView}
               modelRoute={modelRoute}
@@ -2266,6 +2337,27 @@ export function SettingsSurfacePanel({
                 }))
               }
             />
+          ) : (
+            /*
+             * The group keeps its place when its read did not answer.
+             *
+             * It used to render nothing at all, so a transient failure and a build that does not serve
+             * the route looked exactly alike: "my connection is gone". The state already distinguishes
+             * the two (`unavailable` is the route, `error` is a failed re-read), and the fact a player
+             * can act on is the same in both: the read taken again, offered here rather than only in
+             * the Chat list's own retry.
+             */
+            <section
+              className="management-settings-section"
+              aria-label={labels.connectionSettings}
+              data-settings-unread="connection"
+            >
+              <h2>{labels.connectionSettings}</h2>
+              <p>{connectionView.kind === "loading" ? labels.loading : labels.failure}</p>
+              {connectionView.kind === "loading" ? null : (
+                <ReadAgain labels={labels} marker="connection" onRetry={retrySettingsReads} />
+              )}
+            </section>
           )}
           <LanguageSettingsPanel
             languageView={languageView}
@@ -2280,15 +2372,27 @@ export function SettingsSurfacePanel({
             labels={labels}
             onSelectAppearance={mutateAppearance}
           />
-          {modelProfilesView.kind === "ready" && (
-            // Rendered only when the mounted profile published the model-profile
-            // routes; a profile without them never shows an editor it cannot serve.
+          {modelProfilesView.kind === "ready" ? (
             <ModelProfilesPanel
               view={modelProfilesView}
               labels={labels}
               drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
               onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
             />
+          ) : (
+            // The editors a read did not answer are not an absence of the feature: the heading stays,
+            // the group says what happened, and the read is offered again.
+            <section
+              className="management-settings-section"
+              aria-label={labels.modelProfilesTitle}
+              data-settings-unread="model-profiles"
+            >
+              <h2>{labels.modelProfilesTitle}</h2>
+              <p>{modelProfilesView.kind === "loading" ? labels.loading : labels.failure}</p>
+              {modelProfilesView.kind === "loading" ? null : (
+                <ReadAgain labels={labels} marker="model-profiles" onRetry={retrySettingsReads} />
+              )}
+            </section>
           )}
         </div>
         {/* The tuning column: what a player changes about how the model is asked - the game's supplementary
@@ -2305,6 +2409,7 @@ export function SettingsSurfacePanel({
               labels={labels}
               onChange={(next) => promptAddition.type(next)}
               onSave={savePromptAddition}
+              onRetry={retrySettingsReads}
             />
           }
           <SamplerTemperaturePanel
@@ -2313,6 +2418,7 @@ export function SettingsSurfacePanel({
             labels={labels}
             onChange={setSamplerDraft}
             onSave={saveSamplerTemperature}
+            onRetry={retrySettingsReads}
           />
           <VoiceSettingsPanel
             voiceView={voiceView}
