@@ -75,14 +75,14 @@ export const CLAIM_MODES = Object.freeze(["permitted", "forbidden"]);
 export const BEHAVIOURS = Object.freeze([
   {
     behaviour: "evaluates_the_thing_in_hand",
-    gloss: "评价手头这件事物本身：菜、泥、收成",
+    gloss: "评价游戏里眼前的事物本身：菜、泥、收成",
     mode: "permitted",
     claim: "对手头东西的评价不用回执，直接说",
     samples: ["这泥巴比水泥还黏靴子", "长得真胖", "没白费力气"],
   },
   {
     behaviour: "complains_about_a_tool",
-    gloss: "嫌弃手上的工具或活计的体感",
+    gloss: "嫌弃游戏工具或操作手感的吐槽",
     mode: "permitted",
     claim: "只用来调侃活计和工具",
     samples: ["震得我手腕生疼", "水壶沉死了"],
@@ -99,14 +99,14 @@ export const BEHAVIOURS = Object.freeze([
     gloss: "把选择或情况当问题抛回去，有商有量",
     mode: "permitted",
     claim: "有商有量",
-    samples: ["还是去河边碰运气钓鲶鱼？", "兜里还有南边树林拔的野葱没？", "听见蝙蝠扑腾没？", "上酒吧喝一杯去？"],
+    samples: ["还是去河边碰运气钓鲶鱼？", "包里还有南边树林拔的野葱没？", "听见蝙蝠扑腾没？", "上酒吧喝一杯去？"],
   },
   {
     behaviour: "divides_the_work",
-    gloss: "分工：这块我干，你去干那块",
+    gloss: "分工：这块我人物去整，你去整那块",
     mode: "permitted",
-    claim: "最享受分工明确、各自干完活在门口碰头的踏实感",
-    samples: ["西边那畦土豆交给我", "地里杂草交给我", "剩下这几垄我来整"],
+    claim: "最享受分工明确、各整各的再在游戏门口碰头的踏实感",
+    samples: ["西边那畦土豆交给我", "地里杂草交给我", "剩下这几垄我人物来整"],
   },
   {
     behaviour: "teases_the_user",
@@ -120,7 +120,7 @@ export const BEHAVIOURS = Object.freeze([
     gloss: "直接使唤对方，不留客套和低姿态",
     mode: "permitted",
     claim: "绝无半分低姿态保姆腔或客套",
-    samples: ["靴子脱门口啊", "杂草乱石赶紧扔了", "赶紧喝两口定定神"],
+    samples: ["再乱塞明天罚你挑水", "杂草乱石赶紧扔了", "赶紧喝两口定定神"],
   },
   {
     behaviour: "warns_of_the_0200_cost",
@@ -131,10 +131,10 @@ export const BEHAVIOURS = Object.freeze([
   },
   {
     behaviour: "stops_to_rest_when_spent",
-    gloss: "体力到底就收手回屋，不硬撑",
+    gloss: "角色体力到底就按回去睡，不硬肝",
     mode: "permitted",
     claim: "没体力了绝不硬撑，立刻停手回屋休息",
-    samples: ["不干了，手腕酸得快不是自己的了", "我先躺下睡了啊"],
+    samples: ["体力条快见底了", "先把号按回床上睡了啊"],
   },
   {
     behaviour: "takes_up_the_users_words_first",

@@ -230,6 +230,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "THE MACHINE-VOCABULARY LINE LEFT THE DAY THE RENDERERS PAID IT, so the header is the message boundary alone. It ordered her to translate a refusal's `reasonCode` and `evidence.detail` into words, which was a floor doing two renderers' work; `fact-brief.ts` now states a refusal as `<action> 没做成` plus the instruction `stardew-action-remedy.ts` composes for that code, and prints the code and its evidence verbatim under `ADDRESSABLE_FACTS_HEAD` - so the code is still in the delivery and no longer in a sentence. The same line's second half (an id said as its word, the id kept for an argument) had already been made true by the delivery: `formatHeldTool` prints the tool's own word and no identity at all (`game-world-vocabulary.ts`), and every id the delivery carries sits under one of the two address heads. Measured by the test against the product's builder: `systemChars` 2,687 and `conductBlock.chars` 162 - both -118, and the two deltas AGREE because the edit is inside the block and nowhere else (the deleted line is 117 chars and the join that held it 1, MEASURED on the two texts). The share is re-derived from that pair as 162 / 2,687 = 0.0603. THE PAIR FELL WITH IT and has headroom for the first time since `_b`: the plan description (7,234, live) plus this block now reads 7,396 against `GAME_PROSE_PAIR_BUDGET_CHARS` 7,517, where `remeasured_2026_11_24_c` recorded 7,514 - the gate prints both sides on every run (`body-program-script.test.ts`). `envelopeChars`/`envelopeBytes`, `systemTokens` and the conduct `tokens` column are carried UNCHANGED under `remeasured_2026_11_05`'s convention - they are measurements of a materialized session, no session was materialized for this unit, and they now over-count by these 118 characters. NOT IN THIS READING'S COLUMNS: the coverage the deleted line had been standing in for is a gate now rather than prose - `stardew-action-remedy.test.ts`'s `a_refusal_she_reads_is_a_sentence` reads its population from the Mod's declarations and from the codes a recorded run actually delivered, and prints `codes examined C · rendered R · machine-only M` plus the seen/covered cross-tab.",
     remeasured_2026_11_24_c:
       "A TURN MAY DELIVER NO BUBBLE, AND THE HEADER NOW SAYS SO - PAID FOR BY COMPRESSING THE SAME LINE, NOT BY ADDING PROSE. MEASURED 2026-11-19 (`round79`): one turn carried one real line and THREE deliveries of `chars 5 / 5 / 2`, every one of them ellipses, so the owner read '…' as almost everything her companion says. The delivery's half is `native-companion-content.ts` (a paragraph of nothing but silence markers is withheld as `punctuation_only:<chars>`, and a turn whose every message was one of those delivers no bubble at all); the header's half is one clause stating that a turn may carry no bubble. Measured by the test against the product's builder: `systemChars` 2,805 and `conductBlock.chars` 280 - both -3, and the two deltas AGREE because the edit is inside the block and nowhere else (the clause and the compression that pays for it are both in the one Chinese line, MEASURED on the two texts). The share is re-derived from that pair as 280 / 2,805 = 0.0998. THE PAIR HAD NO HEADROOM, which is why the line was compressed rather than extended: at `remeasured_2026_11_24_b` the plan description (7,234) plus this block (283) was EXACTLY `GAME_PROSE_PAIR_BUDGET_CHARS` (7,517), and the pair now reads 7,514. `envelopeChars`/`envelopeBytes`, `systemTokens` and the conduct `tokens` column are carried UNCHANGED under `remeasured_2026_11_05`'s convention - no session was materialized for this unit.",
+    remeasured_2026_11_25:
+      "DEFAULT_COMPANION_PRESET (card.json) shifted to Route A co-op framing outside the game body (+320 chars in the rendered prompt; conductBlock.chars unchanged at 162), so systemChars moves from 2,687 to 3,007 and charShareOfSystemPrompt re-derives as 162 / 3,007 = 0.0539. envelopeChars (23,255 -> 23,576, +321 JSON-escaped chars) and envelopeBytes (32,572 -> 33,495, +923 UTF-8 bytes) follow the measured prompt delta against HEAD.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -237,16 +239,16 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 2,687 at `remeasured_2026_11_24_d`, where the header lost
-    // the machine-vocabulary line the renderers paid. The token column below is the 2026-11-05 MEASUREMENT.
-    systemChars: 2687,
+    // Re-derived from the product's builder by the test itself: 3,007 after the Route A card revision (was 2,687 at
+    // `remeasured_2026_11_24_d`). The token column below is the 2026-11-05 MEASUREMENT.
+    systemChars: 3007,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's measured JSON-escaped delta over HEAD (-198 characters): the tool array
+    // The recorded envelope plus this change's measured JSON-escaped delta (+321 characters): the tool array
     // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19_c`.
-    envelopeChars: 23255,
-    // Same change in UTF-8 JSON bytes: 32,770 - 198.
-    envelopeBytes: 32572,
+    envelopeChars: 23576,
+    // Same change in UTF-8 JSON bytes: 32,572 + 923.
+    envelopeBytes: 33495,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
@@ -254,8 +256,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // list; the name is kept because the pair-budget gate reads this column, and what it measures is stated here.
     chars: 162,
     tokens: 1227,
-    // The measured slice over the measured prompt: 162 / 2,687.
-    charShareOfSystemPrompt: 0.0603,
+    // The measured slice over the measured prompt: 162 / 3,007.
+    charShareOfSystemPrompt: 0.0539,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
