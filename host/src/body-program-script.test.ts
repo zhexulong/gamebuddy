@@ -26,9 +26,9 @@ import {
   planShape,
   planWorkDescription,
 } from "./body-program-script.js";
-import { ROW_STATE_FIELDS } from "./game-world-vocabulary.js";
-import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
 import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
+import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
+import { ROW_STATE_FIELDS } from "./game-world-vocabulary.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
 

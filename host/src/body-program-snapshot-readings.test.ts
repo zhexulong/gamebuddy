@@ -5,8 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  compilePlanScript,
   type CompiledPlan,
+  compilePlanScript,
   PLAN_SNAPSHOT_READINGS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
@@ -413,79 +413,77 @@ test("a family the snapshot does not publish leaves the number she wrote alone",
  * an outcome rather than by a sentence.
  */
 test("a_defence_the_submitter_cannot_know_is_not_the_submitter's:every published argument", () => {
-  const faults: string[] = [];
-  const undelivered: string[] = [];
-  let fingerprints = 0;
-  let derived = 0;
-  let intentions = 0;
-  for (const action of PLAN_ACTIONS) {
-    const familyFields = action.targetFamily === null ? [] : (FAMILY_FIELDS.get(action.targetFamily) ?? []);
-    for (const argument of action.arguments) {
-      const subject = `${action.actionId}.${argument.name}`;
-      const field = PLAN_SNAPSHOT_READINGS.get(argument.name);
-      if (field === undefined) {
-        intentions += 1;
-        continue;
-      }
-      fingerprints += 1;
-      const result = compile(callScript(action, [argument.name]), snapshotWith(action));
-      // THE NEGATIVE, for every action at once: only a reading may ever be written by the compiler.
-      for (const binding of boundOf(result)) {
-        const named = binding.slice("bound=".length, binding.indexOf(";from=")).split(".")[1];
-        if (named === undefined || !PLAN_SNAPSHOT_READINGS.has(named))
-          faults.push(`${subject}: the compiler bound ${binding}, which is not a reading`);
-      }
-      // THE OUTCOME IS THE MEASUREMENT, not a prediction of it: the compiler either read the row or it did not, and the
-      // census counts what happened.
-      const boundThis = boundOf(result).some((binding) =>
-        binding.startsWith(`bound=${action.actionId}.${argument.name};`),
-      );
-      if (!boundThis) {
-        // TWO REASONS AND ONLY TWO, each a fact read off the surface: the row does not publish this field, or no
-        // argument she writes names a field the row publishes. Either way her number is the only source, and the
-        // census names it so the next unit can see what is still hers to copy.
-        const why =
-          action.targetFamily === null
-            ? "the surface declares no target family"
-            : !familyFields.includes(field)
-              ? `${action.targetFamily} publishes no \`${field}\``
-              : `no argument of hers names a field ${action.targetFamily} publishes`;
-        undelivered.push(`${subject}: ${why}`);
-        continue;
-      }
-      derived += 1;
-      const expected = field === "slot" ? String(ROW_SLOT) : ROW_TARGET_ID;
-      assert.equal(
-        valueOf(result, action.actionId, argument.name),
-        expected,
-        `${subject}: the row publishes ${field}=${expected}`,
-      );
-      // AND WHEN THE PUBLISHED FAMILY HOLDS NO ROW AT HER TARGET, NOTHING IS ACCEPTED: the refusal is the whole point.
-      const elsewhere = snapshotCarrying(bareSnapshot(action.actionId), action.targetFamily!, [
-        rowAt(familyFields, { x: 90, y: 90 }),
-      ]);
-      const refused = compile(callScript(action, [argument.name]), elsewhere);
-      const code = refused.status === "compiled" ? "accepted" : refused.reasonCode;
-      if (
-        !(
-          code.startsWith(`plan_script_target_not_in_the_submitted_snapshot:${action.targetFamily!}:`) ||
-          code === "accepted"
-        )
-      )
-        faults.push(`${subject}: a snapshot holding other targets answered ${code}`);
-    }
-  }
+  const census: Census = { faults: [], undelivered: [], fingerprints: 0, derived: 0, intentions: 0 };
+  for (const action of PLAN_ACTIONS) for (const argument of action.arguments) readOneArgument(action, argument, census);
   console.log(
-    `a_defence_the_submitter_cannot_know_is_not_the_submitter's: fingerprints ${fingerprints} · derived ${derived} · ` +
-      `still-the-model's ${intentions}`,
+    `a_defence_the_submitter_cannot_know_is_not_the_submitter's: fingerprints ${String(census.fingerprints)} · ` +
+      `derived ${String(census.derived)} · still-the-model's ${String(census.intentions)}`,
   );
-  console.log(`  undelivered, each named: ${undelivered.join(", ")}`);
-  assert.ok(fingerprints > 100, `examined ${String(fingerprints)} fingerprint arguments`);
-  assert.ok(intentions > 150, `examined ${String(intentions)} arguments the author must still state`);
-  assert.ok(derived > 60, `the compiler bound ${String(derived)} of ${String(fingerprints)} readings`);
+  console.log(`  undelivered, each named: ${census.undelivered.join(", ")}`);
+  assert.ok(census.fingerprints > 100, `examined ${String(census.fingerprints)} fingerprint arguments`);
+  assert.ok(census.intentions > 150, `examined ${String(census.intentions)} arguments the author must still state`);
   assert.ok(
-    undelivered.some((entry) => entry.startsWith("plant_seed.")) === false,
-    `the measured class must be delivered, not excused: ${undelivered.filter((e) => e.startsWith("plant_seed.")).join(", ")}`,
+    census.derived > 60,
+    `the compiler bound ${String(census.derived)} of ${String(census.fingerprints)} readings`,
   );
-  assert.deepEqual(faults, [], faults.join("\n"));
+  assert.ok(
+    census.undelivered.some((entry) => entry.startsWith("plant_seed.")) === false,
+    `the measured class must be delivered, not excused: ${census.undelivered.filter((e) => e.startsWith("plant_seed.")).join(", ")}`,
+  );
+  assert.deepEqual(census.faults, [], census.faults.join("\n"));
 });
+
+/** What one gate run counted, so the loop that fills it stays one shape rather than five counters in scope. */
+type Census = {
+  faults: string[];
+  undelivered: string[];
+  fingerprints: number;
+  derived: number;
+  intentions: number;
+};
+
+/** Why the compiler could not read one argument, in the surface's own terms - or `undefined` when it did read it. */
+function unreadReason(action: PublishedPlanAction, field: string, familyFields: readonly string[]): string {
+  if (action.targetFamily === null) return "the surface declares no target family";
+  if (!familyFields.includes(field)) return `${action.targetFamily} publishes no \`${field}\``;
+  return `no argument of hers names a field ${action.targetFamily} publishes`;
+}
+
+function readOneArgument(action: PublishedPlanAction, argument: DeclaredArgument, census: Census): void {
+  const subject = `${action.actionId}.${argument.name}`;
+  const field = PLAN_SNAPSHOT_READINGS.get(argument.name);
+  if (field === undefined) {
+    census.intentions += 1;
+    return;
+  }
+  census.fingerprints += 1;
+  const familyFields = action.targetFamily === null ? [] : (FAMILY_FIELDS.get(action.targetFamily) ?? []);
+  const result = compile(callScript(action, [argument.name]), snapshotWith(action));
+  // THE NEGATIVE, for every action at once: only a reading may ever be written by the compiler.
+  for (const binding of boundOf(result)) {
+    const named = binding.slice("bound=".length, binding.indexOf(";from=")).split(".")[1];
+    if (named === undefined || !PLAN_SNAPSHOT_READINGS.has(named))
+      census.faults.push(`${subject}: the compiler bound ${binding}, which is not a reading`);
+  }
+  // THE OUTCOME IS THE MEASUREMENT, not a prediction of it: the compiler either read the row or it did not.
+  if (!boundOf(result).some((binding) => binding.startsWith(`bound=${action.actionId}.${argument.name};`))) {
+    census.undelivered.push(`${subject}: ${unreadReason(action, field, familyFields)}`);
+    return;
+  }
+  census.derived += 1;
+  const expected = field === "slot" ? String(ROW_SLOT) : ROW_TARGET_ID;
+  assert.equal(
+    valueOf(result, action.actionId, argument.name),
+    expected,
+    `${subject}: the row publishes ${field}=${expected}`,
+  );
+  // AND WHEN THE PUBLISHED FAMILY HOLDS NO ROW AT HER TARGET, NOTHING IS ACCEPTED: the refusal is the whole point.
+  const elsewhere = snapshotCarrying(bareSnapshot(action.actionId), action.targetFamily!, [
+    rowAt(familyFields, { x: 90, y: 90 }),
+  ]);
+  const refused = compile(callScript(action, [argument.name]), elsewhere);
+  const code = refused.status === "compiled" ? "accepted" : refused.reasonCode;
+  const namesTheAbsence = code.startsWith(`plan_script_target_not_in_the_submitted_snapshot:${action.targetFamily!}:`);
+  if (!namesTheAbsence && code !== "accepted")
+    census.faults.push(`${subject}: a snapshot holding other targets answered ${code}`);
+}

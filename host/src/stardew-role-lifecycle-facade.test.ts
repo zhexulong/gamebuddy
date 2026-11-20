@@ -193,6 +193,7 @@ test("facade delegates lifecycle projection and exposes no direct launch route",
     assert.equal("launch" in facade, false);
     assert.equal("reserveAiClientLaunch" in facade, false);
     assert.deepEqual(Object.keys(owner).sort(), [
+      "noteAiClientEnded",
       "readOwnedAiClientGeneration",
       "readStatus",
       "reserveAiClientLaunch",
