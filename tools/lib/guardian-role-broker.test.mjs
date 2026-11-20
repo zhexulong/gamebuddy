@@ -14,6 +14,7 @@
  *     fixture is not built.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -479,6 +480,153 @@ test(
       // The broker keeps the endpoint and the token to itself: nothing it reports may carry them.
       assert.equal(JSON.stringify(facts).includes("GameBuddy.Guardian."), false);
       assert.equal(JSON.stringify(facts).includes("token"), false);
+    } finally {
+      host.close();
+      await broker.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+/**
+ * A Guardian whose private ingress appears only after `delayMs`: it holds the control frame the broker
+ * writes to stdin in the pipe buffer, starts the real image late, and lets it inherit that same stdin.
+ *
+ * This is the shape the machine produces for real. Measured 2026-11-21 (`.tmp/lane-livenow6.md`), the
+ * wait from control frame to listening pipe for one and the same built image was 0.617 s, 12.885 s,
+ * 15.692 s and 17.866 s on four runs - and the r17 live run's only remaining launch refusal was
+ * `role_broker_private_ingress_unavailable:ENOENT` at the 10 s window this broker used to impose on a
+ * command the Host had already allowed 60 s for.
+ */
+const SLOW_GUARDIAN_SHIM = [
+  'const { spawn } = require("node:child_process");',
+  "const [image, delayMs] = process.argv.slice(2);",
+  "setTimeout(() => {",
+  '  const child = spawn(image, [], { stdio: ["inherit", "inherit", "inherit"], windowsHide: true });',
+  '  child.on("exit", (code) => process.exit(code ?? 0));',
+  "}, Number(delayMs));",
+  "",
+].join("\n");
+
+/** A broker on the real image, run behind a shim that starts it `delayMs` late. */
+async function startLateGuardianBroker(root, delayMs) {
+  const shim = join(root, "slow-guardian.cjs");
+  await writeFile(shim, SLOW_GUARDIAN_SHIM, "utf8");
+  const bootstrapId = randomBytes(32).toString("hex");
+  const image = Object.freeze({
+    path: GUARDIAN_IMAGE,
+    sha256: createHash("sha256")
+      .update(await readFile(GUARDIAN_IMAGE))
+      .digest("hex"),
+  });
+  const broker = createGuardianRoleBroker({
+    bootstrapId,
+    binding: Object.freeze({
+      generation: "gen-late",
+      inventoryDigest: "d".repeat(64),
+      runtimeAdmissionSha256: "a".repeat(64),
+    }),
+    image,
+    imagePath: GUARDIAN_IMAGE,
+    spawnImpl: (path, args, options) => spawn(process.execPath, [shim, path, String(delayMs)], options),
+    log: () => undefined,
+  });
+  await broker.listen();
+  const host = connectHost(guardianPipeEndpoint(bootstrapId));
+  await host.ready;
+  const helloRequest = {
+    schema: "gamebuddy-desktop-guardian-session/v1",
+    protocolVersion: 1,
+    operation: "hello",
+    bootstrapId,
+    generation: "gen-late",
+    inventoryDigest: "d".repeat(64),
+    runtimeAdmissionSha256: "a".repeat(64),
+  };
+  host.send(helloRequest);
+  await host.next((frame) => frame.operation === "hello");
+  const correlation = { guardianInstanceId: randomUUID(), guardianEpoch: 1, attemptId: randomUUID() };
+  const armFrame = (operationWaitBudgetMs) => ({
+    schema: "gamebuddy-desktop-guardian-session/v1",
+    protocolVersion: 1,
+    operation: "arm_attempt",
+    bootstrapId,
+    generation: "gen-late",
+    inventoryDigest: "d".repeat(64),
+    runtimeAdmissionSha256: "a".repeat(64),
+    operationWaitBudgetMs,
+    ...correlation,
+    privateFrame: Buffer.from(
+      JSON.stringify({
+        ...correlation,
+        revision: randomUUID(),
+        leaseName: `Local\\LateArmLease${randomUUID().replaceAll("-", "")}`,
+        playerJobName: `Local\\LateArmPlayer${randomUUID().replaceAll("-", "")}`,
+        aiJobName: `Local\\LateArmAi${randomUUID().replaceAll("-", "")}`,
+        approvedExecutable: ROLE_FIXTURE,
+      }),
+    ).toString("base64url"),
+  });
+  return { broker, host, armFrame };
+}
+
+test(
+  "an arm waits as long as the Host's own budget allows, not a shorter window of the broker's",
+  { skip: STATIC_SKIP, timeout: 90_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "role-broker-late-arm-"));
+    const { broker, host, armFrame } = await startLateGuardianBroker(root, 11_000);
+    try {
+      // 11 s is past the window this broker used to impose and inside the 60 s the Host allows.
+      host.send(armFrame(60_000));
+      const armed = await host
+        .next((frame) => frame.operation === "arm_attempt", 30_000)
+        .catch((error) => {
+          // A refused arm destroys the session without answering the command, so the refusal name in the
+          // broker's facts is the only statement of what happened: a bare wait timeout would hide it.
+          throw new Error(
+            `the arm was never answered (${String(error?.message)}); refusals=${JSON.stringify(broker.facts().refusals)}`,
+          );
+        });
+      assert.equal(armed.status, "armed", "a guardian that needs 11 s to listen must still be armed");
+      assert.deepEqual(broker.facts().refusals, []);
+    } finally {
+      host.close();
+      await broker.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "an arm the Host budgets less than the guardian needs is refused by name, not waited for forever",
+  { skip: STATIC_SKIP, timeout: 60_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "role-broker-short-arm-"));
+    const { broker, host, armFrame } = await startLateGuardianBroker(root, 11_000);
+    try {
+      const began = Date.now();
+      host.send(armFrame(400));
+      // A refused arm does not come back as a frame: the broker ends the session and records the name,
+      // which is where every reader of this wire learns what happened.
+      let refusals = [];
+      while (Date.now() - began < 8_000) {
+        refusals = [...broker.facts().refusals];
+        if (refusals.length > 0) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+      }
+      // Two spellings mean the same thing here and which one wins is a race between the relay's own
+      // deadline and the connect loop's: both say the command's budget, not a longer window, ended it.
+      assert.equal(refusals.length, 1, `one refusal, named: ${JSON.stringify(refusals)}`);
+      assert.match(refusals[0], /^role_broker_(arm_timeout:400ms|private_ingress_unavailable:ENOENT)$/u);
+      assert.deepEqual(
+        broker.facts().operations.map((row) => `${row.operation}:${row.outcome}`),
+        ["arm_attempt:refused"],
+      );
+      assert.ok(
+        Date.now() - began < 5_000,
+        `the 400 ms budget is what ends the wait, not a longer window: it took ${String(Date.now() - began)}ms`,
+      );
     } finally {
       host.close();
       await broker.dispose();

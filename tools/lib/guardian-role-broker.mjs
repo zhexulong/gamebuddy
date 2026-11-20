@@ -519,7 +519,6 @@ export function createGuardianRoleBroker({
   now = Date.now,
   log = (line) => process.stderr.write(`${line}\n`),
   helloTimeoutMs = 30_000,
-  privateConnectTimeoutMs = 10_000,
   guardianEnvironment = process.env,
 }) {
   // One binding, composed once. The endpoint id is this launcher's; the three generation facts come
@@ -779,11 +778,18 @@ export function createGuardianRoleBroker({
   }
 
   /**
-   * Connects the Guardian's private ingress, retrying inside one bounded window.
+   * Connects the Guardian's private ingress, retrying for as long as the command's own budget allows.
    *
    * The Guardian creates that pipe only after it has parsed this very command from its stdin, so the
    * first attempt legitimately finds no endpoint. The Desktop's .NET client retries internally;
    * Node's `createConnection` reports ENOENT and stops, so the retry is stated here, not assumed.
+   *
+   * The window is the command's budget and nothing else. This used to be a second, tighter number
+   * (10 s) inside a command the Host had already allowed `DESKTOP_RUNTIME_OPERATION_WAIT_BUDGET_MS`
+   * (60 s) for, and on this machine the wait from control frame to listening pipe has been measured
+   * at 0.617 s, 12.885 s, 15.692 s and 17.866 s for two different generations of the same image -
+   * so the tighter number refused arms the product would have accepted (measured 2026-11-21,
+   * `.tmp/lane-livenow6.md`: the r17 live run's only remaining launch refusal).
    */
   async function connectIngress(running, deadlineMs) {
     if (running.ingress !== null) return running.ingress;
@@ -862,7 +868,7 @@ export function createGuardianRoleBroker({
       return await withDeadline(commandFamily(operation), budget, async () => {
         await writeStream(running.stdin, nativeControlFrame(operation, command));
         if (operation === "arm_attempt" || operation === "launch_role") {
-          await connectIngress(running, Math.min(deadlineMs, now() + privateConnectTimeoutMs));
+          await connectIngress(running, deadlineMs);
           const body =
             operation === "arm_attempt"
               ? injectArmToken(running.token, decodePrivateFrame(command.privateFrame))
