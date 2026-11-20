@@ -1,18 +1,18 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4631, largest ExecutionManager at 25806 lines / 878 members across 52 partial(s).",
-  "revision": "da20b126",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 80 ts member(s) over 30 (2 at Biome's ceiling), 55 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4637, largest ExecutionManager at 26039 lines / 880 members across 52 partial(s).",
+  "revision": "eaac5c3e",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
   },
   "members": [
     {
-      "id": "cs:ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,List<string>,HashSet<string>)",
+      "id": "cs:ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,Sheet,List<string>,HashSet<string>)",
       "language": "cs",
-      "name": "ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,IReadOnlyDictionary<string, string>,List<string>,HashSet<string>)",
+      "name": "ActionExecutionCapabilityMatrixTests.RowFor(FarmhandActionRegistration,Sheet,List<string>,HashSet<string>)",
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ActionExecutionCapabilityMatrixTests.cs",
-      "line": 446,
-      "value": 31
+      "line": 522,
+      "value": 34
     },
     {
       "id": "cs:ActiveExecutionProjectionSourceShapeTests.WithoutComments(string)",
@@ -149,7 +149,7 @@
       "language": "cs",
       "name": "ExecutionManager.DiscoverWorldObjectTargets(Farmer)",
       "file": "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
-      "line": 1162,
+      "line": 1165,
       "value": 82
     },
     {
@@ -642,7 +642,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 1018,
+      "line": 1052,
       "value": 55,
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
@@ -1146,7 +1146,7 @@
       "parts": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4631,
+      "value": 4637,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved. THIS READING IS 4590 AND IT SHRANK: 4621 at `0e9d1db2` fell to 4608 at `4449d787` across the commits between them, and the last -18 is one commit - `DiscoverWoodFenceTargets`, `DiscoverCrabPotTargets` and `DiscoverFertilizerTargets` traded their duplicated window scans and their order-then-trim tails for one helper, which removed more points than the helper added."
     },
     {
@@ -1267,8 +1267,8 @@
       "files": 51,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 25806,
-      "methods": 878,
+      "lines": 26039,
+      "methods": 880,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED, and the arithmetic is 875 + 1 = 876 methods (the extracted helper `NearestFirstRadiusWindowRows`), 25623 + 9 = 25632 lines (three call sites made one) - both measured on this tree over the same 52 partials and 51 files, not carried from the previous record."
     },
     {
@@ -1321,9 +1321,9 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs",
-      "line": 51,
-      "lines": 1173,
-      "methods": 26,
+      "line": 52,
+      "lines": 1336,
+      "methods": 31,
       "reason": "recorded at 604844a6: 1147 lines, first record, and it is over the 1000-line ceiling. This is a TEST type (`GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs`) whose length is a table of pickup cases rather than a branched body - its class complexity is 13 against a bound of 200 - so the ceiling reading is the whole fact. `c4519440` (`[forage] a distance is a walk, not a verdict`) then took it 1147 -> 1151 lines over the SAME 26 methods (+5/-1: the case that states the walk instead of a refusal beyond the click radius), which is one more row in the table, not one more branch. RECORDED AS DEBT: splitting the case table into partials or a data source is what would take it under 1000, and nothing in this unit does that."
     },
     {
