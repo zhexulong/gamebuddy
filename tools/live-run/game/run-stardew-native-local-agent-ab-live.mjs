@@ -48,6 +48,7 @@ import {
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
+  nightReceiptPairingLine,
   parseReceiptEvidence,
   reconcileDaysWithTheWorld,
   sleepPromisesNotTaken,
@@ -105,6 +106,7 @@ import {
   SCHEDULED_DIALOGUE_GATES,
 } from "../dialogue-gates.mjs";
 import { assessInteractionValue } from "../interaction-value-gate.mjs";
+import { fileNightReceiptsOnTheirOwnNights } from "./night-receipt-filing.mjs";
 import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
 
@@ -2949,6 +2951,17 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       bedTimeBeforeCrossing = Math.max(bedTimeBeforeCrossing ?? 0, snapshot.timeOfDay);
     return snapshot;
   };
+  // The day this watch began on - which is NOT the day the world is on once the wait below is over.
+  //
+  // This used to be re-read after `waitForNightToBegin` had already returned, and that made "the day before the
+  // night" mean "the day after it" on every night the engine took by its own pass-out. Measured 2026-10-28
+  // (`round6`): the watch began on spring 5, the 02:00 pass-out crossed to spring 6 at 02:12:43, the wait noticed the
+  // moved calendar at 02:12:44 and returned, and `dayBefore` was read as 6 - so the night's own crossing check at the
+  // end compared 6 against 6 and could only ever answer "not advanced". `startDay` is the same fact read before the
+  // wait, and on a night the companion sleeps it is the identical value the late read produced, so this is the same
+  // number wherever the late read was right. It is declared HERE, above the wait, because every record this watch can
+  // return publishes it - including the one that says the night never began.
+  const dayBefore = Number.isInteger(startDay) ? startDay : (client.state?.snapshot?.dayOfMonth ?? null);
   const waitForNightToBegin = async () => {
     let daySettled = false;
     void dayTurnSettled.then(() => {
@@ -3008,7 +3021,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     const verdict = judgeUncrossedNight({ witnesses: sleepWitnesses() });
     return Object.freeze({
       terminal: null,
-      after: await observeQuietly(),
+      after: Object.freeze({ ...(await observeQuietly()), dayBefore }),
       menus: [],
       // A night that never began has no crossing hour to report; the field is published as null rather than omitted,
       // so a reader never has to tell "not observed" apart from "not a field on this shape". When she DID go to bed
@@ -3024,16 +3037,6 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
           : Object.freeze({ ...verdict, reasonCode: neverStarted, bedTime: bedTimeWhenSheCommitted }),
     });
   }
-  // The day this watch began on - which is NOT the day the world is on once the wait above is over.
-  //
-  // This used to be re-read HERE, after `waitForNightToBegin` had already returned, and that made "the day before the
-  // night" mean "the day after it" on every night the engine took by its own pass-out. Measured 2026-10-28
-  // (`round6`): the watch began on spring 5, the 02:00 pass-out crossed to spring 6 at 02:12:43, the wait noticed the
-  // moved calendar at 02:12:44 and returned, and `dayBefore` was read as 6 - so the night's own crossing check at the
-  // end compared 6 against 6 and could only ever answer "not advanced". `startDay` is the same fact read before the
-  // wait, and on a night the companion sleeps it is the identical value the late read produced, so this is the same
-  // number wherever the late read was right.
-  const dayBefore = Number.isInteger(startDay) ? startDay : (client.state?.snapshot?.dayOfMonth ?? null);
   /**
    * Settle the level-up menu the rollover raised, with the ONE choice that takes no decision.
    *
@@ -3316,7 +3319,7 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     // throw away the distinction the loop just took the trouble to observe.
     return Object.freeze({
       terminal: null,
-      after: afterNight,
+      after: Object.freeze({ ...afterNight, dayBefore }),
       menus: outcome.menus,
       cause: null,
       bedTime: bedTimeBeforeCrossing,
@@ -3326,7 +3329,14 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
   }
   return Object.freeze({
     terminal,
-    after: await observeQuietly(),
+    // THE CALENDAR THIS WATCH BEGAN ON, ON EVERY RETURN THAT CARRIES ONE.
+    //
+    // `dayBefore` is the day the night ended on, in the same `dayOfMonth` base as the record's own `after.dayOfMonth`,
+    // and only the calendar branch above published it. A record that carries a crossing receipt publishes the day the
+    // night OPENED instead, so its own calendar could not answer "did this night cross" - reconciliation then had to
+    // read the receipt the record happened to carry, which is the misfiled one (`round80`). Publishing it here makes the
+    // record's calendar a witness on its own, and it is the identical value the calendar branch writes.
+    after: Object.freeze({ ...(await observeQuietly()), dayBefore }),
     menus: outcome.menus,
     cause,
     bedTime: bedTimeBeforeCrossing,
@@ -4568,6 +4578,25 @@ try {
     // `crossings: 3` does not, and that is the difference between a record and a witness.
     const worldEndings = worldNightEndingsFromFacts(factLog);
     const worldDayStarts = worldDayStartsFromFacts(factLog);
+    // WHICH NIGHT GOT A TURN AFTER IT, AS THE LOOP ALREADY KNOWS. `[]` in `nextDayAccomplishedActionIds` means two
+    // different things - "the day after this night produced nothing" and "no day after this night was ever issued" - and
+    // only the loop can tell them apart: it returns `completed: false` when it stopped on a night, and then the closing
+    // day's turn (`crossNights + 1`) never runs. Measured `round80`: the closing night's day lived 8.9 s and took no turn,
+    // and the rule that asks for farm work after a night fired on it. Stated as the loop's own fact, so that rule reads
+    // the record instead of its position in an array reconciliation appends to.
+    for (const [index, record] of crossing.dayRecords.entries()) {
+      record.nextDayIssued = index < crossing.dayRecords.length - 1 || crossing.completed === true;
+    }
+    // EACH NIGHT'S RECEIPT IS FILED ON THE RECORD WHOSE OWN CALENDAR IS THAT NIGHT, not on whichever watch window caught it:
+    // a `day_advanced` receipt is minted 18-122 ms AFTER the `day_started` of the day it opened, so it always lands in the
+    // NEXT night's watch (`round80` filed the first night's receipt on the second record). The account is in the module's
+    // header; the identity here is the receipt's own days, the same one `multiday-baseline.mjs` pairs by, so this reader
+    // and the gate cannot disagree.
+    const nightFiling = fileNightReceiptsOnTheirOwnNights({
+      dayRecords: crossing.dayRecords,
+      worldNightEndings: worldEndings,
+      receipts: factLog.map(recordedReceipt).filter((receipt) => receipt !== null),
+    });
     const reconciliation = reconcileDaysWithTheWorld({
       dayRecords: crossing.dayRecords,
       worldNightEndings: worldEndings,
@@ -4666,6 +4695,13 @@ try {
     console.error(
       "MULTIDAY_NIGHTS",
       `endings examined ${String(assessment.worldNights.examined ?? "not_measured")} · recorded ${String(assessment.worldNights.recorded)} · missing ${String(assessment.worldNights.missing ?? "not_measured")} · witnessed-by ${(assessment.worldNights.witnessedBy ?? []).join(",") || "nobody"}`,
+    );
+    // WHICH NIGHT EACH `day_advanced` RECEIPT NAMES, in the baseline's own line, beside what this run did about it: the
+    // two numbers must agree, because `paired` counts the nights with a record and `filed-by-own-night` is how many this
+    // process had to move to get there.
+    console.error(
+      "MULTIDAY_NIGHT_RECEIPTS",
+      `${nightReceiptPairingLine(assessment.nightReceipts)} · filed-by-own-night ${String(nightFiling.filed)} of ${String(nightFiling.examined)} · cleared-from-another-night ${String(nightFiling.cleared)}`,
     );
     multidayOutcome = Object.freeze({
       // What the LEDGER covers: the nights a watcher stood over, plus the nights only the world witnessed.

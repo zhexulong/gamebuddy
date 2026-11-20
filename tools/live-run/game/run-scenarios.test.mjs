@@ -562,7 +562,9 @@ test("the night's day-before baseline is read BEFORE the wait, not after it", ()
   // "not advanced", whatever else the night did.
   //
   // The assertion is an ORDER, because that is the defect: `startDay` is captured before `waitForNightToBegin` runs and
-  // `dayBefore` is derived from it.
+  // `dayBefore` is derived from it - and, since every record the watch returns publishes that day (including the one
+  // that says the night never began), the declaration itself sits above the wait rather than after it, where it would be
+  // in its temporal dead zone on the earliest return.
   const watcher = RUNNER.slice(
     RUNNER.indexOf("async function watchNightRollover(day"),
     RUNNER.indexOf("async function startVoiceLane"),
@@ -574,7 +576,10 @@ test("the night's day-before baseline is read BEFORE the wait, not after it", ()
   assert.ok(waitAt >= 0, "the watcher waits for the night to begin");
   assert.ok(dayBeforeAt >= 0, "the watcher needs a day-before baseline");
   assert.ok(startDayAt < waitAt, "the day is captured before the wait moves it");
-  assert.ok(waitAt < dayBeforeAt, "the baseline is derived after the wait returns");
+  assert.ok(
+    dayBeforeAt < waitAt,
+    "the baseline is derived from that day, above the wait, so every return can publish it",
+  );
   assert.match(watcher, /const dayBefore = Number\.isInteger\(startDay\)/u);
   assert.doesNotMatch(
     watcher,
