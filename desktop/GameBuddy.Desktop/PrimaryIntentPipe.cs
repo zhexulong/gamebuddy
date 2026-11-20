@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -30,7 +31,16 @@ internal enum PrimaryIntent
 /// </summary>
 internal sealed class PrimaryIntentPipe : IAsyncDisposable
 {
-    internal const string PipeName = "GameBuddy.Desktop.PrimaryIntent.v1";
+    /// <summary>
+    /// The channel a secondary invocation addresses. It carries this session's id because the
+    /// app-instance lease it belongs to is a <c>Local\</c> mutex: two players signed in to the same
+    /// machine at once are two legitimate primaries, and a machine-wide name would make the second
+    /// one's listener collide with the first one's - a launch refusal caused by somebody else's
+    /// session. One session and one partition (the installed one, the only partition the product
+    /// starts) is exactly the scope of one primary instance.
+    /// </summary>
+    internal static readonly string PipeName = ComposePipeName();
+
     internal const string FrameSchema = "gamebuddy-desktop-primary-intent/v1";
     private const int MaxFrameBytes = 512;
     private static readonly TimeSpan ClientConnectTimeout = TimeSpan.FromSeconds(5);
@@ -185,6 +195,12 @@ internal sealed class PrimaryIntentPipe : IAsyncDisposable
 
     /// <summary>A secondary invocation's own bounded wait for the primary instance.</summary>
     internal static TimeSpan SecondaryWait => ClientConnectTimeout;
+
+    private static string ComposePipeName()
+    {
+        using var process = Process.GetCurrentProcess();
+        return $"GameBuddy.Desktop.PrimaryIntent.v1.{process.SessionId}";
+    }
 
     public async ValueTask DisposeAsync()
     {

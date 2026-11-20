@@ -408,6 +408,20 @@ internal static class Program
     /// </summary>
     private enum LaunchStage { GenerationSelection, GenerationAdmission, ChildLaunch, HostSession }
 
+    /// <summary>
+    /// The primary instance's answer to a second invocation: the one intent such an invocation may
+    /// deliver is the player asking for the presentation again, which is the same act as the tray's
+    /// Open and is allowed to repeat. Both intents in the channel's vocabulary land here, because
+    /// this product's presentation is the player's own browser: asking to focus it is asking the
+    /// shell's association for the entry again, and re-opening an already-running tab is how the
+    /// platform answers that.
+    /// </summary>
+    internal static PrimaryIntentPipe ServePrimaryIntents(DesktopBrowserPresenter presentation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(presentation);
+        return PrimaryIntentPipe.Start(_ => presentation.Open(), cancellationToken);
+    }
+
     private static async Task<LaunchOutcome> RunProductionAsync(CancellationToken cancellationToken)
     {
         var stage = LaunchStage.GenerationSelection;
@@ -428,6 +442,15 @@ internal static class Program
                     ? LaunchOutcome.NoClaim
                     : LaunchOutcome.Of(DesktopLaunchResult.PrimaryInstanceUnavailable);
             }
+            // The player's presentation, as this launch owns it. The tray's Open and a second
+            // invocation's intent are the same act on the same object, so the launcher creates it
+            // here and the Host supervisor binds its entry into it once the child has acknowledged.
+            var presentation = new DesktopBrowserPresenter();
+            // The other half of the app-instance authority: from this instant this process ANSWERS
+            // the channel a second double-click uses, for the rest of its life. It is declared for
+            // disposal before the lease, so the listener always stops first - a secondary that
+            // reaches the channel therefore always reaches a process that still owns the instance.
+            await using var primaryIntents = ServePrimaryIntents(presentation, cancellationToken);
             // The launcher owns this step, before anything is launched and before the
             // generation is admitted. The data, operational and presentation roots are
             // derived rather than registered and no product component creates them, so
@@ -440,7 +463,7 @@ internal static class Program
             stage = LaunchStage.GenerationAdmission;
             await using var runtime = new InstalledHostRuntimeAdmission().Admit(selection);
             await using var image = await new InstalledGenerationAdmission(layout).AdmitGuardianAsync(selection, cancellationToken).ConfigureAwait(false);
-            await using var runtimeSupervisor = new RuntimeSupervisor();
+            await using var runtimeSupervisor = new RuntimeSupervisor { Presentation = presentation };
             await using var guardianSupervisor = new GuardianSupervisor();
 
             // A companion switch the player asked for through the Host takes effect HERE,

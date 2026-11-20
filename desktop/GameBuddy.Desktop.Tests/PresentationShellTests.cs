@@ -516,6 +516,94 @@ public sealed class PresentationShellTests
     }
 
     /// <summary>
+    /// The primary instance answers that channel for the whole life of the process.
+    ///
+    /// Catches the shipped defect this test was written for: nothing started the listener at all, so
+    /// every second double-click delivered its intent into a channel no process was serving, waited
+    /// out its bounded 5 s and showed the player "already running, and it did not answer". The
+    /// ordering matters as much as the call: the channel must exist before the launch does anything
+    /// that takes time (root provisioning, generation admission, the child's own start-up), because a
+    /// second double-click during start-up is when a player is most likely to make one.
+    /// </summary>
+    [Fact]
+    public void The_primary_instance_answers_the_secondary_channel_for_the_whole_life_of_the_process()
+    {
+        var source = File.ReadAllText(Path.Combine(DesktopProjectRoot(), "Program.cs"));
+        var launch = source[source.IndexOf("private static async Task<LaunchOutcome> RunProductionAsync(", StringComparison.Ordinal)..];
+        launch = launch[..launch.IndexOf("\n    }\n", StringComparison.Ordinal)];
+
+        var secondary = launch.IndexOf("if (!appInstance.IsPrimary)", StringComparison.Ordinal);
+        var serve = launch.IndexOf("ServePrimaryIntents(", StringComparison.Ordinal);
+        var provision = launch.IndexOf("ProvisionMutableRootsForCurrentUser();", StringComparison.Ordinal);
+
+        Assert.True(secondary >= 0 && serve > secondary,
+            "the instance that owns the app-instance lease must be the one that answers the secondary channel, and after it knows it is that instance");
+        Assert.True(provision > serve,
+            "the channel must be listening before the launch's first slow step, or a second double-click during start-up is the one that fails");
+    }
+
+    /// <summary>
+    /// A second invocation wakes the running instance instead of failing: its delivery reaches the
+    /// presentation this launch already owns, and the second ask - the same double-click again - is
+    /// answered again.
+    ///
+    /// Catches the shipped defect this pair of tests exists for: a bounded intent channel nobody
+    /// served, so the secondary's only action ended in "already running, and it did not answer" after
+    /// its 5 s wait while the primary sat at the same double-click with nothing to hand it to.
+    /// </summary>
+    [Fact]
+    public async Task A_second_invocation_opens_the_presentation_the_primary_already_owns()
+    {
+        var entry = new Uri(Entry);
+        var opened = new List<Uri>();
+        var gate = new object();
+        var presentation = DesktopBrowserPresenter.CreateForTesting(url =>
+        {
+            lock (gate) opened.Add(url);
+            return true;
+        });
+        presentation.Adopt(entry);
+
+        using var stopping = new CancellationTokenSource();
+        await using var channel = Program.ServePrimaryIntents(presentation, stopping.Token);
+
+        Assert.True(await AppInstanceOwner.RequestOpenAsync(CancellationToken.None));
+        await WaitFor(() => { lock (gate) return opened.Count == 1; });
+        lock (gate) Assert.Equal(new[] { entry }, opened);
+
+        // The second invocation is the player asking again, which may repeat - and the channel is
+        // still serving after the first intent settled.
+        Assert.True(await AppInstanceOwner.RequestOpenAsync(CancellationToken.None));
+        await WaitFor(() => { lock (gate) return opened.Count == 2; });
+        stopping.Cancel();
+    }
+
+    /// <summary>
+    /// An intent that arrives before the Host child has acknowledged is still answered: this launch
+    /// has no presentation entry yet, so there is nothing to open, but the secondary is told its
+    /// intent was delivered instead of being failed - and the automatic open follows the
+    /// acknowledgement a moment later.
+    ///
+    /// Catches: answering a start-up double-click with "it did not answer", which is the reading the
+    /// shipped defect produced in exactly this window.
+    /// </summary>
+    [Fact]
+    public async Task An_intent_that_arrives_before_the_child_acknowledged_is_still_answered()
+    {
+        var opened = 0;
+        var presentation = DesktopBrowserPresenter.CreateForTesting(_ => { opened += 1; return true; });
+        using var stopping = new CancellationTokenSource();
+        await using var channel = Program.ServePrimaryIntents(presentation, stopping.Token);
+
+        Assert.True(await AppInstanceOwner.RequestOpenAsync(CancellationToken.None));
+        // Nothing was opened, because there is nothing yet to open on this launch's behalf.
+        await Task.Delay(200);
+        Assert.Equal(0, opened);
+        Assert.Equal(DesktopBrowserPresenter.NotAdoptedCategory, presentation.ResultCategory());
+        stopping.Cancel();
+    }
+
+    /// <summary>
     /// One primary instance per partition, and a partition is a bounded closed token.
     /// Catches: a double launch producing two Host owners, an installed and a portable partition
     /// colliding on one lease name, and a caller addressing another product's instance by passing
