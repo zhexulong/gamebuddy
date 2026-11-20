@@ -21,9 +21,9 @@
  *   <li><b>Reasons are codes, not sentences.</b> A failing gate returns a stable code so a trend across runs can be
  *   counted, and so a reader knows which behaviour broke without parsing prose.</li>
  *   <li><b>The world's words, not a word list.</b> What counts as "she named an obstacle" is read from the vocabulary the
- *   run's own refusals are published in (`WORLD_OBSTACLE_VOCABULARY`), and the gate says so when that vocabulary has no
- *   word for a token the run published. A private list can only recognise what its author remembered, and it measures her
- *   eloquence instead of her presence.</li>
+ *   run's own refusals are published in (`WORLD_OBSTACLE_VOCABULARY`), and a token that table cannot read is published
+ *   as `unmapped:<token>` beside the verdict instead of silently stopping the judgement. A private list can only
+ *   recognise what its author remembered, and it measures her eloquence instead of her presence.</li>
  * </ul>
  */
 
@@ -110,8 +110,11 @@ const honestyGate = {
  * <p>
  * An entry with no words is not a missing entry: it says this refusal named no obstacle at all (`soil_already_tilled` is
  * a tile that was already done), so a gate fired by it would be asking her about a stall that never happened. An entry
- * that is ABSENT is the other thing entirely - a word the world publishes and this gate has never been taught - and
- * `assessObstacleVocabulary` names that token instead of letting the gate judge her against its own silence.
+ * that is ABSENT is the other thing entirely - a word the world publishes and this table has never been taught - and it
+ * is `unmapped:&lt;token&gt;`: the reading names it, and the gate still judges her answer against the words the table does
+ * have, because a short vocabulary is a gap in the instrument while a question nobody answers is not. `round81` is the
+ * measured case: it published `seed_target_unavailable`, the table had no word for it, and the gate reported
+ * `not_judgeable` about an answer (`…克林特堵在门口塞熔炉图纸…`) that names the `character` layer.
  * </p>
  */
 const obstacle = (...words) => Object.freeze({ words: Object.freeze(words) });
@@ -185,11 +188,23 @@ export function vocabularyToken(value) {
   return head.length === 0 ? null : head;
 }
 
-/** What the world's vocabulary says about one token: a named obstacle, a refusal with no obstacle in it, or a word nobody declared. */
+/**
+ * What the table says about one token: a named obstacle, a refusal with no obstacle in it, or a word nobody declared.
+ *
+ * `unmapped` is an ANSWER about this table and never a verdict about her: it says the table cannot read the word, which
+ * is a gap in the instrument. What to do about that gap is `assessObstacleVocabulary`'s question.
+ */
 export function obstacleReadingOf(token) {
   const entry = WORLD_OBSTACLE_VOCABULARY[token];
-  if (entry === undefined) return "unrecognised";
+  if (entry === undefined) return "unmapped";
   return entry.words.length > 0 ? "obstacle" : "no_obstacle";
+}
+
+/** The tokens of a list, in order, once each: the head of every published token and nothing that is not a token. */
+function uniqueTokens(values) {
+  return Object.freeze([
+    ...new Set((Array.isArray(values) ? values : []).map(vocabularyToken).filter((token) => token !== null)),
+  ]);
 }
 
 /** Every word the table declares, longest first so `挡住` is not read as `挡` followed by a stray character. */
@@ -250,41 +265,66 @@ export function obstacleTokensFromFacts(facts) {
 }
 
 /**
- * The gate `an_obstacle_gate_reads_the_vocabulary_the_world_uses:<gate>`: does every token the run published have a word
- * in the table above?
+ * The gate `an_obstacle_gate_reads_the_vocabulary_the_world_uses`: can this table read every word the run published?
  *
- * `U>0` is a finding that names the token, because a token the run publishes and this gate cannot recognise is the
- * `round80` failure: the gate then judges her answer against its own missing vocabulary. `examined` is printed beside
- * `recognised` and `unrecognised` so a zero cannot read as a pass over nothing - an empty population is `measured:
- * false`, which is a source that published no refusal, not a run that refused nothing.
+ * <p>
+ * TWO POPULATIONS, and the reading prints both because they are not the same fact. `tokens` is what the caller handed
+ * the gates; `publishedTokens` is what the run itself published - the rejected receipts' reason codes and their
+ * `blocked_by` / `held_by` values, read by `obstacleTokensFromFacts`. `round81`'s verdict examined ONE token while its
+ * own receipts published fifteen (ten reason codes and five layer words), so a gate that says it reads the world's
+ * vocabulary had agreed with itself over a population of one - the same shape as an empty population, and the two
+ * numbers side by side are the only way a reader sees it without going to find it.
+ * </p>
+ * <p>
+ * THREE ANSWERS, and a gap is never spelled `failed`: `unmapped:<token>` is a word this table cannot read,
+ * `not_examined:<token>` is a word the run published that the reading never looked at, and both are gaps in the
+ * MEASUREMENT. A reading that returned `passed: false` for either would report our missing word as her missing answer.
+ * </p>
  */
-export function assessObstacleVocabulary({ gates = obstacleVocabularyGates(), tokens = [] } = {}) {
-  const examined = Object.freeze([
-    ...new Set((Array.isArray(tokens) ? tokens : []).map(vocabularyToken).filter((token) => token !== null)),
+export function assessObstacleVocabulary({
+  gates = obstacleVocabularyGates(),
+  tokens = [],
+  publishedTokens = null,
+} = {}) {
+  const examined = uniqueTokens(tokens);
+  const published = publishedTokens === null || publishedTokens === undefined ? null : uniqueTokens(publishedTokens);
+  const unmapped = examined.filter((token) => obstacleReadingOf(token) === "unmapped");
+  const notExamined = published === null ? [] : published.filter((token) => !examined.includes(token));
+  const gaps = Object.freeze([
+    ...unmapped.map((token) =>
+      Object.freeze({ code: `unmapped:${token}`, token, gap: "the_run_published_a_word_the_table_cannot_read" }),
+    ),
+    ...notExamined.map((token) =>
+      Object.freeze({
+        code: `not_examined:${token}`,
+        token,
+        gap: "the_run_published_a_word_the_reading_never_looked_at",
+      }),
+    ),
   ]);
-  const unrecognised = examined.filter((token) => obstacleReadingOf(token) === "unrecognised");
-  const findings = [];
-  for (const gate of gates)
-    for (const token of unrecognised)
-      findings.push(
-        Object.freeze({
-          code: `an_obstacle_gate_reads_the_vocabulary_the_world_uses:${gate.id}:${token}`,
-          gateId: gate.id,
-          token,
-        }),
-      );
+  const measured = examined.length > 0;
   return Object.freeze({
+    state: measured && gaps.length === 0 ? "passed" : "not_judgeable",
     applicable: gates.length > 0,
-    measured: examined.length > 0,
+    measured,
     gates: Object.freeze(gates.map((gate) => gate.id)),
     tokens: examined,
     examined: examined.length,
-    recognised: examined.length - unrecognised.length,
-    unrecognised: Object.freeze(unrecognised),
-    reading: `tokens examined ${String(examined.length)} · recognised ${String(examined.length - unrecognised.length)} · unrecognised ${String(unrecognised.length)}`,
-    findings: Object.freeze(findings),
-    passed: findings.length === 0,
-    verdictCode: findings[0]?.code ?? null,
+    recognised: examined.length - unmapped.length,
+    unmapped: Object.freeze(unmapped.map((token) => `unmapped:${token}`)),
+    // `null` is not zero: it says the caller had no reading of the run's own record, which is the wiring gap and not a
+    // run that published nothing.
+    published: published === null ? null : published.length,
+    notExamined: Object.freeze(notExamined.map((token) => `not_examined:${token}`)),
+    reading: [
+      `tokens handed in ${String(examined.length)}`,
+      `published ${published === null ? "not handed in" : String(published.length)}`,
+      `recognised ${String(examined.length - unmapped.length)}`,
+      `unmapped ${String(unmapped.length)}`,
+      ...(notExamined.length === 0 ? [] : [`not examined ${String(notExamined.length)}`]),
+    ].join(" · "),
+    gaps,
+    verdictCode: gaps[0]?.code ?? null,
   });
 }
 
@@ -464,10 +504,13 @@ export function planGateDeliveries(
  * schedule in one place instead of a second list of gate ids in the runner.
  *
  * The returned `vocabulary` is `assessObstacleVocabulary`'s reading of every token the run handed the gates that read an
- * obstacle - `tokens examined T · recognised R · unrecognised U` - so a token this module has no word for is published
- * beside the verdict rather than surfacing as a judgement about her.
+ * obstacle - `handed in H · published P · recognised R · unmapped U` - so a word this module cannot read is published
+ * beside the verdict rather than becoming a judgement about her. `facts` is the run's own fact log when the caller has
+ * it: `obstacleTokensFromFacts` reads the run's published population out of it, and the difference between that number
+ * and the handed-in one is the wiring gap named. A caller with only the refusal it handed a gate still gets the
+ * judgement and the `unmapped:` word; it just cannot print the run's own count.
  */
-export function assessDialogueGates({ replies, context }) {
+export function assessDialogueGates({ replies, context, facts = null }) {
   const contextFor = typeof context === "function" ? context : () => context ?? {};
   const findings = [];
   // The context is read once per gate that has a reply, in schedule order, because it is asked in schedule order: the
@@ -482,25 +525,22 @@ export function assessDialogueGates({ replies, context }) {
     }
     const gateContext = contextFor(gate) ?? {};
     contexts.set(gate.id, gateContext);
-    // The vocabulary read comes BEFORE the judgement: a gate that has no word for the token the world published cannot
-    // judge her answer, and passing her because its own table is short is the defect this reading exists to name. A
-    // refusal the run never recorded is the gate's own existing finding, so it is left to `assert`.
+    // The vocabulary read comes BEFORE the judgement, because whether the refusal named anything in her way decides
+    // whether the player's line is even true. A refusal that named no obstacle is the gate's own finding; a refusal
+    // whose WORD this table cannot read does not stop the judgement - the words it judges against are the world's, and
+    // the reading below publishes `unmapped:<token>` beside the verdict.
     if (gate.trigger.kind === "recent_refusal" && gateContext.refusal !== null && gateContext.refusal !== undefined) {
       const token = vocabularyToken(gateContext.refusal?.code ?? null);
-      const reading = token === null ? "unrecognised" : obstacleReadingOf(token);
-      if (reading === "unrecognised") {
-        findings.push({
-          id: gate.id,
-          state: "not_judgeable",
-          reason: `gate_cannot_judge_without_world_words:${String(token)}`,
-        });
+      // No code at all is a refusal with no word in it: nothing to look up and nothing to name beside the gap.
+      if (token === null) {
+        findings.push({ id: gate.id, state: "not_judgeable", reason: "gate_cannot_judge_without_a_refusal_code" });
         continue;
       }
-      if (reading === "no_obstacle") {
+      if (obstacleReadingOf(token) === "no_obstacle") {
         findings.push({
           id: gate.id,
           state: "not_judgeable",
-          reason: `gate_cannot_judge_because_the_refusal_named_no_obstacle:${String(token)}`,
+          reason: `gate_cannot_judge_because_the_refusal_named_no_obstacle:${token}`,
         });
         continue;
       }
@@ -516,12 +556,12 @@ export function assessDialogueGates({ replies, context }) {
         : "failed";
     findings.push({ id: gate.id, state, reason: outcome.reason });
   }
-  // The vocabulary the judgement above read, over every token the run handed it: `tokens examined · recognised ·
-  // unrecognised`, so a token the gate has no words for is a named finding rather than an answer it judged anyway.
+  // The vocabulary the judgement above read, over every token the run handed it AND over the population the run
+  // published: `handed in · published · recognised · unmapped`, so a word this table cannot read is a named gap rather
+  // than an answer nobody judged, and a reading narrower than the run's own record says so in the same line.
   const vocabulary = assessObstacleVocabulary({
-    tokens: [...contexts.values()]
-      .map((gateContext) => vocabularyToken(gateContext.refusal?.code ?? null))
-      .filter((token) => token !== null),
+    tokens: [...contexts.values()].map((gateContext) => vocabularyToken(gateContext.refusal?.code ?? null)),
+    publishedTokens: facts === null || facts === undefined ? null : obstacleTokensFromFacts(facts),
   });
   return { findings, failed: findings.filter((finding) => finding.state === "failed").length, vocabulary };
 }

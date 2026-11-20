@@ -204,14 +204,14 @@ test("the obstacle gate reads every token the run's own refusals published", () 
   assert.equal(vocabularyToken("no_reachable_approach:16:40"), "no_reachable_approach");
   assert.equal(vocabularyToken("range:standability"), "range");
   assert.equal(vocabularyToken(null), null);
-  const vocabulary = assessObstacleVocabulary({ tokens });
+  const vocabulary = assessObstacleVocabulary({ tokens, publishedTokens: tokens });
   assert.deepEqual(
     obstacleVocabularyGates().map((entry) => entry.id),
     ["turn-stuck-just-now"],
   );
   assert.equal(vocabulary.gates[0], "turn-stuck-just-now");
-  assert.equal(vocabulary.reading, "tokens examined 19 · recognised 19 · unrecognised 0");
-  assert.equal(vocabulary.passed, true);
+  assert.equal(vocabulary.reading, "tokens handed in 19 · published 19 · recognised 19 · unmapped 0");
+  assert.equal(vocabulary.state, "passed");
   assert.equal(vocabulary.measured, true);
   console.error("DIALOGUE_OBSTACLE_VOCABULARY", vocabulary.reading);
   // The same population, read from the run itself while its directory is still on this machine, so this fixture cannot
@@ -231,30 +231,180 @@ test("the obstacle gate reads every token the run's own refusals published", () 
     console.error("DIALOGUE_OBSTACLE_VOCABULARY_ARTIFACT not compared: round80 result.json is not on this machine");
 });
 
-test("a token the gate has never been taught is named, and the gate refuses to judge rather than blame her", () => {
-  // The failure this replaces: the gate read the sentence against its own short word list, and a token it did not know
-  // was silently her fault. A named token is a finding about the GATE.
-  const vocabulary = assessObstacleVocabulary({ tokens: ["cutscene_active", "wormhole_blocked"] });
-  assert.equal(vocabulary.reading, "tokens examined 2 · recognised 1 · unrecognised 1");
-  assert.deepEqual(vocabulary.unrecognised, ["wormhole_blocked"]);
-  assert.deepEqual(
-    vocabulary.findings.map((entry) => entry.code),
-    ["an_obstacle_gate_reads_the_vocabulary_the_world_uses:turn-stuck-just-now:wormhole_blocked"],
+// `round81` (`.live-runs/game-ladder/2026-11-20T07-30-03-036Z-multiday_routine`): the obstacle gate was spoken at 06:10 on
+// day 2 against `seed_target_unavailable`, a code the table had never been taught, and the gate answered `not_judgeable`.
+const ROUND81_ARTIFACT = new URL(
+  "../../.live-runs/game-ladder/2026-11-20T07-30-03-036Z-multiday_routine/result.json",
+  import.meta.url,
+);
+// The window the runner waits before it reads a gate's reply out of the presentation stream (`DIALOGUE_REPLY_WINDOW_MS`).
+const REPLY_WINDOW_MS = 45_000;
+// What round81's 27 rejected receipts published, as the vocabulary keys: 10 reason codes and 5 `blocked_by` layer words.
+const ROUND81_POPULATION = Object.freeze([
+  "back_tile",
+  "building",
+  "buildings_tile",
+  "debris_target_changed",
+  "emote_busy",
+  "item_not_sold_here",
+  "item_target_gone",
+  "item_target_out_of_reach",
+  "no_native_path",
+  "no_reachable_approach",
+  "none",
+  "range",
+  "seed_target_unavailable",
+  "shop_target_unavailable",
+  "target_not_addressable",
+]);
+
+/** The three states of a verdict, counted, so "before" and "after" are readings rather than recollection. */
+const statesOf = (findings) =>
+  findings.reduce((tally, finding) => ({ ...tally, [finding.state]: (tally[finding.state] ?? 0) + 1 }), {});
+
+test("round81's new refusal code no longer silences the gate, and the run's own population is printed", () => {
+  if (!existsSync(ROUND81_ARTIFACT)) {
+    console.error("DIALOGUE_OBSTACLE_VOCABULARY_ARTIFACT not compared: round81 result.json is not on this machine");
+    return;
+  }
+  const report = JSON.parse(readFileSync(ROUND81_ARTIFACT, "utf8"));
+  const delivery = report.dialogueGateDelivery.find((entry) => entry.id === "turn-stuck-just-now");
+  assert.equal(delivery.state, "delivered");
+  assert.equal(delivery.refusal.code, "seed_target_unavailable", "the refusal the gate was actually handed");
+
+  // Her answer, read the way the runner reads it: the presentation pieces that arrived after the line was claimed.
+  const claimIndex = report.presentation.pieces.findIndex((piece) => piece.atMs >= delivery.atMs);
+  const reply = report.presentation.pieces
+    .slice(claimIndex)
+    .filter((piece) => piece.atMs <= delivery.atMs + REPLY_WINDOW_MS)
+    .map((piece) => piece.text)
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim();
+  const named = namesAnObstacle(reply);
+  assert.notEqual(named, null, `she answered the gate with words: ${reply}`);
+  assert.equal(named.tokens.includes("character"), true, `she named Clint in the doorway: ${reply}`);
+
+  // The population the run published, and the two words that cannot be read out of it.
+  const publishedTokens = obstacleTokensFromFacts(report.bridgeFacts);
+  assert.deepEqual([...publishedTokens].sort(), [...ROUND81_POPULATION]);
+  assert.equal(obstacleReadingOf("seed_target_unavailable"), "unmapped");
+  // And why it stays unmapped: the Mod publishes no layer for it, so no per-run derivation can resolve it to a noun.
+  const receipt = report.bridgeFacts.find((fact) => fact.reasonCode === "seed_target_unavailable");
+  assert.ok(receipt, "the run recorded the rejected receipt this gate was handed");
+  assert.equal(
+    /blocked_by=|held_by=/u.test(String(receipt.evidence.detail)),
+    false,
+    "the receipt names a target and a slot, never the layer that refused it",
   );
-  assert.equal(vocabulary.passed, false);
-  assert.equal(vocabulary.verdictCode, vocabulary.findings[0].code);
+
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": reply },
+    context: { refusal: delivery.refusal },
+    facts: report.bridgeFacts,
+  });
+  const finding = findingFor(verdict, "turn-stuck-just-now");
+  assert.equal(finding.state, "passed", "the table's shortfall is ours; her answer named the layer the world has");
+  assert.equal(verdict.failed, 0);
+  assert.equal(verdict.vocabulary.state, "not_judgeable", "and the gap is a state of its own");
+  assert.deepEqual(verdict.vocabulary.unmapped, ["unmapped:seed_target_unavailable"]);
+  assert.equal(
+    verdict.vocabulary.reading,
+    "tokens handed in 1 · published 15 · recognised 0 · unmapped 1 · not examined 14",
+    "the reading prints the run's own population beside the one the runner handed in",
+  );
+  assert.equal(verdict.vocabulary.published, 15);
+  assert.equal(verdict.vocabulary.examined, 1);
+  assert.equal("passed" in verdict.vocabulary, false, "a measurement gap must not wear a product failure's word");
+
+  // The recorded verdict in the same artifact is the red case: the gate was stopped, and the vocabulary reported that
+  // stop as `passed: false` - a product failure's word for a measurement gap.
+  assert.deepEqual(statesOf(report.dialogueGates.findings), { not_exercised: 3, not_judgeable: 1 });
+  assert.equal(report.dialogueGates.vocabulary.passed, false);
+  assert.equal(
+    report.dialogueGates.findings.find((entry) => entry.id === "turn-stuck-just-now").reason,
+    "gate_cannot_judge_without_world_words:seed_target_unavailable",
+  );
+  // Same inputs, three states counted on both sides.
+  console.error(
+    "DIALOGUE_GATE_STATES before",
+    JSON.stringify(statesOf(report.dialogueGates.findings)),
+    "after",
+    JSON.stringify(statesOf(verdict.findings)),
+    "vocabulary",
+    report.dialogueGates.vocabulary.reading,
+    "->",
+    verdict.vocabulary.reading,
+  );
+  assert.deepEqual(statesOf(verdict.findings), { not_exercised: 3, passed: 1 });
+  // The whole run's vocabulary, read against the table with nothing held back: eleven words it can read, four it cannot.
+  const wholeRun = assessObstacleVocabulary({ tokens: publishedTokens, publishedTokens });
+  assert.deepEqual(wholeRun.unmapped, [
+    "unmapped:debris_target_changed",
+    "unmapped:item_not_sold_here",
+    "unmapped:shop_target_unavailable",
+    "unmapped:seed_target_unavailable",
+  ]);
+  assert.equal(wholeRun.state, "not_judgeable");
+  console.error("DIALOGUE_OBSTACLE_VOCABULARY_WHOLE_RUN", wholeRun.reading);
+});
+
+test("a word the table was never taught is named `unmapped:`, and the gate judges her answer anyway", () => {
+  // The failure this replaces, in both directions. The gate read the sentence against its own short word list and a token
+  // it did not know was silently her fault; then it read the run's published token and stopped judging at all. A word
+  // this table cannot read is a gap in the INSTRUMENT, and a gap must be named, not sentenced.
+  const vocabulary = assessObstacleVocabulary({ tokens: ["cutscene_active", "wormhole_blocked"] });
+  assert.equal(vocabulary.reading, "tokens handed in 2 · published not handed in · recognised 1 · unmapped 1");
+  assert.deepEqual(vocabulary.unmapped, ["unmapped:wormhole_blocked"]);
+  assert.deepEqual(
+    vocabulary.gaps.map((entry) => entry.code),
+    ["unmapped:wormhole_blocked"],
+    "and it names the drifting member, not a boolean",
+  );
+  assert.equal(vocabulary.state, "not_judgeable");
+  assert.equal("passed" in vocabulary, false, "a measurement gap must not wear a product failure's word");
+  assert.equal(vocabulary.verdictCode, "unmapped:wormhole_blocked");
 
   const verdict = assessDialogueGates({
     replies: { "turn-stuck-just-now": "门口有人堵着。" },
     context: { refusal: { code: "wormhole_blocked" } },
   });
-  assert.equal(findingFor(verdict, "turn-stuck-just-now").state, "not_judgeable");
-  assert.equal(
-    findingFor(verdict, "turn-stuck-just-now").reason,
-    "gate_cannot_judge_without_world_words:wormhole_blocked",
-  );
+  const finding = findingFor(verdict, "turn-stuck-just-now");
+  assert.equal(finding.state, "passed", "an unmapped refusal token does not stop the judgement");
+  assert.equal(finding.reason, null);
   assert.equal(verdict.failed, 0, "a short vocabulary of our own is not her failure");
-  assert.deepEqual(verdict.vocabulary.unrecognised, ["wormhole_blocked"], "and it is published beside the verdict");
+  assert.deepEqual(
+    verdict.vocabulary.unmapped,
+    ["unmapped:wormhole_blocked"],
+    "and it is published beside the verdict",
+  );
+  assert.equal(verdict.vocabulary.state, "not_judgeable");
+});
+
+test("the three states do not share a word: a judged failure beside a named measurement gap", () => {
+  // One reply that does not name an obstacle, against a refusal whose word this table cannot read. She is judged and
+  // failed; the table is not judged at all. Collapsing either into the other is how a gap reads as a product failure.
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": "我就在那儿愣了一会儿，什么也没干。" },
+    context: { refusal: { code: "wormhole_blocked" } },
+  });
+  assert.equal(findingFor(verdict, "turn-stuck-just-now").state, "failed");
+  assert.equal(findingFor(verdict, "turn-stuck-just-now").reason, "companion_named_no_concrete_obstacle");
+  assert.equal(verdict.failed, 1);
+  assert.equal(verdict.vocabulary.state, "not_judgeable");
+  assert.deepEqual(verdict.vocabulary.unmapped, ["unmapped:wormhole_blocked"]);
+});
+
+test("a refusal that carries no code at all is not_judgeable, and says so", () => {
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": "门口有人堵着。" },
+    context: { refusal: { atMs: 1, ageMs: 0, code: null } },
+  });
+  const finding = findingFor(verdict, "turn-stuck-just-now");
+  assert.equal(finding.state, "not_judgeable");
+  assert.equal(finding.reason, "gate_cannot_judge_without_a_refusal_code");
+  assert.equal(verdict.failed, 0);
+  assert.equal(verdict.vocabulary.measured, false, "and the reading says it examined nothing rather than passing");
 });
 
 test("a refusal that named no obstacle is not a stall she failed to describe", () => {
