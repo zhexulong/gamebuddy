@@ -96,6 +96,18 @@ internal sealed partial class ExecutionManager
         string executionId = Guid.NewGuid().ToString("N");
         if (Game1.player.currentLocation is not { } moveLocation)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "location_unavailable", null);
+        // A COORDINATE ON ANOTHER MAP IS NOT A WALK. `move_to_tile(64,14)` from `FarmHouse(3,11)` named the farmhouse's
+        // own door as the FARM spells it, and the answer was `target_not_addressable;target_on_map=false` - true, and
+        // silent about where the number came from (round82). The map that declares the tile as its door leading back
+        // here is the answer, and it is the same one `enter_exit` gives for the same coordinate.
+        if (!moveLocation.isTileOnMap(targetTile)
+            && MapDeclaringExitTileTo(moveLocation, (int)targetTile.X, (int)targetTile.Y) is { } otherMap)
+        {
+            (int X, int Y) standing = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
+            (string anotherMapCode, string anotherMapEvidence) = DescribeAnotherMapsDoor(
+                moveLocation, otherMap, (int)targetTile.X, (int)targetTile.Y, standing);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, anotherMapCode, anotherMapEvidence);
+        }
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
         bool nativeWarpTarget = Game1.player.currentLocation.warps.Any(warp => !warp.npcOnly.Value && warp.X == (int)targetTile.X && warp.Y == (int)targetTile.Y);
         bool adjacentArrival = allowAdjacentArrival || nativeWarpTarget;
@@ -520,6 +532,8 @@ internal sealed partial class ExecutionManager
                 tile => StardewBodyController.IsWalkableTile(location, player, new Vector2(tile.X, tile.Y)));
             (int X, int Y) head = ordered[0].Tile;
             string population = $";candidates={candidates.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)};described={ordered.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            if (!IsAStepTowardTheSubject(actor, target, head))
+                return new FrontierClearance($";blocker={ClearingEvidence.NoBlocker}{population}", Code: null);
             return new FrontierClearance(
                 DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player) + population,
                 Code: null);
@@ -600,6 +614,30 @@ internal sealed partial class ExecutionManager
             detourFacts: null);
         return $";{step};{described}";
     }
+
+    /// <summary>
+    /// Whether a rim tile is a step a refusal may NAME: nearer to her than the subject the refusal is about, so walking
+    /// to it is progress toward the thing she asked for.
+    ///
+    /// <para>
+    /// The rule's other half - being swingable from a tile inside her OWN component - is <see cref="StandingTileFor"/>'s
+    /// filter, which no candidate reaches this point without: a blocker with no standable component neighbour is dropped
+    /// while the rim is being scanned, so the tile named here is always one she can walk to and swing from today.
+    /// </para>
+    /// <para>
+    /// WHY THE DISTANCE IS PART OF THE RULE. <see cref="OrderFrontierBlockers"/> prices each candidate by the walk it
+    /// opens and only THEN by its distance to the subject, so when no single clear opens the way every candidate ties on
+    /// the first key and the ranking degenerates to "nearest to the subject" - a fact about the map that says nothing
+    /// about the walk from where she stands. Measured `round82`: a `fish_here` at Town `69,42` from `69,51` was refused
+    /// `no_reachable_approach:69:42` and the repair step named `twig@102,43` - thirty-three tiles from the subject,
+    /// forty-one from her, on a rim that is the whole town - carrying `blocker_target=unpublished:worldObjectTargets`
+    /// because no family publishes a row that far from the actor. She would have walked to it. A step farther than the
+    /// thing it is supposed to open is not a repair, so the refusal says <c>blocker=none_of_the_published</c> instead of
+    /// the family's nearest row.
+    /// </para>
+    /// </summary>
+    private static bool IsAStepTowardTheSubject((int X, int Y) actor, (int X, int Y) subject, (int X, int Y) blocker) =>
+        FrontierDistance(blocker, actor) < FrontierDistance(subject, actor);
 
     /// <summary>
     /// The footprint tile a chosen standing tile reaches, which is the tile every later reach test must use.
@@ -786,12 +824,33 @@ internal sealed partial class ExecutionManager
         }
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
+            bool ofThisMap = IsTileOfThisMap(location, sourceX, sourceY);
+            // WHERE A COORDINATE LIVES IS NOT A DISTANCE. `distance=61` from `(3,11)` to `Farm:64,14` measured a walk
+            // that cannot exist (round82) because the tile is not a tile of this map at all. Ask which map claims it
+            // before reporting a distance at all.
+            if (!ofThisMap && MapDeclaringExitTileTo(location, sourceX, sourceY) is { } there)
+            {
+                (string anotherMapCode, string anotherMapEvidence) = DescribeAnotherMapsDoor(
+                    location, there, sourceX, sourceY, actorTile, (warp.X, warp.Y), warp);
+                return this.RememberTerminal(
+                    requestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    anotherMapCode,
+                    anotherMapEvidence);
+            }
+
+            string radiusEvidence = $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}";
+            // A tile nothing on this map claims has no distance from her either, and no map to be named in its place - so
+            // the arithmetic is reported with the one fact that stops it being read as a walk here.
+            if (!ofThisMap)
+                radiusEvidence += ";target_on_map=false";
             return this.RememberTerminal(
                 requestId,
                 executionId,
                 ExecutionState.Rejected,
                 doorOwned ? "door_out_of_range" : "warp_out_of_range",
-                $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}");
+                radiusEvidence);
         }
 
         LocalTravelSpec specification = new(
@@ -985,6 +1044,81 @@ internal sealed partial class ExecutionManager
             : string.Join("|", ordered.Take(ExitNamingLimit)
                 .Select(exit => $"{exit.SourceX},{exit.SourceY}->{exit.TargetLocation}"));
         return $"source={source.X},{source.Y};warps={warpCount};you={actor.X},{actor.Y};{nearest};doors={doors}";
+    }
+
+    /// <summary>
+    /// Whether a coordinate is a tile of <paramref name="location"/>'s OWN coordinate space: inside its map, or one of the
+    /// tiles its warp table declares - an edge exit's source is encoded one step OUTSIDE the boundary (`Town` declares
+    /// `-1 53 BusStop`, `79 -1 Mountain`), and that tile is this map's, not another one's.
+    /// </summary>
+    internal static bool IsTileOfThisMap(StardewValley.GameLocation location, int x, int y) =>
+        location.isTileOnMap(new Vector2(x, y)) || IsWarpBufferTile(location, (x, y));
+
+    /// <summary>
+    /// The map a coordinate that is not a tile of THIS one really belongs to, or null when no loaded map claims it.
+    ///
+    /// <para>
+    /// THE ONE FACT `round82` NEEDED AND NOTHING SAID. Measured 2026-11-20, twice in one run: from `FarmHouse` at
+    /// `(3,11)` she sent `enter_exit(64,14)`, and from `AnimalShop` at `(13,19)` `enter_exit(90,15)`. Both numbers are
+    /// the door tile of the SAME door spelled the way the map she had just LEFT spells it - `Farm:64,14` is the
+    /// farmhouse's own human door and `Forest:90,15` the shop's - so the request named a tile that is not on her map at
+    /// all. `enter_exit` answered `door_out_of_range ... distance=61`: a walk from `3,11` to a column 61 tiles away that
+    /// exists on another map, which is not a distance between two places she can be.
+    /// </para>
+    ///
+    /// <para>
+    /// The question is answered by the projection her own doors come from, asked of a different location: a loaded map
+    /// that declares this tile as one of its exits AND leads back to where she stands is the map the coordinate belongs
+    /// to. Requiring the RETURN leg is what keeps the answer honest - a door of some third map that happens to share
+    /// the column says nothing about the door beside her.
+    /// </para>
+    /// </summary>
+    internal static string? MapDeclaringExitTileTo(StardewValley.GameLocation here, int tileX, int tileY)
+    {
+        foreach (StardewValley.GameLocation candidate in Game1.locations)
+        {
+            if (candidate is null || ReferenceEquals(candidate, here) || string.IsNullOrWhiteSpace(candidate.NameOrUniqueName))
+                continue;
+            foreach (BridgeDoor exit in DiscoverDoorTargets(candidate, Game1.player))
+            {
+                if (exit.SourceX == tileX && exit.SourceY == tileY
+                    && string.Equals(exit.TargetLocation, here.NameOrUniqueName, StringComparison.Ordinal))
+                    return candidate.NameOrUniqueName;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// The refusal for a coordinate that names <paramref name="there"/>'s door while the actor stands on
+    /// <paramref name="here"/>: the code the wire accepts, and the detail that spells the two names the confusion needs.
+    ///
+    /// <para>
+    /// ONE RELATION, TWO SPELLINGS, AND WHY. The reason code is judged by the Host's own `isReasonCode`
+    /// (`host/src/protocol.ts`, `[a-z0-9_:-]`), which admits neither `&gt;` nor `,`, so the code carries the fact in the
+    /// alphabet it must survive - `target_is_on_another_map:farmhouse:64:14`, the same `name:x:y` shape
+    /// `no_reachable_approach:x:y` already uses - while the EVIDENCE carries the readable `here-&gt;there:x,y` form
+    /// beside the two facts the door path knows: `door_tile`, the door on HER map, against `lands_at`, where that door
+    /// puts her on the other one. The two field names are what make the pair unsayable the other way round.
+    /// </para>
+    /// </summary>
+    internal static (string Code, string Evidence) DescribeAnotherMapsDoor(
+        StardewValley.GameLocation here,
+        string there,
+        int x,
+        int y,
+        (int X, int Y) actor,
+        (int X, int Y)? doorTile = null,
+        StardewValley.Warp? doorWarp = null)
+    {
+        string code = $"target_is_on_another_map:{RefusalProbe.ReasonCodeToken(here.NameOrUniqueName)}:{x.ToString(CultureInfo.InvariantCulture)}:{y.ToString(CultureInfo.InvariantCulture)}";
+        string evidence = $"target_is_on_another_map:{here.NameOrUniqueName}->{there}:{x},{y}";
+        if (doorTile is { } tile)
+            evidence += $";door_tile={tile.X},{tile.Y}";
+        if (doorWarp?.TargetName is { Length: > 0 } landsAt)
+            evidence += $";lands_at={landsAt}:{doorWarp.TargetX},{doorWarp.TargetY}";
+        return (code, evidence + $";actor={actor.X},{actor.Y}");
     }
 
     private enum NativeDoorOutcome

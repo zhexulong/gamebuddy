@@ -219,6 +219,137 @@ public sealed class RefusalNamesAStepTheCallerCanTakeTests
     }
 
     /// <summary>
+    /// THE DIRECTION GATE: a step a refusal names must never be FARTHER from her than the subject it is supposed to open,
+    /// because a caller reads <c>blocker_occupant</c> as an instruction to walk.
+    ///
+    /// <para>
+    /// Measured `round82`: a `fish_here` at Town `69,42` from `69,51` was refused <c>no_reachable_approach:69:42</c> and
+    /// the step it named was <c>twig@102,43</c>, thirty-three tiles past the subject and forty-one from her, with
+    /// <c>blocker_target=unpublished:worldObjectTargets</c> because no family publishes a row that far away. Every
+    /// candidate had priced as "opens nothing", so the ranking fell back to "nearest to the subject" over the whole
+    /// town's rim and named a tile the walk could only call a detour. Nine tiles was the request; forty-one was the
+    /// advice.
+    /// </para>
+    ///
+    /// <para>
+    /// IT IS THE CEILING AND NOT THE WHOLE RULE: the frontier of a tool approach names a tile STRICTLY nearer than its
+    /// subject (<c>DescribeNoReachableApproach</c>'s own rule, pinned by <c>PocketFrontierTests</c>), while a walk that
+    /// arrived at its blocker names the tile the caller asked for - so the two agree exactly on "never farther". A
+    /// refusal that names no blocker, or that does not name the walk's two ends beside it, is NOT MEASURED here, and the
+    /// population it was read over is printed: a gate that silently examined nothing cannot pass as green.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoNamedStepIsFartherFromHerThanTheSubjectItOpens()
+    {
+        var driven = new List<(string Refusal, string? Evidence)>
+        {
+            DriveFloodRefusal(rowTargetsUnpublished: true),
+            DriveFloodRefusal(rowTargetsUnpublished: false),
+            DriveBushFloodRefusal(),
+            DriveClearStepBlockedArrival(),
+            DriveClearedRouteRefusal(),
+        };
+
+        var readings = driven.Select(row => ReadNamedStep(row.Refusal, row.Evidence)).ToList();
+        List<string> behind = readings.Select(reading => reading.Finding).OfType<string>().ToList();
+        int measured = readings.Count(reading => reading.Measured);
+
+        this.output.WriteLine($"refusals examined {driven.Count} · naming a step with the two ends of the walk {measured}");
+        measured.Should().BeGreaterThan(0, "a gate that measured nothing would agree with itself");
+        behind.Should().BeEmpty(
+            "a_refusal_names_a_step_the_caller_can_take: a step farther from her than the subject is distance away from what "
+                + "she asked for, and she will walk it:\n  " + string.Join("\n  ", behind));
+    }
+
+    /// <summary>
+    /// THE FALSIFIER for the gate above: the `round82` sentence, verbatim, one finding that names the tile she would have
+    /// walked to. Fed to the same reading the gate uses, so the pass and the failure are judged by one function.
+    /// </summary>
+    [Fact]
+    public void AStepBehindTheSubjectsBackIsReportedByName()
+    {
+        const string Round82 =
+            "target=69,42;actor=69,51;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=3;footprint=1;"
+            + "clear_step=twig@102,43;stand_at=101,43;remaining_clears=1;blocker_occupant=twig@102,43;"
+            + "clears_with=remove_placed_item(stamina:2,tool:target_requirement,turns:1);"
+            + "blocker_target=unpublished:worldObjectTargets;candidates=1;described=1";
+
+        (bool Measured, string? Finding) reading = ReadNamedStep("no_reachable_approach:69:42", Round82);
+
+        reading.Measured.Should().BeTrue("the sentence carries all three tiles this reading needs");
+        reading.Finding.Should().NotBeNull("the refusal tells her to walk forty-one tiles to open a nine-tile walk");
+        reading.Finding.Should().Contain("twig@102,43", "the finding names the step itself, so a reader does not have to parse the sentence again");
+        reading.Finding.Should().Contain("41", "and the walk it costs her, beside the nine she asked for");
+        ReadNamedStep("no_reachable_approach:69:42", Round82.Replace("target=69,42", "target=110,42", StringComparison.Ordinal)).Finding
+            .Should().BeNull("the same step is a step when the subject is behind it, which is what makes this a measurement");
+    }
+
+    /// <summary>
+    /// The two tiles a refusal's sentence names its walk between, in the spellings the three route refusals use: the tool
+    /// approach's <c>target</c>/<c>actor</c>, a refused walk's <c>to</c>/<c>from</c>, and the clear-step arrival's
+    /// <c>requested</c>/<c>tile</c>. One list, so a fourth spelling has one place to be added and the gate cannot quietly
+    /// measure nothing.
+    /// </summary>
+    private static readonly (string Subject, string Actor)[] WalkEnds =
+    {
+        ("target", "actor"), ("to", "from"), ("requested", "tile"),
+    };
+
+    /// <summary>
+    /// What one refusal's own numbers say about the step it names: <c>Measured</c> when the sentence carries the step and
+    /// the two tiles to compare it with, and <c>Finding</c> when the step is farther from her than the subject.
+    ///
+    /// <para>
+    /// The step is read out of <c>blocker_occupant=kind@x,y</c> - the field every refusal that names one carries - and the
+    /// two distances are Manhattan, because that is the arithmetic the ranking itself uses (<c>FrontierDistance</c>).
+    /// Every field goes through the same <c>k=v</c> parse the census uses, so one sentence cannot be read two ways.
+    /// </para>
+    /// </summary>
+    private static (bool Measured, string? Finding) ReadNamedStep(string refusal, string? evidence)
+    {
+        if (string.IsNullOrEmpty(evidence))
+            return (false, null);
+        if (Read(evidence, "blocker_occupant") is not { } occupant || !TileAtEnd(occupant, out (int X, int Y) step))
+            return (false, null);
+        foreach ((string Subject, string Actor) ends in WalkEnds)
+        {
+            if (CoordinateOf(evidence, ends.Subject) is not { } subject || CoordinateOf(evidence, ends.Actor) is not { } actor)
+                continue;
+            int toStep = Math.Abs(step.X - actor.X) + Math.Abs(step.Y - actor.Y);
+            int toSubject = Math.Abs(subject.X - actor.X) + Math.Abs(subject.Y - actor.Y);
+            return toStep <= toSubject
+                ? (true, null)
+                : (true, $"{refusal} names {occupant} {toStep} tiles from her, while the subject at {subject.X},{subject.Y} is {toSubject}");
+        }
+
+        return (false, null);
+    }
+
+    /// <summary>The tile one <c>x,y</c> field of a receipt holds, or null when the field is absent or is not a tile.</summary>
+    private static (int X, int Y)? CoordinateOf(string evidence, string field) =>
+        CoordinateAt(Read(evidence, field), out (int X, int Y) tile) ? tile : null;
+
+    /// <summary>The <c>kind@x,y</c> suffix of a <c>blocker_occupant</c> field, as a tile.</summary>
+    private static bool TileAtEnd(string field, out (int X, int Y) tile)
+    {
+        int at = field.LastIndexOf('@');
+        return CoordinateAt(at >= 0 && at < field.Length - 1 ? field[(at + 1)..] : null, out tile);
+    }
+
+    /// <summary>An <c>x,y</c> pair, or false when the field is absent or does not hold one.</summary>
+    private static bool CoordinateAt(string? field, out (int X, int Y) tile)
+    {
+        tile = default;
+        if (field is null)
+            return false;
+        string[] parts = field.Split(',');
+        return parts.Length == 2
+            && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out tile.X)
+            && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out tile.Y);
+    }
+
+    /// <summary>
     /// The body's own refusal for one walk, driven with the PRODUCER's target-id lookup rather than a stand-in - the id in
     /// the receipt is whatever the family's discovery would have published, so a refusal is judged on what a frame really
     /// carries.

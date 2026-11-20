@@ -162,6 +162,53 @@ public sealed class PocketFrontierTests
     }
 
     /// <summary>
+    /// THE RULE a named blocker is held to: it must be nearer to her than the refusal's own subject, or walking to it is
+    /// distance AWAY from the thing she asked for.
+    ///
+    /// <para>
+    /// Measured `round82`: a `fish_here` at Town `69,42`, from `69,51`, was refused `no_reachable_approach:69:42` and the
+    /// repair step named `twig@102,43` - thirty-three tiles from the subject, forty-one from her - with
+    /// `blocker_target=unpublished:worldObjectTargets`. Nine tiles of walking was the request; forty-one was the advice.
+    /// The world below is that sentence in one dimension: her at the west end of a sixty-tile corridor, the subject nine
+    /// tiles away on the walled row above it, and the rim's ONE clearable tile thirty-three tiles east of the subject.
+    /// </para>
+    /// <para>
+    /// Nothing on this rim opens a way to the subject, so every candidate prices as `null` and the ranking falls back to
+    /// "nearest to the subject" - which is how a tile forty-two tiles from her came to be called the step. The refusal
+    /// says <c>blocker=none_of_the_published</c> instead, in the evidence AND in the hint a settled failure keeps, and the
+    /// placement keeps its own code: there IS no approach, and that has not changed.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARimTileNoNearerThanTheSubjectIsNotNamedAsTheStep()
+    {
+        using ClearStepMoveTests.CorridorHarness harness = ClearStepMoveTests.CorridorHarness.Create(width: 60);
+        BuildOneDistantRimTwig(harness, twig: (43, 2));
+        harness.Actor.position.Set(new Vector2(2 * 64 + 8, 3 * 64));
+
+        (int X, int Y) actor = (2, 3);
+        (int X, int Y) subject = (10, 2);
+        (int X, int Y) twig = (43, 2);
+        int toSubject = Math.Abs(subject.X - actor.X) + Math.Abs(subject.Y - actor.Y);
+        int toTwig = Math.Abs(twig.X - actor.X) + Math.Abs(twig.Y - actor.Y);
+        toSubject.Should().Be(9, "the fixture is the measured walk: nine tiles to the thing she asked for");
+        toTwig.Should().Be(42, "and thirty-three more to the tile the ranking picked - the relation is the fixture's, the answer is the producer's");
+
+        (string code, string? evidence, string? hint) = Refuse(harness, subject);
+
+        code.Should().Be("no_reachable_approach:10:2", $"the placement still has no approach, and the code still names it - evidence={evidence}");
+        evidence!.Should().NotContain("blocker_occupant", $"a rim tile farther from her than the subject is not a step, and naming it is an instruction to walk - got: {evidence}");
+        evidence.Should().Contain($"blocker={ClearingEvidence.NoBlocker}",
+            $"none of the published blockers is one, so the refusal says so rather than naming the family's nearest row - got: {evidence}");
+        evidence.Should().Contain("candidates=1;described=1",
+            "the population it looked at is still printed, so the verdict is a measurement rather than a silence");
+        hint.Should().NotBeNull();
+        hint!.Should().Contain($"blocker={ClearingEvidence.NoBlocker}",
+            $"a settled failure's evidence is withheld, so the hint is the only channel this reaches her through - got: {hint}");
+        hint.Should().NotContain("blocker_occupant", "and it must not carry the walk instructions the evidence withheld on purpose");
+    }
+
+    /// <summary>
     /// The price itself, as a counted measurement rather than a claim. Each candidate costs one
     /// <see cref="ExecutionManager.StepsToActAfterClear"/> flood, and every visited tile asks the caller's walkability
     /// predicate - the one collision query the pricing spends. Two hundred candidates therefore spend two hundred
@@ -318,6 +365,32 @@ public sealed class PocketFrontierTests
             harness.PlaceWeed(x, 2);
             harness.PlaceWeed(x, 4);
         }
+    }
+
+    /// <summary>
+    /// The measured shadow of `round82` in one dimension: a sixty-tile corridor (row y=3) walled on every other row, with
+    /// ONE clearable rim tile - a twig, which an axe removes through `remove_placed_item` - and no other candidate at all.
+    ///
+    /// <para>
+    /// The twig's own tile is left without a clump: a clump answers `OccupantAt` before the object does, and an unpriced
+    /// one is an unnamed wall, so a twig sharing its tile with a clump would measure the wall instead of the twig.
+    /// </para>
+    /// </summary>
+    private static void BuildOneDistantRimTwig(ClearStepMoveTests.CorridorHarness harness, (int X, int Y) twig)
+    {
+        GameLocation location = harness.Location;
+        int width = location.map.Layers[0].LayerWidth;
+        for (int x = 0; x < width; x += 1)
+        {
+            for (int y = 0; y < 16; y += 1)
+            {
+                if (y == 3 || (x, y) == twig)
+                    continue;
+                location.resourceClumps.Add(new StardewValley.TerrainFeatures.ResourceClump(0, 1, 1, new Vector2(x, y)));
+            }
+        }
+
+        harness.PlaceTwig(twig.X, twig.Y);
     }
 
     // -------------------------------------------------------------------------

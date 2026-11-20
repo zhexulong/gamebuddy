@@ -353,12 +353,13 @@ public static class ClearingEvidence
     /// The evidence fields a route refusal puts in the hint, in the order a reader needs them: the size of the route
     /// and its verdict, what stands on the frontier and where, what opens it and the id the frame published for it (or,
     /// when the frame published none, the ordered walk that makes it publish one), where to stand, the other branch, and
-    /// - when nothing on the rim can be opened - the word for what the rim is.
+    /// - when nothing on the rim can be opened - the word for what the rim is or for why no rim tile is a step.
     /// </summary>
     private static readonly string[] RouteHintFields =
     {
-        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "next_steps",
-        "progress", "stand_at", "detour_steps", "walk_limit_steps", "remaining_clears", "no_cuttable_blocker",
+        "component_tiles", "target_enclosed", "blocker_occupant", "clears_with", "blocker_target", "blocker",
+        "next_steps", "progress", "stand_at", "detour_steps", "walk_limit_steps", "remaining_clears",
+        "no_cuttable_blocker",
     };
 
     private static string DescribeCost(FarmhandClearingCost cost, int? staminaCharge) =>
@@ -378,4 +379,19 @@ public static class ClearingEvidence
     /// however the frame is re-read.
     /// </summary>
     public const string NoClearingAction = "no_clearing_action";
+
+    /// <summary>
+    /// What `blocker` says when the rim holds published blockers and NONE of them is a step the refusal may name.
+    ///
+    /// <para>
+    /// A named blocker is advice to WALK, so it is held to the one property that makes it advice: it must be nearer to
+    /// her than the refusal's own subject, or walking to it is distance away from the thing she asked for. Measured
+    /// `round82`: a refusal for Town `69,42` from `69,51` named `twig@102,43` - thirty-three tiles from the subject,
+    /// forty-one from her - because every candidate had priced as "opens nothing" and the ranking had degenerated to
+    /// "nearest to the subject" over the whole town's rim. "None of the published blockers is one" is the honest answer
+    /// there, and it is not <see cref="NoClearingAction"/>: those tiles DO have clearing actions, they are simply not
+    /// on the way.
+    /// </para>
+    /// </summary>
+    public const string NoBlocker = "none_of_the_published";
 }
