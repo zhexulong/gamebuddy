@@ -1127,12 +1127,21 @@ export const ROW_TILE_FIELD_PAIRS: readonly (readonly [string, string])[] = Obje
  */
 export const ROW_STATE_FIELDS: Readonly<Record<string, Readonly<{ field: string; label: string }>>> = Object.freeze({
   colorTargets: Object.freeze({ field: "color", label: "色" }),
-  // THE LABEL NAMES WHAT THE ROW ACCEPTS, and the row's own value says whether it does. `hoeDirt: true` is a tile that is
-  // already under the Hoe: nothing left to till, and a legitimate target for `plant_seed` / `fertilize_tile` /
-  // `water_crop`. `hoeDirt: false` is the ground the Hoe still admits, so it is NOT this row's label. A word that named
-  // the work instead (`已锄`) would call the bare ground hoed, and the word `可锄` is the defect `round80` measured - the
-  // family's own label carries no state claim for exactly this reason (see `TARGET_FAMILY_LABELS`).
-  soilTiles: Object.freeze({ field: "hoeDirt", label: "可种植" }),
+  // THE LABEL NAMES THE STATE THE FIELD CARRIES, IN THE WORDS OF THE DECISION MADE AT THAT ROW. `hoeDirt: true` is a tile
+  // already under the Hoe - nothing left to till, and the `plant_seed` / `fertilize_tile` / `water_crop` target; `false` is
+  // the ground the Hoe still admits. The value is the wire's own boolean and stays so; only the word beside it is chosen,
+  // and `已锄` is the Mod's own word for the state (`soil_already_tilled`, `settled_by=engine_flag:hoedirt=present`) and
+  // the one the plan recipe's guard asks in (`if (soil.hoeDirt !== true)`).
+  //
+  // IT WAS `可种植`, AND THAT WORD WAS THE REMAINING HALF OF `round80`'s DEFECT. Measured `round81` (2026-11-20, first
+  // three minutes): `plan_35` wrote 25 `till_soil` nodes over a 13x3 patch whose every tile was already HoeDirt, and all 25
+  // settled `succeeded` - the settlement proves the postcondition and is right, which leaves the 25 node executions bought
+  // for nothing. The rows she read said `可种植 true`: a word about PLANTING, beside a planting family of its own
+  // (`seedTargets` is `可播种的地`), answering nothing about the Hoe, while this family's role in a plan is `till_soil`'s
+  // target list and the recipe's only guard is `hoeDirt`. The family word stays `地块` (`TARGET_FAMILY_LABELS`) so nothing
+  // claims the whole family is hoed - that was `round80`'s half, and `已锄 false` says bare ground as plainly as
+  // `可种植 false` did.
+  soilTiles: Object.freeze({ field: "hoeDirt", label: "已锄" }),
 });
 
 /**
@@ -1463,7 +1472,7 @@ function rowTile(row: Record<string, unknown>): { x: number; y: number } | undef
 }
 
 /**
- * The state one row prints after its tile: `` ` 色 119,191,255` ``, `` ` 可种植 true` ``, or `""` when the row carries
+ * The state one row prints after its tile: `` ` 色 119,191,255` ``, `` ` 已锄 true` ``, or `""` when the row carries
  * nothing to read.
  *
  * A value the wire published as an empty string, a missing member, or a non-scalar is SILENCE rather than the word
@@ -1472,8 +1481,8 @@ function rowTile(row: Record<string, unknown>): { x: number; y: number } | undef
  *
  * A BOOLEAN PRINTS ITS OWN VALUE, and the branch is here rather than inside the family that needed it: the value IS the
  * state (`hoeDirt: true` says the tile is under the Hoe) and translating it into a word of its own would be a second
- * spelling of one boolean. The LABEL is what carries the meaning, which is why `ROW_STATE_FIELDS` names the label for
- * what the row accepts instead of for the action it refuses.
+ * spelling of one boolean. The LABEL is what carries the meaning, which is why `ROW_STATE_FIELDS` names the state the
+ * field holds rather than the decision that state happens to allow.
  */
 function stateSuffix(state: Readonly<{ field: string; label: string }>, value: unknown): string {
   if (typeof value === "boolean") return ` ${state.label} ${value ? "true" : "false"}`;

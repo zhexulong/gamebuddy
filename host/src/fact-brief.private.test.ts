@@ -797,9 +797,9 @@ test("soilTiles prints the ground in both states, and each row states which one 
   const family = nearbyTargetFamilies(snapshot).find((entry) => entry.family === "soilTiles");
   assert.equal(family?.label, "地块", "the family word states the ground and claims no state of its own");
   assert.equal(family?.total, 2);
-  assert.equal(family?.rendered, "地块 (65,15) 可种植 false (66,15) 可种植 true");
+  assert.equal(family?.rendered, "地块 (65,15) 已锄 false (66,15) 已锄 true");
   const text = composeWorldState({ snapshot, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
-  assert.match(text, /地块 \(65,15\) 可种植 false \(66,15\) 可种植 true/u);
+  assert.match(text, /地块 \(65,15\) 已锄 false \(66,15\) 已锄 true/u);
   assert.match(text, /可清的地块 \(67,15\)/u, "the family `till_soil` refuses keeps its own sentence");
   // A row that published no `hoeDirt` says nothing rather than reading as `false`: absent is not a measurement.
   const unmeasured = nearbyTargetFamilies({ ...world, soilTiles: [{ x: 65, y: 15 }] } as unknown as Snapshot).find(
@@ -842,10 +842,40 @@ test("round80_worked_block: a block already under the Hoe is never offered as gr
   const line = text.split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
   assert.notEqual(line, "", `the soil family reaches the block: ${text}`);
   assert.equal(line.includes("可锄"), false, `no tile of a worked block may read as hoeable: ${line}`);
-  assert.match(line, /可种植 true/u, `and every row states the state it carries: ${line}`);
+  assert.match(line, /已锄 true/u, `and every row states the state it carries: ${line}`);
   assert.match(line, /其余 24 格未列出/u, `the cap still counts what it did not name: ${line}`);
   const bare = seedText(seedWorld({ soilTiles: [{ x: 62, y: 18, hoeDirt: false }] }));
-  assert.match(bare, /地块 \(62,18\) 可种植 false/u, `bare ground says which state IT is in: ${bare}`);
+  assert.match(bare, /地块 \(62,18\) 已锄 false/u, `bare ground says which state IT is in: ${bare}`);
+});
+
+/**
+ * ROUND81: THE ROW ANSWERS THE DECISION THE PLAN MAKES AT IT.
+ *
+ * The settlement was fixed first and is right (`soil_already_tilled` now settles `succeeded` with
+ * `settled_by=engine_flag:hoedirt=present`), and `round81`'s first three minutes still spent 25 `till_soil` nodes on a 13x3
+ * patch whose every tile was already HoeDirt. The row said `可种植 true` - a word about planting, in a family whose role in
+ * a plan is `till_soil`'s target list, beside the planting family's own near-synonym (`seedTargets` is `可播种的地`).
+ *
+ * The prefix `已锄` is the Mod's own word for this state (`soil_already_tilled`) and the word the plan recipe's guard asks
+ * in, so a row of this family now answers "may I till this?" in its own sentence, with the wire's boolean unchanged.
+ */
+test("round81_tilled_row: the row states the state the Hoe decision is made on", () => {
+  // The patch `plan_35` was composed against: x 58..70, y 18..20, every tile already under the Hoe.
+  const patch = Array.from({ length: 39 }, (_, index) => ({
+    x: 58 + (index % 13),
+    y: 18 + Math.floor(index / 13),
+    hoeDirt: true,
+  }));
+  const line = seedText(seedWorld({ soilTiles: patch })).split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
+  assert.notEqual(line, "", "the soil family reaches the block");
+  assert.equal(line.includes("已锄 true"), true, `every row states the state it is in: ${line}`);
+  assert.equal(
+    line.includes("可种植") || line.includes("可锄"),
+    false,
+    `a row of this family names the Hoe state, not the planting it happens to allow: ${line}`,
+  );
+  // And the cap still counts what it did not name: 39 rows, six printed.
+  assert.match(line, /其余 33 格未列出/u, `the cap counts what it did not print: ${line}`);
 });
 
 /** The Mod's own `till_soil` evidence (`TILL_SOIL_EVIDENCE_KEYS`), with the pairs this line reads. */
@@ -887,12 +917,12 @@ test("round80_tilled_tile: the tile her own receipt turned under leaves the row 
   const proved = provedGoneTargets([receipt]);
   assert.deepEqual([...proved], ["62:19"], "the proof is the tile, in the spelling the Mod's evidence uses");
   const unproved = composeWorldState(reading);
-  assert.match(unproved, /\(62,19\) 可种植 false/u, `without the receipt the tile is still offered: ${unproved}`);
+  assert.match(unproved, /\(62,19\) 已锄 false/u, `without the receipt the tile is still offered: ${unproved}`);
   const provedState = composeWorldState(reading, undefined, proved);
   const line = provedState.split("\n").find((entry) => entry.startsWith("地块 ")) ?? "";
   assert.notEqual(line, "", `the soil family is printed: ${provedState}`);
   assert.equal(line.includes("(62,19)"), false, `the tile she just tilled is not offered as work: ${line}`);
-  assert.match(line, /\(63,19\) 可种植 false/u, `the tile she did not touch is still named: ${line}`);
+  assert.match(line, /\(63,19\) 已锄 false/u, `the tile she did not touch is still named: ${line}`);
   assert.match(line, /少了 1 格/u, `and the line states what the receipt took out: ${line}`);
   assert.equal(line.includes("其余"), false, `a subtracted row is the proof's, not the cap's omission: ${line}`);
 });

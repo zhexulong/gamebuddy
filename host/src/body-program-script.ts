@@ -971,12 +971,23 @@ export function planSettlementNote(nodeCount: number, programId: string): string
 }
 
 /**
- * The `charge` a plan EXAMPLE prints, read from the wire declaration rather than written beside it.
+ * The `charge` argument a plan EXAMPLE prints, name and value, read from the wire declaration rather than written beside
+ * it.
  *
+ * <p>
  * `till_soil` and `water_crop` pin it on the wire (`EXECUTION_REQUEST_ARGUMENT_RULES`: their exact argument set carries
  * `charge`), so an example that leaves it out is a call the compiler refuses as `loop_do_argument_missing:charge` and the
  * wire refuses as `invalid_args` - and the batch example had already drifted that way, printing a `water_crop` call a
  * caller could not copy. Reading the value from the declaration means the example moves with the range.
+ * </p>
+ *
+ * <p>
+ * IT RETURNS THE WHOLE PAIR BECAUSE ONE CALLER ALREADY WROTE THE NAME. The `till_soil` loop prefixed its own `charge: `
+ * beside this one and printed `charge: charge: 0` - a `SyntaxError`, not a refusal: every companion that copied the
+ * example got `plan_script_threw:SyntaxError` and had to invent its own loop, which is how a plan ends up iterating rows a
+ * guard would have left out. The name is spelled here once and no call site repeats it; `the recipe's examples are a script
+ * the compiler accepts` in `body-program-script.test.ts` compiles the rendered tail and would name the broken call.
+ * </p>
  */
 function planExampleCharge(action: "till_soil" | "water_crop"): string {
   const bound = executionRequestIntegerBounds(action).find((candidate) => candidate.argument === "charge");
@@ -1063,14 +1074,15 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
   return (
     "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none, and ends the day only from inside your own farmhouse or cabin (`not_home` outdoors) - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. Stop when builder.isFull() is true and plan the rest in the next script of this same turn, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
+    "The script is ordinary JavaScript over `snapshot` and `builder`: `for`, `if`, `.filter`, `.sort` run; timers,\n" +
+    "randomness, the network and eval are refused by name.\n" +
     "// In order:\n" +
     "builder.move_to_tile({ x: 10, y: 20 });\n" +
     "builder.enter_exit({ x: 10, y: 20 });\n" +
-    "// The script is ordinary JavaScript over `snapshot` and `builder`: `for`, `if`, `.filter`, `.sort` run; timers,\n" +
-    "// randomness, the network and eval are refused by name. A BATCH IS A LOOP: twenty tiles in ONE call are twenty\n" +
-    "// actions for one turn, and the `if` is what leaves out the tiles you do not mean to touch:\n" +
+    "// A BATCH IS A LOOP: twenty tiles in ONE call are twenty actions for one turn, and the `if` is what leaves out\n" +
+    "// the tiles you do not mean to touch:\n" +
     "for (const soil of snapshot.soilTiles) {\n" +
-    "  if (soil.hoeDirt !== true) builder.till_soil({ x: soil.x, y: soil.y, charge: " +
+    "  if (soil.hoeDirt !== true) builder.till_soil({ x: soil.x, y: soil.y, " +
     planExampleCharge("till_soil") +
     " });\n" +
     "}\n" +
@@ -1127,6 +1139,41 @@ function planActionVocabularyText(actions: readonly PublishedPlanAction[]): stri
  */
 const PLAN_LAYOUT_FACTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   cropTargets: Object.freeze(["isRaised", "tileBlockedNow"]),
+});
+
+/**
+ * The condition under which a loop over a published family is WORK, per family the plan recipe iterates.
+ *
+ * <p>
+ * THE PROPERTY. A family reached from the recipe is a target list, so a loop over it is only work where the row's own
+ * state says the work is still to do. Two shapes say it and there are no others: `rowField` - the row carries the state,
+ * and the recipe's loop guards on that field, which is how `soilTiles` loses the tiles already under the Hoe; and
+ * `publishedAsWork` - the family publishes ONLY rows that need the work, so the family itself is the condition and a guard
+ * written into the loop would be a second spelling of its publication predicate.
+ * </p>
+ *
+ * <p>
+ * WHY IT EXISTS. Measured `round81` (2026-11-20, the first three minutes): `plan_35` wrote 25 `till_soil` nodes over a
+ * 13x3 patch whose every tile was already HoeDirt, and all 25 settled `succeeded` - the settlement proves the
+ * postcondition was already true, which is right, and it leaves 25 node executions bought for nothing. A family named to a
+ * plan without its condition is a family a plan will iterate because the rows are listed; which of the two shapes a
+ * family carries is a decision, so it is declared here rather than left to whichever loop the text happens to show.
+ * `body-program-script.test.ts` reads this table against the rendered recipe
+ * (`a_row_a_plan_iterates_says_when_iterating_it_is_work:<family>`) and fails naming a family that carries neither.
+ * </p>
+ */
+export type PlanIterationCondition =
+  /** The row field the loop guards on: iterating the row is work when this field says so. */
+  | Readonly<{ rowField: string }>
+  /** Why every published row of the family already needs the work, so no guard is owed. */
+  | Readonly<{ publishedAsWork: string }>;
+
+export const PLAN_ITERATION_CONDITIONS: Readonly<Record<string, PlanIterationCondition>> = Object.freeze({
+  soilTiles: Object.freeze({ rowField: "hoeDirt" }),
+  cropTargets: Object.freeze({
+    publishedAsWork:
+      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1456-1470`), so every published row is a tile the Can is still needed on",
+  }),
 });
 
 /** How many absent-fact warnings one answer carries. The COUNT travels beside it and is not bounded. */

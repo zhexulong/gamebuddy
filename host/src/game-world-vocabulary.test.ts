@@ -777,7 +777,7 @@ test("a_row_states_the_state_its_producer_carries: the soil family is the place-
   } as unknown as Snapshot).find((entry) => entry.family === "soilTiles");
   assert.equal(
     line?.rendered,
-    "地块 (62,18) 可种植 true (62,19) 可种植 false (62,20)",
+    "地块 (62,18) 已锄 true (62,19) 已锄 false (62,20)",
     "each row states its own hoeDirt, and a row that published none stays silent rather than reading as false",
   );
   assert.equal(

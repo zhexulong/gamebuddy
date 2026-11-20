@@ -13,7 +13,9 @@ import {
   MAX_PLAN_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
+  PLAN_ITERATION_CONDITIONS,
   PLAN_SCRIPT_BUDGET_MS,
+  type PlanIterationCondition,
   type PublishedPlanAction,
   planActionsFromRegistrations,
   planProgramId,
@@ -22,6 +24,7 @@ import {
   planShape,
   planWorkDescription,
 } from "./body-program-script.js";
+import { ROW_STATE_FIELDS } from "./game-world-vocabulary.js";
 import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
 import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
@@ -3496,5 +3499,366 @@ test("a_script_form_is_reachable_from_the_description is red on a form the descr
     message ?? "",
     /^a_script_form_is_reachable_from_the_description:for_each: /u,
     "a form the grammar accepts and the description does not teach is refused by name",
+  );
+});
+
+/**
+ * THE EXAMPLE IN THE DESCRIPTION IS A SCRIPT, AND A SCRIPT IS EITHER ONE THE COMPILER ACCEPTS OR A LESSON IN NOT
+ * COPYING IT.
+ *
+ * <p>
+ * MEASURED WHILE READING `round81`: the till loop printed `charge: charge: 0`. The `charge` pair is composed by
+ * `planExampleCharge` (name and value, read from the wire's own integer bound) and one call site wrote `charge: ` beside
+ * it, so the example was a `SyntaxError` - `plan_script_threw:SyntaxError`, which is not even a refusal the author can act
+ * on, because it names the parser and not the call. Every companion that copied the taught batch therefore had to write
+ * her own loop, and a loop written from a sentence about a family is a loop without the family's condition.
+ * </p>
+ *
+ * <p>
+ * THE POPULATION IS THE RENDERED EXAMPLE, taken from the description's own `// In order:` block to its end and compiled
+ * VERBATIM - comments included, because a companion copying the block copies them. Two calls were unreadable there: the
+ * till loop printed `charge: charge: 0` (a `SyntaxError`, so the example taught a loop nobody could run), and the sentence
+ * naming the refused words (`timers`, eval, the network) sat INSIDE the block, where a verbatim copy was refused
+ * `plan_script_uses_forbidden:eval` and lost the whole script with it. That sentence now sits above the block: it is prose
+ * about the language, not a line of the example.
+ *
+ * `round81`'s patch is bare on purpose - a plan that composes nothing would answer `plan_script_empty_no_builder_call`,
+ * which is a different defect and would hide a syntax error behind itself.
+ * </p>
+ */
+test("the recipe's examples are a script the compiler accepts", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  const example = description.slice(description.indexOf("// In order:"));
+  assert.ok(example.length > 0, "blocked: the description carries no example block to compile");
+  const compiled = compile(example, {
+    enabledActionIds: ["till_soil", "water_crop"],
+    soilTiles: [
+      { x: 60, y: 18, hoeDirt: false },
+      { x: 61, y: 18, hoeDirt: false },
+    ],
+    cropTargets: [crop("crop_01", 11, 10)],
+  });
+  if (compiled.status !== "compiled")
+    assert.doesNotMatch(
+      compiled.reasonCode,
+      /^plan_script_(?:threw|unknown_action):/u,
+      `a call the description teaches is a call the compiler refuses (${compiled.reasonCode}): ${example}`,
+    );
+  const written = compiled.status === "refused" ? [] : nodesOf(compiled).map((node) => node.actionId);
+  for (const taught of ["till_soil", "water_crop"])
+    assert.ok(
+      written.includes(taught),
+      `${taught}'s loop in the example composes its step, so the example is a shape she can copy: ${written.join(", ")}`,
+    );
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// GATE `a_row_a_plan_iterates_says_when_iterating_it_is_work:<family>`
+// ---------------------------------------------------------------------------------------------------------------
+//
+// A ROW A PLAN ITERATES IS A TARGET LIST, AND THE LIST SAYS NOTHING ABOUT WHICH OF ITS ROWS STILL NEED THE WORK.
+// Measured `round81` (2026-11-20, first three minutes): `plan_35` wrote 25 `till_soil` nodes over a 13x3 patch whose
+// every tile was already HoeDirt - `soil_already_tilled` 25 times, `succeeded 25 · rejected 0`, because the settlement
+// proves the postcondition was already true and is right to say so. The settlement was fixed; the twenty-five node
+// executions were still bought for nothing, because nothing in the composition said a tilled row is not a till target.
+//
+// THE POPULATION IS THE RENDERED RECIPE, not this file: every `snapshot.<family>` the description really iterates is
+// parsed out of `planWorkDescription`'s own output, so a family added to the example joins the gate by being written.
+//
+// EACH FAMILY MUST CARRY ONE OF THE TWO SHAPES `PLAN_ITERATION_CONDITIONS` declares - a row field its loop guards on,
+// or a statement that the family publishes only rows that need the work - and the guard is read OFF THE TEXT rather than
+// off the declaration, so deleting it from the example turns the family red by name.
+//
+// AND BOTH DIRECTIONS EXPIRE: a declared family the recipe no longer iterates is red too, because a table of conditions
+// for loops nobody writes is a rule nobody reads.
+//
+// AND A GUARD THE ROW DOES NOT PRINT IS NOT A CONDITION SHE CAN READ. `round80`'s tree (`e7fd043f`) is the real-history
+// replay: the soil loop already guarded on `soil.hoeDirt`, and `ROW_STATE_FIELDS` had no `soilTiles` entry, so no row of
+// the family printed the state the guard asked about - the block called a worked 10x3 block 「可锄的地块」 and the Mod
+// answered `soil_already_tilled` 54 times. The crossing below is red on that tree by the family's own name.
+
+type IteratedFamilyReading = Readonly<{
+  families: readonly string[];
+  conditioned: number;
+  bare: readonly string[];
+  expired: readonly string[];
+}>;
+
+/**
+ * The loops the recipe writes, as family -> the variable it binds that family's row to.
+ *
+ * The pattern is the one loop shape the description teaches (`for (const row of snapshot.<family>)`), so the population
+ * is the recipe's own iterated families: a family mentioned in prose is not iterated by a plan and is not judged here.
+ */
+function iteratedLoops(description: string): ReadonlyMap<string, string> {
+  const loops = new Map<string, string>();
+  for (const match of description.matchAll(/for \(const ([a-z][A-Za-z0-9_]*) of snapshot\.([a-z][A-Za-z0-9_]*)/gu))
+    loops.set(match[2] as string, match[1] as string);
+  return loops;
+}
+
+/**
+ * The recipe text from one family's mention to the end of the loop it is named in, or `undefined` when the recipe never
+ * names it.
+ *
+ * The end is the closing brace of the first block after the mention, so the slice covers the `if` a guard is written as
+ * and stops before the next family's loop - which is what makes a guard count for the family it is written under.
+ */
+function loopBodyOf(description: string, family: string): string | undefined {
+  const at = description.indexOf(`snapshot.${family}`);
+  if (at < 0) return undefined;
+  const rest = description.slice(at);
+  const end = rest.search(/\n\}/u);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
+function iteratedFamilyReading(
+  description: string,
+  declared: Readonly<Record<string, PlanIterationCondition>> = PLAN_ITERATION_CONDITIONS,
+): IteratedFamilyReading {
+  const loops = iteratedLoops(description);
+  const families = [...loops.keys()].sort();
+  const bare: string[] = [];
+  let conditioned = 0;
+  for (const family of families) {
+    const entry = declared[family];
+    if (entry === undefined) {
+      bare.push(family);
+      continue;
+    }
+    if ("rowField" in entry) {
+      const body = loopBodyOf(description, family) ?? "";
+      const guard = new RegExp(`if \\(${loops.get(family) as string}\\.${entry.rowField}\\b`, "u");
+      if (!guard.test(body)) {
+        bare.push(family);
+        continue;
+      }
+    }
+    conditioned += 1;
+  }
+  const expired = Object.keys(declared)
+    .filter((family) => !families.includes(family))
+    .sort();
+  return Object.freeze({
+    families: Object.freeze(families),
+    conditioned,
+    bare: Object.freeze(bare),
+    expired: Object.freeze(expired),
+  });
+}
+
+/**
+ * The wire's own declaration of one family's row fields, read from the document rather than restated here.
+ *
+ * A `rowField` a condition names has to be a property the Mod really publishes on that family's rows: without this the
+ * table could declare a guard the example also writes and the two would agree about a field nothing publishes.
+ */
+function wireRowFieldNames(family: string): readonly string[] {
+  const schema = JSON.parse(readFileSync(resolve(hostRoot, "../protocol/bridge-v1.schema.json"), "utf8")) as {
+    $defs?: Record<string, { properties?: Record<string, { items?: { $ref?: string } }> }>;
+  };
+  const reference = schema.$defs?.snapshot?.properties?.[family]?.items?.$ref;
+  if (typeof reference !== "string") return [];
+  const properties = schema.$defs?.[reference.slice(reference.lastIndexOf("/") + 1)]?.properties;
+  return properties === undefined ? [] : Object.keys(properties).sort();
+}
+
+/**
+ * The row-prints-the-guarded-state crossing: a guard on a field no row of that family prints is not a condition she can
+ * read.
+ *
+ * THE REPLAY IS `e7fd043f` (`round80`): the recipe already wrote `if (soil.hoeDirt !== true)` over `snapshot.soilTiles`,
+ * and `ROW_STATE_FIELDS` carried `colorTargets` alone - so a row of the soil family printed its tile and nothing about
+ * the Hoe, the block called a worked block 「可锄的地块」, and 54 tills were dispatched at ground already under it. This
+ * reading names the family and the field, on a tree where both halves of `PLAN_ITERATION_CONDITIONS` would have said the
+ * condition was declared.
+ */
+function unprintedGuardFindings(
+  reading: IteratedFamilyReading,
+  printed: Readonly<Record<string, Readonly<{ field: string; label: string }>>> = ROW_STATE_FIELDS,
+): readonly string[] {
+  return reading.families.flatMap((family) => {
+    const entry = PLAN_ITERATION_CONDITIONS[family];
+    if (entry === undefined || !("rowField" in entry)) return [];
+    const field = printed[family]?.field;
+    if (field === entry.rowField) return [];
+    return [
+      `a_row_a_plan_iterates_says_when_iterating_it_is_work:${family}:${entry.rowField} ` +
+        `(the recipe guards on it and a row prints ${field === undefined ? "no state at all" : `\`${field}\``})`,
+    ];
+  });
+}
+
+/** The Mod source a `publishedAsWork` reason cites, in the one spelling a citation may take: `<file>.cs:<from>-<to>`. */
+const PUBLICATION_CITATION = /`([A-Za-z][A-Za-z0-9_.]*)\.cs:(\d+)-(\d+)`/u;
+
+/**
+ * The anchor a `publishedAsWork` reason owes: a citation of the Mod code whose publication predicate makes the family the
+ * condition, and a named symbol that citation really contains.
+ *
+ * WITHOUT THIS, `publishedAsWork` IS A FREE-TEXT EXCUSE: the exemption would be prose a lane could write about any family
+ * - the list of reasons that outlive their reason, which is what every other table in this tree avoids by deriving its
+ * population. A reason that names real C# and a range that really mentions the symbol is as far as a test can reach into
+ * another language, and it is enough to make the escape hatch cost a citation.
+ */
+function publicationAnchorFindings(family: string, reason: string): readonly string[] {
+  const prefix = `a_row_a_plan_iterates_says_when_iterating_it_is_work:${family}:published-as-work`;
+  const cited = PUBLICATION_CITATION.exec(reason);
+  if (cited === null) return [`${prefix} (the reason cites no \`<file>.cs:<from>-<to>\`)`];
+  const source = readFileSync(resolve(hostRoot, `../integrations/stardew/${cited[1] as string}.cs`), "utf8").split("\n");
+  const from = Number(cited[2]);
+  const to = Number(cited[3]);
+  if (!(from >= 1 && to >= from && to <= source.length))
+    return [`${prefix} (${cited[1] as string}.cs has ${String(source.length)} lines, and the reason cites ${String(from)}-${String(to)})`];
+  const citedLines = source.slice(from - 1, to).join("\n");
+  const symbols = [...reason.replace(cited[0], "").matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/gu)].map((match) => match[1] as string);
+  const anchored = symbols.filter((symbol) => citedLines.includes(symbol));
+  if (anchored.length > 0) return [];
+  return [
+    `${prefix} (none of ${symbols.length === 0 ? "the reason's own symbols, of which it names none" : symbols.join(", ")} ` +
+      `is in ${cited[1] as string}.cs:${String(from)}-${String(to)})`,
+  ];
+}
+
+test("a_row_a_plan_iterates_says_when_iterating_it_is_work: every family the recipe iterates states its condition", () => {
+  const reading = iteratedFamilyReading(planWorkDescription(CATALOG_ACTIONS));
+  console.log(
+    `a_row_a_plan_iterates_says_when_iterating_it_is_work: families ${String(reading.families.length)} · ` +
+      `with-a-condition ${String(reading.conditioned)} · bare ${String(reading.bare.length)} ` +
+      `(${reading.families.join(", ")})`,
+  );
+  // Refuse to pass on nothing: a recipe that iterates no family agrees with every assertion below.
+  assert.ok(
+    reading.families.length > 0,
+    "blocked: the recipe iterates no snapshot family, so this gate examined nothing",
+  );
+  assert.deepEqual(
+    reading.bare,
+    [],
+    `these families are iterated by a recipe that never says when iterating them is work: ${reading.bare.join(", ")}`,
+  );
+  assert.deepEqual(reading.expired, [], `these conditions outlived the loops that named them: ${reading.expired.join(", ")}`);
+  assert.deepEqual(
+    unprintedGuardFindings(reading),
+    [],
+    "a loop guards on a state no row of its family prints, which is `round80`'s tree",
+  );
+  // A condition may only name a field the wire publishes for that family's rows, and a `publishedAsWork` reason may only
+  // claim a publication the Mod's own source really holds.
+  const unanchored = reading.families.flatMap((family) => {
+    const entry = PLAN_ITERATION_CONDITIONS[family];
+    if (entry === undefined) return [];
+    if ("publishedAsWork" in entry) return publicationAnchorFindings(family, entry.publishedAsWork);
+    const fields = wireRowFieldNames(family);
+    return fields.includes(entry.rowField)
+      ? []
+      : [
+          `a_row_a_plan_iterates_says_when_iterating_it_is_work:${family}:${entry.rowField} ` +
+            `(the wire publishes ${fields.length === 0 ? "no row record for this family" : fields.join(", ")})`,
+        ];
+  });
+  assert.deepEqual(unanchored, [], `a condition rests on something nothing publishes: ${unanchored.join(" | ")}`);
+});
+
+/**
+ * The loop the recipe writes over one family, taken out of the rendered description: from its `for (` to its closing
+ * brace.
+ *
+ * The script a test compiles below is the product's own sentence, not a second copy of it - which is what makes the
+ * reading a statement about what the recipe composes rather than about what this file would have written.
+ */
+function loopSourceOf(description: string, family: string): string {
+  const start = description.search(new RegExp(`for \\(const [a-z][A-Za-z0-9_]* of snapshot\\.${family}\\)`, "u"));
+  if (start < 0) assert.fail(`the recipe writes no loop over \`${family}\``);
+  const end = description.indexOf("\n}", start);
+  assert.notEqual(end, -1, `the \`${family}\` loop is closed`);
+  return description.slice(start, end + 2);
+}
+
+/**
+ * ROUND81, MEASURED WITHOUT A LIVE RUN: the recipe's own soil loop, compiled against the patch `plan_35` was written for.
+ *
+ * <p>
+ * The live reading is the measurement this stands in for and it cannot be re-taken here (one run is in progress): `plan_35`
+ * composed 25 `till_soil` nodes over x 58..70, y 18..20, every one answered `soil_already_tilled` with
+ * `before=HoeDirt;settled_by=engine_flag:hoedirt=present`, and the run carries no `soil_tilled` receipt at all - so the
+ * field was under the Hoe from the first observation, which is what the save template copies. What is measurable without
+ * the game is what the RECIPE does with those rows, because the loop is a script and the compiler is in this tree.
+ * </p>
+ *
+ * <p>
+ * The two halves are the same sentence: over a patch whose rows say `hoeDirt: true` the loop writes NO call at all (the
+ * compiler answers `plan_script_empty_no_builder_call`, which is the count of a plan that composed nothing), and over the
+ * same patch with `hoeDirt: false` it writes the tills. That is the property the row's word has to carry: her reading said
+ * `可种植 true`, and nothing in that word is the `hoeDirt` the guard tests.
+ * </p>
+ */
+test("round81_composition: the recipe's own soil loop writes no till node over a patch already under the Hoe", () => {
+  const loop = loopSourceOf(planWorkDescription(CATALOG_ACTIONS), "soilTiles");
+  const patch = (hoeDirt: boolean) =>
+    Array.from({ length: 39 }, (_, index) => ({ x: 58 + (index % 13), y: 18 + Math.floor(index / 13), hoeDirt }));
+  const worked = compile(loop, { enabledActionIds: ["till_soil"], soilTiles: patch(true) });
+  assert.equal(worked.status, "refused", "a patch already under the Hoe is a loop with nothing to do");
+  assert.equal(
+    refusalOf(worked),
+    "plan_script_empty_no_builder_call",
+    "and the answer says so by name rather than submitting an empty programme",
+  );
+  const bare = compile(loop, { enabledActionIds: ["till_soil"], soilTiles: patch(false) });
+  assert.notEqual(bare.status, "refused", `the same loop over ground the Hoe admits composes work: ${String(bare.status)}`);
+  assert.ok(
+    nodesOf(bare).every((node) => node.actionId === "till_soil"),
+    "and every node it writes is the till the rows asked for",
+  );
+});
+
+test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare family, and names it", () => {
+  const description = planWorkDescription(CATALOG_ACTIONS);
+  // No declaration at all: every family the recipe iterates is named, which is the state a new family arrives in.
+  assert.deepEqual(
+    iteratedFamilyReading(description, {}).bare,
+    ["cropTargets", "soilTiles"],
+    "a family iterated by the recipe with no declared condition is named by the gate",
+  );
+  // The guard taken out of the example is the row condition gone from the text, and the family whose state it tested is
+  // named - which is what makes this a reading of the recipe rather than of the table beside it.
+  const unguarded = description.replace("if (soil.hoeDirt !== true) ", "");
+  assert.notEqual(unguarded, description, "the example guards the soil loop over the row's own state");
+  assert.deepEqual(
+    iteratedFamilyReading(unguarded).bare,
+    ["soilTiles"],
+    "deleting the guard from the recipe leaves the family it guarded with no condition, and the gate says which",
+  );
+  // An entry cannot outlive its loop.
+  assert.deepEqual(
+    iteratedFamilyReading(description, { ...PLAN_ITERATION_CONDITIONS, machineTargets: { rowField: "machineType" } }).expired,
+    ["machineTargets"],
+    "a condition for a family the recipe no longer iterates is red by that family's own name",
+  );
+  // A guard no row of the family prints is refused: this is `e7fd043f` with the state table taken back to its two-entry
+  // shape, and the reading names the family and the field the guard asks about.
+  assert.deepEqual(
+    unprintedGuardFindings(iteratedFamilyReading(description), { colorTargets: { field: "color", label: "色" } }),
+    ["a_row_a_plan_iterates_says_when_iterating_it_is_work:soilTiles:hoeDirt (the recipe guards on it and a row prints no state at all)"],
+    "a loop whose guarded state no row prints is the composition defect itself, named by family and field",
+  );
+  // And a `publishedAsWork` reason has to cite Mod source that really carries the symbols it names.
+  assert.match(
+    publicationAnchorFindings("cropTargets", "every row needs water")[0] ?? "",
+    /^a_row_a_plan_iterates_says_when_iterating_it_is_work:cropTargets:published-as-work \(the reason cites no /u,
+    "an excuse with no citation is a reason and not an anchor",
+  );
+  assert.match(
+    publicationAnchorFindings(
+      "cropTargets",
+      "`DiscoverCropTargets` answers only `CropNeedsWater` rows (`farmhandexecutioncontroller.targetdiscovery.cs:1-3`)",
+    )[0] ?? "",
+    /is in farmhandexecutioncontroller\.targetdiscovery\.cs:1-3/u,
+    "a citation that names a range not containing what it cites does not anchor the reason",
+  );
+  assert.deepEqual(
+    publicationAnchorFindings("cropTargets", (PLAN_ITERATION_CONDITIONS.cropTargets as { publishedAsWork: string }).publishedAsWork),
+    [],
+    "the shipped reason denotes the Mod code that publishes only rows needing the work",
   );
 });
