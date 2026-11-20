@@ -52,7 +52,7 @@
  * half of `session` therefore rests on the English half - the two catalogues are edited together, and the
  * sentence pair is what a reviewer reads.
  *
- * TWO MORE THINGS A SENTENCE A PLAYER READS MAY NOT DO, added by the second pass over the same copy:
+ * THREE MORE THINGS A SENTENCE A PLAYER READS MAY NOT DO, added by the second pass over the same copy:
  *  - carry a raw identifier (`player-vocabulary.5`). A `snake_case` or `camelCase` token, a dotted name or a
  *    slashed path is a code wearing another spelling: no player can read it, act on it, or repeat it to
  *    anyone. The population is the same derived one, so a code typed into a sentence tomorrow is a finding;
@@ -64,6 +64,14 @@
  *    said what happened. The wall belongs after the account and before the step, and a wall that nothing
  *    follows is a dead end with no way out. The population is the strings that state the page's own limit,
  *    derived by scanning for the phrases that do; zero of them would mean a true fact left the copy.
+ *  - print a contract code (`player-vocabulary.8`). This is the one the first pass could not see: the
+ *    catalogue's own literals were clean, because the codes arrived through a placeholder - a rendered
+ *    `{{cause}}` put `stardew_contained_player_host_launch_failed` on the screen and a rendered
+ *    `{{code}}` put the wire's own word on the internal-error card. A scan of the strings cannot catch
+ *    that, so the check drives the REAL `composedProblemView` over the declared code unions and the
+ *    `stardew_*` names this repository declares, and reads what comes out. The code is not forbidden to
+ *    exist: it stays on the error for the record and for a report, which is where `observedProblemCause`
+ *    reads it. The claim is that no player's SENTENCE carries one.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -71,6 +79,14 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { composedProblemView } from "../src/composed-problem-view.ts";
+import {
+  ComposedReferenceGameProblemError,
+  ComposedReferenceGameProtocolError,
+  GAME_PROBLEM_CODES,
+} from "../src/composed-reference-game-browser-api.ts";
+import { messages } from "../src/i18n.ts";
+import { PROBLEM_CODES, TavernProblemError, TavernProtocolError } from "../src/reference-pipeline-api.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, "..");
@@ -588,5 +604,109 @@ test("player-vocabulary.7 (mutation): a planted wall and a planted identifier fa
   );
   t.diagnostic(
     "player-vocabulary.7: a planted wall, a wall with no step and a planted code are reported; the three-part sentence and the player's own server name are not",
+  );
+});
+
+/**
+ * Every `stardew_*` name this repository declares, as the thing a game refusal can carry on its
+ * `cause`. The population is the Host's own source rather than a list: a code registered tomorrow is
+ * driven through the view the day it is written.
+ */
+function stardewCauses(cache = hostSourceCache()) {
+  const names = new Set();
+  for (const [, text] of cache) for (const match of text.matchAll(/"stardew_[a-z0-9_]+"/gu)) names.add(match[0].slice(1, -1));
+  return [...names].sort();
+}
+
+test("player-vocabulary.8: no contract code reaches a player's sentence", (t) => {
+  const causes = stardewCauses();
+  assert.ok(GAME_PROBLEM_CODES.length > 0, "an empty game code union would agree with itself");
+  assert.ok(PROBLEM_CODES.length > 0, "an empty tavern code union would agree with itself");
+  assert.ok(
+    causes.length >= 20,
+    `only ${causes.length} stardew_* name(s) were derived from the Host's own source; a population this small means the derivation broke`,
+  );
+
+  const findings = [];
+  const seen = [];
+  let examined = 0;
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const examine = (route, view) => {
+      examined += 1;
+      const text = `${view.title}\n${view.detail}`;
+      for (const finding of identifiersIn([{ key: route, value: text, line: route }], locale))
+        findings.push(`${finding.key} -> ${finding.token}`);
+      if (route === GAME_PROBLEM_CODES[0] && !seen.includes(`${locale} ${route}`)) {
+        seen.push(`${locale} ${route}`);
+        seen.push(`${locale} ${route}: ${view.detail}`);
+      }
+    };
+    for (const code of PROBLEM_CODES)
+      examine(
+        code,
+        composedProblemView(
+          new TavernProblemError({ type: "about:blank", title: "refused", status: 409, code, requestId: "request-1", retryable: false }),
+          labels,
+        ),
+      );
+    for (const code of GAME_PROBLEM_CODES)
+      for (const cause of [null, ...causes])
+        examine(
+          cause === null ? code : `${code} + ${cause}`,
+          composedProblemView(new ComposedReferenceGameProblemError(code, 409, "request-1", cause), labels),
+        );
+    // The client's own closed reasons are codes too, and they reach the same card.
+    for (const error of [new ComposedReferenceGameProtocolError("invalid_composed_root"), new TavernProtocolError(), new Error("socket closed")])
+      examine(`the client's own ${error.constructor.name}`, composedProblemView(error, labels));
+  }
+
+  t.diagnostic(
+    `player-vocabulary.8: ${examined} rendered sentence pair(s) driven through the real view — ${PROBLEM_CODES.length} tavern code(s), ${GAME_PROBLEM_CODES.length} game code(s) x ${causes.length} stardew_* cause(s) + none, the client's own reasons — in 2 catalogues; ${findings.length} code token(s)`,
+  );
+  for (const sample of seen) t.diagnostic(`player-vocabulary.8: ${sample}`);
+  for (const finding of findings) t.diagnostic(`player-vocabulary.8: ${finding}`);
+  assert.deepEqual(
+    findings,
+    [],
+    "a code belongs on the wire and in the record, which is where observedProblemCause reads it — a sentence a player reads may not carry one",
+  );
+});
+
+test("player-vocabulary.9 (mutation): the sentences that shipped with a code on them are reported", (t) => {
+  // The exact text the screen showed before this rule existed, in both catalogues: the catalogue held
+  // no code, so only driving the real view (or replaying what it produced) can see this defect.
+  const shipped = [
+    [
+      "gameProblemUnavailableCauseDetail",
+      "GameBuddy could not carry out this step of the game (registered cause stardew_contained_player_host_launch_failed). What this page shows is the last state it read from the game; check Game installation, then try again.",
+    ],
+    [
+      "problemInternalErrorDetail",
+      "GameBuddy reported an internal error (code stardew_contained_player_host_launch_failed).",
+    ],
+    ["problemInternalErrorDetailZh", "GameBuddy 报告了内部错误（代码 stardew_contained_player_host_launch_failed）。"],
+  ];
+  const token = "stardew_contained_player_host_launch_failed";
+  const reported = (text) => identifiersIn([{ key: "sample", value: text, line: "sample" }], "en").map((finding) => finding.token);
+  assert.deepEqual(
+    shipped.map(([, value]) => reported(value)),
+    [[token], [token], [token]],
+    "each shipped sentence carried the code and is reported for it",
+  );
+  // …and the sentences that replaced them carry nothing, which is what makes the rule green.
+  const labels = messages("en");
+  const replaced = [
+    labels.gameProblemUnavailableDetail,
+    labels.problemInternalErrorDetail,
+    messages("zh-CN").problemInternalErrorDetail,
+  ];
+  assert.deepEqual(
+    replaced.map((value) => reported(value)),
+    [[], [], []],
+    "the replaced sentences name the fault and the step, and print no code",
+  );
+  t.diagnostic(
+    "player-vocabulary.9: the three sentences that shipped a code are reported by the same scan the rendered view is held to; their replacements are not",
   );
 });
