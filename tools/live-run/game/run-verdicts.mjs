@@ -96,29 +96,94 @@ export function medianPromptTurnIntervalMs(starts) {
 }
 
 /**
+ * WHAT EACH OF A RUN'S DAY PURPOSES WAS DECIDED AS, as counts and as the days themselves.
+ *
+ * <p>
+ * The states are read APART rather than collapsed: `judged` is a day the evidence decided (`achieved` or
+ * `not_achieved`), `unproven` is a day whose receipts proved nothing either way, and `unjudged` is a day whose criterion
+ * asks for a fact nothing publishes - so no receipt set could ever have decided it (`task-purpose.mjs`). Merging the last
+ * two would make a run that measured nothing look like a run that found nothing.
+ * </p>
+ * <p>
+ * `unjudgedDays` carries each such day WITH ITS MISSING FACT, because the count is not the diagnosis: `unjudged 2 of 3`
+ * does not tell a reader which capability the run could not be scored on, and the fact does.
+ * </p>
+ */
+export function taskPurposeReading(taskPurposes) {
+  const purposes = (Array.isArray(taskPurposes) ? taskPurposes : []).filter(
+    (purpose) => purpose !== null && typeof purpose === "object",
+  );
+  const days = purposes.map((purpose) =>
+    Object.freeze({
+      day: Number.isInteger(purpose.day) ? purpose.day : null,
+      // `taskId` and `task` are the two spellings a day's purpose arrives with; this is where they become one.
+      task: purpose.taskId ?? purpose.task ?? null,
+      state: typeof purpose.state === "string" ? purpose.state : null,
+      reasonCode: typeof purpose.reasonCode === "string" ? purpose.reasonCode : null,
+      missingFact: typeof purpose.missingFact === "string" ? purpose.missingFact : null,
+    }),
+  );
+  const ofState = (state) => days.filter((day) => day.state === state);
+  const notAchieved = ofState("not_achieved");
+  return Object.freeze({
+    days: days.length,
+    judged: days.filter((day) => day.state === "achieved").length + notAchieved.length,
+    notAchieved: notAchieved.length,
+    unproven: ofState("unproven").length,
+    unjudged: ofState("unjudged").length,
+    unprovenDays: Object.freeze(ofState("unproven")),
+    unjudgedDays: Object.freeze(ofState("unjudged")),
+  });
+}
+
+/** The reading as ONE line: `days 3 · judged 2 · unproven 0 · unjudged 1`. */
+export function describeTaskPurposeReading(reading) {
+  const count = (field) => (reading === null || reading === undefined ? "not_measured" : String(reading[field]));
+  return `days ${count("days")} · judged ${count("judged")} · unproven ${count("unproven")} · unjudged ${count("unjudged")}`;
+}
+
+/** One unjudged day and the fact nobody publishes: `day 3 sweep_yard_and_work: unjudged · <code> · <fact>`. */
+export function describeUnjudgedDay(day) {
+  if (day === null || day === undefined) return "unjudged: not_measured";
+  return (
+    `day ${day.day === null ? "?" : String(day.day)} ${String(day.task)}: unjudged · ${String(day.reasonCode)} · ` +
+    `${day.missingFact ?? "no fact named"}`
+  );
+}
+
+/**
  * The task's own verdict, from the purposes the day loop judged (`task-purpose.mjs`). One spelling, because the session
  * verdict and the rung clause both report it.
  *
- * THREE ANSWERS, and `null` is the only pass:
- *   - `task_not_achieved` when a purpose's receipts are COMPLETE evidence that it did not hold;
- *   - `task_unproven:<taskId>:<reasonCode>,...` when a purpose could not be decided at all - the criterion needs a fact
- *     nothing publishes, or the receipts that would decide it carried no postcondition of their own. It names the
- *     criterion AND the reason, so "we could not prove it" is a finding a reader can act on rather than silence;
- *   - `null` when every purpose was achieved.
+ * FOUR ANSWERS, and `null` is the only pass:
+ *   - `task_not_achieved` when a purpose's receipts are COMPLETE evidence that it did not hold. It is the only state the
+ *     companion can be blamed for, so it outranks every day that could not be decided;
+ *   - `task_unproven:<taskId>:<reasonCode>,...` when a NON-gap purpose could not be decided - the receipts that would
+ *     decide it carried no postcondition of their own. It names the criterion AND the reason, so "we could not prove it"
+ *     is a finding a reader can act on rather than silence. Measured 2026-11-07 (`round39`): three days of
+ *     `clear_and_plant_long_patch` came out `unproven` because no admitted receipt carried a tile, and the verdict named
+ *     none of it - the arm read only `not_achieved`. A run that cannot say whether the task happened has not been
+ *     verified as one that did;
+ *   - `task_purposes_nothing_judged:<unjudged>of<days>` when EVERY day was a gap day. A state that excuses an unprovable
+ *     criterion must not be able to excuse the whole run: judged by nothing is not a pass, and `unjudged 3 of 3` says
+ *     which way it failed;
+ *   - `null` when every purpose was achieved or unjudged, with at least one day the evidence actually decided.
  *
- * UNPROVEN IS NOT A PASS. Measured 2026-11-07 (`round39`): three days of `clear_and_plant_long_patch` came out
- * `unproven` - no admitted receipt carried a tile, so the 3x20 strip could be neither confirmed nor denied - and the
- * verdict named none of it, because the arm read only `not_achieved`. An unprovable criterion is a fact about our own
- * reporting, and a run that cannot say whether the task happened has not been verified as one that did.
+ * See `taskPurposeReading` for how the three day states are kept apart.
  */
 export function taskPurposeVerdict(taskPurposes) {
-  const purposes = Array.isArray(taskPurposes) ? taskPurposes : [];
-  if (purposes.some((purpose) => purpose.state === "not_achieved")) return "task_not_achieved";
-  const unproven = purposes.filter((purpose) => purpose.state === "unproven");
-  if (unproven.length === 0) return null;
-  return `task_unproven:${unproven
-    .map((purpose) => `${String(purpose.taskId ?? purpose.task)}:${String(purpose.reasonCode)}`)
-    .join(",")}`;
+  const reading = taskPurposeReading(taskPurposes);
+  if (reading.notAchieved > 0) return "task_not_achieved";
+  // A GAP DAY IS NOT A FAILED DAY. Measured 2026-11-20 (`round81`): day 3 was `sweep_yard_and_work`, whose purpose
+  // nothing publishes, and the run was blocked for a task no run could have passed. `unjudged` days are therefore absent
+  // from this answer - named beside it by `taskPurposeReading` instead, so the gap stays visible without being a verdict.
+  if (reading.unprovenDays.length > 0)
+    return `task_unproven:${reading.unprovenDays
+      .map((day) => `${String(day.task)}:${String(day.reasonCode)}`)
+      .join(",")}`;
+  if (reading.days > 0 && reading.judged === 0)
+    return `task_purposes_nothing_judged:${String(reading.unjudged)}of${String(reading.days)}`;
+  return null;
 }
 
 /**

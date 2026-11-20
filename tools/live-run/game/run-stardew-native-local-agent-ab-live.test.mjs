@@ -647,7 +647,8 @@ test("a run whose multi-day assessment is blocked cannot report a completed sess
   // `sessionVerdict: "completed"` while `multiday.completed` was false and the assessment said `blocked`.
   // One run cannot both have completed and have been blocked, so the verdict is DERIVED from the
   // assessment (one control flow, `completed` as the residual) rather than computed beside it.
-  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+  const [, , deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "taskPurposeReading",
     "taskPurposeVerdict",
     "deriveSessionVerdict",
   ]);
@@ -719,7 +720,8 @@ test("a session that did work cannot report `completed` for a task whose purpose
   // The measured false positive: a `go_mining` day declared `[travel, enter_mine, break_rock]`, broke rocks on the
   // surface, and the run was counted as having done the task because the work list was non-empty. The task's own
   // criterion (`task-purpose.mjs`) now decides it, and the verdict is where that decision becomes the run's outcome.
-  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+  const [, , deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "taskPurposeReading",
     "taskPurposeVerdict",
     "deriveSessionVerdict",
   ]);
@@ -752,30 +754,50 @@ test("a session that did work cannot report `completed` for a task whose purpose
     "task_not_achieved",
     "break_rock succeeded and the rock was on the surface: real work, unmet purpose",
   );
-  // UNPROVEN IS NOT A FAILED DAY, AND IT IS NOT A PASS EITHER.
+  // UNPROVEN IS NOT A FAILED DAY, AND IT IS NOT A PASS EITHER - and a GAP day is neither of those things.
   //
-  // A task whose criterion is missing because a FACT we publish is missing is not a failure of the companion, so it is
-  // not charged as `task_not_achieved` - but it is also not "exercised": nothing in this run established that the task
-  // happened. Measured 2026-11-07 (`round39`): all three days of `clear_and_plant_long_patch` came out `unproven`, and
-  // this arm answered `completed` for all three, so the artifact claimed a completed session on a task whose plot could
-  // not be located. The code names the criterion and its own reason, which is what keeps our gap visible instead of
-  // silent.
+  // A criterion that asks for a fact nothing publishes (`missingFact`) is answered `unjudged`: no receipt set could ever
+  // decide it, so charging it as a failure turns our own reporting gap into a product failure - which is how `round81`
+  // was blocked for a task no run could have passed. A criterion that could be decided and was not is still `unproven`,
+  // and that one blocks: measured 2026-11-07 (`round39`), all three days came out `unproven` and this arm answered
+  // `completed` for all three, so the artifact claimed a completed session on a task whose plot could not be located.
   assert.equal(
     deriveSessionVerdict({
       ...worked,
       taskPurposes: [
         {
           day: 1,
-          task: "clear_east_patch",
-          taskId: "clear_east_patch",
+          task: "mine_delve",
+          taskId: "mine_delve",
           state: "unproven",
-          reasonCode: "task_purpose_needs_an_unpublished_fact",
-          missingFact: "no farm-region fact",
+          reasonCode: "task_purpose_evidence_without_postcondition",
+          missingFact: null,
         },
       ],
     }),
-    "task_unproven:clear_east_patch:task_purpose_needs_an_unpublished_fact",
-    "an undecidable criterion is a verdict that names the criterion and the missing fact's own code, never `completed`",
+    "task_unproven:mine_delve:task_purpose_evidence_without_postcondition",
+    "an undecidable criterion is a verdict that names the criterion and its own reason, never `completed`",
+  );
+  const gapDay = Object.freeze({
+    day: 1,
+    task: "clear_east_patch",
+    taskId: "clear_east_patch",
+    state: "unjudged",
+    reasonCode: "task_purpose_needs_an_unpublished_fact",
+    missingFact: "no farm-region fact",
+  });
+  assert.equal(
+    deriveSessionVerdict({ ...worked, taskPurposes: [gapDay] }),
+    "task_purposes_nothing_judged:1of1",
+    "a run whose only day is a gap day was judged by nothing, which is blocked rather than completed",
+  );
+  assert.equal(
+    deriveSessionVerdict({
+      ...worked,
+      taskPurposes: [gapDay, { day: 2, task: "mine_delve", state: "achieved" }],
+    }),
+    "completed",
+    "a gap day beside a day the evidence decided is not a failure - the session is judged by the day that could be",
   );
   assert.equal(
     deriveSessionVerdict({
@@ -4136,10 +4158,13 @@ test("the run reads the clock where it already reads the world, and once more be
     "the last reading has to happen while the bridge is still alive and before the verdict is written",
   );
 });
-test("an unproven task is not a pass: the arm names the criterion it could not decide", async () => {
+test("an unproven task is not a pass, and a task nothing could decide is not a failure", async () => {
   // ROUND39'S OWN PURPOSES, verbatim from `_multiday_routine-round39.result.json` (measured 2026-11-07). All three
   // days came back `unproven`, and the run's verdict named none of them: the arm read only `not_achieved`, so the
   // residual `completed` stood for "the task may have happened" on a day whose receipts could not say where any plot was.
+  // Days 1 and 2 are still `unproven` for exactly that reason - their criteria ARE decidable and the receipts proved
+  // nothing. Day 3 (`town_market`) is a GAP criterion: nothing publishes the map a purchase happened on, so it is
+  // `unjudged` - printed with its missing fact, and not charged to the run.
   const ROUND39_TASK_PURPOSES = Object.freeze([
     Object.freeze({
       day: 1,
@@ -4164,16 +4189,25 @@ test("an unproven task is not a pass: the arm names the criterion it could not d
       day: 3,
       task: "town_market",
       taskId: "town_market",
-      state: "unproven",
+      state: "unjudged",
       reasonCode: "task_purpose_needs_an_unpublished_fact",
       purpose: "something was bought in town and the post was brought in",
       missingFact:
         "no published fact places the actor in Town: `shop_purchase` publishes the shop and `claim_mail_attachment` the farm mailbox, neither publishes a map, and `travel` publishes endpoints only when travel is the route that was used.",
     }),
   ]);
-  const [taskPurposeVerdict, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+  const [
+    taskPurposeReading,
+    taskPurposeVerdict,
+    deriveSessionVerdict,
+    describeTaskPurposeReading,
+    describeUnjudgedDay,
+  ] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "taskPurposeReading",
     "taskPurposeVerdict",
     "deriveSessionVerdict",
+    "describeTaskPurposeReading",
+    "describeUnjudgedDay",
   ]);
   // Everything a playable session must also have, so the only thing left to decide is the task. round39's own
   // `multidayAssessment` is the PASSING shape here on purpose: this test is about the arm the multi-day block hid.
@@ -4193,18 +4227,40 @@ test("an unproven task is not a pass: the arm names the criterion it could not d
   };
   const verdict = deriveSessionVerdict({ ...playable, taskPurposes: ROUND39_TASK_PURPOSES });
   assert.match(verdict, /^task_unproven:/u, "an undecidable task is a verdict, not a pass");
-  // EVERY criterion and its OWN reason: a reader learns which purposes were unprovable and why, without opening the
-  // artifact's `taskPurposes` - and no reason is paraphrased here.
-  for (const purpose of ROUND39_TASK_PURPOSES)
+  // EVERY criterion that COULD have been decided and was not, with its own reason: a reader learns which purposes were
+  // unprovable and why, without opening the artifact's `taskPurposes` - and no reason is paraphrased here.
+  for (const purpose of ROUND39_TASK_PURPOSES.filter((entry) => entry.state === "unproven"))
     assert.ok(
       verdict.includes(`${purpose.taskId}:${purpose.reasonCode}`),
       `${purpose.taskId} must be named with its own reason: ${verdict}`,
     );
+  assert.ok(
+    !verdict.includes("town_market"),
+    `a day whose criterion decides nothing must not be named as a failed day: ${verdict}`,
+  );
   assert.equal(
     taskPurposeVerdict(ROUND39_TASK_PURPOSES),
     verdict,
     "the clause and the session verdict report the task from one derivation",
   );
+
+  // THE GAP DAY IS ABSENT FROM THAT VERDICT AND NOT SILENT: the reading prints it with the fact it wanted. `unjudged 1`
+  // on its own tells a reader nothing about which capability the run could not be scored on.
+  const purposesReading = taskPurposeReading(ROUND39_TASK_PURPOSES);
+  assert.equal(describeTaskPurposeReading(purposesReading), "days 3 · judged 0 · unproven 2 · unjudged 1");
+  assert.deepEqual(
+    purposesReading.unjudgedDays.map((entry) => entry.task),
+    ["town_market"],
+    "the unjudged day is listed by name",
+  );
+  assert.match(
+    describeUnjudgedDay(purposesReading.unjudgedDays[0]),
+    /^day 3 town_market: unjudged · task_purpose_needs_an_unpublished_fact · no published fact places the actor in Town/u,
+    "the unjudged day travels with its missing fact, not only its reason code",
+  );
+  // AND THE RUN PRINTS IT: a reading nothing writes is a reading nobody reads.
+  assert.match(RUNNER_SOURCE, /console\.error\("MULTIDAY_PURPOSES", describeTaskPurposeReading\(/u);
+  assert.match(RUNNER_SOURCE, /console\.error\("MULTIDAY_UNJUDGED", describeUnjudgedDay\(/u);
 
   // THE FALSIFIERS. A gate that reds every run would be as useless as one that passes every run.
   assert.equal(

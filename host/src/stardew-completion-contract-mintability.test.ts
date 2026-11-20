@@ -134,6 +134,52 @@ const ROUND77_DAY_TWO: readonly MintedShape[] = [
   answers: actionId === "dismiss_modal" ? ("no-op" as const) : ("completion" as const),
 }));
 
+/**
+ * ROUND81'S SETTLEMENTS, receipt for receipt: the Mod's second way to say "this is done".
+ *
+ * `2026-11-20T07-30-03-036Z-multiday_routine` is the run in which the Mod learned to settle and the Host's table had
+ * never been told: thirty-seven `succeeded` terminals, every one filed by `tools/lib/task-purpose.mjs` as
+ * `succeeded_receipt_without_its_own_postcondition`, which is what ruled `clear_and_plant_long_patch` unproven.
+ *
+ * The details are the wire's own text, taken from the run's `timeline.jsonl` at the index beside each one, including the
+ * `chore=` the settlement envelope appends (`STARDEW_SETTLEMENT_ENVELOPE_FIELDS`) so the row is driven with the receipt
+ * the Mod actually wrote and not with a trimmed copy of it. Three distinct shapes are here - the engine's own soil flag,
+ * and the two `consumes` families - and the duplicated tiles are kept as separate dispatches, because a reading that
+ * de-duplicated them would report one `soil_already_tilled` where the run paid for thirty-one.
+ */
+const ROUND81_SETTLEMENTS: readonly MintedShape[] = [
+  [
+    "till_soil",
+    "soil_already_tilled",
+    "target=69,20;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
+    17,
+  ],
+  [
+    "till_soil",
+    "soil_already_tilled",
+    "target=68,18;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
+    19,
+  ],
+  [
+    "cut_weeds",
+    "weed_target_gone",
+    "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none;settled_by=consumes:weedTargets;chore=weedTargets",
+    277,
+  ],
+  [
+    "break_rock",
+    "rock_source_gone",
+    "target=rock_source_9a2b9a1dfa8a045b;named_tile=76,28;tile=none;settled_by=consumes:rockSourceTargets;chore=rockSourceTargets",
+    278,
+  ],
+].map(([actionId, reasonCode, detail, index]) => ({
+  actionId: actionId as string,
+  reasonCode: reasonCode as string,
+  detail: detail as string,
+  from: `2026-11-20T07-30-03-036Z-multiday_routine timeline index ${String(index)}`,
+  answers: "completion" as const,
+}));
+
 /** Whether the Host's row for this action calls this receipt a completion. */
 function reads(row: string, shape: MintedShape): boolean {
   return hasStardewCompletionEvidence(row, {
@@ -157,7 +203,7 @@ function evidenceKeys(detail: string): string[] {
 
 test("a_completion_contract_names_what_the_action_answers:<action>", () => {
   const rows = Object.keys(STARDEW_COMPLETION_CONTRACTS);
-  const witnesses = [...recordedCorpus(), ...ROUND77_DAY_TWO].sort((left, right) =>
+  const witnesses = [...recordedCorpus(), ...ROUND77_DAY_TWO, ...ROUND81_SETTLEMENTS].sort((left, right) =>
     left.actionId.localeCompare(right.actionId),
   );
 

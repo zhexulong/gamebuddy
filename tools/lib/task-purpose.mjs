@@ -30,8 +30,16 @@
  *
  * WHAT A CRITERION MAY NOT DO. It may not read a fact the receipts do not publish, and it may not substitute a
  * readable neighbour for the purpose (clearing "one patch somewhere" is not clearing the east patch). Where the
- * purpose needs a fact nothing publishes, the entry carries `missingFact` instead of `steps`: the task is then
- * `unproven` with that sentence attached, and `judgeTaskPurpose` still cannot return `achieved` for it.
+ * purpose needs a fact nothing publishes, the entry carries `missingFact` instead of `steps`: the day is then
+ * `unjudged` with that sentence attached, and `judgeTaskPurpose` still cannot return `achieved` for it.
+ *
+ * UNJUDGED IS A THIRD ANSWER, NOT A QUIETER UNPROVEN. Measured 2026-11-20 (`round81`): day 3 was `sweep_yard_and_work`,
+ * whose purpose is a fact nothing publishes, and its `unproven` verdict read as a failed day - the run was blocked for a
+ * task no run could have passed. A purpose the receipts cannot decide by construction is our own reporting gap, so a gap
+ * day never blocks. The other half is what keeps the state worth reading: a NON-gap day nobody proved still blocks every
+ * time (`task_unproven`), and a run whose every day was a gap day is `task_purposes_nothing_judged` - judged by nothing is
+ * not a pass. The gate over both halves is `a_day_task_whose_criterion_decides_nothing_is_not_reported_either_way` in
+ * `task-purpose.test.mjs`.
  *
  * AND THE GAP NAMES THE FACT AND THE PRODUCER THAT DOES NOT PUBLISH IT. `missingFact` is the sentence a reader gets;
  * `unpublishedFact` is the same fact as data - its NAME, and the producer that would have to publish it
@@ -117,7 +125,7 @@ const unpublishedFact = (name, producer = null) => Object.freeze({ name, produce
  * A purpose that cannot be decided from published facts, with the fact that would be needed.
  *
  * This is not an exclusion from the gate: the gate requires every rotation task to have an entry, and this entry
- * still answers `unproven` rather than `achieved` for any receipt set, however complete.
+ * still answers `unjudged` rather than `achieved` for any receipt set, however complete.
  *
  * `reason` says whether the blocker itself is machine-checkable (`mechanical`) or rests on an absence no artifact
  * enumerates (`prose`), and `tools/check-stardew-task-gap-reasons.mjs` holds the declaration and the claims to each
@@ -837,9 +845,9 @@ function judgePatch(entry, admitted, refused, observations) {
  * Did the task's own purpose hold?
  *
  * `achieved` is reachable only through the criterion above. Everything else is named: `not_achieved` when the
- * receipts are complete evidence that the purpose did not hold, `unproven` when the criterion cannot be evaluated at
- * all (no entry, or a published fact it needs is missing) or when the receipts that would have decided it carried no
- * postcondition of their own.
+ * receipts are complete evidence that the purpose did not hold, `unproven` when the receipts that would have decided it
+ * carried no postcondition of their own, and `unjudged` when the criterion itself asks for a fact nothing publishes
+ * (`missingFact`) - a purpose no receipt set can decide, and therefore no day of a run can be blamed for.
  *
  * `observations` is the snapshot rows the run saw (`{ location, soilTiles, cropTargets }`), and only a shape
  * criterion reads it: a purpose about three actions is decided by the receipts alone, while a purpose about a strip
@@ -865,7 +873,7 @@ export function judgeTaskPurpose(taskId, receipts, observations = null) {
   if (entry.missingFact !== undefined) {
     return Object.freeze({
       ...common,
-      state: "unproven",
+      state: "unjudged",
       reasonCode: "task_purpose_needs_an_unpublished_fact",
       purpose: entry.purpose,
       missingFact: entry.missingFact,

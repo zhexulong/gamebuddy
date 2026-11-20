@@ -881,6 +881,23 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
   });
 }
 
+function hasTilledSoilSettlementCompletionEvidence(detail: string, settledBy: string): boolean {
+  return declaredCompletionEvidence(
+    detail,
+    ["target", "before", "settled_by"],
+    (evidence) =>
+      // `target` is the TILE, not an opaque id: the seam prints the request's own `x,y` for this family
+      // (`$"target={targetX},{targetY};before={DescribeSoilFeature(dirt)}"`, resourcetoolactions.cs:631).
+      hasTileEvidenceValue(evidence.target) &&
+      // The same engine read twice: `before` is the tile's soil feature and the warrant is the engine field the
+      // action's postcondition is graded on, so the two agreeing is the receipt's own proof it read the tile.
+      evidence.before === "HoeDirt" &&
+      // THE WARRANT IS THE WHOLE CONTENT OF THE CLAIM. Without it the receipt says "there is no swing to make" and
+      // nothing says why that is the state the request asked for.
+      evidence.settled_by === settledBy,
+  );
+}
+
 function hasWaterCropCompletionEvidence(detail: string): boolean {
   return declaredCompletionEvidence(detail, WATER_CROP_EVIDENCE_KEYS, (evidence) => {
     const before = integerEvidenceValue(evidence.water_before);
@@ -1154,6 +1171,32 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
   );
 }
 
+/**
+ * The shape the `consumes` settlements mint when the target's row has left the world:
+ * `target;named_tile;tile=none;settled_by`.
+ *
+ * ONE SHAPE, TWO FAMILIES. `AnswerRockSource` and `AnswerWeed` (`resourcetoolactions.cs:308-324`, `:1262-1280`) print
+ * the same four clauses and differ only in the family their own declaration names, which is why the family is the
+ * argument rather than a second predicate. `target` is the OPAQUE ID the request carried and not a tile: these families
+ * are addressed by identity, so the settlement has to name the identity it found gone, and `named_tile` is the tile that
+ * identity stood on.
+ */
+function hasGoneSourceSettlementCompletionEvidence(detail: string, settledBy: string): boolean {
+  return declaredCompletionEvidence(
+    detail,
+    ["target", "named_tile", "tile", "settled_by"],
+    (evidence) =>
+      hasOpaqueIdEvidenceValue(evidence.target) &&
+      hasTileEvidenceValue(evidence.named_tile) &&
+      // The tile holds NOTHING. A different occupant under the same address is `*_target_changed` and never reaches
+      // this row, so `none` here is the absence the warrant is about.
+      evidence.tile === "none" &&
+      // THE WARRANT IS THE WHOLE CONTENT OF THE CLAIM. Without it the receipt says nothing stands there and nothing says
+      // the request's own success is what took it away.
+      evidence.settled_by === settledBy,
+  );
+}
+
 function hasBreakResourceClumpCompletionEvidence(detail: string): boolean {
   const evidence = parseSemicolonEvidence(detail);
   if (evidence === null) return false;
@@ -1340,6 +1383,33 @@ function hasBaitCrabPotCompletionEvidence(detail: string): boolean {
     after === 0 &&
     evidence.actionable === "true" &&
     evidence.active_execution === "null"
+  );
+}
+
+/**
+ * `tree_chop_source_gone`: the two shapes the seam mints for a tree the request named and no longer has to fell.
+ *
+ *   resourcetoolactions.cs:65  target;named_tile;tile=none                 - nothing stands at the address at all;
+ *   resourcetoolactions.cs:87  target;named_tile;tree_type;stump=true      - the SAME identity, already felled.
+ *
+ * The second shape is the one that matters: `chop_tree`'s own postcondition is `stump_after === "true"`
+ * (`hasChopTreeSourceCompletionEvidence`), so a stump at the named identity IS the state the request asked for. The
+ * first is only a settlement because the catalogue backs it - `chop_tree` is declared `Finishes` over
+ * `treeChopSourceTargets` - which is the warrant both shapes print.
+ */
+function hasChopTreeSourceSettlementCompletionEvidence(detail: string, settledBy: string): boolean {
+  return (
+    hasGoneSourceSettlementCompletionEvidence(detail, settledBy) ||
+    declaredCompletionEvidence(
+      detail,
+      ["target", "named_tile", "tree_type", "stump", "settled_by"],
+      (evidence) =>
+        hasOpaqueIdEvidenceValue(evidence.target) &&
+        hasTileEvidenceValue(evidence.named_tile) &&
+        integerEvidenceValue(evidence.tree_type) !== null &&
+        evidence.stump === "true" &&
+        evidence.settled_by === settledBy,
+    )
   );
 }
 
@@ -3046,7 +3116,15 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     );
   },
   till_soil: (claim) => {
-    return claim.reasonCode === "soil_tilled" && hasTillSoilCompletionEvidence(claim.detail);
+    // TWO TERMINALS, ONE POSTCONDITION. `soil_tilled` is the swing this request made; `soil_already_tilled` is the tile
+    // that already carried HoeDirt, which the Mod answers from the same read its success is graded on
+    // (`GameLocation.GetHoeDirtAtTile` non-null, farmhandexecutioncontroller.resourcetoolactions.cs:626-633). Measured
+    // `round81`: thirty-one of them, every one a `succeeded` receipt the old row refused for carrying no `soil_tilled`.
+    return (
+      (claim.reasonCode === "soil_tilled" && hasTillSoilCompletionEvidence(claim.detail)) ||
+      (claim.reasonCode === "soil_already_tilled" &&
+        hasTilledSoilSettlementCompletionEvidence(claim.detail, "engine_flag:hoedirt=present"))
+    );
   },
   water_crop: (claim) => {
     return claim.reasonCode === "crop_watered" && hasWaterCropCompletionEvidence(claim.detail);
@@ -3063,13 +3141,30 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // `rock_source_damaged` with `state: succeeded`), but it has not yet removed the source, so it is not the
     // transition a completed task is recorded from. A multi-hit rock therefore needs as many dispatches as its
     // durability, and the last one is the one that counts.
-    return claim.reasonCode === "rock_source_broken" && hasBreakRockSourceCompletionEvidence(claim.detail);
+    //
+    // AND THE ROCK AN EARLIER NODE ALREADY BROKE. `rock_source_gone` is that same boundary answered from the tile the
+    // request named, and the Mod prints WHAT makes the absence the outcome - `break_rock` is declared `Finishes` over
+    // `rockSourceTargets`, so the empty tile is the row's own success rather than a target that moved
+    // (`farmhandexecutioncontroller.resourcetoolactions.cs:308-324`). Measured `round81`: four of them, all refused.
+    return (
+      (claim.reasonCode === "rock_source_broken" && hasBreakRockSourceCompletionEvidence(claim.detail)) ||
+      (claim.reasonCode === "rock_source_gone" &&
+        hasGoneSourceSettlementCompletionEvidence(claim.detail, "consumes:rockSourceTargets"))
+    );
   },
   clear_hoedirt: (claim) => {
     return claim.reasonCode === "hoedirt_cleared" && hasClearHoeDirtCompletionEvidence(claim.detail);
   },
   chop_tree: (claim) => {
-    return claim.reasonCode === "tree_source_chopped" && hasChopTreeSourceCompletionEvidence(claim.detail);
+    // `tree_chop_source_gone` is the same boundary as `tree_source_chopped` answered by the tile's own state: the tree
+    // that stood there is FELLED, or its row has left `treeChopSourceTargets` altogether, and either way the felling the
+    // request asked for already happened (`farmhandexecutioncontroller.resourcetoolactions.cs:60-99`). Unread until this
+    // row learned it, and the gate beside it named the code.
+    return (
+      (claim.reasonCode === "tree_source_chopped" && hasChopTreeSourceCompletionEvidence(claim.detail)) ||
+      (claim.reasonCode === "tree_chop_source_gone" &&
+        hasChopTreeSourceSettlementCompletionEvidence(claim.detail, "consumes:treeChopSourceTargets"))
+    );
   },
   place_wood_fence: (claim) => {
     return claim.reasonCode === "wood_fence_placed" && hasWoodFenceCompletionEvidence(claim.detail);
@@ -4035,41 +4130,47 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // farmhandexecutioncontroller.resourcetoolactions.cs ExecuteCutWeeds: the native weed branch reported the cut
     // AND the map entry left the world; the handler selected the scythe its own registration claims and put the
     // actor's selection back, which is the only place `tool_restored` is written.
+    //
+    // AND THE WEED AN EARLIER NODE ALREADY CUT. `weed_target_gone` is a tile that holds nothing, answered under the
+    // catalogue's own claim that `cut_weeds` finishes over `weedTargets` (`SettledIfConsumed`, :1262-1280). Measured
+    // `round81`: two of them, both a `succeeded` receipt the old row refused for carrying no `weeds_cut`.
     return (
-      claim.reasonCode === "weeds_cut" &&
-      declaredCompletionEvidence(
-        claim.detail,
-        [
-          "target",
-          "type",
-          "tool",
-          "tool_selected",
-          "slot",
-          "tool_before",
-          "slot_before",
-          "qualified_item_id",
-          "health_before",
-          "health_after",
-          "swings",
-          "removed",
-          "stamina_before",
-          "stamina_after",
-          "stamina_delta",
-          "expected_stamina_cost",
-          "tool_restored",
-        ],
-        (e) =>
-          hasOpaqueIdEvidenceValue(e.target) &&
-          e.type === "weed" &&
-          e.tool === "scythe" &&
-          hasToolSelectionEvidence(e, "scythe") &&
-          hasOpaqueEvidenceValue(e.qualified_item_id) &&
-          integerEvidenceValue(e.health_before) !== null &&
-          hasBoundedNonemptyEvidenceValue(e.health_after) &&
-          positiveIntegerEvidence(e.swings) !== null &&
-          e.removed === "true" &&
-          hasStaminaConservationEvidence(e),
-      )
+      (claim.reasonCode === "weeds_cut" &&
+        declaredCompletionEvidence(
+          claim.detail,
+          [
+            "target",
+            "type",
+            "tool",
+            "tool_selected",
+            "slot",
+            "tool_before",
+            "slot_before",
+            "qualified_item_id",
+            "health_before",
+            "health_after",
+            "swings",
+            "removed",
+            "stamina_before",
+            "stamina_after",
+            "stamina_delta",
+            "expected_stamina_cost",
+            "tool_restored",
+          ],
+          (e) =>
+            hasOpaqueIdEvidenceValue(e.target) &&
+            e.type === "weed" &&
+            e.tool === "scythe" &&
+            hasToolSelectionEvidence(e, "scythe") &&
+            hasOpaqueEvidenceValue(e.qualified_item_id) &&
+            integerEvidenceValue(e.health_before) !== null &&
+            hasBoundedNonemptyEvidenceValue(e.health_after) &&
+            positiveIntegerEvidence(e.swings) !== null &&
+            e.removed === "true" &&
+            hasStaminaConservationEvidence(e),
+        )) ||
+      (claim.reasonCode === "weed_target_gone" &&
+        hasGoneSourceSettlementCompletionEvidence(claim.detail, "consumes:weedTargets"))
     );
   },
   cut_grass: (claim) => {

@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readHostCompletionContracts } from "../check-stardew-postcondition-delta.mjs";
 import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
+import { taskPurposeVerdict } from "../live-run/game/run-verdicts.mjs";
 import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION } from "./multiday-daily-tasks.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
@@ -29,9 +30,11 @@ import { judgeTaskPurpose, purposeReceipts, TASK_PURPOSE_CRITERIA } from "./task
  *            re-ordering `clear_and_cultivate` (dropping `ordered: false`) turns its day-1 replay red, because
  *            `round76`'s day 1 did the four kinds of work in an order that criterion forbade; dropping a `because`
  *            from an ordered row turns `a_criterion_requires_an_order_the_world_does_not` red, naming that row;
- *            and asking for a fact nobody publishes - a gap without its `unpublishedFact`, or a tile field the Host's
+ *            asking for a fact nobody publishes - a gap without its `unpublishedFact`, or a tile field the Host's
  *            contract does not carry - turns `a_criterion_asks_for_a_fact_the_product_does_not_publish` red, naming the
- *            criterion and the fact (tools/lib/task-purpose.test.mjs)
+ *            criterion and the fact; and answering a gap entry `unproven` turns
+ *            `a_day_task_whose_criterion_decides_nothing_is_not_reported_either_way` red, naming the day and its
+ *            missing fact (tools/lib/task-purpose.test.mjs)
  */
 
 const ROTATION = [...DAILY_TASK_ROTATION];
@@ -251,6 +254,130 @@ test("every rotation task declares a purpose or names the fact that is missing",
 test("no purpose is declared for a task the rotation never asks for", () => {
   const orphans = Object.keys(TASK_PURPOSE_CRITERIA).filter((task) => !ROTATION.includes(task));
   assert.deepEqual(orphans, [], `these criteria describe tasks no run asks for: ${orphans.join(", ")}`);
+});
+
+/**
+ * THE GATE: `a_day_task_whose_criterion_decides_nothing_is_not_reported_either_way:<task>`.
+ *
+ * <p>
+ * A DAY TASK IS A DAY THE RUN IS JUDGED ON, and a criterion that asks for a fact nothing publishes can only ever answer
+ * `unjudged`. Reporting that as a failure is a red that names a defect which does not exist - the mirror image of a gate
+ * that cannot fail. Measured 2026-11-20 (`round81`): day 3 was `sweep_yard_and_work` - a task whose purpose is "the
+ * GROUP of the farm was worked", and no receipt names a group - so the run published
+ * `task_unproven:...,sweep_yard_and_work:task_purpose_needs_an_unpublished_fact` and was blocked for a day nobody could
+ * have passed. Six of the rotation's twenty entries have been in that state since before that run, which is why the gate
+ * is written over the whole rotation rather than over the three sweep days it was noticed on.
+ * </p>
+ * <p>
+ * POPULATION: every rotation task (the days a run is judged on), crossed with its `TASK_PURPOSE_CRITERIA` entry. Empty
+ * receipts are the day with nothing to show: the only receipt set a gap day can answer differently for, and the shape of
+ * a day whose work never reached its purpose. TWO DEFECTS, TWO NAMES - a gap day that blocked, and a decidable day that
+ * did not - because they are opposite lies about the same run, and one sentence for both would leave a reader unable to
+ * tell which way the state broke.
+ * </p>
+ * <p>
+ * red-proof: inject  a gap entry answered `unproven` in `judgeTaskPurpose` -> `a_gap_day_blocked_the_run:<task>` goes red
+ *                   naming that day and its missing fact; and an `unproven` day let through by `taskPurposeVerdict` ->
+ *                   `a_non_gap_day_did_not_block_the_run:<task>` goes red naming it
+ *                   (tools/lib/task-purpose.test.mjs)
+ * </p>
+ */
+const GAP_DAY_GATE = "a_day_task_whose_criterion_decides_nothing_is_not_reported_either_way";
+
+/**
+ * The other day a run needs for ONE day's verdict to be readable: a day the evidence decided.
+ *
+ * A run whose every day is a gap day is judged by nothing, and `task_purposes_nothing_judged` says so - which is the
+ * rail `a run whose every day was a gap day is judged by nothing` owns below. Reading one day's verdict out of a
+ * one-day run would let that rail answer instead of the day, so every per-day reading here is taken over a run that
+ * also had a day the evidence decided: the witness stands for that day, and this gate is about the day beside it.
+ */
+const DECIDED_WITNESS = Object.freeze({
+  day: 0,
+  task: "the_witness",
+  state: "achieved",
+  reasonCode: "task_purpose_achieved",
+});
+
+test(GAP_DAY_GATE, (t) => {
+  const days = ROTATION.map((task) => {
+    const entry = TASK_PURPOSE_CRITERIA[task];
+    const judged = judgeTaskPurpose(task, []);
+    return Object.freeze({
+      task,
+      gap: entry?.missingFact !== undefined,
+      state: judged.state,
+      reasonCode: judged.reasonCode,
+      // The fact is the diagnosis, and it travels on the day itself: which capability this day could not be scored on.
+      fact: judged.unpublishedFact?.name ?? judged.missingFact ?? null,
+      verdict: taskPurposeVerdict([Object.freeze({ day: 1, task, ...judged }), DECIDED_WITNESS]),
+    });
+  });
+  const gaps = days.filter((day) => day.gap);
+  const decidable = days.filter((day) => !day.gap);
+  const findings = [];
+  for (const day of gaps) {
+    if (day.state !== "unjudged")
+      findings.push(
+        `${GAP_DAY_GATE}:${day.task} - the criterion asks for a fact nothing publishes and answered \`${String(day.state)}\`, so the day was decided by something else (missing fact: ${String(day.fact)})`,
+      );
+    if (day.verdict !== null)
+      findings.push(
+        `a_gap_day_blocked_the_run:${day.task} - \`${String(day.state)}\` was reported as \`${String(day.verdict)}\`, so a day nobody could pass is a failed day (missing fact: ${String(day.fact)})`,
+      );
+  }
+  for (const day of decidable) {
+    if (day.state === "unjudged")
+      findings.push(
+        `${GAP_DAY_GATE}:${day.task} - the criterion is decidable and answered \`unjudged\`, so a day that can be judged is excused instead`,
+      );
+    // Nothing proved it and nothing said so: an undecided day that reaches the session verdict as a pass.
+    if (day.state !== "achieved" && day.verdict === null)
+      findings.push(
+        `a_non_gap_day_did_not_block_the_run:${day.task} - the criterion answered \`${String(day.state)}\` and the run was not told, so an undecided day reads as a pass (reason: ${String(day.reasonCode)})`,
+      );
+  }
+  const blockedGaps = gaps.filter((day) => day.verdict !== null).length;
+  const unblockedDecidable = decidable.filter((day) => day.state !== "achieved" && day.verdict === null).length;
+  const reading =
+    `days ${String(days.length)} · judged ${String(decidable.length)} · unjudged ${String(gaps.length)} · ` +
+    `a gap day that blocked ${String(blockedGaps)} · a non-gap day that did not ${String(unblockedDecidable)}`;
+  t.diagnostic(reading);
+  // Zero is not green: a rotation of nothing but gaps, or one with none, would agree with itself about one of the two
+  // halves of this rule.
+  assert.ok(
+    decidable.length > 0 && gaps.length > 0,
+    `${reading} - one half of this rule examined nothing, so it cannot fail`,
+  );
+  assert.deepEqual(findings, [], `${reading}\n${findings.join("\n")}`);
+});
+
+/**
+ * THE RAIL THE STATE NEEDS: a run whose every day was a gap day has been judged by nothing.
+ *
+ * <p>
+ * `unjudged` had to be able to pass a day, which makes it able to pass a RUN. A run assembled entirely from gap days -
+ * every day pinned to one - could otherwise report `completed` with nothing judged at all, and that is the hole every
+ * exemption opens if the zero is not told apart from the low count.
+ * </p>
+ */
+test("a run whose every day was a gap day is judged by nothing, and that is blocked rather than passed", () => {
+  const gapDays = ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task]?.missingFact !== undefined);
+  assert.ok(gapDays.length > 0, "the rotation is expected to hold the days whose criterion cannot be decided");
+  const purposes = gapDays.map((task, index) => Object.freeze({ day: index + 1, task, ...judgeTaskPurpose(task, []) }));
+  assert.equal(
+    taskPurposeVerdict(purposes),
+    `task_purposes_nothing_judged:${String(gapDays.length)}of${String(gapDays.length)}`,
+    "every day unjudged is a run nobody judged: it must not reach `completed`",
+  );
+  // ONE decided day is enough for the run to have been judged, and an unjudged day beside it is not a failure.
+  assert.equal(
+    taskPurposeVerdict([...purposes, Object.freeze({ day: 99, task: "mine_delve", state: "achieved" })]),
+    null,
+    "a run with a day the evidence decided was judged, so its gap days are not an exemption from the whole verdict",
+  );
+  // And a scenario that names no task at all is judged on its session alone - that is not a run nobody judged.
+  assert.equal(taskPurposeVerdict([]), null);
 });
 
 /**
@@ -695,14 +822,17 @@ test("mine_ladder_to_depth: the level's own exit ladder is a proven fact, so the
   assert.match(left.purpose ?? "", /worked deeper/);
 });
 
-test("a task with a named gap answers unproven for every receipt set, however complete", () => {
+test("a task with a named gap answers `unjudged` for every receipt set, however complete", () => {
   const gaps = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.missingFact !== undefined);
   assert.ok(gaps.length > 0, "the registry is expected to declare the purposes it cannot decide");
   for (const [task, entry] of gaps) {
     // Every declared action of that task, each with evidence-shaped detail: the strongest set a run could produce.
     const complete = (DAILY_TASK_ACTION_HINTS[task] ?? []).map((actionId) => receipt(actionId));
     const judged = judgeTaskPurpose(task, complete);
-    assert.equal(judged.state, "unproven", `${task}: a purpose with no decidable fact must not be reported either way`);
+    // `unjudged`, not `unproven`: the two say different things about the run. `unproven` is "this run's evidence proved
+    // nothing", which a day can be blamed for; `unjudged` is "this criterion asks for a fact nothing publishes", which
+    // no receipt set could ever settle - and a day nobody could judge must not be reported as a day that failed.
+    assert.equal(judged.state, "unjudged", `${task}: a purpose with no decidable fact is nobody's failure`);
     assert.equal(judged.missingFact, entry.missingFact, `${task}: the gap has to travel with the verdict`);
     // And so does the FACT, as data: the run's artifact then names the fact and the producer that does not publish it
     // rather than only describing the absence in a sentence.

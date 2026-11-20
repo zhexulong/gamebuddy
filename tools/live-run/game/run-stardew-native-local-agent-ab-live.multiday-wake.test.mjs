@@ -627,7 +627,8 @@ test("the attach boundary is called before the first prompt, and both first turn
 });
 
 test("a blind day outranks her silence, and the attach's arrival is answered before it too", () => {
-  const [, deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+  const [, , deriveSessionVerdict] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "taskPurposeReading",
     "taskPurposeVerdict",
     "deriveSessionVerdict",
   ]);

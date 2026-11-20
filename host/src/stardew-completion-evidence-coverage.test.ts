@@ -1486,6 +1486,83 @@ test("dismiss_modal: a settlement that found nothing is read only when it names 
   );
 });
 
+/**
+ * THE FOUR SETTLEMENTS `round81` ANSWERED, with the code, the shape and the warrant each one prints.
+ *
+ * The first three are the run's own receipts, quoted from `timeline.jsonl` at the index beside each; `chop_tree`'s two
+ * shapes are the two sites `farmhandexecutioncontroller.resourcetoolactions.cs:65-92` mints, which no run has reached
+ * yet. The settle code is the Mod's SECOND way to say the action is done - the world already says so - and the warrant is
+ * the whole content of that claim: `engine_flag:` is the engine's own finished state, `consumes:` is the catalogue's
+ * declaration that this action's success takes the addressed row out of the world.
+ */
+const SETTLED_TARGETS: readonly (readonly [string, string, string, string])[] = [
+  ["till_soil", "soil_already_tilled", "target=69,20;before=HoeDirt", "engine_flag:hoedirt=present"],
+  ["cut_weeds", "weed_target_gone", "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none", "consumes:weedTargets"],
+  [
+    "break_rock",
+    "rock_source_gone",
+    "target=rock_source_9a2b9a1dfa8a045b;named_tile=76,28;tile=none",
+    "consumes:rockSourceTargets",
+  ],
+  ["chop_tree", "tree_chop_source_gone", "target=tree_chopped0;named_tile=70,26;tile=none", "consumes:treeChopSourceTargets"],
+];
+
+test("a settled target is the request's outcome only when the receipt names the warrant that makes it one", () => {
+  // `round81` answered 37 of these - 31 tilled tiles, 2 weeds and 4 rocks - and every one was a succeeded receipt the
+  // Host refused. The other direction matters as much: an absence with no warrant is an absence, and a warrant the seam
+  // never mints is not this request's outcome.
+  for (const [actionId, reasonCode, shape, warrant] of SETTLED_TARGETS) {
+    assert.equal(
+      completionEvidence(actionId, reasonCode, `${shape};settled_by=${warrant}`),
+      true,
+      `the settlement ${reasonCode} is the state the request asked for: ${shape};settled_by=${warrant}`,
+    );
+    assert.equal(
+      completionEvidence(actionId, reasonCode, shape),
+      false,
+      "an absence with no warrant is the absence being used as its own evidence, which is what round77 published",
+    );
+    assert.equal(
+      completionEvidence(actionId, reasonCode, `${shape};settled_by=consumes:somebodyElsesTargets`),
+      false,
+      "a warrant that names another family says the row this request addressed is not the one its work consumes",
+    );
+    assert.equal(
+      completionEvidence(actionId, reasonCode, `${shape};settled_by=${warrant};unknown=value`),
+      false,
+      "an undeclared field refuses the receipt whole, so the warrant is the only thing holding the claim up",
+    );
+  }
+
+  // `chop_tree`'s OTHER site: the same identity standing there FELLED, which is the tree rule's own postcondition
+  // (`stump_after === "true"`), so a stump the request named is the felling it asked for.
+  assert.equal(
+    completionEvidence(
+      "chop_tree",
+      "tree_chop_source_gone",
+      "target=tree_chopped0;named_tile=70,26;tree_type=1;stump=true;settled_by=consumes:treeChopSourceTargets",
+    ),
+    true,
+    "a stump at the named identity is the state the request asked for",
+  );
+  assert.equal(
+    completionEvidence(
+      "chop_tree",
+      "tree_chop_source_gone",
+      "target=tree_chopped0;named_tile=70,26;tree_type=1;stump=false;settled_by=consumes:treeChopSourceTargets",
+    ),
+    false,
+    "a tree still standing is not felled, and no warrant makes it so",
+  );
+
+  // ONE CODE, ONE ACTION. A settled code is the outcome of the action that minted it and of no other.
+  assert.equal(
+    completionEvidence("break_rock", "weed_target_gone", "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none;settled_by=consumes:weedTargets"),
+    false,
+    "a weed settlement is not a rock's completion",
+  );
+});
+
 for (const [actionId, fixture] of Object.entries(completionFixtures)) {
   test(`${actionId}: the Mod's own success shape completes`, () => {
     assert.equal(

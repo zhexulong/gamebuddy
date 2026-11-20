@@ -229,11 +229,14 @@ import { describePresentationPiece } from "./presentation-piece-time.mjs";
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import {
   deriveRungVerdict,
+  describeTaskPurposeReading,
+  describeUnjudgedDay,
   dispatchMarkers,
   medianPromptTurnIntervalMs,
   NON_ACCOMPLISHMENT_ACTIONS,
   sleepSubmittedSince,
   summarizeDispatchedActions,
+  taskPurposeReading,
   taskPurposeVerdict,
 } from "./run-verdicts.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
@@ -1973,13 +1976,16 @@ function deriveSessionVerdict({
   // session alone, which is the truth about that scenario rather than a default about a task.
   // THE TASK'S OWN VERDICT, and it does not stop at `not_achieved`.
   //
-  // A criterion can be missing because a FACT we publish is missing - seven rotation tasks are in exactly that state,
-  // each naming the fact (see `task-purpose.mjs`). Judging the run as a FAILURE on one turns our own reporting gap into
-  // a product failure. But `completed` is the other lie: a purpose nobody could decide was not verified, and a session
-  // that says `completed` beside it claims the task happened. The arms above are about whether the session ran at all;
-  // this one is about whether it did the thing it was asked to do, and `unproven` answers "nobody can say".
+  // A criterion can be unprovable because a FACT we publish is missing, and six rotation tasks are in exactly that state,
+  // each naming the fact (see `task-purpose.mjs`). Such a day is judged `unjudged`, and it does NOT reach this arm:
+  // charging it as a failure turns our own reporting gap into a product failure, which is how `round81` was blocked for a
+  // task no run could have passed. It is not silence either - the run prints every unjudged day with its missing fact
+  // (`MULTIDAY_UNJUDGED`) and the clause below carries the count.
   //
-  // `not_achieved` decides first, because there the receipts are complete evidence that the purpose did NOT hold.
+  // `not_achieved` decides first, because there the receipts are complete evidence that the purpose did NOT hold, and
+  // `unproven` decides next: a non-gap day whose receipts proved nothing either way was not verified as done, and a
+  // session that says `completed` beside it claims the task happened. The last arm is the rail - a run whose every day
+  // was a gap day was judged by nothing, and `task_purposes_nothing_judged` is not a pass.
   const taskVerdict = taskPurposeVerdict(taskPurposes);
   if (taskVerdict !== null) return taskVerdict;
   return "completed";
@@ -4678,6 +4684,13 @@ try {
     // What each day was asked for versus what was delivered, and the tasks it never asked for, in one line.
     const taskDelivery = readTaskDelivery({ scheduled: dayTasksScheduled, delivered: taskPurposes });
     console.error("MULTIDAY_TASKS", taskDelivery.reading, taskDelivery.notDelivered.join(","));
+    // WHAT THE RUN COULD AND COULD NOT BE SCORED ON, printed beside the tasks it delivered. A gap day no longer blocks
+    // the verdict (it is `unjudged`, see `task-purpose.mjs`), so the count and the missing fact have to appear HERE - a
+    // state that is silent about what it cannot judge is worse than a red that names it.
+    const taskPurposesReading = taskPurposeReading(taskPurposes);
+    console.error("MULTIDAY_PURPOSES", describeTaskPurposeReading(taskPurposesReading));
+    for (const unjudgedDay of taskPurposesReading.unjudgedDays)
+      console.error("MULTIDAY_UNJUDGED", describeUnjudgedDay(unjudgedDay));
     // THE WAKE ACCOUNT, in one line, because it is the run's answer to "why did the harness think 109 times for four
     // days": what it issued and by which reason, and every settlement it deliberately did not turn into a prompt.
     const wakeByReason = Object.fromEntries(WAKE_REASONS.map((reason) => [reason, wakeAccount.issued[reason] ?? 0]));
@@ -5450,8 +5463,10 @@ try {
       reasonCode: dayNoteDelivery.verdictCode ?? "day_notes_delivered",
     }),
     // THE TASK'S OWN QUESTION, beside the session's shape rather than inside it. A run whose day purpose was
-    // `unproven` has not been shown to have done what it was asked, and the clause states it in its own right so the
-    // artifact names it even when a more structural clause fails first (see `deriveRungVerdict`'s `failedClauses`).
+    // `unproven` has not been shown to have done what it was asked, and a run whose every day was `unjudged` was judged
+    // by nothing; the clause states either in its own right so the artifact names it even when a more structural clause
+    // fails first (see `deriveRungVerdict`'s `failedClauses`). An `unjudged` day on its own does NOT fail it - see
+    // `MULTIDAY_PURPOSES` and `MULTIDAY_UNJUDGED` for where that day is reported instead.
     Object.freeze({
       id: "task_purpose",
       passed: taskPurposeVerdict(taskPurposes) === null,
