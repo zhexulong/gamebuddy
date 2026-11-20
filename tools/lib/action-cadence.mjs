@@ -25,6 +25,25 @@ export function median(values) {
 }
 
 /**
+ * A wall-clock span as a reader quotes it, and a share to a tenth.
+ *
+ * Both live here, with the arithmetic they describe, because every account of a run's wall clock prints them - the per-action
+ * cadence above and the standstill partition beside it - and two spellings of "12.6 %" in one report is how a reader ends up
+ * comparing a rounded number with an unrounded one. `null` is `not_measured`, never `0.0s`: a span nobody measured is not an
+ * instant.
+ */
+export function seconds(ms) {
+  return Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : "not_measured";
+}
+
+/** The share a reader compares ACROSS runs, to a tenth: a whole percent hides the difference between 42.6 and 43.4. */
+export function shareToATenth(part, whole) {
+  return Number.isFinite(part) && Number.isFinite(whole) && whole > 0
+    ? `${((part / whole) * 100).toFixed(1)}%`
+    : "not_measured";
+}
+
+/**
  * The cadence of one run's action trace.
  *
  * `entries` is the runner's own trace: each entry carries `action`, `dispatchedAtMs` (when the dispatch was sent)

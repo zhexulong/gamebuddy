@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { median, summarizeActionCadence } from "./action-cadence.mjs";
+import { median, seconds, shareToATenth, summarizeActionCadence } from "./action-cadence.mjs";
 
 const entry = (dispatchedAtMs, settledAtMs, action = "move_to_tile") => ({
   action,
@@ -132,4 +132,19 @@ test("an empty or malformed trace answers with nulls instead of zeros", () => {
   assert.equal(median([]), null);
   assert.equal(median([5]), 5);
   assert.equal(median([1, 3]), 2);
+});
+
+test("a span nobody measured is not_measured, never 0.0s, and a share of no wall is not a percentage", () => {
+  // Every account of a run's wall clock prints these two, and the boundary is the whole three-zeroes rule: `0.0s` reads as
+  // "the body never stood still" and `0.0%` as "none of the wall went there", where both are the statement that nothing
+  // was read. MEASURED reasons: `round84`'s `idleMs` was the one number an absent reading produced.
+  assert.equal(seconds(null), "not_measured");
+  assert.equal(seconds(undefined), "not_measured");
+  assert.equal(seconds(Number.NaN), "not_measured");
+  assert.equal(seconds(0), "0.0s", "a MEASURED zero is a reading and prints as one");
+  assert.equal(seconds(261_144), "261.1s");
+  assert.equal(shareToATenth(261_144, 2_065_870), "12.6%");
+  assert.equal(shareToATenth(0, 2_065_870), "0.0%");
+  assert.equal(shareToATenth(1, null), "not_measured", "a share of a wall nobody measured has no denominator");
+  assert.equal(shareToATenth(1, 0), "not_measured", "and a zero wall is not a denominator either");
 });

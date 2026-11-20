@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 /**
  * A session record, read as entries.
  *
@@ -18,4 +20,35 @@ export function sessionEntries(raw) {
     } catch {}
   }
   return entries;
+}
+
+/** The same, for a session FILE: the reader every tool holds is the one that skips rather than repairs. */
+export function readSessionEntries(path) {
+  return sessionEntries(readFileSync(path, "utf8"));
+}
+
+/**
+ * The JSON a tool result carries.
+ *
+ * Measured on `round42`: two plan answers are a complete JSON object with a Magic Context `<system-reminder>` appended in
+ * place of nothing - the reminder is a separate block after a blank line. Parsing the text whole therefore failed, and
+ * those two calls read as "asked for a plan and received no answer", which was a refusal of the reader rather than a fact
+ * about the run: 51 accepted and 7 refused answers, not 50 and 6. The reminder is stripped and nothing else is guessed.
+ */
+export function toolResultPayload(message) {
+  const text = stripSystemReminder(
+    (message.content ?? []).map((part) => (typeof part?.text === "string" ? part.text : "")).join(""),
+  );
+  if (!text.startsWith("{")) return null;
+  try {
+    const value = JSON.parse(text);
+    return typeof value === "object" && value !== null ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function stripSystemReminder(text) {
+  const at = text.indexOf("<system-reminder");
+  return (at < 0 ? text : text.slice(0, at)).trim();
 }

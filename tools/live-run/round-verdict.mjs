@@ -17,6 +17,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { median, seconds, shareToATenth } from "../lib/action-cadence.mjs";
 import {
   actionExecutions,
   actionStates,
@@ -29,6 +30,8 @@ import { worldDayStartsFromFacts, worldNightEndingsFromFacts } from "../lib/mult
 import { crossingsFromEvidence, wakeReasonReachability } from "../lib/multiday-loop.mjs";
 import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 import { createReadingLedger } from "../lib/reading-source.mjs";
+import { readSessionEntries, toolResultPayload } from "../lib/session-jsonl.mjs";
+import { standstillLines, summarizeStandstill } from "../lib/standstill-partition.mjs";
 import { readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
 
 const LADDER = ".live-runs/game-ladder";
@@ -409,45 +412,6 @@ const NAVIGATION_ACTION_IDS = new Set(["move_to_tile"]);
 // The declared ceiling on one plan, read from the authority that enforces it rather than copied here.
 const PLAN_CAP_SOURCE = "host/src/body-program-script.ts";
 
-function sessionEntries(sessionFile) {
-  const entries = [];
-  for (const line of readFileSync(sessionFile, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      entries.push(JSON.parse(line));
-    } catch {
-      // A half-written last line is what a killed run leaves; it is skipped, not repaired.
-    }
-  }
-  return entries;
-}
-
-/**
- * The JSON a tool result carries.
- *
- * Measured on `round42`: two plan answers are a complete JSON object with a Magic Context `<system-reminder>` appended in
- * place of nothing - the reminder is a separate block after a blank line. Parsing the text whole therefore failed, and
- * those two calls read as "asked for a plan and received no answer", which was a refusal of the reader rather than a fact
- * about the run: 51 accepted and 7 refused answers, not 50 and 6. The reminder is stripped and nothing else is guessed.
- */
-function toolPayload(message) {
-  const text = stripSystemReminder(
-    (message.content ?? []).map((part) => (typeof part?.text === "string" ? part.text : "")).join(""),
-  );
-  if (!text.startsWith("{")) return null;
-  try {
-    const value = JSON.parse(text);
-    return typeof value === "object" && value !== null ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function stripSystemReminder(text) {
-  const at = text.indexOf("<system-reminder");
-  return (at < 0 ? text : text.slice(0, at)).trim();
-}
-
 /**
  * One PROMPT TURN per delivered user message, with every assistant message that answered it.
  *
@@ -475,7 +439,7 @@ function sessionTurns(entries) {
     answers.set(message.toolCallId, {
       name: typeof message.toolName === "string" ? message.toolName : null,
       atMs: Date.parse(entry.timestamp),
-      payload: toolPayload(message),
+      payload: toolResultPayload(message),
     });
   }
   const turns = [];
@@ -532,13 +496,6 @@ function sessionTurns(entries) {
   for (const [index, turn] of turns.entries())
     turn.endMs = index + 1 < turns.length ? turns[index + 1].startMs : lastEventAtMs;
   return { turns, messages, deliveries, lastEventAtMs };
-}
-
-function median(values) {
-  const sorted = values.filter((value) => Number.isFinite(value)).sort((left, right) => left - right);
-  if (sorted.length === 0) return null;
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 /** Accepted and refused plan answers, in the order the companion made them. */
@@ -817,14 +774,6 @@ function percentOf(part, whole) {
     : "not_measured";
 }
 
-/** The share a reader compares ACROSS runs, to a tenth: a whole percent hides the difference between 42.6 and 43.4. */
-function shareToATenth(part, whole) {
-  return Number.isFinite(part) && Number.isFinite(whole) && whole > 0
-    ? `${((part / whole) * 100).toFixed(1)}%`
-    : "not_measured";
-}
-
-const seconds = (ms) => (Number.isFinite(ms) ? `${(ms / 1000).toFixed(1)}s` : "not_measured");
 const ratio = (actual, floor) =>
   Number.isFinite(actual) && Number.isFinite(floor) && floor > 0 ? `${(actual / floor).toFixed(1)}x` : "not_measured";
 
@@ -855,7 +804,7 @@ function isWaitingOnTheGame(turn, restMs) {
  */
 function measureEfficiency({ sessionFile, result, repoRoot }) {
   if (sessionFile === null) return { missing: "no_session" };
-  const entries = sessionEntries(sessionFile);
+  const entries = readSessionEntries(sessionFile);
   const { turns, messages, deliveries, lastEventAtMs } = sessionTurns(entries);
   if (turns.length === 0) return { missing: "no_turns", sessionFile };
 
@@ -1623,8 +1572,8 @@ record(
 // counting of the token said 97 calls on a run that dispatched 26, because the tool schema that lists the name is in the
 // session text too. The population is every toolCall part the turn walk found, so the two plan tools are printed as what
 // they are - some of the calls this run made - and a mention of the name cannot be mistaken for a call.
-const sessionToolCalls =
-  boundSession === null ? [] : sessionTurns(sessionEntries(boundSession)).turns.flatMap((turn) => turn.calls);
+const sessionWalk = boundSession === null ? null : sessionTurns(readSessionEntries(boundSession));
+const sessionToolCalls = sessionWalk === null ? [] : sessionWalk.turns.flatMap((turn) => turn.calls);
 const planToolCensus =
   sessionToolCalls.length === 0
     ? null
@@ -1761,6 +1710,13 @@ record(
 const repoRoot = resolve(".");
 const efficiency = efficiencyLines({ sessionFile: boundSession, result, repoRoot });
 
+// 8. The standstill partition: the five readings the efficiency block never took, and the wall clock split by cause.
+//
+// It is printed BESIDE the accounting rather than after the whole verdict, because `idleMs` was read as the answer to
+// "where did the run go" while the partition that answers it did not exist. The session walk is shared with the efficiency
+// block above rather than parsed twice: one file, one parse, two readings of it.
+const standstill = summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath: locatedLog.path });
+
 const width = Math.max(...rows.map((row) => row.name.length));
 process.stdout.write(`run   ${runDir}\n`);
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
@@ -1770,10 +1726,16 @@ const work = workLines({ runnerLog, result, readings, why: locatedLog.why });
 if (work.length > 0) process.stdout.write(`\n${work.join("\n")}\n`);
 process.stdout.write(`\n${crossingsLines(crossings).join("\n")}\n`);
 process.stdout.write(`\n${efficiency.join("\n")}\n`);
+process.stdout.write(`\n${standstillLines(standstill).join("\n")}\n`);
 // THE SOURCE GATE: every reading above that came from the run's own records names which of the two it read. A reading
 // printed with no file behind it fails here by name, so a number in this verdict can always be re-derived.
 for (const line of readings.lines()) process.stdout.write(`${line}\n`);
 // A BLOCKED ending is a refused reading, in the same code `no run directory` already uses: this verdict cannot say anything
 // about a run whose own process never closed the record, and exiting 0 over it is how `round65`-`round67` read as passes.
 if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
-else if (readings.failed()) process.exitCode = 1;
+// A WALL CLOCK WITH SECONDS IN NO BUCKET FAILS THE VERDICT, naming the largest stretch: a partition that leaves a share
+// unexplained behind one authoritative number is how `idleMs 1,234 s` pointed a reader at the wrong cause for a round. A run
+// whose wall or buckets could not be READ is `not_measured` in the block above (visible, never green) and is not the same
+// failure: a live run has no bundle yet, and failing it here would read as a defect in the run. `Math.abs(null)` is 0, so
+// an unpriced wall falls through this line rather than failing on an absence.
+else if (readings.failed() || Math.abs(standstill.unexplainedMs) >= 1) process.exitCode = 1;
