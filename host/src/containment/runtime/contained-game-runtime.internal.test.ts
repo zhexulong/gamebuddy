@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readSourceShape } from "../../test-support/source-shape.test-support.js";
+import { DESKTOP_BOOTSTRAP_REFUSAL_PREFIX } from "../auth/desktop-guardian-session.internal.js";
 import type {
   RoleLaunchOperation,
   TypedPrivateGameAuthorizationProducer,
@@ -209,6 +210,35 @@ test("a refused launch keeps the bounded name it was given and never carries the
   const outcome = await text.launchRole("role", launchOperation(), produce);
   assert.deepEqual(outcome, { role: "role", status: "failed", refusal: null });
   assert.equal(JSON.stringify(outcome).includes("Steam"), false, "no path crosses a redacted outcome");
+
+  // The authenticated session the production platform speaks on spells every refusal
+  // `<wrapper><code>`: the wrapper is one constant, the code is the fact that says which check
+  // refused. Without stripping it, every wire refusal - a lost Guardian and a launch frame this side
+  // refused to write alike - arrived here as a refusal that named nothing.
+  const viaWire = (message: string) =>
+    createContainedGameRuntime(fakePlatform([], { failLaunch: true, launchRefusal: message }), binding);
+  assert.deepEqual(
+    await viaWire(`${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}guardian_wire_too_long`).launchRole(
+      "role",
+      launchOperation(),
+      produce,
+    ),
+    { role: "role", status: "failed", refusal: "guardian_wire_too_long" },
+  );
+  assert.deepEqual(
+    await viaWire(`${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}guardian_session_closed`).launchRole(
+      "role",
+      launchOperation(),
+      produce,
+    ),
+    { role: "role", status: "failed", refusal: "guardian_session_closed" },
+  );
+  // Stripping the wrapper is not a licence to cross text: whatever follows it must still be a
+  // bounded name.
+  assert.deepEqual(
+    await viaWire(`${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}${osLevel}`).launchRole("role", launchOperation(), produce),
+    { role: "role", status: "failed", refusal: null },
+  );
 });
 
 test("containment is terminal and duplicate contain rejects before native call", async () => {

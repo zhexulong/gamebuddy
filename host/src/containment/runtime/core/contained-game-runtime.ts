@@ -14,6 +14,7 @@ import type {
   GuardianRecoveryAck,
   GuardianRecoveryRole,
 } from "../../auth/desktop-guardian-session.internal.js";
+import { DESKTOP_BOOTSTRAP_REFUSAL_PREFIX } from "../../auth/desktop-guardian-session.internal.js";
 
 type RuntimeBinding = ContainmentCorrelation &
   ContainmentOperationWaitBudget &
@@ -126,14 +127,25 @@ const rejected = (message: string): never => {
  * It is the bound, not a preference. The message can be an OS error, a game path or a session's raw
  * detail, and none of those may enter an outcome that leaves this layer - so anything that is not a
  * code reads as a refusal that named nothing rather than as text wearing a code's clothes.
+ *
+ * A refusal arrives from the authenticated session this runtime's platform speaks on, and that wire
+ * spells every one of its refusals `<wrapper><code>` (`DESKTOP_BOOTSTRAP_REFUSAL_PREFIX`). The
+ * wrapper is a fixed constant rather than the refusal's own text, so the code after it crosses and
+ * the wrapper does not: without that, every transport refusal and every frame this side refused to
+ * write arrived here as a refusal that named nothing, and the launch that never reached the game
+ * could only be reported as one word standing for a lost Guardian, a refused native plan and an
+ * authorization failure alike.
  */
 const BOUNDED_REFUSAL_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 
 /** The bounded name a refused step's error carries, or `null` when it carries none that may cross. */
-const refusalName = (error: unknown): string | null =>
-  error instanceof Error && error.message.length <= 96 && BOUNDED_REFUSAL_NAME.test(error.message)
-    ? error.message
-    : null;
+const refusalName = (error: unknown): string | null => {
+  if (!(error instanceof Error) || error.message.length > 96) return null;
+  const name = error.message.startsWith(DESKTOP_BOOTSTRAP_REFUSAL_PREFIX)
+    ? error.message.slice(DESKTOP_BOOTSTRAP_REFUSAL_PREFIX.length)
+    : error.message;
+  return BOUNDED_REFUSAL_NAME.test(name) ? name : null;
+};
 
 export function createContainedGameRuntime(
   platform: ContainedGameRuntimePlatform,

@@ -472,20 +472,27 @@ function sendLifecycleProblem(response: ServerResponse, statusCode: number, erro
 }
 
 /**
- * The wire names a launch's own transport refuses under.
+ * The wire names a launch's own transport refuses under, plus the one name that proves this side
+ * refused the launch before writing it.
  *
  * A launch reaches the game through the Host's one authenticated Guardian session, and that
  * session's refusals are the wire's vocabulary rather than the coordinator's - which is why the
  * bounded-cause projection above deliberately drops them (it carries `stardew_*` only, and an
  * unknown token in a response body tells a player nothing). They are still the fact that tells this
- * launch's refusal apart from the wrapper it arrives in: a session that ends mid-command or a pipe
- * that is not there means nothing was started.
+ * launch's refusal apart from the wrapper it arrives in: a session that ended mid-command, a pipe
+ * that is not there, or a frame this side refused to write all mean nothing was started.
+ *
+ * `guardian_wire_too_long` is the last of those and the strongest evidence of the three: the frame
+ * was never written, so the launch did not reach the game and no native side effect can exist.
+ * It arrives when a launch plan exceeds the session's frame bound - measured 2026-11-21, when the
+ * Host forwarded its own 17 069-character PATH into the role environment.
  */
 const GAME_LAUNCH_TRANSPORT_CAUSES: ReadonlySet<string> = new Set([
   "guardian_pipe_unreachable",
   "guardian_session_closed",
   "guardian_hello_acknowledgement_invalid",
   "guardian_command_acknowledgement_invalid",
+  "guardian_wire_too_long",
 ]);
 
 /**

@@ -11,6 +11,7 @@ import type {
   GuardianRecoveryRole,
   GuardianRoleExit,
 } from "../../containment/auth/desktop-guardian-session.internal.js";
+import { DESKTOP_BOOTSTRAP_REFUSAL_PREFIX } from "../../containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopProductComposition,
   prepareDesktopHostLaunch,
@@ -60,7 +61,17 @@ const MAX_WIRE_BYTES = 32_768;
  * assumed (probe: exit reported `signal SIGTERM` with the handler never invoked).
  */
 const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
-const MAX_GUARDIAN_WIRE_BYTES = 16_384;
+/**
+ * The most one Guardian session frame may weigh, in either direction.
+ *
+ * It is exported because it is not this wire's private number: the Desktop broker that serves the
+ * session reads and writes under its own `MaxWireBytes` (DesktopHostBootstrapBroker.cs:14), and a
+ * frame this side would refuse is one that channel cannot carry either. A launch frame is the only
+ * frame whose size the product's own data decides - it carries the role's encoded launch plan - so
+ * the budget that keeps it inside this bound is stated where the plan is built and asserted against
+ * this constant by a gate.
+ */
+export const MAX_GUARDIAN_WIRE_BYTES = 16_384;
 const MAX_PRIVATE_FRAME_BYTES = 65_536;
 const MAX_GUARDIAN_DEADLINE_HORIZON_MS = 300_000;
 const guardianSessionSchema = "gamebuddy-desktop-guardian-session/v1";
@@ -1710,10 +1721,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * `dialogue_exited_before_ready:<code>:<stderr>` and an operator reading the
  * child's stderr learn WHICH admission refused instead of the single
  * `desktop_runtime_bootstrap_unavailable` twenty different causes all produced.
- * The prefix is written here and nowhere else.
+ * The wrapper is declared once, in the session contract both this wire and the
+ * contained runtime read (`DESKTOP_BOOTSTRAP_REFUSAL_PREFIX`).
  */
 function unavailable(reason: string): Error {
-  return new Error(`desktop_runtime_bootstrap_unavailable:${reason}`);
+  return new Error(`${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}${reason}`);
 }
 
 /**

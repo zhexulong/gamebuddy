@@ -1028,6 +1028,20 @@ test("the launch wrapper's distinct causes stop collapsing into one masked answe
     observed.add(text);
   }
   assert.equal(observed.size, cases.length, "two collapsed launch faults still answer identically");
+
+  // `guardian_wire_too_long` answers the SAME composed code, so it is asserted here rather than added
+  // to the list above: the list is one entry per answer, and "the launch never reached the game" is
+  // one answer for the whole family. The frame was never written, which makes this the strongest
+  // member - no native side effect can exist - and it used to be invisible: the runtime's crossing
+  // rule rejected the wire's `<wrapper><code>` spelling, so the panel read `game_unavailable`.
+  const refusedBeforeWriting = await launchRefusal(
+    wrapped(
+      new Error("guardian_wire_too_long", {
+        cause: new Error("stardew_contained_player_host_launch_failed"),
+      }),
+    ),
+  );
+  assert.deepEqual(JSON.parse(refusedBeforeWriting), { code: "game_launch_unreachable" });
 });
 
 test("the bounded-cause walk terminates on a cyclic cause chain", async () => {

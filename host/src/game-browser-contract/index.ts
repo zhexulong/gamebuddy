@@ -66,13 +66,14 @@ const GameProblemCode = Type.Union([
   Type.Literal("stardew_cabin_choice_stale"),
   Type.Literal("stardew_manifest_handoff_uncertain"),
   Type.Literal("game_runtime_unavailable"),
-  // The launch's own transport. A launch reaches the game through the Host's one authenticated
-  // Guardian session, which can be absent or end mid-command; nothing was started, so the refusal
-  // is a refusal and not an outcome the Host cannot state. It is its own code because the nearest
-  // two readings are both false claims here: `state_unavailable` tells the player the result is
-  // unknown, and `game_runtime_unavailable` carries the panel's "the result is uncertain" line,
-  // which is what the panel shows for a refusal whose effect the Host cannot rule out. It names the
-  // CONDITION only - which transport step failed travels in no field.
+  // The launch that never reached the game: the Host's connection to the part that starts the game
+  // can be absent or end mid-command, and a launch frame this side refuses to write never left it
+  // either - in every one of those the game was never asked to start anything, so the refusal is a
+  // refusal and not an outcome the Host cannot state. It is its own code because the nearest two
+  // readings are both false claims here: `state_unavailable` tells the player the result is unknown,
+  // and `game_runtime_unavailable` carries the panel's "the result is uncertain" line, which is what
+  // the panel shows for a refusal whose effect the Host cannot rule out. It names the CONDITION only -
+  // which step failed travels in no field.
   Type.Literal("game_launch_unreachable"),
   Type.Literal("game_storage_unavailable"),
   // The composed reference-game shell's own route and transport refusals. They are

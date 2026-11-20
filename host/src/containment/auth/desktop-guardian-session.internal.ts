@@ -1,5 +1,15 @@
 type ContainmentRole = string;
 
+/**
+ * The one wrapper the Desktop bootstrap's own refusals are spelled in.
+ *
+ * Every refusal that wire throws reads `<prefix><bounded code>`: the code names the check that
+ * refused, and the launcher's `dialogue_exited_before_ready:<code>:<stderr>` reads the same text. It
+ * is declared here because two layers need the same string: the wire builds it, and the contained
+ * runtime strips it to learn which check refused before it let the message cross.
+ */
+export const DESKTOP_BOOTSTRAP_REFUSAL_PREFIX = "desktop_runtime_bootstrap_unavailable:";
+
 export type ContainmentCorrelation = Readonly<{
   guardianInstanceId: string;
   guardianEpoch: number;
