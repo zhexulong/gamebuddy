@@ -282,7 +282,7 @@ test("player-vocabulary.1: the population is derived, and it is not empty", (t) 
   const lexicon = INTERNAL_NOUNS.flatMap((noun) => [...noun.forms, ...(noun.zh ?? [])]);
   const carriers = visibleEn.filter((entry) => internalsIn([entry], "en").length > 0).length;
   t.diagnostic(
-    `player-vocabulary.1: strings examined ${examined} (${en.entries.length} declared key(s), ${read.size} read by a source) · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
+    `player-vocabulary.1: strings examined ${examined} (${visibleEn.length} read key(s) of ${en.entries.length} declared in this file; ${read.size} keys read across every catalogue) · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
   );
 });
 
