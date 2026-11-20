@@ -26,7 +26,9 @@ import { isNonNegativeSafeInteger, isRecord, isTileCoordinate } from "./protocol
  * throwaway context, and turns the nodes it produced into ONE standard Body Program that the caller
  * submits through the same path a hand-written program takes. Nothing here executes game physics,
  * chooses a route, or invents a target: every action id and every argument name comes from the
- * published surface, and every value comes from the script's own reading of the snapshot.
+ * published surface, every INTENTION comes from the script's own words, and every READING - an index
+ * or an opaque id that can only be copied out of a snapshot - is read here, at submit, from the rows
+ * the caller's intentions select (see `PLAN_SNAPSHOT_READINGS`).
  *
  * Deliberately absent from the script's world: Node globals, the network, the clock, randomness,
  * timers, and any way to compile more code. A script that reaches for one is refused BY NAME before
@@ -139,6 +141,39 @@ export type PublishedPlanAction = Readonly<{
 }>;
 
 /**
+ * The arguments whose value is a READING OF THE SUBMIT-MOMENT SNAPSHOT, and the row field each one reads.
+ *
+ * <p>
+ * A plan argument is one of two things. An INTENTION is what the author means - the tile, the item, which seed, how
+ * many - and nothing on this side may choose it. A READING is a value that can only be COPIED out of a snapshot: an
+ * opaque id the Mod minted for a row, or an index into the pack. These two are readings, and the measurement is
+ * `round84` (2026-11-20, one live run): 54 `plant_seed` nodes carrying 44 hand-written `expectedTargetId` values, in
+ * which the tile `(59,18)` and the tile `(59,12)` were each submitted TWICE with a different id - one tile cannot carry
+ * two - and 22 of the plants answered `seed_target_unavailable`. Her own call was `{ x: 79, y: 18, slot: 11,
+ * expectedQualifiedItemId: "(O)472", expectedTargetId: "seed_51f5e088b8c867e7" }`: two intentions and two copies, and
+ * both copies were knowable from the snapshot the plan was submitted against.
+ * </p>
+ * <p>
+ * `slot` is a reading and not merely a number she likes. It indexes `Game1.player.Items`, it moves between the compile
+ * and the execution, and the Mod already re-resolves it from the item the request names
+ * (`ExecutionManager.ResolveLiveSlot`, and the Mod's own `StaleIndexIsNotAMissingItemGateTests`, which prints a slot the
+ * caller SAW as `migrated` and a slot the caller MEANS as an address). Binding it at submit is therefore never less
+ * trustworthy than her copy.
+ * </p>
+ * <p>
+ * NOT readings, and deliberately left to her: `expectedQualifiedItemId` - the item she MEANS, which is why the Mod's gate
+ * calls the item "the fact that survives the re-packing" while it re-resolves the slot - `expectedSkill`/`expectedLevel`
+ * (which of the pending level-ups she is answering), and every tile, quantity and closed-set choice.
+ * </p>
+ */
+export const PLAN_SNAPSHOT_READINGS: ReadonlyMap<string, string> = Object.freeze(
+  new Map([
+    ["expectedTargetId", "targetId"],
+    ["slot", "slot"],
+  ]),
+);
+
+/**
  * What a `slot` argument means when the SURFACE says nothing about it.
  *
  * Corrected 2026-10-29. This used to read "never a backpack index", which is false: all thirteen actions that take a
@@ -205,6 +240,13 @@ const MAX_REPORTED_PLAN_CALLS = 16;
  * saying one thing. `insertedCount` is not bounded, so the answer still states the population.
  */
 const MAX_REPORTED_PLAN_INSERTIONS = 16;
+
+/**
+ * How many bindings one answer spells out, bounded for the same reason the insertion list is: a loop over a patch binds
+ * one reading per node, so a forty-tile plan would repeat one sentence forty times. `boundFromSnapshotCount` is the
+ * population, so a bounded list never reads as "that was the whole of it".
+ */
+const MAX_REPORTED_PLAN_READINGS = 16;
 
 /**
  * What became of every call the author wrote, by the one numbering a REFUSED plan still has: the position of her call.
@@ -330,6 +372,18 @@ type RunnablePlan = Readonly<{
    * empty array rather than leaving a reader to infer zero from an absent field.
    */
   insertedNodeIds: readonly string[];
+  /**
+   * The arguments this compiler READ OUT OF THE SUBMIT-MOMENT SNAPSHOT rather than asking the author for, one per
+   * binding, spelled `bound=<actionId>.<argument>;from=snapshot.<family>[].<field>`.
+   *
+   * Present for the same reason `inserted` is: the program that runs is not the script she wrote, and a value she
+   * copied by hand was REPLACED here. She learns from this list which arguments are the harness's, so the next plan
+   * omits them instead of spending context on a copy that will be overruled. Bounded;
+   * `boundFromSnapshotCount` is the population.
+   */
+  boundFromSnapshot: readonly string[];
+  /** Every binding, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  boundFromSnapshotCount: number;
   /**
    * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
    * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
@@ -1185,7 +1239,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     " });\n" +
     "}\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
-    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId, " +
+    "  builder.water_crop({ x: crop.x, y: crop.y, " +
     planExampleCharge("water_crop") +
     " });\n" +
     "}\n" +
@@ -1270,7 +1324,7 @@ export const PLAN_ITERATION_CONDITIONS: Readonly<Record<string, PlanIterationCon
   soilTiles: Object.freeze({ rowField: "hoeDirt" }),
   cropTargets: Object.freeze({
     publishedAsWork:
-      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1456-1470`), so every published row is a tile the Can is still needed on",
+      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1472-1492`), so every published row is a tile the Can is still needed on",
   }),
 });
 
@@ -1515,6 +1569,8 @@ export function compilePlanScript(
     ),
     insertedCount: state.inserted.length,
     insertedNodeIds: Object.freeze(state.insertedNodeIds.map(programNodeId)),
+    boundFromSnapshot: Object.freeze(state.boundFromSnapshot.slice(0, MAX_REPORTED_PLAN_READINGS)),
+    boundFromSnapshotCount: state.boundFromSnapshot.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
@@ -1622,6 +1678,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
+    boundFromSnapshot: [],
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
@@ -1822,6 +1879,11 @@ type PlanScriptState = {
    * ids would make a long plan's refusals silently uncountable.
    */
   insertedNodeIds: string[];
+  /**
+   * The arguments this compiler read out of the submit-moment snapshot, in the order the calls were written, each
+   * `<actionId>.<argument>` beside the path it was read from. Narrowed once, where the answer is built.
+   */
+  boundFromSnapshot: string[];
   /**
    * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
@@ -2302,6 +2364,175 @@ function refuseUnknownArguments(
   }
 }
 
+/**
+ * Binds the arguments that are READINGS OF THE SUBMIT-MOMENT SNAPSHOT, and refuses by name when the snapshot holds no
+ * such target.
+ *
+ * <p>
+ * HER INTENTIONS SELECT THE ROW, AND A READING NEVER SELECTS THE ROW IT IS READ FROM. The tile and the item she wrote
+ * say WHICH target this step is about; the id and the slot are then read off that one row, so her stale copy cannot
+ * choose the row it came from and two readings of one step can never disagree with each other. Selection is EXACT first
+ * (a field name her argument spells); the `expected` prefix is stripped only as a FALLBACK selection and only as a
+ * NARROWING after it - `bait_crab_pot` names the bait in `expectedQualifiedItemId` while its row's `qualifiedItemId` is
+ * the pot, so a stripped-name match is a way to FIND a row among rows her tile already selected, never a way to pick one
+ * on its own.
+ * </p>
+ * <p>
+ * THREE ANSWERS, AND THE DIFFERENCE BETWEEN THEM IS THE POINT. (1) The snapshot publishes the action's target family
+ * and a row matches: the answer is that row's field, whatever she wrote. (2) The family is published and NO row
+ * matches: the tool refuses NOW, by name and place
+ * (`plan_script_target_not_in_the_submitted_snapshot:<family>:<x>,<y>`), instead of accepting a plan that will fail once
+ * per node in the body - the shape of the 22 `seed_target_unavailable` refusals this exists for. (3) The family is not
+ * published at all (an older Mod, or a world that measured nothing): the snapshot cannot answer, so her number stands
+ * exactly as it did before, and a call that omitted it is refused as a missing argument.
+ * </p>
+ */
+function bindSnapshotReadings(
+  action: PublishedPlanAction,
+  canonical: Record<string, PlanArgument>,
+  snapshot: Snapshot,
+  state: PlanScriptState,
+  requirement: PlanArgumentRequirement,
+): readonly string[] {
+  const readings = action.arguments.filter((argument) => planReadingField(argument.name) !== undefined);
+  const familyName = action.targetFamily;
+  if (readings.length === 0 || familyName === null) return [];
+  const rows = planSnapshotRows(snapshot, familyName);
+  // NOT MEASURED, which is a different answer from "measured, and nothing is there": the doctrine every family in
+  // `protocol.ts` states (`soilTiles` null versus an empty array). An unmeasured row cannot overrule the author's own
+  // number, and it cannot refuse her either.
+  if (rows.length === 0) return [];
+  const fields = planRowFields(rows);
+  // SELECTION IS EXACT FIRST, and the assertion's own name is the fallback: an action that names no field its family
+  // publishes exactly (`use_item` writes `expectedQualifiedItemId` against a row publishing `qualifiedItemId`) still
+  // has one field the row and the author agree about, and that is the one that selects. The fallback is only a
+  // SELECTION, never a reading: it is how a row is found, not a value taken from it.
+  const exact = planRowSelections(action, canonical, false, fields);
+  const selecting = exact.length > 0 ? exact : planRowSelections(action, canonical, true, fields);
+  if (selecting.length === 0) return [];
+  let chosen = planRowsMatching(rows, selecting);
+  const place = planSelectedPlace(selecting);
+  if (chosen.length > 1) {
+    const narrowing = planRowSelections(action, canonical, true, fields).filter(
+      (selection) => !selecting.some((candidate) => candidate.field === selection.field),
+    );
+    const narrowed = narrowing.length === 0 ? chosen : planRowsMatching(chosen, narrowing);
+    // ONE TILE CAN HOLD SEVERAL TARGETS, and only the item she MEANT says which of them this step is about: a tile with
+    // seed rows for two seed types and an argument naming a third is a target this snapshot does not hold, not an
+    // ambiguity to guess through.
+    if (narrowing.length > 0 && narrowed.length === 0)
+      rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${place}`, state, requirement);
+    if (narrowed.length > 0) chosen = narrowed;
+  }
+  if (chosen.length === 0)
+    rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${place}`, state, requirement);
+  const bound: string[] = [];
+  for (const reading of readings) {
+    const field = planReadingField(reading.name)!;
+    // Only the fields the ROWS really carry: `chop_tree`'s slot is the tool its own claim names, not a field of
+    // `treeChopSourceTargets`, so nothing is read for it and her number stays the only source.
+    const published = new Map<string, unknown>();
+    for (const row of chosen) {
+      const value = row[field];
+      const key = planRowValue(value);
+      if (key !== undefined) published.set(key, value);
+    }
+    if (published.size === 0) continue;
+    if (published.size > 1)
+      rejectPlanCall(
+        `plan_script_target_is_ambiguous_in_the_submitted_snapshot:${familyName}:${place}`,
+        state,
+        requirement,
+      );
+    const [only] = [...published.values()];
+    // A row's `-1` is the row saying it holds no slot for this action (`debrisTargets`: the actor owns no tool for it).
+    // That is a fact to report, not a number to bind.
+    if (typeof only === "number" && only < 0) continue;
+    const value = canonicalPlanArgument(reading, only);
+    if (value === undefined) continue;
+    canonical[reading.name] = value;
+    bound.push(`bound=${action.actionId}.${reading.name};from=snapshot.${familyName}[].${field}`);
+  }
+  return bound;
+}
+
+/** The row field this argument reads, when the surface states it as a reading rather than as a statement of intent. */
+function planReadingField(argumentName: string): string | undefined {
+  return PLAN_SNAPSHOT_READINGS.get(argumentName);
+}
+
+/** The rows one published family carries in this snapshot, or none when the snapshot does not publish it. */
+function planSnapshotRows(snapshot: Snapshot, family: string): readonly Readonly<Record<string, unknown>>[] {
+  const rows = (snapshot as Readonly<Record<string, unknown>>)[family];
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((row): row is Readonly<Record<string, unknown>> => isRecord(row));
+}
+
+/** Every field name the family's own rows carry, which is what a selection may match by. */
+function planRowFields(rows: readonly Readonly<Record<string, unknown>>[]): readonly string[] {
+  const fields = new Set<string>();
+  for (const row of rows) for (const field of Object.keys(row)) fields.add(field);
+  return Object.freeze([...fields]);
+}
+
+/** A row field, or an argument name, as one case-free key: `expectedQualifiedItemId` and `qualifiedItemId` agree. */
+function planFieldKey(words: readonly string[]): string {
+  return words.join("");
+}
+
+/** One row field the author's own words select a target by, and the value she wrote for it. */
+type PlanRowSelection = Readonly<{ field: string; value: string }>;
+
+/** The value of a row field as the one string a selection compares with, or `undefined` when it is not a scalar. */
+function planRowValue(value: unknown): string | undefined {
+  if (typeof value === "string") return value.length === 0 ? undefined : value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+/**
+ * What the author's own arguments select a row by: every argument she wrote that the row publishes under the same name
+ * (and, when `stripExpected`, under the name her assertion is about - `expectedQualifiedItemId` -> `qualifiedItemId`).
+ */
+function planRowSelections(
+  action: PublishedPlanAction,
+  canonical: Readonly<Record<string, PlanArgument>>,
+  stripExpected: boolean,
+  fields: readonly string[],
+): readonly PlanRowSelection[] {
+  const selections: PlanRowSelection[] = [];
+  for (const argument of action.arguments) {
+    if (planReadingField(argument.name) !== undefined) continue;
+    const value = canonical[argument.name];
+    if (value === undefined || !("canonicalValue" in value)) continue;
+    const words = stripExpected ? planArgumentFieldWords(argument.name) : planNameWords(argument.name);
+    const key = planFieldKey(words);
+    const field = fields.find((candidate) => planFieldKey(planNameWords(candidate)) === key);
+    if (field === undefined) continue;
+    selections.push({ field, value: value.canonicalValue });
+  }
+  return selections;
+}
+
+/** The rows whose every selected field carries the value the author wrote. */
+function planRowsMatching(
+  rows: readonly Readonly<Record<string, unknown>>[],
+  selections: readonly PlanRowSelection[],
+): readonly Readonly<Record<string, unknown>>[] {
+  return rows.filter((row) => selections.every((selection) => planRowValue(row[selection.field]) === selection.value));
+}
+
+/**
+ * Where a refusal says the target is: the tile she named - `79,18`, the spelling every receipt uses - or, for an action
+ * that selects by something else, every field and value she selected by.
+ */
+function planSelectedPlace(selections: readonly PlanRowSelection[]): string {
+  const x = selections.find((selection) => selection.field === "x");
+  const y = selections.find((selection) => selection.field === "y");
+  if (x !== undefined && y !== undefined) return `${x.value},${y.value}`;
+  return selections.map((selection) => `${selection.field}=${selection.value}`).join(";");
+}
+
 function emitPlanNode(
   action: PublishedPlanAction,
   arguments_: unknown,
@@ -2337,28 +2568,43 @@ function emitPlanNode(
   const supplied = accepted as Readonly<Record<string, unknown>>;
   const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
   refuseUnknownArguments(action, supplied, state, requirement);
-  // AN OMITTED ARGUMENT IS REFUSED, NOT INFERRED, EVEN WHEN ITS VALUE IS IN THE SNAPSHOT.
+  // AN OMITTED ARGUMENT IS REFUSED - EXCEPT THE TWO THAT ARE READINGS, WHICH ARE BOUND HERE INSTEAD.
   //
-  // Inferring was considered and rejected. `expectedQualifiedItemId` when exactly one target row matches the x/y of the
-  // same script is the case that invites it, and there are four reasons it is wrong:
-  //   1. Those arguments are ASSERTIONS the Mod re-checks at execution against the live target. A value this compiler
-  //      filled in is an assertion nobody made; when the row it picked is the wrong one (`forageTargets`, `itemTargets`,
-  //      `harvestTargets` and `cropTargets` overlap in tile space) the plan is refused at runtime, aimed at a line whose
-  //      author never wrote that value and cannot see which row was read.
-  //   2. (x, y) does not identify a row. It selects among EVERY family publishing x and y, so choosing one is a Host-side
-  //      claim about what the caller meant, and this projection may only narrow what the Mod published - never add.
-  //   3. It is silent. The measured cost of the alternative is one teaching refusal per class (`round18`: the model had
-  //      `qualifiedItemId` in its target rows and omitted the argument anyway); the cost of inference is a model that
-  //      believes the argument is optional and cannot say why the same plan fails when two families share a tile.
-  //   4. `planProgramId` is content-addressed on the nodes, and a journal replays a node's arguments as written. A
-  //      Host-inferred value has no provenance to replay.
+  // The rule this replaces was "refuse, never infer", and its four reasons were right about the arguments it was written
+  // for and blind to the difference this file now draws between an INTENTION and a READING (`PLAN_SNAPSHOT_READINGS`).
+  // Each reason, against a reading:
+  //   1. "Those arguments are ASSERTIONS the Mod re-checks, so a value this compiler filled in is an assertion nobody
+  //      made." For a READING the assertion is not about intent: the Mod re-checks the row at the tile she named, this
+  //      compiler's value is that row AT THE SUBMISSION'S REVISION, and hers is a memory of an older one. Binding is the
+  //      only version of the assertion anybody can make truthfully - `round84` made it from memory 54 times and was wrong
+  //      22 times.
+  //   2. "(x, y) does not identify a row; it selects among every family." True, which is why the row is looked for in the
+  //      ONE family the SURFACE declares for this action and selected by her own fields - and why a selection that finds
+  //      nothing refuses by name (`target_not_in_the_submitted_snapshot`) rather than picking a family.
+  //   3. "It is silent." It was. It is not: `boundFromSnapshot` names every reading this compiler wrote and the row path
+  //      it read, and a model that believes a reading is optional learns it there, in a value it can check.
+  //   4. "`planProgramId` is content-addressed and a Host-inferred value has no provenance." The provenance is the path
+  //      `boundFromSnapshot` prints and the `snapshotRevision` the program already carries; a journal replay is against a
+  //      world, not against the author's memory.
+  // What did NOT change: every intention - the tile, the item, the seed, the quantity - is still hers, and an argument
+  // that is neither bound nor supplied is still refused by name, with the whole set of omissions beside it.
   const canonical: Record<string, PlanArgument> = {};
-  // EVERY ARGUMENT THAT IS MISSING, not the first one: measured in `.tmp/fork-why-slow.jsonl`, the refusal for
-  // `claim_mail_attachment({ expectedTargetId })` named `x` alone, so a correction that fixed `x` bought a second
-  // refusal for `y`. The code names the first (with what it must be and where the value is published) and the answer
-  // carries the whole set beside it.
-  const missing = [...declared.values()].filter((declaration) => !Object.hasOwn(supplied, declaration.name));
-  if (missing.length > 0) {
+  // THE ORDER OF THE THREE CHECKS IS THE ORDER OF HER MISTAKES. What she FAILED TO WRITE is answered first and for every
+  // argument that is not a reading, because a value she never wrote is a fact about her call and outranks anything the
+  // snapshot could say - binding first made `pickup_forage` with no `x` answer "no forage at y=1", a place built from the
+  // one coordinate she did write. What she wrote wrong is answered second, unchanged. What the snapshot knows is read
+  // last, and a reading it could not answer is then reported exactly as any other omission.
+  const rejectMissing = (candidates: readonly PlanArgumentShape[], readingsCount: boolean): void => {
+    const missing = candidates.filter(
+      (declaration) =>
+        !Object.hasOwn(supplied, declaration.name) &&
+        (readingsCount || planReadingField(declaration.name) === undefined),
+    );
+    if (missing.length === 0) return;
+    // EVERY ARGUMENT THAT IS MISSING, not the first one: measured in `.tmp/fork-why-slow.jsonl`, the refusal for
+    // `claim_mail_attachment({ expectedTargetId })` named `x` alone, so a correction that fixed `x` bought a second
+    // refusal for `y`. The code names the first (with what it must be and where the value is published) and the answer
+    // carries the whole set beside it.
     const first = missing[0]!;
     rejectPlanCall(
       `plan_script_missing_argument:${action.actionId}.${first.name}:${planArgumentExpectation(first)}:${planArgumentSource(action, snapshot, first.name)}`,
@@ -2366,8 +2612,10 @@ function emitPlanNode(
       requirement,
       Object.freeze(missing.map((declaration) => declaration.name)),
     );
-  }
+  };
+  rejectMissing([...declared.values()], false);
   for (const [name, declaration] of declared) {
+    if (!Object.hasOwn(supplied, name)) continue;
     const argumentPath = `${action.actionId}.${name}`;
     const value = canonicalPlanArgument(declaration, supplied[name]);
     if (value === undefined) {
@@ -2382,6 +2630,14 @@ function emitPlanNode(
     }
     canonical[name] = value;
   }
+  // THE READINGS ARE READ HERE, before the last look at what is missing: a reading she did not write is not a mistake,
+  // and a reading she DID write is replaced by the row's own value - which is the half of this change that answers the
+  // 22 `seed_target_unavailable` nodes, because her copy was the stale one.
+  const readings = bindSnapshotReadings(action, canonical, snapshot, state, requirement);
+  rejectMissing(
+    [...declared.values()].filter((declaration) => !Object.hasOwn(canonical, declaration.name)),
+    true,
+  );
   // A transition is written as the walk plus the door: the walk is the compiler's because the Mod refuses the door
   // on distance alone, and the node the author wrote still runs in the order the author wrote it.
   //
@@ -2462,6 +2718,9 @@ function emitPlanNode(
   // Her step is in the program, so her call is accounted for and cannot also appear as dropped or unneeded.
   state.acceptedSteps.push(state.builderCalls);
   state.callOfNode.set(authorNodeId, state.builderCalls);
+  // AND THE READINGS ARE COMMITTED ONLY NOW, because a step that was refused after being bound produced no node: an
+  // answer that listed the binding anyway would be a sentence about a program nobody runs.
+  state.boundFromSnapshot.push(...readings);
 }
 
 /**

@@ -16,6 +16,7 @@ import {
   PLAN_FORM_ACTION_IDS,
   PLAN_ITERATION_CONDITIONS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_SNAPSHOT_READINGS,
   type PlanIterationCondition,
   type PublishedPlanAction,
   planActionsFromRegistrations,
@@ -1359,6 +1360,12 @@ function answerOf(code: string, prefix: string): Readonly<{ expects: string; fro
 const NAMED_SOURCES = Object.freeze(["observe_scene", "find_destination", "not_in_snapshot"]);
 
 /**
+ * The refusal a READING's omission earns when the action's own family is published and holds no row at her target: the
+ * family to re-read, and the tile she named.
+ */
+const TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT = /^plan_script_target_not_in_the_submitted_snapshot:[A-Za-z]+:[^:]+$/u;
+
+/**
  * The gate the measured refusals asked for: for EVERY action whose surface declares an argument, omitting that argument
  * must answer with the argument, what it must be, and where the value is published - and that source must be a path the
  * snapshot really resolves, or one of the two read-only answers / the explicit "the snapshot does not carry it".
@@ -1373,7 +1380,15 @@ test("every declared argument, omitted, is refused with what it must be and wher
       const result = compile(callScript(action, { omit: [argument.name] }), { ...SOURCE_SNAPSHOT });
       const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${subject}:`;
+      // A READING IS NOT HERS TO WRITE, so an omission of one has three legal answers and the first is the best: the row
+      // answered it (`accepted`), the family is published and holds no such row (the refusal that names both), or the
+      // family is not published at all and the snapshot cannot answer - which is the missing-argument answer below.
       if (!code.startsWith(prefix)) {
+        if (
+          PLAN_SNAPSHOT_READINGS.has(argument.name) &&
+          (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code))
+        )
+          continue;
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
         continue;
       }
@@ -1410,6 +1425,11 @@ test("a sparse snapshot changes the source, never the shape of the answer", () =
       const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${action.actionId}.${argument.name}:`;
       if (!code.startsWith(prefix)) {
+        if (
+          PLAN_SNAPSHOT_READINGS.has(argument.name) &&
+          (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code))
+        )
+          continue;
         faults.push(`${action.actionId}.${argument.name}: ${code}`);
         continue;
       }
@@ -3222,10 +3242,15 @@ test("every argument plan_shape marks required is one whose omission the builder
       );
       const code = omitted.status === "compiled" ? "accepted" : omitted.reasonCode;
       const refuses = code.startsWith(`plan_script_missing_argument:${action.actionId}.${argument.name}:`);
-      if (argument.required === true && !refuses)
+      // THE SAME THREE ANSWERS ONE LEVEL UP: `required` is the WIRE's requirement, and this compiler satisfies it either
+      // by refusing the omission or by reading the row - `boundFromSnapshot` names which, per call.
+      const reads =
+        PLAN_SNAPSHOT_READINGS.has(argument.name) &&
+        (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code));
+      if (argument.required === true && !refuses && !reads)
         faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
-      if (argument.required !== true && refuses)
-        faults.push(`${action.actionId}.${argument.name}: marked optional, but an omission is refused as ${code}`);
+      if (argument.required !== true && (refuses || reads))
+        faults.push(`${action.actionId}.${argument.name}: marked optional, but an omission is answered by ${code}`);
     }
   }
   assert.deepEqual(faults, [], faults.join("\n"));
@@ -3284,7 +3309,17 @@ builder.harvest_crop({ x: 60, y: 9, expectedQualifiedItemId: "(O)24", expectedTa
 builder.move_to_tile({ x: 59, y: 14 });
 builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedTargetId: "crop_5481d34df6f60c18" });
 `;
-  const result = compile(measured, { ...SOURCE_SNAPSHOT });
+  const result = compile(measured, {
+    ...SOURCE_SNAPSHOT,
+    // THE SNAPSHOT THE SESSION WAS IN, for the three tiles it harvested: a plan naming a tile the world does not hold is
+    // now refused at submit (`body-program-snapshot-readings.test.ts`), and this replay is about the ONE refusal that is
+    // an omitted argument - so the two steps that were CORRECT must name rows this world really publishes.
+    harvestTargets: [
+      { ...SOURCE_SNAPSHOT.harvestTargets![0]!, targetId: "harvest_measured_6010", x: 60, y: 10 },
+      { ...SOURCE_SNAPSHOT.harvestTargets![0]!, targetId: "harvest_measured_609", x: 60, y: 9 },
+      { ...SOURCE_SNAPSHOT.harvestTargets![0]!, targetId: "harvest_measured_5814", x: 58, y: 14 },
+    ],
+  });
   // Calls 2, 4 and 6 were the same mistake in the measured session; this replay supplies the argument on 4 and 6 so the
   // reading is "one refused call, five that were fine", which is the property, not the session's arithmetic.
   assert.equal(result.status, "partial", "one call did not become a step, so the answer may not say `compiled`");
