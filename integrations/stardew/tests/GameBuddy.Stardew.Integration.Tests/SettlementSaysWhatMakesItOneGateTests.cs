@@ -27,10 +27,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <para>
 /// POPULATION, FROM THE SOURCE AND NEVER FROM A LIST: every <c>TileTargetGate.Settled(</c> call site in the Mod's
 /// partials and handler files. The warrant's spelling comes from <see cref="TileTargetSettledBy"/> - the closed set the
-/// design admits - read by reflection, so a fourth form cannot appear without being declared there; and which actions
-/// reach each site is read from the handler arms through the members they call, which is what lets the KIND be derived
-/// rather than chosen: a site that mints <c>consumes</c> is only telling the truth when every action that reaches it
-/// is declared <see cref="FarmhandChoreDeclaration.Consumes"/>.
+/// design admits - read by reflection, so a fourth form cannot appear without being declared there. WHICH FORM A SITE
+/// NAMES is the one its argument's member mints, and a producer mints the form whose constant its own body prints:
+/// <c>ConsumesFor</c> prints <c>Consumes</c>, <c>EngineFlag</c> prints <c>EngineFlagPrefix</c>. That correspondence is
+/// read from the vocabulary's own source rather than from a table beside it, because a second spelling of "which member
+/// mints which form" is a disagreement scheduled for the day a producer is added. And which actions reach each site is
+/// read from the handler arms through the members they call, which is what lets the KIND be derived rather than chosen:
+/// a site that mints <c>consumes</c> is only telling the truth when every action that reaches it is declared
+/// <see cref="FarmhandChoreDeclaration.Consumes"/>.
 /// </para>
 ///
 /// <para>
@@ -60,6 +64,14 @@ public sealed class SettlementSaysWhatMakesItOneGateTests
 
     /// <summary>A call a member body makes, so the set of members one action reaches can be walked.</summary>
     private static readonly Regex Call = new(@"(?:this\.)?(?<name>\w+)\s*\(", RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Where a warrant argument names the vocabulary: <c>TileTargetSettledBy.Consumes</c> for the form a site prints
+    /// itself, and <c>TileTargetSettledBy.EngineFlag(...)</c> for the producer that prints it.
+    /// </summary>
+    private static readonly Regex WarrantMember = new(
+        Regex.Escape(WarrantVocabulary) + @"\.(?<member>\w+)",
+        RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The forms the design admits: the string constants of <see cref="TileTargetSettledBy"/> except the evidence-field
@@ -133,21 +145,30 @@ public sealed class SettlementSaysWhatMakesItOneGateTests
     }
 
     /// <summary>
-    /// THE FALSIFIER, on the code that shipped: <c>AnswerRockSource</c> is replayed with the three-argument call it had
-    /// before this unit added the warrant, which is byte-for-byte the shape that was in the tree, and the gate must name
-    /// that site.
+    /// THE FALSIFIER, on the shape that shipped: <c>AnswerRockSource</c> is replayed with the bare three-argument call it
+    /// carried before this unit gave it a warrant - byte-for-byte the line that was in the tree - and the gate must name
+    /// that site. The arm is replayed rather than the old warrant removed from a four-argument call because the site now
+    /// ASKS a producer (<c>SettledIfConsumed</c>); the shape a settlement without any warrant takes is this one.
     /// </summary>
     [Fact]
     public void TheGateIsRedOnTheSettlementThatShippedWithoutAWarrant()
     {
-        const string withWarrant =
-            "                $\"target={expectedTargetId};named_tile={targetX},{targetY};tile=none\",\n"
-            + "                TileTargetSettledBy.Consumes),\n";
-        const string shipped = "                $\"target={expectedTargetId};named_tile={targetX},{targetY};tile=none\"),\n";
+        const string warranted =
+            "            RockSourceAnswer.Settled => TileTargetGate.SettledIfConsumed(\n"
+            + "                \"break_rock\",\n"
+            + "                ExecutionState.Succeeded,\n"
+            + "                RockSourceAlreadySettled,\n"
+            + "                $\"target={expectedTargetId};named_tile={targetX},{targetY};tile=none\",\n"
+            + "                new TileTargetRefusal(\"rock_target_changed\", $\"target={expectedTargetId};named_tile={targetX},{targetY};actual=none;occupant=none\")),\n";
+        const string shipped =
+            "            RockSourceAnswer.Settled => TileTargetGate.Settled(\n"
+            + "                ExecutionState.Succeeded,\n"
+            + "                RockSourceAlreadySettled,\n"
+            + "                $\"target={expectedTargetId};named_tile={targetX},{targetY};tile=none\"),\n";
 
         Dictionary<string, string> sources = HandlerSourceFacts.HandlerSources()
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        Dictionary<string, string> replayed = Mutate(sources, text => text.Replace(withWarrant, shipped, StringComparison.Ordinal));
+        Dictionary<string, string> replayed = Mutate(sources, text => text.Replace(warranted, shipped, StringComparison.Ordinal));
 
         Measurement before = Measure(replayed);
 
@@ -211,26 +232,85 @@ public sealed class SettlementSaysWhatMakesItOneGateTests
     {
         Dictionary<string, Member> members = Members(sources);
         Dictionary<string, HashSet<string>> reachedByAction = Actions(members);
+        IReadOnlyDictionary<string, IReadOnlyList<string>> minted = FormsMinted(sources);
         var sites = new List<Site>();
         foreach ((string name, Member member) in members)
         {
             foreach (int open in OpenArguments(member.Body))
             {
                 string arguments = ArgumentsAt(member.Body, open);
-                string? form = DeclaredForms
-                    .Where(pair => arguments.Contains(WarrantVocabulary + "." + pair.Key, StringComparison.Ordinal))
-                    .Select(pair => pair.Value)
-                    .FirstOrDefault();
+                MatchCollection warrants = WarrantMember.Matches(arguments);
+                string? warrant = warrants.Count == 0 ? null : warrants[^1].Groups["member"].Value;
                 List<string> reaching = reachedByAction
                     .Where(pair => pair.Value.Contains(name))
                     .Select(pair => pair.Key)
                     .OrderBy(actionId => actionId, StringComparer.Ordinal)
                     .ToList();
-                sites.Add(new Site(member.File, name, arguments, form, reaching));
+                IReadOnlyList<string> forms = warrant is not null && minted.TryGetValue(warrant, out IReadOnlyList<string>? printed)
+                    ? printed
+                    : Array.Empty<string>();
+                sites.Add(new Site(member.File, name, warrant, forms, reaching));
             }
         }
 
         return new Measurement(sites);
+    }
+
+    /// <summary>
+    /// The form each member of the vocabulary mints: a constant is its own form, and a producer is the form whose
+    /// constant its own body prints, so <c>EngineFlag</c> mints <c>engine_flag:</c> through <c>EngineFlagPrefix</c> and
+    /// <c>ConsumesFor</c> mints <c>consumes</c> through <c>Consumes</c>. Read from the type's own source - the same tree
+    /// the sites come from - so a producer the vocabulary gains tomorrow is understood without a table being taught it,
+    /// and a producer that prints no declared form is reported as an unexplained settlement instead of agreeing with
+    /// itself. A member whose body prints two forms answers with both, and a site naming it is unexplained.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<string>> FormsMinted(IReadOnlyDictionary<string, string> sources)
+    {
+        string vocabulary = VocabularyBlock(sources);
+        var minted = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach ((string field, string form) in DeclaredForms)
+        {
+            Mint(minted, field, form);
+            foreach (Match declaration in MemberDeclaration.Matches(vocabulary))
+            {
+                if (HandlerSourceFacts.MemberBody(vocabulary, declaration.Index) is not { } body) continue;
+                if (Regex.IsMatch(body, @"\b" + Regex.Escape(field) + @"\b", RegexOptions.CultureInvariant))
+                    Mint(minted, declaration.Groups["name"].Value, form);
+            }
+        }
+
+        return minted.ToDictionary(pair => pair.Key, pair => (IReadOnlyList<string>)pair.Value, StringComparer.Ordinal);
+    }
+
+    private static void Mint(Dictionary<string, List<string>> minted, string member, string form)
+    {
+        if (!minted.TryGetValue(member, out List<string>? forms)) minted[member] = forms = new List<string>();
+        if (!forms.Contains(form, StringComparer.Ordinal)) forms.Add(form);
+    }
+
+    /// <summary>Only the members of <see cref="TileTargetSettledBy"/> itself decide what it mints, so its block is read.</summary>
+    private static string VocabularyBlock(IReadOnlyDictionary<string, string> sources)
+    {
+        foreach (string source in sources.Values)
+        {
+            int declaration = source.IndexOf("class " + WarrantVocabulary, StringComparison.Ordinal);
+            if (declaration >= 0) return BlockAt(source, source.IndexOf('{', declaration));
+        }
+
+        throw new InvalidOperationException($"`{WarrantVocabulary}` is not among the sources this gate reads");
+    }
+
+    /// <summary>The body of the block whose opening brace is at <paramref name="open"/>.</summary>
+    private static string BlockAt(string source, int open)
+    {
+        int depth = 0;
+        for (int index = open; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0) return source[(open + 1)..index];
+        }
+
+        throw new InvalidOperationException($"unbalanced block at offset {open}");
     }
 
     /// <summary>
@@ -322,16 +402,26 @@ public sealed class SettlementSaysWhatMakesItOneGateTests
     private sealed record Member(string File, string Body);
 
     /// <summary>
-    /// One settlement site: where it is, the form it names (null when its evidence names none), and the actions whose
-    /// handler chain reaches it.
+    /// One settlement site: where it is, the vocabulary member its warrant argument names (<c>null</c> when it names
+    /// none), the forms that member mints, and the actions whose handler chain reaches it. <see cref="Form"/> is the one
+    /// form when the member mints exactly one, which is the only shape that can say what makes the settlement one.
     /// </summary>
-    private sealed record Site(string File, string Member, string Arguments, string? Form, IReadOnlyList<string> Reaching)
+    private sealed record Site(
+        string File,
+        string Member,
+        string? Warrant,
+        IReadOnlyList<string> Forms,
+        IReadOnlyList<string> Reaching)
     {
-        /// <summary>What the failure message prints instead of a form nobody declared.</summary>
-        internal string WarrantSummary =>
-            Arguments.Contains(WarrantVocabulary + ".", StringComparison.Ordinal)
-                ? $"a warrant from `{WarrantVocabulary}` that is not one of {string.Join(" / ", DeclaredForms.Values)}"
-                : "no warrant at all";
+        /// <summary>The form this receipt prints, or <c>null</c> when its warrant does not settle on one.</summary>
+        internal string? Form => Forms.Count == 1 ? Forms[0] : null;
+
+        /// <summary>What the failure message prints instead of a form the site does not name.</summary>
+        internal string WarrantSummary => Warrant is null
+            ? "no warrant at all"
+            : Forms.Count == 0
+                ? $"names `{WarrantVocabulary}.{Warrant}`, which prints none of {string.Join(" / ", DeclaredForms.Values)}"
+                : $"names `{WarrantVocabulary}.{Warrant}`, which prints {string.Join(" and ", Forms)} at once";
     }
 
     private sealed record Measurement(IReadOnlyList<Site> Sites);
