@@ -6,6 +6,10 @@
  * work reading and the session verdict both read it, so a store that reads it one way cannot pass a run that another
  * reads the other way. `deriveRungVerdict` is the residual: a run is passed when no clause objects, and every clause
  * carries a code, so a blocked run can never publish an empty or borrowed reason.
+ *
+ * `deriveRungVerdict` can only name the clauses it is HANDED, so the list it is handed is where a finding gets lost:
+ * `assessmentRungClauses` turns an assessment's own clause list into rung clauses, one for one, so a clause a gate
+ * produces is a clause the verdict reads without anyone restating it in the runner.
  */
 import { executedActionIds } from "./execution-trace.mjs";
 
@@ -184,6 +188,52 @@ export function taskPurposeVerdict(taskPurposes) {
   if (reading.days > 0 && reading.judged === 0)
     return `task_purposes_nothing_judged:${String(reading.unjudged)}of${String(reading.days)}`;
   return null;
+}
+
+/**
+ * The states an assessment's clause can be in and NOT object to the run, and the one that objects.
+ *
+ * `not_exercised` is the assessment saying the run never put that clause in front of itself - no player line to answer, no
+ * setback to narrate - and it always carries the fact that stopped it (`no_player_input_found`), so the clause travels
+ * with its reason instead of vanishing into a silent pass. Anything outside this set, INCLUDING a state this adapter has
+ * never seen, objects: a vocabulary that changed shape is a finding, not a pass.
+ */
+export const NON_OBJECTING_ASSESSMENT_STATES = Object.freeze(new Set(["pass", "not_exercised"]));
+
+/**
+ * The clauses an ASSESSMENT produces, as rung clauses - one rung clause per assessed clause, so none can be dropped.
+ *
+ * WHY THE POPULATION IS DERIVED (measured 2026-11-20, `round82`). The interaction-value gate published `verdict:
+ * "failed"` - `no_step_reports` failed on one bare progress report - and the run's `failedClauses` named
+ * `action_breadth` alone. Neither half was wrong: the gate had judged, and `deriveRungVerdict` lists EVERY clause it is
+ * handed. What was missing was the clause itself, because the runner's clause list was written by hand and named the
+ * interaction assessment nowhere - so the strongest finding about the companion that run produced was published beside
+ * the verdict and never entered it. A clause that can fail and cannot appear in the reason code is a clause nobody will
+ * fix, and the next clause the assessment grows would have been dropped the same way. The population is therefore the
+ * assessment's OWN report: each clause becomes `<id>:<clauseId>`, carrying the assessment's own reason code, and a
+ * clause it starts producing arrives here without anyone remembering to add it.
+ *
+ * A report with NO clauses at all blocks instead of passing: `every` is vacuously true over an empty list, so such a
+ * report answers `verdict: "passed"`, and a rung that read that answer would publish a pass built on nothing.
+ */
+export function assessmentRungClauses(id, assessment) {
+  const clauses = Array.isArray(assessment?.clauses) ? assessment.clauses : [];
+  if (clauses.length === 0)
+    return Object.freeze([Object.freeze({ id, passed: false, reasonCode: "assessment_carried_no_clauses" })]);
+  return Object.freeze(
+    clauses.map((clause) => {
+      const clauseId = String(clause?.id ?? "unnamed_clause");
+      const state = String(clause?.state ?? "unstated");
+      return Object.freeze({
+        id: `${id}:${clauseId}`,
+        passed: NON_OBJECTING_ASSESSMENT_STATES.has(state),
+        // The gate's OWN code, never a paraphrase: `bare_step_reports` and `setback_happened_and_was_never_narrated` are
+        // different findings about the companion, and the code a reader acts on is the one the assessment wrote.
+        reasonCode:
+          typeof clause?.reason === "string" && clause.reason.length > 0 ? clause.reason : `${id}:${clauseId}:${state}`,
+      });
+    }),
+  );
 }
 
 /**

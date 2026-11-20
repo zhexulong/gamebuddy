@@ -228,6 +228,7 @@ import { describePresentationPiece } from "./presentation-piece-time.mjs";
 // The one projection of a node's outcome: the Host's own `planBatchAnswer`, which the settlement digest answers with.
 import { programNodeOutcomes } from "./program-node-outcomes.mjs";
 import {
+  assessmentRungClauses,
   deriveRungVerdict,
   describeTaskPurposeReading,
   describeUnjudgedDay,
@@ -5488,6 +5489,12 @@ try {
       passed: interactionPassed,
       reasonCode: interactionAssessment.reason ?? "companion_interaction_not_assessed",
     }),
+    // THE INTERACTION-VALUE GATE'S OWN CLAUSES, derived from its report rather than restated here - one rung clause per
+    // clause it judged, so a clause this gate adds, or a verdict shape that changes, cannot fail silently. Measured
+    // 2026-11-20 (`round82`): `no_step_reports` failed on one bare progress report ("石头也快清完了，收完这波我就往家溜达。")
+    // and this list named the assessment nowhere, so `failedClauses` published `action_breadth` alone while the run's
+    // strongest finding about the companion lived only in the evidence.
+    ...assessmentRungClauses("interaction_value", interactionValue),
     Object.freeze({
       id: "historian_rubric",
       passed: historianRubricPassed,
