@@ -587,7 +587,7 @@ const en = {
   // The model itself is chosen in the connection form, where the endpoint that serves it is named,
   // so a hint promising "any model name" here would point at a field this panel no longer has.
   modelProfilesHint:
-    "How much each surface reasons before it answers. The model itself comes from the connection you activated in Connection and model above.",
+    "How much thinking the chat and the game each do before answering. The model itself comes from the connection you activated in Connection and model above.",
   modelProfilesChat: "Chat",
   modelProfilesGame: "Game companion",
   modelProfilesThinkingLevel: "Thinking level",
@@ -599,7 +599,7 @@ const en = {
   thinkingLevelOf: "{{record}} thinking level",
   modelProfilesRecommended: "Suggested models",
   modelProfilesApply: "Save",
-  modelProfilesApplied: "Saved. It applies the next time that surface's runtime starts.",
+  modelProfilesApplied: "Saved. It applies the next time that chat or game starts.",
   modelProfilesRevisionConflict: "This profile changed elsewhere. Reopen the panel and try again.",
   modelProfilesUnavailable: "Model profiles are unavailable.",
   modelProfilesLevelRequired: "Enter a thinking level.",
@@ -689,7 +689,7 @@ const en = {
   // cached prefix replays that summary every turn, and this operation reaches neither, so the name says
   // both facts and stops there.
   deleteMessageName:
-    "Delete this message: it leaves this chat and her session - memory the fold already made from it stays",
+    "Delete this message: it leaves this chat, and she stops seeing it here - what she already wrote into her memory from it stays",
   deleteConfirmPrompt: "Delete this message? This cannot be undone.",
   deleteConfirmYes: "Delete",
   // What a rewind and a delete owe the player once they land (`message-mutation`). Both take words out
@@ -700,7 +700,7 @@ const en = {
   // silently by the absence of a sentence. `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs`
   // holds it to that, in both catalogues.
   removedWordsMayStillBeInMemory:
-    "The words are gone from this chat. Memory the fold already made from them may still reach her until that memory is rebuilt.",
+    "The words are gone from this chat. What she already wrote into her memory from them may still come up until that memory is rebuilt.",
   // The negative answer to every destructive confirmation in this product is the same word -
   // `取消` / `Cancel` (the owner's ruling, 2026-10-20). It is the way OUT of the press, never a
   // second name for the state the row is already in; the affirmative is the one that says what
@@ -751,9 +751,9 @@ const en = {
   problemTemporarilyUnavailableDetail: "The chat state is temporarily unavailable.",
   problemReconciliationFailedTitle: "Chat needs to be read again",
   problemReconciliationFailedDetail: "The chat state could not be safely reconciled.",
-  problemSessionExpiredTitle: "Your session ended",
+  problemSessionExpiredTitle: "This page has expired",
   problemSessionExpiredDetail:
-    "Your GameBuddy session is gone, so there is nothing to read. Start GameBuddy again and reload the page it opens.",
+    "The GameBuddy run this page was reading has ended, so there is nothing to read. Start GameBuddy again and reload the page it opens.",
   problemRouteUnavailableTitle: "Unable to reach chat",
   problemRouteUnavailableDetail:
     "This GameBuddy build does not serve the route the page asked for. Update GameBuddy or reload the page.",
@@ -992,7 +992,7 @@ const en = {
   gameProblemStorageUnavailableTitle: "GameBuddy could not save your game",
   gameProblemStorageUnavailableDetail:
     "GameBuddy could not save this game, so it was not set up. Reload the game page and try again.",
-  gameProblemEndgameSettlementTitle: "The game was not settled",
+  gameProblemEndgameSettlementTitle: "The game did not finish ending",
   gameProblemEndgameSettlementDetail:
     "The endgame request reached the game, but it did not finish shutting down, so the game may still be running. Reload the game page and check before ending it again.",
   gameProblemClosedTitle: "This game page has ended",
@@ -1088,14 +1088,14 @@ const en = {
 
   // Preset surface (design/architecture/tavern-preset-compatibility.md §2.1, §2.5, §4). A preset is
   // read-only, so every line here states a fact about the assembly rather than offering a control.
-  presetsPanel: "Preset assembly",
+  presetsPanel: "Presets",
   /**
    * The control that opens the readout, which is no longer a bar entry: it sits in the Settings
    * surface's disclosure. It carries the destination's own name so the button and the page it
    * opens are one fact, with a verb in front because a button that repeats a heading beside that
    * heading names nothing it does.
    */
-  presetsOpen: "Open the preset assembly",
+  presetsOpen: "Open the presets",
   /**
    * The readout's way back. Settings opened it, so Settings is where it returns: the surface is a
    * full-region page reached from a disclosure, and a player who is done reading has no other exit
@@ -1104,7 +1104,7 @@ const en = {
    */
   presetBackToSettings: "Back to Settings",
   presetReadOnlyHint:
-    "A preset is imported once and read from then on, so this surface shows what the assembly does with it and changes nothing.",
+    "A preset is imported once and read from then on, so this page shows what it does with your requests and changes nothing.",
   presetEntriesLine: "Entries: {{total}} · {{enabled}} enabled · {{disabled}} disabled",
   presetDisabledTitle: "Switched off",
   presetDisabledNone: "No entry is switched off.",
@@ -1116,13 +1116,13 @@ const en = {
   presetDepthLine: "{{count}} blocks at depths {{depths}}",
   presetDepthNone: "No entry is injected at a depth.",
   presetEmpty: "No preset has been imported yet.",
-  presetReadFailed: "The preset assembly could not be read.",
-  presetReplyUnreadable: "GameBuddy could not make sense of what the Host sent about the preset assembly.",
-  presetActiveNone: "No preset is in force: nothing is bound, so no preset assembles this Chat's requests.",
-  presetActiveBound: "In force: {{preset}} - its enabled entries assemble this Chat's requests.",
+  presetReadFailed: "The preset could not be read.",
+  presetReplyUnreadable: "GameBuddy could not make sense of the preset it was given.",
+  presetActiveNone: "No preset is in use: none is chosen, so this chat's requests go out without one.",
+  presetActiveBound: "In use: {{preset}} - its switched-on entries are used in this chat's requests.",
   presetActiveMissing: "{{preset}} is bound but is no longer imported: import it again, or bind another preset.",
   presetActiveUnreported:
-    "The Host did not report which preset is in force, so this build cannot say whether a preset assembles these requests.",
+    "GameBuddy did not report which preset is in use, so this build cannot say whether these requests go through one.",
   presetSamplingTitle: "Sampling in force",
   presetSamplingHint:
     "What each sampler key is actually sent as, and which layer decided it - a preset value can be overridden by the model or the thinking level, and unset means nothing is sent.",
@@ -1132,7 +1132,8 @@ const en = {
   presetNotAppliedNone: "This preset states no field this product recognises and leaves out.",
   presetNotAppliedReasonModelOwnedSetting:
     "is not sent: the context window and output reserve belong to the selected model.",
-  presetNotAppliedReasonHostOwnedTransport: "is not sent: this runtime always streams, so the transport is the Host's.",
+  presetNotAppliedReasonHostOwnedTransport:
+    "is not sent: this product always streams, so the choice is not the preset's to make.",
   presetNotAppliedReasonNoValueToSend:
     'is not sent: SillyTavern writes -1 for "pick randomly", so there is no seed there to send.',
   presetNotAppliedReasonOneCompletionPerCall: "is not sent: one completion per call is how this product asks.",
@@ -1144,10 +1145,10 @@ const en = {
   samplingTemperatureRange: "Between {{min}} and {{max}}.",
   samplingTemperatureOutOfRange: "Enter a number between {{min}} and {{max}}, or leave it empty to follow the preset.",
   samplingTemperatureEffective:
-    "Takes effect on the next Chat or Game start: a running session keeps the temperature it began with.",
+    "Takes effect the next time a Chat or Game starts: one already running keeps the temperature it began with.",
   samplingTemperatureSave: "Save temperature",
   samplingTemperatureUnavailable:
-    "This Host does not serve the sampler setting, so this build cannot show or change it.",
+    "This version of GameBuddy does not offer the sampler setting, so it cannot show or change it.",
 
   // Shell (design/104 §2): brand mark, single contextual drawer, panel groups.
   appMark: "GB",
@@ -1418,7 +1419,7 @@ const en = {
   // The fail-closed answer: the mounted turn could not be aborted, so the runtime deliberately stays
   // where it is instead of being torn down under that turn. The selection itself is recorded.
   chatSelectTurnNotAbortable:
-    "The switch is recorded, but this conversation still has a turn that cannot be interrupted, so the runtime stayed where it is.",
+    "The switch is recorded, but this chat still has a reply that cannot be interrupted, so this page stays in the chat you were in until it finishes.",
 
   // --- ruling-and-ui-defects lane block (U-05): a row's destructive action is a
   // deliberate one. Same shape as the endgame block below it in the product: the
@@ -1903,14 +1904,14 @@ const zh: Messages = {
   connectionLevelMax: "最大",
 
   modelProfilesTitle: "模型配置",
-  modelProfilesHint: "每个界面回答前的思考强度。模型本身来自你在上方「连接与模型」中启用的连接。",
+  modelProfilesHint: "聊天和游戏各自在回答前思考多少。模型本身来自你在上方「连接与模型」中启用的连接。",
   modelProfilesChat: "聊天",
   modelProfilesGame: "游戏陪玩",
   modelProfilesThinkingLevel: "思考强度",
   thinkingLevelOf: "{{record}}思考强度",
   modelProfilesRecommended: "建议模型",
   modelProfilesApply: "保存",
-  modelProfilesApplied: "已保存。将在该界面下次启动运行时生效。",
+  modelProfilesApplied: "已保存。将在该聊天或游戏下次开始时生效。",
   modelProfilesRevisionConflict: "该配置已在其它地方被修改，请重新打开面板后再试。",
   modelProfilesUnavailable: "模型配置不可用。",
   modelProfilesLevelRequired: "请填写思考强度。",
@@ -1981,7 +1982,7 @@ const zh: Messages = {
   // 这个名称原本也承诺了与合同同一句话：「模型从下一轮开始不再读到它」。模型确实不再读到**这一行**，
   // 但关于这些字，模型读到的并不只有这一行：折叠会把这对话写进 Magic Context 的 `compartments`，
   // 缓存前缀每轮把那份摘要重新放进去，而这两个操作都碰不到它。所以名称只说两件事，不多说。
-  deleteMessageName: "删除这条消息：它会从这段对话和她的会话里离开——折叠时已写进她记忆的部分会留下",
+  deleteMessageName: "删除这条消息：它会从这段对话里消失，她在这里也看不到它了——她已经写进记忆的部分会留下",
   deleteConfirmPrompt: "删除这条消息？此操作无法撤销。",
   deleteConfirmYes: "删除",
   // 回退与删除落地之后欠玩家的一句话（见 `message-mutation`）。两者都把字从对话和模型自己的会话里
@@ -1989,8 +1990,7 @@ const zh: Messages = {
   // 而 Host 不得写它（`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`）。所以承诺被
   // 收窄到操作真正能触及的范围，并且说出来，而不是靠「没有这句话」默默把它当成例外。
   // `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs` 在两个语言里看着它。
-  removedWordsMayStillBeInMemory:
-    "这些话已从这段对话中删除。但折叠时已写进她记忆的部分，在记忆重建之前，她仍可能读到。",
+  removedWordsMayStillBeInMemory: "这些话已从这段对话中删除。但她已经写进记忆的部分，在记忆重建之前，她仍可能读到。",
   deleteConfirmNo: "取消",
   // 复制控件：她的行和玩家自己的行都有。它把这条消息**自己的文字**放到剪贴板——与 SillyTavern 复制 `mes`
   // 一致：不带说话人前缀、不带时间戳，Markdown 照原样复制。名称里说清按下之后对话会发生什么：什么都不变，
@@ -2020,9 +2020,9 @@ const zh: Messages = {
   problemTemporarilyUnavailableDetail: "聊天状态暂时不可用。",
   problemReconciliationFailedTitle: "聊天需要重新读取",
   problemReconciliationFailedDetail: "聊天状态未能安全对齐。",
-  problemSessionExpiredTitle: "会话已失效",
+  problemSessionExpiredTitle: "这个页面已经失效",
   problemSessionExpiredDetail:
-    "你的 GameBuddy 会话已失效，因此没有可读取的内容。请重新启动 GameBuddy，并重新加载它打开的页面。",
+    "这个页面所连接的那次 GameBuddy 运行已经结束，因此没有可读取的内容。请重新启动 GameBuddy，并重新加载它打开的页面。",
   problemRouteUnavailableTitle: "无法访问聊天",
   problemRouteUnavailableDetail: "当前 GameBuddy 版本不提供该页面请求的路由。请更新 GameBuddy，或重新加载页面。",
   problemRetryRead: "重新读取",
@@ -2279,12 +2279,12 @@ const zh: Messages = {
   cardImportHistoryFailed: "无法读取导入历史。",
 
   // 预设面（design/architecture/tavern-preset-compatibility.md §2.1、§2.5、§4）。预设只读，因此这里的每一行都是关于装配的事实，而不是控件。
-  presetsPanel: "预设装配",
+  presetsPanel: "预设",
   // 打开只读页面的控件（英文目录同名字段的说明）：它带着目的地的名字，前面加动词，因为紧挨着同名标题的按钮什么也没说。
-  presetsOpen: "查看预设装配",
+  presetsOpen: "查看预设",
   // 只读页面的返回路径：是设置打开了它，所以回到设置。它说的是目的地，不是手势——单说“返回”说不出按下去会到哪里。
   presetBackToSettings: "返回设置",
-  presetReadOnlyHint: "预设只导入一次，之后只读；这个页面显示装配如何使用它，不会改动它。",
+  presetReadOnlyHint: "预设只导入一次，之后只读；这个页面显示它如何用在这个聊天的请求上，不会改动它。",
   presetEntriesLine: "条目：{{total}} · {{enabled}} 启用 · {{disabled}} 关闭",
   presetDisabledTitle: "已关闭",
   presetDisabledNone: "没有已关闭的条目。",
@@ -2296,12 +2296,12 @@ const zh: Messages = {
   presetDepthLine: "{{count}} 个块，深度 {{depths}}",
   presetDepthNone: "没有条目注入到某个深度。",
   presetEmpty: "还没有导入预设。",
-  presetReadFailed: "无法读取预设装配。",
-  presetReplyUnreadable: "GameBuddy 读不懂 Host 返回的预设装配。",
-  presetActiveNone: "当前没有生效的预设：没有任何绑定，因此这个 Chat 的请求不由预设装配。",
-  presetActiveBound: "当前生效：{{preset}}——它启用的条目会装配这个 Chat 的请求。",
+  presetReadFailed: "无法读取这个预设。",
+  presetReplyUnreadable: "GameBuddy 读不懂收到的预设内容。",
+  presetActiveNone: "当前没有使用预设：没有选任何预设，所以这个聊天的请求不经过预设。",
+  presetActiveBound: "当前使用：{{preset}}——它启用的条目会用在这次聊天的请求里。",
   presetActiveMissing: "绑定的 {{preset}} 已不在预设库里：请重新导入它，或改绑其他预设。",
-  presetActiveUnreported: "Host 没有报告哪个预设生效，因此这里无法说明这些请求是否由预设装配。",
+  presetActiveUnreported: "GameBuddy 没有说明哪个预设正在使用，因此这里无法说明这些请求是否经过预设。",
   presetSamplingTitle: "实际生效的采样参数",
   presetSamplingHint:
     "每个采样键真正下发的值，以及是哪一层决定的——预设里的值可能被模型或思考等级覆盖；unset 表示不发这个键。",
@@ -2309,7 +2309,7 @@ const zh: Messages = {
   presetNotAppliedTitle: "已识别但不下发",
   presetNotAppliedNone: "这个预设没有填写本产品会识别但不下发的字段。",
   presetNotAppliedReasonModelOwnedSetting: "不下发：上下文窗口与输出上限属于所选模型。",
-  presetNotAppliedReasonHostOwnedTransport: "不下发：本运行时始终流式传输，传输方式由 Host 决定。",
+  presetNotAppliedReasonHostOwnedTransport: "不下发：这个产品始终使用流式传输，不由预设决定。",
   presetNotAppliedReasonNoValueToSend: "不下发：SillyTavern 用 -1 表示“随机”，因此没有种子可下发。",
   presetNotAppliedReasonOneCompletionPerCall: "不下发：本产品每次只请求一个补全。",
   samplingTemperatureTitle: "采样温度",
@@ -2318,9 +2318,9 @@ const zh: Messages = {
   samplingTemperatureFromPreset: "留空：沿用预设",
   samplingTemperatureRange: "范围 {{min}} 到 {{max}}。",
   samplingTemperatureOutOfRange: "请输入 {{min}} 到 {{max}} 之间的数字，留空表示沿用预设。",
-  samplingTemperatureEffective: "在下次 Chat 或 Game 启动时生效：正在运行的会话继续用启动时的温度。",
+  samplingTemperatureEffective: "在下次聊天或游戏开始时生效：已经开着的仍用它开始时的温度。",
   samplingTemperatureSave: "保存温度",
-  samplingTemperatureUnavailable: "这个 Host 没有提供采样设置，因此这里无法显示或修改。",
+  samplingTemperatureUnavailable: "这个版本的 GameBuddy 没有提供采样设置，因此这里无法显示或修改。",
 
   // 外壳（design/104 §2）：品牌标记、唯一上下文抽屉、面板分组。
   appMark: "GB",
@@ -2512,7 +2512,7 @@ const zh: Messages = {
   chatSelectSwitching: "正在切换…",
   // 失败关闭的答复：挂载中的回合无法中止，运行时宁可留在原会话，也不在该回合之下被拆除。
   // 选择本身已记录。
-  chatSelectTurnNotAbortable: "切换已记录，但该会话仍有一个无法中断的回合，运行时保持在原会话。",
+  chatSelectTurnNotAbortable: "切换已记录，但这个聊天还有一条无法打断的回复，所以在它结束前，这里仍停在原来的聊天。",
 
   // --- ruling-and-ui-defects lane block（U-05）：某一行的破坏性动作属于“刻意动作”。
   // 与产品中的结束游戏分组同一形状：首次点击只是预置，只有确认按钮才会发出请求，
