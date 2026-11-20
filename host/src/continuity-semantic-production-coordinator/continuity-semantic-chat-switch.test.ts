@@ -167,6 +167,12 @@ const switchScript = `
             : JSON.parse(durable.active.expected_selection_json),
       });
     },
+    // None of these scenarios removes the served Chat while the only survivor is one no verification
+    // reached, so the removal never records a settlement here; saying so is what keeps this double from
+    // pretending a promise it cannot keep.
+    async recordExpectedSelection() {
+      return false;
+    },
   });
   /** The bounded refusal a request answers, or the fact that it was accepted. */
   const refusal = async (work) => {
@@ -845,6 +851,50 @@ const switchScript = `
     const successor = await store.resumeThread(second.chatThreadId, second.chatSurfaceSessionId);
     out.successorIsSelectedChat = successor.thread.chatThreadId === outcome.chatThreadId;
     out.successorThreadReadable = successor.thread.chatThreadId === second.chatThreadId;
+  } else if (scenario === "submit-during-release") {
+    // The player pressed Enter and clicked another Chat in the same round trip: the submit is INSIDE
+    // its admission - past the active checks, holding the admission - when the selection starts. This
+    // is the window the drain counter does not serialise (it counts what is running, it does not
+    // exclude), so it is where a durable turn could be written into a runtime the switch had already
+    // released, or where the switch could be refused by a turn it never saw.
+    const { acceptMountedPlayerMessage } = await import(storeUrl);
+    let releaseSubmit;
+    let submitEntered;
+    const submitGate = new Promise((resolve) => { releaseSubmit = resolve; });
+    const submitEnteredPromise = new Promise((resolve) => { submitEntered = resolve; });
+    const submitTask = internal.acceptMountedDurableTurn(manifest, first, async (admission) => {
+      submitEntered();
+      await submitGate;
+      return internal.consumeMountedDurableAdmission(admission, (binding) => acceptMountedPlayerMessage(binding, {
+        text: "At the same moment.",
+        locale: "en-US",
+        idempotencyKey: "abcdefghijklmnopqrstuv",
+        expectedDraftRevision: 0,
+      }));
+    });
+    submitTask.catch(() => undefined);
+    await submitEnteredPromise;
+    // The race, not a scripted order: the submit is released on a timer scheduled BEFORE the selection
+    // starts, so its durable insert lands while the selection is running, and neither side can deadlock
+    // waiting for the other. Whatever the interleaving, both answers have to be consistent.
+    const submitTimer = setTimeout(() => releaseSubmit(), 20);
+    const selection = authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
+    const outcome = await selection;
+    clearTimeout(submitTimer);
+    releaseSubmit();
+    out.outcomeStatus = outcome.status;
+    out.outcomeThread = outcome.chatThreadId;
+    out.firstSupersededWhileSubmitting = !isCurrentMountedChatRuntimeLease(first);
+    out.submitted = await submitTask.then(() => "accepted", (error) => error?.message ?? String(error));
+    const after = await store.resumeThread(firstThread, firstSurface);
+    out.ledgerStatus = after.turnLedger === null ? null : after.turnLedger.status;
+    out.keptPlayerText = after.messages.some((message) => message.kind === "player" && message.text === "At the same moment.");
+    const second = await authority.startMountedChatRuntime();
+    out.secondThread = second.chatThreadId;
+    out.secondSurface = second.chatSurfaceSessionId;
+    out.secondCurrent = isCurrentMountedChatRuntimeLease(second);
+    out.successorIsSelectedChat = second.chatThreadId === outcome.chatThreadId;
+    out.firstThreadStillReadable = after.thread.chatThreadId === firstThread;
   } else {
     const outcome = await authority.requestChatSelection({ kind: "create", selectionGeneration: firstGeneration });
     out.outcomeStatus = outcome.status;
@@ -888,7 +938,8 @@ type SwitchScenario =
   | "unmounted-successor-after-restart"
   | "unmounted-successor-shared-after-restart"
   | "no-live-chat-create-only"
-  | "no-live-chat-after-restart";
+  | "no-live-chat-after-restart"
+  | "submit-during-release";
 
 /**
  * One child, its exit status and both of its channels. The refusal cases need the child's own
@@ -1117,6 +1168,45 @@ test(
       assert.equal(terminal.presentation, false);
       assert.equal(terminal.companionMessages, 0);
       assert.equal(observed.interruptedKeptPlayerText, true);
+    } finally {
+      cleanup(root);
+    }
+  },
+);
+
+/**
+ * THE WINDOW A DRAIN COUNTER DOES NOT CLOSE.
+ *
+ * A player who presses Enter and clicks another Chat in the same round trip puts an admission inside its
+ * own durable insert while the selection is releasing the mount. On the old reading the release read the
+ * ledger before that insert landed, answered `released`, tore the runtime down, and the admission then
+ * wrote `accepted_queued` into the Chat nobody served any more, leaving the player's message as a turn with
+ * no prompt behind it in a conversation the surface had already left. The other ordering answered
+ * `turn_in_flight` for a turn the cancel seam can reach, which ADR-0010 forbids for a switch.
+ *
+ * What must hold either way: the switch lands (`switched`), the turn the player's message created is
+ * TERMINAL, and the text is still in the transcript.
+ */
+test(
+  "a submit that lands inside a switch's release is decided with the turn, not after it",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async () => {
+    const root = canonicalTestRootSync("semantic-turn-level-submit-during-release-");
+    try {
+      const observed = await runSwitchScenario(root, "submit-during-release");
+      // The switch is never the thing that gets refused for a turn that landed in this window.
+      assert.equal(observed.outcomeStatus, "switched");
+      assert.equal(observed.secondCurrent, true);
+      assert.equal(observed.successorIsSelectedChat, true);
+      assert.equal(observed.firstThreadStillReadable, true);
+      // The turn either settled through the cancel seam or never became durable; a non-terminal ledger
+      // row here is the orphan this test exists to refuse.
+      assert.ok(
+        observed.ledgerStatus === null || observed.ledgerStatus === "cancelled",
+        `the turn the player's message created was left ${String(observed.ledgerStatus)} on a released runtime`,
+      );
+      // Nothing the player wrote was lost: the turn may be cancelled, the text is not.
+      assert.equal(observed.keptPlayerText, true);
     } finally {
       cleanup(root);
     }

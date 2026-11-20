@@ -316,6 +316,17 @@ type MountedChatRuntimeLeaseRecord = {
   cancellation?: Promise<CancelResult>;
   readonly begin: <T>(work: () => Promise<T>) => Promise<T>;
   /**
+   * The last player-message admission this mounted runtime let inside, so a release can wait for it.
+   *
+   * `begin` is a drain counter, not an exclusion: a submit that passed its `active` checks and is inside
+   * its durable insert overlaps a release that has already claimed `active = false`. Without this slot the
+   * release read the ledger BEFORE that insert landed, answered `released`, tore the runtime down, and the
+   * insert then wrote `accepted_queued` against a runtime nobody served - or, in the other order, the
+   * release read the fresh turn and refused the switch (ADR-0010: a focus switch is not refused for a turn
+   * the cancel seam can reach). The slot is the admission's own handshake, never durable.
+   */
+  admissionInFlight: Promise<unknown>;
+  /**
    * This lease's own store, opened lazily by the first read that needs it and
    * closed by `close()`. Every coordinator read under this mounted lease shares
    * it, so a long-lived mount holds exactly one SQLite connection instead of one
@@ -710,17 +721,25 @@ export async function acceptMountedDurableTurn(
     throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
   return record.begin(async () => {
     if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
-    await ensureCurrentAuthoredContext(manifest, record);
-    if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
-    const active = { value: true };
-    const consuming = { value: false };
-    const admission = Object.freeze({}) as MountedAdmission;
-    mountedAdmissions.set(admission, Object.freeze({ lease: record, active, consuming }));
-    try {
-      return await accept(admission);
-    } finally {
-      active.value = false;
-    }
+    // Serialised against a Chat switch's release: an admission that arrives while the mount is being
+    // released either waited here and is refused by the re-check below, or is the one the release waits
+    // for. Either way the durable insert and the release can no longer interleave.
+    const admitted = record.admissionInFlight.then(async () => {
+      if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
+      await ensureCurrentAuthoredContext(manifest, record);
+      if (!record.active) throw new SemanticProductionCoordinatorError("semantic_chat_runtime_p4_admission_rejected");
+      const active = { value: true };
+      const consuming = { value: false };
+      const admission = Object.freeze({}) as MountedAdmission;
+      mountedAdmissions.set(admission, Object.freeze({ lease: record, active, consuming }));
+      try {
+        return await accept(admission);
+      } finally {
+        active.value = false;
+      }
+    });
+    record.admissionInFlight = admitted.catch(() => undefined);
+    return admitted;
   });
 }
 
@@ -2932,6 +2951,10 @@ async function createFreshChatRuntimeAuthority(
     const record = lease === undefined ? undefined : mountedChatRuntimeLeases.get(lease);
     if (record !== undefined && record.active) {
       record.active = false;
+      // The claim above stops the next admission; this waits out the one already inside. A release that
+      // read the ledger before that insert landed answered `released` and then had a turn written into a
+      // torn-down runtime, so the ledger is read only once nothing is being admitted under this claim.
+      await record.admissionInFlight;
       if (await mountedLeaseHasTurnInFlight(record)) {
         record.active = true;
         return "turn_in_flight";
@@ -3275,8 +3298,19 @@ async function createFreshChatRuntimeAuthority(
           const lease = mountedLease;
           if (lease !== undefined) await abortMountedTurnThroughCancelSeam(manifest, lease, "player_chat_select");
         }
-        if ((await releaseMountedChatRuntime()) === "turn_in_flight")
-          return Object.freeze({ status: "turn_in_flight" as const, ...target });
+        // A turn can land in the window between that pre-check and the release's own claim - the player
+        // pressed Enter and clicked another Chat in the same round trip. ADR-0010 says the switch is not
+        // refused for a turn the cancel seam can reach, so the turn is prepared, aborted through the ONE
+        // seam a Stop uses, and the release is retried. The residual `turn_in_flight` therefore only
+        // survives for a turn this seam cannot reach at all.
+        let released = await releaseMountedChatRuntime();
+        if (released === "turn_in_flight" && mountedRecord !== undefined && mountedRecord.active) {
+          await prepareMountedTurnForChatSelection(mountedRecord);
+          const lease = mountedLease;
+          if (lease !== undefined) await abortMountedTurnThroughCancelSeam(manifest, lease, "player_chat_select");
+          released = await releaseMountedChatRuntime();
+        }
+        if (released === "turn_in_flight") return Object.freeze({ status: "turn_in_flight" as const, ...target });
         await startMountedChatRuntime();
         return Object.freeze({ status: "switched" as const, ...target });
       }),
@@ -3554,6 +3588,7 @@ async function createFreshChatRuntimeAuthority(
         transitionAuthority: createMountedTurnTransitionAuthority(),
         presentationEpoch: createCompanionInterruption(),
         promptSettlementWaiters: new Set<() => void>(),
+        admissionInFlight: Promise.resolve(),
         begin,
         store: mountedStore,
         close: () => authority.close(),
