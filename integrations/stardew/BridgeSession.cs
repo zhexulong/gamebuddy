@@ -573,8 +573,14 @@ string? bodyProgramUnavailableReason = null,
             if (!TryToBridgeReceipt(latest, out BridgeReceipt replayReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
             response = Reply("execution_receipt", envelope.CorrelationId, replayReceipt); reasonCode = "idempotent_replay"; return true;
         }
+        // ONE PREDICATE FOR THREE DECISIONS. Whether a replay can be answered from the journal, whether a journal answer
+        // other than `receipt_not_found` is this request's refusal, and whether the request is durably admitted before
+        // dispatch all used to spell the same three action ids out here. The population is the request's own declared
+        // argument shape (`FarmhandCanonicalRequest.TryCreate`), so a catalogue row that declares a destination, an
+        // emote or a direction is admitted and recoverable without an id being named in this file.
+        bool durablyAdmitted = FarmhandCanonicalRequest.TryCreate(request, out _);
         string durableReason = "receipt_not_found";
-        if ((request.Action is "navigate_to_destination" or "express_emote" or "face_direction")
+        if (durablyAdmitted
             && this.executions.TryGetDurableAdmission(request.RequestId, request.IdempotencyKey, out FarmhandExecutionJournalRecord durableAdmission, out durableReason))
         {
             if (!MatchesDurableAdmission(request, durableAdmission))
@@ -607,13 +613,13 @@ string? bodyProgramUnavailableReason = null,
             reasonCode = "durable_replay";
             return true;
         }
-        else if ((request.Action is "navigate_to_destination" or "express_emote" or "face_direction") && durableReason != "receipt_not_found")
+        else if (durablyAdmitted && durableReason != "receipt_not_found")
         {
             reasonCode = durableReason;
             return false;
         }
 
-        string? executionId = request.Action is "navigate_to_destination" or "express_emote" or "face_direction"
+        string? executionId = durablyAdmitted
             ? Guid.NewGuid().ToString("N")
             : null;
         if (executionId is not null)
@@ -623,7 +629,7 @@ string? bodyProgramUnavailableReason = null,
             // a pending admission that later replays as an unrecoverable tuple.
             if (!this.actionRouter.CanExecute(request.Action, out reasonCode))
                 return false;
-            bool admitted = request.Action == "navigate_to_destination"
+            bool admitted = request.Args.Destination is not null
                 ? this.executions.TryAdmitNavigation(request, executionId, out reasonCode)
                 : this.executions.TryAdmitCandidate(request, executionId, out reasonCode);
             if (!admitted)
@@ -1514,22 +1520,8 @@ string? bodyProgramUnavailableReason = null,
             return false;
         }
 
-        FarmhandCanonicalRequest? expected = request.Action switch
-        {
-            "navigate_to_destination" when request.Args.Destination is not null =>
-                FarmhandCanonicalRequest.NavigationDestination(
-                    "navigate_to_destination",
-                    request.Args.Destination.Kind,
-                    request.Args.Destination.Label,
-                    request.Args.Destination.Ref),
-            "express_emote" when request.Args.Emote is not null =>
-                FarmhandCanonicalRequest.EmoteRequest("express_emote", request.Args.Emote),
-            "face_direction" when request.Args.Direction is not null =>
-                FarmhandCanonicalRequest.DirectionRequest("face_direction", request.Args.Direction),
-            _ => null,
-        };
-
-        return expected is not null && Equals(durableAdmission.Request, expected);
+        return FarmhandCanonicalRequest.TryCreate(request, out FarmhandCanonicalRequest expected)
+            && Equals(durableAdmission.Request, expected);
     }
 
     private bool IsFreshExecutionRequest(BridgeExecutionRequest request, out string reasonCode)

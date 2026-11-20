@@ -319,15 +319,7 @@ internal sealed class ExecutionAdmission
         }
 
         FarmhandCanonicalRequest canonicalRequest;
-        if (request.Action == "express_emote" && request.Args.Emote is not null)
-        {
-            canonicalRequest = FarmhandCanonicalRequest.EmoteRequest(request.Action, request.Args.Emote);
-        }
-        else if (request.Action == "face_direction" && request.Args.Direction is not null)
-        {
-            canonicalRequest = FarmhandCanonicalRequest.DirectionRequest(request.Action, request.Args.Direction);
-        }
-        else
+        if (!FarmhandCanonicalRequest.TryCreate(request, out canonicalRequest))
         {
             reasonCode = "invalid_execution_request";
             return false;

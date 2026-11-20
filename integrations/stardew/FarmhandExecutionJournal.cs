@@ -85,6 +85,43 @@ internal sealed record FarmhandCanonicalRequest(
 
     internal static FarmhandCanonicalRequest DirectionRequest(string actionId, string direction) =>
         new(actionId, FarmhandCanonicalArgumentKind.Direction, Direction: direction);
+
+    /// <summary>
+    /// The canonical form of one execution request, or none when its wire arguments are not a shape the journal can
+    /// express.
+    ///
+    /// THIS IS THE DURABLE-ADMISSION POPULATION, and it is the request's OWN DECLARED SHAPE rather than a list of
+    /// action ids. <c>FarmhandExecutionAcceptance.TryValidate</c> has already refused any request carrying an argument
+    /// its catalogue row does not declare, so "this request carries a destination / emote / direction" and "this is a
+    /// catalogue row that declares one" are one statement, held in the descriptor.
+    ///
+    /// <see cref="BridgeSession.TryExecute"/> reads this for three decisions that each spelled the same three ids
+    /// before it existed: whether a replay can be answered from the journal, whether a journal answer other than
+    /// `receipt_not_found` is this request's refusal, and whether the request is durably admitted before dispatch.
+    /// </summary>
+    internal static bool TryCreate(BridgeExecutionRequest request, out FarmhandCanonicalRequest canonical)
+    {
+        if (request.Args.Destination is { } destination)
+        {
+            canonical = NavigationDestination(request.Action, destination.Kind, destination.Label, destination.Ref);
+            return true;
+        }
+
+        if (request.Args.Emote is { } emote)
+        {
+            canonical = EmoteRequest(request.Action, emote);
+            return true;
+        }
+
+        if (request.Args.Direction is { } direction)
+        {
+            canonical = DirectionRequest(request.Action, direction);
+            return true;
+        }
+
+        canonical = null!;
+        return false;
+    }
 }
 
 /// <summary>Immutable dispatch facts supplied when an action is admitted.</summary>
