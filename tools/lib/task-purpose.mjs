@@ -523,6 +523,20 @@ function tileOf(value) {
 const tileKey = (tile) => `${String(tile.x)},${String(tile.y)}`;
 
 /**
+ * The seed a receipt put in the ground, or null when it put none there.
+ *
+ * ONE SPELLING OF "THIS TILE WAS SOWN": a crop proof (an action the criterion's `croppedBy` declares) that also names
+ * the `item` it spent. `plant_seed`'s postcondition carries `item`, `inventory_before` and `inventory_after`; a
+ * `water_crop` carries the water it spent and no seed, so it proves a crop without proving a sowing. Adding a second
+ * declaration of which actions sow would be the same fact written twice, and the two copies would drift.
+ */
+function sownSeed(entry, actionId, fields) {
+  if (!entry.croppedBy.some((proof) => proof.actionId === actionId)) return null;
+  const item = fields.get("item");
+  return typeof item === "string" && item.length > 0 ? item : null;
+}
+
+/**
  * The tiles the run proved, grouped by the map they are on.
  *
  * Two sources, and they are not the same kind of fact. A receipt proves what IT changed, and the tile it names is
@@ -531,13 +545,18 @@ const tileKey = (tile) => `${String(tile.x)},${String(tile.y)}`;
  * crop, while a `soilTiles` row counts as tilled ONLY when the row's own `hoeDirt` says so - the Mod's
  * `DiscoverSoilTiles` skips every tile that already has HoeDirt, because the family is the `till_soil` target list,
  * and counting those rows as tilled would let untilled ground be reported as a finished plot.
+ *
+ * `sown` is the subset of `cropped` that a receipt proved by naming the seed it spent (`sownSeed`). It exists because
+ * "a crop is on this tile" and "a seed went into this tile" answer differently: a day that waters the crops of an
+ * earlier week proves forty crops and sows none, and a verdict that called those forty "sown" would report a patch
+ * day she never planted.
  */
 function patchTileFacts(entry, admitted, observations) {
   const byLocation = new Map();
   const factsFor = (location) => {
     const existing = byLocation.get(location);
     if (existing !== undefined) return existing;
-    const created = { tilled: new Map(), cropped: new Map() };
+    const created = { tilled: new Map(), cropped: new Map(), sown: new Map() };
     byLocation.set(location, created);
     return created;
   };
@@ -555,8 +574,12 @@ function patchTileFacts(entry, admitted, observations) {
     if (location === null || tile === null) continue;
     const facts = factsFor(location);
     for (const proof of proofs) {
-      const target = entry.tilledBy.includes(proof) ? facts.tilled : facts.cropped;
-      target.set(tileKey(tile), tile);
+      if (entry.tilledBy.includes(proof)) {
+        facts.tilled.set(tileKey(tile), tile);
+        continue;
+      }
+      facts.cropped.set(tileKey(tile), tile);
+      if (sownSeed(entry, admittedReceipt.actionId, fields) !== null) facts.sown.set(tileKey(tile), tile);
     }
   }
   const observedOn = mapOf(observations?.location);
@@ -594,10 +617,87 @@ function patchReading(location, facts, orientations) {
     location,
     coordinateCount: facts.tilled.size + facts.cropped.size,
     tileCount: qualified.length,
+    // The components of `tileCount`, so a short verdict can say WHY it is short instead of only that it is.
+    sownTiles: facts.sown.size,
+    tilledTiles: facts.tilled.size,
     window,
     holdsAll: orientations.some((orientation) => windowHoldsAll(qualified, orientation)),
     largestRectangle: largestFilledRectangle(qualified),
   });
+}
+
+/**
+ * The seed each planting spent, in the words of the receipt that spent it.
+ *
+ * `plant_seed`'s own postcondition carries `item`, `inventory_before` and `inventory_after`, so the pack's count of
+ * THAT seed before the day's first sowing and after its last is a published fact rather than an inference. It is the
+ * number that tells "sown 2, and the pack was empty" from "sown 2 of 60, and seed was never the limit".
+ *
+ * An unpublished count stays `unknown` rather than becoming zero, for the reason every count in this product does: a
+ * zero derived from an absence tells a reader she holds none of a seed nobody counted.
+ */
+function seedLedger(entry, admitted) {
+  const byItem = new Map();
+  for (const admittedReceipt of admitted) {
+    const detail = admittedReceipt.receipt?.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    const fields = evidenceFields(detail);
+    const item = sownSeed(entry, admittedReceipt.actionId, fields);
+    if (item === null) continue;
+    const existing = byItem.get(item);
+    if (existing === undefined)
+      byItem.set(item, { item, before: heldCount(fields.get("inventory_before")), after: "unknown" });
+    byItem.get(item).after = heldCount(fields.get("inventory_after"));
+  }
+  return [...byItem.values()].sort((left, right) => left.item.localeCompare(right.item));
+}
+
+/** A published count, or `unknown`. `Number("")` is 0, which is why an absent field is read as text first. */
+function heldCount(value) {
+  return typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value) ? Number(value) : "unknown";
+}
+
+/**
+ * How many tiles a patch day got, and what the receipts say limited it.
+ *
+ * <p>
+ * THE COUNT ALONE LEAVES THE NEXT READER GUESSING. Measured 2026-11-20 (`round81`, `clear_and_plant_long_patch`):
+ * the day's verdict was `unproven/task_purpose_evidence_without_postcondition` and carried no number at all, while
+ * the run had sown two tiles and the pack had held two seeds. "Two of sixty" and "none of sixty" are different
+ * days, and "sixty composed and fifty-eight refused" is a third - none of which that sentence could distinguish.
+ * </p>
+ * <p>
+ * So a patch verdict carries the count it reached (`patchTiles`) and its components - how many tiles a sowing proved
+ * (`patchSownTiles`) and how many a tilling did (`patchTilledTiles`) - beside the named limits: the seed each
+ * planting spent, the tile-bearing receipts that were refused, and the tilled tiles nothing sowed. The ledger is
+ * derived from the receipts the day actually minted, so it is bounded by a measured population rather than by a cap.
+ * </p>
+ */
+function patchTally(entry, admitted, refusedTileProofs, reading, area) {
+  const tileCount = reading?.tileCount ?? 0;
+  const sownTiles = reading?.sownTiles ?? 0;
+  const tilledTiles = reading?.tilledTiles ?? 0;
+  return Object.freeze({
+    patchTiles: tileCount,
+    patchSownTiles: sownTiles,
+    patchTilledTiles: tilledTiles,
+    limitingFactors: Object.freeze([
+      ...seedLedger(entry, admitted).map(
+        (seed) => `seed_ledger:${seed.item}:${String(seed.before)}->${String(seed.after)}`,
+      ),
+      ...(refusedTileProofs > 0 ? [`tile_proof_refused:${String(refusedTileProofs)}`] : []),
+      ...(tilledTiles > tileCount ? [`tilled_not_sown:${String(tilledTiles - tileCount)}`] : []),
+      ...(sownTiles === 0 ? ["nothing_sown"] : []),
+    ]),
+    countDetail: `${String(tileCount)}/${String(area)} tiles tilled and sown (sown ${String(sownTiles)}, tilled ${String(tilledTiles)})`,
+  });
+}
+
+/** One verdict's `detail`: the count first, then what this branch found, then the named limits - each written once. */
+function patchDetail(tally, finding = "") {
+  return [tally.countDetail, finding, tally.limitingFactors.join(" \u00b7 ")]
+    .filter((part) => part.length > 0)
+    .join(" \u00b7 ");
 }
 
 /**
@@ -608,6 +708,11 @@ function patchReading(location, facts, orientations) {
  * reports the count it reached. A run whose tiles fit inside no declared window worked a different shape, and that is
  * named as its own finding with the largest rectangle it did form. A run whose receipts carry no tile at all leaves
  * us nothing to place on a map, which is our gap rather than her failure.
+ *
+ * EVERY ONE OF THE FOUR CARRIES THE COUNT. The refused branch used to return before anything was placed on a map, so
+ * the one outcome a run reaches when a tile-bearing receipt cannot be read was also the only outcome that could not
+ * say whether it saw two tiles or fifty-nine (`round81`, below). It now carries the count as a FLOOR and says so: a
+ * refused proof may hide tiles, so it cannot be read as proof that they were not there.
  */
 function judgePatch(entry, admitted, refused, observations) {
   const declared = entry.patch;
@@ -628,7 +733,11 @@ function judgePatch(entry, admitted, refused, observations) {
       patch: declared,
       location: proved.location,
       patchTiles: proved.tileCount,
+      patchSownTiles: proved.sownTiles,
+      patchTilledTiles: proved.tilledTiles,
       patchWindow: strip,
+      // Nothing limited a day that reached all sixty, and a ledger here would invite a reader to look for the catch.
+      limitingFactors: Object.freeze([]),
       detail: `${String(area)}/${String(area)} tiles of a ${String(strip.width)}x${String(strip.height)} strip at ${String(strip.x)},${String(strip.y)} are tilled and sown`,
     });
   }
@@ -642,61 +751,85 @@ function judgePatch(entry, admitted, refused, observations) {
   const tileProvingActionIds = new Set(
     [...entry.tilledBy, ...entry.croppedBy].map((tileProofEntry) => tileProofEntry.actionId),
   );
-  if (refused.some((receipt) => tileProvingActionIds.has(receipt.actionId))) {
+  const refusedTileProofs = refused.filter((receipt) => tileProvingActionIds.has(receipt.actionId)).length;
+  // The plot is the map the most tiles were proven on. A map with no proven tile at all is not the plot; it is the
+  // bedroom she slept in, or the garden pots in the house, and it only speaks when no map proves anything.
+  const populated = readings.filter((reading) => reading.coordinateCount > 0);
+  const best =
+    [...populated].sort(
+      (left, right) =>
+        right.coordinateCount - left.coordinateCount ||
+        (right.holdsAll ? 1 : 0) - (left.holdsAll ? 1 : 0) ||
+        (right.window?.count ?? 0) - (left.window?.count ?? 0) ||
+        (right.largestRectangle?.area ?? 0) - (left.largestRectangle?.area ?? 0) ||
+        left.location.localeCompare(right.location),
+    )[0] ?? null;
+  const tally = patchTally(entry, admitted, refusedTileProofs, best, area);
+  const counted = {
+    patchTiles: tally.patchTiles,
+    patchSownTiles: tally.patchSownTiles,
+    patchTilledTiles: tally.patchTilledTiles,
+    limitingFactors: tally.limitingFactors,
+  };
+  if (refusedTileProofs > 0) {
     return Object.freeze({
+      ...counted,
       state: "unproven",
       reasonCode: "task_purpose_evidence_without_postcondition",
       purpose: entry.purpose,
       missingFact: null,
       patch: declared,
+      location: best?.location ?? null,
+      patchWindow: best?.window ?? null,
+      detail: patchDetail(
+        tally,
+        `${String(refusedTileProofs)} tile proofs were refused, so this count is a floor rather than the day's total`,
+      ),
     });
   }
-  if (readings.every((reading) => reading.coordinateCount === 0)) {
+  if (best === null) {
     return Object.freeze({
+      ...counted,
       state: "unproven",
       reasonCode: "task_purpose_has_no_tile_coordinates",
       purpose: entry.purpose,
       missingFact:
         "no receipt of this run carried a tile for the patch: `till_soil` names the tile it turned and `plant_seed`/`water_crop` name the tile their crop is on, so with none of those admitted nothing says where the plot was. This is the run's observation gap, not a failure of the companion's.",
       patch: declared,
+      detail: patchDetail(tally, "no receipt carried a tile"),
     });
   }
-  // The plot is the map the most tiles were proven on. A map with no proven tile at all is not the plot; it is the
-  // bedroom she slept in, or the garden pots in the house, and it only speaks when no map proves anything.
-  const populated = readings.filter((reading) => reading.coordinateCount > 0);
-  const best = [...populated].sort(
-    (left, right) =>
-      right.coordinateCount - left.coordinateCount ||
-      (right.holdsAll ? 1 : 0) - (left.holdsAll ? 1 : 0) ||
-      (right.window?.count ?? 0) - (left.window?.count ?? 0) ||
-      (right.largestRectangle?.area ?? 0) - (left.largestRectangle?.area ?? 0) ||
-      left.location.localeCompare(right.location),
-  )[0];
   const strip = best.window ?? Object.freeze({ width: declared.width, height: declared.height, count: 0 });
   if (best.holdsAll) {
     return Object.freeze({
+      ...counted,
       state: "not_achieved",
       reasonCode: "task_purpose_not_achieved",
       purpose: entry.purpose,
       missingFact: null,
       patch: declared,
       location: best.location,
-      patchTiles: best.tileCount,
       patchWindow: strip,
-      detail: `${String(strip.count)}/${String(area)} tiles inside the best ${String(strip.width)}x${String(strip.height)} window at ${String(strip.x)},${String(strip.y)}`,
+      detail: patchDetail(
+        tally,
+        `inside the best ${String(strip.width)}x${String(strip.height)} window at ${String(strip.x)},${String(strip.y)}`,
+      ),
     });
   }
   const largest = best.largestRectangle;
   return Object.freeze({
+    ...counted,
     state: "not_achieved",
     reasonCode: "tiles_do_not_form_the_declared_patch",
     purpose: entry.purpose,
     missingFact: null,
     patch: declared,
     location: best.location,
-    patchTiles: best.tileCount,
     largestRectangle: largest,
-    detail: `the largest rectangle found is ${String(largest.width)}x${String(largest.height)} (${String(largest.area)} tiles), not the declared ${String(declared.width)}x${String(declared.height)}`,
+    detail: patchDetail(
+      tally,
+      `the largest rectangle found is ${String(largest.width)}x${String(largest.height)} (${String(largest.area)} tiles), not the declared ${String(declared.width)}x${String(declared.height)}`,
+    ),
   });
 }
 

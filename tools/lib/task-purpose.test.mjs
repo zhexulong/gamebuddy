@@ -771,7 +771,8 @@ test("37 of the sixty tiles is a patch that is not finished, and the count says 
   const judged = judgeTaskPurpose("clear_and_plant_long_patch", patchReceipts(rectangle(3, 20).slice(0, 37)));
   assert.equal(judged.state, "not_achieved");
   assert.equal(judged.reasonCode, "task_purpose_not_achieved");
-  assert.match(judged.detail ?? "", /37\/60 tiles inside the best 3x20 window/u);
+  assert.equal(judged.patchTiles, 37, "the verdict names how many of the sixty it got");
+  assert.match(judged.detail ?? "", /37\/60 tiles tilled and sown/u);
 });
 
 test("sixty tiles in another shape are named as another shape, not as a short patch", () => {
@@ -800,6 +801,151 @@ test("a patch day whose receipts carry no tile is our gap, not her failure", () 
     assert.equal(judged.reasonCode, "task_purpose_has_no_tile_coordinates");
     assert.match(judged.missingFact ?? "", /no receipt of this run carried a tile/u);
   }
+});
+
+/**
+ * `a_task_that_asks_for_n_tiles_reports_how_many_it_got:<task>`
+ *
+ * THE DEFECT. Measured 2026-11-20 (`round81`, `clear_and_plant_long_patch`, "three tiles wide, twenty long"): the
+ * day's verdict was `unproven/task_purpose_evidence_without_postcondition` and carried no number at all. Six
+ * `till_soil` receipts had been refused, so the judge returned before it placed anything on a map - and a reader
+ * could not tell "she planted two" from "she planted fifty-nine" from "she planted none". That run had planted two,
+ * and both plantings' own receipts said so (`inventory_before=2` then `1`): `sown 2 (seeds available 2)`.
+ *
+ * THE GATE. Its population is every criterion that counts tiles, read from `TASK_PURPOSE_CRITERIA`'s own `patch`
+ * declarations - never a list here, so a task that starts counting tiles tomorrow is covered by existing. For each
+ * one it judges the readings a real day produces - every tile, one short, round81's two sowings, none - and asserts
+ * that the verdict names the count it reached. A verdict that reports a state without a number fails here, naming
+ * the criterion, the count it declared and the count it reported.
+ *
+ * AND THE LIMITING FACTOR, because the number alone is the same defect one layer down: "sown 2 and the pack was
+ * empty" and "sown 2 of 60 and 58 tile proofs were refused" are different days that both read `2/60`.
+ *
+ * red-proof: inject  dropping the count block from `judgePatch`'s refused branch -> round81's reading reports
+ *                   `whose verdict names the count undefined` and this gate is red naming
+ *                   `clear_and_plant_long_patch · that name a count 60`
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+
+/** `round81`'s two `seed_planted` receipts, verbatim: two cauliflower seeds, and the pack empty after the second. */
+const ROUND81_SOWINGS = Object.freeze([
+  receipt("plant_seed", {
+    reasonCode: "seed_planted",
+    evidence: {
+      detail: contractEvidence("plant_seed", {
+        location: "Farm",
+        target: "seed_b158f2cf25582a64",
+        tile: "63,19",
+        item: "(O)474",
+        crop: "474",
+        inventory_before: "2",
+        inventory_after: "1",
+      }),
+    },
+  }),
+  receipt("plant_seed", {
+    reasonCode: "seed_planted",
+    evidence: {
+      detail: contractEvidence("plant_seed", {
+        location: "Farm",
+        target: "seed_2d9cdc97acabfff4",
+        tile: "62,18",
+        item: "(O)474",
+        crop: "474",
+        inventory_before: "1",
+        inventory_after: "0",
+      }),
+    },
+  }),
+]);
+
+/** The six `till_soil` receipts that run could not read: succeeded, and not their own postcondition. */
+const ROUND81_REFUSED_TILLS = Object.freeze(
+  Array.from({ length: 6 }, () =>
+    receipt("till_soil", { reasonCode: "soil_tilled", evidence: { detail: "target=62,18" } }),
+  ),
+);
+
+test("a_task_that_asks_for_n_tiles_reports_how_many_it_got", (t) => {
+  const patchCriteria = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.patch !== undefined);
+  // The fixture for round81 is only that run if its six tillings ARE refused: a fixture quietly admitted would test
+  // the `not_achieved` branch instead of the one the defect lived in.
+  assert.equal(
+    purposeReceipts([...ROUND81_SOWINGS, ...ROUND81_REFUSED_TILLS]).refused.length,
+    ROUND81_REFUSED_TILLS.length,
+    "round81's six tillings must be refused here too, and its two sowings admitted",
+  );
+  const violations = [];
+  let examined = 0;
+  for (const [task, entry] of patchCriteria) {
+    const declared = entry.patch.width * entry.patch.height;
+    const strip = rectangle(entry.patch.width, entry.patch.height);
+    const readings = [
+      { label: "every tile proved", receipts: patchReceipts(strip), qualified: declared, sown: declared },
+      { label: "one tile short", receipts: patchReceipts(strip.slice(0, declared - 1)), qualified: declared - 1 },
+      // A patch of two tiles or fewer cannot be short by two, so there is no round81 reading to take for it.
+      ...(declared > 2
+        ? [
+            {
+              label: "round81's two sowings",
+              receipts: [...ROUND81_SOWINGS, ...ROUND81_REFUSED_TILLS],
+              qualified: 0,
+              sown: 2,
+            },
+          ]
+        : []),
+      { label: "nothing proved", receipts: [], qualified: 0 },
+    ];
+    for (const reading of readings) {
+      examined += 1;
+      const judged = judgeTaskPurpose(task, reading.receipts);
+      const code =
+        `a_task_that_asks_for_n_tiles_reports_how_many_it_got:${task}: criteria 1 · that name a count ` +
+        `${String(declared)} · whose verdict names the count ${String(judged.patchTiles)} (${reading.label})`;
+      t.diagnostic(code);
+      if (!Number.isInteger(judged.patchTiles)) {
+        violations.push(
+          `${code} - the verdict reports ${String(judged.state)}/${String(judged.reasonCode)} and no count at all, ` +
+            `so two tiles and fifty-nine read the same`,
+        );
+        continue;
+      }
+      const fraction = `${String(judged.patchTiles)}/${String(declared)}`;
+      if (!String(judged.detail ?? "").includes(fraction))
+        violations.push(
+          `${code} - its detail never states ${fraction}: ${JSON.stringify(String(judged.detail ?? ""))}`,
+        );
+      if (reading.qualified < declared && judged.state === "achieved")
+        violations.push(`${code} - a patch short of its own count was reported achieved`);
+      if (!Array.isArray(judged.limitingFactors))
+        violations.push(`${code} - nothing in the verdict says whether seed, refusals or the day itself stopped it`);
+      // The falsifier: round81's own two sowings, and the limiting factor that told this day apart from a day that
+      // refused fifty-eight of sixty.
+      if (reading.sown !== undefined && judged.patchSownTiles !== reading.sown)
+        violations.push(
+          `${code} - it sowed ${String(reading.sown)} and the verdict reports ${String(judged.patchSownTiles)} sown`,
+        );
+      if (reading.label === "round81's two sowings") {
+        for (const fragment of [
+          "sown 2",
+          "seed_ledger:(O)474:2->0",
+          `tile_proof_refused:${String(ROUND81_REFUSED_TILLS.length)}`,
+        ])
+          if (!String(judged.detail ?? "").includes(fragment))
+            violations.push(`${code} - its detail never states "${fragment}": ${String(judged.detail ?? "")}`);
+        if (!judged.limitingFactors.includes("seed_ledger:(O)474:2->0"))
+          violations.push(`${code} - the seeds it spent are not among its limits: ${String(judged.limitingFactors)}`);
+      }
+    }
+  }
+  const summary = `criteria ${String(patchCriteria.length)} · readings ${String(examined)}`;
+  t.diagnostic(summary);
+  // Zero is not green: a gate over a population of no tile-counting criterion agrees with itself.
+  assert.ok(
+    patchCriteria.length > 0 && examined > 0,
+    `blocked: ${summary} - no criterion in TASK_PURPOSE_CRITERIA counts tiles, so nothing here was examined`,
+  );
+  assert.deepEqual(violations, [], `${summary}\n${violations.join("\n")}`);
 });
 
 test("what the run saw counts beside what it proved, and only as each row describes itself", () => {
@@ -936,7 +1082,12 @@ test("round38's patch day is 3/60 of the declared strip, not `unproven`", () => 
   assert.equal(judged.missingFact, null, "nothing is missing: the tiles are all in the receipts");
   // The fraction, the shape, and where it sits: the (x, y, w, h) a reader needs to see that the work was somewhere
   // else. Three tiles carry both her tilling and her seed; the other ten crops went into ground this day did not till.
-  assert.equal(judged.detail, "3/60 tiles inside the best 20x3 window at 50,18");
+  // The components are what say so - thirteen sown, twenty tilled, seventeen of those tilled tiles never sown - and a
+  // verdict that reported `3/60` alone would leave a reader unable to tell this day from one that planted three seeds.
+  assert.equal(
+    judged.detail,
+    "3/60 tiles tilled and sown (sown 13, tilled 20) · inside the best 20x3 window at 50,18 · seed_ledger:(O)472:2->1 · tilled_not_sown:17",
+  );
   assert.deepEqual(judged.patchWindow, { x: 50, y: 18, width: 20, height: 3, count: 3 });
   assert.equal(judged.patchTiles, 3);
 });
