@@ -623,6 +623,84 @@ test("premature response close rejects the continuation and provider start remai
   assert.equal(recorder.closes, 1);
 });
 
+/**
+ * The drain inside `close()` exists for exactly this shape: a request the shell has ALREADY
+ * accepted is answered before any socket dies.
+ *
+ * A submit that is inside its own pipeline call when the close starts ends with
+ * `chat_pipeline_service_closed` - a code the panel can act on, which is only true if `close()`
+ * keeps the socket alive until that answer is written. Destroying the connections first wrote the
+ * answer into a dead socket, and the panel recorded one request with no answer at all.
+ */
+test("reference shell answers an accepted Chat request before it destroys the socket", async () => {
+  // The two points this test owns: the route is inside its submit, and the route may answer it.
+  let entered!: () => void;
+  const submitEntered = new Promise<void>((resolveEntered) => {
+    entered = resolveEntered;
+  });
+  let refused!: () => void;
+  const submitRefused = new Promise<void>((resolveRefused) => {
+    refused = resolveRefused;
+  });
+  const recorder = { starts: 0, statuses: 0, closes: 0 };
+  const server = await startReferencePipelineDialogueWebServer({
+    referenceStateFacade: facade,
+    pipelineService: Object.freeze({
+      ...service(recorder),
+      async submitAfterResponseCommit() {
+        entered();
+        await submitRefused;
+        // What the service says when the handler's `closed` flag rejects admitted work.
+        throw new Error("chat_pipeline_service_closed");
+      },
+    }),
+    profile,
+    eventStream,
+    bootstrapToken: token,
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const snapshot = (await bootstrap.json()) as { csrfToken: string };
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const submit = fetch(`${server.origin}/api/tavern/v1/messages`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+        "Idempotency-Key": "A".repeat(22),
+      },
+      body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, text: "Hello", locale: "en" }),
+    });
+    await submitEntered;
+
+    // The close begins while this submit is still inside its pipeline call; the wait below is what
+    // let the old order destroy the connection before the answer existed.
+    const closing = server.close();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    refused();
+
+    const response = await submit;
+    assert.equal(
+      response.status,
+      503,
+      "the Chat request this shell had already accepted must be answered, not destroyed with its socket",
+    );
+    assert.equal(((await response.json()) as { code: string }).code, "runtime_unavailable");
+    await closing;
+  } finally {
+    await server.close().catch(() => {});
+  }
+  assert.equal(recorder.closes, 1);
+});
+
 test("reference handler replays an existing SSE cursor", async () => {
   const stream = createChatEventStream();
   const recorder = { starts: 0, statuses: 0, closes: 0 };

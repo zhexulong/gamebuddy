@@ -350,13 +350,30 @@ export async function startReferencePipelineDialogueWebServer(
   return Object.freeze({
     origin: `http://${LOOPBACK_HOST}:${port}`,
     closeAllConnections: () => server.closeAllConnections(),
+    /**
+     * A request this listener already accepted is ANSWERED before any socket dies.
+     *
+     * The handler marks itself closed and drains what it accepted, and an in-flight Chat request
+     * answers its own named code there (`runtime_unavailable` for work the close rejects) - so the
+     * listener stops taking new requests, idle keep-alive sockets go now, the drain is awaited
+     * next, and only what is still connected after it is destroyed. Destroying the connections
+     * first wrote those answers into a destroyed socket, which is how a named refusal reached the
+     * panel as `TypeError: Failed to fetch` instead of its code.
+     */
     async close() {
       if (closed) return;
       closed = true;
       const handlerDrain = handler.close();
-      server.closeAllConnections();
-      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      // The listener's own close is a callback, not a promise: it settles once the last connection
+      // ends, which is why it is armed here and awaited after the drain below.
+      const listenerClosed = new Promise<Error | undefined>((resolveClose) => {
+        server.close((error) => resolveClose(error));
+      });
+      server.closeIdleConnections();
       await handlerDrain;
+      server.closeAllConnections();
+      const listenerError = await listenerClosed;
+      if (listenerError !== undefined) throw listenerError;
     },
   });
 }
