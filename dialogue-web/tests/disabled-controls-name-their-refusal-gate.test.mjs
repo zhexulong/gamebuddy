@@ -177,14 +177,6 @@ export const OPEN = Object.freeze([
   },
   {
     file: "src/components/management-panels.tsx",
-    predicate: "!canSave",
-    expires: "2026-11-21",
-    why:
-      "the thinking-level field withholds Save while it is empty, and its reason (`modelProfilesLevelRequired`) is " +
-      "attached to a request this form can never send - the next commit of this lane moves it onto the field",
-  },
-  {
-    file: "src/components/management-panels.tsx",
     predicate: "connectionView.pending || selected === undefined",
     expires: "2027-01-31",
     why: "a provider not yet chosen withholds the press; the select shows an empty row, not a reason",

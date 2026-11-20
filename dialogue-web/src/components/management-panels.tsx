@@ -401,8 +401,23 @@ export function ModelProfileEditor({
   const thinkingLevel = draft === undefined ? ownThinkingLevel : draft.value;
   const setThinkingLevel = draft === undefined ? setOwnThinkingLevel : draft.type;
   const busy = pending !== null;
-  const dirty = thinkingLevel !== profile.thinkingLevel;
-  const canSave = !busy && dirty && thinkingLevel.trim().length > 0;
+  /*
+   * The press is always offered (except while a request is in flight), and it names the field it cannot
+   * honour instead of the control being withdrawn.
+   *
+   * It used to be `disabled={!busy && dirty && thinkingLevel.trim().length > 0}`, and the reason the
+   * field was empty existed all along - `modelProfilesLevelRequired`, "Enter a thinking level." - on the
+   * Host's `invalid_request` answer, which this form can never receive: the only press that could send
+   * it is the press the empty field withdrew. The reason belongs to the field (the `fieldError` pair and
+   * the sentence under it, the shape Memory's authoring forms use), and the keyboard lands on it.
+   *
+   * A press with nothing changed sends the level the field holds: "save" is what the control says, and
+   * a press that silently did nothing would be the same defect wearing a different hat.
+   */
+  const press = useRequiredField();
+  const levelFieldId = `model-profile-level-${surface}`;
+  const problem = press.marked(thinkingLevel.trim().length === 0 ? labels.modelProfilesLevelRequired : null);
+  const field = fieldError(problem, `model-profile-level-refusal-${surface}`);
   return (
     <form
       className="model-profile-editor"
@@ -410,7 +425,9 @@ export function ModelProfileEditor({
       onKeyDown={preventImeFormSubmit}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!canSave) return;
+        if (busy) return;
+        if (!press.press(thinkingLevel.trim().length === 0 ? labels.modelProfilesLevelRequired : null, levelFieldId))
+          return;
         const sent = thinkingLevel.trim();
         draft?.release(sent);
         onSave(sent);
@@ -419,11 +436,13 @@ export function ModelProfileEditor({
       <h3>{surfaceLabel}</h3>
       {/* The field's label names the record it writes. `surfaceLabel` is already the card's own
           heading, so the label and the heading that scopes it cannot disagree. */}
-      <label htmlFor={`model-profile-level-${surface}`}>{recordLabel(labels.thinkingLevelOf, surfaceLabel)}</label>
+      <label htmlFor={levelFieldId}>{recordLabel(labels.thinkingLevelOf, surfaceLabel)}</label>
       <input
-        id={`model-profile-level-${surface}`}
+        id={levelFieldId}
         className="form-input"
         list={`model-profile-thinking-levels-${surface}`}
+        aria-invalid={field.invalid}
+        aria-describedby={field.describedBy}
         value={thinkingLevel}
         disabled={busy}
         onChange={(event) => setThinkingLevel(event.target.value)}
@@ -433,6 +452,11 @@ export function ModelProfileEditor({
           <option key={level} value={level} />
         ))}
       </datalist>
+      {problem === null ? null : (
+        <p role="status" className="error-banner" id={field.id} data-model-profile-level-problem>
+          {problem}
+        </p>
+      )}
       {/*
        * Named after its surface. A bare "Save" here would collide with every other
        * save on the management surface, which is ambiguous for a screen reader and
@@ -442,7 +466,7 @@ export function ModelProfileEditor({
         type="submit"
         className="small-button"
         aria-label={`${labels.modelProfilesApply} ${surfaceLabel}`}
-        disabled={!canSave}
+        disabled={busy}
       >
         {labels.modelProfilesApply}
       </button>
