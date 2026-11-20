@@ -23,6 +23,7 @@
  * behavior here: the save notice (`modelProfilesApplied`) already says it, and
  * this file asserts only that the notice is the one the player sees.
  */
+import { messages } from "../src/i18n";
 import { type Page, expect, test } from "./frontend-coverage";
 
 const token = "A".repeat(43);
@@ -263,10 +264,11 @@ test("the Chat drawer's chat profile and the Settings chat editor show each othe
     thinkingLevel: "high",
   });
   await expect(drawerEditor.getByLabel("Thinking level")).toHaveValue("high");
-  // The player is told the edit lands on the next runtime start, in this exact
-  // notice (i18n.ts `modelProfilesApplied`).
+  // The player is told when the edit lands, in this exact notice (i18n.ts
+  // `modelProfilesApplied`); the sentence is read from the catalogue so a rewording
+  // cannot leave this line asserting words the product no longer says.
   await expect(drawerEditor.locator("[data-model-notice]")).toHaveText(
-    "Saved. It applies the next time that surface's runtime starts.",
+    messages("en").modelProfilesApplied,
   );
 
   // The drawer is modal, so the AppBar cannot switch surfaces while it is open - which is

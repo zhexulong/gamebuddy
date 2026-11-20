@@ -20,6 +20,7 @@
  * rather than of the module's wording. `/api/tavern/v1/` is tavern-*named*: `management-pipeline-api.ts`
  * says what gates it.
  */
+import { messages } from "../src/i18n";
 import { expect, test, type Page, type Route } from "./frontend-coverage";
 import { game, jsonOk, root, token, stubGameRead } from "./composed-reference-game-fixtures";
 
@@ -133,7 +134,7 @@ test("the Game surface's thinking level is written on the shell's one session to
   expect(write.headers["x-csrf-token"], "the shell's own session token").toBe(game.csrfToken);
   expect(write.body).toEqual({ apiVersion: 1, surface: "game", expectedRevision: 1, thinkingLevel: "high" });
   await expect(editor.locator("[data-model-notice]")).toHaveText(
-    "Saved. It applies the next time that surface's runtime starts.",
+    messages("en").modelProfilesApplied,
   );
 });
 
@@ -161,6 +162,6 @@ test("the same write lands while the conversation's own read is refused", async 
   await expect.poll(() => wire.writes.length).toBe(1);
   console.log(`MEASURE game-thinking-level: writes=${wire.writes.length} with the conversation unreadable`);
   await expect(editor.locator("[data-model-notice]")).toHaveText(
-    "Saved. It applies the next time that surface's runtime starts.",
+    messages("en").modelProfilesApplied,
   );
 });
