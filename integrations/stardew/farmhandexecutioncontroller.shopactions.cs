@@ -1020,6 +1020,22 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// key set (see <see cref="ShopPurchaseReceipt"/>), and the shop suite builds the same receipt from these same facts
     /// so the invariant it asserts is asserted on the text the Mod emits.
     /// </para>
+    ///
+    /// <para>
+    /// IT DECLARES WHEN ITS THREE PAIRS WERE READ, because `money_before`/`money_after`, `owned_before`/`owned_after`
+    /// and `stock_before`/`stock_after` are a world state compared with itself: a charge that the engine applied after
+    /// the read would report no effect, exactly as `pickup_forage`'s `removed=false` did for two rounds. The click that
+    /// spends the money runs inside <c>ShopMenu.receiveLeftClick</c> -> <c>tryToPurchaseItem</c> (ShopMenu.cs:1364) and the
+    /// after-facts are sampled once those clicks return (<c>RequestLocalShopPurchase</c>), so the point is
+    /// <see cref="PostconditionReadPoint.AfterTheSettle"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// THE POINT IS DECLARED BUT NOT PRINTED, which is the one place this class of postcondition cannot reach the wire:
+    /// the Host's shop_purchase completion rule reads this detail as an exact key set
+    /// (host/src/stardew-completion-contracts.ts:4655-4704), so an extra token on the ordinary path is a producer bug
+    /// there rather than a fact - see <see cref="ShopToolUpgradeEvidence"/> for the same constraint stated on a field.
+    /// </para>
     /// </summary>
     internal readonly record struct ShopPurchaseReceiptFacts(
         string ShopId,
@@ -1045,7 +1061,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         string RequiredToolQualifiedId,
         int RequiredToolBefore,
         int RequiredToolAfter,
-        string PurchaseDialogue);
+        string PurchaseDialogue) : IReadsAWorldStateBeforeAndAfter
+    {
+        public string ActionId => "shop_purchase";
+
+        public PostconditionReadPoint ReadPoint => PostconditionReadPoint.AfterTheSettle;
+    }
 
     /// <summary>
     /// The ONE producer of a purchase receipt's detail.

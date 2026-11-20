@@ -14,6 +14,13 @@ internal sealed partial class ExecutionManager
     private const int ItemPickupMagnetClaimTicks = 60 * 60 * 5;
 
     /// <summary>
+    /// The catalogue's id for this family's forage pickup, spelled once: the approach leg names the action it walks for
+    /// and the verdict names the action it settles, and two spellings of that id would let the receipt answer for one
+    /// action while the leg walked for another.
+    /// </summary>
+    internal const string ForagePickupActionId = "pickup_forage";
+
+    /// <summary>
     /// How many of this Mod's own updates the engine's magnet may have to deliver a ground chunk before the wait is
     /// settled. Not the catalogue's watchdog, which bounds liveness for every action and stays where it is.
     /// </summary>
@@ -81,7 +88,7 @@ internal sealed partial class ExecutionManager
             return this.TryBeginToolApproach(
                 requestId,
                 executionId,
-                "pickup_forage",
+                ForagePickupActionId,
                 Game1.player.currentLocation,
                 targetX,
                 targetY,
@@ -110,6 +117,17 @@ internal sealed partial class ExecutionManager
     /// click path, and `removed`/`inventory_after` are what it did - so a receipt that publishes only those two says
     /// "nothing happened" without saying whether the engine declined or handled it and delivered nothing.
     /// </para>
+    ///
+    /// <para>
+    /// THE OBJECT'S OWN GATES ARE READ BEFORE THE CLICK AND THE CONSEQUENCES AFTER IT, and the receipt says so. `Type`
+    /// and `IsSpawnedObject` are what <c>GameLocation.checkAction</c> asks before its forage branch runs at all
+    /// (:7727 `value.Type != null || isErrorItem`, :7791 `value.isSpawnedObject.Value || isErrorItem`), so they are the
+    /// state OF THE OBJECT THE CLICK WILL READ and are sampled while it is still that object; `removed` and
+    /// `inventory_after` are the branch's consequences and are sampled once the call has returned - which for THIS
+    /// action is after the mutation, because the branch fills the pack and removes the object inside the same call
+    /// (:7830 `addItemToInventoryBool`, :7837 `objects.Remove`, :7838 `return true`). The pair therefore cannot be a
+    /// race, and <see cref="ForagePickupPostcondition.ReadPoint"/> says so in the sentence.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt ExecutePickupForage(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -129,6 +147,9 @@ internal sealed partial class ExecutionManager
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY};item={forage.QualifiedItemId}");
 
+        // The two fields the engine's own forage branch opens with, read here while they are still the object's answer.
+        bool spawned = forage.IsSpawnedObject;
+        string? objectType = forage.Type;
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         LocalForagePickupSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
         bool actionHandled = Game1.tryToCheckAt(tile, Game1.player);
@@ -138,8 +159,8 @@ internal sealed partial class ExecutionManager
             Removed: !location.objects.ContainsKey(tile),
             InventoryBefore: beforeCount,
             InventoryAfter: afterCount,
-            Spawned: forage.IsSpawnedObject,
-            ObjectType: forage.Type);
+            Spawned: spawned,
+            ObjectType: objectType);
         return this.RememberTerminal(
             requestId,
             executionId,
@@ -408,6 +429,28 @@ internal sealed partial class ExecutionManager
 /// forageable by <c>isForage()</c> and still fails either gate is one the click path silently refuses, and a receipt
 /// that says so is the difference between "walk again" and "this will never be picked up".
 /// </para>
+/// <para>
+/// WHICH GATE THE LIVE REFUSALS HIT, read out of the engine's own branch instead of guessed. The same daffodil answered
+/// four refusals - `round66` twice, `round82` once, `round83` twice - always as <c>forage_80109cc4e46cdd7f</c> at Farm
+/// `(57,12)`, always after a walk that reported `arrival=exact;stand_at=58,11|56,12` (one tile from the flower, inside
+/// <c>Utility.tileWithinRadiusOfPlayer</c>), and never once removed. That is not a race and not the wrong container: the
+/// play-session fixture writes the object with <c>farm.objects.Add(spot, new StardewValley.Object("18", 1))</c>
+/// (ModEntry.Fixtures.cs:850), and that constructor sets <c>isSpawnedObject = false</c> (Object.cs:903) - only the
+/// engine's own <c>dropObject</c> sets it (GameLocation.cs:13264), which is the path the two DEDICATED forage fixtures
+/// use and assert (ModEntry.Fixtures.ScenarioInitializers.cs:480, :486; ModEntry.Fixtures.HostAutomation.PickupForage.cs:61
+/// says so in as many words). So <c>:7791</c> is false, the whole <c>objects</c> block is skipped, <c>checkAction</c>
+/// falls through terrain, large terrain and building actions and answers <c>return false</c> at :7940 on every attempt -
+/// the numbers the four refusals published, forever. <c>blocked_by</c> names that gate so a reader can repair the
+/// world instead of re-walking to it.
+/// </para>
+/// <para>
+/// WHEN THE PAIR WAS READ, which the four refusals could not say either. <c>removed</c>/<c>inventory_after</c> are
+/// sampled after <c>Game1.tryToCheckAt</c> returned, and for this action the engine's mutation happens inside that call
+/// (GameLocation.cs:7830, :7837, :7838) - so the pair is
+/// <see cref="PostconditionReadPoint.AfterTheSettle"/> and a "nothing changed" reading is a fact about the world rather
+/// than a check that outran the engine. The sentence prints both the point and the call it settled after, because an
+/// unqualified pair is what made a decline and a race indistinguishable for two rounds.
+/// </para>
 /// </summary>
 internal readonly record struct ForagePickupPostcondition(
     bool ActionHandled,
@@ -415,7 +458,7 @@ internal readonly record struct ForagePickupPostcondition(
     int InventoryBefore,
     int InventoryAfter,
     bool Spawned,
-    string? ObjectType)
+    string? ObjectType) : IReadsAWorldStateBeforeAndAfter
 {
     /// <summary>
     /// The one container this action's facts come from - see the type's remarks for why it has exactly one.
@@ -423,20 +466,65 @@ internal readonly record struct ForagePickupPostcondition(
     private const string Container = "location.objects";
 
     /// <summary>
+    /// The call whose return the pair is read after: <c>Game1.tryToCheckAt</c> is the engine's click entry and the only
+    /// mutation this action performs, so naming it is what turns "after the settle" into a checkable claim.
+    /// </summary>
+    private const string Settle = "game1.try_to_check_at";
+
+    public string ActionId => ExecutionManager.ForagePickupActionId;
+
+    public PostconditionReadPoint ReadPoint => PostconditionReadPoint.AfterTheSettle;
+
+    /// <summary>
+    /// Which of the engine's two gates on the object refuses it, in the order <c>GameLocation.checkAction</c> asks them
+    /// (:7727 <c>value.Type != null || isErrorItem</c>, then :7791 <c>value.isSpawnedObject.Value || isErrorItem</c>), or
+    /// <see langword="null"/> when both let it in.
+    ///
+    /// <para>
+    /// `isErrorItem` is the third input of both gates and is not a field here, because the request half has already
+    /// excluded it: an error item answers <c>isForage()</c> false (Object.cs:2806-2813 reads the category and the
+    /// context tag, neither of which an item with no data row has) and is refused as
+    /// <c>forage_target_unavailable</c> before this type is built.
+    /// </para>
+    /// </summary>
+    internal string? EngineGate =>
+        this.ObjectType is null ? "object_type_null"
+        : !this.Spawned ? "not_a_spawned_object"
+        : null;
+
+    /// <summary>
     /// Succeeded only when the engine handled the click AND the object left its tile AND the pack gained exactly one of
-    /// the named item; every other combination is <see cref="ExecutionState.Uncertain"/>, because each of them is a
-    /// world where the caller cannot tell whether the flower is still there.
+    /// the named item. A click the engine DID handle without those consequences stays <see cref="ExecutionState.Uncertain"/>,
+    /// because that is a world where the caller cannot tell whether the flower is still there; a click the engine never
+    /// handled, on an object one of the branch's own gates refuses, is <see cref="ExecutionState.Rejected"/> - nothing
+    /// happened, nothing CAN happen to that object, and the sentence names the gate to repair.
     /// </summary>
     internal ExecutionState State =>
         this.ActionHandled && this.Removed && this.InventoryAfter == this.InventoryBefore + 1
             ? ExecutionState.Succeeded
-            : ExecutionState.Uncertain;
+            : this.ActionHandled
+                ? ExecutionState.Uncertain
+                : this.EngineGate is not null
+                    ? ExecutionState.Rejected
+                    : ExecutionState.Uncertain;
 
-    internal string ReasonCode => this.State == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
+    internal string ReasonCode => this.State switch
+    {
+        ExecutionState.Succeeded => "forage_picked_up",
+        ExecutionState.Rejected => "forage_target_not_pickable",
+        _ => "forage_postcondition_unavailable",
+    };
 
     internal string Describe(string location, string targetId, int tileX, int tileY, string qualifiedItemId) =>
         $"location={location};targetIdentity={targetId};tile={tileX},{tileY};item={qualifiedItemId};container={Container};"
-        + $"action_handled={this.ActionHandled.ToString().ToLowerInvariant()};spawned={this.Spawned.ToString().ToLowerInvariant()}"
-        + $";object_type={this.ObjectType ?? "none"};removed={this.Removed.ToString().ToLowerInvariant()}"
-        + $";inventory_before={this.InventoryBefore};inventory_after={this.InventoryAfter}";
+        + $"action_handled={this.ActionHandled.ToString().ToLowerInvariant()};blocked_by={this.GateToken.Format()}"
+        + $";spawned={this.Spawned.ToString().ToLowerInvariant()};object_type={this.ObjectType ?? "none"}"
+        + $";removed={this.Removed.ToString().ToLowerInvariant()};inventory_before={this.InventoryBefore};inventory_after={this.InventoryAfter}"
+        + $";settle={Settle};read={this.ReadPoint.ToWireValue()}";
+
+    /// <summary>The gate in the vocabulary every other refusal in this file uses, or <c>none</c>.</summary>
+    private RefusalLayerToken GateToken =>
+        this.EngineGate is { } gate
+            ? new RefusalLayerToken(RefusalLayerKind.ObjectOnTile, gate)
+            : RefusalLayerToken.None;
 }
