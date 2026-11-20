@@ -336,18 +336,22 @@ test("player-vocabulary.4 (mutation): a planted mechanism noun fails, the player
     '  gateMutationClean: "Choose your game folder in Game installation on this page, then enable companion play again.",',
     '  gateMutationPlaceholder: "No backup was saved: {{authority}} could not be read.",',
     "} as const;",
+    "const zh = {",
+    '  gateMutationChinese: "当前显示的是最新权威游戏状态。",',
+    "} as const;",
   ].join("\n");
-  const [catalogue] = catalogues(planted, "src/i18n.ts");
-  const entries = catalogue.entries.filter((entry) => entry.key.startsWith("gateMutation"));
-  const findings = internalsIn(entries, "en");
+  const parsed = catalogues(planted, "src/i18n.ts");
+  const plantedEntries = (locale) =>
+    parsed
+      .find((catalogue) => catalogue.name === locale)
+      .entries.filter((entry) => entry.key.startsWith("gateMutation"));
   assert.deepEqual(
-    findings.map((finding) => `${finding.key}: ${finding.noun}`),
+    internalsIn(plantedEntries("en"), "en").map((finding) => `${finding.key}: ${finding.noun}`),
     ["gateMutationQuarantine: guardian", "gateMutationQuarantine: process"],
     "the planted sentence names two mechanisms and both are reported; the folder sentence and the substituted id name nothing",
   );
-  const chinese = [{ key: "gateMutationChinese", value: "当前显示的是最新权威游戏状态。", line: "src/i18n.ts:1" }];
   assert.deepEqual(
-    internalsIn(chinese, "zh").map((finding) => finding.noun),
+    internalsIn(plantedEntries("zh"), "zh").map((finding) => finding.noun),
     ["权威"],
     "the Chinese rendering of an entry is scanned by the same rule",
   );

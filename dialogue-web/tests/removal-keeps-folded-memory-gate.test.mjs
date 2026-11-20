@@ -31,13 +31,18 @@ const LOCALES = ["en", "zh-CN"];
 const SENTENCE_KEY = "removedWordsMayStillBeInMemory";
 
 /**
- * The two halves of the fact the sentence must carry: where the words went, and where they did not.
- * A locale must name the fold and the memory, or the sentence has been reworded into something that
- * no longer says the thing this gate exists for.
+ * The two halves of the fact the sentence must carry: the memory the removed words survive in, and
+ * the fact that they may still reach her from it. A locale must name both, or the sentence has been
+ * reworded into something that no longer says the thing this gate exists for.
+ *
+ * It named THE FOLD here until 2026-11-20, and that was the copy defect the owner ruled on: the fold
+ * is the module that writes the summary, and a player cannot act on it or find it. The force is the
+ * same - the sentence still has to name the memory that survives the removal and to say it still
+ * reaches her - and `MUST_NAME` still fails a sentence that drops either half.
  */
 const MUST_NAME = {
-  en: [/\bfold/i, /\bmemor/i],
-  "zh-CN": [/折叠/u, /记忆/u],
+  en: [/\bmemor/i, /\bmay still\b/i],
+  "zh-CN": [/记忆/u, /仍/u],
 };
 
 /**

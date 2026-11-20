@@ -946,13 +946,14 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     );
     assert.match(
       labels.gameEndedQuarantined,
-      /restarting GameBuddy is what allows another launch|重启 GameBuddy 才能再启动一次游戏/u,
+      /until it is started again|要等到重新打开/u,
       "and the step is the restart of GameBuddy, not a restart of the game",
     );
   }
-  // …and both say that the page is not where that step is carried out: the lock is in GameBuddy's
-  // own process, so no control here lifts it and reloading comes back to this same screen. The
-  // instruction that sent the player looking for a control this page does not have is gone.
+  // …and both say that the page is not where that step is carried out: the ending is held inside
+  // GameBuddy until it is started again, so no control here reaches it and reloading comes back to
+  // this same screen. The instruction that sent the player looking for a control this page does not
+  // have is gone.
   for (const labels of [en, zh]) {
     assert.match(labels.gameLaunchQuarantined, /no control on this page|本页没有任何控件/u);
     assert.match(labels.gameLaunchQuarantined, /reloading this page does not|刷新本页也不行/u);
@@ -991,16 +992,16 @@ test("a launch refused behind a reported exit reads as the ending, not as an unc
   }
 
   // The facts the launch sentence owes, in each catalogue. The ending (not a failed launch), the
-  // attempt being over, the record held by GameBuddy's own process, and the restart that allows
-  // another launch.
+  // attempt being over, the ending GameBuddy itself holds until it is started again, and the restart
+  // that allows another launch.
   for (const [locale, labels] of [
     ["en", en],
     ["zh-CN", zh],
   ]) {
     assert.match(labels.gameProblemPlayerHostExitedDetail, /Stardew Valley ended|《星露谷物语》已经退出/u, locale);
     assert.match(labels.gameProblemPlayerHostExitedDetail, /will not be repeated|不会再重来/u, locale);
-    assert.match(labels.gameProblemPlayerHostExitedDetail, /inside GameBuddy's own process|GameBuddy 自己的进程里/u, locale);
-    assert.match(labels.gameProblemPlayerHostExitedDetail, /quit GameBuddy itself|退出 GameBuddy 本身/u, locale);
+    assert.match(labels.gameProblemPlayerHostExitedDetail, /GameBuddy keeps that ending|要等到重新打开/u, locale);
+    assert.match(labels.gameProblemPlayerHostExitedDetail, /quit GameBuddy itself|退出 GameBuddy 本身/iu, locale);
     assert.match(labels.gameProblemPlayerHostExitedDetail, /another launch|再启动一次游戏/u, locale);
     // Nothing is left of the cabin read's own framing, and nothing asks the player to go close a
     // game this Host watched end.
