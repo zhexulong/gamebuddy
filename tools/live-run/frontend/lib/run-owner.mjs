@@ -14,15 +14,22 @@
 // kills the union, by exact pid only - never by image name (#3715) - and prints what it examined.
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { releaseCdpPortLockHeldBy } from "./cdp-port-lock.mjs";
-import { killProcessTree, portListener, processesWithCommandLine } from "./process-table.mjs";
+import { killProcessTree, portListener, processesWithCommandLine, processRow, processTable } from "./process-table.mjs";
 
-/** Records one pid this run started. Append-only: the launch and capture phases are separate processes. */
+/**
+ * Records one pid this run started. Append-only: the launch and capture phases are separate processes.
+ *
+ * The OS's own creation time is taken HERE when the caller does not have it, because this is the moment it
+ * can still be read: the pid exists now, and a minute later the machine may have handed the number to
+ * something else. A row without it is a row whose kill decision cannot be made (#3715).
+ */
 export function registerRunProcess(paths, { pid, role, startTime = null }) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return;
+  const identity = typeof startTime === "string" ? startTime : (processRow(pid)?.startTime ?? null);
   mkdirSync(paths.stateDir, { recursive: true });
   appendFileSync(
     paths.runProcessesFile,
-    `${JSON.stringify({ pid, role: String(role ?? "unrecorded"), startTime: typeof startTime === "string" ? startTime : null, at: new Date().toISOString() })}\n`,
+    `${JSON.stringify({ pid, role: String(role ?? "unrecorded"), startTime: identity, at: new Date().toISOString() })}\n`,
     "utf8",
   );
 }
@@ -101,31 +108,62 @@ const isBrowser = (commandLine) => String(commandLine).includes("--user-data-dir
  * to prevent.
  */
 export function teardownRun({ paths, run, reason }) {
-  const targets = new Map();
-  for (const record of registeredRunProcesses(paths)) targets.set(record.pid, record.role);
+  const registry = registeredRunProcesses(paths);
+  const registered = new Set(registry.map((record) => record.pid));
   const swept = processesWithCommandLine(paths.stageRoot);
-  for (const row of swept?.rows ?? []) {
-    if (!targets.has(row.pid)) targets.set(row.pid, isBrowser(row.commandLine) ? "browser" : row.name);
-  }
+  // One read of the table answers every identity question below: whether a recorded pid still exists, and - when
+  // it does - whether it is still the process that was recorded (pid AND start time is the identity, #3715).
+  const table = processTable();
+  const startTimeOf = (pid) => {
+    if (table === null) return "unreadable";
+    return table.rows.find((row) => row.pid === pid)?.startTime ?? null;
+  };
 
   const killed = [];
   const alreadyGone = [];
   const failed = [];
-  for (const [pid, role] of targets) {
+  const unverified = [];
+  const end = (pid, role) => {
     const outcome = killProcessTree(pid);
     if (outcome === "killed") killed.push({ pid, role });
     else if (outcome === "already_exited") alreadyGone.push({ pid, role });
     else failed.push({ pid, role });
+  };
+  for (const record of registry) {
+    const observed = startTimeOf(record.pid);
+    if (observed === null) {
+      alreadyGone.push({ pid: record.pid, role: record.role });
+      continue;
+    }
+    if (record.startTime === null || observed === "unreadable" || observed !== record.startTime) {
+      unverified.push(
+        Object.freeze({
+          pid: record.pid,
+          role: record.role,
+          recorded: record.startTime,
+          observed: observed === "unreadable" ? null : observed,
+        }),
+      );
+      continue;
+    }
+    end(record.pid, record.role);
+  }
+  // A swept process's identity is its command line, which names this run's own stage root: nothing else on the
+  // machine says `<stage>/browser-profile` or `<stage>/state/run.json`, so it is ended by its pid.
+  for (const row of swept?.rows ?? []) {
+    if (registered.has(row.pid)) continue;
+    end(row.pid, isBrowser(row.commandLine) ? "browser" : row.name);
   }
 
   return Object.freeze({
     reason,
-    recorded: registeredRunProcesses(paths).length,
+    recorded: registry.length,
     swept: swept === null ? null : swept.examined,
     killed,
     alreadyGone,
     failed,
-    lock: releaseCdpPortLockHeldBy(run.cdpPort, new Set(targets.keys())),
+    unverified,
+    lock: releaseCdpPortLockHeldBy(run.cdpPort, new Set([...registered, ...(swept?.rows ?? []).map((row) => row.pid)])),
   });
 }
 
@@ -174,9 +212,16 @@ export function inspectRunLeftovers({ paths, run, game = null }) {
 
 const listing = (entries) => entries.map((entry) => `${entry.pid}(${entry.role})`).join(" ");
 
-/** The teardown's own line: what was killed, what was already gone, what could not be killed, and the sweep. */
+/**
+ * The teardown's own line: what was killed, what was already gone, what could not be killed, what it refused to
+ * kill because the number no longer provably named the process that was recorded, and the sweep.
+ */
 export function describeTeardown(teardown) {
   const swept = teardown.swept === null ? "unavailable" : `${teardown.swept} examined`;
+  const unverified = teardown.unverified.map(
+    (entry) =>
+      `${entry.pid}(${entry.role}) recorded=${entry.recorded ?? "nothing"} observed=${entry.observed ?? "nothing"}`,
+  );
   const parts = [
     `RUN-CLEANUP(${teardown.reason})`,
     `recorded=${teardown.recorded}`,
@@ -184,6 +229,7 @@ export function describeTeardown(teardown) {
     `killed=${teardown.killed.length}${teardown.killed.length === 0 ? "" : ` [${listing(teardown.killed)}]`}`,
     `already-gone=${teardown.alreadyGone.length}`,
     `could-not-kill=${teardown.failed.length}${teardown.failed.length === 0 ? "" : ` [${listing(teardown.failed)}]`}`,
+    `unverified=${teardown.unverified.length}${unverified.length === 0 ? "" : ` [${unverified.join(" ")}]`}`,
     `cdp-lock=${teardown.lock}`,
   ];
   return parts.join(" ");

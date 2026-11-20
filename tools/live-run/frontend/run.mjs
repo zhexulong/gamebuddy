@@ -516,10 +516,14 @@ async function main() {
     writeLeftoversReading(paths, leftovers);
     console.log(describeLeftovers(leftovers, run));
     // A run that leaves its own processes alive did not finish, whatever its phase said - and so did a run that
-    // ended a process it did not own, one that left the game it started on screen, or one whose ledger could not
-    // account for the pids it registered.
+    // ended a process it did not own, one that left the game it started on screen, one whose ledger could not
+    // account for the pids it registered, or one that could not prove a recorded pid was still the process it
+    // recorded and so refused to end it (#3715: an unconfirmed identity is reported, never resolved by a kill).
     const ledgerFailed =
-      reading.leftovers.length > 0 || reading.population === "unmeasured" || reading.collateral?.endedByRunUnowned > 0;
+      reading.leftovers.length > 0 ||
+      reading.population === "unmeasured" ||
+      reading.collateral?.endedByRunUnowned > 0 ||
+      teardownReport.unverified.length > 0;
     const gameFailed =
       game.surviving.kind === "alive" || (game.surviving.kind === "unverifiable" && game.recorded.length > 0);
     return code !== 0 ||

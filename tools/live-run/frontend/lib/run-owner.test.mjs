@@ -294,3 +294,106 @@ test("a retired pid leaves the reading and stays in the record", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// A pid is not an identity. The registry row for a capture driver that has already exited still names its
+// pid, and Windows hands that number to the next process - so a teardown that kills by the recorded number
+// alone kills a stranger. Measured 2026-11-21 (`D:/gb-modcheck/frontend--r16`): the `n-message-edit` driver
+// was registered at 00:08:28Z with `startTime:null`, exited, and a later invocation's teardown killed
+// whatever held pid 36952 at 00:23 - reported as `killed=1 [36952(capture:n-message-edit)]` (rule #3715).
+test("a recorded pid the machine has since recycled is reported, never killed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-owner-recycled-"));
+  const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+  mkdirSync(paths.stateDir, { recursive: true });
+  const run = { cdpPort: 9495, tag: "recycled-test" };
+  const stranger = spawnIdle(["capture"]);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    registerRunProcess(paths, {
+      pid: stranger.pid,
+      role: "capture:n-message-edit",
+      startTime: "2026-11-21T00:08:28.1640000+08:00",
+    });
+    const teardown = teardownRun({ paths, run, reason: "phase_failure" });
+    const line = describeTeardown(teardown);
+    assert.equal(teardown.killed.length, 0, `${line} - the recorded start time is not this process's`);
+    assert.deepEqual(
+      teardown.unverified.map((entry) => [entry.pid, entry.role, entry.recorded]),
+      [[stranger.pid, "capture:n-message-edit", "2026-11-21T00:08:28.1640000+08:00"]],
+      line,
+    );
+    assert.equal(
+      typeof teardown.unverified[0].observed,
+      "string",
+      `the reading names both sides, so a reader can see the two are different processes: ${line}`,
+    );
+    assert.notEqual(teardown.unverified[0].observed, teardown.unverified[0].recorded, line);
+    assert.match(
+      line,
+      new RegExp(
+        `unverified=1 \\[${stranger.pid}\\(capture:n-message-edit\\) recorded=2026-11-21T00:08:28\\.1640000\\+08:00 observed=\\S+\\]`,
+        "u",
+      ),
+      line,
+    );
+    assert.ok(isAlive(stranger.pid), "a pid wearing a recorded number is not this run's to end");
+  } finally {
+    stranger.kill("SIGKILL");
+    await waitForGone(stranger.pid);
+    await removeTree(root);
+  }
+});
+
+// The same rule for a row that could not be dated when it was written: an identity nobody recorded is not
+// one the teardown may assume. The run says so by name instead of killing the number.
+test("a recorded pid with no start time is reported, never killed", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-owner-undated-"));
+  const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+  mkdirSync(paths.stateDir, { recursive: true });
+  const run = { cdpPort: 9494, tag: "undated-test" };
+  const child = spawnIdle(["capture"]);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    writeFileSync(
+      paths.runProcessesFile,
+      `${JSON.stringify({ pid: child.pid, role: "capture:a-surfaces", startTime: null, at: "2026-11-21T00:00:00.000Z" })}\n`,
+      "utf8",
+    );
+    const teardown = teardownRun({ paths, run, reason: "run_complete" });
+    const line = describeTeardown(teardown);
+    assert.equal(teardown.killed.length, 0, line);
+    assert.deepEqual(
+      teardown.unverified.map((entry) => [entry.pid, entry.recorded]),
+      [[child.pid, null]],
+      line,
+    );
+    assert.match(
+      line,
+      new RegExp(`unverified=1 \\[${child.pid}\\(capture:a-surfaces\\) recorded=nothing observed=\\S+\\]`, "u"),
+      line,
+    );
+    assert.ok(isAlive(child.pid), "an undated row does not license a kill");
+  } finally {
+    child.kill("SIGKILL");
+    await waitForGone(child.pid);
+    await removeTree(root);
+  }
+});
+
+// The registration is where the identity is available (the pid exists when it is written, and a minute later
+// it need not), so the recorder takes it rather than trusting every caller to remember.
+test("a registration records the process's own start time when the caller does not", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-owner-identity-"));
+  const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+  const child = spawnIdle(["capture"]);
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    registerRunProcess(paths, { pid: child.pid, role: "capture:b-characters" });
+    const [record] = registeredRunProcesses(paths);
+    assert.equal(typeof record.startTime, "string", "pid AND start time is the identity, so both are written");
+    assert.match(record.startTime, /^\d{4}-\d{2}-\d{2}T/u, record.startTime);
+  } finally {
+    child.kill("SIGKILL");
+    await waitForGone(child.pid);
+    await removeTree(root);
+  }
+});
