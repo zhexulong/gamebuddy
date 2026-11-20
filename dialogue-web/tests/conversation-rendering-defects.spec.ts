@@ -461,7 +461,7 @@ test("defect 4: a published title is what the transcript heading shows", async (
   expect(titled, "a published title is what the transcript heading shows").toBe("Gate Chat");
 });
 
-// --- defect 4, the narrow window (owner ruling 2026-10-19, superseded 2026-10-21) ---
+// --- defect 4, the narrow window (owner rulings 2026-10-19 / 2026-10-21 / 2026-11-21) ---
 
 /**
  * The title stack's second layer on the window that has no room for it - and the
@@ -473,25 +473,26 @@ test("defect 4: a published title is what the transcript heading shows", async (
  * covered: below 861 px `.nav-label` is not drawn at all, so the bar is a row of
  * unlabelled icons - and under 480 px four of the six entries are not drawn
  * either, they sit inside the `More` panel whose trigger looks the same on every
- * one of them. At 400x800 the shell named no surface anywhere.
+ * one of them. At 400x800 the shell named no surface anywhere, so the band was
+ * drawn again.
  *
- * So the heading is drawn where the bar stopped naming, and the assertions keep
- * the force the earlier premise protected from the other side:
+ * The band was a second PINNED row, and the 2026-11-21 ruling keeps the premise
+ * (a narrow bar names the surface with a WORD) by moving the word into the bar
+ * itself rather than restoring the band: measured at 400x800 the pair cost 111 px
+ * of an 800 px window (`.app-bar` 0..56, the band 56..111) before the transcript
+ * began. What this test protects is now:
  *
- *  - the region's accessible name is still exactly one node at both widths, and it
- *    is still the heading `SurfaceView` points `aria-labelledby` at - not a copy
- *    of the word somewhere else;
- *  - the mount focus still lands on that heading;
- *  - 1440x900 still draws nothing new: the band is still out of the flow and out of
- *    the column, and the room it spends there is still the measured 62 px.
+ *  - exactly ONE pinned row at 400x800, and the content starting under it;
+ *  - the surface named by its own word - `.app-bar-surface`, inside the bar's row;
+ *  - the region's accessible name still exactly one node at both widths, and still
+ *    the heading `SurfaceView` points `aria-labelledby` at;
+ *  - the mount focus still landing on that heading;
+ *  - 1440x900 still drawing nothing new: the band is out of the flow and out of the
+ *    column, and the room it would spend there is still its box plus the gap.
  *
- * The 400x800 measurement is read from the layout rather than from a class name:
- * the band's own box (`headerHeight`), the word in it, where the scroll container
- * starts relative to that box and the column's gap, and - by turning the two
- * declarations back on in this same mounted layout - what the band costs there
- * (62 px: the 54 px box and the column's 8 px gap).
+ * Every reading is taken from the layout rather than from a class name.
  */
-test("defect 4: the narrow window draws the surface's name and the wide window still does not", async ({ page }) => {
+test("defect 4: exactly one pinned band names the surface, and the wide window draws no band at all", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   await mountShell(page, { root: composedRoot({ transcript: [], title: "Gate Chat" }) });
 
@@ -501,8 +502,11 @@ test("defect 4: the narrow window draws the surface's name and the wide window s
     const surface = document.querySelector<HTMLElement>('[data-testid="chat-surface"]')!;
     const content = surface.querySelector<HTMLElement>(".surface-content")!;
     const style = getComputedStyle(header);
+    const bar = document.querySelector<HTMLElement>(".app-bar")!;
+    const word = document.querySelector<HTMLElement>(".app-bar-surface")!;
     const headerRect = header.getBoundingClientRect();
-    const headingRect = heading.getBoundingClientRect();
+    const barRect = bar.getBoundingClientRect();
+    const wordRect = word.getBoundingClientRect();
     return {
       clipPath: style.clipPath,
       position: style.position,
@@ -510,12 +514,16 @@ test("defect 4: the narrow window draws the surface's name and the wide window s
       regionHeight: Math.round(surface.getBoundingClientRect().height),
       gap: Math.round(Number.parseFloat(getComputedStyle(surface).rowGap || "0")),
       headerHeight: Math.round(headerRect.height),
-      headerWidth: Math.round(headerRect.width),
+      headerTop: Math.round(headerRect.top),
       headerBottom: Math.round(headerRect.bottom),
+      barBottom: Math.round(barRect.bottom),
+      barHeight: Math.round(barRect.height),
+      wordText: (word.textContent ?? "").trim(),
+      wordVisible: word.checkVisibility(),
+      wordRight: Math.round(wordRect.right),
+      wordTop: Math.round(wordRect.top),
+      wordBottom: Math.round(wordRect.bottom),
       headingText: (heading.textContent ?? "").trim(),
-      headingTop: Math.round(headingRect.top),
-      headingHeight: Math.round(headingRect.height),
-      headingWidth: Math.round(headingRect.width),
       contentTop: Math.round(content.getBoundingClientRect().top),
       contentClientHeight: content.clientHeight,
       labelledBy: surface.getAttribute("aria-labelledby"),
@@ -525,47 +533,53 @@ test("defect 4: the narrow window draws the surface's name and the wide window s
   const namedRegions = await page.getByRole("region", { name: "聊天", exact: true }).count();
   console.log(`[defect-4 narrow] ${JSON.stringify({ ...narrow, namedRegions })}`);
 
-  // The label a 400 px player reads: the surface's own word, in the band the bar
-  // gave up. Both catalogues carry it (`chatPanel`: 聊天 / Chat); this is the zh one.
-  expect(narrow.clipPath, "the heading is drawn at 400x800").toBe("none");
-  expect(narrow.position, "and it is in the column's flow").toBe("static");
-  expect(narrow.headingText, "the drawn word is the surface's own").toBe("聊天");
-  expect(narrow.headerHeight, "the band has a real box").toBeGreaterThan(0);
-  expect(narrow.headingWidth, "the word has a real box").toBeGreaterThan(0);
-  expect(narrow.headingTop, "and it is on the screen, not clipped off it").toBeGreaterThanOrEqual(narrow.surfaceTop);
-  // It sits above the content, on the column's own gap: the band leads the surface.
+  // THE SHAPE CHANGED ON PURPOSE, and the ruling it keeps is named: the 2026-10-21 ruling is that a
+  // narrow bar names the surface with a WORD rather than an icon alone. It was answered with a band of
+  // the surface's own above the conversation, and that band was a SECOND pinned row: measured at
+  // 400x800 it cost 55 px plus the column's 8 px gap - 111 px of an 800 px window before the
+  // transcript began, under a bar that had already marked the same surface. The word now lives in the
+  // bar (`.app-bar-surface`), and what this test protects is the two things that matter about it:
+  //   (a) exactly ONE row is pinned, so nothing above the conversation is drawn twice;
+  //   (b) the surface is still named by its own word, and it is that same 聊天 - not an icon.
+  expect(narrow.clipPath, "the surface's band is retired at 400x800, so the bar is the only pinned row").toBe(
+    "inset(50%)",
+  );
+  expect(narrow.position, "so its box is out of the column").toBe("absolute");
+  // One band, and the content directly under it: the retired heading is out of the flow, so it fires
+  // no gap either - the column's 8 px `gap` sits BETWEEN in-flow children, and this surface has one.
   expect(
     narrow.contentTop,
-    `the content starts under the band and its gap (${narrow.contentTop} vs ${narrow.headerBottom} + ${narrow.gap})`,
-  ).toBe(narrow.headerBottom + narrow.gap);
+    `the content starts under the bar and nothing else (${narrow.contentTop} vs the bar's ${narrow.barBottom}; the column's ${narrow.gap} px gap needs two in-flow children and the retired heading is not one)`,
+  ).toBe(narrow.barBottom);
   expect(
-    narrow.contentTop - narrow.surfaceTop,
-    "so the band is the first thing the surface draws",
-  ).toBe(narrow.headerHeight + narrow.gap);
-
-  // The room the band spends, measured in the same mounted layout: turning the two
-  // declarations back on is the 400x800 capture's 744.
-  const narrowContentWhileClipped = await page.evaluate(() => {
-    const header = document.querySelector<HTMLElement>(".surface-header")!;
-    const content = document.querySelector<HTMLElement>('[data-testid="chat-surface"] .surface-content')!;
-    header.style.position = "absolute";
-    header.style.clipPath = "inset(50%)";
-    const clipped = content.clientHeight;
-    header.style.position = "";
-    header.style.clipPath = "";
-    return clipped;
-  });
-  console.log(`[defect-4 narrow-clipped] contentClientHeight while the band is out of the column: ${narrowContentWhileClipped}`);
-  expect(narrowContentWhileClipped, "and what the capture read while the band was retired is 744").toBe(744);
+    narrow.surfaceTop,
+    "and the surface itself starts where the bar ends, so no second band stands between them",
+  ).toBe(narrow.barBottom);
   expect(
-    narrowContentWhileClipped - narrow.contentClientHeight,
-    "the room the band's box and the column's gap spend at 400x800",
-  ).toBe(62);
+    narrow.barHeight,
+    `exactly one pinned row: the bar is ${narrow.barHeight} px and the band adds nothing (it sits at y ${narrow.headerTop}..${narrow.headerBottom} but out of the flow)`,
+  ).toBe(narrow.barBottom);
+  // The room this buys, measured on the same mount: 63 px of the 800 px window (the 55 px band plus
+  // the column's 8 px gap). `119 - 56` is that number, and it is what the retired band cost.
+  expect(
+    narrow.contentTop,
+    "the 55 px band plus the column's 8 px gap are back on the transcript (content started at 119 before)",
+  ).toBe(56);
 
-  // The half a11y depends on: the region is still the thing named 聊天, by the
-  // node the heading IS - not by a copy of the word somewhere else.
+  // The premise the ruling is about, kept in a different box: the surface's own WORD, in the bar.
+  expect(narrow.wordVisible, "the bar draws the surface's word at 400x800").toBe(true);
+  expect(narrow.wordText, "and the word is the surface's own").toBe("聊天");
+  expect(
+    narrow.wordTop >= narrow.barBottom - narrow.barHeight && narrow.wordBottom <= narrow.barBottom,
+    `the word is inside the bar's own row (word y ${narrow.wordTop}..${narrow.wordBottom}, bar ends at ${narrow.barBottom})`,
+  ).toBe(true);
+  expect(narrow.wordRight, "and inside it horizontally").toBeLessThanOrEqual(400);
+
+  // The half a11y depends on, unchanged: the region is still the thing named 聊天, by the node the
+  // heading IS - not by the copy of the word in the bar.
   expect(narrow.labelledBy, "the region is still labelled by the heading's id").toBe("chat-surface-title");
   expect(namedRegions, "and exactly one region answers to the surface's name").toBe(1);
+  expect(narrow.headingText, "the heading is still the surface's word").toBe("聊天");
   expect(narrow.headingFocused, "the mount focus still lands on the heading").toBe(true);
 
   await page.setViewportSize({ width: 1440, height: 900 });

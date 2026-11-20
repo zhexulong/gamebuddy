@@ -10,6 +10,14 @@ import { CompanionAvatar } from "./CompanionAvatar";
  * then the affordances for the contextual panels. It is a single 56 px row
  * (`--appbar-height`) so the conversation below keeps its height.
  *
+ * - `surfaceName` is the surface occupying the main region, drawn in the
+ *   companion block only while the bar is too narrow to name a surface with its
+ *   entries (below 861 px of BAR, style.css). A narrow bar keeps no second band
+ *   above the conversation: the word the surface used to draw in its own header
+ *   is here instead, so there is exactly one pinned row at that width and the
+ *   surface is still named by a word rather than by an icon alone. Above that
+ *   width the entries carry their labels and this says nothing.
+ *
  * Two deliberate properties:
  *
  * - `entries` is a prop, not a fixed list. Design/26 §1 and §8.1 require a
@@ -47,6 +55,14 @@ export type AppBarProps = Readonly<{
   brandMark: string;
   brandLabel: string;
   companionName: string;
+  /**
+   * The surface occupying the main region, by its catalogue word (`labels().chatPanel`).
+   *
+   * Drawn only below 861 px of bar width, where the entries are icons: it is the word the
+   * retired surface band carried (owner ruling 2026-10-21, kept by moving the word into this
+   * row instead of restoring the band). Empty at a wide bar, where nothing draws it.
+   */
+  surfaceName: string;
   /**
    * The companion's own opaque roster handle, which is also the address of her
    * picture: the same `CompanionAvatar` every other surface draws her with, so a
@@ -113,6 +129,7 @@ export function AppBar({
   brandMark,
   brandLabel,
   companionName,
+  surfaceName,
   companionHandle,
   companionDigest,
   statusLabel,
@@ -243,6 +260,10 @@ export function AppBar({
 
       <div className="app-bar-companion">
         <CompanionAvatar handle={companionHandle} name={avatarName} className="avatar-small" digest={companionDigest} />
+        {/* The surface's own word, in the row rather than in a band of its own (style.css draws it
+            only while the entries are icons). It precedes the companion's name because it answers
+            "where am I" before "who is with me". */}
+        <span className="app-bar-surface">{surfaceName}</span>
         <span className="app-bar-title">{companionName}</span>
         {/* One polite live region announces the connection/turn status once
             (design/26 §7.3); `role="status"` is that region. The word is a child

@@ -124,6 +124,51 @@ test("a connected game and an active model are two badges with two names", async
   console.log(
     `[app-bar-two-facts] model="${await modelBadge(page).getAttribute("aria-label")}" game="${await gameBadge(page).getAttribute("aria-label")}"`,
   );
+
+  // THE PHONE CELL, where the row carries a THIRD fact: the surface's own word (the retired surface
+  // band's word moved into the bar, `.app-bar-surface`). The two badges must survive it - a narrow
+  // bar that names the surface by spending the status claims would trade one fact for another,
+  // which is this file's own defect one width over.
+  await page.setViewportSize({ width: 400, height: 800 });
+  const phone = await page.evaluate(() => {
+    const bar = document.querySelector<HTMLElement>(".app-bar")!;
+    const word = document.querySelector<HTMLElement>(".app-bar-surface")!;
+    const name = document.querySelector<HTMLElement>(".app-bar-title")!;
+    const box = (node: HTMLElement) => {
+      const rect = node.getBoundingClientRect();
+      return {
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        bottom: Math.round(rect.bottom),
+      };
+    };
+    return {
+      bar: box(bar),
+      word: box(word),
+      wordText: (word.textContent ?? "").trim(),
+      wordDrawn: word.checkVisibility(),
+      nameDrawn: name.checkVisibility(),
+      modelDots: document.querySelectorAll('[data-testid="app-bar-model-status"] .status-dot').length,
+      gameDots: document.querySelectorAll('[data-testid="app-bar-game-status"] .status-dot').length,
+      pageOverflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+  });
+  console.log(`[app-bar-two-facts] phone ${JSON.stringify(phone)}`);
+  expect(phone.wordDrawn, "the phone bar names the surface with a word").toBe(true);
+  expect(phone.wordText, "and it is the selected surface's own word").toBe(catalogue.chatPanel);
+  expect(phone.nameDrawn, "the companion's name is still drawn beside it").toBe(true);
+  expect(
+    phone.word.top >= phone.bar.top && phone.word.bottom <= phone.bar.bottom,
+    `the surface's word is inside the bar's one row (word ${phone.word.top}..${phone.word.bottom}, bar ${phone.bar.top}..${phone.bar.bottom})`,
+  ).toBe(true);
+  // Two facts, two lights: the WORDS are retired at this width (`@container (max-width: 720px)`), so
+  // the dot is the claim - and both claims are still made.
+  expect(phone.modelDots, "the model's own light survives the surface's word").toBe(1);
+  expect(phone.gameDots, "and so does the game's").toBe(1);
+  await expect(modelBadge(page)).toHaveAttribute("aria-label", catalogue.online);
+  await expect(gameBadge(page)).toHaveAttribute("aria-label", catalogue.gameStatusConnected);
+  expect(phone.pageOverflowX, "and the row still fits the window").toBeLessThanOrEqual(0);
 });
 
 test("a crashed game is disconnected while the model keeps its own word", async ({ page }) => {

@@ -244,6 +244,12 @@ async function controlColumns(page: Page): Promise<Record<string, number>> {
     const name = (await control.getAttribute("aria-label")) ?? `#${index}`;
     columns[name] = box.x;
   }
+  // The surface's own word is in the same row at a narrow bar (the retired surface band's word,
+  // `.app-bar-surface`), so it is measured with them: a status word that reflowed the row would
+  // move the surface's name too, and that is the fact this journey is about at phone width.
+  const word = page.locator(".app-bar-surface").first();
+  const wordBox = (await word.count()) === 0 ? null : await word.boundingBox();
+  if (wordBox !== null) columns["the surface's word"] = wordBox.x;
   return columns;
 }
 

@@ -20,7 +20,7 @@ import {
 import type { Locale } from "../i18n";
 import { applyDocumentLocale, messages, persistLocale, resolveLocale } from "../i18n";
 import type { BrowserDraftV1, TavernStateSnapshotV1 } from "../reference-pipeline-api";
-import { createReferencePipelineSession } from "../reference-pipeline-session";
+import { createReferencePipelineSession, ReferencePipelineSessionError } from "../reference-pipeline-session";
 import { type WorldInfoBindingSource, worldInfoBindingSource } from "../world-info-binding-source";
 import { AppBar } from "./AppBar";
 import { CharactersSurface } from "./CharactersSurface";
@@ -1116,9 +1116,17 @@ export function ComposedReferenceGameApp() {
    */
   const readProductWorldInfo = useCallback(async (): Promise<WorldInfoBindingSource> => {
     const current = viewRef.current;
-    const mounted = current.kind === "ready" ? (current.session.snapshot.selection?.generation ?? null) : null;
-    const root = await composedApiRef.current.readState();
-    return worldInfoBindingSource(root, mounted);
+    if (current.kind !== "ready") throw new ReferencePipelineSessionError("state_reconciliation_required");
+    // The Chat half's own route, never the aggregate. `/state` composes a Game projection into the
+    // same document and refuses the whole document when that half cannot be produced
+    // (`state_unavailable`/`game_projection_failed`, `readComposedRoot` in
+    // `host/src/composed-reference-game-browser.ts`), so reading it here let a Game fault empty the
+    // managed World Info library - the library a conversation attaches its items from - while the
+    // conversation itself stayed readable. This is the route a Chat switch already reads
+    // (`chatHalfPair`); the Game slice beside it is the view's own, which no Chat read may decide.
+    const chat = await tavernApiRef.current.readState();
+    const mounted = current.session.snapshot.selection?.generation ?? null;
+    return worldInfoBindingSource({ ...current.root, chat }, mounted);
   }, []);
 
   /**
@@ -1237,6 +1245,12 @@ export function ComposedReferenceGameApp() {
     [SETTINGS_PANEL]: { open: openSettings, ref: settingsEntryRef },
     [MEMORY_PANEL]: { open: openMemory, ref: memoryEntryRef },
   };
+  // The bar's entries, and the surface's word read back off them: a narrow bar keeps no second band
+  // above the conversation, so the entry that is `active` is also what names the surface in the row
+  // itself (`AppBar.surfaceName`). One derivation, so the word in the row and the entry the player
+  // pressed cannot disagree.
+  const barEntries = surfaceBarEntries(labels(), shownSurface, managementPanelsAvailable, entryOpeners);
+  const shownSurfaceName = barEntries.find((entry) => entry.active)?.label ?? "";
 
   // The step's sentence and the card's own control are one decision, so they are read once and cannot
   // disagree: a card drawing both would name two different steps for the same refusal.
@@ -1276,12 +1290,13 @@ export function ComposedReferenceGameApp() {
               brandMark={labels().appMark}
               brandLabel={labels().appName}
               companionName={view.session.snapshot.chat.companion.name}
+              surfaceName={shownSurfaceName}
               companionHandle={view.session.snapshot.chat.companion.handle}
               companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
               statusLabel={status.label}
               statusTone={status.tone}
               {...(gameStatus === undefined ? {} : { gameStatus })}
-              entries={surfaceBarEntries(labels(), shownSurface, managementPanelsAvailable, entryOpeners)}
+              entries={barEntries}
               fold={{ from: LEADING_SURFACE_COUNT, label: labels().appBarMore }}
             />
             <main id="main-content" className="app-main-content" tabIndex={-1}>

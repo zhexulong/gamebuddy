@@ -4970,9 +4970,28 @@
    whole. `173bf747` added the game's own word to the same budget - a second badge, with
    `app-bar-game-status-label` - and left the number where a single badge had measured it, so
    between 481 and about 568 the bar kept three facts in a strip that fits two and a name.
-   576 px is the first step above that crossover, so both words are retired together as soon as
-   the bar cannot hold them, exactly as they already are below 480. */
-  @container (max-width: 576px) {
+   576 px is where a single badge ceased to fit beside the name, so both words are retired together
+   as soon as the bar cannot hold them, exactly as they already are below 480.
+
+   660 px is that same crossover MEASURED AGAIN once the surface's own word joined the row
+   (`.app-bar-surface`, 30 px at this catalogue, drawn below 861 px of bar). The ladder above is
+   about the NAME's budget and the name is what moved: with the surface word in the row, a 127 px
+   companion name is cut at a 600 px bar by 25 px and at 661 by 58, and the words first fit beside
+   the name again at 720 - so they give way exactly where they would start costing the name.
+   Measured, mounted, on this sheet with a 127 px name and the surface word drawn:
+
+     bar 481  name given 195  (whole, 32 px to spare)
+     bar 560  name given 274  (whole)
+     bar 600  name given 102  (25 px cut)   <- whole again only once the words retire
+     bar 661  name given  69  (58 px cut)
+     bar 700  name given 108  (19 px cut)
+     bar 710  name given 118  (9 px cut)
+     bar 720  name given 128  (whole: the crossover)
+     bar 816  name given 224  (whole)
+
+   The 576 this replaces was the same crossover before the sheet's third fact existed; the surface
+   word spends the 8 px of margin it had. */
+  @container (max-width: 720px) {
     .app-bar-status-label,
     .app-bar-game-status-label {
       display: none;
@@ -5684,6 +5703,61 @@
     grid-column: 1 / -1;
   }
 
+  /* The companion situation card: her picture, where she is, and the one next thing to do.
+
+   It spans the surface's own two columns, exactly as the drawer below it does, and it is the first
+   thing on the surface - the panels under it answer questions about the machinery. Measured at
+   400x800 after this block: the card occupies y=119..188 (69 px), and the guide's own primary
+   control is still wholly inside the window (see the lane's own note in `.tmp/`).
+
+   The plate is `.avatar` at 40 px rather than a new shape: the monogram is the same fallback the
+   AppBar and the roster use, so a companion without a picture reads as the same companion in all
+   three places. */
+  .surface-game > .surface-content > .game-situation {
+    grid-column: 1 / -1;
+  }
+
+  .game-situation {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    background-color: var(--surface-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  .avatar.game-situation-avatar {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    font-size: 16px;
+    color: var(--accent);
+  }
+
+  .game-situation-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .game-situation-line {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+  }
+
+  .game-situation-next {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    overflow-wrap: anywhere;
+  }
+
   .game-capability-board {
     display: flex;
     flex-direction: column;
@@ -6212,7 +6286,7 @@
    and the name is what the space is being spent on.
    ========================================================================== */
 
-  @container (max-width: 576px) {
+  @container (max-width: 720px) {
     .app-bar-companion {
       position: relative;
     }
@@ -6978,6 +7052,56 @@
   }
 
   /* ==========================================================================
+   The narrow bar names the surface in the bar itself (owner ruling 2026-10-21,
+   kept by moving the word instead of restoring the band)
+
+   The retired band above was retired because the AppBar's own entry names the
+   surface it is showing. Below 861 px of BAR that premise is gone: `.nav-button
+   .nav-label` is `display: none` (the bar's own container query, near
+   `.nav-button`), so the bar is a row of unlabelled icons - and under 480 px four
+   of the six entries are not even drawn, they live inside the `More` panel.
+
+   That was answered with a band of the surface's own above the conversation, and
+   the band was a second PINNED row: measured, mounted, at 400x800 it cost 55 px of
+   an 800 px window (`.app-bar` 0..56, the band 56..111) on top of the bar's own
+   56 - 111 px of chrome before the transcript began, with the word 聊天 repeated
+   under the icon that already marked the same surface. The premise of the 2026-10-21
+   ruling is that a narrow bar must name the surface with a WORD rather than an
+   icon alone; that premise is what is kept here, and the band is what goes.
+
+   So the word moves into the bar's own companion block (`AppBar.surfaceName`),
+   drawn exactly where the bar stops drawing its entries' labels and nowhere else -
+   above 861 px the entries spell the selected surface themselves and this says
+   nothing. It is `display: inline` rather than a box of its own so it costs the
+   row no height, and it takes the accent the band's icon carried: the surface is
+   the one spot of accent in the chrome at either width.
+
+   Measured, mounted: at 400x800 the bar reads `GB M 聊天 Mira` and the content
+   starts at y=56 instead of y=119 - the 55 px band and the column's 8 px gap come
+   back, and exactly one row is pinned. At 1440x900 nothing is drawn by this rule
+   (the word is `display: none` there); the region's accessible name is the `h2`
+   `aria-labelledby` points at, unchanged at both widths.
+   ========================================================================== */
+
+  .app-bar-surface {
+    display: none;
+    flex: 0 0 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  @container (max-width: 860px) {
+    .app-bar-surface {
+      display: inline;
+    }
+  }
+
+  /* ==========================================================================
    A narrow bar names the surface in the surface itself (owner ruling, 2026-10-21)
 
    The retired band above was retired because the AppBar's own entry names the
@@ -7013,12 +7137,9 @@
    Appended block; the rules above are untouched.
    ========================================================================== */
 
-  @container (max-width: 860px) {
-    .surface-view > .surface-header {
-      position: static;
-      clip-path: none;
-    }
-  }
+  /* The surface's word is in the bar at this width (`.app-bar-surface`, shown by the block below
+   `The narrow bar names the surface in the bar itself`), so the band stays retired even here: two
+   pinned rows cost 111 px of the 800 px phone window, one costs 56. */
 
   /* ==========================================================================
    The companion's world-book notice joins the authoring form's measure (item 5)
