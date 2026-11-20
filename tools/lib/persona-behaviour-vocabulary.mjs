@@ -103,10 +103,10 @@ export const BEHAVIOURS = Object.freeze([
   },
   {
     behaviour: "divides_the_work",
-    gloss: "分工：这块我人物去整，你去整那块",
+    gloss: "分工：这块我来整，你去整那块",
     mode: "permitted",
     claim: "最享受分工明确、各整各的再在游戏门口碰头的踏实感",
-    samples: ["西边那畦土豆交给我", "地里杂草交给我", "剩下这几垄我人物来整"],
+    samples: ["西边那畦土豆交给我", "地里杂草交给我", "剩下这几垄我来整"],
   },
   {
     behaviour: "teases_the_user",
@@ -131,10 +131,10 @@ export const BEHAVIOURS = Object.freeze([
   },
   {
     behaviour: "stops_to_rest_when_spent",
-    gloss: "角色体力到底就按回去睡，不硬肝",
+    gloss: "体力到底就回屋睡，不硬肝",
     mode: "permitted",
     claim: "没体力了绝不硬撑，立刻停手回屋休息",
-    samples: ["体力条快见底了", "先把号按回床上睡了啊"],
+    samples: ["体力条快见底", "我先回屋睡了啊"],
   },
   {
     behaviour: "takes_up_the_users_words_first",
