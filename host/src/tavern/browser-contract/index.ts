@@ -2553,15 +2553,17 @@ export const RegenerateMessageCommandV1Schema = strictObject({
  * session, which is the invariant the whole operation exists for. That is the shape both references
  * have: SillyTavern truncates after the point and Pi moves the session leaf to that entry, so the
  * player can regenerate what followed, or answer their own kept line again. A rewind that only hid
- * rows in the projection would leave the model reading text the player can no longer see.
+ * rows in the projection would leave the model reading text the player can no longer see - and for the
+ * words the fold has already summarised, that is what this operation does: it reaches the transcript and
+ * the session and stops there, so the surface says the limit out loud rather than leaving the sentence
+ * above to imply the model forgets.
  *
- * What the operation reaches, exactly, and what it does not: it removes `tavern_messages` rows and
- * appends Pi context edits, and those two authorities are the whole of it. Words the fold has already
- * summarised are not among them - Magic Context renders the conversation's history from its own
- * `compartments` and replays a cached m[0]/m[1] prefix every turn, this cut touches neither, and no
- * Host path may write that store (`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`).
- * So the promise is the transcript and the session, and folded memory is a STATED limit rather than a
- * silent exception: the surface says it after every rewind, in both catalogues
+ * What the operation reaches, exactly: it removes `tavern_messages` rows and appends Pi context edits,
+ * and those two authorities are the whole of it. Words the fold has already summarised are not among
+ * them - Magic Context renders the conversation's history from its own `compartments` and replays a
+ * cached m[0]/m[1] prefix every turn, this cut touches neither, and no Host path may write that store
+ * (`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`). So the limit is STATED rather
+ * than left as a silent exception: the surface says it after every rewind, in both catalogues
  * (`removedWordsMayStillBeInMemory`, held there by
  * `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs`), and no wording here may claim the
  * model has forgotten summarised words.
