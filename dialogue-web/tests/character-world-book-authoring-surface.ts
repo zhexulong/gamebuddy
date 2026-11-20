@@ -71,6 +71,10 @@ export async function stubLibraryWorldBookSurface(page: Page): Promise<LibraryWo
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "en"));
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(mountedRoot())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(mountedRoot())));
+  // The library's binding reads the Chat half on its own route, never the aggregate: `/state`
+  // refuses the whole document when the Game projection cannot be produced, and the library is a
+  // surface the game has no part in (`game-projection-failure-is-not-the-chats.spec.ts`).
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(mountedRoot().chat)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, companions: [] })),

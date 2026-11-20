@@ -100,6 +100,9 @@ async function stubCharacters(page: Page): Promise<void> {
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  // The library's binding reads the Chat half on its own route: the aggregate refuses when the Game
+  // projection cannot be produced (`game-projection-failure-is-not-the-chats.spec.ts`).
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(composedRoot.chat)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, companions: [{ handle: companionHandle, name: "琥珀", isCurrent: true }] })),

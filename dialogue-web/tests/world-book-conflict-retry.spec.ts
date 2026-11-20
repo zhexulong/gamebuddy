@@ -104,6 +104,9 @@ type Save = Readonly<{
 async function stubSurface(page: Page): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  // The library's binding reads the Chat half on its own route: the aggregate refuses when the Game
+  // projection cannot be produced (`game-projection-failure-is-not-the-chats.spec.ts`).
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(composedRoot.chat)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );

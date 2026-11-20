@@ -106,6 +106,10 @@ async function stubCharacters(
 ): Promise<void> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(composedRoot)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(composedRoot)));
+  // The managed World Info library's binding reads the Chat half on its own route, not the
+  // aggregate: a Game projection that cannot be read refuses the whole `/state` document, and the
+  // library is a surface the game has no part in (`game-projection-failure-is-not-the-chats.spec.ts`).
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(composedRoot.chat)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
   );
@@ -338,23 +342,21 @@ test("the companion's own trigger list draws the same card rows as the bindable 
   });
   // The attachable library is non-empty here, so its own row is the comparison.
   // Registered after `stubCharacters`, which is what makes it win the match: the
-  // library now reaches the surface through the composed snapshot's Chat half, so
-  // the override is that route and not a second read of `/world-info`.
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+  // library reaches the surface through the Chat half, and that half now arrives on
+  // its own route (`/api/tavern/v1/state`), so the override is that route and not a
+  // second read of `/world-info`.
+  await page.route("**/api/tavern/v1/state", (route) =>
     route.fulfill(
       jsonOk({
-        ...composedRoot,
+        ...composedRoot.chat,
         chat: {
-          ...composedRoot.chat,
-          chat: {
-            ...composedRoot.chat.chat,
-            worldInfo: {
-              state: "none",
-              revision: handle,
-              items: [
-                { handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: false, pending: false },
-              ],
-            },
+          ...composedRoot.chat.chat,
+          worldInfo: {
+            state: "none",
+            revision: handle,
+            items: [
+              { handle: worldInfoItemHandle, title: "Pelican Town", summary: null, selected: false, pending: false },
+            ],
           },
         },
       }),
@@ -1034,8 +1036,8 @@ test("a world book library that could not be read says so, and offers the read a
   const labels = characterLabels("en");
   await stubCharacters(page, null);
   let failing = true;
-  // The panel reads the composed state for the library, so this is the read under test.
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+  // The panel reads the Chat half's own route for the library, so this is the read under test.
+  await page.route("**/api/tavern/v1/state", (route) =>
     failing ? route.fulfill(problem(503, "runtime_unavailable")) : route.fallback(),
   );
 
@@ -1046,7 +1048,7 @@ test("a world book library that could not be read says so, and offers the read a
   await expect(failed).not.toContainText(labels.worldBookUnavailable);
 
   failing = false;
-  const reread = page.waitForRequest((request) => request.url().endsWith("/api/composed-reference-game/v1/state"));
+  const reread = page.waitForRequest((request) => request.url().endsWith("/api/tavern/v1/state"));
   await failed.locator("[data-world-book-retry]").click();
   await reread;
   await expect(surface.locator("[data-world-book-read-failed]")).toHaveCount(0);

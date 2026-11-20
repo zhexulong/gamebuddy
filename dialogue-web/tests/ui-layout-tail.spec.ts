@@ -94,6 +94,10 @@ async function stubShell(
   await page.addInitScript(() => localStorage.setItem("gamebuddy.tavern.ui-locale", "zh-CN"));
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  // The Characters library's binding reads the Chat half on its own route, never the aggregate:
+  // `/state` refuses the whole document when the Game projection cannot be produced, and the library
+  // is a surface the game has no part in (`game-projection-failure-is-not-the-chats.spec.ts`).
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(root.chat)));
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.route("**/api/tavern/v1/companions", (route) =>
     route.fulfill(
