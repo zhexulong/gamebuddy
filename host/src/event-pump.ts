@@ -1616,31 +1616,35 @@ export const MOD_STALL_VERDICT_CODE = "stalled_waiting";
 export const STARDEW_TICKS_PER_SECOND = 60;
 
 /**
- * How many nodes her own plan may still have left before the next turn is asked for anyway.
+ * Every rule that can open a turn for something other than the player's own word.
  *
  * <p>
- * MEASURED 2026-11-20 (`round82`, its own `result.json`): **102 programme switches with 4 overlaps** - so in 98 of them she
- * was woken only after the previous programme had answered - and **992.3 s of the run's 1,626 s spent between programmes**,
- * 61% of the wall clock. The rule that produced it was `remaining > 0`, written when `follow_up` was 65 turns of chatter
- * (`round60`) and every arrival opened a prompt: the answer was "wait until the plan has answered", and it is exact for the
- * question it was written for and wrong for the next one.
- *
- * <p>
- * THE UNIT IS THE DECISION, NOT THE NODE. A turn is a model round-trip that ENDS in a plan, and the Mod's journal accepts a
- * second `Active` programme while the first still holds the body (`OpenBodyProgramJournalAuthority.Submit`) - its nodes
- * wait their turn behind the one in flight (`FarmhandBodyProgramController.ProgramWithNodeInFlight`) and nothing is minted,
- * so a queue is free. What was expensive was the GAP: the last node settles, the settlement fact opens a turn, the model
- * reads, composes and submits, and only then does the body work again. Asking for that decision two nodes early overlaps
- * the model's own seconds with the body's.
+ * A WAKE RULE NEEDS A BELL. Measured 2026-11-20 (`round84`, 34 minutes, its own account line): `turns opened 82
+ * {player_input 7, world_fact 74 {adapter_ingress 26, companion_arrival 1, program_settlement 47}}` - and the low-water rule
+ * this pump had carried since `8e8e625f` ("wake her when her plan is down to its last two nodes") opened **none** of them,
+ * because no fact kind can carry it. `#opensTurn` asks the SURFACE question first (`#canPresent`), a node's
+ * `execution_receipt` has no presentation lease, and `watchProgramSettlement` synthesizes `program_settled` only once every
+ * node is terminal: what a plan's progress produces is either unpresentable or arrives after the tail it was about is gone.
+ * The rule was a filter on a fact that is never offered to it, and it was retired rather than tuned.
  * </p>
  * <p>
- * WHY TWO AND NOT MORE. Three is the shape the old rule was measured against (`round82`'s plans are 2-3 nodes) and waking
- * three nodes early is waking on almost every programme, which is the chatter the rule exists to prevent; zero is the
- * defect. Two is the smallest step that overlaps a turn with the tail of a plan, and it is a COUNT OF NODES rather than a
- * duration because the journal publishes nodes and no clock (`InFlightProgramme.remaining`).
+ * SO THE POPULATION IS DECLARED HERE, one member per wake rule, and `event-pump.wake-rule-reachability.test.ts` drives each
+ * member's own carrier fact through the pump and reds the member that opens nothing. A wake rule added to the pump without a
+ * member here is a rule nobody has proven can fire, and a member whose carrier opens no turn fails by name.
  * </p>
  */
-export const PLAN_LOW_WATER_NODES = 2;
+export const WAKE_RULE = Object.freeze({
+  /** A fact her surface can show and she has not been shown: `#canPresent` plus `#isRestatement` - the `world_fact` opener. */
+  presentableNews: "presentable_news",
+  /** A Host-minted wake (`PUMP_MINTED_WAKE_KINDS`): the `due` opener, whose product is the look and not a line. */
+  dueWake: "due_wake",
+  /** The world declaring it will not move until the fact is answered (`HELD_WORLD_DECLARATIONS`). */
+  heldWorld: "held_world",
+});
+
+export const WAKE_RULES = Object.freeze(Object.values(WAKE_RULE));
+
+export type WakeRule = (typeof WAKE_RULES)[number];
 
 /**
  * One delivered turn, at the cadence this product measured.
@@ -3312,9 +3316,9 @@ export class CompanionEventPump {
    * worth waking her for.
    * </p>
    * <p>
-   * AND WHEN THE TAIL IS SHORT, THE ANSWER IS "NOW": `#planStillPlansAhead` asks the journal a finer question than "are
-   * there any nodes left" - see `PLAN_LOW_WATER_NODES` for the measurement that forced it. What has not changed is that
-   * the reading is the journal's own count of the nodes that have not happened.
+   * AND WHEN THE TAIL IS SHORT, WAITING IS THE CHEAPER ANSWER: the plan's own settlement is nearer than any answer could be,
+   * so the fact rides that batch instead of buying a turn - `#planStillPlansAhead` asks the journal its own count of the nodes
+   * that have not happened.
    * </p>
    * TWO THINGS DO NOT WAIT, and both are declared above rather than special-cased here. A DUE wake is the liveness
    * exception (`PUMP_MINTED_WAKE_KINDS`): a stale reading, a narration run and the Mod's stall verdict exist to make her
@@ -3344,29 +3348,22 @@ export class CompanionEventPump {
    * Whether the next turn should still wait for her own plan rather than be opened for whatever arrived.
    *
    * <p>
-   * TWO CONDITIONS, and the second is what a QUEUE changes (`PLAN_LOW_WATER_NODES` carries the measurement):
+   * THE READING, AND THE RETIREMENT. The reading is unchanged: the journal's own count of the nodes her programmes have not
+   * got through (`nodesLeftToPlan`). While it is above zero, a fact arriving mid-plan is carried into the batch the plan's own
+   * answer opens, which is the measurement this rule was written for (`follow_up` 9 -> 65 between `round42` and `round60`, a
+   * turn's 8.2 model steps down to 2.0). A plan that has answered opens its own turn, and the player's word, a due wake, a
+   * settlement or a world that declared it is waiting never come through here.
    * </p>
-   * <ul>
-   *   <li>A SECOND PROGRAMME IS ALREADY QUEUED. The journal holds more than one `Active` programme, so the next turn has
-   *       already spent its decision and there is nothing left to ask for - and waiting is what keeps two programmes from
-   *       being composed against the same snapshot, which is the re-ask a lookahead has to avoid.</li>
-   *   <li>THE PLAN STILL HAS A TAIL LONGER THAN THE LOW-WATER MARK. Two nodes left is about a turn's worth of body work:
-   *       the model composes the next programme while the last two settle, instead of after.</li>
-   * </ul>
    * <p>
-   * WHAT IT IS NOT: a statement that the plan has answered. That question is `#workLeftToPlan() === 0`, and the carried
-   * backlog still asks it - facts waiting for the plan's own settlement are waiting for an answer one or two nodes away,
-   * and calling that a backlog would buy the extra turn the backlog exists to avoid. Two questions, two readings.
+   * WHAT WENT IS THE THRESHOLD. `PLAN_LOW_WATER_NODES = 2` ("wake her when the plan is down to its last two nodes",
+   * `8e8e625f`) is retired, and `WAKE_RULE` carries the measurement: `round84` delivered 34 minutes, opened 82 turns, and not
+   * one of them came from the mark - because no fact kind can carry it (`#opensTurn` asks the surface question first, a node's
+   * receipt has no presentation lease, and the settlement arrives only once every node is terminal). A threshold on a fact
+   * that is never offered to the filter is not a threshold, and tuning its unit would have measured nothing.
    * </p>
    */
   #planStillPlansAhead(): boolean {
-    const programmes = this.#readInFlight().programmes;
-    const remaining = nodesLeftToPlan(programmes);
-    // A PROGRAMME THE JOURNAL STILL CALLS ACTIVE BUT HAS NOTHING LEFT IN is not a queue: it is a programme waiting to be
-    // closed, and counting it as "already asked for" would hold a turn indefinitely on an empty plan.
-    if (remaining === 0) return false;
-    if (programmes.length >= 2) return true;
-    return remaining > PLAN_LOW_WATER_NODES;
+    return this.#workLeftToPlan() > 0;
   }
 
   /**
@@ -4212,7 +4209,7 @@ export class CompanionEventPump {
         events: promptFacts,
         locale,
         // THE WORK ALREADY QUEUED IS NOT OFFERED AGAIN. The snapshot in this batch may predate the programme still in
-        // flight (`PLAN_LOW_WATER_NODES` is what opens a turn while it runs), so the rows its un-settled nodes address
+        // flight (`WAKE_RULE` is the population of the wakes that can open a turn while it runs), so the rows its un-settled nodes address
         // leave the state block for this delivery: a plan composed from a line that still offers them is a second plan
         // for one tile. Tile, not target id - the journal publishes the tile (`InFlightProgramme.unsettledTiles`).
         inFlightTiles: inFlightTargets(this.#readInFlight()),

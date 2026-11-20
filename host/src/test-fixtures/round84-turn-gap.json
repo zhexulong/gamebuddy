@@ -1,0 +1,842 @@
+{
+ "source": "round84 · .live-runs/game-ladder/2026-11-20T13-52-51-386Z-multiday_routine/{result.json (programOutcomes), run-trace.json (delivery + turn.tail spans)} · 2026-11-20",
+ "run": "2026-11-20T13-52-51-386Z-multiday_routine",
+ "programmes": [
+  {
+   "programId": "plan_0_9191ba7165178c9a",
+   "nodes": 3,
+   "firstAtMs": 154,
+   "lastSettledMs": 2476
+  },
+  {
+   "programId": "plan_5_55580059b4336acc",
+   "nodes": 3,
+   "firstAtMs": 20736,
+   "lastSettledMs": 25930
+  },
+  {
+   "programId": "plan_14_bb0ef279f15a4ca4",
+   "nodes": 3,
+   "firstAtMs": 30940,
+   "lastSettledMs": 35011
+  },
+  {
+   "programId": "plan_19_fbdaae14ea0469d4",
+   "nodes": 2,
+   "firstAtMs": 248884,
+   "lastSettledMs": 249613
+  },
+  {
+   "programId": "plan_22_cef66135058e8f36",
+   "nodes": 1,
+   "firstAtMs": 254598,
+   "lastSettledMs": 306615
+  },
+  {
+   "programId": "plan_26_e8452f83bdb2b5a2",
+   "nodes": 1,
+   "firstAtMs": 382357,
+   "lastSettledMs": 384837
+  },
+  {
+   "programId": "plan_28_e8f9f520c3799f5b",
+   "nodes": 1,
+   "firstAtMs": 401502,
+   "lastSettledMs": 401650
+  },
+  {
+   "programId": "plan_29_3962d6b0d3d40fc4",
+   "nodes": 2,
+   "firstAtMs": 412350,
+   "lastSettledMs": 414736
+  },
+  {
+   "programId": "plan_32_dfaf26d8c0b4c861",
+   "nodes": 3,
+   "firstAtMs": 420448,
+   "lastSettledMs": 423042
+  },
+  {
+   "programId": "plan_37_5d8930f5175c33fc",
+   "nodes": 1,
+   "firstAtMs": 443684,
+   "lastSettledMs": 451550
+  },
+  {
+   "programId": "plan_39_e1f6a1e66b3fdb7a",
+   "nodes": 2,
+   "firstAtMs": 495102,
+   "lastSettledMs": 497238
+  },
+  {
+   "programId": "plan_43_27b2507344dac234",
+   "nodes": 3,
+   "firstAtMs": 507206,
+   "lastSettledMs": 507420
+  },
+  {
+   "programId": "plan_43_c72e8776268bc5ee",
+   "nodes": 1,
+   "firstAtMs": 517097,
+   "lastSettledMs": 517118
+  },
+  {
+   "programId": "plan_43_1d66869369c986de",
+   "nodes": 3,
+   "firstAtMs": 615505,
+   "lastSettledMs": 618322
+  },
+  {
+   "programId": "plan_49_77bbc2e5b9101ef9",
+   "nodes": 1,
+   "firstAtMs": 631370,
+   "lastSettledMs": 650488
+  },
+  {
+   "programId": "plan_52_b22e08bc6d713788",
+   "nodes": 10,
+   "firstAtMs": 806654,
+   "lastSettledMs": 808832
+  },
+  {
+   "programId": "plan_76_ab37f7051285e209",
+   "nodes": 5,
+   "firstAtMs": 825816,
+   "lastSettledMs": 837552
+  },
+  {
+   "programId": "plan_85_15d03879c6feae54",
+   "nodes": 1,
+   "firstAtMs": 839944,
+   "lastSettledMs": 839963
+  },
+  {
+   "programId": "plan_86_9191ba7165178c9a",
+   "nodes": 3,
+   "firstAtMs": 860722,
+   "lastSettledMs": 863076
+  },
+  {
+   "programId": "plan_91_4ce46c6991175778",
+   "nodes": 10,
+   "firstAtMs": 884320,
+   "lastSettledMs": 888136
+  },
+  {
+   "programId": "plan_115_5d10d5cc52483b31",
+   "nodes": 1,
+   "firstAtMs": 892606,
+   "lastSettledMs": 895780
+  },
+  {
+   "programId": "plan_118_9effff83d391c543",
+   "nodes": 3,
+   "firstAtMs": 912404,
+   "lastSettledMs": 914905
+  },
+  {
+   "programId": "plan_123_01f17212285554fd",
+   "nodes": 3,
+   "firstAtMs": 928190,
+   "lastSettledMs": 929081
+  },
+  {
+   "programId": "plan_127_7a0a1181189e99b7",
+   "nodes": 5,
+   "firstAtMs": 943005,
+   "lastSettledMs": 946666
+  },
+  {
+   "programId": "plan_137_b7e800297720bc3b",
+   "nodes": 1,
+   "firstAtMs": 950960,
+   "lastSettledMs": 950978
+  },
+  {
+   "programId": "plan_138_951828da0ad085d9",
+   "nodes": 9,
+   "firstAtMs": 975226,
+   "lastSettledMs": 980089
+  },
+  {
+   "programId": "plan_159_5af31e8cb7bb5927",
+   "nodes": 4,
+   "firstAtMs": 986709,
+   "lastSettledMs": 988982
+  },
+  {
+   "programId": "plan_167_a227e48970aa0ca1",
+   "nodes": 3,
+   "firstAtMs": 997272,
+   "lastSettledMs": 998839
+  },
+  {
+   "programId": "plan_174_740a2f51fdcf4757",
+   "nodes": 2,
+   "firstAtMs": 1011474,
+   "lastSettledMs": 1011797
+  },
+  {
+   "programId": "plan_178_fbcbbc562834b66e",
+   "nodes": 5,
+   "firstAtMs": 1025159,
+   "lastSettledMs": 1029363
+  },
+  {
+   "programId": "plan_189_99d05d04df6f3d5c",
+   "nodes": 1,
+   "firstAtMs": 1134093,
+   "lastSettledMs": 1134722
+  },
+  {
+   "programId": "plan_192_9effff83d391c543",
+   "nodes": 3,
+   "firstAtMs": 1148259,
+   "lastSettledMs": 1151306
+  },
+  {
+   "programId": "plan_197_32552eff71a19473",
+   "nodes": 3,
+   "firstAtMs": 1400811,
+   "lastSettledMs": 1401720
+  },
+  {
+   "programId": "plan_201_bae9002a3dab081b",
+   "nodes": 2,
+   "firstAtMs": 1410645,
+   "lastSettledMs": 1418174
+  },
+  {
+   "programId": "plan_205_9191ba7165178c9a",
+   "nodes": 3,
+   "firstAtMs": 1422163,
+   "lastSettledMs": 1424524
+  },
+  {
+   "programId": "plan_210_48062f8e9d920d6a",
+   "nodes": 7,
+   "firstAtMs": 1433832,
+   "lastSettledMs": 1439508
+  },
+  {
+   "programId": "plan_229_fd7956e2cb90ef6e",
+   "nodes": 12,
+   "firstAtMs": 1447500,
+   "lastSettledMs": 1452507
+  },
+  {
+   "programId": "plan_255_6d7dd984c01f270c",
+   "nodes": 9,
+   "firstAtMs": 1460006,
+   "lastSettledMs": 1465614
+  },
+  {
+   "programId": "plan_278_bd2c2f20aa28da9e",
+   "nodes": 16,
+   "firstAtMs": 1470824,
+   "lastSettledMs": 1479590
+  },
+  {
+   "programId": "plan_312_e085ba32c0d0d583",
+   "nodes": 12,
+   "firstAtMs": 1485626,
+   "lastSettledMs": 1491691
+  },
+  {
+   "programId": "plan_340_bffe85ee39f843b0",
+   "nodes": 9,
+   "firstAtMs": 1497547,
+   "lastSettledMs": 1501257
+  },
+  {
+   "programId": "plan_353_1094391a91b765c9",
+   "nodes": 17,
+   "firstAtMs": 1506831,
+   "lastSettledMs": 1516609
+  },
+  {
+   "programId": "plan_397_7351e6b85120072c",
+   "nodes": 17,
+   "firstAtMs": 1522535,
+   "lastSettledMs": 1532358
+  },
+  {
+   "programId": "plan_438_913990d169ab2ffb",
+   "nodes": 15,
+   "firstAtMs": 1541257,
+   "lastSettledMs": 1546207
+  },
+  {
+   "programId": "plan_473_e48ced0724472053",
+   "nodes": 16,
+   "firstAtMs": 1556016,
+   "lastSettledMs": 1562674
+  },
+  {
+   "programId": "plan_511_441013a21f5c8164",
+   "nodes": 17,
+   "firstAtMs": 1572107,
+   "lastSettledMs": 1581280
+  },
+  {
+   "programId": "plan_550_326514fd30d73d05",
+   "nodes": 15,
+   "firstAtMs": 1594510,
+   "lastSettledMs": 1601141
+  },
+  {
+   "programId": "plan_583_7a6cbbe44a7f4398",
+   "nodes": 11,
+   "firstAtMs": 1608143,
+   "lastSettledMs": 1618624
+  },
+  {
+   "programId": "plan_612_db6f09f58eb41b8a",
+   "nodes": 12,
+   "firstAtMs": 1624314,
+   "lastSettledMs": 1632441
+  },
+  {
+   "programId": "plan_642_24e1c1cbde9e756c",
+   "nodes": 6,
+   "firstAtMs": 1790505,
+   "lastSettledMs": 1800957
+  },
+  {
+   "programId": "plan_652_de22790a76fa21a0",
+   "nodes": 4,
+   "firstAtMs": 1797505,
+   "lastSettledMs": 1804392
+  },
+  {
+   "programId": "plan_668_1cb537570fe5373e",
+   "nodes": 6,
+   "firstAtMs": 1807911,
+   "lastSettledMs": 1812024
+  },
+  {
+   "programId": "plan_676_3c8014fa68e895df",
+   "nodes": 2,
+   "firstAtMs": 1817607,
+   "lastSettledMs": 1817901
+  },
+  {
+   "programId": "plan_680_89fd90adcff580db",
+   "nodes": 12,
+   "firstAtMs": 1958397,
+   "lastSettledMs": 1963956
+  },
+  {
+   "programId": "plan_698_81d801bd3df6d0c8",
+   "nodes": 3,
+   "firstAtMs": 1972647,
+   "lastSettledMs": 1984967
+  },
+  {
+   "programId": "plan_703_5d4507b656447ca3",
+   "nodes": 1,
+   "firstAtMs": 1992611,
+   "lastSettledMs": 1993489
+  },
+  {
+   "programId": "plan_705_2197bd186944c381",
+   "nodes": 3,
+   "firstAtMs": 2002489,
+   "lastSettledMs": 2003522
+  }
+ ],
+ "turns": [
+  {
+   "batchId": "53cebc5d-3593-46c6-a3a2-5368cce2b8be",
+   "disposition": "follow_up",
+   "startMs": 9645,
+   "endMs": 14705
+  },
+  {
+   "batchId": "c39bd689-e38e-4894-b946-0fb6da15c27a",
+   "disposition": "steer",
+   "startMs": 14756,
+   "endMs": 25475
+  },
+  {
+   "batchId": "e0fa144e-2bcb-43d7-afca-b1e148e9db25",
+   "disposition": "follow_up",
+   "startMs": 26122,
+   "endMs": 48523
+  },
+  {
+   "batchId": "b5b764cf-d352-4524-b2fc-977a6c435cff",
+   "disposition": "follow_up",
+   "startMs": 49670,
+   "endMs": 57615
+  },
+  {
+   "batchId": "424f2a21-7866-4a9b-ae96-c482e9ca41c0",
+   "disposition": "follow_up",
+   "startMs": 58833,
+   "endMs": 62121
+  },
+  {
+   "batchId": "59fed265-648d-4812-9f90-4c99e0593d3e",
+   "disposition": "follow_up",
+   "startMs": 265875,
+   "endMs": 280985
+  },
+  {
+   "batchId": "9a6770fe-2da8-4c7c-bb6a-5f3ca754a779",
+   "disposition": "follow_up",
+   "startMs": 281010,
+   "endMs": 288828
+  },
+  {
+   "batchId": "6aa518d7-494a-45e3-9ea4-105fca884fdb",
+   "disposition": "follow_up",
+   "startMs": 294020,
+   "endMs": 309264
+  },
+  {
+   "batchId": "40a3fde4-a230-4583-a93a-c875f719b8ae",
+   "disposition": "follow_up",
+   "startMs": 309369,
+   "endMs": 314414
+  },
+  {
+   "batchId": "2ed0360e-b92d-4f24-8a1d-c86567e102df",
+   "disposition": "follow_up",
+   "startMs": 314505,
+   "endMs": 317458
+  },
+  {
+   "batchId": "9088eb64-f6af-4d9e-8684-1de1dc546290",
+   "disposition": "follow_up",
+   "startMs": 317538,
+   "endMs": 320495
+  },
+  {
+   "batchId": "66afbeac-2431-4527-9da7-d6dee000e8b7",
+   "disposition": "follow_up",
+   "startMs": 320591,
+   "endMs": 327012
+  },
+  {
+   "batchId": "3ea30d16-39dc-48a0-9ef0-5274707fc369",
+   "disposition": "follow_up",
+   "startMs": 327018,
+   "endMs": 334700
+  },
+  {
+   "batchId": "759d7448-7c2d-474d-b5da-2adf3032c084",
+   "disposition": "follow_up",
+   "startMs": 334705,
+   "endMs": 339570
+  },
+  {
+   "batchId": "4a958c4e-4d7a-46ec-8d10-69345cbab13c",
+   "disposition": "follow_up",
+   "startMs": 339580,
+   "endMs": 345206
+  },
+  {
+   "batchId": "96bbd890-3fda-4ed8-b9a0-79e80eef6e3b",
+   "disposition": "follow_up",
+   "startMs": 345233,
+   "endMs": 348214
+  },
+  {
+   "batchId": "0414bc64-4e5d-41a4-aaf9-5648c8fa14c8",
+   "disposition": "follow_up",
+   "startMs": 348228,
+   "endMs": 352111
+  },
+  {
+   "batchId": "be352cf6-1417-4d5a-90d0-0eb6256089d6",
+   "disposition": "follow_up",
+   "startMs": 353689,
+   "endMs": 357362
+  },
+  {
+   "batchId": "02d2d89d-fcbf-49dd-8cc0-12442ec7e995",
+   "disposition": "follow_up",
+   "startMs": 360062,
+   "endMs": 363892
+  },
+  {
+   "batchId": "0e4aad84-d0f1-4da5-87a0-41bb9c1c1326",
+   "disposition": "follow_up",
+   "startMs": 369985,
+   "endMs": 373663
+  },
+  {
+   "batchId": "d7ffe61e-04cf-4512-8945-0f5fc837622b",
+   "disposition": "follow_up",
+   "startMs": 373666,
+   "endMs": 377364
+  },
+  {
+   "batchId": "db51429c-841e-4d3b-9f55-d2b6d997e16f",
+   "disposition": "follow_up",
+   "startMs": 377368,
+   "endMs": 380891
+  },
+  {
+   "batchId": "2e2d9788-9269-4931-ac5f-fe15a2ca699d",
+   "disposition": "follow_up",
+   "startMs": 382378,
+   "endMs": 385661
+  },
+  {
+   "batchId": "853c12d9-40a7-4148-826b-7052fc88f701",
+   "disposition": "follow_up",
+   "startMs": 385665,
+   "endMs": 388582
+  },
+  {
+   "batchId": "30e4fb05-468a-4227-b178-8821718d597e",
+   "disposition": "steer",
+   "startMs": 388699,
+   "endMs": 407812
+  },
+  {
+   "batchId": "f1d2e742-e35b-4220-8598-d7c10c78315d",
+   "disposition": "follow_up",
+   "startMs": 408186,
+   "endMs": 437888
+  },
+  {
+   "batchId": "879b7913-b381-46b7-9304-45521037d444",
+   "disposition": "follow_up",
+   "startMs": 437904,
+   "endMs": 469348
+  },
+  {
+   "batchId": "40230d7a-d4f4-425d-9136-e8b8066daef5",
+   "disposition": "steer",
+   "startMs": 469373,
+   "endMs": 473270
+  },
+  {
+   "batchId": "a79ba817-8411-4eb4-b4b4-5ebca311409d",
+   "disposition": "follow_up",
+   "startMs": 474617,
+   "endMs": 481229
+  },
+  {
+   "batchId": "a25a6c60-ad7b-41ee-b713-8ca7e2dca536",
+   "disposition": "steer",
+   "startMs": 511409,
+   "endMs": 520656
+  },
+  {
+   "batchId": "c85e239a-fc8a-4619-81bb-8c6d101d8148",
+   "disposition": "follow_up",
+   "startMs": 520967,
+   "endMs": 543583
+  },
+  {
+   "batchId": "b6c11ffb-47f3-4ae2-8f94-cc72ccc2d042",
+   "disposition": "follow_up",
+   "startMs": 543672,
+   "endMs": 549580
+  },
+  {
+   "batchId": "2c7c96cf-06d6-424f-ab9c-263cc592ae1c",
+   "disposition": "follow_up",
+   "startMs": 634169,
+   "endMs": 644272
+  },
+  {
+   "batchId": "6e2631ae-3cd1-4b2c-a3bf-37e416327e15",
+   "disposition": "follow_up",
+   "startMs": 644290,
+   "endMs": 657780
+  },
+  {
+   "batchId": "98ad4ee5-8067-4c56-8197-500034f845a3",
+   "disposition": "follow_up",
+   "startMs": 673453,
+   "endMs": 683481
+  },
+  {
+   "batchId": "128efe44-04f1-4b09-abb7-c38dbd7f9806",
+   "disposition": "follow_up",
+   "startMs": 813370,
+   "endMs": 841964
+  },
+  {
+   "batchId": "581e0956-71d6-405c-90b6-ab41cfb2a7d1",
+   "disposition": "follow_up",
+   "startMs": 841976,
+   "endMs": 852215
+  },
+  {
+   "batchId": "c0cbf7f0-a0b2-4b23-97ff-6113b8341cce",
+   "disposition": "steer",
+   "startMs": 852278,
+   "endMs": 855080
+  },
+  {
+   "batchId": "ea94a2b5-7bbe-4c8b-b975-339abbc3f520",
+   "disposition": "follow_up",
+   "startMs": 855112,
+   "endMs": 877499
+  },
+  {
+   "batchId": "30702518-fb00-46c1-b0e0-e4418040268a",
+   "disposition": "follow_up",
+   "startMs": 877503,
+   "endMs": 886998
+  },
+  {
+   "batchId": "c974ee39-46df-4d11-9e7a-045f858bfd2a",
+   "disposition": "steer",
+   "startMs": 887066,
+   "endMs": 902164
+  },
+  {
+   "batchId": "c75b8338-2d41-4a1c-88fe-9f3dd0f05ecd",
+   "disposition": "follow_up",
+   "startMs": 902214,
+   "endMs": 906367
+  },
+  {
+   "batchId": "dc577c5d-1223-41b3-af07-6b9d777bc5d3",
+   "disposition": "follow_up",
+   "startMs": 906411,
+   "endMs": 919242
+  },
+  {
+   "batchId": "af49a8b5-17ef-4c96-90a1-9f23affaabaf",
+   "disposition": "follow_up",
+   "startMs": 919275,
+   "endMs": 925647
+  },
+  {
+   "batchId": "aec12aed-d289-413d-8aac-b7eb7a230965",
+   "disposition": "follow_up",
+   "startMs": 925712,
+   "endMs": 939364
+  },
+  {
+   "batchId": "7f20581b-b8a2-4f40-9d49-2f9cce585c3e",
+   "disposition": "follow_up",
+   "startMs": 939378,
+   "endMs": 956210
+  },
+  {
+   "batchId": "c76a6ca6-df37-4f79-9938-eac079011131",
+   "disposition": "follow_up",
+   "startMs": 956225,
+   "endMs": 969310
+  },
+  {
+   "batchId": "d196345d-5054-4fa3-9f74-7ea69304f557",
+   "disposition": "follow_up",
+   "startMs": 969871,
+   "endMs": 991899
+  },
+  {
+   "batchId": "e78e2422-c024-4988-bb41-89ea3a46273d",
+   "disposition": "follow_up",
+   "startMs": 991959,
+   "endMs": 1003532
+  },
+  {
+   "batchId": "a023b0e7-5346-4839-bf8f-c130bac206a0",
+   "disposition": "follow_up",
+   "startMs": 1003596,
+   "endMs": 1013709
+  },
+  {
+   "batchId": "b39efbb0-9c3e-49df-8ef1-2460c9b8d5d6",
+   "disposition": "follow_up",
+   "startMs": 1013766,
+   "endMs": 1025144
+  },
+  {
+   "batchId": "6a99474e-f44a-4fde-8cef-9b29c8a11a6e",
+   "disposition": "follow_up",
+   "startMs": 1025193,
+   "endMs": 1038911
+  },
+  {
+   "batchId": "83500abe-281d-4ba4-ae98-27c97efa0ea1",
+   "disposition": "follow_up",
+   "startMs": 1038966,
+   "endMs": 1050883
+  },
+  {
+   "batchId": "af2f030c-3616-4896-9e03-a7de647c15f8",
+   "disposition": "follow_up",
+   "startMs": 1053039,
+   "endMs": 1058393
+  },
+  {
+   "batchId": "1ef487fd-14d5-4c93-8963-3333437f3e39",
+   "disposition": "follow_up",
+   "startMs": 1150556,
+   "endMs": 1162153
+  },
+  {
+   "batchId": "9a8bbc8d-5101-47af-98bd-efbe763eb434",
+   "disposition": "follow_up",
+   "startMs": 1162210,
+   "endMs": 1175674
+  },
+  {
+   "batchId": "9e4b7129-f057-4996-ad04-c3dab3bad2ab",
+   "disposition": "follow_up",
+   "startMs": 1175706,
+   "endMs": 1183215
+  },
+  {
+   "batchId": "12867ea6-b807-46aa-929c-40c3ed8fdc7a",
+   "disposition": "follow_up",
+   "startMs": 1414686,
+   "endMs": 1426970
+  },
+  {
+   "batchId": "7c0ad861-70a1-44d9-a306-1428332b9063",
+   "disposition": "follow_up",
+   "startMs": 1426990,
+   "endMs": 1450098
+  },
+  {
+   "batchId": "9ada4420-f577-4854-82af-2958f668d176",
+   "disposition": "steer",
+   "startMs": 1450111,
+   "endMs": 1465694
+  },
+  {
+   "batchId": "ac85fce0-e5b3-410f-9651-cf078c9096a2",
+   "disposition": "follow_up",
+   "startMs": 1465791,
+   "endMs": 1478874
+  },
+  {
+   "batchId": "bab92c34-247b-4dc5-903b-6e3713694b09",
+   "disposition": "follow_up",
+   "startMs": 1478931,
+   "endMs": 1485116
+  },
+  {
+   "batchId": "f343ff70-9f76-4138-bfc6-8505b96cc565",
+   "disposition": "follow_up",
+   "startMs": 1488924,
+   "endMs": 1495954
+  },
+  {
+   "batchId": "d962ca38-057b-49d3-8a23-369d93f05625",
+   "disposition": "follow_up",
+   "startMs": 1502874,
+   "endMs": 1512419
+  },
+  {
+   "batchId": "f19fd05b-7d0c-41da-a384-aecf1307a821",
+   "disposition": "follow_up",
+   "startMs": 1515523,
+   "endMs": 1523678
+  },
+  {
+   "batchId": "8dccad3b-3304-4359-a5e2-be6c9fd8f5b9",
+   "disposition": "follow_up",
+   "startMs": 1524458,
+   "endMs": 1534593
+  },
+  {
+   "batchId": "a978d79e-6815-446e-8844-17ea7b2b1264",
+   "disposition": "follow_up",
+   "startMs": 1534662,
+   "endMs": 1540311
+  },
+  {
+   "batchId": "dfb732a1-baf8-49ce-a34d-0c5e7837a1f5",
+   "disposition": "follow_up",
+   "startMs": 1540364,
+   "endMs": 1556169
+  },
+  {
+   "batchId": "1fa4278d-bf19-4dc8-afa4-564ea7bd1453",
+   "disposition": "follow_up",
+   "startMs": 1556233,
+   "endMs": 1572808
+  },
+  {
+   "batchId": "0afd1353-775b-4460-a0c4-0b25db5efec2",
+   "disposition": "follow_up",
+   "startMs": 1572864,
+   "endMs": 1584208
+  },
+  {
+   "batchId": "6c1df075-c28d-42cf-ad0a-268ff250083c",
+   "disposition": "follow_up",
+   "startMs": 1586239,
+   "endMs": 1601547
+  },
+  {
+   "batchId": "0e112e2c-9b64-443c-9395-8c2ab1f4a3e4",
+   "disposition": "follow_up",
+   "startMs": 1604133,
+   "endMs": 1623226
+  },
+  {
+   "batchId": "14c1b402-4c91-476d-b01b-f61c781f9639",
+   "disposition": "follow_up",
+   "startMs": 1624558,
+   "endMs": 1635459
+  },
+  {
+   "batchId": "dad506e5-84a2-4c6b-99a1-c832c53fc7bb",
+   "disposition": "follow_up",
+   "startMs": 1642223,
+   "endMs": 1650958
+  },
+  {
+   "batchId": "f974b7d7-709e-4e00-8210-172594802237",
+   "disposition": "follow_up",
+   "startMs": 1655325,
+   "endMs": 1821171
+  },
+  {
+   "batchId": "e987a3b4-b7d5-46f1-9040-7087891683a6",
+   "disposition": "follow_up",
+   "startMs": 1824490,
+   "endMs": 1834312
+  },
+  {
+   "batchId": "6fc41149-48e9-40c4-9d9e-1ffcc08ac67f",
+   "disposition": "follow_up",
+   "startMs": 1834369,
+   "endMs": 1845678
+  },
+  {
+   "batchId": "e128f87f-17ea-4e82-9d9c-5e41384d7d4a",
+   "disposition": "follow_up",
+   "startMs": 1845692,
+   "endMs": 1870367
+  },
+  {
+   "batchId": "c4660dfb-bc38-40c1-bb91-fb78e57232a8",
+   "disposition": "follow_up",
+   "startMs": 1974941,
+   "endMs": 1989486
+  },
+  {
+   "batchId": "5c12c90e-6b13-4de9-af56-a2653c2dd352",
+   "disposition": "follow_up",
+   "startMs": 1989538,
+   "endMs": 1999073
+  },
+  {
+   "batchId": "cbd1d9bd-7bc3-4259-926c-9bb46b19f847",
+   "disposition": "follow_up",
+   "startMs": 2008615,
+   "endMs": 2019357
+  },
+  {
+   "batchId": "d29c2d2d-fd05-4b1d-af84-e0235127d6c9",
+   "disposition": "follow_up",
+   "startMs": 2019367,
+   "endMs": 2046645
+  }
+ ]
+}

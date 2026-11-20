@@ -4,27 +4,33 @@ import {
   CompanionEventPump,
   FACT_PRODUCER,
   NOT_OWED,
-  PLAN_LOW_WATER_NODES,
   type PendingBatch,
+  TURN_OPENING,
   type WorldFact,
 } from "./event-pump.js";
 import type { InFlightProgramme, InFlightProgrammeReading } from "./program-status-wait.js";
 import type { Snapshot } from "./protocol.js";
 
 /**
- * `a_plan_at_low_water_opens_the_next_turn:<case>` and `a_queued_lookahead_holds_nothing:<case>`.
+ * `a_plan_with_nodes_left_holds_the_fact:<case>` and `a_queued_lookahead_holds_nothing:<case>`.
  *
  * <p>
- * THE MEASUREMENT THIS EXISTS FOR, from `round82`'s own `result.json`: **102 programme switches with 4 overlaps**, and
- * **992.3 s of the run's 1,626 s spent between programmes** - 61% of the wall clock. The rule before this unit
- * (`#workLeftToPlan() > 0`) held every fact until the journal showed ZERO nodes left, so her next plan could not be
- * composed until the previous one had settled, and the body stood still for the model round-trip in between.
+ * THE HOLD, AND WHAT IT IS NOT. While her own plan has nodes the journal has not seen settle, a fact that arrives is carried
+ * into the batch that plan's answer opens: `follow_up` - the pump opening a turn after her own turn ended - went 9 -> 65
+ * between `round42` and `round60` while a turn went from 8.2 model steps to 2.0, so "a fact arrived" became "there is a turn
+ * to open" and the turn stopped being one unit of work. The reading is the journal's own `remaining`
+ * (`InFlightProgramme.remaining`), and it is the whole rule.
  * </p>
  * <p>
- * WHAT CHANGED AND WHAT DID NOT. The journal's own `remaining` is still the reading; the THRESHOLD moved to
- * `PLAN_LOW_WATER_NODES`, and a second `Active` programme counts as a plan already asked for. Everything the old rule was
- * written against is still true one node higher: three nodes left is not a tail, a plan that has answered opens its own
- * turn, and a due wake or the player's own word never waits.
+ * WHAT THE HOLD IS NOT ANY MORE. Two units tried to time it - `PLAN_LOW_WATER_NODES = 2` (`8e8e625f`) and a time-aware
+ * successor measured from this pump's own pace and turn - and `round84` retired both: no fact kind reaches the rule early
+ * enough to matter (`WAKE_RULE` carries the measurement, `event-pump.wake-rule-reachability.test.ts` holds the property).
+ * What is left is what the measurement supports: a plan that has nodes left holds, and a plan that has answered opens.
+ * </p>
+ * <p>
+ * WHAT DOES NOT WAIT is declared rather than special-cased: the player's own word (`#opening` answers it first), a due wake
+ * (`PUMP_MINTED_WAKE_KINDS`), a held world (`HELD_WORLD_DECLARATIONS`) and the plan's own settlement. The last two are the
+ * cases below, because a rule that holds them too would be a rule that can deadlock.
  * </p>
  */
 
@@ -51,7 +57,7 @@ function snapshotFact(revision: number, tiles: readonly string[]): WorldFact {
     toolSlots: [],
     rockSourceTargets: tiles.map((tile) => {
       const [x, y] = tile.split(":").map(Number);
-      return { x, y, targetId: `rock_source_${x ?? 0}_${y ?? 0}`, health: 1 };
+      return { x: x ?? 0, y: y ?? 0, targetId: `rock_source_${x ?? 0}_${y ?? 0}`, health: 1 };
     }),
   } as unknown as Snapshot;
   return Object.freeze({
@@ -95,6 +101,15 @@ function heldWorldFact(): WorldFact {
   });
 }
 
+const PLAYER_INPUT = Object.freeze({
+  source: "player_text" as const,
+  inputId: "player_1",
+  eventId: "player_source_1",
+  text: "去把那排地浇了",
+  locale: "zh-CN",
+  timestampMs: 1_000,
+});
+
 /** One programme of the journal's own reading: `remaining` nodes left, `tiles` of them un-settled on those tiles. */
 function programme(programId: string, remaining: number, tiles: readonly string[] = []): InFlightProgramme {
   return {
@@ -126,56 +141,59 @@ function recorder(): Delivery {
   };
 }
 
-/** A pump whose journal reading is the one the case states, primed with the snapshot the turn will read. */
-async function primed(
+/** A pump on the journal the case states, primed with the reading a turn will render. */
+function primed(
   reading: InFlightProgrammeReading,
   tiles: readonly string[] = [],
-): Promise<Readonly<{ pump: CompanionEventPump; turns: Delivery }>> {
+): Readonly<{ pump: CompanionEventPump; turns: Delivery }> {
   const pump = new CompanionEventPump(() => reading);
   const turns = recorder();
   pump.enqueueFact(snapshotFact(7, tiles), FACT_PRODUCER.adapterIngress);
   return { pump, turns };
 }
 
-/** How many turns a fact opens once the snapshot is already in hand. */
+/** What one fact does at one journal reading: how many turns it opened, and the batch that proves it. */
 async function turnsOpened(
   reading: InFlightProgrammeReading,
   fact: WorldFact,
-): Promise<Readonly<{ opened: number; outcome: string; batches: readonly PendingBatch[] }>> {
-  const { pump, turns } = await primed(reading);
+): Promise<Readonly<{ opened: number; outcome: string; reason: string | undefined; delivered: number }>> {
+  const { pump, turns } = primed(reading);
   pump.enqueueFact(fact, FACT_PRODUCER.adapterIngress);
   const outcome = await pump.flush(turns.sink);
-  return { opened: pump.turnAccount.opened, outcome: outcome.kind, batches: turns.batches };
+  return {
+    opened: pump.turnAccount.opened,
+    outcome: outcome.kind,
+    reason: outcome.kind === "not_owed" ? outcome.reason : undefined,
+    delivered: turns.batches.length,
+  };
 }
 
 /**
- * `a_plan_at_low_water_opens_the_next_turn:four_cases` - the threshold, driven at the boundary in both directions.
+ * `a_plan_with_nodes_left_holds_the_fact:five_cases` - the rule, driven at both ends.
  *
  * <p>
- * THE READINGS ARE THE JOURNAL'S OWN (`InFlightProgramme.remaining`), and every case is a real shape of a plan: a plan with
- * three nodes left is not a tail, two is the low-water mark, one is a tail with one step in it, and two programmes is the
- * lookahead already asked for. A gate that only drove the middle number would pass on a rule that opens EVERY turn.
+ * Every case is a real shape of a plan: three nodes left is not a tail, one node left is not an answer, no nodes left is the
+ * plan answering, and a programme the journal still calls `Active` with nothing in it is waiting to be CLOSED rather than a
+ * plan already asked for. A gate that only drove the middle number would pass on a rule that holds everything.
  * </p>
  */
-test("a_plan_at_low_water_opens_the_next_turn: the threshold, and the queue that holds it", async () => {
-  assert.equal(PLAN_LOW_WATER_NODES, 2, "the low-water mark this suite is written against");
+test("a_plan_with_nodes_left_holds_the_fact: the hold, and what it does not hold", async () => {
   const cases: readonly Readonly<{
     name: string;
     reading: InFlightProgrammeReading;
     opens: boolean;
   }>[] = [
     { name: "three_nodes_left", reading: readingOf(programme("plan_a", 3)), opens: false },
-    { name: "two_nodes_left", reading: readingOf(programme("plan_a", 2)), opens: true },
-    { name: "one_node_left", reading: readingOf(programme("plan_a", 1)), opens: true },
-    { name: "answered", reading: readingOf(), opens: true },
+    { name: "one_node_left", reading: readingOf(programme("plan_a", 1)), opens: false },
     {
-      name: "low_water_but_a_second_programme_is_queued",
+      name: "a_second_programme_is_queued",
       reading: readingOf(programme("plan_a", 1), programme("plan_b", 3)),
       opens: false,
     },
+    { name: "answered", reading: readingOf(), opens: true },
     {
       // A programme the journal still calls `active` with nothing left in it is a programme waiting to be CLOSED, not a
-      // plan already asked for: counting it as a queue would hold the next turn on an empty plan for ever.
+      // plan already asked for: holding on it would hold the next turn on an empty plan for ever.
       name: "two_programmes_with_nothing_left",
       reading: readingOf(programme("plan_a", 0), programme("plan_b", 0)),
       opens: true,
@@ -193,60 +211,62 @@ test("a_plan_at_low_water_opens_the_next_turn: the threshold, and the queue that
     );
     if (!each.opens) {
       assert.equal(result.outcome, "not_owed", `${each.name}: the refusal is a debt answer (${result.outcome})`);
-      assert.equal(result.batches.length, 0, `${each.name}: and no batch was delivered`);
+      assert.equal(result.reason, NOT_OWED.planStillRunning, `${each.name}: and it names the plan (${String(result.reason)})`);
+      assert.equal(result.delivered, 0, `${each.name}: and no batch was delivered`);
     }
   }
   assert.ok(opened > 0 && opened < cases.length, "an empty population, or one that always opens, is not a threshold");
   console.log(
-    `a_plan_at_low_water_opens_the_next_turn: cases ${cases.length} · opened ${opened} · held ${cases.length - opened} · ` +
-      `low-water ${PLAN_LOW_WATER_NODES}`,
+    `a_plan_with_nodes_left_holds_the_fact: cases ${String(cases.length)} · opened ${String(opened)} · held ` +
+      `${String(cases.length - opened)}`,
   );
 });
 
 /**
- * `a_queued_lookahead_holds_nothing:<case>` - what a held world does to the queue.
+ * `a_queued_lookahead_holds_nothing:<case>` - a held world is never held behind a running plan.
  *
  * <p>
  * THE LIMIT, STATED RATHER THAN PAPERED OVER: nothing on this side can drop a queued programme's un-started nodes
  * (`program_stop` needs the STOP epoch and `abandon` is poisoned-programs-only), so the queued programme WILL run its nodes
  * when the first drains. What the pump controls is the TURN: a world that will not move until it is answered must never be
- * held behind a queue, or the queued work runs against a world that moved. The Mod's own re-validation at admission is what
+ * held behind work, or the queued nodes run against a world that moved. The Mod's own re-validation at admission is what
  * refuses a node the moved world no longer admits.
  * </p>
- * <p>
- * THE PLAYER'S STEER IS THE SAME CASE one opener over, and it never came through this rule at all (`#opening` answers the
- * player first) - which is why the mutation below can only reach the fact-driven half.
- * </p>
  */
-test("a_queued_lookahead_holds_nothing: a held world is never held behind a queue", async () => {
-  const queued = readingOf(programme("plan_a", 1), programme("plan_b", 3));
-  // DIRECTION ONE: an ordinary fact at the same reading waits, which is what makes the queue a real hold.
-  const waiting = await turnsOpened(queued, milestoneFact(1200));
-  assert.equal(waiting.opened, 0, `an ordinary fact is held behind the queue (${waiting.outcome})`);
+test("a_queued_lookahead_holds_nothing: a held world is never held behind a running plan", async () => {
+  const running = readingOf(programme("plan_a", 3));
+  // DIRECTION ONE: an ordinary fact at the same reading waits, which is what makes the hold a real hold.
+  const waiting = await turnsOpened(running, milestoneFact(1200));
+  assert.equal(waiting.opened, 0, `an ordinary fact is held while her plan still has nodes (${waiting.outcome})`);
 
   // DIRECTION TWO: the world declaring it will not move opens its turn anyway.
-  const held = await turnsOpened(queued, heldWorldFact());
-  assert.equal(held.opened, 1, `a held world opens its own turn behind the same queue (${held.outcome})`);
+  const held = await turnsOpened(running, heldWorldFact());
+  assert.equal(held.opened, 1, `a held world opens its own turn (${held.outcome})`);
   assert.equal(held.outcome, "opened", "and it delivered a batch, rather than being answered as a debt");
-  console.log(`a_queued_lookahead_holds_nothing: ordinary ${waiting.opened} · held-world ${held.opened}`);
+  console.log(`a_queued_lookahead_holds_nothing: ordinary ${String(waiting.opened)} · held-world ${String(held.opened)}`);
 });
 
 /**
  * `a_queued_tile_is_not_offered_again:<site>` - the subtraction, read through the batch the model is actually handed.
  *
  * <p>
- * THE FIRST RISK OF ANY LOOKAHEAD, and the reason it is not enough to wake earlier: the turn is composed from a snapshot read
- * while the plan in flight was still working, so the rows it publishes are rows that programme is about to take. A block that
- * still offered them is an invitation to plan the same tile twice, and `round82` contains exactly that: `plan_895` submitted
- * `enter_exit` at `90:15` while `plan_894`'s own `enter_exit` at `90:15` was still queued.
+ * THE FIRST RISK OF ANY TURN OPENED BEHIND A RUNNING PLAN, and the reason waking earlier was never the whole fix: the turn is
+ * composed from a snapshot read while the programme in flight was still working, so the rows it publishes are rows that
+ * programme is about to take. A block that still offered them would invite the same tile twice, and `round82` contains
+ * exactly that: `plan_895` submitted an `enter_exit` at `90:15` while `plan_894`'s own `enter_exit` at `90:15` was still
+ * queued.
+ * </p>
+ * <p>
+ * THE TURN HERE IS THE PLAYER'S WORD, because behind a running plan it is one of the three that still opens (`#opening`
+ * answers a person first; a due wake and a held world are the other two). The block is composed by the same `takeBatch`, so
+ * what it withholds is the same reading.
  * </p>
  */
 test("a_queued_tile_is_not_offered_again: the state block withdraws the rows the journal says are being worked", async () => {
-  const reading = readingOf(programme("plan_a", 2, ["40:9"]));
-  const { pump, turns } = await primed(reading, ["40:9", "41:9"]);
-  pump.enqueueFact(milestoneFact(600), FACT_PRODUCER.adapterIngress);
+  const { pump, turns } = primed(readingOf(programme("plan_a", 2, ["40:9"])), ["40:9", "41:9"]);
+  pump.enqueuePlayerInput(PLAYER_INPUT);
   const outcome = await pump.flush(turns.sink);
-  assert.equal(outcome.kind, "opened", `the low-water turn is the one this block is composed for (${outcome.kind})`);
+  assert.equal(outcome.kind, "opened", `the person's word opens the turn this block is composed for (${outcome.kind})`);
   const batch = turns.batches.at(-1);
   assert.ok(batch !== undefined, "a batch was delivered to the model");
   const block = worldStateBlock(batch.text);
@@ -263,5 +283,34 @@ function worldStateBlock(text: string): string {
   return open < 0 || close < 0 ? "" : text.slice(open, close);
 }
 
-/** The refusal reason the old rule answered with is still the reason a plan's tail buys - named, not re-spelled here. */
-assert.equal(NOT_OWED.planStillRunning, "plan_still_running");
+/**
+ * `a_wake_that_cannot_beat_a_think_time_is_not_a_wake:<plan>` - SKIPPED, and the skip is the finding.
+ *
+ * <p>
+ * THIS WAS THE TIME-AWARE SUCCESSOR TO `PLAN_LOW_WATER_NODES`, written and driven before `round84`'s account line was read.
+ * It held a fact while the plan's tail was estimated, from this pump's own pace, to outlast a delivered turn, and woke it
+ * while the tail still covered one - `round84`'s numbers support the arithmetic: a median turn of 10.12 s against programmes
+ * that ran at 0.4-52 s per node, with 51 of 57 shorter than a single turn.
+ * </p>
+ * <p>
+ * IT WAS RETIRED UNMEASURED, and that is why it is recorded rather than deleted. The rule it replaced opened **no turns in 34
+ * minutes**, because a node's `execution_receipt` cannot present and the settlement arrives only once every node is terminal -
+ * so neither the old threshold NOR this one has a fact kind that reaches it while the tail it measures still exists
+ * (`WAKE_RULE`, `event-pump.wake-rule-reachability.test.ts`). A second measurement of a rule nothing can carry would have
+ * been a second round spent on the wrong layer.
+ * </p>
+ * <p>
+ * WHAT IS KEPT FROM IT: the reading, not the rule. `event-pump.turn-gap-round84.test.ts` reproduces the run's own numbers,
+ * and the split between the queue wait (437.5 s) and the turn gap (1,265.2 s) is the part of that work that survives.
+ * </p>
+ */
+test(
+  "a_wake_that_cannot_beat_a_think_time_is_not_a_wake",
+  { skip: "the rule cannot open a turn; retired pending a bell" },
+  () => {
+    // Intentionally empty: the replay is preserved in the doc above and in the round84 reading, and the rule it drove no
+    // longer exists in the pump.
+  },
+);
+
+assert.equal(TURN_OPENING.due, "due");

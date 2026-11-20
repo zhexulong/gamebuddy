@@ -1089,6 +1089,36 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
 export const GAME_PROSE_PAIR_BUDGET_CHARS = 7517;
 
 /**
+ * How long `stardew_plan_work` may hold its own call waiting for the plan it just submitted to settle.
+ *
+ * THE BUDGET IS ONE DECISION, NOT ONE PLAN'S PATIENCE. Measured 2026-11-20 (`round84`): a model turn costs a median
+ * 6.18 s to decide and 10.1 s to deliver, and the 1,702.7 s between its programmes was 437.5 s of queue wait and
+ * 1,265.2 s of turn gaps - so a plan that settles inside the call that submitted it costs the run nothing, and one that
+ * outlasts this bound costs no more than the turn the wait was meant to save. `program-status-wait.ts`'s 30 s cap is a
+ * different question (how long a caller who ASKED to wait may wait); nothing here raises it.
+ */
+export const PLAN_SELF_WAIT_BUDGET_MS = 6_000;
+
+/**
+ * The pace one node of a plan was measured at, which is what makes the threshold below a DERIVATION.
+ *
+ * A MEASUREMENT, NOT A KNOB: `round84`'s 57 accepted programmes, each programme's own span (its journal's first
+ * `atMs` to its last `settledAtMs`) divided by its node count - p50 629 ms, p90 2,480 ms - so the pace is what the
+ * work actually took, not what a node count chosen by hand would assume. A threshold written as `2` or `3` would be
+ * that hand-picked number standing beside a measurement nothing can check it against, which is the drift the family
+ * tables and the prose budget exist to prevent; `plan-self-wait.test.ts` re-derives the threshold from this pace over
+ * the run's own programmes and prints how many of them it covers.
+ */
+export const PLAN_NODE_PACE_MS = 629;
+
+/**
+ * The largest plan whose own settlement is predicted to fit inside the budget: DERIVED, never written.
+ * `floor(6_000 / 629) = 9` - and a plan past it is answered as soon as the Mod accepts, because holding that turn would
+ * buy nothing but an expired bound.
+ */
+export const MAX_PLAN_SELF_WAIT_NODES = Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PLAN_NODE_PACE_MS);
+
+/**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
  * arguments they declare.
  *
@@ -1103,12 +1133,15 @@ export const GAME_PROSE_PAIR_BUDGET_CHARS = 7517;
  * hand-maintained list to drift from the Mod's catalog. Every action is printed once, under the family the Mod declared
  * it in, as the call it is: its declared argument names in parentheses, `sleep()` for the five that declare none.
  *
- * The other thing it has to teach is SUBMIT, THEN END THE TURN. `plan_work` returns as soon as the Mod accepts, because a
- * held call makes `stop`, `append` and a player's steering unreachable exactly while they matter. The wake is not
- * invented here: a dispatched node's execution receipt reaches the same pump as every other fact
- * (`host-service.ts` `acceptIntegrationFact` -> `CompanionEventPump.flush`), and a terminal receipt is not a held progress
- * fact, so it starts a follow-up turn (`event-pump.ts` `#hasPendingFactTrigger`). Measured 2026-11-03 (`round29`): 48
- * `program_status` calls, `waitMs` median 30,000, 248 s blocked - the description never said a receipt was coming.
+ * The other thing it has to teach is WHEN THE CALL RETURNS, BECAUSE IT IS NOT THE SAME ANSWER FOR EVERY PLAN. A plan
+ * whose nodes fit `MAX_PLAN_SELF_WAIT_NODES` is held until it settles, so the same turn carries on with the outcome in
+ * hand - measured `round84`: 51 of 57 programmes were shorter than one turn, and the turn boundaries between them cost
+ * 1,265.2 s of that run. A longer plan returns as soon as the Mod accepts, because a held call makes `stop`, `append`
+ * and a player's steering unreachable exactly while they matter. For those the wake is not invented here: a dispatched
+ * node's execution receipt reaches the same pump as every other fact (`host-service.ts` `acceptIntegrationFact` ->
+ * `CompanionEventPump.flush`), and a terminal receipt is not a held progress fact, so it starts a follow-up turn
+ * (`event-pump.ts` `#hasPendingFactTrigger`). Measured 2026-11-03 (`round29`): 48 `program_status` calls, `waitMs` median
+ * 30,000, 248 s blocked - the description never said a receipt was coming.
  *
  * THE BATCH IS TAUGHT AS THE JAVASCRIPT IT IS. A `for` over a snapshot family, an `if` that leaves out the tiles she does
  * not mean to touch, and one call per tile: that is the shape that buys twenty actions for one turn. It replaced a
@@ -1135,7 +1168,9 @@ export const GAME_PROSE_PAIR_BUDGET_CHARS = 7517;
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. The call returns as soon as the plan is accepted: do NOT poll it - each step's receipt arrives later as a new message. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none, and ends the day only from inside your own farmhouse or cabin (`not_home` outdoors) - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. Stop when builder.isFull() is true and plan the rest in the next script of this same turn, in this shape:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. A plan of " +
+    String(MAX_PLAN_SELF_WAIT_NODES) +
+    " nodes or fewer is held until it settles, so its outcome is in this answer; a longer plan returns as soon as it is accepted - do NOT poll it, each step's receipt arrives later as a new message. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by the family the Mod declared and printing the arguments each declares - `sleep()` takes none, and ends the day only from inside your own farmhouse or cabin (`not_home` outdoors) - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - while no argument gives the whole bounded world, and stardew_look_up answers what the session holds; all of them are reads that cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. Stop when builder.isFull() is true and plan the rest in the next script of this same turn, in this shape:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "The script is ordinary JavaScript over `snapshot` and `builder`: `for`, `if`, `.filter`, `.sort` run; timers,\n" +
     "randomness, the network and eval are refused by name.\n" +
