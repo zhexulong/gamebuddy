@@ -1463,10 +1463,10 @@ const en = {
   // next world load. A field that cannot be changed at all is not offered.
   gameSettingsTitle: "Companion settings",
   gameSettingsIntro:
-    "What the companion may do on your farm. These are your own settings; they are kept outside the mod's config file.",
+    "What the companion may do on your farm. These are your own settings, kept in GameBuddy rather than in the mod's config file.",
   gameSettingsActionPolicyTitle: "What the companion may do",
   gameSettingsActionPolicyHint:
-    "Switch off anything you would rather it never touched. A change takes effect within a few seconds while the game is running.",
+    "Switch off anything you would rather she never touched. A change takes effect within a few seconds, even while the game is running.",
   // The region's own count line: one sentence, true in every shape, so a player learns how much
   // of the setting is left without reading (or scrolling) twenty-one rows. The three counts are
   // filled from the draft on screen rather than from the Host's record, so the line and the boxes
@@ -1479,7 +1479,7 @@ const en = {
     "How many players must be online before the companion may end the day. A change takes effect the next time the world loads.",
   gameSettingsWindowModeTitle: "While she plays",
   gameSettingsWindowModeHint:
-    "How the game window behaves while she is in the world. The Mod reads this on its own tick, so a change lands within seconds.",
+    "How the game window behaves while she is in the world. A change lands within seconds, even while the game is running.",
   gameSettingsWindowModeDefault: "Visible (default)",
   gameSettingsWindowModeVisible: "Visible",
   gameSettingsWindowModeMinimized: "Minimised",
@@ -1500,14 +1500,14 @@ const en = {
   gameFamilyFarmingCrops: "Farming: tilling, watering, planting, harvest",
   gameFamilyResourceGathering: "Gathering: forage, wood, stone, artifacts",
   gameFamilyAnimalsPets: "Animals and pets",
-  gameFamilyMachinesProcessing: "Machines and processing",
+  gameFamilyMachinesProcessing: "Machines and what they make",
   gameFamilyCraftingCooking: "Crafting and cooking",
   gameFamilyBuildingsFarmManagement: "Buildings and farm layout",
   gameFamilyInventoryItems: "Backpack and items",
   gameFamilyBodyTools: "Tools",
   gameFamilyMovementNavigation: "Walking on this farm",
   gameFamilyWorldNavigation: "Travel between areas",
-  gameFamilyWorldPerception: "Looking around and reading the world map",
+  gameFamilyWorldPerception: "Looking around and finding her way",
   gameFamilyTransportWarps: "Minecarts, buses and warp travel",
   gameFamilyWaterTravel: "Rafts and water travel",
   gameFamilyAnimalTransport: "Riding your horse",
@@ -2541,9 +2541,9 @@ const zh: Messages = {
   // 重新读取，所以对运行中的游戏生效；联机夜晚人数只在角色初始化时读取一次，因此要等下
   // 一次世界载入。根本改不了的字段不提供。
   gameSettingsTitle: "伙伴设置",
-  gameSettingsIntro: "伙伴在你的农场上能做什么。这些是你自己的设置，保存在模组配置文件之外。",
+  gameSettingsIntro: "伙伴在你的农场上能做什么。这些是你自己的设置，保存在 GameBuddy 里，不用去改模组的配置文件。",
   gameSettingsActionPolicyTitle: "伙伴可以做什么",
-  gameSettingsActionPolicyHint: "关掉你不希望它碰的任何事项。游戏运行中保存后几秒内生效。",
+  gameSettingsActionPolicyHint: "关掉你不希望她碰的事情。游戏运行中保存后，几秒内就会生效。",
   // 这一行是整块区域的摘要：不管名单是什么样子它都成立，所以不用读完（或滚完）二十一行，就能知道这份设置还剩下多少。
   // 三个数字取自屏幕上正在编辑的草稿，而不是宿主保存的记录，所以改过还没保存时这一行和旁边的勾选框不会互相矛盾。
   gameSettingsActionPolicySummary: "允许 {{allowed}} / {{total}} · 已关掉 {{withheld}} 项",
@@ -2551,7 +2551,7 @@ const zh: Messages = {
   gameSettingsCoopTitle: "入夜前需要到场的玩家人数",
   gameSettingsCoopHint: "伙伴结束一天之前，需要有几位玩家在线。更改在下次载入世界时生效。",
   gameSettingsWindowModeTitle: "她玩的时候",
-  gameSettingsWindowModeHint: "她在世界里时游戏窗口的表现。模组每次自己读取，所以改动几秒内生效。",
+  gameSettingsWindowModeHint: "她在世界里时游戏窗口的表现。改动几秒内生效，游戏运行中也一样。",
   gameSettingsWindowModeDefault: "可见（默认）",
   gameSettingsWindowModeVisible: "可见",
   gameSettingsWindowModeMinimized: "最小化",
@@ -2566,14 +2566,14 @@ const zh: Messages = {
   gameFamilyFarmingCrops: "耕作：翻土、浇水、播种、收获",
   gameFamilyResourceGathering: "采集：觅食、木材、石头、文物",
   gameFamilyAnimalsPets: "动物与宠物",
-  gameFamilyMachinesProcessing: "机器与加工",
+  gameFamilyMachinesProcessing: "机器与它们做出来的东西",
   gameFamilyCraftingCooking: "制作与烹饪",
   gameFamilyBuildingsFarmManagement: "建筑与农场布局",
   gameFamilyInventoryItems: "背包与物品",
   gameFamilyBodyTools: "工具",
   gameFamilyMovementNavigation: "在农场上走动",
   gameFamilyWorldNavigation: "在区域之间移动",
-  gameFamilyWorldPerception: "观察周围与读取世界地图",
+  gameFamilyWorldPerception: "四处看看、认路",
   gameFamilyTransportWarps: "矿车、巴士与传送",
   gameFamilyWaterTravel: "木筏与水上通行",
   gameFamilyAnimalTransport: "骑马",
