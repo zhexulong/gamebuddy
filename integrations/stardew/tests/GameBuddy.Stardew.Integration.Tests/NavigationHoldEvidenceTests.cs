@@ -103,20 +103,55 @@ public sealed class NavigationHoldEvidenceTests
     }
 
     [Fact]
-    public void AHoldTheVocabularyCannotName_NamesTheEngineFactRatherThanSayingNothing()
+    public void AFlagWithNothingRunningIsANamedDeadEndRatherThanAShrugThatLoops()
     {
-        // No event, no menu, no faint, no animation: the closed vocabulary has no name for this, and the one engine
-        // field that reported the hold is `Farmer.CanMove`.
+        // No event, no menu, no faint, no animation, no countdown: the closed vocabulary has no name for this, and the
+        // one engine field that reported the hold is `Farmer.CanMove`. round83 read this shape twice as
+        // `unknown_holder:CanMove;...;next_step=observe_again` and then did exactly that for seven minutes.
         string hold = WorldModel.DescribeNavigationHold(Facts(), canMove: false);
 
-        hold.Should().Contain("held_by=unknown_holder:CanMove");
+        hold.Should().Contain("held_by=stalled_with_no_holder:CanMove");
         hold.Should().Contain("can_move=false");
         hold.Should().Contain("admissible_actions=none");
-        hold.Should().Contain("next_step=");
+        hold.Should().Contain(
+            $"next_step={WorldModel.ReportTheStalledBodyStep}",
+            "nothing in this Mod ends a hold the facts cannot name, so the one step left ends the attempt");
+        hold.Should().NotContain("observe_again", "the read that produced the refusal is not a forward action");
 
         NavigationOutcome outcome = Decide(hold);
         outcome.TerminalReasonCode.Should().Be("destination_locked");
-        outcome.Evidence.Should().Contain("held_by=unknown_holder:CanMove");
+        outcome.Evidence.Should().Contain("held_by=stalled_with_no_holder:CanMove");
+    }
+
+    /// <summary>
+    /// The one native countdown that writes `CanMove = false` while declaring no hold of its own is read rather than
+    /// guessed: `Farmer.noMovementPause` (Farmer.cs:7586-7593), which `express_emote` raises for 200 ms.
+    /// </summary>
+    [Fact]
+    public void ANativeBodyPauseNamesTheCountdownAndTheWindowThatClearsIt()
+    {
+        string hold = WorldModel.DescribeNavigationHold(Facts(), canMove: false, bodyPauseRemainingMs: 200);
+
+        hold.Should().Contain("held_by=body_pause:noMovementPause");
+        hold.Should().Contain("body_pause_remaining_ms=200");
+        hold.Should().Contain("admissible_actions=none");
+        hold.Should().Contain($"next_step={WorldModel.WaitForRetryWindowStep}");
+
+        NavigationOutcome outcome = Decide(hold);
+        outcome.TerminalReasonCode.Should().Be("destination_locked");
+        outcome.Evidence.Should().Contain("held_by=body_pause:noMovementPause");
+    }
+
+    /// <summary>
+    /// The countdown is a live probe and not a disposition fact: `noMovementPause` is only ever consulted when the flag
+    /// is actually down, so a farmer who can move is never reported as paused.
+    /// </summary>
+    [Fact]
+    public void ABodyPauseDoesNotHoldAnActorWhoCanMove()
+    {
+        string hold = WorldModel.DescribeNavigationHold(Facts(), canMove: true, bodyPauseRemainingMs: 200);
+
+        hold.Should().NotContain("held_by=body_pause", "a pause that has elapsed while the flag is up is not a hold");
     }
 
     /// <summary>

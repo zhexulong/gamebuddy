@@ -513,43 +513,102 @@ internal static class WorldModel
     /// </para>
     ///
     /// <para>
-    /// A hold the closed vocabulary cannot name is published as `unknown_holder:&lt;engine field&gt;` rather than left
-    /// silent: the engine reported it through a specific field, and naming that field is the difference between a
-    /// refusal a caller can act on and no answer at all.
+    /// The one hold the closed set cannot name is `CanMove` itself, and it has two shapes. MEASURED `round83`: two
+    /// `destination_locked` receipts read <c>held_by=unknown_holder:CanMove;can_move=false;admissible_actions=none;
+    /// next_step=observe_again</c> six seconds apart, and the game clock then stood at 1530 for seven minutes. The flag
+    /// was not a mystery: the engine's own clock asks it - `shouldTimePass` returns `player.forceTimePass` for exactly
+    /// `!CanMove &amp;&amp; !UsingTool` (Game1.cs:9307-9310) - so what the evidence called "unknown" was stopping the world.
+    /// And `observe_again` is the reading that had just answered: the run sat in `observe -&gt; destination_locked -&gt;
+    /// observe`.
+    /// </para>
+    ///
+    /// <para>
+    /// So both shapes are named and neither loops. A native countdown is RUNNING and releases her on its own
+    /// (<see cref="BodyPauseHolder" />) - the evidence says what is left of it and names the retry window that clears
+    /// it. Nothing is running, so nothing in this Mod can end it: that is a named dead end
+    /// (<see cref="StalledHolderPrefix" /><see cref="UnnamedHolderEngineFact" />) whose step ends the attempt instead of
+    /// asking for the same reading again.
     /// </para>
     /// </summary>
+    /// <param name="bodyPauseRemainingMs">
+    /// What is left of <c>Farmer.noMovementPause</c>, read from the live farmer by
+    /// <see cref="DescribeCurrentNavigationHold"/>. It is a probe rather than an <see cref="ActorWorldFacts" /> member
+    /// because that record is the closed set of holds the Mod can NAME, and this countdown raises none of them while it
+    /// writes <c>CanMove = false</c>.
+    /// </param>
     public static string DescribeNavigationHold(
         in ActorWorldFacts facts,
         bool canMove,
-        bool? modalIsQuestion = null)
+        bool? modalIsQuestion = null,
+        int bodyPauseRemainingMs = 0)
     {
         ActorDisposition disposition = Classify(facts);
-        string holder = disposition.Kind == ActorDispositionKind.Idle
-            ? $"{UnknownHolderPrefix}{UnnamedHolderEngineFact}"
-            : HoldReasonCode(disposition.Kind);
-        return $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}"
-            + NavigationCountermeasure(disposition.Kind);
+        bool boundedBodyPause = disposition.Kind == ActorDispositionKind.Idle && !canMove && bodyPauseRemainingMs > 0;
+        string holder = disposition.Kind != ActorDispositionKind.Idle
+            ? HoldReasonCode(disposition.Kind)
+            : boundedBodyPause ? BodyPauseHolder : $"{StalledHolderPrefix}{UnnamedHolderEngineFact}";
+        string countermeasure = boundedBodyPause
+            ? $";body_pause_remaining_ms={bodyPauseRemainingMs};admissible_actions=none;next_step={WaitForRetryWindowStep}"
+            : NavigationCountermeasure(disposition.Kind);
+        return $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}{countermeasure}";
     }
 
     /// <summary>
-    /// <see cref="DescribeNavigationHold"/> with the modal probe filled from the LIVE modal, for the same reason
-    /// <see cref="DescribeCurrentBodyHold"/> reads it: a cutscene's own dialogue box is only reachable through the live
-    /// menu, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an answer.
+    /// <see cref="DescribeNavigationHold"/> with the two live probes filled: the mounted modal (for the same reason
+    /// <see cref="DescribeCurrentBodyHold"/> reads it - a cutscene's own dialogue box is only reachable through the live
+    /// menu, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an answer), and the
+    /// native body countdown that writes `CanMove = false` while declaring no hold of its own.
     /// </summary>
     public static string DescribeCurrentNavigationHold(Farmer? player)
     {
         bool? isQuestion = null;
         if (Game1.activeClickableMenu is DialogueBox dialogue)
             isQuestion = dialogue.isQuestion;
-        return DescribeNavigationHold(ReadFacts(player), player?.CanMove ?? false, isQuestion);
+        return DescribeNavigationHold(
+            ReadFacts(player),
+            player?.CanMove ?? false,
+            isQuestion,
+            player?.noMovementPause ?? 0);
     }
 
     /// <summary>
-    /// The `<see cref="UnknownHolderPrefix"/>` code and the engine field that reported the hold, for the one hold the
-    /// closed set has no member for: <c>CanMove=false</c> with no event, menu, faint or animation that produced it.
+    /// The `<see cref="StalledHolderPrefix"/>` code and the engine field that reported the hold, for the one hold the
+    /// closed set has no member for and no countdown is running: <c>CanMove=false</c> with no event, menu, faint,
+    /// animation or body pause that produced it. A named dead end, because nothing here can end it - the alternative
+    /// (`unknown_holder`, then "observe again") read as a shrug and looped.
     /// </summary>
-    private const string UnknownHolderPrefix = "unknown_holder:";
+    private const string StalledHolderPrefix = "stalled_with_no_holder:";
     private const string UnnamedHolderEngineFact = "CanMove";
+
+    /// <summary>
+    /// The holder word for the one native countdown that takes the body without declaring a hold:
+    /// <c>Farmer.noMovementPause</c> writes <c>CanMove = false</c> at Farmer.cs:7588 and clears it again at :7592. Its
+    /// three setters are the emote (Farmer.cs:2505), the pool entrance (GameLocation.cs:3819) and the emote selector
+    /// (EmoteSelector.cs:228), which is why an `express_emote` can leave the body flagged with nothing else up.
+    /// </summary>
+    private const string BodyPauseHolder = "body_pause:noMovementPause";
+
+    /// <summary>What CLEARS a body hold, as the closed set of `next_step=` words the evidence publishes.</summary>
+    internal const string WaitForRetryWindowStep = "wait_for_retry_window";
+    internal const string WaitForDayToAdvanceStep = "wait_for_day_to_advance";
+    internal const string WaitForEventToAdvanceStep = "wait_for_event_to_advance";
+    internal const string ReportTheStalledBodyStep = "report_the_stalled_body";
+
+    /// <summary>
+    /// Whether a hold's `next_step=` word names the thing that ENDS the hold, or only asks for the reading that already
+    /// produced the refusal. `observe_again` was the second kind, and the reason this table exists: MEASURED `round83`,
+    /// a run was answered `admissible_actions=none;next_step=observe_again` twice and then did exactly that, for seven
+    /// minutes of a stopped clock. The default is `false` rather than `true`, so a word added without being classified
+    /// fails <c>RefusalWithNoAdmissibleActionGateTests</c> by name instead of passing on an assumption.
+    /// </summary>
+    internal static bool NextStepEndsTheHold(string nextStep) => nextStep switch
+    {
+        WaitForRetryWindowStep => true,
+        WaitForDayToAdvanceStep => true,
+        WaitForEventToAdvanceStep => true,
+        ReportTheStalledBodyStep => true,
+        _ => false,
+    };
 
     /// <summary>
     /// What would CLEAR the hold, in the vocabulary the admission itself reads. <see cref="DescribeEventHold"/> already
@@ -562,9 +621,9 @@ internal static class WorldModel
         ActorDispositionKind.Event => string.Empty,
         ActorDispositionKind.Modal
             => $";admissible_actions={string.Join(",", FarmhandActionCatalog.ModalResolvingActionIds.OrderBy(actionId => actionId, StringComparer.Ordinal))}",
-        ActorDispositionKind.PassOut => ";admissible_actions=none;next_step=wait_for_day_to_advance",
-        ActorDispositionKind.Transient => ";admissible_actions=none;next_step=wait_for_retry_window",
-        _ => ";admissible_actions=none;next_step=observe_again",
+        ActorDispositionKind.PassOut => $";admissible_actions=none;next_step={WaitForDayToAdvanceStep}",
+        ActorDispositionKind.Transient => $";admissible_actions=none;next_step={WaitForRetryWindowStep}",
+        _ => $";admissible_actions=none;next_step={ReportTheStalledBodyStep}",
     };
 
     /// <summary>
@@ -589,7 +648,7 @@ internal static class WorldModel
         string driver = $"driver={EventHoldDriver(facts)};event_up={Bool(facts.EventUp)}";
         if (!HasDialogueBox(facts))
             return $"{driver};dialogue_box=false;admissible_actions=none"
-                + $";next_step=wait_for_event_to_advance;can_move={canMoveText}";
+                + $";next_step={WaitForEventToAdvanceStep};can_move={canMoveText}";
 
         string admissible = string.Join(
             ",",
