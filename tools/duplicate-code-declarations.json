@@ -17,13 +17,6 @@
       "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
     },
     {
-      "hash": "5745550f7028",
-      "sites": 3,
-      "tokens": 79,
-      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
-      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalDismissModal(BridgeExecutionRequest request, I...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
-    },
-    {
       "hash": "72fc77528444",
       "sites": 5,
       "tokens": 128,
