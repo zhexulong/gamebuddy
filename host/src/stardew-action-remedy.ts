@@ -551,7 +551,7 @@ export function remedyForRefusal(reasonCode: string | null, detail: string | nul
         action: null,
         guidance:
           "A cutscene currently holds the farmhand, so no action can run. Do not issue actions until the " +
-          "scene ends; if the player is watching, this is a good moment to narrate rather than to act.",
+          "scene ends: it advances on its own, and the request can be re-issued once it does.",
       };
     }
     // The modal family was admitted into the cutscene and found nothing to act on: the event is running with no
