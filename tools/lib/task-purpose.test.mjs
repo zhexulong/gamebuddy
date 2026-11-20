@@ -807,10 +807,11 @@ test("a patch day whose receipts carry no tile is our gap, not her failure", () 
  * `a_task_that_asks_for_n_tiles_reports_how_many_it_got:<task>`
  *
  * THE DEFECT. Measured 2026-11-20 (`round81`, `clear_and_plant_long_patch`, "three tiles wide, twenty long"): the
- * day's verdict was `unproven/task_purpose_evidence_without_postcondition` and carried no number at all. Six
- * `till_soil` receipts had been refused, so the judge returned before it placed anything on a map - and a reader
- * could not tell "she planted two" from "she planted fifty-nine" from "she planted none". That run had planted two,
- * and both plantings' own receipts said so (`inventory_before=2` then `1`): `sown 2 (seeds available 2)`.
+ * day's verdict was `unproven/task_purpose_evidence_without_postcondition` and carried no number at all. Thirty-one
+ * `till_soil` receipts had been refused (the ground was already tilled, so the Mod answered `soil_already_tilled`), and
+ * the judge returned before it placed anything on a map - so a reader could not tell "she planted two" from "she
+ * planted fifty-nine" from "she planted none". That run had planted two, and both plantings' own receipts said so
+ * (`inventory_before=2` then `1`): `sown 2 (seeds available 2)`.
  *
  * THE GATE. Its population is every criterion that counts tiles, read from `TASK_PURPOSE_CRITERIA`'s own `patch`
  * declarations - never a list here, so a task that starts counting tiles tomorrow is covered by existing. For each
@@ -859,21 +860,21 @@ const ROUND81_SOWINGS = Object.freeze([
   }),
 ]);
 
-/** The six `till_soil` receipts that run could not read: succeeded, and not their own postcondition. */
+/** The thirty-one `till_soil` receipts that run could not read: succeeded, and not their own postcondition. */
 const ROUND81_REFUSED_TILLS = Object.freeze(
-  Array.from({ length: 6 }, () =>
+  Array.from({ length: 31 }, () =>
     receipt("till_soil", { reasonCode: "soil_tilled", evidence: { detail: "target=62,18" } }),
   ),
 );
 
 test("a_task_that_asks_for_n_tiles_reports_how_many_it_got", (t) => {
   const patchCriteria = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.patch !== undefined);
-  // The fixture for round81 is only that run if its six tillings ARE refused: a fixture quietly admitted would test
-  // the `not_achieved` branch instead of the one the defect lived in.
+  // The fixture for round81 is only that run if its thirty-one tillings ARE refused: a fixture quietly admitted
+  // would test the `not_achieved` branch instead of the one the defect lived in.
   assert.equal(
     purposeReceipts([...ROUND81_SOWINGS, ...ROUND81_REFUSED_TILLS]).refused.length,
     ROUND81_REFUSED_TILLS.length,
-    "round81's six tillings must be refused here too, and its two sowings admitted",
+    "round81's thirty-one tillings must be refused here too, and its two sowings admitted",
   );
   const violations = [];
   let examined = 0;
