@@ -60,8 +60,6 @@ const MOD_ROOT = join(ROOT, "integrations", "stardew");
 const CONTRACTS_FILE = join(ROOT, "host", "src", "stardew-completion-contracts.ts");
 const SURFACE_FILE = join(MOD_ROOT, "action-development", "contracts", "generated", "action-surface.v1.json");
 
-/** The trees that hold no producer: build output, the Mod's own tests, and the surface generator's fixtures. */
-const SKIP_DIRECTORIES = Object.freeze(["obj", "bin", "tests", "action-development", "node_modules"]);
 
 /** One settlement the Mod can mint, with the facts the Host row must read back. */
 type SettlementMint = Readonly<{
@@ -99,7 +97,7 @@ function csharpSources(): Array<{ file: string; text: string }> {
   const files: string[] = [];
   const walk = (directory: string) => {
     for (const entry of readdirSync(directory)) {
-      if (SKIP_DIRECTORIES.includes(entry)) continue;
+      if (entry === "obj" || entry === "bin" || entry === "tests" || entry === "action-development" || entry === "node_modules") continue;
       const path = join(directory, entry);
       if (statSync(path).isDirectory()) walk(path);
       else if (entry.endsWith(".cs")) files.push(path);
