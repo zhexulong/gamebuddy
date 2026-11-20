@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
 import { STARDEW_COMPLETION_CONTRACTS } from "./stardew-completion-contracts.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /**
  * The completion-evidence coverage invariant.
@@ -594,6 +599,53 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["inventory_before", "3"],
       ["inventory_after", "2"],
       ["native_placement", "true"],
+    ],
+  },
+  plant_seed: {
+    // `round80`'s own success, field for field (`timeline.jsonl` index 50, request `022b0f2f8c7347e5b6ff4f7bcacd7a1a`,
+    // revision 87): a Parsnip seed left the pack at Farm 12,37. The handler also printed `slot`/`named_slot` there, which
+    // no reader takes, and a receipt carrying an undeclared field is refused WHOLE - so this run minted two
+    // `seed_planted` successes, counted `succeeded/seed_planted` in its day record, and never admitted `plant_seed`.
+    // The pair was deleted from the producer; the seven keys below are what it prints now.
+    reasonCode: "seed_planted",
+    fields: [
+      ["location", "Farm"],
+      ["target", "seed_6bf4e600e1b7abd5"],
+      ["tile", "12,37"],
+      ["item", "(O)474"],
+      ["crop", "474"],
+      ["inventory_before", "2"],
+      ["inventory_after", "1"],
+    ],
+  },
+  sweep_scythe: {
+    // `round80`'s own success (`timeline.jsonl` index 22, request `384b3bc023674af298b6e819687218da`): ONE swing put the
+    // engine's arc over eleven tiles, three of them carried a weed, and all three moved. `after_occupant=none` is the
+    // named tile EMPTY after the cut, which is this action's success - and the rule refused it until its after-side
+    // reader learned the word this Mod spells empty with. The live receipt also carried `steps=2;folded=…` (the
+    // settlement envelope, declared once in `STARDEW_SETTLEMENT_ENVELOPE_FIELDS` and stripped before any row reads it),
+    // which is why no fixture here lists it.
+    reasonCode: "scythe_sweep_cut",
+    fields: [
+      ["location", "Farm"],
+      ["target", "40,9"],
+      ["before_occupant", "weed"],
+      ["after_occupant", "none"],
+      ["named_moved", "true"],
+      ["arc_tiles", "11"],
+      ["arc_sweepable", "3"],
+      ["arc_clear", "5"],
+      ["changed", "40:8:weed|40:9:weed|39:10:weed"],
+      ["tiles_changed", "3"],
+      ["tool_selected", "scythe"],
+      ["slot", "4"],
+      ["tool_before", "axe"],
+      ["slot_before", "0"],
+      ["stamina_before", "270"],
+      ["stamina_after", "270"],
+      ["stamina_delta", "0"],
+      ["expected_stamina_cost", "0"],
+      ["tool_restored", "axe"],
     ],
   },
   cut_weeds: {
@@ -1276,11 +1328,97 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
   const pairs = new Set(shapes.map((shape) => `${shape.actionId}:${shape.reasonCode}`));
   console.log(`examined ${shapes.length} producer shapes over ${pairs.size} (action, reasonCode) pairs`);
   assert.ok(shapes.length > 0, "an empty population agrees with itself");
+  // THE ARMS THIS TABLE WAS EXTENDED FOR STAY IN IT. `plant_seed` and `sweep_scythe` were unreadable for a whole run
+  // BECAUSE no shape for them was ever here - the probe agreed with itself while three real successes were refused - so
+  // a later edit that drops one of these would take its action back out of the population silently.
+  assert.deepEqual(
+    ["plant_seed:seed_planted", "sweep_scythe:scythe_sweep_cut", "respond_level_up:level_up_resolved"].filter(
+      (name) => !pairs.has(name),
+    ),
+    [],
+    "an arm this table exists for is gone, so the probe no longer examines the receipt it was written for",
+  );
   assert.deepEqual(
     findings,
     [],
     "a real success shape the Host refuses: the rule is narrower than the Mod - an undeclared key or an accepted value it was never given",
   );
+});
+
+/**
+ * The two actions whose success detail is composed OUTSIDE a `ToolActionEvidence` list, each with the reader that pulls
+ * its field names out of the Mod's own source: an interpolated literal for `plant_seed`, a declared array for
+ * `sweep_scythe`.
+ */
+const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
+  actionId: string;
+  file: string;
+  read: (source: string) => string[];
+}>[] = Object.freeze([
+  {
+    actionId: "plant_seed",
+    file: "integrations/stardew/farmhandexecutioncontroller.farmingconstructionactions.cs",
+    read: (source) => {
+      const body = source.slice(source.indexOf("private LocalExecutionReceipt ExecutePlantSeed("));
+      const marker = body.indexOf("inventory_after=");
+      assert.ok(marker > 0, "blocked: ExecutePlantSeed no longer prints an inventory count, so nothing was compared");
+      // The detail is ONE interpolated literal and its holes may hold quotes (`{plantedCropId ?? "none"}`), so the
+      // boundary is a `"` at brace depth zero rather than the next quote character.
+      const open = body.lastIndexOf('$"', marker);
+      assert.ok(open >= 0, "blocked: the success evidence is no longer an interpolated literal");
+      let depth = 0;
+      let end = -1;
+      for (let index = open + 2; index < body.length; index += 1) {
+        const character = body[index];
+        if (character === "{") depth += 1;
+        else if (character === "}") depth -= 1;
+        else if (character === '"' && depth === 0) {
+          end = index;
+          break;
+        }
+      }
+      assert.ok(end > open, "blocked: the success evidence literal is unterminated");
+      return [...body.slice(open + 2, end).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu)].map((match) => match[1] as string);
+    },
+  },
+  {
+    actionId: "sweep_scythe",
+    file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
+    read: (source) => {
+      const at = source.indexOf("internal static readonly IReadOnlyList<string> SweepScythe = Array.AsReadOnly(new[]");
+      assert.ok(at >= 0, "blocked: ToolActionEvidence.SweepScythe is no longer where this reads it");
+      const close = source.indexOf("});", at);
+      assert.ok(close > at, "blocked: ToolActionEvidence.SweepScythe has no closing brace");
+      return [...source.slice(at, close).matchAll(/"([a-z][a-z0-9_]*)"/gu)].map((match) => match[1] as string);
+    },
+  },
+]);
+
+test("a_fixture_carries_the_producers_own_fields: the two inline-composed success details still match their fixtures", (t) => {
+  // A FIXTURE IS ONLY A PRODUCER SHAPE WHILE IT CARRIES THE PRODUCER'S FIELDS, and a hand-written list cannot notice a
+  // handler that grew one back. That is exactly how `round80` lost its planting and its sweep: two `seed_planted`
+  // receipts carrying `slot`/`named_slot` and one `scythe_sweep_cut` carrying `after_occupant=none` were refused whole,
+  // and this table had no shape for either action, so nothing compared a real success to its rule. So the field NAMES
+  // are read from the Mod's source and compared to the fixture that claims the rule accepts them; the sweep's key set
+  // is pinned on both sides by `DeclaredToolSelectionTests` as well, and what this adds is the FIXTURE's own honesty.
+  for (const source of PRODUCER_EVIDENCE_SOURCES) {
+    const fixture = completionFixtures[source.actionId];
+    assert.ok(fixture !== undefined, `blocked: ${source.actionId} has no fixture, so nothing was compared`);
+    const printed = source.read(readFileSync(join(ROOT, source.file), "utf8"));
+    assert.ok(
+      printed.length > 0,
+      `blocked: ${source.actionId}'s producer detail printed no field, so nothing was judged`,
+    );
+    t.diagnostic(
+      `${source.actionId}: producer fields ${String(printed.length)}, fixture fields ${String(fixture.fields.length)}`,
+    );
+    assert.deepEqual(
+      [...printed].sort(),
+      fixture.fields.map(([key]) => key).sort(),
+      `${source.actionId}: the fields the Mod prints and the fields this table declares for it are one set - a field on ` +
+        "one side and not the other refuses the producer's own success",
+    );
+  }
 });
 
 test("dismiss_modal: the latch's re-ask is a commit already under way, not a dismissal", () => {

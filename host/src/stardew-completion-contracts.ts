@@ -950,7 +950,13 @@ function hasSweepScytheCompletionEvidence(detail: string): boolean {
       evidence.location !== "none" &&
       hasTileEvidenceValue(evidence.target) &&
       hasOpaqueEvidenceValue(evidence.before_occupant) &&
-      hasOpaqueEvidenceValue(evidence.after_occupant) &&
+      // THE TILE IS EMPTY AFTER A CUT, and the producer spells empty `none` (`FarmhandForEachHealing.NoOccupant`, the
+      // word the classifier itself writes): the opaque reader REFUSES that word, because elsewhere it is the protocol's
+      // absent sentinel, so this rule refused every real success by exactly the field its own paragraph above says is
+      // empty afterwards - round80's `scythe_sweep_cut` carried `after_occupant=none` and was read as nothing. The two
+      // sides are not symmetric: before the swing the named tile must hold something the scythe cuts
+      // (`sweep_target_not_scythe_work`), so the before side stays strict.
+      isNoneOrOpaqueEvidenceValue(evidence.after_occupant) &&
       // The named tile's own transition is the completion condition, stated as the fact it is: a weed that lost one point
       // of health still reads `weed` on both sides, so the two occupancy words alone cannot carry this claim.
       evidence.named_moved === "true" &&
@@ -3072,6 +3078,14 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     return claim.reasonCode === "crab_pot_baited" && hasBaitCrabPotCompletionEvidence(claim.detail);
   },
   plant_seed: (claim) => {
+    // farmhandexecutioncontroller.farmingconstructionactions.cs ExecutePlantSeed: the seed's own `placementAction`
+    // planted the crop and the pack lost exactly one of it. These seven keys ARE the handler's success detail. It also
+    // printed `slot`/`named_slot` - the slot the live pack answered and the index the plan named - which no reader
+    // takes: not this row, not `factBrief.provedPackCounts` (it reads `item`/`inventory_after`), and not the handler's
+    // own `PlantSeedStaleSlotTests`, which reads the pair off the two REFUSALS where the stale index is the story.
+    // `declaredCompletionEvidence` refuses a field it was not told about, so those two keys made every real
+    // `seed_planted` unreadable - round80's two successes were minted, the day counted `succeeded/seed_planted`, and
+    // `plant_seed` never appeared in its `admittedActionIds`. The pair was deleted from the producer, not declared here.
     return (
       claim.reasonCode === "seed_planted" &&
       declaredCompletionEvidence(
@@ -3800,6 +3814,17 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // A LevelUpMenu has no pure-cancel path (`cleanupBeforeExit -> okButtonClicked` grants the perk), so
     // `menu_closed` is not decoration: it is the only statement in the receipt that the thing which grants
     // levels stopped showing.
+    //
+    // THE PAIR THE CALLER MUST NAME IS A PROJECTION, AND THAT IS A DIFFERENT OWNER. The Mod publishes the pending pairs
+    // as `pendingLevelUps` (from `Farmer.newLevels`, `skill@level`) and the milestone cards as `pendingLevelUpChoices`,
+    // but a STANDING menu's own pair lives in `LevelUpMenu`'s private `currentSkill`/`currentLevel` and is projected
+    // nowhere - and `LevelUpMenu.RemoveLevelFromLevelList` drops the `newLevels` entry the moment the engine settles a
+    // level, before `Game1.activeClickableMenu` stops being that menu. So "`pendingLevelUps` is empty" and "a
+    // `LevelUpMenu` is up" are one reachable state (round80's `dayRecords[0]`), and it belongs to the projection
+    // (`integrations/stardew/farmhandexecutioncontroller.cs` `DescribePendingLevelUps`,
+    // `src/Core/Models/BridgeProtocolModels.cs` `BridgeSnapshot.PendingLevelUps`) rather than to this rule: the receipt
+    // this action mints is read exactly, as `stardew-completion-evidence-coverage.test.ts`'s fixture and round80's own
+    // `level_up_resolved` receipt show.
     return (
       claim.reasonCode === "level_up_resolved" &&
       declaredCompletionEvidence(

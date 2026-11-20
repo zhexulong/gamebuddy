@@ -389,8 +389,15 @@ internal sealed partial class ExecutionManager
         bool inventoryDecremented = afterCount == beforeCount - 1;
         ExecutionState state = placementHandled && cropCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "seed_planted" : "seed_plant_postcondition_unavailable";
+        // THE SLOT PAIR IS A REFUSAL'S EVIDENCE, NOT A SUCCESS'S. `slot`/`named_slot` are the two readings the
+        // stale-index story is made of, and both refusals above print them; on THIS terminal nothing reads them - not the
+        // Host's completion row, not `factBrief.provedPackCounts` (which reads `item`/`inventory_after`), and not this
+        // file's own `PlantSeedStaleSlotTests`. Printed here anyway they were fields no reader declared, and a Host rule
+        // refuses a receipt carrying one, so every real `seed_planted` was unreadable: round80 minted two of them
+        // (`timeline.jsonl` 50/51, both carrying `slot=8;named_slot=8`), the day recorded `succeeded/seed_planted`, and
+        // `plant_seed` never appeared in its `admittedActionIds`.
         return this.RememberTerminal(requestId, executionId, state, reasonCode,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
+            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
     }
 
     /// <summary>The kind `Object.placementAction`'s seed branch plants: a stack in the engine's own seeds category.</summary>
