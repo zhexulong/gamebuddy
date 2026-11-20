@@ -10,7 +10,11 @@
  *
  * THE POPULATION is derived, not listed. A key is player-facing when a source under `src` reads it
  * (`labels.<key>`, `labels().<key>` and `labels["<key>"]`, the three access forms the shell and the panels
- * use), in both catalogues of `src/i18n.ts`. A declared key no source reads cannot reach a player, and
+ * use), in both locales of every catalogue under `src`. Which files those are is also derived: a file
+ * that declares both an `en` and a `zh` binding of string-valued keys is a catalogue, which is how the
+ * character/companion domain's own words (`src/components/character-domain-labels.ts`) came into the
+ * population that the first pass did not scan - and how a third one would, without anyone remembering
+ * to add it here. A declared key no source reads cannot reach a player, and
  * `i18n-parity-gate.test.mjs` (`i18n.7`) already records those as debt, so this gate inherits that
  * boundary rather than restating it. Placeholders are stripped before the scan: `{{authority}}` is
  * substituted with the Host's own id for a part of the profile, and a value the code fills in is not a word
@@ -47,6 +51,19 @@
  * (`chats: "会话"`), so a scan for it would fail the interface's name for its own surface. The Chinese
  * half of `session` therefore rests on the English half - the two catalogues are edited together, and the
  * sentence pair is what a reviewer reads.
+ *
+ * TWO MORE THINGS A SENTENCE A PLAYER READS MAY NOT DO, added by the second pass over the same copy:
+ *  - carry a raw identifier (`player-vocabulary.5`). A `snake_case` or `camelCase` token, a dotted name or a
+ *    slashed path is a code wearing another spelling: no player can read it, act on it, or repeat it to
+ *    anyone. The population is the same derived one, so a code typed into a sentence tomorrow is a finding;
+ *    the one exception is a token the player typed themselves (`PLAYER_TOKENS`, witnessed in the copy and
+ *    dropped the moment no sentence carries it). Measured on this tree: the catalogue's own literals are
+ *    clean, and the codes a player actually met came through a placeholder, not through a typed word.
+ *  - meet the wall first (`player-vocabulary.6`). "Nothing on this page can do it, and reloading does not
+ *    either" is a true fact and a bad opening line: a player reads it as the product giving up before it has
+ *    said what happened. The wall belongs after the account and before the step, and a wall that nothing
+ *    follows is a dead end with no way out. The population is the strings that state the page's own limit,
+ *    derived by scanning for the phrases that do; zero of them would mean a true fact left the copy.
  */
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -104,25 +121,40 @@ export const INTERNAL_NOUNS = [
   { names: "the way a stream is carried", forms: ["transport"] },
   { names: "reading a prompt's entries into a request", forms: ["assembly", "assembles", "assembled", "assemble"], zh: ["装配"] },
   { names: "the fold that writes a transcript into memory", forms: ["fold", "folds", "folding"], zh: ["折叠"] },
-  { names: "a game prepared ahead of the surface that asks for it", forms: ["staged", "staging"] },
+  { names: "a game prepared ahead of the surface that asks for it", forms: ["staged", "staging"], zh: ["暂存"] },
   { names: "an operating-system process a role runs in", forms: ["process", "processes"], zh: ["进程"] },
   { names: "the registry entry that holds a game after a run", forms: ["registration", "registrations"] },
   { names: "the settlement record of a finished program", forms: ["digest", "digests"] },
   { names: "the quota a turn may use", forms: ["budget", "budgets"] },
+  { names: "the identity GameBuddy creates for a thing it stores", forms: ["mint", "mints", "minted", "minting"], zh: ["铸造"] },
 ];
 
 /** The nouns this gate exists for: a shrinking lexicon must fail loudly instead of quietly passing. */
 const ANCHORS = ["host", "session", "runtime", "quarantine", "guardian", "authority", "projection", "assembly"];
 
-/** Unwraps `as const`, `satisfies T` and parentheses. */
+/** Unwraps `as const`, `satisfies T`, `Object.freeze(...)` and parentheses - the forms both catalogue files use. */
 function unwrap(node) {
   let current = node;
-  while (
-    current !== undefined &&
-    (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current))
-  )
-    current = current.expression;
-  return current;
+  for (;;) {
+    if (
+      current !== undefined &&
+      (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current))
+    ) {
+      current = current.expression;
+      continue;
+    }
+    if (
+      current !== undefined &&
+      ts.isCallExpression(current) &&
+      ts.isPropertyAccessExpression(current.expression) &&
+      current.expression.name.text === "freeze" &&
+      current.arguments.length === 1
+    ) {
+      current = current.arguments[0];
+      continue;
+    }
+    return current;
+  }
 }
 
 function parse(file, text = readFileSync(file, "utf8")) {
@@ -160,6 +192,7 @@ export function catalogues(text, fileName = I18N) {
   const found = [];
   walk(sourceFile, (node) => {
     if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return;
+    if (node.name.text !== "en" && node.name.text !== "zh") return;
     const object = unwrap(node.initializer);
     if (object === undefined || !ts.isObjectLiteralExpression(object)) return;
     const entries = [];
@@ -241,6 +274,88 @@ export function internalsIn(entries, locale, lexicon = INTERNAL_NOUNS) {
   return findings;
 }
 
+/**
+ * The shapes of a raw identifier: a `snake_case` or `camelCase` token, a dotted name, a slashed path.
+ * A player cannot read one, cannot act on it, and cannot repeat it to anyone - so one in a sentence
+ * is the code showing through in another form.
+ */
+const IDENTIFIER_TOKENS = [
+  /\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\b/gu,
+  /\b[a-z][A-Za-z0-9]*(?:[A-Z][A-Za-z0-9]*)+\b/gu,
+  /\b[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]+){2,}\b/gu,
+  /\b[a-z][a-z0-9_]*(?:\/[a-z0-9_]+)+\b/gu,
+];
+
+/**
+ * The tokens a player typed themselves and reads on their own screen: a server they run, not a word
+ * of ours. An entry no sentence carries any more is a finding, so the list cannot outlive its reason.
+ */
+export const PLAYER_TOKENS = [
+  { token: "vLLM", why: "a model server the player runs, named in their own connection settings" },
+];
+
+/** Every raw identifier a player-facing string would put in front of a player. */
+export function identifiersIn(entries, locale, allowed = PLAYER_TOKENS.map((entry) => entry.token)) {
+  const findings = [];
+  for (const entry of entries) {
+    if (entry.value === null) continue;
+    const text = spokenText(entry.value);
+    const tokens = new Set();
+    for (const pattern of IDENTIFIER_TOKENS) for (const match of text.matchAll(pattern)) tokens.add(match[0]);
+    for (const token of tokens)
+      if (!allowed.includes(token)) findings.push({ key: entry.key, line: entry.line, locale, token });
+  }
+  return findings;
+}
+
+/**
+ * The phrases that tell a player nothing on this page can help. Every one of them is a fact worth
+ * stating - a reload is wasted otherwise - and every one of them reads as the product giving up when
+ * it stands where what happened should stand.
+ */
+const WALL = [
+  /\bno control\b/giu,
+  /\bnothing on this page\b/giu,
+  /\bdoes not help\b/giu,
+  /\bwill not help\b/giu,
+  /\bimpossible\b/giu,
+  /\bno way to\b/giu,
+  /没有任何控件/gu,
+  /无能为力/gu,
+  /没有办法/gu,
+  /无济于事/gu,
+];
+
+/** What a sentence says the player can do: the verbs this product's own steps are written with. */
+const STEP = [
+  /\b(?:close|quit|open|reload|read|try|check|choose|pick|press|wait|save|start|enable|load|delete|remove|update|confirm|stop)\b/iu,
+  /关闭|退出|打开|刷新|读取|重试|试试|检查|选择|等待|保存|开始|启用|删除|确认|停掉/u,
+];
+
+/** What a player reads first: everything up to the first full stop. */
+function openingSentence(text) {
+  const end = text.search(/[.。!！?？]/u);
+  return end < 0 ? text : text.slice(0, end);
+}
+
+/** A wall standing where what happened should stand, or a wall with no step after it. */
+export function wallsIn(entry, locale) {
+  if (entry.value === null) return [];
+  const text = spokenText(entry.value);
+  const walls = [];
+  for (const pattern of WALL) for (const match of text.matchAll(pattern)) walls.push({ at: match.index, phrase: match[0] });
+  if (walls.length === 0) return [];
+  walls.sort((left, right) => left.at - right.at);
+  const findings = [];
+  const opening = openingSentence(text);
+  if (walls[0].at < opening.length)
+    findings.push({ key: entry.key, line: entry.line, locale, kind: "wall in the opening sentence", phrase: walls[0].phrase });
+  const last = walls[walls.length - 1];
+  if (!STEP.some((pattern) => pattern.test(text.slice(last.at + last.phrase.length))))
+    findings.push({ key: entry.key, line: entry.line, locale, kind: "nothing to do after the wall", phrase: last.phrase });
+  return findings;
+}
+
 /** The Host files whose path or text names a word: the witness that the word is ours. */
 function hostWitnesses(word, cache) {
   const pattern = LATIN(word);
@@ -260,40 +375,66 @@ function hostSourceCache() {
   return cache;
 }
 
-/** The two catalogues, the keys a source reads, and the strings a player can therefore see. */
+/**
+ * Every catalogue pair under `src`: a file that declares both an `en` and a `zh` binding is one.
+ * The derivation is the tree's, not a list: the second catalogue (the character/companion domain's
+ * own words) declares its pair the same way the main one does, and a third would be scanned without
+ * anyone remembering to add it here.
+ */
+function cataloguePairs() {
+  const pairs = [];
+  for (const file of sourceFiles(SRC)) {
+    const parsed = catalogues(readFileSync(file, "utf8"), file);
+    const en = parsed.find((catalogue) => catalogue.name === "en");
+    const zh = parsed.find((catalogue) => catalogue.name === "zh");
+    if (en !== undefined && zh !== undefined)
+      pairs.push({ file: file.replace(/\\/gu, "/").split("/dialogue-web/").pop(), en, zh });
+  }
+  return pairs;
+}
+
+/** A catalogue entry a player can actually read: a source reads its key, and its value is a string. */
+function spoken(entries, read, locale, file) {
+  return entries
+    .filter((entry) => read.has(entry.key) && entry.value !== null)
+    .map((entry) => ({ ...entry, locale, file }));
+}
+
+/** Every catalogue pair, the keys a source reads, and the strings a player can therefore see. */
 function population() {
-  const parsed = catalogues(readFileSync(I18N, "utf8"));
-  const en = parsed.find((catalogue) => catalogue.name === "en");
-  const zh = parsed.find((catalogue) => catalogue.name === "zh");
-  assert.ok(en !== undefined && zh !== undefined, "src/i18n.ts must declare both catalogues");
+  const pairs = cataloguePairs();
+  assert.ok(pairs.length >= 2, `only ${pairs.length} catalogue pair(s) under src; the derivation broke`);
   const read = readKeys();
-  const visible = (catalogue) => catalogue.entries.filter((entry) => read.has(entry.key) && entry.value !== null);
-  return { en, zh, read, visibleEn: visible(en), visibleZh: visible(zh) };
+  const strings = pairs.flatMap((pair) => [
+    ...spoken(pair.en.entries, read, "en", pair.file),
+    ...spoken(pair.zh.entries, read, "zh", pair.file),
+  ]);
+  return { pairs, read, strings };
 }
 
 test("player-vocabulary.1: the population is derived, and it is not empty", (t) => {
-  const { en, zh, read, visibleEn, visibleZh } = population();
-  const examined = visibleEn.length + visibleZh.length;
+  const { pairs, read, strings } = population();
+  const examined = strings.length;
   assert.ok(
-    examined >= 1000,
-    `only ${examined} player-facing string(s) were derived from ${en.entries.length} declared key(s) and ${read.size} read key(s); a population this small means the derivation broke, not that the copy is clean`,
+    examined >= 1400,
+    `only ${examined} player-facing string(s) were derived from ${pairs.reduce((total, pair) => total + pair.en.entries.length, 0)} declared key(s) and ${read.size} read key(s); a population this small means the derivation broke, not that the copy is clean`,
   );
   // Both catalogues hold the same keys (i18n.1); a player reads one of the two sentences, never both.
   const lexicon = INTERNAL_NOUNS.flatMap((noun) => [...noun.forms, ...(noun.zh ?? [])]);
-  const carriers = visibleEn.filter((entry) => internalsIn([entry], "en").length > 0).length;
+  const carriers = new Set(strings.filter((entry) => internalsIn([entry], entry.locale).length > 0).map((entry) => entry.key)).size;
   t.diagnostic(
-    `player-vocabulary.1: strings examined ${examined} (${visibleEn.length} read key(s) of ${en.entries.length} declared in this file; ${read.size} keys read across every catalogue) · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
+    `player-vocabulary.1: strings examined ${examined} (${pairs.map((pair) => `${pair.file} ${pair.en.entries.length} declared / ${spoken(pair.en.entries, read, "en", pair.file).length} read`).join("; ")}) · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
   );
 });
 
 test("player-vocabulary.2: no player-facing sentence names our machinery", (t) => {
-  const { visibleEn, visibleZh } = population();
-  const findings = [...internalsIn(visibleEn, "en"), ...internalsIn(visibleZh, "zh")];
+  const { pairs, read, strings } = population();
+  const findings = strings.flatMap((entry) => internalsIn([entry], entry.locale));
   const counts = new Map();
   for (const finding of findings) counts.set(finding.noun, (counts.get(finding.noun) ?? 0) + 1);
   const top = [...counts].sort((left, right) => right[1] - left[1]).slice(0, 8);
   t.diagnostic(
-    `player-vocabulary.2: ${findings.length} finding(s) across ${new Set(findings.map((finding) => finding.key)).size} key(s); top: ${top.map(([noun, count]) => `${noun}:${count}`).join(", ")}`,
+    `player-vocabulary.2: ${findings.length} finding(s) across ${new Set(findings.map((finding) => finding.key)).size} key(s) in ${pairs.length} catalogue file(s); top: ${top.map(([noun, count]) => `${noun}:${count}`).join(", ")}`,
   );
   for (const finding of findings)
     t.diagnostic(`player-vocabulary.2: ${finding.line} ${finding.locale}.${finding.key} names "${finding.noun}" (${finding.names})`);
@@ -356,4 +497,96 @@ test("player-vocabulary.4 (mutation): a planted mechanism noun fails, the player
     "the Chinese rendering of an entry is scanned by the same rule",
   );
   t.diagnostic("player-vocabulary.4: a planted noun and its Chinese rendering are reported; a player's own words are not");
+});
+
+test("player-vocabulary.5: no player-facing sentence carries a raw identifier", (t) => {
+  const { strings } = population();
+  const findings = strings.flatMap((entry) => identifiersIn([entry], entry.locale));
+  const carried = PLAYER_TOKENS.filter((entry) => strings.some((string) => spokenText(string.value).includes(entry.token)));
+  t.diagnostic(
+    `player-vocabulary.5: ${findings.length} raw identifier(s) across ${new Set(findings.map((finding) => finding.key)).size} key(s) in ${strings.length} string(s); ${carried.length} of ${PLAYER_TOKENS.length} player-typed token(s) still carried (${PLAYER_TOKENS.map((entry) => entry.token).join(", ")})`,
+  );
+  for (const finding of findings)
+    t.diagnostic(`player-vocabulary.5: ${finding.line} ${finding.locale}.${finding.key} prints "${finding.token}"`);
+  assert.ok(strings.length > 0, "a population of zero strings would agree with itself");
+  assert.deepEqual(
+    [
+      ...findings.map((finding) => `${finding.line} ${finding.locale}.${finding.key}: ${finding.token}`),
+      ...PLAYER_TOKENS.filter((entry) => !carried.includes(entry)).map(
+        (entry) => `${entry.token} is declared a token the player typed, and no sentence carries it any more; drop the entry`,
+      ),
+    ],
+    [],
+    "a player's sentence names the game, the companion, the chat and their own machine - never an identifier",
+  );
+});
+
+test("player-vocabulary.6: a wall is never what a player reads first, and a step always follows it", (t) => {
+  const { strings } = population();
+  const findings = strings.flatMap((entry) => wallsIn(entry, entry.locale));
+  const walls = new Set(
+    strings.filter((entry) => WALL.some((pattern) => pattern.test(spokenText(entry.value)))).map((entry) => entry.key),
+  );
+  t.diagnostic(
+    `player-vocabulary.6: ${findings.length} finding(s) across ${new Set(findings.map((finding) => finding.key)).size} key(s); ${walls.size} key(s) tell the player the page cannot help`,
+  );
+  for (const finding of findings)
+    t.diagnostic(
+      `player-vocabulary.6: ${finding.line} ${finding.locale}.${finding.key} - ${finding.kind} ("${finding.phrase}")`,
+    );
+  assert.ok(
+    walls.size > 0,
+    "no sentence states the page's own limit any more; either a true fact left the copy or the detector broke, and neither is a pass",
+  );
+  assert.deepEqual(
+    findings.map((finding) => `${finding.line} ${finding.locale}.${finding.key}: ${finding.kind}`),
+    [],
+    "a dead end a player meets before anything else reads as the product giving up: what happened, then why the page cannot help, then the step and what is true after it",
+  );
+});
+
+test("player-vocabulary.7 (mutation): a planted wall and a planted identifier fail; a three-part sentence does not", (t) => {
+  const planted = [
+    "const en = {",
+    '  gateMutationWall: "This failed, and no control on this page can do it. Quit GameBuddy from the tray.",',
+    '  gateMutationWallNoStep: "Stardew Valley ended. GameBuddy keeps that ending, and nothing on this page reaches it.",',
+    '  gateMutationThreePart: "This start failed. GameBuddy still holds the attempt and lets go only when it is started again: no control on this page reaches it. Quit GameBuddy from the tray and open it again.",',
+    '  gateMutationIdentifier: "The launch reported stardew_contained_player_host_launch_failed and stopped.",',
+    '  gateMutationPlayerToken: "Compatible with Ollama, LM Studio or vLLM.",',
+    // The sentence as it shipped, both catalogues: the wall stood where what happened belonged, and
+    // this gate is red on the text it was written against rather than only on a sample of my making.
+    '  gateMutationShippedLaunch: "This start failed, and GameBuddy cannot clear what it left behind until it is started again: no control on this page reaches it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again.",',
+    "} as const;",
+    "const zh = {",
+    '  gateMutationShippedLaunchZh: "这次启动失败了，GameBuddy 要重新打开才能清掉它留下的状态：本页没有任何控件能做到，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开。",',
+    "} as const;",
+  ].join("\n");
+  const parsed = catalogues(planted, "src/i18n.ts");
+  const plantedEntries = parsed
+    .find((catalogue) => catalogue.name === "en")
+    .entries.filter((entry) => entry.key.startsWith("gateMutation"));
+  assert.deepEqual(
+    plantedEntries.flatMap((entry) => wallsIn(entry, "en")).map((finding) => `${finding.key}: ${finding.kind}`),
+    [
+      "gateMutationWall: wall in the opening sentence",
+      "gateMutationWallNoStep: nothing to do after the wall",
+      "gateMutationShippedLaunch: wall in the opening sentence",
+    ],
+    "a wall where what happened should stand, a wall nothing follows, and the sentence that shipped that way are all reported; the three-part sentence is not",
+  );
+  assert.deepEqual(
+    wallsIn(parsed.find((catalogue) => catalogue.name === "zh").entries.find((entry) => entry.key === "gateMutationShippedLaunchZh"), "zh").map(
+      (finding) => finding.kind,
+    ),
+    ["wall in the opening sentence"],
+    "the Chinese sentence that shipped carried the same wall in the same place, and the scan is not English-only",
+  );
+  assert.deepEqual(
+    identifiersIn(plantedEntries, "en").map((finding) => `${finding.key}: ${finding.token}`),
+    ["gateMutationIdentifier: stardew_contained_player_host_launch_failed"],
+    "a code in a sentence is one raw identifier; the server the player runs themselves is not",
+  );
+  t.diagnostic(
+    "player-vocabulary.7: a planted wall, a wall with no step and a planted code are reported; the three-part sentence and the player's own server name are not",
+  );
 });
