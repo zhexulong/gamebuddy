@@ -151,15 +151,22 @@ internal sealed partial class ExecutionManager
     /// earliest table owning the row, because one tile can be both a gated door and a plain warp and the gated one is the
     /// tile the native click entry knows.
     /// </para>
+    /// <para>
+    /// THE SAME TABLES ANSWER FOR A MAP SHE IS NOT ON. <see cref="DiscoverDoorTargets(GameLocation, Farmer)"/> takes the location
+    /// rather than the actor for exactly one reason: a coordinate a request names may be a door of ANOTHER map (round82), and
+    /// the only honest way to say which map it belongs to is to ask that map the same question this one is asked here.
+    /// </para>
     /// </summary>
-    internal static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(Farmer player)
+    internal static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(Farmer player) =>
+        player.currentLocation is { } location ? DiscoverDoorTargets(location, player) : Array.Empty<BridgeDoor>();
+
+    /// <summary>The same three tables, asked of <paramref name="location"/> - the map whose doors these rows are.</summary>
+    internal static IReadOnlyList<BridgeDoor> DiscoverDoorTargets(StardewValley.GameLocation location, Farmer actor)
     {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeDoor>();
         Dictionary<(int X, int Y), BridgeDoor> result = new();
         foreach ((Microsoft.Xna.Framework.Point point, string target) in location.doors.Pairs)
         {
-            if (DescribeDoor(point.X, point.Y, location.getWarpFromDoor(point, player)) is { } door)
+            if (DescribeDoor(point.X, point.Y, location.getWarpFromDoor(point, actor)) is { } door)
                 result.TryAdd((door.SourceX, door.SourceY), door);
         }
         foreach (StardewValley.Buildings.Building building in location.buildings)

@@ -100,7 +100,7 @@ internal sealed partial class ExecutionManager
         // own door as the FARM spells it, and the answer was `target_not_addressable;target_on_map=false` - true, and
         // silent about where the number came from (round82). The map that declares the tile as its door leading back
         // here is the answer, and it is the same one `enter_exit` gives for the same coordinate.
-        if (!moveLocation.isTileOnMap(targetTile)
+        if (!IsTileOfCurrentMap(Game1.player, (int)targetTile.X, (int)targetTile.Y)
             && MapDeclaringExitTileTo(moveLocation, (int)targetTile.X, (int)targetTile.Y) is { } otherMap)
         {
             (int X, int Y) standing = ((int)Game1.player.Tile.X, (int)Game1.player.Tile.Y);
@@ -824,7 +824,7 @@ internal sealed partial class ExecutionManager
         }
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
-            bool ofThisMap = IsTileOfThisMap(location, sourceX, sourceY);
+            bool ofThisMap = IsTileOfCurrentMap(Game1.player, sourceX, sourceY);
             // WHERE A COORDINATE LIVES IS NOT A DISTANCE. `distance=61` from `(3,11)` to `Farm:64,14` measured a walk
             // that cannot exist (round82) because the tile is not a tile of this map at all. Ask which map claims it
             // before reporting a distance at all.
@@ -1047,12 +1047,14 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Whether a coordinate is a tile of <paramref name="location"/>'s OWN coordinate space: inside its map, or one of the
-    /// tiles its warp table declares - an edge exit's source is encoded one step OUTSIDE the boundary (`Town` declares
-    /// `-1 53 BusStop`, `79 -1 Mountain`), and that tile is this map's, not another one's.
+    /// Whether a coordinate is a tile of the CURRENT map's own space: inside its map, or one of the exit tiles it declares
+    /// itself - an edge exit's source is encoded one step OUTSIDE the map boundary (`Town` declares `-1 53 BusStop`,
+    /// `79 -1 Mountain`), and that tile is THIS map's, not another one's. The two facts are the map's own grid and the
+    /// exit family it publishes, so a tile either of them names is never a coordinate of another map.
     /// </summary>
-    internal static bool IsTileOfThisMap(StardewValley.GameLocation location, int x, int y) =>
-        location.isTileOnMap(new Vector2(x, y)) || IsWarpBufferTile(location, (x, y));
+    internal static bool IsTileOfCurrentMap(Farmer player, int x, int y) =>
+        (player.currentLocation is { } location && location.isTileOnMap(new Vector2(x, y)))
+        || DiscoverExitTiles(player).Any(exit => exit.SourceX == x && exit.SourceY == y);
 
     /// <summary>
     /// The map a coordinate that is not a tile of THIS one really belongs to, or null when no loaded map claims it.

@@ -12,6 +12,7 @@ using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Network;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -50,6 +51,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 [Collection(HeadlessGameWorld.Collection)]
 public sealed class EnterExitAdjacentExitRefusalTests
 {
+    private readonly ITestOutputHelper output;
+
+    public EnterExitAdjacentExitRefusalTests(ITestOutputHelper output) => this.output = output;
+
     /// <summary>
     /// A refusal names the door even when the actor is too far to step onto it - the `round42` answer minus the
     /// step: the exits this location publishes, the nearest one, and how far it is from her own tile.
@@ -68,6 +73,124 @@ public sealed class EnterExitAdjacentExitRefusalTests
         receipt.Evidence.Should().Be(
             "source=9,9;warps=1;you=5,9;nearest=3,12;distance=3;doors=3,12->Farm",
             "the refusal knows where the door is; naming the count of the warp list alone is the round42 defect");
+    }
+
+    /// <summary>
+    /// ROUND82: the coordinate she named belongs to the map she LEFT, and nothing in the refusal said so.
+    ///
+    /// <para>
+    /// Measured 2026-11-20, day 5, twice in one run: leaving `FarmHouse` from `(3,11)` she sent `move_to_tile(64,14)` and
+    /// then `enter_exit(64,14)`; leaving `AnimalShop` from `(13,19)` the same shape with `(90,15)`. Both numbers are the
+    /// door tile of the SAME door spelled the way the other map spells it - `Farm:64,14` is the farmhouse's human door,
+    /// `Forest:90,15` the animal shop's - so each named a tile that is not on her map at all. `enter_exit` answered
+    /// `door_out_of_range ... distance=61`, a walk between two maps that does not exist, and `move_to_tile` answered
+    /// `target_not_addressable` without ever saying where the number came from.
+    /// </para>
+    ///
+    /// <para>
+    /// Both requests now name the map that claims the tile, in the code the Host's own reason-code validator admits and
+    /// with the fact the door path knows: `door_tile` (the door on HER map, one step away) against `lands_at` (where that
+    /// door puts her, on the other one). The two were not swapped in the row she read - `doorTargets` publishes its own
+    /// `sourceX`/`sourceY` and the arrival as `targetLocation`/`targetX`/`targetY` - what was missing was the MAP the
+    /// row's tile is a tile of, on a row that names the arrival's map and not the source's.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData("FarmHouse", 3, 11, 3, 12, "Farm", 64, 15, 64, 14)]
+    [InlineData("AnimalShop", 13, 19, 13, 20, "Forest", 90, 16, 90, 15)]
+    public void ACoordinateOnAnotherMapSaysWhichMapItIsOn(
+        string here,
+        int actorX,
+        int actorY,
+        int doorX,
+        int doorY,
+        string there,
+        int landsAtX,
+        int landsAtY,
+        int namedX,
+        int namedY)
+    {
+        using var world = HeadlessWorld.Create(here);
+        world.Location.warps.Add(new Warp(doorX, doorY, there, landsAtX, landsAtY, flipFarmer: false));
+        world.LoadOtherMap(there, new Warp(namedX, namedY, here, actorX, actorY, flipFarmer: false));
+        world.PlaceActorAt(actorX, actorY);
+
+        LocalExecutionReceipt transition = world.RequestEnterExit(namedX, namedY);
+        LocalExecutionReceipt walk = world.RequestMove(namedX, namedY);
+
+        foreach (LocalExecutionReceipt refusal in new[] { transition, walk })
+        {
+            refusal.State.Should().Be(ExecutionState.Rejected);
+            refusal.ReasonCode.Should().Be(
+                $"target_is_on_another_map:{RefusalProbe.ReasonCodeToken(here)}:{namedX}:{namedY}",
+                "the code is the producer's own projection of the two names, not a second spelling of it, and it has to "
+                + "survive the Host's reason-code alphabet (`[a-z0-9_:-]`)");
+            FarmhandExecutionJournal.IsValidReasonCode(refusal.ReasonCode).Should().BeTrue(
+                "the alphabet the Host validates against is stricter than the journal's, and a code the wire refuses "
+                + "reports nothing at all");
+            refusal.Evidence.Should().Contain($"target_is_on_another_map:{here}->{there}:{namedX},{namedY}");
+            refusal.Evidence.Should().Contain($"actor={actorX},{actorY}");
+            refusal.Evidence.Should().NotContain("distance=", "a tile on another map is not a walk of any length");
+        }
+
+        transition.ReasonCode.Should().NotBe("door_out_of_range", "round82's 61-tile walk is the defect, not the answer");
+        transition.Evidence.Should().Contain(
+            $"door_tile={doorX},{doorY}", "the door on HER map is the one-step answer, and it is one step away");
+        transition.Evidence.Should().Contain($"lands_at={there}:{landsAtX},{landsAtY}");
+        walk.ReasonCode.Should().NotBe(
+            StardewBodyController.TargetNotAddressableReasonCode,
+            "the walk must name where the coordinate is, not only that it is not here");
+
+        this.output.WriteLine(
+            $"round82 {here}({actorX},{actorY}) naming {there}:{namedX},{namedY} -> {transition.ReasonCode} | {transition.Evidence}");
+    }
+
+    /// <summary>
+    /// The other side of the same boundary: a door on HER map, named from six tiles away, is still the radius refusal
+    /// with a real distance - the cross-map answer must not swallow the ordinary "walk closer" case.
+    ///
+    /// <para>
+    /// WHICH CODE, `door_out_of_range` OR `warp_out_of_range`, is the table's question and not this one: the harness's
+    /// exit lives in `location.warps`, so it resolves as a warp, while `round82`'s real farmhouse exit lives in the door
+    /// table and refused as a door. Both name the tile that must be walked to, and that is the fact under test.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ADoorOnThisMapsFarSideIsStillAWalk()
+    {
+        using var world = HeadlessWorld.Create("FarmHouse");
+        world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
+        world.PlaceActorAt(3, 11);
+
+        LocalExecutionReceipt receipt = world.RequestEnterExit(9, 9);
+
+        receipt.ReasonCode.Should().BeOneOf("door_out_of_range", "warp_out_of_range");
+        receipt.Evidence.Should().Contain("distance=6");
+        receipt.Evidence.Should().Contain("door=3,12");
+        receipt.Evidence.Should().NotContain("target_on_map=false", "the tile IS a tile of this map");
+    }
+
+    /// <summary>
+    /// A coordinate on NO map keeps the radius refusal it always had, and gains the one fact that stops its distance
+    /// being read as a walk here: no loaded map claims the tile, so there is no map to name in its place.
+    /// </summary>
+    [Fact]
+    public void ACoordinateOnNoMapSaysItIsNotATileOfThisOne()
+    {
+        using var world = HeadlessWorld.Create("FarmHouse");
+        world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
+        world.LoadOtherMap("Farm", new Warp(64, 14, "FarmHouse", 3, 11, flipFarmer: false));
+        world.PlaceActorAt(3, 11);
+
+        LocalExecutionReceipt receipt = world.RequestEnterExit(40, 40);
+
+        receipt.ReasonCode.Should().BeOneOf("door_out_of_range", "warp_out_of_range");
+        receipt.Evidence.Should().Contain("distance=37");
+        receipt.Evidence.Should().Contain(
+            "target_on_map=false",
+            "a distance to a tile nothing on this map declares is arithmetic, not a walk, and the field says so with the "
+            + "same spelling `move_to_tile` uses");
+        receipt.ReasonCode.Should().NotContain("another_map", "no loaded map claims (40,40), so naming one would be a guess");
     }
 
     /// <summary>
@@ -334,7 +457,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
         public GameLocation Location { get; private set; } = null!;
 
-        public static HeadlessWorld Create()
+        public static HeadlessWorld Create(string locationName = "ProbeFarm")
         {
             var world = new HeadlessWorld();
 
@@ -354,7 +477,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
             map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(16, 16), new xTile.Dimensions.Size(64, 64)));
             location.map = map;
             location.IsFarm = true;
-            SetField(location, "name", new NetString("ProbeFarm"));
+            SetField(location, "name", new NetString(locationName));
             world.Location = location;
 
             var sprite = (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite));
@@ -429,6 +552,24 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
         public void PlaceActorAt(int x, int y) => Game1.player.position.Set(new Vector2(x * 64 + 8, y * 64));
 
+        /// <summary>
+        /// A SECOND loaded location, so a coordinate that belongs to another map can be recognised as that map's door.
+        /// <paramref name="warps"/> is that map's own warp table, which is where an edge or building door lives when the
+        /// location is not the one being stood in.
+        /// </summary>
+        public GameLocation LoadOtherMap(string name, params Warp[] warps)
+        {
+            var other = new GameLocation();
+            var map = new xTile.Map();
+            map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(128, 128), new xTile.Dimensions.Size(64, 64)));
+            other.map = map;
+            SetField(other, "name", new NetString(name));
+            foreach (Warp warp in warps)
+                other.warps.Add(warp);
+            Game1.game1!._locations = new List<GameLocation> { other };
+            return other;
+        }
+
         /// <summary>`enter_exit` through its real request path.</summary>
         public LocalExecutionReceipt RequestEnterExit(int sourceX, int sourceY)
         {
@@ -439,6 +580,18 @@ public sealed class EnterExitAdjacentExitRefusalTests
                 $"req_enter_exit_{sourceX}_{sourceY}",
                 sourceX,
                 sourceY,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
+        }
+
+        /// <summary>`move_to_tile` through its real request path, so the two actions are asked the same question.</summary>
+        public LocalExecutionReceipt RequestMove(int targetX, int targetY)
+        {
+            var publication = FarmhandCapabilityPublication.Initial(
+                new HashSet<string>(StringComparer.Ordinal) { "move_to_tile" });
+            var executions = new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
+            return executions.RequestLocalMove(
+                $"req_move_to_tile_{targetX}_{targetY}",
+                new Vector2(targetX, targetY),
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);
         }
 
