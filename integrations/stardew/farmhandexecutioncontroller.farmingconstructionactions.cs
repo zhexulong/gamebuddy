@@ -10,6 +10,49 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager
 {
+    /// <summary>
+    /// WHICH CLAUSE OF A TARGET REFUSAL BROKE, as one closed vocabulary, printed as <c>reason=&lt;clause&gt;</c>.
+    ///
+    /// <para>
+    /// A code that covers one fact names that fact. These codes cover several, so the code alone cannot say which one
+    /// refused the request - and a caller reading <c>seed_target_unavailable</c> twenty-one times learned nothing about
+    /// the tile. MEASURED <c>round84</c>: twenty-one <c>plant_seed</c> requests, zero successes, every one
+    /// <c>seed_target_unavailable</c>. The pack half was never the answer (the pack is asked first and has its own code),
+    /// so all twenty-one were one of the five tile clauses and the receipt could not say which.
+    /// </para>
+    ///
+    /// <para>
+    /// TWO CLAUSES ARE ONE FACT IN MORE THAN ONE ACTION: <c>soil_not_tilled</c> is "this tile carries no hoe dirt" for
+    /// every crop action, and <c>target_id_changed</c> is "the tile is not the one this request named". They are spelled
+    /// once, here, so a reader can compare across actions; the rest are each action's own question and stay in its own
+    /// words rather than being filed under one umbrella.
+    /// </para>
+    /// </summary>
+    private static class TileTargetRefusalClause
+    {
+        /// <summary>The evidence field every clause is printed in.</summary>
+        internal const string Field = "reason=";
+
+        internal const string SoilNotTilled = "soil_not_tilled";
+        internal const string SoilIsIndoorPot = "soil_is_indoor_pot";
+        internal const string SoilHasCrop = "soil_has_crop";
+        internal const string SeedRejectedBySoil = "seed_rejected_by_soil";
+        internal const string NoCrop = "no_crop";
+        internal const string CropNeedsNoWater = "crop_needs_no_water";
+        internal const string CropAlreadyWatered = "crop_already_watered";
+        internal const string CropIsForage = "crop_is_forage";
+        internal const string CropNotReady = "crop_not_ready";
+        internal const string HarvestMethodNotGrab = "harvest_method_not_grab";
+        internal const string FertilizerRejectedBySoil = "fertilizer_rejected_by_soil";
+        internal const string PotNotPresent = "pot_not_present";
+        internal const string NotACrabPot = "not_a_crab_pot";
+        internal const string PotNotOwned = "pot_not_owned";
+        internal const string PotAlreadyBaited = "pot_already_baited";
+        internal const string MachineNotPresent = "machine_not_present";
+        internal const string NotAMachine = "not_a_machine";
+        internal const string TargetIdChanged = "target_id_changed";
+    }
+
     public LocalExecutionReceipt RequestLocalRefillWateringCan(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.General, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
@@ -81,22 +124,43 @@ internal sealed partial class ExecutionManager
             "water_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: null,
+            gate: location => DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out _),
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteWaterCrop(executionId, admittedRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs));
+
+    /// <summary>
+    /// What makes this tile a place the actor can water: the crop is there, it wants water, it is dry, and it is the one
+    /// the request named. The gate asks it before the walk and the body asks it again after one.
+    /// </summary>
+    private static TileTargetRefusal? DescribeWaterCropRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId, out StardewValley.TerrainFeatures.HoeDirt? dirt)
+    {
+        dirt = null;
+        string tile = $"target={targetX},{targetY}";
+        if (!location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt soil)
+            return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilNotTilled}");
+        dirt = soil;
+        if (dirt.crop is null)
+            return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.NoCrop}");
+        if (!dirt.needsWatering())
+            return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropNeedsNoWater}");
+        if (dirt.isWatered())
+            return new TileTargetRefusal("crop_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropAlreadyWatered}");
+        return string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("crop_target_changed", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
 
     private LocalExecutionReceipt ExecuteWaterCrop(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs)
     {
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || dirt.crop is null
-            || !dirt.needsWatering()
-            || dirt.isWatered())
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crop_target_unavailable", $"target={targetX},{targetY}");
-        if (!string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "crop_target_changed", $"target={targetX},{targetY}");
+        // THE SAME PREDICATE THE GATE ASKED. This body runs after a walk the request was admitted for, so the world has
+        // had the whole walk to move - and the reading is taken again from the one function, never trusted from the
+        // gate that answered before it.
+        if (DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.HoeDirt? resolved) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.TerrainFeatures.HoeDirt dirt = resolved!;
         if (!TrySelectDeclaredTool(Game1.player, "water_crop", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, null);
         Dictionary<string, string> evidence = ToolActionEvidence.SelectionFacts(selection);
@@ -171,25 +235,48 @@ internal sealed partial class ExecutionManager
             "harvest_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: null,
+            gate: location => DescribeHarvestCropRefusal(location, targetX, targetY, expectedTargetId, out _, out _),
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteHarvestCrop(executionId, admittedRequestId, targetX, targetY, expectedQualifiedHarvestItemId, expectedTargetId, requestedDeadlineMs));
 
+    /// <summary>
+    /// What makes this tile a place the actor can harvest: a living crop, ready, that the engine harvests by hand, and
+    /// the one the request named. One predicate for the gate and the body.
+    /// </summary>
+    private static TileTargetRefusal? DescribeHarvestCropRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId,
+        out StardewValley.TerrainFeatures.HoeDirt? dirt, out StardewValley.Crop? crop)
+    {
+        dirt = null;
+        crop = null;
+        string tile = $"target={targetX},{targetY}";
+        if (!location.terrainFeatures.TryGetValue(new Vector2(targetX, targetY), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt soil)
+            return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilNotTilled}");
+        dirt = soil;
+        crop = soil.crop;
+        if (crop is null)
+            return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.NoCrop}");
+        if (crop.forageCrop.Value)
+            return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropIsForage}");
+        if (!dirt.readyForHarvest())
+            return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.CropNotReady}");
+        if (crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+            return new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.HarvestMethodNotGrab}");
+        return string.Equals(BuildCropTargetId(location, targetX, targetY, crop.netSeedIndex.Value, crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("harvest_target_unavailable", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
+
     private LocalExecutionReceipt ExecuteHarvestCrop(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedHarvestItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-
-    StardewValley.GameLocation location = Game1.player.currentLocation;
-    Vector2 tile = new(targetX, targetY);
-    if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-        || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-        || dirt.crop is null
-        || dirt.crop.forageCrop.Value
-        || !dirt.readyForHarvest()
-        || dirt.crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab
-        || !string.Equals(BuildCropTargetId(location, targetX, targetY, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value), expectedTargetId, StringComparison.Ordinal))
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "harvest_target_unavailable", $"target={targetX},{targetY}");
-
-    StardewValley.Crop crop = dirt.crop;
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        // THE SAME PREDICATE THE GATE ASKED, after the walk.
+        if (DescribeHarvestCropRefusal(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.HoeDirt? resolvedDirt, out StardewValley.Crop? resolvedCrop) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.TerrainFeatures.HoeDirt dirt = resolvedDirt!;
+        StardewValley.Crop crop = resolvedCrop!;
     // HoeDirt.performUseAction promotes the `(W)66` scythe to a scythe
     // harvest even for a crop whose data says Grab (HoeDirt.cs:484-487). This
     // narrow action exposes only the ordinary native Grab path, so reject that
@@ -345,26 +432,67 @@ internal sealed partial class ExecutionManager
             "plant_seed", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: null,
+            gate: location => DescribePlantSeedRefusal(location, targetX, targetY, expectedTargetId, expectedQualifiedItemId, slot, out _, out _),
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecutePlantSeed(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
+    /// <summary>
+    /// WHAT MAKES A TILE A PLACE THIS REQUEST'S SEED CAN GO: the seed's own presence in the live pack (L1), then the
+    /// soil (L2). The gate asks it before the walk and the body asks it again after one, so a request the world has
+    /// answered with a NO is refused without walking there.
+    ///
+    /// <para>
+    /// THE PACK HALF IS A PRE-WALK ANSWER TOO, not just an item check: `canPlantThisSeedHere` takes the seed's own
+    /// <c>ItemId</c> - a seed the pack no longer holds cannot be asked about any tile - and a walk toward a tile that
+    /// could not be asked about is the round84 shape exactly. The pack is read through <see cref="ResolveLiveSlot"/>, so
+    /// the slot the plan observed is never the identity (that is <c>seed_not_owned_in_pack</c> when the pack holds the
+    /// item nowhere, and <c>slot=</c>/<c>named_slot=</c> in the evidence when it moved).
+    /// </para>
+    ///
+    /// <para>
+    /// THE TILE HALF NAMES ITS CLAUSE. MEASURED <c>round84</c>: twenty-one requests, zero successes, every one
+    /// <c>seed_target_unavailable</c> - a code covering five different facts, so the receipt could not say whether the
+    /// tile was untilled, held a crop, held a garden pot, rejected the seed, or was not the tile the request named. The
+    /// pack half was never the answer: it is asked first and has its own code.
+    /// </para>
+    /// </summary>
+    private static TileTargetRefusal? DescribePlantSeedRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId, string expectedQualifiedItemId, int namedSlot,
+        out int liveSlot, out StardewValley.Object? seed)
+    {
+        liveSlot = -1;
+        seed = null;
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held
+            || held.Item is not StardewValley.Object heldSeed)
+            return new TileTargetRefusal("seed_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={namedSlot}");
+        liveSlot = held.Slot;
+        seed = heldSeed;
+        string soil = $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={namedSlot}";
+        Vector2 tile = new(targetX, targetY);
+        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt)
+            return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilNotTilled}");
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
+            return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilIsIndoorPot}");
+        if (dirt.crop is not null)
+            return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilHasCrop}");
+        if (!dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false))
+            return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SeedRejectedBySoil}");
+        return string.Equals(BuildSeedTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
+
     private LocalExecutionReceipt ExecutePlantSeed(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held
-            || held.Item is not StardewValley.Object seed)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={slot}");
-        int liveSlot = held.Slot;
+        // THE SAME PREDICATE THE GATE ASKED, after the walk: the pack and the soil have had the whole walk to move, and
+        // a request that named a slot has to see the slot the pack answers NOW rather than the one the plan observed.
+        if (DescribePlantSeedRefusal(Game1.player.currentLocation, targetX, targetY, expectedTargetId, expectedQualifiedItemId, slot, out int liveSlot, out StardewValley.Object? resolved) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.Object seed = resolved!;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
         Vector2 tile = new(targetX, targetY);
-        if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
-            || dirt.crop is not null
-            || !dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false)
-            || !string.Equals(BuildSeedTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "seed_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         int previousSlot = Game1.player.CurrentToolIndex;
@@ -639,23 +767,56 @@ internal sealed partial class ExecutionManager
             "bait_crab_pot", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            // No item gate: the name the caller gave is checked against the pack in the body, and whether the item is
-            // BAIT belongs to the pot (see <see cref="AnyObject"/>). A gate that read the snapshot's slot refused a bait
-            // that had only moved.
-            gate: null,
+            // The pack half and the pot's state are BOTH pre-walk answers: a bait the pack does not hold cannot be asked
+            // about this pot, and a pot that is not there cannot be baited. Whether the pot ACCEPTS the bait stays in
+            // the body - that is the pot's own probe, which asks what the pot does with the item rather than where the
+            // tile is. The pack is read through `ResolveLiveSlot`, so a bait that only moved still answers.
+            gate: location => DescribeBaitCrabPotRefusal(location, targetX, targetY, expectedTargetId, slot, expectedQualifiedItemId, out _, out _, out _),
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecuteBaitCrabPot(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
+
+    /// <summary>
+    /// What makes this a pot this request can bait: the bait is in the live pack, the pot stands on the named tile, it
+    /// is this actor's own empty standard pot, and it is the one the request named. The gate asks it before the walk and
+    /// the body asks it again after one.
+    /// </summary>
+    private static TileTargetRefusal? DescribeBaitCrabPotRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId, int namedSlot, string expectedQualifiedItemId,
+        out StardewValley.Objects.CrabPot? crabPot, out StardewValley.Object? bait, out int liveSlot)
+    {
+        crabPot = null;
+        bait = null;
+        liveSlot = -1;
+        if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, AnyObject) is not { } held
+            || held.Item is not StardewValley.Object heldBait)
+            return new TileTargetRefusal("bait_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={namedSlot}");
+        bait = heldBait;
+        liveSlot = held.Slot;
+        string evidence = $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={namedSlot}";
+        Vector2 tile = new(targetX, targetY);
+        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed))
+            return new TileTargetRefusal("bait_crab_pot_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.PotNotPresent}");
+        if (placed is not StardewValley.Objects.CrabPot pot || pot.QualifiedItemId != "(O)710")
+            return new TileTargetRefusal("bait_crab_pot_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.NotACrabPot}");
+        crabPot = pot;
+        if (crabPot.owner.Value != Game1.player.UniqueMultiplayerID)
+            return new TileTargetRefusal("bait_crab_pot_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.PotNotOwned}");
+        if (crabPot.bait.Value is not null)
+            return new TileTargetRefusal("bait_crab_pot_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.PotAlreadyBaited}");
+        return string.Equals(BuildBaitCrabPotTargetId(location, namedSlot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("bait_crab_pot_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
 
     private LocalExecutionReceipt ExecuteBaitCrabPot(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId)
     {
         Farmer player = Game1.player;
-        if (ResolveLiveSlot(player, expectedQualifiedItemId, AnyObject) is not { } held
-            || held.Item is not StardewValley.Object bait)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
-        int liveSlot = held.Slot;
         GameLocation location = player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? placed) || placed is not StardewValley.Objects.CrabPot crabPot || crabPot.QualifiedItemId != "(O)710" || crabPot.owner.Value != player.UniqueMultiplayerID || crabPot.bait.Value is not null || !string.Equals(BuildBaitCrabPotTargetId(location, slot, targetX, targetY), expectedTargetId, StringComparison.Ordinal)) return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_crab_pot_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
+        // THE SAME PREDICATE THE GATE ASKED, after the walk.
+        if (DescribeBaitCrabPotRefusal(location, targetX, targetY, expectedTargetId, slot, expectedQualifiedItemId, out StardewValley.Objects.CrabPot? resolvedPot, out StardewValley.Object? resolvedBait, out int liveSlot) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.Objects.CrabPot crabPot = resolvedPot!;
+        StardewValley.Object bait = resolvedBait!;
         if (!crabPot.performObjectDropInAction(bait, probe: true, player))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "bait_not_accepted_by_pot", $"target={targetX},{targetY};item={expectedQualifiedItemId};pot=(O)710;bait_present={(crabPot.bait.Value is not null).ToString().ToLowerInvariant()}");
         int beforeCount = CountQualifiedItem(player, expectedQualifiedItemId);
@@ -675,25 +836,51 @@ internal sealed partial class ExecutionManager
             "fertilize_tile", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: null,
+            gate: location => DescribeFertilizeTileRefusal(location, targetX, targetY, expectedTargetId, slot, expectedQualifiedItemId, out _, out _, out _),
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteFertilizeTile(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs));
 
-    private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    /// <summary>
+    /// What makes this a tile this request can fertilize: the fertilizer is in the live pack, the tile carries hoe dirt
+    /// that takes it, and it is the tile the request named. The gate asks it before the walk and the body asks it again
+    /// after one.
+    /// </summary>
+    private static TileTargetRefusal? DescribeFertilizeTileRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId, int namedSlot, string expectedQualifiedItemId,
+        out StardewValley.Object? fertilizer, out int liveSlot, out StardewValley.TerrainFeatures.HoeDirt? dirt)
     {
+        fertilizer = null;
+        liveSlot = -1;
+        dirt = null;
         if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsFertilizerItem) is not { } held
-            || held.Item is not StardewValley.Object fertilizer)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={slot}");
-        int liveSlot = held.Slot;
-
-        StardewValley.GameLocation location = Game1.player.currentLocation;
+            || held.Item is not StardewValley.Object heldFertilizer)
+            return new TileTargetRefusal("fertilizer_not_owned_in_slot", $"item={expectedQualifiedItemId};named_slot={namedSlot}");
+        fertilizer = heldFertilizer;
+        liveSlot = held.Slot;
+        string evidence = $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={namedSlot}";
         Vector2 tile = new(targetX, targetY);
         if (!location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            || feature is not StardewValley.TerrainFeatures.HoeDirt dirt
-            || (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
-            || !dirt.CanApplyFertilizer(fertilizer.QualifiedItemId)
-            || !string.Equals(BuildFertilizerTargetId(location, slot, targetX, targetY, fertilizer.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "fertilizer_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
+            || feature is not StardewValley.TerrainFeatures.HoeDirt soil)
+            return new TileTargetRefusal("fertilizer_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilNotTilled}");
+        dirt = soil;
+        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)
+            return new TileTargetRefusal("fertilizer_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilIsIndoorPot}");
+        if (!dirt.CanApplyFertilizer(fertilizer.QualifiedItemId))
+            return new TileTargetRefusal("fertilizer_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.FertilizerRejectedBySoil}");
+        return string.Equals(BuildFertilizerTargetId(location, namedSlot, targetX, targetY, fertilizer.QualifiedItemId), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("fertilizer_target_unavailable", $"{evidence};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
+
+    private LocalExecutionReceipt ExecuteFertilizeTile(string executionId, string requestId, int slot, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    {
+        StardewValley.GameLocation location = Game1.player.currentLocation;
+        Vector2 tile = new(targetX, targetY);
+        // THE SAME PREDICATE THE GATE ASKED, after the walk.
+        if (DescribeFertilizeTileRefusal(location, targetX, targetY, expectedTargetId, slot, expectedQualifiedItemId, out StardewValley.Object? resolvedFertilizer, out int liveSlot, out StardewValley.TerrainFeatures.HoeDirt? resolvedDirt) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.Object fertilizer = resolvedFertilizer!;
+        StardewValley.TerrainFeatures.HoeDirt dirt = resolvedDirt!;
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         string? beforeFertilizer = dirt.fertilizer.Value;

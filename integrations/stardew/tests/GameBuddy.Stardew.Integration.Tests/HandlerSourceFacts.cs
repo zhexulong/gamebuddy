@@ -72,6 +72,13 @@ internal static class HandlerSourceFacts
     /// body is a brace-balanced block and an EXPRESSION body runs to its own semicolon. The parameter list is skipped by
     /// its own parentheses first, because an expression-bodied request half has no brace of its own while the lambdas it
     /// hands the seam do - reading from the first <c>{</c> would return a lambda's block instead of the handler.
+    ///
+    /// <para>
+    /// TWO DECLARATION SHAPES, ONE READER. A request half hands its gate a predicate returning
+    /// <see cref="TileTargetRefusal"/> and asks the same one from its body, so the action's target decision lives in
+    /// that predicate now and a path reader that stopped at <c>LocalExecutionReceipt</c> would stop exactly where the
+    /// decision starts - which is how the live-pack re-resolution left the path the day it moved.
+    /// </para>
     /// </summary>
     internal static (string File, int Line, int BodyLine, string Body)? MethodSite(
         IReadOnlyDictionary<string, string> sources,
@@ -80,6 +87,8 @@ internal static class HandlerSourceFacts
         foreach ((string file, string source) in sources)
         {
             int declaration = source.IndexOf($"LocalExecutionReceipt {method}(", StringComparison.Ordinal);
+            if (declaration < 0)
+                declaration = source.IndexOf($"TileTargetRefusal? {method}(", StringComparison.Ordinal);
             if (declaration < 0)
                 continue;
 

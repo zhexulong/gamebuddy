@@ -273,19 +273,36 @@ internal sealed partial class ExecutionManager
             "machine_inspect", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: null,
+            gate: location => DescribeMachineInspectRefusal(location, targetX, targetY, expectedTargetId, out _),
             inReach: IsMachineTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteMachineInspect(executionId, admittedRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs));
 
+    /// <summary>
+    /// What makes this tile an inspection this request can perform: a machine is placed there and it is the one the
+    /// request named. The gate asks it before the walk and the body asks it again after one.
+    /// </summary>
+    private static TileTargetRefusal? DescribeMachineInspectRefusal(
+        GameLocation location, int targetX, int targetY, string expectedTargetId, out StardewValley.Object? machine)
+    {
+        machine = null;
+        string tile = $"target={targetX},{targetY}";
+        if (!location.objects.TryGetValue(new Vector2(targetX, targetY), out StardewValley.Object? placed))
+            return new TileTargetRefusal("machine_target_changed", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.MachineNotPresent}");
+        machine = placed;
+        if (machine.GetMachineData() is null)
+            return new TileTargetRefusal("machine_target_changed", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.NotAMachine}");
+        return string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal)
+            ? null
+            : new TileTargetRefusal("machine_target_changed", $"{tile};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
+    }
+
     private LocalExecutionReceipt ExecuteMachineInspect(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-
         StardewValley.GameLocation location = Game1.player.currentLocation;
-        Vector2 tile = new(targetX, targetY);
-        if (!location.objects.TryGetValue(tile, out StardewValley.Object? machine)
-            || machine.GetMachineData() is null
-            || !string.Equals(BuildMachineTargetId(location, targetX, targetY, machine.QualifiedItemId), expectedTargetId, StringComparison.Ordinal))
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "machine_target_changed", $"target={targetX},{targetY}");
+        // THE SAME PREDICATE THE GATE ASKED, after the walk.
+        if (DescribeMachineInspectRefusal(location, targetX, targetY, expectedTargetId, out StardewValley.Object? resolved) is { } refusal)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusal.ReasonCode, refusal.Evidence);
+        StardewValley.Object machine = resolved!;
 
         LocalMachineInspectionSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, this.revision, requestedDeadlineMs);
         string? held = machine.heldObject.Value?.QualifiedItemId;

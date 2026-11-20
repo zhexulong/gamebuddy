@@ -138,14 +138,15 @@ public sealed class TileTargetRequestSeamTests
         }
         else
         {
-            // A site that resolves its own target hands the seam a resolver; the alternative is spelled out as
-            // `gate: null`, so "forgot to pass a resolver" cannot look like "has no target". A resolver that reads the
-            // actor's location resolves the target OUT of it - the tile and the identity come from the world, not from the
-            // call - while one that does not (`_`) answers from the pack alone.
-            bool declaresResolver = !site.Body.Contains("gate: null", StringComparison.Ordinal);
+            // A site that resolves its own target hands the seam a resolver, and whether one was handed at all is
+            // `SeamThatWasAdoptedIsNotHandedNullGateTests`'s question - it counts every call and fails on a null gate, so
+            // the weaker reading that used to live here ("a resolver, or an explicit `gate: null`") is gone: one fact,
+            // one owner. What is left is the SHAPE of the resolver: one that reads the actor's location resolves the
+            // target OUT of it - the tile and the identity come from the world, not from the call - while one that does
+            // not (`_`) answers from the pack alone.
             bool readsLocation = site.Body.Contains("gate: location =>", StringComparison.Ordinal);
-            if (declaresResolver && !readsLocation && !site.Body.Contains("gate: _ =>", StringComparison.Ordinal))
-                yield return $"{site.File}: {site.Method} must hand its target resolver the actor's location, or declare `gate: null`";
+            if (!readsLocation && !site.Body.Contains("gate: _ =>", StringComparison.Ordinal))
+                yield return $"{site.File}: {site.Method} must hand its target resolver the actor's location, or answer from the pack alone";
             if (readsLocation && !site.Body.Contains("(location, targetX, targetY, expectedTargetId", StringComparison.Ordinal))
                 yield return $"{site.File}: {site.Method} must resolve its target through (location, targetX, targetY, expectedTargetId)";
             if (!site.Body.Contains("inReach:", StringComparison.Ordinal))

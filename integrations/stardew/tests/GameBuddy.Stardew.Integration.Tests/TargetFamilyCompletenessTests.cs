@@ -1311,11 +1311,24 @@ public sealed class TargetFamilyCompletenessTests
         /// <c>HoeDirt</c>'s own `state` NetField is what `HoeDirt.cs` reads, and `crop` is a plain field the shipped
         /// predicate tests for null.
         /// </summary>
-        internal void PlaceEmptyHoeDirt(int x, int y)
+        internal StardewValley.TerrainFeatures.HoeDirt PlaceEmptyHoeDirt(int x, int y)
         {
             var dirt = new StardewValley.TerrainFeatures.HoeDirt();
             SetInstanceField(dirt, "state", new NetInt(0));
             this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+            return dirt;
+        }
+
+        /// <summary>
+        /// A garden pot on a tile. `plant_seed` and `fertilize_tile` both refuse a tile whose object layer holds one,
+        /// because the pot owns the soil the engine would actually plant into - so the tile's own hoe dirt is not the
+        /// soil the request would write to.
+        /// </summary>
+        internal void PlaceIndoorPot(int x, int y)
+        {
+            var pot = (StardewValley.Objects.IndoorPot)FormatterServices.GetUninitializedObject(typeof(StardewValley.Objects.IndoorPot));
+            SeedMissingNetFields(pot);
+            this.Farm.objects[new Vector2(x, y)] = pot;
         }
 
         /// <summary>
@@ -1548,24 +1561,26 @@ public sealed class TargetFamilyCompletenessTests
         /// A hoedirt tile carrying a crop that wants water, built from the two facts `DiscoverCropTargets` reads
         /// (`needsWatering()` / `isWatered()`), never from a hand-written row.
         /// </summary>
-        internal void PlaceWaterableCrop(int x, int y)
+        internal StardewValley.TerrainFeatures.HoeDirt PlaceWaterableCrop(int x, int y)
         {
             var dirt = new StardewValley.TerrainFeatures.HoeDirt();
             SetInstanceField(dirt, "state", new NetInt(0));
             dirt.crop = NewCrop(seedIndex: "472", phaseDaysLeft: 2, fullyGrown: false);
             this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+            return dirt;
         }
 
         /// <summary>
         /// A hoedirt tile whose crop reports `readyForHarvest()` through the engine's own day counter, so
         /// `DiscoverHarvestTargets` decides it - the family whose season-killed case was `24d8168e`.
         /// </summary>
-        internal void PlaceHarvestableCrop(int x, int y)
+        internal StardewValley.TerrainFeatures.HoeDirt PlaceHarvestableCrop(int x, int y)
         {
             var dirt = new StardewValley.TerrainFeatures.HoeDirt();
             SetInstanceField(dirt, "state", new NetInt(0));
             dirt.crop = NewCrop(seedIndex: "472", phaseDaysLeft: 0, fullyGrown: true);
             this.Farm.terrainFeatures[new Vector2(x, y)] = dirt;
+            return dirt;
         }
 
         /// <summary>One object-layer forageable, the subject `DiscoverForageTargets` scans for.</summary>

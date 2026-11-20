@@ -116,7 +116,13 @@ public sealed class ActionExecutionCapabilityMatrixTests
         @"IReadOnlyList<[^>]*>\s+(?<method>Discover[A-Za-z0-9_]+)\(",
         RegexOptions.CultureInvariant);
 
-    private static readonly Regex RequestHalfCall = new(@"this\.(?<method>\w+)\(", RegexOptions.CultureInvariant);
+    /// <summary>
+    /// A call the request path continues through. UNQUALIFIED COUNTS TOO: a gate lambda hands the seam a predicate by its
+    /// own name (`DescribePlantSeedRefusal(...)`, a static member of the same partial class), and a reader that only saw
+    /// `this.` would stop at the gate and report the action as never resolving its slot - measured: that is exactly what
+    /// it said about `plant_seed`, `fertilize_tile` and `bait_crab_pot` for one run after the predicate moved there.
+    /// </summary>
+    private static readonly Regex RequestHalfCall = new(@"(?:this[.])?(?<method>\w+)\(", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// The builder that turns an action's inputs into the id its request has to echo, and therefore the one place to ask
@@ -636,9 +642,12 @@ public sealed class ActionExecutionCapabilityMatrixTests
     }
 
     /// <summary>The declarations a request path can continue through - and <c>Execute*</c> is one of them, because the
-    /// receipt is minted there.</summary>
+    /// receipt is minted there, and so is <c>Describe&lt;Action&gt;Refusal</c>, because that is where the target decision
+    /// itself now lives: a request half hands its gate that function and its body asks the same one.</summary>
     private static bool IsRequestHalf(string method) =>
-        method.StartsWith("RequestLocal", StringComparison.Ordinal) || method.StartsWith("Execute", StringComparison.Ordinal);
+        method.StartsWith("RequestLocal", StringComparison.Ordinal)
+        || method.StartsWith("Execute", StringComparison.Ordinal)
+        || (method.StartsWith("Describe", StringComparison.Ordinal) && method.EndsWith("Refusal", StringComparison.Ordinal));
 
     /// <summary>Every discovery method's body, keyed by its own name, read from the one place it is declared.</summary>
     private static Dictionary<string, string> DiscoveryBodies(IReadOnlyDictionary<string, string> sources)
