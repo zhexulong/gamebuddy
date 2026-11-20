@@ -14,13 +14,28 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager
 {
     /// <summary>
-    /// The rows one radius-window family publishes when its candidate set is larger than the budget: the wood fence and
-    /// crab pot lists.
+    /// The rows one radius-window family publishes: the fence and crab-pot lists.
+    ///
+    /// <para>
+    /// THIS IS THE HOST'S NUMBER, NOT THE FARM'S. The Host declares <c>maxItems</c> per snapshot family in
+    /// <c>SNAPSHOT_FAMILY_RULES</c> and REFUSES THE WHOLE SNAPSHOT past it rather than trimming, so this is a bound on
+    /// what one observation can carry - published by the Mod only because the wire cannot carry more. It is not a
+    /// statement about how much the world offers: the crab-pot shore under one actor is routinely larger than this, and
+    /// the fence list can never reach it at all, because <c>Utility.playerCanPlaceItemHere</c> admits the radius-1 ring
+    /// only (<c>TargetDiscoveryOrderTests</c> pins both).
+    /// </para>
     /// </summary>
-    private const int RadiusWindowRowBudget = 16;
+    /// <remarks>
+    /// Not hand-picked: <c>EveryRadiusWindowCapIsTheHostsDeclaredMaxItemsForItsFamily</c> reads the number back out of
+    /// <c>SNAPSHOT_FAMILY_RULES</c> for each family that spends it, so the two layers cannot drift apart silently.
+    /// </remarks>
+    internal const int RadiusWindowRowBudget = 16;
 
-    /// <summary>The same budget for the fertilizer list, which names four times as many candidates per tile.</summary>
-    private const int FertilizerRowBudget = 64;
+    /// <summary>
+    /// The same bound for the fertilizer list, which the Host declares at four times as many rows because one tile can
+    /// carry far more fertilizer candidates than it can hold a fence.
+    /// </summary>
+    internal const int FertilizerRowBudget = 64;
 
     /// <summary>
     /// WHETHER A TILE IS A PLACE a published target row may name - the one admission every family's tile passes
@@ -96,10 +111,10 @@ internal sealed partial class ExecutionManager
     /// <para>
     /// The published order is <see cref="TargetOrdering.NearestFirstByChebyshev"/>'s - distance, then slot, then tile.
     /// Three things differ per family and all three are arguments: the predicate (`isSource`, plus whatever `buildRow`
-    /// admits and refuses by returning null), the cap (a named budget constant - `RadiusWindowRowBudget` for the fence
-    /// and crab-pot lists, `FertilizerRowBudget` for the fertilizer list - never a literal at the call site), and the
-    /// natural key `identify` reads a row's tile and slot back out of. Ordering removes nothing: a row the actor was
-    /// never shown is a target the dispatch can never name.
+    /// admits and refuses by returning null), the cap (`RadiusWindowRowBudget` for the fence and crab-pot lists,
+    /// `FertilizerRowBudget` for the fertilizer list - each the Host's declared `maxItems` for the family it caps,
+    /// never a literal at the call site), and the natural key `identify` reads a row's tile and slot back out of.
+    /// Ordering removes nothing: a row the actor was never shown is a target the dispatch can never name.
     /// </para>
     /// </summary>
     private static IReadOnlyList<T> NearestFirstRadiusWindowRows<T>(
