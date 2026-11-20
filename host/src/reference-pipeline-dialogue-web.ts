@@ -21,7 +21,11 @@ import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-s
 // a second copy of this number is how the two dispatch paths ended up disagreeing about the same
 // request. The loopback bind address is shared for the same reason: it is the listener's, and
 // deliberately not configurable.
-import { LOOPBACK_HOST, MAX_TAVERN_MESSAGE_BODY_BYTES } from "./reference-pipeline-dialogue-web.core.js";
+import {
+  closeListenerAfterDrain,
+  LOOPBACK_HOST,
+  MAX_TAVERN_MESSAGE_BODY_BYTES,
+} from "./reference-pipeline-dialogue-web.core.js";
 
 const BROWSER_TTL_MS = 2 * 60 * 60_000;
 const MAX_BOOTSTRAP_BODY_BYTES = 4 * 1024;
@@ -350,30 +354,10 @@ export async function startReferencePipelineDialogueWebServer(
   return Object.freeze({
     origin: `http://${LOOPBACK_HOST}:${port}`,
     closeAllConnections: () => server.closeAllConnections(),
-    /**
-     * A request this listener already accepted is ANSWERED before any socket dies.
-     *
-     * The handler marks itself closed and drains what it accepted, and an in-flight Chat request
-     * answers its own named code there (`runtime_unavailable` for work the close rejects) - so the
-     * listener stops taking new requests, idle keep-alive sockets go now, the drain is awaited
-     * next, and only what is still connected after it is destroyed. Destroying the connections
-     * first wrote those answers into a destroyed socket, which is how a named refusal reached the
-     * panel as `TypeError: Failed to fetch` instead of its code.
-     */
     async close() {
       if (closed) return;
       closed = true;
-      const handlerDrain = handler.close();
-      // The listener's own close is a callback, not a promise: it settles once the last connection
-      // ends, which is why it is armed here and awaited after the drain below.
-      const listenerClosed = new Promise<Error | undefined>((resolveClose) => {
-        server.close((error) => resolveClose(error));
-      });
-      server.closeIdleConnections();
-      await handlerDrain;
-      server.closeAllConnections();
-      const listenerError = await listenerClosed;
-      if (listenerError !== undefined) throw listenerError;
+      await closeListenerAfterDrain(server, [handler.close()]);
     },
   });
 }

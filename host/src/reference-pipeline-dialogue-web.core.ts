@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import {
   type ComposedTavernProfile,
   MAX_TEXT_UTF8_BYTES,
@@ -324,6 +324,52 @@ export function isIdempotencyKey(value: string | null): value is string {
 
 export function isExactLoopbackHost(request: IncomingMessage, port: number): boolean {
   return request.headers.host === `${LOOPBACK_HOST}:${port}`;
+}
+
+/**
+ * The one shutdown order for a listener of this family: a request that was already accepted is
+ * ANSWERED before any socket dies.
+ *
+ * The drains are passed as promises that are ALREADY STARTED, not as callbacks: an argument list is
+ * evaluated before the call, so a shell marks itself closed and begins draining before this
+ * function stops the listener. That is what makes the order hard to write wrongly rather than
+ * merely documented. The three shells that each carried it by hand wrote `closeAllConnections()`
+ * first every time, because destroying the connections reads as decisive shutdown.
+ *
+ * `server.close()` is armed, not awaited: it settles only once the last connection ends, which is
+ * after the drain has written its answers. Idle keep-alive sockets carry no request and go first;
+ * the accepted work is awaited next; only what is still connected after that is destroyed.
+ *
+ * A rejected drain does NOT cancel the shutdown - `allSettled`, never `all`, and never the
+ * sequential `await` the three shells each had. Sequential awaits abandon the destroy and the
+ * listener await the moment one drain throws, which leaves the port bound, the remaining drains
+ * unobserved, and the caller holding an error that describes half a shutdown; a shutdown that
+ * cannot report what it did is worse than one that reports a failure. The first drain rejection is
+ * rethrown after teardown, ahead of the listener's own error, because the caller's own work is the
+ * more informative of the two. What a caller loses: throwing can no longer skip teardown, so a
+ * shell that wants to keep its listener open when a drain fails must decide that for itself.
+ *
+ * A fourth listener of this family calls this function instead of writing its own `close()`. The
+ * gate on the order is the socket test of each current caller -
+ * `composed-reference-game-static-shell-composition`, `reference-pipeline-dialogue-web.private` and
+ * `tavern-management-dialogue-web.private` each answer an accepted request across a close, and each
+ * of them fails when this function destroys before draining.
+ *
+ * `drains` admits `undefined` for an optional handler, so a caller never needs a filter of its own.
+ */
+export async function closeListenerAfterDrain(
+  server: Server,
+  drains: readonly (Promise<unknown> | undefined)[],
+): Promise<void> {
+  const listenerClosed = new Promise<Error | undefined>((resolveClose) => {
+    server.close((error) => resolveClose(error));
+  });
+  server.closeIdleConnections();
+  const settled = await Promise.allSettled(drains);
+  server.closeAllConnections();
+  const listenerError = await listenerClosed;
+  for (const result of settled) if (result.status === "rejected") throw result.reason;
+  if (listenerError !== undefined) throw listenerError;
 }
 
 function randomToken(): string {

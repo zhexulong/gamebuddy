@@ -8,7 +8,7 @@ import {
 } from "../composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "../reference-pipeline-dialogue-web.delegated.js";
 // The listener contract this composition mounts its handlers on: one loopback address, defined once.
-import { LOOPBACK_HOST } from "../reference-pipeline-dialogue-web.core.js";
+import { closeListenerAfterDrain, LOOPBACK_HOST } from "../reference-pipeline-dialogue-web.core.js";
 import {
   createTavernManagementDialogueWebDelegatedHandler,
   type TavernManagementDelegatedHandler,
@@ -349,38 +349,14 @@ export async function startComposedReferenceGameStaticShellComposition(
     // strings); the one-time bootstrap token stays in the same fragment.
     launchUrl: `${origin}/#profile=composed-reference-game&boot=${bootstrapToken}`,
     closeAllConnections: () => server.closeAllConnections(),
-    /**
-     * The order here is the whole reason this is one function.
-     *
-     * A request that was already accepted is ANSWERED before any socket dies. The three
-     * handlers mark themselves closed and then drain what they accepted, and an in-flight
-     * launch answers its own named code there (`game_launch_unreachable` among them) - so
-     * the listener stops taking new requests, idle keep-alive sockets go now, the drain is
-     * awaited next, and only what is still connected after it is destroyed.
-     *
-     * Destroying the connections first, as this used to, wrote those answers into a
-     * destroyed socket: the panel saw a network error (`ERR_CONNECTION_REFUSED`, "Failed to
-     * fetch") where the product had a code to name, and every later read was refused by the
-     * closed listener too.
-     */
     async close() {
       if (closed) return;
       closed = true;
-      const composedDrain = composedHandler.close();
-      const referenceDrain = referenceHandler.close();
-      const managementDrain = managementHandler?.close();
-      // The listener's own close is a callback, not a promise: it settles once the last
-      // connection ends, which is why it is armed here and awaited after the drain below.
-      const listenerClosed = new Promise<Error | undefined>((resolveClose) => {
-        server.close((error) => resolveClose(error));
-      });
-      server.closeIdleConnections();
-      await composedDrain;
-      await referenceDrain;
-      await managementDrain;
-      server.closeAllConnections();
-      const listenerError = await listenerClosed;
-      if (listenerError !== undefined) throw listenerError;
+      await closeListenerAfterDrain(server, [
+        composedHandler.close(),
+        referenceHandler.close(),
+        managementHandler?.close(),
+      ]);
     },
   });
 }
