@@ -112,13 +112,33 @@ function createHarness(
 test("Player Host owner exposes only a distinct redacted reserve/read/stop API", () => {
   const { composition, owner } = createHarness();
 
-  assert.deepEqual(Object.keys(owner).sort(), ["readStatus", "reservePlayerHostLaunch", "stopOwnedPlayerHost"]);
+  assert.deepEqual(Object.keys(owner).sort(), [
+    "notePlayerHostEnded",
+    "readStatus",
+    "reservePlayerHostLaunch",
+    "stopOwnedPlayerHost",
+  ]);
   assert.equal(Object.isFrozen(owner), true);
   assert.equal("launch" in owner, false);
   assert.equal("register" in owner, false);
   assert.equal("generation" in owner, false);
   assert.equal(owner === (composition.aiClientProcessOwner as unknown), false);
   assert.deepEqual(owner.readStatus(), { kind: "idle" });
+});
+
+test("a Player Host ending is recorded, never performed", () => {
+  const harness = createHarness();
+  harness.owner.reservePlayerHostLaunch();
+  assert.deepEqual(harness.owner.readStatus(), { kind: "player_host_launch_pending" });
+
+  // An ending says the attempt's one-shot launch authority is spent. It never spawns, never kills,
+  // and never clears a reservation that is still outstanding: the reservation belongs to the
+  // attempt that holds it until that attempt launches or is revoked.
+  harness.owner.notePlayerHostEnded();
+  assert.deepEqual(harness.owner.readStatus(), { kind: "player_host_launch_pending" });
+  assert.deepEqual(harness.playerSpawnCalls, []);
+  assert.deepEqual(harness.playerKillCalls, []);
+  assert.throws(() => harness.owner.reservePlayerHostLaunch(), /owned_player_host_launch_already_active/);
 });
 
 test("Player Host reservation is frozen, empty, nominal, and singular", () => {

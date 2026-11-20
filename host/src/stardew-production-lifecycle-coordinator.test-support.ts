@@ -765,6 +765,8 @@ export async function createFixture(
   // `ai-generation-1`; each fresh resume activation claims the next one, so a
   // second resume's spawn/connect generation is observably distinct.
   let aiClientLaunchGenerationIndex = 0;
+  /** How many times this fixture has minted an attempt identity; see `createBootstrapIdentity`. */
+  let bootstrapReservations = 0;
   const dependencies: StardewPrivateBootstrapCoreDependencies = {
     rawSpawn(executable, args, options) {
       spawnCalls.push(Object.freeze({ executable, args: Object.freeze([...args]), options }));
@@ -795,7 +797,17 @@ export async function createFixture(
       });
     },
     rawPlayerHostProbe: (pid) => (input.playerProbeFailure ? null : { pid, creationDate: "20260101010101.000000+000" }),
-    createBootstrapIdentity: () => `bootstrap-coordinator-${attempt}`,
+    createBootstrapIdentity: () => {
+      // Every owner reservation mints its OWN attempt identity, exactly as production does
+      // (`createBootstrapIdentity: randomUUID`): the durable attempt is keyed by this id, so a second
+      // attempt inside one fixture (or one Host process) that reused the first one's identity would be
+      // refused as a held attempt instead of observed as the next one. The first reservation keeps the
+      // name the helpers below and other suites read; every later one adds its own sequence number.
+      bootstrapReservations += 1;
+      return bootstrapReservations === 1
+        ? `bootstrap-coordinator-${attempt}`
+        : `bootstrap-coordinator-${attempt}-${bootstrapReservations}`;
+    },
     createGuardianRevision: () => `guardian-revision-coordinator-${attempt}`,
     createGuardianInstanceId: () => `guardian-instance-coordinator-${attempt}`,
     createGuardianEpoch: () => 1,

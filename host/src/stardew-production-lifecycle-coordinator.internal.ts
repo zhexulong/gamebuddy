@@ -2959,7 +2959,9 @@ function createCoordinator(
    * 3. Only then does this lifecycle forget the attempt. Its owner, admission,
    *    activation promise, launch promise, exit record, mod count and runtime flags were
    *    the attempt's alone, and the generation advances so nothing it bound can be sent
-   *    again. The attestation needed no reset of its own: it is the `player_host_attested`
+   *    again. The Player Host process owner is told the attempt ended too, so the one-shot
+   *    launch reservation it minted belongs to an attempt that is over. The attestation
+   *    needed no reset of its own: it is the `player_host_attested`
    *    state this lifecycle is leaving for `inactive`.
    */
   const settleEndedAttempt = (): Promise<void> | undefined => {
@@ -3011,6 +3013,12 @@ function createCoordinator(
       endgameSettled = false;
       playerHostLaunchThroughRuntime = false;
       aiClientLaunchThroughRuntime = false;
+      // The attempt's one-shot Player Host and AI-client launch reservations are spent with the
+      // attempt. Without this the process owners refuse every later attempt with
+      // `owned_player_host_launch_already_active` / `owned_ai_client_launch_already_active` - the
+      // latches left below this lifecycle, and the reason a second game needed a second Host process
+      // (ADR-0015 §6 U4a).
+      internal.noteAttemptEnded();
       runtimeContained.playerHost = false;
       runtimeContained.aiClient = false;
       runtimeClosed = false;

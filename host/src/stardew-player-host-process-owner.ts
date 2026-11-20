@@ -36,6 +36,18 @@ export type StardewPlayerHostProcessOwner = Readonly<{
   readStatus(): StardewPlayerHostProcessStatus;
   reservePlayerHostLaunch(): StardewPlayerHostLaunchReservation;
   stopOwnedPlayerHost(): StopOwnedPlayerHostResult;
+  /**
+   * Records that the Player Host this owner launched has ENDED, so the attempt it belonged to does
+   * not hold the one-shot launch reservation any more and the next attempt may reserve its own.
+   *
+   * It is deliberately not `stopOwnedPlayerHost`: nothing here kills, contains or probes anything,
+   * and the ending it records is the Guardian's own `role_exited` report - an ending the Host did
+   * not cause (ADR-0007). It advances only the CONTAINED shape, where this owner holds no pid of
+   * its own; an owner that holds one answers for that process by probe, never by a claim.
+   *
+   * Idempotent, because the caller is a settle that may be asked twice by two presses.
+   */
+  notePlayerHostEnded(): void;
 }>;
 
 /** Raw OS dependencies accepted only by the explicitly named test support. */

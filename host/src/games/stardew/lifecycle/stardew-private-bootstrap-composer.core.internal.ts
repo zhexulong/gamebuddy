@@ -390,6 +390,15 @@ type StardewPlayerHostLaunchRegistration = Readonly<{
   launch(input: LaunchPlayerHostInput): Readonly<{
     status: StardewPlayerHostProcessStatus;
   }>;
+  /**
+   * Contained variant: commits the exact one-shot reservation and marks the process owner awaiting
+   * attestation without creating a raw child. The native process is owned by the authenticated
+   * platform session; this owner holds no pid for it, so the ending it gets back is the Guardian's
+   * report through `notePlayerHostEnded` rather than a handle of its own.
+   */
+  containedLaunch(): Readonly<{
+    status: StardewPlayerHostProcessStatus;
+  }>;
   revoke(): void;
 }>;
 
@@ -553,6 +562,14 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
   ): Promise<StardewOwnedPlayerHostBootstrap>;
   stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  /**
+   * Records that the attempt this composition prepared is over - the Guardian reported the Player
+   * Host's exit, or an explicit endgame settled it - so both process owners' one-shot launch
+   * reservations are spent and the next attempt mints its own. It is the Player Host's counterpart
+   * of the AI client's "the ended activation is superseded" edge, and it never kills, contains or
+   * probes anything (ADR-0007, ADR-0015 §6 U4a).
+   */
+  noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   /**
    * Best effort: merge the player's action policy into the config of the attempt
@@ -628,6 +645,7 @@ export function createStardewPrivateBootstrapProductionCore(
     reserveOwnedPlayerHostBootstrapForActivation: closed.reserveOwnedPlayerHostBootstrapForActivation,
     stageOwnedPlayerHostProfile: closed.stageOwnedPlayerHostProfile,
     terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
+    noteAttemptEnded: closed.noteAttemptEnded,
     quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
     projectPlayerActionPolicyIntoOwnedAttempt: closed.projectPlayerActionPolicyIntoOwnedAttempt,
     reconcileHeldBootstrapRegistration: closed.reconcileHeldBootstrapRegistration,
@@ -747,6 +765,14 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
   ): Promise<StardewOwnedPlayerHostBootstrap>;
   stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  /**
+   * Records that the attempt this composition prepared is over - the Guardian reported the Player
+   * Host's exit, or an explicit endgame settled it - so both process owners' one-shot launch
+   * reservations are spent and the next attempt mints its own. It is the Player Host's counterpart
+   * of the AI client's "the ended activation is superseded" edge, and it never kills, contains or
+   * probes anything (ADR-0007, ADR-0015 §6 U4a).
+   */
+  noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -835,6 +861,9 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
     },
     terminalizeOwnedPlayerHostOwner(owner) {
       base.terminalizeOwnedPlayerHostOwner(owner);
+    },
+    noteAttemptEnded() {
+      base.noteAttemptEnded();
     },
     quarantineOwnedPlayerHostOwner(owner) {
       return base.quarantineOwnedPlayerHostOwner(owner);
@@ -941,6 +970,14 @@ type ClosedBootstrapCore = Readonly<{
   ): Promise<StardewOwnedPlayerHostBootstrap>;
   stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  /**
+   * Records that the attempt this composition prepared is over - the Guardian reported the Player
+   * Host's exit, or an explicit endgame settled it - so both process owners' one-shot launch
+   * reservations are spent and the next attempt mints its own. It is the Player Host's counterpart
+   * of the AI client's "the ended activation is superseded" edge, and it never kills, contains or
+   * probes anything (ADR-0007, ADR-0015 §6 U4a).
+   */
+  noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
@@ -1293,6 +1330,10 @@ function createClosedComposition(dependencies: StardewPrivateBootstrapCoreDepend
           throw error;
         }
       });
+    },
+    noteAttemptEnded: (): void => {
+      playerHostProcessOwner.notePlayerHostEnded();
+      aiClientProcessOwner.noteAiClientEnded();
     },
     terminalizeOwnedPlayerHostOwner: (owner: StardewOwnedPlayerHostBootstrap): void => {
       requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
@@ -3829,10 +3870,9 @@ function composeOwnedPlayerHostOwner(
         launch: (launchInput) => playerHostRegistration.launch(launchInput),
         revoke: revokePlayerHostLaunch,
       }),
-    // Contained variant: claiming the launch does not create a raw child. The
-    // native process is owned by the authenticated platform session; the claim
-    // only commits the one-shot reservation and its launch generation so the
-    // lifecycle correlation and double-launch protection stay intact.
+    // Contained variant: claiming the launch creates no raw child and ends the reservation exactly
+    // as the direct one does, so the attempt's one-shot authority is spent either way. The process
+    // is the platform session's; the ending comes back through `notePlayerHostEnded`.
     consumePlayerHostLaunchContained: (callback) =>
       consumeLaunch({
         role: "player_host",
@@ -3841,7 +3881,7 @@ function composeOwnedPlayerHostOwner(
         setState: (state) => {
           playerHostLaunchState = state;
         },
-        launch: () => undefined,
+        launch: () => playerHostRegistration.containedLaunch(),
         revoke: revokePlayerHostLaunch,
       }),
     consumeAiClientLaunch: (callback) =>
@@ -4119,7 +4159,9 @@ type OwnedPlayerHost = {
 
 type OwnedPlayerHostProcessState =
   | { readonly kind: "idle" }
-  | { readonly kind: "awaiting_player_host_attestation"; readonly owned: OwnedPlayerHost }
+  // `owned` is the Host's own child, or null for a CONTAINED launch, where the platform session and
+  // the Guardian's player Job own the process and this Host never holds a pid for it.
+  | { readonly kind: "awaiting_player_host_attestation"; readonly owned: OwnedPlayerHost | null }
   | { readonly kind: "player_host_stopped" };
 
 function createPlayerHostProcessOwner(
@@ -4232,6 +4274,17 @@ function createPlayerHostProcessOwner(
           reservation = null;
           return launchWithGeneration(input, launchGeneration);
         },
+        containedLaunch() {
+          if (consumed || reservation?.capability !== capability)
+            throw new Error("player_host_launch_reservation_not_active");
+          consumed = true;
+          reservation = null;
+          if (state.kind === "awaiting_player_host_attestation") throw new Error("owned_player_host_already_active");
+          state = { kind: "awaiting_player_host_attestation", owned: null };
+          return Object.freeze({
+            status: { kind: "awaiting_player_host_attestation" as const },
+          });
+        },
         revoke() {
           if (!consumed && reservation?.capability === capability) reservation = null;
           consumed = true;
@@ -4249,6 +4302,10 @@ function createPlayerHostProcessOwner(
     stopOwnedPlayerHost(): StopOwnedPlayerHostResult {
       if (state.kind === "idle") return { kind: "no_owned_player_host", killed: false };
       if (state.kind === "player_host_stopped") return { kind: "already_stopped", killed: false };
+      // A contained launch owns no process here: the player's world belongs to its Guardian Job, and
+      // this Host has neither a pid nor a handle to end. `contain_role` - the explicit endgame's own
+      // authenticated operation - is the only thing that reaches it (ADR-0007).
+      if (state.owned === null) return { kind: "no_owned_player_host", killed: false };
 
       const { owned } = state;
       let probeResult: StardewPlayerHostProcessProbeResult;
@@ -4270,6 +4327,15 @@ function createPlayerHostProcessOwner(
       if (killed !== true) return { kind: "termination_failed", killed: false };
       state = { kind: "player_host_stopped" };
       return { kind: "terminated", killed: true };
+    },
+    /**
+     * The contained ending: the world this attempt launched is gone and this owner holds no handle
+     * that could say so. Marking `player_host_stopped` here is what lets the next attempt reserve at
+     * all, and it claims only what its caller proved - see `StardewPlayerHostProcessOwner`.
+     */
+    notePlayerHostEnded(): void {
+      if (state.kind === "awaiting_player_host_attestation" && state.owned === null)
+        state = { kind: "player_host_stopped" };
     },
   });
 }
@@ -4391,6 +4457,15 @@ function createAiClientProcessOwner(
         throw error;
       }
       return capability;
+    },
+    noteAiClientEnded(): void {
+      // A reservation the attempt never used is spent with it: nothing can launch it any more, and
+      // the next attempt mints its own.
+      if (reservation !== null) reservation = null;
+      // A contained launch owns no process here; the attempt's own containment already ran, so the
+      // only thing left to record is that this owner holds no activation any more.
+      if (state.kind === "awaiting_ai_client_attestation" && state.owned === null)
+        state = { kind: "ai_client_stopped" };
     },
     stopOwnedAiClient(): StopOwnedAiClientResult {
       if (state.kind === "idle") return { kind: "no_owned_ai_client", killed: false };
@@ -5037,6 +5112,7 @@ function createRecoverablePlayerHostRegistration(launchGeneration: string): Star
   return Object.freeze({
     launchGeneration,
     launch: refuseRecoverableOwnerLaunch,
+    containedLaunch: refuseRecoverableOwnerLaunch,
     // There is no in-process reservation left to revoke: the one this record
     // describes died with the process that held it.
     revoke: () => undefined,

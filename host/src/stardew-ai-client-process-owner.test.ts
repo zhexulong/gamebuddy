@@ -93,6 +93,7 @@ test("AI process owner exposes only the redacted reserve/read/stop API", () => {
   const { owner } = createHarness();
 
   assert.deepEqual(Object.keys(owner).sort(), [
+    "noteAiClientEnded",
     "readOwnedAiClientGeneration",
     "readStatus",
     "reserveAiClientLaunch",
@@ -124,6 +125,20 @@ test("AI process owner exposes the single owned generation only after launch and
   assert.deepEqual(harness.owner.readOwnedAiClientGeneration(), {
     ownedGeneration: { launchGeneration: "generation-2" },
   });
+});
+
+test("a reservation the attempt never used is spent when that attempt ends", () => {
+  const { owner } = createHarness();
+  owner.reserveAiClientLaunch();
+  assert.deepEqual(owner.readStatus(), { kind: "ai_client_launch_pending" });
+
+  // The attempt is over and nothing can launch this reservation any more. Recording that spends the
+  // reservation and never spawns or kills anything - the ended attempt's own containment already ran.
+  owner.noteAiClientEnded();
+  assert.deepEqual(owner.readStatus(), { kind: "idle" });
+  // A second attempt mints its own reservation rather than being refused by the first one's.
+  const reservation = owner.reserveAiClientLaunch();
+  assert.equal(Object.isFrozen(reservation), true);
 });
 
 test("reservation is a frozen empty nominal object and only one may be pending", () => {

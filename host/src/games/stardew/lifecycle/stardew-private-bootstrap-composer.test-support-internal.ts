@@ -91,6 +91,7 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   ): Promise<StardewOwnedPlayerHostBootstrap>;
   stageOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   terminalizeOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): void;
+  noteAttemptEnded(): void;
   bindOwnedPlayerHostPhaseAOwner(owner: StardewOwnedPlayerHostBootstrap): StardewOwnedPlayerHostPhaseATestView;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   projectPlayerActionPolicyIntoOwnedAttempt(

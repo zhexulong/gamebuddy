@@ -51,6 +51,15 @@ export type StardewAiClientProcessOwner = Readonly<{
   readOwnedAiClientGeneration(): ReadOwnedAiClientGenerationResult;
   reserveAiClientLaunch(): StardewAiClientLaunchReservation;
   stopOwnedAiClient(): StopOwnedAiClientResult;
+  /**
+   * Records that the attempt this owner minted its reservation for has ENDED, so that reservation is
+   * spent and the next attempt mints its own - whether the attempt launched the AI client or only
+   * reserved it. Nothing here kills or probes: the ended attempt's own containment already ran, and
+   * this only stops the owner from holding an authority nobody can use.
+   *
+   * Idempotent, because the caller is a settle that may be asked twice by two presses.
+   */
+  noteAiClientEnded(): void;
 }>;
 
 /** Raw OS dependencies accepted only by the explicitly named test support. */

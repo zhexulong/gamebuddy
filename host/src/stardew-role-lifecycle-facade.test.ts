@@ -154,6 +154,9 @@ test("direct-owned Player Host pending, awaiting, and stopped states remain trut
         throw new Error("not_exposed_by_facade");
       },
       stopOwnedPlayerHost: () => ({ kind: "no_owned_player_host" as const, killed: false as const }),
+      notePlayerHostEnded: () => {
+        throw new Error("not_exposed_by_facade");
+      },
     });
     const facade = createStardewRoleLifecycleFacade(null, owner, playerOwner);
     assert.deepEqual((await facade.readRoleLifecycleView()).playerHost, {

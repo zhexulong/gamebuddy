@@ -125,6 +125,7 @@ export type _ProductionInternalCompositionHasExactKeys = Assert<
     | "stageOwnedPlayerHostProfile"
     | "terminalizeOwnedPlayerHostOwner"
     | "quarantineOwnedPlayerHostOwner"
+    | "noteAttemptEnded"
     | "projectPlayerActionPolicyIntoOwnedAttempt"
     | "reconcileHeldBootstrapRegistration"
     | "settleOwnedPlayerHostContainedRuntimeAttempt"
@@ -2053,6 +2054,7 @@ test("production internal composition exposes only the private C1 materializer w
       "launchStagedPlayerHost",
       "launchStagedPlayerHostContained",
       "materializeAiClientProfileAfterManifestAdmission",
+      "noteAttemptEnded",
       "prepareFreshFarmhandAiClientActivation",
       "projectPlayerActionPolicyIntoOwnedAttempt",
       "quarantineOwnedPlayerHostOwner",
