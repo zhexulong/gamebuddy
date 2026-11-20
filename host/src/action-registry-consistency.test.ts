@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { basename, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -376,19 +376,23 @@ function toolNameFor(actionId: string): string | undefined {
  * run on the target version - and `visibleActionsFromModCatalog` has two. The second is the descriptor-derived carve-out:
  * an enrolled action whose Mod-owned descriptor is complete is admitted while its lifecycle still says `experimental`.
  *
- * WHICH actions walk through that door is not written down anywhere: `lifecycle` is a field the Mod's registration
+ * WHICH actions walk through that door is not listed anywhere else: `lifecycle` is a field the Mod's registration
  * publishes, so "carries no proof of its own" is `unprovenVisibilityActionIds(registrations)`, derived from the artifact
- * here. `UNPROVEN_VISIBILITY_DECLARATIONS` supplies the PROSE and nothing else, and this gate is the bijection between the
- * two - failing in both directions, each with its own name rather than a count:
+ * here, and `UNPROVEN_VISIBILITY_DECLARATIONS` is the DOOR itself - `visibleActionsFromModCatalog` admits an action its
+ * lifecycle does not admit by finding its row, and by nothing else. This gate is the bijection between the two, failing
+ * in both directions, each with its own name rather than a count:
  *
  *   `an_action_without_its_own_proof_is_undeclared:<action>`
- *       registered, lifecycle neither `live_verified` nor `published`, and no row. Nobody wrote down why it is (or could
- *       be) visible, and one direction alone would be a list that can only grow.
+ *       registered, lifecycle neither `live_verified` nor `published`, and no row: it is refused, and nobody wrote down
+ *       whether that is intended. One direction alone would be a table that can only grow.
  *   `declared_row_names_a_proven_action:<action>`
  *       a row whose action has since earned its own proof. An exemption must expire, and a row left sitting there reads as
  *       authority for a fact the Mod already states.
  *   `declared_row_names_no_registered_action:<action>`
  *       a row whose action has left the surface altogether: it excuses nothing.
+ *   `declared_row_admits_nothing:<action>`
+ *       a row whose action the catalog gate still refuses: the row is the door, so a row that admits nothing has drifted
+ *       away from the reason it states.
  *
  * The population is the Mod's own published surface, and "carries its own proof" is the lifecycle byte - which is not
  * taken on faith here either: `tools/check-stardew-action-promotion.mjs` re-derives `live_verified` from the recorded live
@@ -419,11 +423,10 @@ test("every action without its own proof has a declared reason, and no row outli
   const failures: string[] = [];
   for (const actionId of unproven) {
     if (declaredIds.has(actionId)) continue;
-    const reach = visibleIds.has(actionId) ? "hands it to the Agent" : "refuses it";
     failures.push(
       `an_action_without_its_own_proof_is_undeclared:${actionId}:its registration lifecycle is ` +
-        `\`${String(lifecycleOf.get(actionId))}\`, and the catalog gate ${reach} with no row stating why it may be ` +
-        "visible and what would retire that reason",
+        `\`${String(lifecycleOf.get(actionId))}\`, so the only door that could admit it is a row in that table, and ` +
+        "there is none: it is refused, and nothing states whether that is intended",
     );
   }
   for (const declaration of UNPROVEN_VISIBILITY_DECLARATIONS) {
@@ -451,6 +454,15 @@ test("every action without its own proof has a declared reason, and no row outli
         registered.length,
       )} registered · unproven [${unproven.join(", ")}] · declared [${declared.join(", ")}]`,
   );
+  // The table IS the second door, so the third direction is a row that admits nothing: a row whose action is refused is
+  // an exemption nobody can walk through, and it reads as authority for a visibility the Agent does not have.
+  for (const actionId of declared) {
+    if (visibleIds.has(actionId)) continue;
+    failures.push(
+      `declared_row_admits_nothing:${actionId}:the row states why it may be visible and the catalog gate refuses it ` +
+        "anyway, so the reason and the door have drifted apart",
+    );
+  }
   // Zero population is BLOCKED, never green: a surface that registers nothing makes every count above agree on nothing.
   assert.ok(
     registered.length > 0,
@@ -625,4 +637,294 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
     [],
     `the prompt names a per-action tool the plan surface drops: ${named.filter((name) => perAction.has(name)).join(", ")}`,
   );
+});
+
+/**
+ * EVERY SITE THAT DECIDES AN ACTION IS VISIBLE DOES SO THROUGH A DECLARATION THAT CAN EXPIRE - OR IT IS A FINDING.
+ *
+ * <p>
+ * The defect this gate exists for, measured on the tree rather than reported. Visibility had TWO answers: the table
+ * `UNPROVEN_VISIBILITY_DECLARATIONS`, where each row carries a `reason` and a `deleteWhen`, and a predicate
+ * `isVisibleWithoutLiveProof` = "descriptor-derived and its descriptor is complete", which carried neither. The predicate
+ * admitted exactly the two actions the table already named, so nothing downstream could tell the two apart - and the next
+ * action to arrive through the predicate would have been visible with nobody having said why or when it stops.
+ * </p>
+ *
+ * <p>
+ * THE RULE, one fact per visibility decision: an action is admitted by its own lifecycle proof (`carriesItsOwnProof` -
+ * `live_verified` re-derived from recorded live runs by `tools/check-stardew-action-promotion.mjs`, or `published`), or by
+ * a row of the table, which states its expiry. So every site that reads a visibility fact gets one verdict:
+ * </p>
+ *
+ *   `declaration`  reads `UNPROVEN_VISIBILITY_DECLARATIONS`. The row is the door, and a row has a `deleteWhen`.
+ *   `lifecycle`    reads `carriesItsOwnProof` - the door the architecture names, whose evidence expires on its own.
+ *   `restrictor`   `!isModDescriptorComplete(...)`, a guard that only ever CLOSES. A door that cannot open is not a
+ *                  second answer.
+ *   `definition`   the declaration or the function itself, which decides nothing.
+ *   `predicate`    anything else: a visibility fact combined into an admission with no expiry written down. THE FINDING.
+ *
+ * <p>
+ * POPULATION FROM SOURCE, verdict from use. The files are every production `.ts` under `host/src` (tests and test support
+ * excluded by name, imports stripped so an import is not mistaken for a use), and the facts are the vocabulary the module
+ * itself exports plus the two doors - which is to say the population is whatever the tree contains, not a list of sites
+ * written here. The counter is printed so a green run states what it read: `sites S · declared D · predicate P`.
+ * </p>
+ *
+ * <p>
+ * WHAT THIS READING DOES NOT SEE, stated rather than hidden: a site that admits an action through a fact outside the
+ * vocabulary (a new field on the registration, a second table of ids) is invisible to it. That is why the file's other
+ * gates hold the PRODUCT's own answer - `visibleActionsFromModCatalog` against the mount, and the table against the Mod's
+ * lifecycle - to each other, rather than trusting this census alone. red-proof: `isVisibleWithoutLiveProof` restored
+ * beside `hasAnAdmissionPath` reads `predicate` and fails naming `action-registry.ts:visibleActionsFromModCatalog`.
+ * </p>
+ */
+const VISIBILITY_FACTS = /\b(UNPROVEN_VISIBILITY_DECLARATIONS|carriesItsOwnProof|isModDescriptorComplete)\b/gu;
+
+type VisibilitySiteVerdict = "declaration" | "lifecycle" | "restrictor" | "definition" | "predicate";
+
+type VisibilitySite = Readonly<{ file: string; site: string; verdict: VisibilitySiteVerdict }>;
+
+/** The text with every comment removed, so a mention in prose is not counted as a site. */
+function withoutComments(text: string): string {
+  const out: string[] = [];
+  let index = 0;
+  let quote: string | null = null;
+  while (index < text.length) {
+    const character = text[index]!;
+    if (quote !== null) {
+      out.push(character);
+      if (character === "\\") {
+        out.push(text[index + 1] ?? "");
+        index += 2;
+        continue;
+      }
+      if (character === quote) quote = null;
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'" || character === "`") {
+      quote = character;
+      out.push(character);
+      index += 1;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "/") {
+      const end = text.indexOf("\n", index);
+      index = end === -1 ? text.length : end;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "*") {
+      const end = text.indexOf("*/", index + 2);
+      index = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    out.push(character);
+    index += 1;
+  }
+  return out.join("");
+}
+
+/** Every production file under `host/src`: a test and its support are not the product, whatever they are called after that. */
+function productionSources(): readonly Readonly<{ file: string; text: string }>[] {
+  return readdirSync(resolve(hostRoot, "src"), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+    .map((entry) => join(entry.parentPath, entry.name))
+    .filter((path) => {
+      const name = basename(path);
+      return !name.includes(".test.") && !name.endsWith(".test-support.ts");
+    })
+    .map((path) => ({
+      file: relative(hostRoot, path).split("\\").join("/"),
+      text: withoutComments(readFileSync(path, "utf8")).replace(/^import\b[^;]*;/gmu, ""),
+    }))
+    .sort((left, right) => left.file.localeCompare(right.file));
+}
+
+/** The top-level declaration a match sits under, so a failure names the site rather than a byte offset. */
+function enclosingDeclaration(text: string, index: number): string {
+  const declarations = [
+    ...text
+      .slice(0, index)
+      .matchAll(
+        /(?:^|\n)(?:export )?(?:async )?function ([A-Za-z_$][\w$]*)|(?:^|\n)(?:export )?const ([A-Za-z_$][\w$]*) =/gu,
+      ),
+  ];
+  const last = declarations[declarations.length - 1];
+  return last === undefined ? "<module>" : (last[1] ?? last[2] ?? "<module>");
+}
+
+/** One verdict for every occurrence of a visibility fact in the product. */
+function visibilitySites(): readonly VisibilitySite[] {
+  const sites: VisibilitySite[] = [];
+  for (const { file, text } of productionSources()) {
+    for (const match of text.matchAll(VISIBILITY_FACTS)) {
+      const fact = match[1]!;
+      const index = match.index;
+      const before = text.slice(Math.max(0, index - 24), index);
+      const definition =
+        /function\s+$/u.test(before) || (fact === "UNPROVEN_VISIBILITY_DECLARATIONS" && /const\s+$/u.test(before));
+      const negated = /!\s*\(?\s*$/u.test(before);
+      const verdict: VisibilitySiteVerdict = definition
+        ? "definition"
+        : fact === "UNPROVEN_VISIBILITY_DECLARATIONS"
+          ? "declaration"
+          : fact === "carriesItsOwnProof"
+            ? "lifecycle"
+            : negated
+              ? "restrictor"
+              : "predicate";
+      sites.push(Object.freeze({ file, site: enclosingDeclaration(text, index), verdict }));
+    }
+  }
+  return Object.freeze(sites);
+}
+
+test("every visibility decision is a declaration with an expiry, never a predicate", (t) => {
+  const sources = productionSources();
+  const sites = visibilitySites();
+  const withVerdict = (verdict: VisibilitySiteVerdict) => sites.filter((site) => site.verdict === verdict);
+  const declared = withVerdict("declaration");
+  const predicates = withVerdict("predicate");
+  t.diagnostic(
+    `sites ${String(sites.length)} · declared ${String(declared.length)} · predicate ${String(predicates.length)}` +
+      ` · lifecycle ${String(withVerdict("lifecycle").length)} · restrictor ${String(withVerdict("restrictor").length)}` +
+      ` · definitions ${String(withVerdict("definition").length)} · over ${String(sources.length)} production files`,
+  );
+  assert.ok(sources.length > 0, "blocked: host/src holds no production source, so this census examines nothing");
+  assert.ok(
+    sites.length > 0,
+    "blocked: no production file names a visibility fact, so every verdict above agrees on nothing",
+  );
+  assert.ok(
+    declared.length > 0,
+    "blocked: no site reads UNPROVEN_VISIBILITY_DECLARATIONS, so the second door is a path this census cannot see",
+  );
+  assert.deepEqual(
+    predicates.map((site) => `visibility_decided_by_a_predicate_with_no_expiry:${site.file}:${site.site}`),
+    [],
+    "a site admits an action through a fact that states no reason and no expiry",
+  );
+});
+
+/**
+ * THE MOUNT IS NOT A SECOND VISIBILITY DECISION, AND THIS GATE HOLDS IT TO THE ONE THAT IS.
+ *
+ * `game-tools.ts` mounts a descriptor-derived tool when the Mod's own descriptor opens it - it reads
+ * `registration.descriptor` and `isModDescriptorComplete`, and deliberately NOT `lifecycle`, the live capability snapshot
+ * or the policy, because the mounted NAME set has to stay constant for the provider prefix cache and per-action
+ * eligibility is decided at execution time. `visibleActionsFromModCatalog` is the one visibility decision.
+ *
+ * MEASURED 2026-11-20: the two agree - 103 actions each, and the mount's 104th tool is `stardew_stop_action`, which is not
+ * an action. Agreement today is a disagreement scheduled for later unless something reads both, and the difference is
+ * reachable in one edit: delete one row of `UNPROVEN_VISIBILITY_DECLARATIONS` while its action stays `experimental` and the
+ * visibility gate refuses the action while the mount keeps handing it out. So the population is derived on both sides -
+ * the artifact for the registrations, the product's own `createStardewActionTools` for the tools, and
+ * `STARDEW_ACTION_TOOL_NAMES` read BACKWARDS for the action each mounted tool names - and either difference fails by name.
+ */
+test("the derived mount shows exactly the actions the one visibility decision admits", (t) => {
+  const published = loadActionSurface();
+  const registrations = registrationsFor(published);
+  const capabilities = registrations
+    .filter((registration) => registration.kind === "execution")
+    .map((registration) => registration.actionId);
+  const visible = new Set(
+    visibleActionsFromModCatalog(registrations, capabilities, DEFAULT_ACTION_POLICY).map((action) => action.actionId),
+  );
+  const actionIdByToolName = new Map<string, string>(
+    Object.entries(STARDEW_ACTION_TOOL_NAMES as Readonly<Record<string, string>>).map(([actionId, toolName]) => [
+      toolName,
+      actionId,
+    ]),
+  );
+  const mounted = new Set(
+    mountedToolNames(published).flatMap((toolName) => {
+      const actionId = actionIdByToolName.get(toolName);
+      return actionId === undefined ? [] : [actionId];
+    }),
+  );
+
+  const failures: string[] = [];
+  for (const actionId of mounted) {
+    if (visible.has(actionId)) continue;
+    failures.push(
+      `mount_shows_an_action_the_visibility_decision_refuses:${actionId}:game-tools.ts mounts its tool while ` +
+        "visibleActionsFromModCatalog refuses the action, so the Agent reaches what the visibility gate closed",
+    );
+  }
+  for (const actionId of visible) {
+    if (mounted.has(actionId)) continue;
+    failures.push(
+      `visibility_decision_shows_an_action_the_mount_withholds:${actionId}:the catalog hands the action to the Agent ` +
+        "and no mounted tool can act on it",
+    );
+  }
+
+  t.diagnostic(
+    `mounted actions ${String(mounted.size)} · visible ${String(visible.size)} · divergent ${String(failures.length)}`,
+  );
+  assert.ok(mounted.size > 0, "blocked: the artifact mounts no action tool, so this gate examines nothing");
+  assert.ok(
+    visible.size > 0,
+    "blocked: the visibility decision admits no action, so every mounted tool would be a failure",
+  );
+  assert.deepEqual(failures, [], "the mount and the visibility decision answer the visibility question differently");
+});
+
+/**
+ * AN ACTION THE MOD HAS PROVED IS NEVER WITHHELD FOR A HOST-SIDE ROW - OR THE REFUSAL IS NAMED HERE.
+ *
+ * The one door the architecture names is the action's own proof (`live_verified`, `published`), and it is not enough on
+ * its own: `visibleActionsFromModCatalog` also needs a row in the Host's hand-written `STARDEW_ACTION_ADAPTERS` (a
+ * capability name and the identity versions this build understands), so an action the Mod proved can be refused because
+ * the Host forgot a row - the failure a reader would otherwise see as "the action is not there". Measured 2026-11-20
+ * with `some_future_action` registered `live_verified`: refused. The three adapter-less actions on the Mod's own surface
+ * (`observe_scene`, `find_destination`, `inspect_world_map`) are `read_only` and belong to the observation tools, which
+ * is why the population is the `execution` actions and not the whole registry.
+ *
+ * "Proved" is derived, not re-spelled: registered minus `unprovenVisibilityActionIds`, which is the product's own answer
+ * to the same question.
+ */
+test("an action whose own lifecycle proved it is never withheld for a missing Host adapter row", (t) => {
+  const registrations = registrationsFor(loadActionSurface());
+  const capabilities = registrations
+    .filter((registration) => registration.kind === "execution")
+    .map((registration) => registration.actionId);
+  const visible = new Set(
+    visibleActionsFromModCatalog(registrations, capabilities, DEFAULT_ACTION_POLICY).map((action) => action.actionId),
+  );
+  const unproven = new Set(unprovenVisibilityActionIds(registrations));
+  const provedExecution = registrations.filter(
+    (registration) => registration.kind === "execution" && !unproven.has(registration.actionId),
+  );
+  const adapters = new Map<string, (typeof STARDEW_ACTION_ADAPTERS)[number]>(
+    STARDEW_ACTION_ADAPTERS.map((adapter) => [adapter.actionId, adapter]),
+  );
+
+  const failures: string[] = [];
+  for (const registration of provedExecution) {
+    if (visible.has(registration.actionId)) continue;
+    const adapter = adapters.get(registration.actionId);
+    const reason =
+      adapter === undefined
+        ? "the Host's STARDEW_ACTION_ADAPTERS carries no row for it, so no tool can be built for the action its own " +
+          "registration already proved"
+        : !adapter.supportedIdentityVersions.includes(registration.identityVersion)
+          ? `the Host adapter understands identityVersion ${adapter.supportedIdentityVersions.join("/")} and the Mod ` +
+            `registers ${String(registration.identityVersion)}`
+          : "another arm of the visibility gate refuses it, and nothing here names which";
+    failures.push(
+      `proved_action_is_withheld:${registration.actionId}:its lifecycle is \`${registration.lifecycle}\`; ${reason}`,
+    );
+  }
+
+  t.diagnostic(
+    `proved execution actions ${String(provedExecution.length)} · visible ${String(
+      provedExecution.filter((registration) => visible.has(registration.actionId)).length,
+    )} · withheld ${String(failures.length)}`,
+  );
+  assert.ok(
+    provedExecution.length > 0,
+    "blocked: the surface registers no proved execution action, so this gate examines nothing",
+  );
+  assert.deepEqual(failures, [], "the Mod proved an action and the Host cannot hand it to the Agent");
 });

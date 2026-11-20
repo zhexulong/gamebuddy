@@ -300,10 +300,10 @@ test("candidate schemas do NOT hardcode enums: custom Mod descriptor enums are r
 });
 
 // ---------------------------------------------------------------------------
-// 2. Strict filtering of candidate actions while Experimental
+// 2. A complete descriptor is a shape, not a proof
 // ---------------------------------------------------------------------------
 
-test("candidate actions with a complete descriptor are visible despite the experimental lifecycle", () => {
+test("candidate actions with a complete descriptor are visible on their lifecycle, not on the descriptor", () => {
   const experimentalCatalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
@@ -337,27 +337,36 @@ test("candidate actions with a complete descriptor are visible despite the exper
       kind: "execution",
     },
   ];
+  const capabilities = ["express_emote", "face_direction", "interact_npc_with_item", "equip_tool"];
 
-  const visible = visibleActionsFromModCatalog(
-    experimentalCatalog,
-    ["express_emote", "face_direction", "interact_npc_with_item", "equip_tool"],
-    DEFAULT_ACTION_POLICY,
+  // Every descriptor above is complete, and none of that admits an action: `experimental` carries no proof of its own, and
+  // `UNPROVEN_VISIBILITY_DECLARATIONS` names none of these three, so the catalog gate refuses them (2026-11-20).
+  assert.deepEqual(
+    visibleActionsFromModCatalog(experimentalCatalog, capabilities, DEFAULT_ACTION_POLICY).map((e) => e.actionId),
+    ["equip_tool"],
+    "a complete descriptor admits nothing on its own; only the lifecycle or a declared row does",
   );
 
+  // `published` is the review gate, and it admits the same three without any edit to their descriptors.
+  const publishedCatalog = experimentalCatalog.map((entry) =>
+    entry.lifecycle === "experimental" ? { ...entry, lifecycle: "published" as const } : entry,
+  );
   assert.deepEqual(
-    visible.map((e) => e.actionId).sort(),
+    visibleActionsFromModCatalog(publishedCatalog, capabilities, DEFAULT_ACTION_POLICY)
+      .map((e) => e.actionId)
+      .sort(),
     ["equip_tool", "express_emote", "face_direction", "interact_npc_with_item"],
-    "Complete candidate actions must be agent-visible while experimental",
+    "a published action with a complete descriptor must be agent-visible",
   );
 });
 
-test("createStardewActionTools mounts candidate tools with a complete descriptor while experimental", () => {
-  const experimentalCatalog: readonly ActionRegistration[] = [
+test("createStardewActionTools mounts the published tools whose descriptor is complete", () => {
+  const publishedCatalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
       familyId: "expression",
       identityVersion: 1,
-      lifecycle: "experimental",
+      lifecycle: "published",
       kind: "execution",
       descriptor: VALID_EXPRESS_EMOTE_DESCRIPTOR,
     },
@@ -365,7 +374,7 @@ test("createStardewActionTools mounts candidate tools with a complete descriptor
       actionId: "face_direction",
       familyId: "movement_navigation",
       identityVersion: 1,
-      lifecycle: "experimental",
+      lifecycle: "published",
       kind: "execution",
       descriptor: VALID_FACE_DIRECTION_DESCRIPTOR,
     },
@@ -380,7 +389,7 @@ test("createStardewActionTools mounts candidate tools with a complete descriptor
 
   const integration = createIntegration({
     capabilities: ["express_emote", "face_direction", "equip_tool"],
-    catalogRegistrations: experimentalCatalog,
+    catalogRegistrations: publishedCatalog,
   });
 
   const tools = createStardewActionTools(integration, DEFAULT_ACTION_POLICY, createTestAdmission());
@@ -391,13 +400,13 @@ test("createStardewActionTools mounts candidate tools with a complete descriptor
   assert.ok(toolNames.includes("stardew_face_direction"), "face_direction must be mounted with a complete descriptor");
 });
 
-test("pet_animal is visible and mounted as a first-class tool while experimental", () => {
+test("pet_animal is visible and mounted as a first-class tool once published", () => {
   const catalog: readonly ActionRegistration[] = [
     {
       actionId: "pet_animal",
       familyId: "animals_pets",
       identityVersion: 1,
-      lifecycle: "experimental",
+      lifecycle: "published",
       kind: "execution",
       descriptor: VALID_PET_ANIMAL_DESCRIPTOR,
     },
@@ -407,7 +416,7 @@ test("pet_animal is visible and mounted as a first-class tool while experimental
   assert.deepEqual(
     visible.map((e) => e.actionId),
     ["pet_animal"],
-    "pet_animal must be Agent-visible while experimental with a complete descriptor",
+    "pet_animal must be Agent-visible once published, with its complete descriptor",
   );
 
   const integration = createIntegration({
@@ -423,15 +432,23 @@ test("pet_animal is visible and mounted as a first-class tool while experimental
   // This asserts the tool now exists, not merely that the capability is declared.
 });
 
-test("observation catalog reveals experimental candidates with a complete descriptor", async () => {
-  const experimentalCatalog: readonly ActionRegistration[] = [
+test("the observation catalog reveals what the visibility decision admits, and nothing else", async () => {
+  const catalog: readonly ActionRegistration[] = [
     {
       actionId: "express_emote",
       familyId: "expression",
       identityVersion: 1,
-      lifecycle: "experimental",
+      lifecycle: "published",
       kind: "execution",
       descriptor: VALID_EXPRESS_EMOTE_DESCRIPTOR,
+    },
+    {
+      actionId: "pet_animal",
+      familyId: "animals_pets",
+      identityVersion: 1,
+      lifecycle: "experimental",
+      kind: "execution",
+      descriptor: VALID_PET_ANIMAL_DESCRIPTOR,
     },
     {
       actionId: "equip_tool",
@@ -443,8 +460,8 @@ test("observation catalog reveals experimental candidates with a complete descri
   ];
 
   const integration = createIntegration({
-    capabilities: ["express_emote", "equip_tool"],
-    catalogRegistrations: experimentalCatalog,
+    capabilities: ["express_emote", "pet_animal", "equip_tool"],
+    catalogRegistrations: catalog,
   });
 
   const obsTools = createStardewObservationTools(integration, DEFAULT_ACTION_POLICY);
@@ -452,10 +469,12 @@ test("observation catalog reveals experimental candidates with a complete descri
   const result = await catalogTool.execute("test", {}, new AbortController().signal, () => {}, {} as never);
   const details = result.details as { actions: Array<{ actionId: string }> };
 
+  // `pet_animal` is here to be ABSENT: its descriptor is complete and its lifecycle carries no proof, so the catalogue
+  // tool must not name it - it is the same `visibleActionsFromModCatalog` call the mounted action tools make.
   assert.deepEqual(
     details.actions.map((a) => a.actionId).sort(),
     ["equip_tool", "express_emote"],
-    "Observation catalog must reveal complete experimental candidate actions",
+    "the observation catalog must name exactly what the one visibility decision admits",
   );
 });
 

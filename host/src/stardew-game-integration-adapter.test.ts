@@ -1464,6 +1464,12 @@ test("a connection no launch minted is served while its liveness fence is open",
  * is the review gate, `experimental` is an explicit opt-in), so this table pins every shape the Mod can
  * really publish — the ones the two definitions used to disagree on, and the one they always agreed on.
  *
+ * A COMPLETE DESCRIPTOR IS NOT AN OPT-IN (measured 2026-11-20). The `experimental` row below read `admitted`, because the
+ * visibility gate used to admit any descriptor-derived action whose descriptor was complete. That predicate admitted
+ * exactly the two actions `UNPROVEN_VISIBILITY_DECLARATIONS` already named, so it was a second answer to a question that
+ * had one; the row now reads `refused`, and the declared row is what an action without its own proof needs in order to be
+ * visible at all.
+ *
  * Each case asserts BOTH that the two definitions agree AND what they agree on, so the table cannot be
  * satisfied by making both refuse everything.
  */
@@ -1512,7 +1518,7 @@ test("the Stardew catalog and the Mod-catalog predicate answer every registratio
     ["live_verified with a complete descriptor", { ...base, lifecycle: "live_verified" }, completeDescriptor, true],
     ["live_verified with no descriptor", { ...base, lifecycle: "live_verified" }, undefined, false],
     ["published with a drifted descriptor", { ...base, lifecycle: "published" }, driftedDescriptor, false],
-    ["experimental with a complete descriptor", { ...base, lifecycle: "experimental" }, completeDescriptor, true],
+    ["experimental with a complete descriptor", { ...base, lifecycle: "experimental" }, completeDescriptor, false],
     [
       "an identityVersion this build cannot execute",
       { ...base, identityVersion: 2, lifecycle: "live_verified" },

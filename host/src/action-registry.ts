@@ -1377,12 +1377,13 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
 }
 
 /**
- * One action the Agent may see BEFORE the live run that the visibility gate requires - with the reason it may, and
+ * One action the Agent may see WITHOUT the live run that the visibility gate is made of - with the reason it may, and
  * the condition that retires the row.
  *
  * <p>
- * The reason is not a formality, and it is the honest description of what the descriptor-derived carve-out in
- * `visibleActionsFromModCatalog` buys: a declared action has a COMPLETE Mod-owned descriptor, so the Host builds a real
+ * A row is BOTH the reason and the door: `visibleActionsFromModCatalog` admits exactly the actions this table names, so
+ * the action is visible for as long as its row exists and no longer. The reason is not a formality, and it is the honest
+ * description of what the row buys: a declared action has a COMPLETE Mod-owned descriptor, so the Host builds a real
  * typed tool for it and the model can call it, and it has NO live proof - nothing on the target game version has ever
  * produced its own native result and receipt. `design/architecture/game-action-model.md:44` gives visibility exactly
  * one door, `live_verified`; this table is the second door written down instead of left implicit.
@@ -1414,9 +1415,9 @@ function carriesItsOwnProof(lifecycle: ActionLifecycle): boolean {
  * The SET is derived because the Mod owns it: `lifecycle` is a field its registration publishes, and "has no live proof"
  * is exactly the two values it is not. A hand-written list of the same ids was a second spelling of that field, and one
  * that could only ever be right about the registrations its author happened to remember - an action that earns or loses
- * its proof moves between the two sides here with no edit. Only the PROSE is Host-owned, in
- * `UNPROVEN_VISIBILITY_DECLARATIONS`, and `action-registry-consistency.test.ts` holds the two to each other in both
- * directions.
+ * its proof moves between the two sides here with no edit. Every member is the door's business: an action in this set that
+ * `UNPROVEN_VISIBILITY_DECLARATIONS` does not name is refused, and `action-registry-consistency.test.ts` holds the two to
+ * each other in both directions.
  */
 export function unprovenVisibilityActionIds(registrations: readonly ActionRegistration[]): readonly string[] {
   return Object.freeze(
@@ -1427,10 +1428,11 @@ export function unprovenVisibilityActionIds(registrations: readonly ActionRegist
 /**
  * The reason each action without its own proof may be visible anyway, and the condition that retires the row.
  *
- * The rows carry PROSE ONLY: which actions need one is `unprovenVisibilityActionIds`' answer, derived from the Mod's
- * registration, so a row for an action that holds its own proof means the row outlived its reason and a missing row means
- * an action is visible with nobody saying why. Both are failures of
- * `action-registry-consistency.test.ts`'s bijection, each with its own name.
+ * This table IS the second door: `visibleActionsFromModCatalog` reads it and admits the action it names, so a deleted row
+ * is an action refused and a row outliving its reason is an exemption that never expires. Which actions need one is
+ * `unprovenVisibilityActionIds`' answer, derived from the Mod's registration - a row for an action that holds its own
+ * proof has outlived its reason. Both are failures of `action-registry-consistency.test.ts`'s bijection, each with its
+ * own name.
  */
 export const UNPROVEN_VISIBILITY_DECLARATIONS = Object.freeze([
   {
@@ -1471,26 +1473,25 @@ export function visibleActionsFromModCatalog(
   const live = new Set(liveCapabilities);
   const deniedActions = new Set(policy.deniedActions);
   const deniedFamilies = new Set(policy.deniedFamilies);
+  const declaredWithoutProof = new Set<string>(
+    UNPROVEN_VISIBILITY_DECLARATIONS.map((declaration) => declaration.actionId),
+  );
   const visible: VisibleStardewAction[] = [];
 
   for (const registration of registrations) {
     const adapter = adapters.get(registration.actionId);
-    // Two admission paths, and only one of them is a live proof.
+    // Two doors, and both are written down.
     //
     // The ordinary one is lifecycle: `published` or `live_verified` means the action already proved itself, either
     // with a live run (live_verified) or with the full publication process behind it.
     //
-    // The other is the descriptor-derived carve-out: an enrolled action whose Mod-owned descriptor is complete comes
-    // out while its lifecycle still says `experimental`, which is to say WITHOUT the live run the visibility gate is
-    // made of. It deliberately does not consult `UNPROVEN_VISIBILITY_DECLARATIONS`: withdrawing this door would take
-    // most of the surface out of the model's reach in one edit, and that is the owner's decision, not a lane's. The
-    // table makes the door ACCOUNTABLE instead - every action it lets out is named there with the reason it may be
-    // and the condition that retires the row, and `action-registry-consistency.test.ts` fails by name on an action
-    // this branch admits that no row explains.
-    const isVisibleWithoutLiveProof =
-      isDescriptorDerivedActionId(registration.actionId) &&
-      isModDescriptorComplete(registration.actionId, registration.descriptor);
-    const hasAnAdmissionPath = carriesItsOwnProof(registration.lifecycle) || isVisibleWithoutLiveProof;
+    // The other is a row of `UNPROVEN_VISIBILITY_DECLARATIONS`: an action whose lifecycle carries no proof comes out
+    // while that row exists, and only while it exists - the row states why it may and the condition that retires it. No
+    // predicate opens this door. A complete descriptor does NOT admit an action, which is why the completeness test
+    // below only ever CLOSES the door: measured 2026-11-20, a descriptor predicate beside this table admitted exactly
+    // the two actions the table names, a second answer to a question that already had one.
+    const hasAnAdmissionPath =
+      carriesItsOwnProof(registration.lifecycle) || declaredWithoutProof.has(registration.actionId);
     if (
       adapter === undefined ||
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||

@@ -95,7 +95,7 @@ test("policy only subtracts from the current Mod catalog", () => {
   );
 });
 
-test("complete candidate actions are visible despite the experimental lifecycle", () => {
+test("a complete descriptor is a shape, not a proof: the action is visible on its own lifecycle or not at all", () => {
   const capabilities = ["express_emote", "face_direction"];
   const catalog = [
     {
@@ -128,20 +128,26 @@ test("complete candidate actions are visible despite the experimental lifecycle"
         nativeBinding: "Farmer.faceDirection",
       }),
     },
-    {
-      // An experimental non-candidate action stays invisible.
-      actionId: "equip_tool",
-      familyId: "body_tools",
-      identityVersion: 1,
-      lifecycle: "experimental" as const,
-      kind: "execution" as const,
-    },
   ];
 
-  const visible = visibleActionsFromModCatalog(catalog, capabilities);
-  assert.deepEqual(visible.map((entry) => entry.actionId).sort(), ["express_emote", "face_direction"]);
-  assert.equal(visible.find((entry) => entry.actionId === "express_emote")?.lifecycle, "experimental");
-  assert.equal(visible.find((entry) => entry.actionId === "face_direction")?.lifecycle, "experimental");
+  // `experimental` carries no proof of its own, and `UNPROVEN_VISIBILITY_DECLARATIONS` names neither action, so the
+  // catalog gate refuses them: a complete descriptor says the Host can build a typed tool, never that a live run ever
+  // succeeded. The visibility this pair does have is the row the two declared actions carry, not a descriptor.
+  assert.deepEqual(
+    visibleActionsFromModCatalog(catalog, capabilities),
+    [],
+    "an experimental action with a complete descriptor and no declared row must not be handed to the Agent",
+  );
+
+  // The same registrations at `published` are admitted, so what the refusal above reads is the lifecycle and not the
+  // descriptor: the descriptors did not change.
+  const published = catalog.map((entry) => ({ ...entry, lifecycle: "published" as const }));
+  assert.deepEqual(
+    visibleActionsFromModCatalog(published, capabilities)
+      .map((entry) => entry.actionId)
+      .sort(),
+    ["express_emote", "face_direction"],
+  );
 });
 
 test("live_verified actions are visible without being candidates", () => {

@@ -1925,12 +1925,30 @@ export function createStardewActionTools(
   // capability snapshots or per-turn permission.
   const modRegistrations = state.catalogRegistrations ?? [];
   const tools: Array<ReturnType<typeof defineTool>> = [];
-  const makeGameActionTool = gameActionToolFactory(integration, policy, dispatchAdmissionFactory, trace, expressionTurnGate);
+  const makeGameActionTool = gameActionToolFactory(
+    integration,
+    policy,
+    dispatchAdmissionFactory,
+    trace,
+    expressionTurnGate,
+  );
   // Every action whose tool is a projection of the Mod's own declaration, mounted through the one rule a mount has: the
   // parameters are `buildCandidateToolSchema` over the published descriptor, and the names forwarded to the wire are that
   // same descriptor's. Forty-eight blocks used to spell each of these out by hand - the schema call, the forwarded names
   // and the arm that admitted it - and every one of them was a second copy of a declaration the Mod already publishes.
   // The condition is unchanged: a descriptor that cannot open its own arm means the tool is not mounted.
+  //
+  // WHAT THIS LOOP READS, AND WHAT IT DOES NOT. It reads the Mod's own published descriptor (`registration.descriptor`
+  // through `isModDescriptorComplete`, which only ever closes) and nothing else: not `lifecycle`, not the live capability
+  // snapshot, not the policy. So this loop is NOT the visibility decision - `visibleActionsFromModCatalog` is, and there
+  // is one of it - and the reason the difference is harmless is the constant name set the provider prefix cache needs:
+  // per-action eligibility is decided at execution time by the receipt-backed admission, which is why a capability the
+  // snapshot no longer carries withdraws the ACTION and not the tool.
+  //
+  // The difference is still a fact that can drift, so `action-registry-consistency.test.ts`'s mount gate holds the mounted
+  // action set and the visibility decision's set to each other and fails by name on either difference. Measured
+  // 2026-11-20: both sets are the same 103 actions, and that agreement is what a visibility row deleted while its action
+  // stays `experimental` would break - the visibility gate would refuse the action while this loop kept handing it out.
   for (const actionId of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS) {
     const registration = modRegistrations.find((entry) => entry.actionId === actionId);
     if (registration?.descriptor === undefined) continue;
