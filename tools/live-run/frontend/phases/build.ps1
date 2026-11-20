@@ -91,6 +91,17 @@ $g = node (Join-Path $Worktree "host\scripts\build-desktop-launcher-test-generat
 $sw.Stop()
 Log ("  generation build exit=" + $LASTEXITCODE + " elapsed=" + [int]$sw.Elapsed.TotalSeconds + "s")
 $g | Select-Object -Last 15 | ForEach-Object { Log ("  | " + $_) }
+# The runtime closure is the one build step that used to reach a package registry, and the
+# generation build says whether it re-deployed the tree or reused a verified one. That line is
+# one of the last fifteen only on a hit; printing it here means the reading survives a FAILED
+# build (the closure is staged before the helpers and the Mod package), and that a run which
+# reused a cached tree cannot be described as one that built it.
+$closureCache = @($g | Where-Object { $_ -match 'runtime_closure_cache' })
+if ($closureCache.Count -gt 0) {
+  Log ("CLOSURE-CACHE: " + ($closureCache -join " / "))
+} else {
+  Log "CLOSURE-CACHE: not_reported - the generation build said nothing about the runtime closure cache, which is NOT a reading that it deployed one or reused one"
+}
 if ($LASTEXITCODE -ne 0) { Log "DONE-BUILD-FAIL"; exit 1 }
 
 Log "=== 5. artifact verification ==="
