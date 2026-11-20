@@ -112,19 +112,25 @@ const en = {
   gameSyncing: "Syncing the game connection...",
   gameLaunch: "Start the game",
   gameLaunchFailed: "The game launch result is uncertain. The latest authoritative game state is shown.",
-  // The two states whose step is not a control on this page. Both name the step a player
-  // actually takes, and both say what this page cannot do: the lock a quarantined launch leaves
-  // lives in GameBuddy's own process (`launchTerminal` in
-  // `stardew-production-lifecycle-coordinator.internal.ts`), so no control here lifts it and a
-  // reload comes back to this same screen. The explicit endgame is not a way out either: it is a
-  // control of an attached session, and it does not clear that lock even when it succeeds.
+  // The two states whose step is not a control on this page. Both name what the player can see - a
+  // start that did not go through, an ending that happened - and the step left to them; the layer
+  // that holds the state (`launchTerminal` in `stardew-production-lifecycle-coordinator.internal.ts`)
+  // is named in neither sentence, because a player cannot act on it. The explicit endgame is not a
+  // way out either: it is a control of an attached game and does not clear that hold even when it
+  // succeeds.
+  //
+  // TRANSITIONAL, owned by the generation-2 recovery lane, which deletes the restart: today the hold
+  // lasts for the rest of this GameBuddy run, so starting GameBuddy again is the only step that
+  // clears it. That step is the sentences' last sentence and nothing else - when the product clears
+  // its own hold, both keep their state and lose only that sentence, so no promise is made here
+  // about how long the state lasts.
   //
   // The step is the product's own tray - `TrayShell`'s "Quit GameBuddy", which serves no browser
   // route - and it is named by its location for the reason `companionActivationRestart` names it:
   // a screen with nothing to press that says only "quit GameBuddy and start it again" leaves the
   // player with the task manager as the one thing that matches the words.
   gameLaunchQuarantined:
-    "This launch failed, and the lock it left is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - the restart is what frees the game from the attempt that failed.",
+    "This start did not go through, and GameBuddy cannot clear what it left behind until it is started again: nothing on this page reaches it, and reloading this page does not either. If Stardew Valley is still running, close it. Then quit GameBuddy from the tray icon (Quit GameBuddy) and open it again.",
   // The same dead end without the failure claim, for the ending the Guardian really reported
   // (`instance.status: stopped`, `playerHostExitCode`). The one fact that tells the two apart is
   // the exit the Host published, and it changes one thing in the sentence: a reported exit is a
@@ -132,7 +138,7 @@ const en = {
   // process that does not exist. The clause stays in the sentence above, where the launch's
   // outcome is unknown and the game may well still be running.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in, and the lock that ending leaves is inside GameBuddy's own process: no control on this page lifts it, and reloading this page does not either. Then quit GameBuddy itself from its tray icon (Quit GameBuddy) and start it again - restarting GameBuddy is what allows another launch of the game.",
+    "Stardew Valley ended before your companion moved in. GameBuddy keeps that ending until it is started again, so it will not launch the game: nothing on this page reaches it, and reloading this page does not either. Then quit GameBuddy from the tray icon (Quit GameBuddy) and open it again.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -1007,7 +1013,7 @@ const en = {
   // the cabins belong to the handoff's own words, not to a launch's refusal.
   gameProblemPlayerHostExitedTitle: "The game ended",
   gameProblemPlayerHostExitedDetail:
-    "Stardew Valley ended, so this launch is over and will not be repeated. The ending stays recorded inside GameBuddy's own process, where no control on this page frees it and reloading the page does not either: quit GameBuddy itself from its tray icon (Quit GameBuddy), open it again, and another launch can begin.",
+    "Stardew Valley ended, so this launch is over and will not be repeated. GameBuddy keeps that ending until it is started again, so it will not launch the game: nothing on this page reaches it, and reloading the page does not either. Quit GameBuddy from the tray icon (Quit GameBuddy), open it again, and another launch can begin.",
   gameInstanceExited: "Ended (exit code {{code}})",
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
@@ -1457,6 +1463,13 @@ const en = {
   gameSettingsActionPolicyTitle: "What the companion may do",
   gameSettingsActionPolicyHint:
     "Switch off anything you would rather it never touched. A change takes effect within a few seconds while the game is running.",
+  // The region's own count line: one sentence, true in every shape, so a player learns how much
+  // of the setting is left without reading (or scrolling) twenty-one rows. The three counts are
+  // filled from the draft on screen rather than from the Host's record, so the line and the boxes
+  // beside it cannot disagree while an edit is unsaved.
+  gameSettingsActionPolicySummary: "{{allowed}} of {{total}} allowed · {{withheld}} withheld",
+  gameSettingsActionPolicyNonePublished:
+    "This game has published no action families, so there is nothing to switch off yet.",
   gameSettingsCoopTitle: "Farmers needed before night falls",
   gameSettingsCoopHint:
     "How many players must be online before the companion may end the day. A change takes effect the next time the world loads.",
@@ -1590,9 +1603,9 @@ const zh: Messages = {
   gameLaunch: "启动游戏",
   gameLaunchFailed: "游戏启动结果不确定；当前显示的是最新权威游戏状态。",
   gameLaunchQuarantined:
-    "这次启动失败了，它留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重新启动才会把这个游戏从那一次失败的尝试里释放出来。",
+    "这次启动没有成功，GameBuddy 要重新打开才能清掉它留下的状态：本页没有任何控件能做到，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它。然后从系统托盘退出 GameBuddy（Quit GameBuddy），再重新打开。",
   gameEndedQuarantined:
-    "《星露谷物语》在伙伴搬进农场前就退出了，这个结局留下的锁在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新本页也不行。请从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），再重新打开——重启 GameBuddy 才能再启动一次游戏。",
+    "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏：本页没有任何控件能做到，刷新本页也不行。请从系统托盘退出 GameBuddy（Quit GameBuddy），再重新打开。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
@@ -2194,7 +2207,7 @@ const zh: Messages = {
   // 也来自一次被已结束的尝试拒绝的启动，所以句子只说“结局”和“下一步”，不提小屋。
   gameProblemPlayerHostExitedTitle: "游戏已退出",
   gameProblemPlayerHostExitedDetail:
-    "《星露谷物语》已经退出，所以这次启动到此为止，不会再重来。这个结局一直记在 GameBuddy 自己的进程里：本页没有任何控件能解开它，刷新页面也不行。请从系统托盘图标退出 GameBuddy 本身（Quit GameBuddy），重新打开，才能再启动一次游戏。",
+    "《星露谷物语》已经退出，所以这次启动到此为止，不会再重来。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏：本页没有任何控件能做到，刷新页面也不行。请从系统托盘退出 GameBuddy（Quit GameBuddy），重新打开，才能再启动一次游戏。",
   gameInstanceExited: "已退出（退出代码 {{code}}）",
   gameProblemCabinMissingTitle: "这个农场还没有伙伴可住的小屋",
   gameProblemCabinMissingDetail:
@@ -2528,6 +2541,10 @@ const zh: Messages = {
   gameSettingsIntro: "伙伴在你的农场上能做什么。这些是你自己的设置，保存在模组配置文件之外。",
   gameSettingsActionPolicyTitle: "伙伴可以做什么",
   gameSettingsActionPolicyHint: "关掉你不希望它碰的任何事项。游戏运行中保存后几秒内生效。",
+  // 这一行是整块区域的摘要：不管名单是什么样子它都成立，所以不用读完（或滚完）二十一行，就能知道这份设置还剩下多少。
+  // 三个数字取自屏幕上正在编辑的草稿，而不是宿主保存的记录，所以改过还没保存时这一行和旁边的勾选框不会互相矛盾。
+  gameSettingsActionPolicySummary: "允许 {{allowed}} / {{total}} · 已关掉 {{withheld}} 项",
+  gameSettingsActionPolicyNonePublished: "这个游戏还没有公布任何可以做的事项，所以暂时没有可关掉的内容。",
   gameSettingsCoopTitle: "入夜前需要到场的玩家人数",
   gameSettingsCoopHint: "伙伴结束一天之前，需要有几位玩家在线。更改在下次载入世界时生效。",
   gameSettingsWindowModeTitle: "她玩的时候",
