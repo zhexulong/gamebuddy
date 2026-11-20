@@ -53,12 +53,6 @@
       "reason": "`if (!Number.isInteger(snapshot.revision) || !Array.isArray(snapshot.machineTargets)) throw`"
     },
     {
-      "file": "run-stardew-native-local-player-machine-load-smoke.mjs",
-      "fact": "machineTargets",
-      "count": 1,
-      "reason": "`if (!Array.isArray(snapshot.machineTargets)) throw` - the target projection, empty while the world settles"
-    },
-    {
       "file": "run-stardew-native-local-player-ride-minecart-smoke.mjs",
       "fact": "tile",
       "count": 1,
