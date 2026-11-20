@@ -372,6 +372,14 @@ const noSuchItem: ProblemSentence = (labels) =>
 const serviceUnavailable: ProblemSentence = (labels) =>
   sentence(labels.problemServiceUnavailableTitle, labels.problemServiceUnavailableDetail, RETRY_READ);
 
+/**
+ * The Chat service that would answer this page has closed. Its own sentence, because its step is not the
+ * card's: nothing about the service was unusable, so reading again asks a closed door, and only a fresh
+ * GameBuddy opens it.
+ */
+const chatServiceClosed: ProblemSentence = (labels) =>
+  sentence(labels.problemChatServiceClosedTitle, labels.problemChatServiceClosedDetail, RESTART_GAMEBUDDY);
+
 /** The live event stream lost its place; the page is behind the authoritative state. */
 const streamResyncRequired: ProblemSentence = (labels) =>
   sentence(labels.problemStreamResyncTitle, labels.problemStreamResyncDetail, RETRY_READ);
@@ -597,6 +605,7 @@ const PROBLEM_SENTENCES: Readonly<Record<TavernProblemCode, ProblemSentence>> = 
   character_import_not_found: noSuchItem,
 
   runtime_unavailable: serviceUnavailable,
+  chat_service_closed: chatServiceClosed,
   storage_unavailable: serviceUnavailable,
 
   stream_resync_required: streamResyncRequired,

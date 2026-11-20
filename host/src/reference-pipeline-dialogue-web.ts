@@ -120,7 +120,7 @@ export function createReferencePipelineDialogueWebRequestHandler(
     const port = new URL(origin).port;
     if (new URL(origin).protocol !== "http:" || !/^\d+$/.test(port) || !isExactLoopbackHost(request, Number(port)))
       return sendProblem(response, 421, "invalid_request");
-    if (closed) return sendProblem(response, 503, "runtime_unavailable");
+    if (closed) return sendProblem(response, 503, "chat_service_closed");
     const url = new URL(request.url ?? "/", origin);
     try {
       if (request.method === "POST" && url.pathname === "/api/tavern/v1/bootstrap") {
@@ -435,12 +435,16 @@ function problemFor(error: unknown): Readonly<{ status: number; code: ProblemCod
   if (message === "idempotency_conflict") return { status: 409, code: "idempotency_conflict" };
   if (message === "chat_draft_revision_conflict") return { status: 409, code: "draft_conflict" };
   if (message === "chat_pipeline_service_selection_conflict") return { status: 409, code: "selection_conflict" };
-  if (
-    message === "chat_pipeline_service_commit_rejected" ||
-    message === "chat_pipeline_service_closed" ||
-    message === "chat_pipeline_service_unavailable"
-  )
-    return { status: 503, code: "runtime_unavailable" };
+  // The three ways the Chat service refuses a request that reached a live process, each its own name.
+  // They were one code (`runtime_unavailable`) until the r16 live run answered a send with it and no
+  // layer could say which of the three had fired: the surface offered "try again in a moment" for a
+  // service that was closing, and for a message that was already committed.
+  if (message === "chat_pipeline_service_unavailable") return { status: 503, code: "runtime_unavailable" };
+  if (message === "chat_pipeline_service_closed") return { status: 503, code: "chat_service_closed" };
+  // The durable message was committed and the 202 could not be delivered on its socket, so its turn
+  // never started - nothing about the service is unavailable, and a read shows the committed row.
+  if (message === "chat_pipeline_service_commit_rejected")
+    return { status: 409, code: "state_reconciliation_required" };
   if (/storage|sqlite|eio|enoent/i.test(message)) return { status: 503, code: "storage_unavailable" };
   if (/runtime|lease|mount/i.test(message)) return { status: 503, code: "runtime_unavailable" };
   return { status: 409, code: "state_reconciliation_required" };

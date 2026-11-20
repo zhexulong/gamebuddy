@@ -141,6 +141,10 @@ const ProblemCode = Type.Union([
   Type.Literal("turn_busy"),
   Type.Literal("stream_resync_required"),
   Type.Literal("runtime_unavailable"),
+  // The Chat service that would answer this page has closed (the Host is shutting it down), which is not
+  // an outage of that service: asking again reaches the same closed door until GameBuddy is started
+  // again, so it is its own code with its own sentence and its own step.
+  Type.Literal("chat_service_closed"),
   Type.Literal("storage_unavailable"),
   Type.Literal("state_reconciliation_required"),
   Type.Literal("settings_revision_conflict"),
@@ -2827,6 +2831,7 @@ export const TAVERN_BROWSER_PROBLEM_CODES_V1 = Object.freeze([
   "turn_busy",
   "stream_resync_required",
   "runtime_unavailable",
+  "chat_service_closed",
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",

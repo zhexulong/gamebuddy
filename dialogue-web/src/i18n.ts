@@ -862,6 +862,12 @@ const en = {
   problemServiceUnavailableTitle: "GameBuddy is not available right now",
   problemServiceUnavailableDetail:
     "One of GameBuddy's own services could not be used just now, so the chat could not go on. Try again in a moment.",
+  // A closed Chat service is not an outage of one: nothing was unusable, the service this page was talking
+  // to has gone away, and asking again reaches the same closed door until GameBuddy is started again. The
+  // step is therefore the restart, not the card's own read.
+  problemChatServiceClosedTitle: "This chat was closed",
+  problemChatServiceClosedDetail:
+    "GameBuddy closed the service this chat was running in, so nothing can be sent in it. Start GameBuddy again and open the chat it gives you.",
   problemStreamResyncTitle: "The live updates lost their place",
   problemStreamResyncDetail:
     "GameBuddy stopped receiving this chat's live updates, so the page is out of date. Reload the chat to catch up.",
@@ -2077,6 +2083,9 @@ const zh: Messages = {
     "这次操作指向的内容已经不在了——它被删除或被替换了。请重新加载页面，从当前显示的内容里重新选择。",
   problemServiceUnavailableTitle: "GameBuddy 现在不可用",
   problemServiceUnavailableDetail: "GameBuddy 自己的某个服务现在用不了，聊天无法继续。请稍后再试。",
+  problemChatServiceClosedTitle: "这个聊天已经关闭",
+  problemChatServiceClosedDetail:
+    "GameBuddy 已经关闭了这个聊天所用的服务，因此在这里发不出任何东西。请重新启动 GameBuddy，再打开它给你的聊天。",
   problemStreamResyncTitle: "实时更新断开了",
   problemStreamResyncDetail: "GameBuddy 停止接收这个聊天的实时更新，页面上的内容已经过期。请重新加载聊天以同步。",
   problemRequestRejectedTitle: "GameBuddy 无法接受这次请求",

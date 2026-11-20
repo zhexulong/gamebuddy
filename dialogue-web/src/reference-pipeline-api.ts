@@ -378,6 +378,9 @@ export const PROBLEM_CODES = [
   "turn_busy",
   "stream_resync_required",
   "runtime_unavailable",
+  // The Chat service that would answer this page has closed, which is not an outage of it: asking again
+  // reaches the same closed door until GameBuddy is started again.
+  "chat_service_closed",
   "storage_unavailable",
   "state_reconciliation_required",
   "settings_revision_conflict",

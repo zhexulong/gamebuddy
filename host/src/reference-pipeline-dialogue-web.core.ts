@@ -140,12 +140,16 @@ export function problemFor(error: unknown): Readonly<{ status: number; code: Pro
   if (message === "chat_delete_binding_unavailable") return { status: 409, code: "chat_delete_binding_unavailable" };
   if (message === "chat_regenerate_anchor_unavailable")
     return { status: 409, code: "chat_regenerate_anchor_unavailable" };
-  if (
-    message === "chat_pipeline_service_commit_rejected" ||
-    message === "chat_pipeline_service_closed" ||
-    message === "chat_pipeline_service_unavailable"
-  )
-    return { status: 503, code: "runtime_unavailable" };
+  // The three ways the Chat service refuses a request that reached a live process, each its own name.
+  // They were one code (`runtime_unavailable`) until the r16 live run answered a send with it and no
+  // layer could say which of the three had fired: the surface offered "try again in a moment" for a
+  // service that was closing, and for a message that was already committed.
+  if (message === "chat_pipeline_service_unavailable") return { status: 503, code: "runtime_unavailable" };
+  if (message === "chat_pipeline_service_closed") return { status: 503, code: "chat_service_closed" };
+  // The durable message was committed and the 202 could not be delivered on its socket, so its turn
+  // never started - nothing about the service is unavailable, and a read shows the committed row.
+  if (message === "chat_pipeline_service_commit_rejected")
+    return { status: 409, code: "state_reconciliation_required" };
   if (/storage|sqlite|eio|enoent/i.test(message)) return { status: 503, code: "storage_unavailable" };
   if (/runtime|lease|mount/i.test(message)) return { status: 503, code: "runtime_unavailable" };
   return { status: 409, code: "state_reconciliation_required" };

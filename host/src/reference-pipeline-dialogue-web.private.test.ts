@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { problemFor } from "./reference-pipeline-dialogue-web.core.js";
 import {
   createReferencePipelineDialogueWebRequestHandler,
   startReferencePipelineDialogueWebServer,
@@ -693,7 +697,7 @@ test("reference shell answers an accepted Chat request before it destroys the so
       503,
       "the Chat request this shell had already accepted must be answered, not destroyed with its socket",
     );
-    assert.equal(((await response.json()) as { code: string }).code, "runtime_unavailable");
+    assert.equal(((await response.json()) as { code: string }).code, "chat_service_closed");
     await closing;
   } finally {
     await server.close().catch(() => {});
@@ -1102,5 +1106,52 @@ test("reference handler resyncs a reconnect from a previous host epoch and serve
   } finally {
     server.closeAllConnections();
     await server.close();
+  }
+});
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+/**
+ * Every bounded refusal the Chat pipeline service can raise reaches the wire as a name of its own.
+ *
+ * The defect this is written against is the r16 live run (`frontend--r16`, driver `n`,
+ * 2026-11-21T00:08Z): a send was answered `503 runtime_unavailable`, one word for four different
+ * statements the service makes about the same request - it is shutting down, the 202 answer could not
+ * be delivered, the runtime lease it was given is not the live one, or the selection moved. The
+ * player's sentence for `runtime_unavailable` is "one of GameBuddy's own services could not be used
+ * just now ... try again in a moment", which is false for the first two: nothing about the service
+ * was unusable, and asking again cannot help. The run kept no other record of which one fired, so
+ * the wire was the only place that fact could have lived.
+ *
+ * The population is the producer's own text rather than a list kept here: a refusal the service adds
+ * is a missing answer in `problemFor` until it is given one, and the failure names the member and the
+ * code it collided with.
+ */
+test("each bounded Chat pipeline refusal reaches the wire as a name of its own", () => {
+  const service = readFileSync(join(ROOT, "host", "src", "tavern", "chat-pipeline-service.ts"), "utf8");
+  const raised = [
+    ...new Set([...service.matchAll(/new Error\("(chat_pipeline_service_[a-z_]+)"\)/gu)].map((one) => one[1]!)),
+  ].sort();
+  assert.deepEqual(
+    raised,
+    [
+      "chat_pipeline_service_closed",
+      "chat_pipeline_service_commit_rejected",
+      "chat_pipeline_service_selection_conflict",
+      "chat_pipeline_service_unavailable",
+    ],
+    "the population this gate reads is the service's own constructors; a refusal added there needs a mapping of its own here",
+  );
+  const answered = new Map<string, string>();
+  for (const refusal of raised) {
+    const { status, code } = problemFor(new Error(refusal));
+    assert.ok(status >= 400 && status <= 599, `${refusal} answered ${status}`);
+    const collision = [...answered.entries()].find(([, other]) => other === code);
+    assert.equal(
+      collision,
+      undefined,
+      `${refusal} reaches the wire as ${code}, the same code ${String(collision?.[0])} already answers with - the surface cannot tell the two apart`,
+    );
+    answered.set(refusal, code);
   }
 });

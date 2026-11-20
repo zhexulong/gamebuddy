@@ -520,7 +520,10 @@ test("problem-code.5: the authorities and the sender signatures are read, not as
   // `presentation_unavailable` left it 68 to 67: a turn that cannot present anything fails with the turn's own
   // `problemCode` `no_visible_presentation`, and a presentation epoch that cannot be used is the invariant path
   // (`semantic_chat_runtime_p5_presentation_epoch_unavailable`), never a per-request refusal.
-  assert.equal(tavern.size, 67, `the tavern problem union should have 67 members, read ${tavern.size}`);
+  // `chat_service_closed` takes it back to 68: the r16 live run answered a send with `runtime_unavailable`
+  // and no layer could say which of four statements the service had made, so the one a retry cannot help
+  // - "the service this page was talking to has closed" - is declared and worded apart from the outage.
+  assert.equal(tavern.size, 68, `the tavern problem union should have 68 members, read ${tavern.size}`);
   // ...and the game process itself ending (`stardew_player_host_exited`, the cabin read answered
   // against a game the Guardian watched die) moved the game count 24 to 25, and the cabin read's
   // other named answer, declared at last (`stardew_player_host_cabin_missing`, a live farm with no
