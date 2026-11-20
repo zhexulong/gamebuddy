@@ -246,6 +246,43 @@ public sealed class HostTeardownOrderTests
         }
     }
 
+    /// <summary>
+    /// A drain that overruns the deadline it published by less than one of its own steps is not a hang.
+    ///
+    /// The number the child publishes is the SUM of its eight step ceilings, so it bounds the steps and
+    /// nothing else: not the delivery of the controller EOF that starts them, not the exit that follows
+    /// the last one, and not this launcher noticing that exit. A launcher that waits exactly that sum
+    /// kills a child which did everything it promised and then left inside the same order of magnitude
+    /// - the child's own `stepHangDeadlineMs` is the scale at which IT calls a step stuck, and it is
+    /// published in the same acknowledgement.
+    ///
+    /// Catches: a quit that spends the child's declaration to the millisecond and calls the overrun past
+    /// it a timeout, which terminates a process that was reclaiming and writes `host_teardown_timeout`
+    /// about a Host that had already journaled every one of its steps.
+    /// </summary>
+    [Fact]
+    public async Task A_drain_that_overruns_its_published_deadline_by_less_than_one_of_its_own_steps_is_not_killed()
+    {
+        if (!OperatingSystem.IsWindows()) throw SkipException.ForSkip("Requires Windows.");
+        await using var harness = await BootstrapHandshakeHarness.CreateAsync(
+            acknowledgementPlan: """{ "rewrite": { "drainDeadlineMs": 300, "stepHangDeadlineMs": 1000 } }""",
+            // The child runs all eight steps and then takes its time to leave - the part of a drain the
+            // published sum cannot bound, modelled at the only place the fixture can hold.
+            reclamationPlan: """{ "holdMs": 700 }""",
+            silenceTimeout: Silence);
+        await using var lease = await harness.Supervisor.StartHostAsync(harness.Selection, harness.Runtime, harness.Layout, CancellationToken.None);
+
+        await lease.DisposeAsync();
+
+        // It reclaimed every step it owes, and it named no failure of its own.
+        Assert.Equal(ReclamationSteps, await File.ReadAllLinesAsync(harness.ReclamationJournalPath));
+        Assert.True(
+            !Directory.Exists(harness.HostExitRecordDirectory) || Directory.GetFiles(harness.HostExitRecordDirectory, "host-exit-*.json").Length == 0,
+            "the child wrote its own exit record, so a step of its own failed");
+        // And the launcher never reached for the watchdog: no kill, no timeout fact.
+        Assert.Empty(TeardownRecords(harness));
+    }
+
     private static string[] TeardownRecords(BootstrapHandshakeHarness harness) =>
         Directory.Exists(harness.HostExitRecordDirectory)
             ? Directory.GetFiles(harness.HostExitRecordDirectory, "host-teardown-*.json")

@@ -56,7 +56,7 @@ public sealed class ShutdownWaitBudgetTests
         var broker = File.ReadAllText(LauncherSource("DesktopHostBootstrapBroker.cs"));
 
         // One budget, and it is the child's own published exit deadline - the launcher keeps no copy.
-        Assert.Contains("var budget = new ShutdownBudget(Result.DrainDeadlineMs);", supervisor, StringComparison.Ordinal);
+        Assert.Contains("var budget = new ShutdownBudget(Result.DrainDeadlineMs, Result.StepHangDeadlineMs);", supervisor, StringComparison.Ordinal);
         // It is created before the arm, and the arm is what performs the Guardian's exit wait: the
         // budget is handed to the broker close, so the Guardian's wait is inside the measured window.
         Assert.Contains("await closingBroker.CloseAsync(budget, cancellationToken)", supervisor, StringComparison.Ordinal);
@@ -70,6 +70,35 @@ public sealed class ShutdownWaitBudgetTests
         Assert.Contains("DesktopHostTeardownRecord.Write(operationalRoot, pid, budget.ConsumedMs, budget.DeclaredMs)", supervisor, StringComparison.Ordinal);
         // No close path may wait for the Guardian with a bound of its own.
         Assert.DoesNotContain("CloseControlAndWaitForExitAsync(CancellationToken.None)", broker, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The quit may spend one of the child's OWN ordinary steps past the deadline that child published.
+    ///
+    /// The published number is the sum of the child's eight step ceilings, so it bounds the steps and
+    /// nothing else: the delivery of the controller EOF that starts them, the exit that follows the last
+    /// one and this launcher noticing that exit all happen outside it. A budget that took the number
+    /// literally would kill a child at the millisecond it finished its last step - the false failure
+    /// this margin exists to prevent - and the margin is not a constant of the launcher's: it is the
+    /// child's own `stepHangDeadlineMs`, the smallest bound it publishes and its own scale for "this step
+    /// is stuck". The declared number stays the child's fact, so the teardown record still compares what
+    /// the player waited against what the child said.
+    /// </summary>
+    [Fact]
+    public void A_quit_may_spend_one_of_the_childs_own_steps_past_the_deadline_it_published()
+    {
+        var budget = new ShutdownBudget(declaredMs: 61_260, marginMs: 180);
+
+        Assert.Equal(61_260, budget.DeclaredMs);
+        Assert.Equal(180, budget.MarginMs);
+        Assert.Equal(61_440, budget.LimitMs);
+        Assert.True(budget.RemainingMs > 61_260 - 200, $"a fresh budget left {budget.RemainingMs} ms of its 61 440 ms limit");
+        // The ceiling a wait brings is clamped to what is left of the WHOLE limit, so a margin is part of
+        // the limit rather than a second pot beside it.
+        Assert.True(budget.Take(61_440) > 61_240, $"a full ceiling was clamped to {budget.Take(61_440)} ms of a 61 440 ms limit");
+        Assert.True(budget.Take(30_000) <= budget.RemainingMs);
+        // A budget with no margin (the broker's own close paths) behaves exactly as it did.
+        Assert.Equal(30_000, new ShutdownBudget(30_000).LimitMs);
     }
 
     /// <summary>

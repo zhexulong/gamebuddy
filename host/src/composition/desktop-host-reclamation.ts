@@ -211,12 +211,17 @@ export const DESKTOP_HOST_RECLAMATION_STEP_BOUND_MS: DesktopHostReclamationStepB
 });
 
 /**
- * How long the WHOLE reclamation may take: what the Desktop launcher waits for this process to
- * leave before it treats the process as hung and terminates it.
+ * How long the WHOLE reclamation may take: the sum of the declared per-step bounds - a step's ceiling
+ * counted once, which is what the sequence can actually cost: every step runs once, and a step that
+ * outlives its own bound is abandoned and named there, so the steps behind it start inside their own
+ * bound.
  *
- * It is the sum of the declared per-step bounds - a step's ceiling counted once, which is what
- * the sequence can actually cost: every step runs once, and a step that outlives its own bound is
- * abandoned and named there, so the steps behind it start inside their own bound.
+ * That is a bound on the STEPS, and the launcher's wait covers that plus what no step can bound: the
+ * delivery of the controller EOF that starts them, the exit that follows the last one, and the launcher
+ * noticing that exit. So the launcher waits this number plus one of this process's own ordinary step
+ * bounds (`stepHangDeadlineMs`, the smallest bound below, which it already publishes in the same
+ * acknowledgement) - `desktop/GameBuddy.Desktop/RuntimeSupervisor.cs`, `CloseAsync`. Without that
+ * margin a drain that finished its last step just before the sum would be terminated as hung.
  *
  * The launcher does not keep its own copy - the entry publishes this value in the bootstrap
  * acknowledgement it already writes (`drainDeadlineMs`,

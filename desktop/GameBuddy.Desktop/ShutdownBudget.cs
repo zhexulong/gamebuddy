@@ -18,22 +18,46 @@ namespace GameBuddy.Desktop;
 ///
 /// The declared number is the child's own <c>drainDeadlineMs</c>, taken from the acknowledgement it
 /// published. There is no second copy of it anywhere: a budget is spent, never extended.
+/// <para>
+/// That number is the SUM of the child's own step ceilings, so it bounds those steps and nothing else.
+/// The quit also has to cover the delivery of the orchestrating EOF that starts them, the child's exit
+/// once its last step is done, and this launcher noticing that exit - all outside the declaration by
+/// construction. So a budget carries one margin beside it (<see cref="MarginMs"/>) and
+/// <see cref="LimitMs"/> is the two together. They are separate fields because they are two different
+/// facts: the declaration is the child's and the teardown record still compares the player's wait
+/// against it, while the margin is this launcher's own answer to what that declaration cannot cover.
+/// </para>
 /// </summary>
 internal sealed class ShutdownBudget
 {
     private readonly Stopwatch elapsed = Stopwatch.StartNew();
     private readonly long declaredMs;
+    private readonly long marginMs;
 
-    internal ShutdownBudget(long declaredMs) => this.declaredMs = Math.Max(0, declaredMs);
+    internal ShutdownBudget(long declaredMs, long marginMs = 0)
+    {
+        this.declaredMs = Math.Max(0, declaredMs);
+        this.marginMs = Math.Max(0, marginMs);
+    }
 
-    /// <summary>The declared number this quit may spend in total.</summary>
+    /// <summary>The child's own declaration: the sum of its step ceilings, as it published it.</summary>
     internal long DeclaredMs => declaredMs;
 
     /// <summary>
-    /// What is left of the declared number, never negative: 0 means the quit has no further wait to
-    /// give, and is the value a wait should pass through when it must not add time of its own.
+    /// What this quit may spend past the declaration, for the part of the exit the declaration cannot
+    /// bound. The close path supplies it from a number the child publishes itself
+    /// (<see cref="RuntimeSupervisorLease.CloseAsync"/>), so this class keeps no constant of its own.
     /// </summary>
-    internal long RemainingMs => Math.Max(0, declaredMs - elapsed.ElapsedMilliseconds);
+    internal long MarginMs => marginMs;
+
+    /// <summary>The whole quit's limit: the child's declaration plus the margin above.</summary>
+    internal long LimitMs => declaredMs + marginMs;
+
+    /// <summary>
+    /// What is left of the quit's limit, never negative: 0 means the quit has no further wait to give,
+    /// and is the value a wait should pass through when it must not add time of its own.
+    /// </summary>
+    internal long RemainingMs => Math.Max(0, LimitMs - elapsed.ElapsedMilliseconds);
 
     /// <summary>What this quit has spent so far, which is the wait the player experiences.</summary>
     internal long ConsumedMs => elapsed.ElapsedMilliseconds;

@@ -1057,7 +1057,15 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     internal async Task CloseAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var budget = new ShutdownBudget(Result.DrainDeadlineMs);
+        // The child publishes the SUM of its eight step ceilings, which bounds those steps and nothing
+        // else: not the delivery of the controller EOF that starts them, not the exit that follows the
+        // last one, and not this launcher noticing that exit. A quit that spent exactly that sum would
+        // terminate a child which did everything it promised - so the quit may spend one of the child's
+        // OWN ordinary step bounds past it (`stepHangDeadlineMs`, the smallest bound it publishes and
+        // its own scale for "this step is stuck"), which needs no constant of this launcher's. What it
+        // costs is named where it is paid: a child that really is hung is killed one ordinary step
+        // later, and the player's worst-case quit is that much longer.
+        var budget = new ShutdownBudget(Result.DrainDeadlineMs, Result.StepHangDeadlineMs);
         var shouldTerminate = Interlocked.Exchange(ref closed, 1) == 0;
         var child = Interlocked.Exchange(ref process, null);
         // The controller channel goes first, and it goes on EVERY quit and not only the one that finds
