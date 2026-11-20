@@ -835,6 +835,149 @@ export function productivityGate(lines, { requireRows = true } = {}) {
   return Object.freeze({ lines: gateLines, failed: findings.length > 0 && (rows.length > 0 || requireRows) });
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// THE POPULATION THE VERDICT COMPARED.
+//
+// Measured 2026-11-20 (`round84`): `published 101 · addressable 55 · attempted 18 · succeeded 16` came back as
+// `narrow:below_baseline:round38`, and nothing in that code said the comparison was 18 of 55 against round76's 17 of 43 -
+// the label named a run whose entry records no addressable width at all, while 46 of the 101 published actions had never
+// been addressable in that run's world. Two defects met in one line: the verdict did not name which dimension it compared,
+// and a reader could not recompute it. The ruler now carries the dimension and both halves of its ratio
+// (`tools/lib/action-breadth.mjs`), and this gate holds every reading to it: the numbers on the comparison row must be the
+// reading's own, a verdict that FAILED a comparison must name the value it was held to and who held it, and the coverage
+// verdict must follow from those four numbers by cross-multiplication alone.
+
+/** The gate: a breadth verdict names the population it compared, and the comparison survives arithmetic. */
+export const BREADTH_POPULATION_GATE = "a_breadth_verdict_names_the_population_it_compared";
+
+// The row may carry the day anchor after the comparison (`· day_task=<the day>`), so the pattern names the token that
+// ends the comparison rather than the end of the line.
+const COMPARISON_HELD = /baseline-held (.+?); compared (coverage|families|none)(?: ·|$)/u;
+const COMPARISON_ADDRESSABLE = /attempted (\d+) of (\d+) addressable/u;
+const COMPARISON_CATALOG = /attempted (\d+) of (\d+) published/u;
+const PUBLISHED_WITHOUT_WIDTH = /published (\d+) \((\d+) never addressable in this world\)/u;
+const VERDICT_ROW = /^action_breadth_verdict: (\S+)/u;
+const COVERAGE_CODE = /:coverage=(\d+)\/(\d+):held=(\d+)\/(\d+):by=(\S+)$/u;
+const FAMILIES_CODE = /:families=(.+)$/u;
+
+/**
+ * The gate, reading the rows the tool printed rather than the fields it decided from - so a line that stops naming the
+ * population fails here even while the record behind it is still right.
+ *
+ * POPULATION: the one comparison row this reading prints (the populations and the bar) and the one verdict row. A reading
+ * that printed neither is BLOCKED rather than passed, for the reason every gate in this tree is: a check whose population
+ * is empty agrees with itself. A verdict the four numbers do not reproduce, a coverage verdict that does not say which
+ * dimension it used, and a failed comparison that does not name the value it was held to all fail and are named.
+ */
+export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
+  const printed = (Array.isArray(lines) ? lines : []).map(String);
+  const failures = [];
+  const blocked = (why) =>
+    Object.freeze({
+      lines: Object.freeze([`${BREADTH_POPULATION_GATE}:blocked - ${why}, so this gate would agree with itself`]),
+      failed: true,
+    });
+  const comparison = printed.find((line) => COMPARISON_HELD.test(line)) ?? null;
+  if (comparison === null)
+    return blocked(
+      "this reading printed no row naming its published, addressable and attempted populations beside the value it was held to",
+    );
+  const verdictOf = (printed.find((line) => VERDICT_ROW.test(line)) ?? "").match(VERDICT_ROW);
+  if (verdictOf === null) return blocked("this reading printed no verdict row to check the comparison against");
+  const verdict = verdictOf[1];
+  const [held, compared] = (comparison.match(COMPARISON_HELD) ?? []).slice(1);
+  const addressableShape = comparison.match(COMPARISON_ADDRESSABLE);
+  const catalogShape = comparison.match(COMPARISON_CATALOG);
+  const neverAddressable = comparison.match(PUBLISHED_WITHOUT_WIDTH);
+  const read = { published: null, addressable: null, attempted: null };
+  if (addressableShape !== null) {
+    read.attempted = Number(addressableShape[1]);
+    read.addressable = Number(addressableShape[2]);
+    if (neverAddressable !== null) read.published = Number(neverAddressable[1]);
+  } else if (catalogShape !== null) {
+    // The shape a run with no census prints: `attempted 3 of 101 published`, where the two numbers are the companion's
+    // attempts and the catalog - never an addressable width it never had.
+    read.attempted = Number(catalogShape[1]);
+    read.published = Number(catalogShape[2]);
+  }
+
+  const name = `${BREADTH_POPULATION_GATE}:${verdict}`;
+  if (read.published === null || read.attempted === null)
+    failures.push(
+      `${name} - the comparison row names no published or attempted population (${comparison.trim()}); print both, so the companion's choice and the world's offering stay two facts`,
+    );
+  else if (breadth !== null) {
+    if (read.published !== breadth.published)
+      failures.push(
+        `${name} - the row prints ${String(read.published)} published, the reading holds ${String(breadth.published)}`,
+      );
+    if (read.attempted !== breadth.attempted)
+      failures.push(
+        `${name} - the row prints ${String(read.attempted)} attempted, the reading holds ${String(breadth.attempted)}`,
+      );
+    if (read.addressable !== (breadth.addressable ?? null))
+      failures.push(
+        `${name} - the row prints addressable ${read.addressable === null ? "not_measured" : String(read.addressable)}, the reading holds ${breadth.addressable === null || breadth.addressable === undefined ? "not_measured" : String(breadth.addressable)}`,
+      );
+  }
+
+  const failedOn = verdict.startsWith("narrow:below_baseline:") ? (verdict.split(":")[3]?.split("=")[0] ?? null) : null;
+  if (verdict.startsWith("narrow:below_baseline:") && failedOn !== compared)
+    failures.push(
+      `${name} - the verdict compares ${failedOn ?? "a dimension it never names"}, the row says it compared ${compared}; a comparison a reader cannot name is one nobody can argue with`,
+    );
+  const coverage = verdict.match(COVERAGE_CODE);
+  if (failedOn === "coverage") {
+    if (coverage === null)
+      failures.push(
+        `${name} - the verdict failed on coverage without printing the ratio it compared; it must carry :coverage=<attempted>/<addressable>:held=<h>/<w>:by=<holder>`,
+      );
+    else {
+      const codeAttempted = Number(coverage[1]);
+      const codeAddressable = Number(coverage[2]);
+      const codeHeld = Number(coverage[3]);
+      const codeWidth = Number(coverage[4]);
+      const holder = coverage[5];
+      if (!(codeAttempted * codeWidth < codeHeld * codeAddressable))
+        failures.push(
+          `${name} - the verdict claims coverage failed, but ${String(codeAttempted)}/${String(codeAddressable)} is not below ${String(codeHeld)}/${String(codeWidth)}`,
+        );
+      if (codeAttempted !== read.attempted || codeAddressable !== read.addressable)
+        failures.push(
+          `${name} - the verdict's own ratio is not the row's: ${String(codeAttempted)}/${String(codeAddressable)} against attempted ${String(read.attempted)} of addressable ${String(read.addressable)}`,
+        );
+      if (!held.includes(`${String(codeHeld)} of ${String(codeWidth)}`))
+        failures.push(
+          `${name} - the verdict was held to ${String(codeHeld)} of ${String(codeWidth)} by ${holder}, and the row prints \`baseline-held ${held}\``,
+        );
+      // WHO held the bar, not only what it was: `round84`'s code named `round38` for a ratio `round76` recorded, and the
+      // label is the half a reader follows to the bundle the number came from.
+      if (!held.includes(holder))
+        failures.push(
+          `${name} - the verdict says ${holder} held the bar, and the row names no such run (\`baseline-held ${held}\`)`,
+        );
+      if (breadth?.baselineCompared?.label !== undefined && breadth.baselineCompared.label !== holder)
+        failures.push(
+          `${name} - the verdict credits ${holder} with the bar, the reading holds it against ${breadth.baselineCompared.label}`,
+        );
+    }
+  }
+  if (failedOn === "families") {
+    const named = (verdict.match(FAMILIES_CODE) ?? [])[1] ?? "";
+    const heldFamilies = [...(breadth?.baselineMissedFamilies ?? [])].sort().join(",");
+    if (heldFamilies.length > 0 && named !== heldFamilies)
+      failures.push(
+        `${name} - the verdict names ${named || "no family"} as skipped, the reading found ${heldFamilies}`,
+      );
+    if (/^(?:not_measured|none)/u.test(held))
+      failures.push(
+        `${name} - the verdict failed on a family the world offered, and the row names no bar it was held to`,
+      );
+  }
+  const summary = `${BREADTH_POPULATION_GATE} published ${String(read.published ?? "not_measured")} · addressable ${read.addressable === null ? "not_measured" : String(read.addressable)} · attempted ${String(read.attempted ?? "not_measured")} · baseline-held ${held} · compared ${compared} · verdict ${verdict}`;
+  return Object.freeze({ lines: Object.freeze([...failures, summary]), failed: failures.length > 0 });
+}
+
 /** The name a failure can point at: `action_breadth_action:move_placed_furniture`, `breadth`, … */
 function readingOf(line) {
   const colon = line.indexOf(":");
@@ -1136,6 +1279,7 @@ async function main() {
     for (const line of readings.lines()) out(line);
     for (const line of settlementGate([]).lines) out(line);
     for (const line of productivityGate([]).lines) out(line);
+    for (const line of breadthPopulationGate({ lines: PRINTED }).lines) out(line);
     process.exitCode = 2;
     return;
   }
@@ -1152,6 +1296,7 @@ async function main() {
     for (const line of readings.lines()) out(line);
     for (const line of settlementGate([]).lines) out(line);
     for (const line of productivityGate([]).lines) out(line);
+    for (const line of breadthPopulationGate({ lines: PRINTED }).lines) out(line);
     process.exitCode = 2;
     return;
   }
@@ -1283,10 +1428,15 @@ async function main() {
   out(
     `action_breadth_verdict: ${breadth.verdict}${chosen.partial ? " (partial - the run has not ended, so this is what it had done and not what it did)" : ""}`,
   );
+  const populationGate = breadthPopulationGate({ breadth, lines: PRINTED });
+  for (const line of populationGate.lines) out(line);
   const productGate = productivityGate(PRINTED);
   for (const line of productGate.lines) out(line);
   for (const line of readings.lines()) out(line);
-  process.exitCode = exitCodeFor(breadth, readings.failed() || gate.failed || productGate.failed);
+  process.exitCode = exitCodeFor(
+    breadth,
+    readings.failed() || gate.failed || populationGate.failed || productGate.failed,
+  );
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

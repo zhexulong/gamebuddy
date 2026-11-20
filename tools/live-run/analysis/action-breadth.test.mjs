@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { productivityGate, readTaskPrompts, settlementGate } from "./action-breadth.mjs";
+import { breadthPopulationGate, productivityGate, readTaskPrompts, settlementGate } from "./action-breadth.mjs";
 
 const BREADTH = join(import.meta.dirname, "action-breadth.mjs");
 const START = Date.parse("2026-11-19T10:30:34.853Z");
@@ -137,6 +137,11 @@ test("a run with no bundle is measured from its log, and every reading says so",
       "every reading taken from the log names the log, and none is left without a source",
     );
     assert.equal(status, 2, "a mid-run reading has no snapshot census, so it is not_measured rather than a verdict");
+    assert.match(
+      out,
+      /^a_breadth_verdict_names_the_population_it_compared published \d+ · addressable not_measured · attempted 3 ·/mu,
+      "the population gate runs on every reading, not only on the ones that could compare a ratio",
+    );
   } finally {
     rmSync(options.root, { recursive: true, force: true });
   }
@@ -448,4 +453,131 @@ test("the productivity gate reds on a row that scores an action count and names 
   const empty = productivityGate([]);
   assert.equal(empty.failed, true);
   assert.match(empty.lines[0], /:blocked - rows examined 0 · day-task named 0 · family-scored 0 · unanchored 0/u);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// THE POPULATION THE VERDICT COMPARED.
+//
+// Both fixtures below are the rows two real runs printed on 2026-11-20, copied verbatim from
+// `node tools/live-run/analysis/action-breadth.mjs --result tools/_multiday_routine-round<nn>.result.json`:
+// `round84` failed on the coverage ratio and `round82`, a different world, failed on the families it offered and skipped.
+// What they pin is the rule, not the numbers: the verdict names the dimension it compared and the value it was held to,
+// and those four numbers reproduce it. `round84`'s code used to read `narrow:below_baseline:round38` - no dimension, no
+// numerator, no holder - while the ratio it had failed belonged to `round76`.
+
+const ROUND84_ROW = Object.freeze({
+  line: "action_breadth: attempted 18 of 55 addressable (32.7%); succeeded 16 of 55; published 101 (46 never addressable in this world); baseline-held 17 of 43 (round76's coverage floor, the best census-bearing run's attempted/addressable); compared coverage · day_task=sweep_animals_and_company+sweep_carried_things+clear_east_patch",
+  verdict: "action_breadth_verdict: narrow:below_baseline:round38:coverage=18/55:held=17/43:by=round76",
+  breadth: { published: 101, addressable: 55, attempted: 18, baselineMissedFamilies: [] },
+});
+
+const ROUND82_ROW = Object.freeze({
+  line: "action_breadth: attempted 23 of 57 addressable (40.4%); succeeded 20 of 57; published 101 (44 never addressable in this world); baseline-held 4 of 6 families (the families this run's world offered that the recorded best worked in); compared families · day_task=a_fish_from_the_water+sweep_yard_and_work+sweep_animals_and_company",
+  verdict: "action_breadth_verdict: narrow:below_baseline:round38:families=buildings_farm_management,shops_economy",
+  breadth: {
+    published: 101,
+    addressable: 57,
+    attempted: 23,
+    baselineMissedFamilies: ["buildings_farm_management", "shops_economy"],
+  },
+});
+
+/** The gate line's shape, which is what must NOT move between two runs in two different worlds. */
+const GATE_LINE =
+  /^a_breadth_verdict_names_the_population_it_compared published \d+ · addressable (?:\d+|not_measured) · attempted \d+ · baseline-held .+ · compared (?:coverage|families|none) · verdict \S+$/u;
+
+test("a verdict that compares a baseline names the dimension, the numbers and the run that held them", () => {
+  const coverage = breadthPopulationGate({
+    breadth: ROUND84_ROW.breadth,
+    lines: [ROUND84_ROW.line, ROUND84_ROW.verdict],
+  });
+  assert.equal(coverage.failed, false, coverage.lines.join("\n"));
+  assert.match(coverage.lines.at(-1), GATE_LINE);
+  assert.match(
+    coverage.lines.at(-1),
+    /published 101 · addressable 55 · attempted 18 · baseline-held 17 of 43 \(round76's coverage floor.*compared coverage · verdict narrow:below_baseline:round38:coverage=18\/55:held=17\/43:by=round76$/u,
+    "the four numbers alone reproduce the verdict: 18 of 55 is below 17 of 43",
+  );
+
+  // THE FALSIFIER: a different world changes the numbers and the dimension, never the shape of the line.
+  const families = breadthPopulationGate({
+    breadth: ROUND82_ROW.breadth,
+    lines: [ROUND82_ROW.line, ROUND82_ROW.verdict],
+  });
+  assert.equal(families.failed, false, families.lines.join("\n"));
+  assert.match(families.lines.at(-1), GATE_LINE);
+  assert.match(
+    families.lines.at(-1),
+    /addressable 57 · attempted 23 · baseline-held 4 of 6 families .*compared families/u,
+  );
+
+  // And a population of zero is blocked rather than green: no comparison row, nothing to check.
+  const empty = breadthPopulationGate({ breadth: ROUND84_ROW.breadth, lines: [ROUND84_ROW.verdict] });
+  assert.equal(empty.failed, true);
+  assert.match(
+    empty.lines[0],
+    /:blocked - this reading printed no row naming its published, addressable and attempted/u,
+  );
+});
+
+test("the verdict this unit replaced fails, and the numbers that do not reproduce it fail too", () => {
+  // THE RED PROOF, on the exact line `round84` produced: same row, the old code with no dimension and no ratio.
+  const old = breadthPopulationGate({
+    breadth: ROUND84_ROW.breadth,
+    lines: [ROUND84_ROW.line, "action_breadth_verdict: narrow:below_baseline:round38"],
+  });
+  assert.equal(old.failed, true);
+  assert.match(
+    old.lines[0],
+    /:narrow:below_baseline:round38 - the verdict compares a dimension it never names, the row says it compared coverage/u,
+    "the failure names the code and says which comparison it dropped",
+  );
+
+  // A ratio that does not fail: 30 of 55 clears 17 of 43, so a `coverage` verdict on it is a claim the numbers refute.
+  const refuted = breadthPopulationGate({
+    breadth: ROUND84_ROW.breadth,
+    lines: [
+      ROUND84_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=30/55:held=17/43:by=round76",
+    ],
+  });
+  assert.equal(refuted.failed, true);
+  assert.match(refuted.lines[0], /claims coverage failed, but 30\/55 is not below 17\/43/u);
+
+  // A held value the row does not carry: the verdict says 17 of 43, the row printed 6 of 11.
+  const otherBar = breadthPopulationGate({
+    breadth: ROUND84_ROW.breadth,
+    lines: [ROUND84_ROW.line.replace("17 of 43", "6 of 11"), ROUND84_ROW.verdict],
+  });
+  assert.equal(otherBar.failed, true);
+  assert.match(
+    otherBar.lines[0],
+    /the verdict was held to 17 of 43 by round76, and the row prints `baseline-held 6 of 11/u,
+  );
+
+  // THE MISLABEL ITSELF: the ratio is round76's, and the code credits round38 - the run whose entry records no width.
+  const mislabelled = breadthPopulationGate({
+    breadth: ROUND84_ROW.breadth,
+    lines: [
+      ROUND84_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=18/55:held=17/43:by=round38",
+    ],
+  });
+  assert.equal(mislabelled.failed, true);
+  assert.match(
+    mislabelled.lines[0],
+    /the verdict says round38 held the bar, and the row names no such run/u,
+    "a reader following `by=round38` reaches a bundle that never recorded an addressable width",
+  );
+
+  // The families arm names its members from the reading, so a code that dropped one is caught.
+  const droppedFamily = breadthPopulationGate({
+    breadth: ROUND82_ROW.breadth,
+    lines: [ROUND82_ROW.line, "action_breadth_verdict: narrow:below_baseline:round38:families=shops_economy"],
+  });
+  assert.equal(droppedFamily.failed, true);
+  assert.match(
+    droppedFamily.lines[0],
+    /names shops_economy as skipped, the reading found buildings_farm_management,shops_economy/u,
+  );
 });

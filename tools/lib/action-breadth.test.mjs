@@ -161,7 +161,19 @@ test("the coverage floor fails a run that used a fraction of the world its own s
   const thin = await measure({ cut_weeds: 4, harvest_crop: 4, move_to_tile: 4 }, { baseline: floored });
   assert.equal(thin.addressable, 11);
   assert.ok(thin.coverage < 6 / 11, `${String(thin.coverage)} must be below the recorded floor`);
-  assert.equal(thin.verdict, "narrow:below_baseline:fixture-best", "coverage alone fails it, and the code says so");
+  assert.equal(
+    thin.verdict,
+    "narrow:below_baseline:fixture-best:coverage=3/11:held=6/11:by=fixture-floor",
+    "coverage alone fails it, and the code names the dimension, both halves of its ratio, and the run that held it",
+  );
+  assert.deepEqual(thin.baselineCompared, {
+    dimension: "coverage",
+    label: "fixture-floor",
+    attempted: 6,
+    addressable: 11,
+    what: "coverage floor, the best census-bearing run's attempted/addressable",
+  });
+  assert.equal(thin.baselineFailed, "coverage", "and which dimension decided is a field, not a word to decode");
 
   // The falsifier: eight of eleven clears the same floor, and nothing else in this reading objects.
   const wide = await measure(
@@ -290,11 +302,11 @@ test("a run at the recorded best is rich, and one action below it is below_basel
     sleep: 4,
   });
   assert.equal(oneShort.attempted, 7);
-  assert.equal(oneShort.verdict, "narrow:below_baseline:fixture-best");
+  assert.equal(oneShort.verdict, "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-best");
   assert.deepEqual(actionBreadthClause(oneShort), {
     id: "action_breadth",
     passed: false,
-    reasonCode: "narrow:below_baseline:fixture-best",
+    reasonCode: "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-best",
   });
 });
 
@@ -378,7 +390,11 @@ test("coverage is compared as a fraction, so a smaller world is not charged for 
     },
   );
   assert.equal(threeOfEleven.addressable, 12, "the whole fixture world, with no exclusions declared for this baseline");
-  assert.equal(threeOfEleven.verdict, "narrow:below_baseline:fixture-best", "3 of 12 is below 5 of 10");
+  assert.equal(
+    threeOfEleven.verdict,
+    "narrow:below_baseline:fixture-best:coverage=3/12:held=5/10:by=fixture-best",
+    "3 of 12 is below 5 of 10, and the code carries both fractions so a reader can redo the cross-multiplication",
+  );
 });
 
 test("a run that attempts every addressable action is rich, and one that attempts three of eleven is narrow", async () => {
@@ -425,7 +441,7 @@ test("a run that attempts every addressable action is rich, and one that attempt
   assert.equal(threeOfEleven.addressable, 11);
   assert.equal(threeOfEleven.attempted, 3);
   assert.equal(threeOfEleven.families, 1, "the family dimension is satisfied, so only coverage can fail this run");
-  assert.equal(threeOfEleven.verdict, "narrow:below_baseline:fixture-best");
+  assert.equal(threeOfEleven.verdict, "narrow:below_baseline:fixture-best:coverage=3/11:held=8/9:by=fixture-best");
 });
 
 test("one action holding most of the executions is narrow even when the coverage looks acceptable", async () => {
@@ -897,22 +913,59 @@ test("the reading prints its population, its census, its addressable set, its co
     attributedExecutions: 124,
     concentration: { actionId: "cut_weeds", executions: 32, share: 32 / 124 },
     concentrationReason: null,
-    verdict: "narrow:below_baseline:round38",
+    scenario: "multiday_routine",
+    baseline: { label: "round38" },
+    baselineCompared: {
+      dimension: "coverage",
+      label: "round76",
+      attempted: 17,
+      addressable: 43,
+      what: "coverage floor, the best census-bearing run's attempted/addressable",
+    },
+    baselineFailed: "coverage",
+    verdict: "narrow:below_baseline:round38:coverage=15/40:held=17/43:by=round76",
   };
   assert.deepEqual(formatActionBreadth(breadth), [
     "action_breadth: population 95 published, 91 judged (4 excluded)",
     "action_breadth: census 402 snapshots from runner_observations, 2 of 3 target families with rows",
     "action_breadth: addressable 40 of 95 published (target-bound 25, targetless 15)",
-    "action_breadth: attempted 15 of 40 addressable (37.5%); succeeded 14 of 40; catalog 15 of 95 (15.8%)",
+    // THE LINE THE VERDICT HAS TO BE READ AGAINST: both populations side by side, the 55 of the 95 published actions this
+    // world never made addressable named as such, and the bar with the run that held it.
+    "action_breadth: attempted 15 of 40 addressable (37.5%); succeeded 14 of 40; published 95 (55 never addressable in this world); baseline-held 17 of 43 (round76's coverage floor, the best census-bearing run's attempted/addressable); compared coverage",
     "action_breadth: families 2 of 20 resource_gathering,world_lifecycle",
     "action_breadth: executions 124 (124 attributed); concentration cut_weeds 32 (25.8%)",
-    "action_breadth: verdict narrow:below_baseline:round38",
+    "action_breadth: verdict narrow:below_baseline:round38:coverage=15/40:held=17/43:by=round76",
   ]);
 
-  // And the shape a bundle from before the census produces: the catalog stays visible, the addressable set does not.
-  assert.deepEqual(formatActionBreadth({ ...breadth, census: null, addressable: null, coverage: null }).slice(1, 4), [
-    "action_breadth: census none published - the addressable surface cannot be measured",
-    "action_breadth: addressable not_measured (no snapshot census)",
-    "action_breadth: attempted 15 of 95 published (15.8%)",
-  ]);
+  // And the shape a bundle from before the census produces: the catalog stays visible, the addressable set does not, and
+  // the bar says which input was missing rather than printing a ratio nobody held.
+  assert.deepEqual(
+    formatActionBreadth({ ...breadth, census: null, addressable: null, coverage: null, baselineFailed: null }).slice(
+      1,
+      4,
+    ),
+    [
+      "action_breadth: census none published - the addressable surface cannot be measured",
+      "action_breadth: addressable not_measured (no snapshot census)",
+      "action_breadth: attempted 15 of 95 published; succeeded 14 (no snapshot census, so the addressable width is not measurable); baseline-held not_measured (this run published no snapshot census, so it has no world of its own to compare); compared none",
+    ],
+  );
+
+  // The families arm prints its own bar in its own terms: a set, not a ratio, because that is what it compares.
+  const byFamily = formatActionBreadth({
+    ...breadth,
+    baselineCompared: {
+      dimension: "families",
+      label: "round38",
+      offered: ["farming_crops", "resource_gathering", "shops_economy"],
+      touched: 1,
+      what: "the families this run's world offered that the recorded best worked in",
+    },
+    baselineFailed: "families",
+    verdict: "narrow:below_baseline:round38:families=resource_gathering,shops_economy",
+  });
+  assert.match(
+    byFamily[3],
+    /baseline-held 1 of 3 families \(the families this run's world offered .*compared families$/u,
+  );
 });
