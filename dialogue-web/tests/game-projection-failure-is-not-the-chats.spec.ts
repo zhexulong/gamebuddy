@@ -27,6 +27,24 @@ import { chat, game, jsonOk, root as composedRoot, token } from "./composed-refe
  *  - the reverse direction is the same shape: a Chat projection that cannot be read must not take
  *    the Game surface away. `chat-problem-keeps-the-game-mounted.spec.ts` holds its own shape of
  *    that; this file holds the one a Chat-side refusal of the AGGREGATE produces.
+ *
+ * The mount cannot be decoupled from this side of the wire, and the two ends of that are worth
+ * naming together: `readComposedRoot` throws for the Game half
+ * (`host/src/composed-reference-game-browser.ts:1577`), and `handleBootstrap` answers that throw by
+ * retiring the session it had just minted (`:1703`, `if (session === activeSession) session =
+ * undefined`) - so the refusal arrives with no session left for the Chat half's own route to answer
+ * on. That pair, not a missing retry, is why the first journey measures `chatHalfReads` instead of
+ * pressing a control: what a real fix needs is a `/bootstrap` that answers a root with no Game slice
+ * and a session that survives it, plus a mount state that draws the shell with a degraded Game
+ * panel. Neither is this client's to choose, so neither was built here.
+ *
+ * Two reds found while measuring, left where they belong and not fixed by this lane:
+ *  - `world-book-entry-opens-without-cutting-the-line-above.spec.ts` item 30: its sensitivity probe
+ *    assigns `scrollTop` on `.surface-content` and reads 0 - the container has no overflow at
+ *    400x800 - and it fails identically against the pre-change source of the read this file pins.
+ *  - `companion-activation.spec.ts:513` asserts `labels.unavailable`, which is `undefined`:
+ *    `acc58ac4` renamed that key to `companionsUnreadable` in both catalogues, in the same commit
+ *    that added the journey asserting it.
  */
 
 const gameProjectionRefusal = {
