@@ -38,6 +38,9 @@ function catalogStub() {
     async readChatCatalog() {
       return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
     },
+    async recordExpectedSelection() {
+      return false;
+    },
   });
 }
 
@@ -467,131 +470,12 @@ test("the mounted list read returns the player's 101st Chat instead of refusing 
 });
 
 /**
- * THE FIVE CLAUSES OF THE UNMOUNTABLE-SUCCESSOR REFUSAL, one test each.
- *
- * The refusal exists for one state: a removal that leaves the next start with Chats it cannot mount,
- * which fails closed with `semantic_chat_liveness_unrecoverable` before a browser exists. A refusal
- * that also fires on a request the product can serve is worse than none - it blocks an ordinary
- * removal over a state the player cannot repair from inside the product. So each clause below has its
- * own test, written so that clause alone decides the answer: drop it and the reading inverts.
- */
-
-/**
- * (i) THE REQUEST MUST REMOVE A LIVE CHAT.
- *
- * A restore can only name a Chat that already left the active list, so the row's own lifecycle state
- * is the whole clause - and it must be the clause, not an incidental one: in the state below the Chat
- * this mount serves is the archived one, the survivor is a Chat the semantic authority never
- * registered, and the same request issued as a removal is refused. Only the restore is served, and
- * only because it puts the Chat back.
- */
-test("a restore of the served Chat is served in the state a removal of it is refused in", async () => {
-  const results = await mounted(`
-    const handle = lease.browserProjection.chatHandle;
-    const survivor = { chatThreadId: "chat-" + "2".repeat(16), chatSurfaceSessionId: "surface-" + "2".repeat(16) };
-    await createChat(survivor.chatThreadId, survivor.chatSurfaceSessionId);
-    // The served Chat leaves the active list through another writer of the same durable authority -
-    // the state a restore exists for, and the state a removal request can still name.
-    const row = (await store().listThreads()).find((thread) => thread.chatThreadId === lease.chatThreadId);
-    await store().transitionLifecycle({ chatThreadId: row.chatThreadId, chatSurfaceSessionId: row.chatSurfaceSessionId, companionId: "companion_01", continuityId: "continuity_01", expectedManagementRevision: row.managementRevision ?? 1, operation: "archive" });
-    const removalOfAnArchivedChat = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 2, operation: "archive" }));
-    const restored = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 2, operation: "restore" }));
-    const removalAfterRestore = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: handle, expectedManagementRevision: 3, operation: "archive" }));
-    const durable = (await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId)).thread;
-    process.stdout.write(JSON.stringify({ removalOfAnArchivedChat, restored, removalAfterRestore, lifecycle: durable.lifecycleStatus, mountedThreadId: lease.chatThreadId }));
-    await service.close();
-    await lease.close();
-    await shared.close();
-  `);
-  // The archived row is the store's own refusal of an impossible transition, under the store's name.
-  assert.deepEqual(results.removalOfAnArchivedChat, {
-    ok: false,
-    error: "chat_management_lifecycle_invalid",
-  });
-  assert.equal((results.restored as { ok: boolean }).ok, true, "a restore was refused as if it were a removal");
-  assert.equal(results.lifecycle, "active", "the restore did not put the Chat back");
-  // ...and the SAME row, now live, is refused as a removal with the survivor set unmoved by either
-  // call: the refused restore reading above could not have been the empty list's, nor a revision's.
-  assert.deepEqual(results.removalAfterRestore, {
-    ok: false,
-    error: `chat_successor_unmountable:${String(results.mountedThreadId)}`,
-  });
-  assert.equal(results.lifecycle, "active", "the refused removal reached the durable row");
-});
-
-/**
- * (ii) ONLY THE REMOVAL THAT WOULD ORPHAN THE SELECTION IS JUDGED.
- *
- * A durable archive never moves the mount lease: the mounted runtime keeps serving the Chat the player
- * is looking at until the shell migrates its selection. So while the served Chat is still a live row,
- * removing any OTHER Chat leaves the next start's selection exactly where it was - live, verified, and
- * readable - and the semantic authority is never consulted for it. Once the served Chat has left the
- * list through any writer, every removal is judged by what it leaves behind, because then the next
- * start has to find a successor.
- */
-test("a sibling removal is served without asking the catalog, and a removal is judged once the mount's Chat is gone", async () => {
-  const results = await mounted(`
-    const sibling = { chatThreadId: "chat-" + "3".repeat(16), chatSurfaceSessionId: "surface-" + "3".repeat(16) };
-    const first = { chatThreadId: "chat-" + "4".repeat(16), chatSurfaceSessionId: "surface-" + "4".repeat(16) };
-    const second = { chatThreadId: "chat-" + "5".repeat(16), chatSurfaceSessionId: "surface-" + "5".repeat(16) };
-    await createChat(sibling.chatThreadId, sibling.chatSurfaceSessionId);
-    await createChat(first.chatThreadId, first.chatSurfaceSessionId);
-    await createChat(second.chatThreadId, second.chatSurfaceSessionId);
-    // The catalog, counted: whether a removal consults the semantic authority at all is the one thing
-    // a removal of another Chat must not do.
-    let catalogReads = 0;
-    const countingCatalog = Object.freeze({ async readChatCatalog() { catalogReads += 1; return shared.catalog.readChatCatalog(); } });
-    const countingService = createChatManagementService({ manifest, lease, profile, chatCatalog: countingCatalog });
-    const handleOf = (target) => lease.browserProjection.projectChatHandle(target.chatThreadId, target.chatSurfaceSessionId);
-    const siblingRemoval = await code(() => countingService.transitionLifecycle({ apiVersion: 1, chatHandle: handleOf(sibling), expectedManagementRevision: 1, operation: "archive" }));
-    const readsAfterSibling = catalogReads;
-    // The served Chat leaves the list through another writer of the same durable authority, and the
-    // two Chats left carry no verified content: what a removal leaves is now the whole question.
-    const row = (await store().listThreads()).find((thread) => thread.chatThreadId === lease.chatThreadId);
-    await store().transitionLifecycle({ chatThreadId: row.chatThreadId, chatSurfaceSessionId: row.chatSurfaceSessionId, companionId: "companion_01", continuityId: "continuity_01", expectedManagementRevision: row.managementRevision ?? 1, operation: "archive" });
-    const orphanedRemoval = await code(() => countingService.transitionLifecycle({ apiVersion: 1, chatHandle: handleOf(first), expectedManagementRevision: 1, operation: "archive" }));
-    const readsAfterOrphaned = catalogReads - readsAfterSibling;
-    const firstRow = (await store().resumeThread(first.chatThreadId, first.chatSurfaceSessionId)).thread;
-    const active = (await countingService.listChats({ apiVersion: 1, state: "active" })).chats.length;
-    process.stdout.write(JSON.stringify({ siblingRemoval, readsAfterSibling, orphanedRemoval, readsAfterOrphaned, firstLifecycle: firstRow.lifecycleStatus, active }));
-    await countingService.close();
-    await service.close();
-    await lease.close();
-    await shared.close();
-  `);
-  // Reading 1: the served Chat is live, so the sibling goes - and the semantic authority is not asked,
-  // because nothing about that removal can leave the next start without a selection.
-  assert.equal(
-    (results.siblingRemoval as { ok: boolean }).ok,
-    true,
-    "a removal of a Chat the mount does not serve was refused while that mount's Chat was still live",
-  );
-  assert.equal(results.readsAfterSibling, 0, "a removal of another Chat consulted the semantic catalog");
-  // Reading 2: with the served Chat gone, the same-shaped request leaves two unverified Chats and one
-  // survivor, which is the state that bricks the next start - so it is refused, naming the Chat.
-  const orphaned = results.orphanedRemoval as { ok: boolean; error?: string };
-  assert.equal(
-    orphaned.ok,
-    false,
-    "a removal that left only unmountable Chats was served once the served Chat was gone",
-  );
-  assert.match(
-    String(orphaned.error),
-    /^chat_successor_unmountable:/u,
-    "the orphaned removal was refused as something other than the unmountable successor's own fact",
-  );
-  assert.equal(results.readsAfterOrphaned, 1, "the orphaned removal did not reach the catalog's answer");
-  assert.equal(results.firstLifecycle, "active", "the refused removal reached the durable row");
-  assert.equal(results.active, 2, "the refused removal left the active list changed");
-});
-
-/**
- * (iii) A SURVIVOR MUST EXIST - AND THE EMPTY LIST KEEPS ITS OWN NAME.
+ * A SURVIVOR MUST EXIST - AND THE EMPTY LIST KEEPS ITS OWN NAME.
  *
  * The last live Chat is a different fact with a different sentence: nothing is left to open, so the
- * player creates one, where the unmountable survivor is one click from being mountable. The empty
- * list is judged inside the removal's own transaction (`ChatThreadStore.transitionLifecycle`), so
- * this clause is what keeps this guard from borrowing that refusal's name.
+ * player creates one. It is judged inside the removal's own transaction
+ * (`ChatThreadStore.transitionLifecycle`), so two removals issued in one tick cannot both pass it,
+ * and it is the one removal this library still refuses.
  */
 test("archiving the last live Chat is the empty list's refusal, not the unmountable successor's", async () => {
   const results = await mounted(`
@@ -609,51 +493,60 @@ test("archiving the last live Chat is the empty list's refusal, not the unmounta
 });
 
 /**
- * (iv) NO SURVIVOR MAY CARRY VERIFIED CONTENT.
+ * (iv) A SURVIVOR NOTHING HAS VERIFIED IS SERVED, AND THE REMOVAL RECORDS ITS SETTLEMENT.
  *
  * A New Chat is durable from the moment `chat.create` writes it, but the semantic catalog learns it
- * only when the player opens it. That asymmetry is the whole defect: removing the served Chat while
- * such a Chat is the only survivor leaves the next start with no successor it could mount. The
- * forward path is the one the refusal names - open it once - and it is exercised here so the refusal
- * is proved to be about the catalog's answer, not about removals in general.
+ * only when the player opens it. Removing the served Chat while such a Chat is the only survivor used
+ * to be refused; the refusal made the player open the other Chat first to reach the same end. The
+ * removal now records exactly what that journey produced - a settlement expectation for the survivor -
+ * and proceeds, so the next start registers, verifies and mounts it.
  */
-test("a survivor the semantic authority never verified refuses the removal, and a verified one does not", async () => {
+test("a survivor the semantic authority never verified is served, and the next start settles and mounts it", async () => {
   const results = await mounted(`
     const servedHandle = lease.browserProjection.chatHandle;
     const survivor = { chatThreadId: "chat-" + "6".repeat(16), chatSurfaceSessionId: "surface-" + "6".repeat(16) };
     await createChat(survivor.chatThreadId, survivor.chatSurfaceSessionId);
-    const refused = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: servedHandle, expectedManagementRevision: 1, operation: "archive" }));
-    const durableAfterRefusal = (await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId)).thread;
-    const activeAfterRefusal = (await service.listChats({ apiVersion: 1, state: "active" })).chats.length;
-    // The forward path the refusal names: open the survivor once, which registers and verifies it...
-    await selectChat(survivor.chatThreadId, survivor.chatSurfaceSessionId, lease.browserProjection.selectionGeneration);
-    const onSurvivor = await authority.startMountedChatRuntime();
-    // ...and come back to the served Chat, so THIS mount serves the Chat whose survivor the catalog
-    // now knows. The catalog's answer, not the removal, is the difference.
-    await selectChat(lease.chatThreadId, lease.chatSurfaceSessionId, onSurvivor.browserProjection.selectionGeneration);
-    const migrated = await authority.startMountedChatRuntime();
-    const serviceOnServed = createChatManagementService({ manifest, lease: migrated, profile, chatCatalog: shared.catalog });
-    const servedAgain = migrated.browserProjection.projectChatHandle(lease.chatThreadId, lease.chatSurfaceSessionId);
-    const served = await code(() => serviceOnServed.transitionLifecycle({ apiVersion: 1, chatHandle: servedAgain, expectedManagementRevision: 1, operation: "archive" }));
-    process.stdout.write(JSON.stringify({ refused, durableLifecycleAfterRefusal: durableAfterRefusal.lifecycleStatus, activeAfterRefusal, served, mountedThreadId: lease.chatThreadId }));
-    await serviceOnServed.close();
+    const removal = await code(() => service.transitionLifecycle({ apiVersion: 1, chatHandle: servedHandle, expectedManagementRevision: 1, operation: "archive" }));
+    const durable = (await store().resumeThread(lease.chatThreadId, lease.chatSurfaceSessionId)).thread;
+    const pending = (await shared.catalog.readChatCatalog()).expectedSelection;
     await service.close();
-    await migrated.close();
-    await onSurvivor.close();
     await lease.close();
     await shared.close();
+    // The next start, through the same entry point the composition calls first.
+    const reopened = await coordinator.createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest);
+    const mounted = await reopened.chat.startMountedChatRuntime();
+    const catalog = await reopened.catalog.readChatCatalog();
+    const survivorRow = catalog.threads.find((thread) => thread.chatThreadId === survivor.chatThreadId);
+    process.stdout.write(JSON.stringify({
+      removal,
+      lifecycle: durable.lifecycleStatus,
+      pendingThreadId: pending === null ? null : pending.chatThreadId,
+      mountedThreadId: mounted.chatThreadId,
+      survivorThreadId: survivor.chatThreadId,
+      survivorContentState: survivorRow === undefined ? null : survivorRow.contentState,
+      expectedAfterSettlement: catalog.expectedSelection,
+    }));
+    await mounted.close();
+    await reopened.close();
   `);
-  assert.deepEqual(results.refused, {
-    ok: false,
-    error: `chat_successor_unmountable:${String(results.mountedThreadId)}`,
-  });
-  assert.equal(results.durableLifecycleAfterRefusal, "active", "the refused removal reached the durable row");
-  assert.equal(results.activeAfterRefusal, 2, "the refused removal left the active list changed");
   assert.equal(
-    (results.served as { ok: boolean }).ok,
+    (results.removal as { ok: boolean }).ok,
     true,
-    "the same removal was refused with a verified survivor, so the refusal is not about the catalog's answer",
+    "the removal was refused although its successor can be settled",
   );
+  assert.equal(results.lifecycle, "archived", "the served removal did not reach the durable row");
+  assert.equal(
+    results.pendingThreadId,
+    results.survivorThreadId,
+    "the removal did not record a settlement expectation for the survivor it left behind",
+  );
+  assert.equal(
+    results.mountedThreadId,
+    results.survivorThreadId,
+    "the next start did not mount the survivor the removal promised",
+  );
+  assert.equal(results.survivorContentState, "verified", "the settlement did not verify the survivor's content");
+  assert.equal(results.expectedAfterSettlement, null, "the settlement left the expectation pending");
 });
 
 /**
@@ -830,12 +723,16 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
     const read = async (operationName, caseId, outcome) => {
       const live = await liveThreadIds();
       // The semantic authority's own answer for the survivors, not a second list written here: a Chat
-      // it holds as verified is one the next start's successor settlement can actually mount.
+      // it holds as verified is one the next start's successor settlement can actually mount, and a
+      // recorded expectation is the other shape it keeps - the settlement registers, verifies and selects
+      // the Chat that expectation names before the mount.
+      const catalog = await shared.catalog.readChatCatalog();
       const verified = new Set(
-        (await shared.catalog.readChatCatalog()).threads
+        catalog.threads
           .filter((thread) => thread.contentState === "verified")
           .map((thread) => thread.chatThreadId),
       );
+      const expected = catalog.expectedSelection;
       return {
         path: operationName,
         case: caseId,
@@ -844,6 +741,9 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
         live: live.length,
         survivors: live.map((chatThreadId) => (chatThreadId === mountedThreadId ? "mounted" : "created")),
         mountableSurvivors: live.filter((chatThreadId) => verified.has(chatThreadId)).length,
+        settledByExpectation: live.filter(
+          (chatThreadId) => expected !== null && expected.chatThreadId === chatThreadId,
+        ).length,
       };
     };
 
@@ -965,10 +865,9 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
     live: number;
     survivors: readonly string[];
     mountableSurvivors: number;
+    settledByExpectation: number;
   }>;
   const name = (reading: { path: string; case: string }): string => `${reading.path}:${reading.case}`;
-  const unmountableSuccessor = (code: string | null): boolean =>
-    code !== null && code.startsWith("chat_successor_unmountable:");
 
   // A population that discovered nothing agrees with itself, so it is blocked rather than passed.
   assert.ok(
@@ -993,8 +892,7 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
       (reading) =>
         reading.outcome === "refused" &&
         reading.code !== "chat_active_list_empty" &&
-        reading.code !== "chat_management_lifecycle_invalid" &&
-        !unmountableSuccessor(reading.code),
+        reading.code !== "chat_management_lifecycle_invalid",
     )
     .map((reading) => `${name(reading)}=${reading.code}`);
   assert.deepEqual(
@@ -1002,24 +900,40 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
     [],
     `a_removal_leaves_the_companion_no_chat: ${unnamed.join(", ")} was refused as a service outage instead of by rule`,
   );
-  // THE BRICK ITSELF: an accepted removal that leaves Chats behind and not one the semantic authority
-  // could mount. This is the reading the next start turns into `semantic_chat_liveness_unrecoverable`
-  // before a browser exists, so a route that allows it has bricked the root.
+  // THE BRICK ITSELF: an accepted removal that leaves Chats behind with nothing the next start could
+  // mount and nothing it could settle. This is the reading the next start turns into
+  // `semantic_chat_liveness_unrecoverable` before a browser exists, so a route that allows it has bricked
+  // the root.
   const bricked = readings
-    .filter((reading) => reading.outcome === "ok" && reading.live > 0 && reading.mountableSurvivors === 0)
+    .filter(
+      (reading) =>
+        reading.outcome === "ok" &&
+        reading.live > 0 &&
+        reading.mountableSurvivors === 0 &&
+        reading.settledByExpectation === 0,
+    )
     .map(name);
   assert.deepEqual(
     bricked,
     [],
-    `a_removal_leaves_the_companion_no_chat: ${bricked.join(", ")} left only Chats the next start could not mount`,
+    `a_removal_leaves_the_companion_no_chat: ${bricked.join(", ")} left only Chats the next start could neither mount nor settle`,
   );
   // The rule must be witnessed, and it must refuse only the removal that would empty the list.
   const refused = readings.filter((reading) => reading.code === "chat_active_list_empty").length;
   assert.ok(refused > 0, "a_removal_leaves_the_companion_no_chat: the population never reached the empty-list rule");
-  const unmountable = readings.filter((reading) => unmountableSuccessor(reading.code)).length;
+  // The removal that leaves a survivor nothing has verified records the settlement the next mount keeps,
+  // and the population must reach it: without this reading a route could stop recording and the gate would
+  // still be green on the empty-list rule alone.
+  const settlementRecorded = readings.filter(
+    (reading) =>
+      reading.outcome === "ok" &&
+      reading.live > 0 &&
+      reading.mountableSurvivors === 0 &&
+      reading.settledByExpectation > 0,
+  ).length;
   assert.ok(
-    unmountable > 0,
-    "a_removal_leaves_the_companion_no_chat: the population never reached the unmountable-successor rule, so this gate does not hold it",
+    settlementRecorded > 0,
+    "a_removal_leaves_the_companion_no_chat: the population never reached a removal that records its successor's settlement, so this gate does not hold that rule",
   );
   assert.ok(
     readings.some((reading) => reading.outcome === "ok"),
@@ -1031,7 +945,7 @@ test("a_removal_leaves_the_companion_no_chat: every removal path leaves a live C
     "a_removal_leaves_the_companion_no_chat: the two population passes disagreed",
   );
   t.diagnostic(
-    `a_removal_leaves_the_companion_no_chat: removals examined ${readings.length} · refused by the empty list ${refused} · by the unmountable successor ${unmountable} · leaves-none ${offenders.length} · leaves-only-unmountable ${bricked.length}`,
+    `a_removal_leaves_the_companion_no_chat: removals examined ${readings.length} · refused by the empty list ${refused} · settlements recorded ${settlementRecorded} · leaves-none ${offenders.length} · leaves-nothing-to-mount ${bricked.length}`,
   );
 
   // The list read is the only way the surface reaches a Chat, so its ceiling is read from the contract

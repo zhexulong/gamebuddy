@@ -318,6 +318,9 @@ const chatCatalogStub = Object.freeze({
   async readChatCatalog() {
     return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
   },
+  async recordExpectedSelection() {
+    return false;
+  },
 });
 
 async function main(): Promise<void> {

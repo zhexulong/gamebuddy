@@ -81,6 +81,9 @@ const mountPreamble = `
       async readChatCatalog() {
         return Object.freeze({ threads: Object.freeze([]), expectedSelection: null });
       },
+      async recordExpectedSelection() {
+        return false;
+      },
     }),
   });
   const facade = Object.freeze({

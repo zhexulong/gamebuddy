@@ -2080,6 +2080,13 @@ export type SemanticProductionAuthority = Readonly<{
   authority: "SEMANTIC";
   /** Manifest-bound, close-drained Chat catalog. No Tavern content is read under this semantic mutex. */
   readChatCatalog(): Promise<ProductionChatCatalog>;
+  /**
+   * Records the settlement expectation ADR 0009 gives a Chat only a pre-mount settlement can register:
+   * the same `create`-shaped intent `chat.select` writes, for a Chat whose Tavern content already exists.
+   * Answers whether the expectation is now recorded; a pending expectation of the player's own, or a
+   * runtime transition in flight, answers `false` and changes nothing.
+   */
+  recordExpectedSelection(target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>): Promise<boolean>;
   /** Identities and CAS vectors are derived internally from the immediately preceding semantic readback. */
   registerChat(): Promise<ProductionChatCommandReadback>;
   verifyRegisteredChatContent(receipt: TavernExactContentReceipt): Promise<ProductionChatCommandReadback>;
@@ -2131,13 +2138,17 @@ export type SharedSemanticProductionAuthority = Readonly<{
   chat: SemanticChatRuntimeProductionAuthority;
   game: SemanticGameProductionAuthority;
   /**
-   * The Dialogue semantic authority's catalog observation, and nothing else: which Chats carry
-   * verified content, and whether a selection the player already asked for is still waiting for its
-   * settlement. The composed product needs exactly this to judge one durable mutation - removing the
-   * Chat this authority has selected - because whether a survivor can be mounted is a fact only this
-   * side holds. It carries no lease, no command, no store and no mutex.
+   * The Dialogue semantic authority's catalog observation, plus the one write the removal's own guard needs:
+   * which Chats carry verified content, whether a selection the player already asked for is still waiting for
+   * its settlement, and the ability to record that settlement for a survivor that has none. The composed
+   * product needs exactly this to judge one durable mutation - removing the Chat this authority has selected -
+   * because whether a survivor can be mounted is a fact only this side holds. It carries no lease, no command,
+   * no store and no mutex.
    */
-  catalog: Readonly<{ readChatCatalog(): Promise<ProductionChatCatalog> }>;
+  catalog: Readonly<{
+    readChatCatalog(): Promise<ProductionChatCatalog>;
+    recordExpectedSelection(target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>): Promise<boolean>;
+  }>;
   close(): Promise<void>;
 }>;
 
@@ -2616,7 +2627,11 @@ function createSharedSemanticProductionAuthorityOwner(
     // Delegated, not re-implemented: the same drained read the Dialogue authority serves, under the
     // same partition mutex. A second implementation of "is this Chat mountable" is the drift this
     // delegation exists to prevent.
-    catalog: Object.freeze({ readChatCatalog: () => semantic.readChatCatalog() }),
+    catalog: Object.freeze({
+      readChatCatalog: () => semantic.readChatCatalog(),
+      recordExpectedSelection: (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) =>
+        semantic.recordExpectedSelection(target),
+    }),
     close: () => {
       if (closePromise !== undefined) return closePromise;
       const attempt = (async () => {
@@ -4083,6 +4098,26 @@ function create(
   return Object.freeze({
     authority: "SEMANTIC" as const,
     readChatCatalog: () => begin(() => locked(() => provision.store.readChatCatalog())),
+    recordExpectedSelection: (target: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>) =>
+      begin(() =>
+        locked((): boolean => {
+          const catalog = provision.store.readChatCatalog();
+          try {
+            provision.store.recordChatSelectionIntent(
+              Object.freeze({
+                intent: Object.freeze({ kind: "create" as const, ...target }),
+                expected: { ...catalog.vector },
+              }),
+            );
+            return true;
+          } catch (error) {
+            // A runtime transition in flight and a pair the store cannot accept are the same answer for the
+            // caller that asked: no expectation was recorded, so the removal it guards may not count on one.
+            if (error instanceof Error) return false;
+            throw error;
+          }
+        }),
+      ),
     registerChat: () => chatOperation("register"),
     verifyRegisteredChatContent: (receipt) => chatOperation("verify", receipt),
     selectVerifiedChat: () => chatOperation("select"),
