@@ -169,6 +169,20 @@ export const NIGHT_CAUSE_SLEEP_UNSETTLED = "sleep_unsettled";
 export const NIGHT_CAUSE_ENGINE = "engine";
 
 /**
+ * EVERY CAUSE A NIGHT RECORD CAN NAME, and the population of `nightCauseSupport`.
+ *
+ * A cause that is not in this list is one this ledger has not met: a record carrying it cannot be supported, because
+ * nothing here knows what observation would support it. That is why the list is the authority the support gate reads
+ * rather than a comment - a new cause has to be declared here before a night can claim it.
+ */
+export const NIGHT_CAUSES = Object.freeze([
+  NIGHT_CAUSE_SLEEP,
+  NIGHT_CAUSE_SLEEP_UNSETTLED,
+  NIGHT_CAUSE_PASS_OUT,
+  NIGHT_CAUSE_ENGINE,
+]);
+
+/**
  * HOW a night ended, from the witnesses that can actually answer it. A night that crossed always gets an answer.
  *
  * The attributions are not interchangeable, and only one of them can be faked:
@@ -585,6 +599,12 @@ export function worldWitnessedNightRecord(ending) {
     nextDayIssued: false,
     watched: false,
     cause: ending.cause,
+    // NO CLOCK WAS EVER READ FOR THIS NIGHT, AND THE RECORD SAYS WHY. It carries a cause (the world's own ending) and
+    // no watch stood over it, so it can have no hour - and a bare `bedTime: null` would leave the cause supported by
+    // nothing. Stated rather than omitted, so the gate reads the reason instead of the absence.
+    bedTime: null,
+    bedTimeSource: null,
+    bedTimeAbsent: "night_not_watched",
     passedOut: ending.cause === NIGHT_CAUSE_PASS_OUT,
     // THE SAME NUMBER THE WATCHED RECORDS CARRY: a `dayOfMonth`, converted from the fact's `TotalDays` here and nowhere
     // else, so `nightEndedDayOfMonth` and the finding that names a missing night agree about which day it was.
@@ -880,6 +900,80 @@ export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS
 }
 
 /**
+ * WHAT SUPPORTS EACH NIGHT'S CLAIMED CAUSE, per cause, as the support gate reads it.
+ *
+ * A NIGHT THAT NAMES A CAUSE MUST NAME WHAT SUPPORTS IT. Measured 2026-11-20 (`round81`, day 1): `MULTIDAY_NIGHT
+ * {"day":1,"cause":"sleep","bedTime":null}` beside a `day_advanced` receipt carrying
+ * `entered_via=native_sleep_prompt`. `cause: sleep` with no hour reads as "she slept, at some point", and nothing
+ * distinguishes "the native prompt published no clock" from "the harness failed to read one". The night record
+ * therefore either carries the reading it was decided on (`bedTime` + `bedTimeSource`, naming which observation
+ * produced the hour) or says why it has none (`bedTimeAbsent`) - and a claim with neither is BARE.
+ *
+ * THE POPULATION IS THE DECLARED CAUSES (`NIGHT_CAUSES`), not a list kept here, and a cause a record carries that is
+ * not declared is bare by construction: this ledger does not know what would support it. The reading reports the causes
+ * the records actually claim, so `supported` and `bare` partition `causes` and neither is printed without the other.
+ */
+export function nightCauseSupport(dayRecords) {
+  const records = Array.isArray(dayRecords) ? dayRecords : [];
+  const claims = [];
+  for (const [index, record] of records.entries()) {
+    if (!isPlainObject(record)) continue;
+    const cause = typeof record.cause === "string" && record.cause.length > 0 ? record.cause : null;
+    // A night that names NO cause is not in this gate's population: `night_mechanism_unobserved` is where an
+    // unattributed crossing is judged, and it is a different question.
+    if (cause === null) continue;
+    const reading =
+      Number.isInteger(record.bedTime) && typeof record.bedTimeSource === "string" && record.bedTimeSource.length > 0;
+    const stated =
+      record.bedTime === null && typeof record.bedTimeAbsent === "string" && record.bedTimeAbsent.length > 0;
+    // WHICH support a claim has, and never a nested ternary: a reconciled night STATES its absence rather than carrying
+    // an hour nobody could have read, and a cause this ledger has not declared is bare whatever the record says.
+    let support = "bare";
+    if (NIGHT_CAUSES.includes(cause) && reading) support = "reading";
+    else if (NIGHT_CAUSES.includes(cause) && stated) support = "stated_absence";
+    claims.push(
+      Object.freeze({
+        where: `dayRecords[${String(index)}]`,
+        cause,
+        declared: NIGHT_CAUSES.includes(cause),
+        supported: support !== "bare",
+        support,
+        bedTime: Number.isInteger(record.bedTime) ? record.bedTime : null,
+        bedTimeSource: typeof record.bedTimeSource === "string" ? record.bedTimeSource : null,
+        bedTimeAbsent: typeof record.bedTimeAbsent === "string" ? record.bedTimeAbsent : null,
+      }),
+    );
+  }
+  const byCause = [];
+  for (const cause of [...new Set(claims.map((claim) => claim.cause))].sort()) {
+    const forCause = claims.filter((claim) => claim.cause === cause);
+    byCause.push(
+      Object.freeze({
+        cause,
+        claims: forCause.length,
+        supported: forCause.filter((claim) => claim.supported).length,
+        bare: forCause.filter((claim) => !claim.supported).length,
+      }),
+    );
+  }
+  return Object.freeze({
+    declared: NIGHT_CAUSES,
+    examined: claims.length,
+    causes: byCause.length,
+    supported: byCause.filter((entry) => entry.bare === 0).length,
+    bare: byCause.filter((entry) => entry.bare > 0).length,
+    byCause: Object.freeze(byCause),
+    claims: Object.freeze(claims),
+  });
+}
+
+/** The one line the support gate is read off: `causes C · supported S · bare B`. */
+export function nightCauseSupportLine(support) {
+  const count = (field) => (support === null || support === undefined ? "not_measured" : String(support[field]));
+  return `causes ${count("causes")} · supported ${count("supported")} · bare ${count("bare")}`;
+}
+
+/**
  * Judge one run's day records against the baseline's rules. Every rule can fail on its own and names
  * itself, so a red result says which single-game fact was missing instead of "multi-day timed out".
  *
@@ -905,6 +999,15 @@ export function assessMultiDayBaseline({
       violations: Object.freeze([violation("day_records_missing", "dayRecords")]),
       checkedRules: CHECKED_RULES,
     });
+  }
+
+  // A NIGHT THAT NAMES A CAUSE MUST NAME WHAT SUPPORTS IT, judged before the rules that read the night's own
+  // witnesses: `cause: sleep` with a bare `bedTime: null` is a claim about her night with nothing behind it, and the
+  // failure names the CAUSE (`a_night_that_names_a_cause_names_what_supports_it:sleep`).
+  const causeSupport = nightCauseSupport(dayRecords);
+  for (const claim of causeSupport.claims) {
+    if (claim.supported) continue;
+    violations.push(violation(`a_night_that_names_a_cause_names_what_supports_it:${claim.cause}`, claim.where));
   }
 
   const requested = isFiniteNumber(daysRequested) ? Math.trunc(daysRequested) : dayRecords.length;
@@ -1400,6 +1503,9 @@ export function assessMultiDayBaseline({
     // night was called a pass-out, and `nightWitness` says whose answer that was.
     worldNightEndings: worldEndings === null ? null : Object.freeze([...worldEndings]),
     nightWitness: worldEndings === null ? "assessor" : "world",
+    // WHAT SUPPORTS EACH NIGHT'S CAUSE, printed as `causes C · supported S · bare B` beside the nights it describes:
+    // `bare 0` on its own would also be what an empty population prints.
+    nightCauseSupport: causeSupport,
     violations: Object.freeze(violations),
     checkedRules: CHECKED_RULES,
   });
@@ -1438,5 +1544,6 @@ const CHECKED_RULES = Object.freeze([
   "night_cause_disagrees_with_the_world",
   "a_night_the_world_had_is_not_missing_from_the_record",
   "a_night_receipt_is_paired_by_its_own_day",
+  "a_night_that_names_a_cause_names_what_supports_it",
   "first_night_shipping_menu_never_dismissed",
 ]);

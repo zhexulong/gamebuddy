@@ -446,11 +446,20 @@ test("the scheduled gates are delivered from ground truth the run observed, and 
     "yesterday must be the night before the gate's own day, not a constant",
   );
   // 2. Yesterday is the night watch's own observation, and it is an observation: the latest clock it saw on that day.
-  assert.match(RUNNER_SOURCE, /bedTime: bedTimeBeforeCrossing/);
+  assert.match(
+    RUNNER_SOURCE,
+    /\.\.\.bedTimeReading\(\[/,
+    "every night record spreads the reading, so no branch publishes a bare number or a bare null",
+  );
   assert.match(
     RUNNER_SOURCE,
     /bedTimeBeforeCrossing = Math\.max\(bedTimeBeforeCrossing \?\? 0, snapshot\.timeOfDay\)/,
     "the bed time is the engine's clock, read by the watch that is already polling",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /const BED_TIME_ABSENT_NO_CLOCK = "no_clock_reading_before_the_crossing";/,
+    "a night with no reading states which reading it lacked",
   );
   // 3. The refusal gate is planned, not skipped: the schedule is the gate module's, and no branch here filters gates out
   //    by trigger kind.
@@ -2734,6 +2743,144 @@ test("a night she slept through and the host player did not is not reported as h
     nights: [{ day: 1, nightVerdict: refused.nightVerdict }],
   });
   assert.match(refusedSummary, /her sleep was refused \(not_home, target own_bed\)/u, refusedSummary);
+});
+/**
+ * A NIGHT THAT NAMES A CAUSE NAMES WHAT SUPPORTS IT.
+ *
+ * Measured 2026-11-20 (`round81`, day 1). The run's own line was
+ * `MULTIDAY_NIGHT {"day":1,"cause":"sleep","bedTime":null,"menus":["ShippingMenu"]}` beside this receipt, its
+ * evidence quoted verbatim below. The `sleep` dispatch reached the bridge FOLDED into the crossing receipt
+ * (`folded=accepted@target=own_bed`), so the fact that names the action arrived at the same moment the calendar moved:
+ * the wait loop's first sighting and the crossing are one event. `bedTimeBeforeCrossing` therefore stayed null (no
+ * poll of the watch saw the pre-crossing day), and the branch that published the record read only that field - while
+ * `bedTimeWhenSheCommitted`, the clock at the first sighting, sat beside it unread.
+ */
+test("a night whose crossing arrived folded into her sleep receipt keeps the hour it was read at (round81)", async () => {
+  const ROUND81_EVIDENCE =
+    "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;" +
+    "saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=false;" +
+    "shipping_summary_settled=already_committed;engine_crossing_menu=already_committed;overnight_menu_not_recognised=none;" +
+    "day_before=4;days_before=5;day_after=5;days_after=6;enteredVia=native_sleep_prompt;topology=single_player;" +
+    "dayBefore=4;dayAfter=5;daysPlayedBefore=5;daysPlayedAfter=6;savingObserved=False;savedObserved=True;" +
+    "dayStartedObserved=True;saveBoundaryNotObserved=False;readyCheckObserved=False;steps=1;" +
+    "folded=accepted@target=own_bed,never_direct_new_day=true";
+  const foldedFrontier = Object.freeze({
+    executionId: "b458e25b0b984c4fb3a01d66dbf6181c",
+    requestId: "e22cc76adf33411dbd3e4fcdc1abda2a",
+    actionId: "sleep",
+    state: "succeeded",
+    reasonCode: "day_advanced",
+    evidence: Object.freeze({ detail: ROUND81_EVIDENCE }),
+  });
+
+  /**
+   * One night, with the clock as this run's own log holds it.
+   *
+   * `clockSeenBeforeTheCrossing` is a reading taken on the night's own day; 1910 is the last clock read the run's own
+   * log carries before the Sleep prompt was shown at 1930 (the live value is whatever the cache held at that poll, and
+   * the assertion is about WHICH reading is published, not about the exact minute). When it is `false` the calendar had
+   * already moved by the poll that first saw the receipt, which is the other half of the same defect: the only clock
+   * there is reads the MORNING the night opened, and publishing it as her bed time would be a guess.
+   */
+  const runNight = async ({ clockSeenBeforeTheCrossing }) => {
+    const factLog = [];
+    const actionTrace = [];
+    // THE CACHE IS THE STALE ONE, WHICH IS THE MEASURED FACT: the wait loop reads facts and a cached snapshot and never
+    // observes, so at the poll that first saw this receipt the cache still said day 5 while the world had moved to 6.
+    // `observe()` is the world the watch gets once it finally looks, and it has already crossed.
+    let cached = Object.freeze({
+      revision: 100,
+      dayOfMonth: 5,
+      timeOfDay: 1910,
+      actionable: true,
+      actorDispositionKind: "free",
+      actorDispositionDetail: null,
+      activeExecution: null,
+    });
+    const afterCrossing = Object.freeze({ ...cached, revision: 140, dayOfMonth: 6, timeOfDay: 600 });
+    const client = {
+      get state() {
+        return { snapshot: cached };
+      },
+      observe: async () => afterCrossing,
+    };
+    const timers = [
+      setTimeout(() => {
+        if (!clockSeenBeforeTheCrossing) cached = afterCrossing;
+        factLog.push(asRecordedFact(foldedFrontier));
+      }, 20),
+    ];
+    const [, , , watchNightRollover] = extractRunnerFunction(
+      RUNNER_SURFACE_SOURCE,
+      ["recordedReceipt", "terminalReceiptFor", "watchNightThroughPassOut", "watchNightRollover"],
+      {
+        actionTrace,
+        factLog,
+        bridgeDisconnections: [],
+        client,
+        sampleModHeartbeat: () => ({ count: 1, sinceMs: 0, line: "DEBUG-native-local-heartbeat", silentMs: 0 }),
+        // The runner's own reader: the cached snapshot first, and that is why a reading taken on the night's own day
+        // and one taken on the morning after are told apart by `calendarMovedPastStartDay` rather than by the clock.
+        readWorldClock: () => ({
+          spent: false,
+          minutes: 1150,
+          unknown: false,
+          timeOfDay: cached.timeOfDay,
+          source: "snapshot",
+        }),
+        watchRollover,
+        nightCause,
+        parseReceiptEvidence,
+        worldNightEndingsFromFacts,
+        NIGHT_CAUSE_PASS_OUT,
+        sleepReceiptOf,
+        TERMINAL_STATES,
+        judgeUncrossedNight,
+        sleepVerdictCase,
+        MOD_HEARTBEAT_STALL_MS: 90_000,
+        MULTIDAY_NIGHT_TIMEOUT_MS: 5_000,
+        MULTIDAY_POLL_INTERVAL_MS: 5,
+        worldFacts: { wait: async () => new Promise((resolve) => timers.push(setTimeout(resolve, 5))) },
+        MULTIDAY_DISPATCH_TIMEOUT_MS: 5_000,
+        MULTIDAY_DISMISS_TIMEOUT_MS: 5_000,
+      },
+    );
+    try {
+      return await watchNightRollover(1);
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+    }
+  };
+
+  const night = await runNight({ clockSeenBeforeTheCrossing: true });
+  assert.equal(
+    night.cause,
+    "sleep",
+    `the receipt's own \`entered_via=native_sleep_prompt\` is the claim this night makes: got ${String(night.cause)}`,
+  );
+  assert.equal(
+    night.bedTime,
+    1910,
+    "the hour the clock read on the night's own day, kept even though the crossing arrived folded into that one receipt",
+  );
+  assert.equal(
+    night.bedTimeSource,
+    "sleep_dispatch_clock",
+    "and the record names WHICH reading that hour is, so it cannot be read as a guessed one",
+  );
+  assert.equal(night.bedTimeAbsent, null, "a night with a reading states no absence");
+
+  // THE OTHER HALF, WHICH IS THE POINT OF THE UNIT: a watch whose only clock already reads the new day's morning says
+  // so instead of publishing it as her bed time - a `bedTime` the harness invented is worse than none.
+  const unread = await runNight({ clockSeenBeforeTheCrossing: false });
+  assert.equal(unread.cause, "sleep");
+  assert.equal(unread.bedTime, null, "no reading is null, never a number the harness invented");
+  assert.equal(unread.bedTimeSource, null);
+  assert.equal(
+    unread.bedTimeAbsent,
+    "no_clock_reading_before_the_crossing",
+    "and the record names the reading it lacked",
+  );
 });
 test("the run bundle publishes the crossing record, and one it cannot judge is reported instead of refusing the manifest", () => {
   // The gate reads `bundle.multiday`, and the bundle used to drop the runner's own crossing record, so

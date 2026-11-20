@@ -31,6 +31,7 @@ import { readEvidenceBundle } from "./lib/evidence-bundle.mjs";
 import {
   assessMultiDayBaseline,
   BASELINE_SCOPE_NOTES,
+  nightCauseSupportLine,
   parseReceiptEvidence,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
@@ -88,6 +89,13 @@ const day = (overrides = {}) => ({
     },
   ],
   nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["harvest_crop"],
+  // HOW the night ended and the reading behind that claim: the runner publishes both, and the support gate reads them.
+  // The cause has no default on purpose - a night that names none is outside that gate's population, and defaulting it
+  // to `sleep` would make every other fixture here claim a sleep it holds no receipt for.
+  cause: overrides.cause,
+  bedTime: overrides.bedTime === undefined ? 2200 : overrides.bedTime,
+  bedTimeSource: overrides.bedTimeSource === undefined ? "pre_crossing_clock" : overrides.bedTimeSource,
+  bedTimeAbsent: overrides.bedTimeAbsent ?? null,
 });
 
 const codes = (result) => result.violations.map((entry) => entry.code);
@@ -178,6 +186,18 @@ function fixtureChecks() {
         }),
       "next_day_produced_no_farm_work",
     ],
+    [
+      // A NIGHT THAT NAMES A CAUSE MUST NAME WHAT SUPPORTS IT. Measured 2026-11-20 (`round81`): `cause: sleep` beside a
+      // bare `bedTime: null`, so the night reads as "she slept, at some point" with nothing saying which reading was
+      // missing. The failure names the CAUSE, because that is the claim the record cannot support.
+      "night_cause_names_its_support",
+      () =>
+        assessMultiDayBaseline({
+          dayRecords: [day({ cause: "sleep", bedTime: null, bedTimeSource: null }), day({ day: 2 })],
+          daysRequested: 2,
+        }),
+      "a_night_that_names_a_cause_names_what_supports_it:sleep",
+    ],
   ];
   for (const [id, produce, expected] of rules) {
     // A named rule may carry its detail in the code (`night_not_advanced:blocked/day_start_not_observed`), so
@@ -189,6 +209,26 @@ function fixtureChecks() {
       produced.join(","),
     );
   }
+
+  // THE OTHER HALF OF THE SAME RULE: a night with no clock is supported by STATING the reading it lacked, so the gate
+  // cannot be satisfied only by having an hour.
+  const statedAbsence = assessMultiDayBaseline({
+    dayRecords: [
+      day({
+        cause: "sleep",
+        bedTime: null,
+        bedTimeSource: null,
+        bedTimeAbsent: "no_clock_reading_before_the_crossing",
+      }),
+      day({ day: 2 }),
+    ],
+    daysRequested: 2,
+  });
+  check(
+    "a_night_with_no_clock_states_which_reading_it_lacked",
+    !codes(statedAbsence).some((code) => code.startsWith("a_night_that_names_a_cause_names_what_supports_it")),
+    nightCauseSupportLine(statedAbsence.nightCauseSupport),
+  );
 
   // 2b. The SCOPE is enforced, not just documented: a night that leaves it is red rather than a broader pass.
   // The evidence totals and the world's calendar must AGREE for a night to be classified at all, so each case

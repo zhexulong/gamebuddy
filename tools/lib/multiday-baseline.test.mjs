@@ -8,22 +8,25 @@ import {
   classifyNight,
   DISMISSIBLE_ROLLOVER_MENUS,
   dayOfMonthForTotalDays,
-  SLEEP_PROMISE_NEGATIONS,
-  SLEEP_PROMISE_PHRASES,
-  SLEEP_PROMISE_TURNS,
-  sleepPromiseIn,
-  sleepPromisesNotTaken,
   MAXIMUM_BASELINE_DAYS,
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_ENGINE,
   NIGHT_CAUSE_PASS_OUT,
   NIGHT_CAUSE_SLEEP,
   NIGHT_CAUSE_SLEEP_UNSETTLED,
+  NIGHT_CAUSES,
   nightCause,
+  nightCauseSupport,
+  nightCauseSupportLine,
   nightReceiptPairingLine,
   nightReceiptPairings,
   parseReceiptEvidence,
   reconcileDaysWithTheWorld,
+  SLEEP_PROMISE_NEGATIONS,
+  SLEEP_PROMISE_PHRASES,
+  SLEEP_PROMISE_TURNS,
+  sleepPromiseIn,
+  sleepPromisesNotTaken,
   WAIT_ROLLOVER_MENUS,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
@@ -71,6 +74,11 @@ const DAY = (overrides = {}) => ({
   menus: overrides.menus ?? [MENU()],
   // How the night ended, as the loop records it: the companion's own sleep, or the engine's 2:00 AM pass-out.
   cause: overrides.cause ?? "sleep",
+  // THE HOUR THE NIGHT BEGAN, WITH THE READING IT CAME FROM: the runner publishes both, because a bare number cannot be
+  // told apart from a guess. A record that has no hour states why (`bedTimeAbsent`) instead.
+  bedTime: overrides.bedTime === undefined ? 2210 : overrides.bedTime,
+  bedTimeSource: overrides.bedTimeSource === undefined ? "pre_crossing_clock" : overrides.bedTimeSource,
+  bedTimeAbsent: overrides.bedTimeAbsent ?? null,
   nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["harvest_crop", "cut_weeds"],
 });
 
@@ -435,6 +443,11 @@ const SLEEPING_CALENDAR_NIGHT = (overrides = {}) => ({
   menus: overrides.menus ?? [{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1793892226449 }],
   nextDayAccomplishedActionIds: overrides.nextDayAccomplishedActionIds ?? ["cut_weeds"],
   cause: overrides.cause ?? NIGHT_CAUSE_SLEEP_UNSETTLED,
+  // 23:10, the hour the run's own Mod log names her walking to bed (`WalkingToBed` at 23:14:37, the crossing at
+  // 23:15:49): the last clock reading of the day the night ended.
+  bedTime: overrides.bedTime === undefined ? 2310 : overrides.bedTime,
+  bedTimeSource: "pre_crossing_clock",
+  bedTimeAbsent: null,
   ...("sleepReceipt" in overrides
     ? { sleepReceipt: overrides.sleepReceipt }
     : { sleepReceipt: SLEEP_LIFECYCLE_RECEIPT }),
@@ -461,6 +474,11 @@ const SLEEP_RECEIPT_NIGHT = Object.freeze({
   ]),
   nextDayAccomplishedActionIds: Object.freeze([]),
   cause: NIGHT_CAUSE_SLEEP,
+  // This night's own artifact published no hour, and the shape the runner writes now says why rather than leaving a bare
+  // null under a cause it cannot support.
+  bedTime: null,
+  bedTimeSource: null,
+  bedTimeAbsent: "no_clock_reading_before_the_crossing",
   sleepReceipt: SLEEP_LIFECYCLE_RECEIPT,
 });
 
@@ -1728,6 +1746,9 @@ const ROUND80_WATCHED = Object.freeze([
     after: Object.freeze({ dayOfMonth: 6, dayBefore: 5, seasonIndex: 0, timeOfDay: 600 }),
     menus: Object.freeze([]),
     cause: NIGHT_CAUSE_ENGINE,
+    // ROUND80'S OWN RECORD, VERBATIM: `"bedTime":null` under `"cause":"engine"` with nothing saying why - the shape
+    // the support gate exists to fail, kept here because it is the only real artifact of it.
+    bedTime: null,
     nextDayAccomplishedActionIds: Object.freeze(["break_rock", "chop_tree"]),
   }),
   Object.freeze({
@@ -1738,6 +1759,9 @@ const ROUND80_WATCHED = Object.freeze([
     after: Object.freeze({ dayOfMonth: 7, seasonIndex: 0, timeOfDay: 600 }),
     menus: Object.freeze([{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1795125376493 }]),
     cause: NIGHT_CAUSE_SLEEP,
+    // And its own hour, from the run's record: the last clock the watch read while day 6 was current.
+    bedTime: 2030,
+    bedTimeSource: "pre_crossing_clock",
     nextDayAccomplishedActionIds: Object.freeze(["cut_weeds", "fish_here", "water_crop"]),
   }),
 ]);
@@ -1809,8 +1833,14 @@ test("a night receipt is paired by its own day, not by the record it was filed o
   });
   assert.deepEqual(
     codes(settled),
-    ["a_night_receipt_is_paired_by_its_own_day:4->5:dayRecords[0],dayRecords[1]"],
-    "the night is attributed, the count agrees, and only the misfiled receipt is left red",
+    [
+      // The first night is round80's own engine night, and its record names no reading for it: the hour the night took
+      // the actor was never published, so `cause: engine` stands there with nothing supporting it. The gate fires on the
+      // real artifact, not only on a fixture written to fail it.
+      "a_night_that_names_a_cause_names_what_supports_it:engine",
+      "a_night_receipt_is_paired_by_its_own_day:4->5:dayRecords[0],dayRecords[1]",
+    ],
+    "the night is attributed and the count agrees; what stays red is the misfiled receipt and the night that names its cause without its reading",
   );
   assert.equal(settled.daysCrossed, 3);
   assert.equal(settled.worldDaysCrossed, 3);
@@ -1861,5 +1891,111 @@ test("a record whose next day was never issued is not measured, wherever the pad
   assert.ok(
     codes(idle).includes("next_day_produced_no_farm_work"),
     `a day that was given a turn and did nothing is still red; got ${JSON.stringify(codes(idle))}`,
+  );
+});
+
+/**
+ * A NIGHT THAT NAMES A CAUSE NAMES WHAT SUPPORTS IT.
+ *
+ * Measured 2026-11-20 (`round81`, day 1): the run's own line read
+ * `MULTIDAY_NIGHT {"day":1,"cause":"sleep","bedTime":null,"menus":["ShippingMenu"]}` beside a `day_advanced` receipt
+ * carrying `entered_via=native_sleep_prompt`. `cause: sleep` with no hour reads as "she slept, at some point": nothing
+ * on that record tells "the native prompt published no clock" from "the harness failed to read one", and both are
+ * different from a night that has an hour.
+ */
+test("a night that names a cause names what supports it (round81)", () => {
+  // THE POPULATION COMES FROM THE AUTHORITY: the causes a record can carry are the declared ones, so a cause added
+  // without support has to be declared here before any night can claim it.
+  assert.deepEqual(
+    [...NIGHT_CAUSES],
+    [NIGHT_CAUSE_SLEEP, NIGHT_CAUSE_SLEEP_UNSETTLED, NIGHT_CAUSE_PASS_OUT, NIGHT_CAUSE_ENGINE],
+    "the declared causes are the gate's population",
+  );
+
+  // ROUND81'S OWN RECORD: cause `sleep`, no hour, and nothing saying why.
+  const round81Night = {
+    ...DAY({ day: 1 }),
+    cause: NIGHT_CAUSE_SLEEP,
+    bedTime: null,
+    bedTimeSource: null,
+    bedTimeAbsent: null,
+  };
+  const bare = assessMultiDayBaseline({
+    dayRecords: [round81Night, DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    codes(bare).includes("a_night_that_names_a_cause_names_what_supports_it:sleep"),
+    `a sleep with no hour behind it is a bare claim, and the failure names the cause; got ${JSON.stringify(codes(bare))}`,
+  );
+  assert.equal(
+    nightCauseSupportLine(bare.nightCauseSupport),
+    "causes 1 · supported 0 · bare 1",
+    "the gate prints its population beside the failure: `bare 1` alone is not a reading",
+  );
+  assert.deepEqual(
+    [...bare.nightCauseSupport.byCause],
+    [{ cause: "sleep", claims: 2, supported: 1, bare: 1 }],
+    "one cause, two claims, one of them bare",
+  );
+
+  // THE READING IT WAS DECIDED ON: the hour plus WHICH observation produced it.
+  const read = assessMultiDayBaseline({
+    dayRecords: [{ ...round81Night, bedTime: 1910, bedTimeSource: "sleep_dispatch_clock" }, DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    !codes(read).includes("a_night_that_names_a_cause_names_what_supports_it:sleep"),
+    `a night that publishes its reading is supported; got ${JSON.stringify(codes(read))}`,
+  );
+  assert.equal(nightCauseSupportLine(read.nightCauseSupport), "causes 1 · supported 1 · bare 0");
+
+  // OR IT SAYS WHY IT HAS NONE, which is the other half of the same fact.
+  const stated = assessMultiDayBaseline({
+    dayRecords: [{ ...round81Night, bedTimeAbsent: "no_clock_reading_before_the_crossing" }, DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    !codes(stated).includes("a_night_that_names_a_cause_names_what_supports_it:sleep"),
+    `a night that names the reading it lacked is supported; got ${JSON.stringify(codes(stated))}`,
+  );
+
+  // A NUMBER WITH NO READING IS STILL A GUESS: the field exists to say WHEN the night began, and an unsourced hour
+  // cannot be told from one the harness made up.
+  const guessed = assessMultiDayBaseline({
+    dayRecords: [{ ...round81Night, bedTime: 1910, bedTimeSource: null }, DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    codes(guessed).includes("a_night_that_names_a_cause_names_what_supports_it:sleep"),
+    `an hour without its reading does not support the cause; got ${JSON.stringify(codes(guessed))}`,
+  );
+
+  // AND A CAUSE THIS LEDGER HAS NOT MET CANNOT BE SUPPORTED BY ANYTHING HERE - the gate fails loudly on drift rather
+  // than passing the member it does not know.
+  const drifted = assessMultiDayBaseline({
+    dayRecords: [
+      { ...round81Night, cause: "nap", bedTime: 1910, bedTimeSource: "sleep_dispatch_clock" },
+      DAY({ day: 2 }),
+    ],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    codes(drifted).includes("a_night_that_names_a_cause_names_what_supports_it:nap"),
+    `an undeclared cause is named, not silently skipped; got ${JSON.stringify(codes(drifted))}`,
+  );
+
+  // A RECONCILED NIGHT CARRIES ITS CAUSE AND STATES THE REASON IT HAS NO HOUR: no watch stood over it, so no reading
+  // could exist, and saying so is what keeps `pass_out` from reading as a claim nothing supports.
+  const reconciled = worldWitnessedNightRecord({ day: 8, cause: NIGHT_CAUSE_PASS_OUT });
+  assert.equal(reconciled.bedTime, null);
+  assert.equal(reconciled.bedTimeSource, null);
+  assert.equal(reconciled.bedTimeAbsent, "night_not_watched");
+  assert.equal(nightCauseSupport([reconciled]).bare, 0, "a stated absence is support, not a bare claim");
+
+  // An assessment with no records to judge says `not_measured` rather than three zeroes that agree with themselves.
+  assert.equal(
+    nightCauseSupportLine(assessMultiDayBaseline({ dayRecords: null }).nightCauseSupport),
+    "causes not_measured · supported not_measured · bare not_measured",
   );
 });

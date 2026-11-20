@@ -209,7 +209,12 @@ test("round80's published records are red on the pairing gate, and the same fact
     nightReceiptPairingLine(beforeAssessment.nightReceipts),
     "receipts 3 · paired 2 · unpaired 0 · double-paired 1",
   );
+  // ROUND80'S OWN RECORDS NAME THEIR CAUSES WITHOUT THE READING BEHIND THEM (day 1 is `engine` with a bare
+  // `bedTime: null`, day 2 is `sleep` with an hour and no source), and that gate fires on the artifact exactly as it
+  // was published. Filing a receipt does not answer it either - it is a fact about the record, not about the pairing.
   assert.deepEqual(codes(beforeAssessment), [
+    "a_night_that_names_a_cause_names_what_supports_it:engine",
+    "a_night_that_names_a_cause_names_what_supports_it:sleep",
     "level_up_menu_not_resolved:level_up_pair_not_in_snapshot",
     "a_night_receipt_is_paired_by_its_own_day:4->5:dayRecords[0],dayRecords[1]",
   ]);
@@ -250,7 +255,11 @@ test("round80's published records are red on the pairing gate, and the same fact
   );
   // THE ONE FINDING THIS RUN KEEPS IS THE ONE IT MEASURED: the first night's rollover raised a `LevelUpMenu` whose
   // pending pair the snapshot never published. Filing a receipt does not answer that, and must not silence it.
-  assert.deepEqual(codes(afterAssessment), ["level_up_menu_not_resolved:level_up_pair_not_in_snapshot"]);
+  assert.deepEqual(codes(afterAssessment), [
+    "a_night_that_names_a_cause_names_what_supports_it:engine",
+    "a_night_that_names_a_cause_names_what_supports_it:sleep",
+    "level_up_menu_not_resolved:level_up_pair_not_in_snapshot",
+  ]);
 });
 
 test("a receipt is never taken off the record that has nothing else to name its night", () => {

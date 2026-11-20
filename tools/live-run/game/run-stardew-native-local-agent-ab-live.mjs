@@ -48,6 +48,7 @@ import {
   MINIMUM_BASELINE_DAYS,
   NIGHT_CAUSE_PASS_OUT,
   nightCause,
+  nightCauseSupportLine,
   nightReceiptPairingLine,
   parseReceiptEvidence,
   reconcileDaysWithTheWorld,
@@ -2924,13 +2925,14 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     return sleepTerminals().length < requests.length;
   };
   // The hour the farmer actually went to bed, as this watch's own observations say it: the latest `timeOfDay` the
-  // engine reported while the PRE-CROSSING day was still current. The night record carries no bed time, so this is
-  // where the honesty gate's ground truth comes from - and it is an observation, not a constant: a companion who slept
-  // at 22:10 and one the engine passed out at 26:00 are different nights and different tests.
+  // engine reported while the PRE-CROSSING day was still current. `bedTimeReading` publishes it as the record's
+  // `bedTime` with its source, which is where the honesty gate's ground truth comes from - and it is an observation,
+  // not a constant: a companion who slept at 22:10 and one the engine passed out at 26:00 are different nights and
+  // different tests.
   //
   // A maximum, not the last reading: the game clock only advances within a day, so the latest value seen is the hour
   // the night took the actor even if a later poll during the rollover fade returned the cached projection. A watch that
-  // never observed the clock leaves it null, and the gate then says what it is missing instead of guessing.
+  // never observed the clock leaves it null, and the record then states that it read none rather than guessing.
   let bedTimeBeforeCrossing = null;
   // The hour SHE went to bed, as the engine's clock read it at the first poll that saw her `sleep`.
   //
@@ -2950,6 +2952,38 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     if (Number.isInteger(startDay) && snapshot?.dayOfMonth === startDay && Number.isInteger(snapshot?.timeOfDay))
       bedTimeBeforeCrossing = Math.max(bedTimeBeforeCrossing ?? 0, snapshot.timeOfDay);
     return snapshot;
+  };
+  /**
+   * WHERE A NIGHT'S `bedTime` CAME FROM, and what a record says when it has none.
+   *
+   * A NIGHT THAT NAMES A CAUSE MUST NAME WHAT SUPPORTS IT. Measured 2026-11-20 (`round81`, day 1): the run's own line
+   * read `MULTIDAY_NIGHT {"day":1,"cause":"sleep","bedTime":null}` beside a `day_advanced` receipt carrying
+   * `entered_via=native_sleep_prompt` - a night attributed to her own sleep with no hour behind the claim, and nothing
+   * on the record to tell "the native prompt published no clock" from "the watch failed to read one". The readings
+   * existed in that run (its own log carries `GAME_CLOCK_READ timeOfDay=1910 day=5` before the Sleep prompt was shown
+   * at 1930); the branch that published the record read the other observation and dropped it.
+   *
+   * `pre_crossing_clock` is the latest clock the watch read while the night's own day was still current - the last
+   * reading before the transition. `sleep_dispatch_clock` is the clock at the poll that first saw her `sleep` in the
+   * fact log, which is the closest reading a night whose crossing arrived folded into that one receipt can offer.
+   */
+  const BED_TIME_BEFORE_THE_CROSSING = "pre_crossing_clock";
+  const BED_TIME_FROM_HER_SLEEP = "sleep_dispatch_clock";
+  /** The one reason this runner can give for a night with no bed time: it never read the clock before the crossing. */
+  const BED_TIME_ABSENT_NO_CLOCK = "no_clock_reading_before_the_crossing";
+  /**
+   * THE HOUR THE NIGHT BEGAN, as the first reading this record actually has - or the reason it has none.
+   *
+   * The candidates are in the order the CALLER's branch prefers them, and the source travels with the number so a reader
+   * can tell which observation produced it. `null` with no source is not published: a bare null cannot say whether the
+   * native prompt has no clock or the watch failed to read one, and a number without its reading is indistinguishable
+   * from a guess. `round81` published exactly that bare null under `cause: sleep`.
+   */
+  const bedTimeReading = (candidates) => {
+    for (const [source, reading] of candidates)
+      if (Number.isInteger(reading))
+        return Object.freeze({ bedTime: reading, bedTimeSource: source, bedTimeAbsent: null });
+    return Object.freeze({ bedTime: null, bedTimeSource: null, bedTimeAbsent: BED_TIME_ABSENT_NO_CLOCK });
   };
   // The day this watch began on - which is NOT the day the world is on once the wait below is over.
   //
@@ -2981,8 +3015,15 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       // The night BEGINS when the companion dispatches `sleep`, read from EITHER channel. Reading only the
       // flat one made round18's watcher poll a whole night for a dispatch that had already happened at 03:36:26 and
       // notice the night only once the calendar had moved - i.e. once it was over.
-      if (bedTimeWhenSheCommitted === null && sleepRequestsSinceStart().length > 0)
-        bedTimeWhenSheCommitted = readWorldClock().timeOfDay;
+      if (bedTimeWhenSheCommitted === null && sleepRequestsSinceStart().length > 0) {
+        const committedClock = readWorldClock();
+        // A READING FROM THE MORNING THE NIGHT OPENED IS NOT THE HOUR SHE WENT TO BED. `round81`'s receipt arrived after
+        // the calendar had already moved, so a sighting read then would have published the new day's 06:00 as her bed
+        // time. The clock and this calendar check read the same cached observation, so a reading taken on the night's own
+        // day is still accepted; one taken on the morning after is not, and the record states that it has none.
+        if (Number.isInteger(committedClock.timeOfDay) && !calendarMovedPastStartDay())
+          bedTimeWhenSheCommitted = committedClock.timeOfDay;
+      }
       if (nightBegan()) return null;
       // The engine crossed the night whatever dispatched it (the 02:00 pass-out calls `NewDay` itself), so a moved
       // calendar is also a night under way.
@@ -3023,10 +3064,13 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       terminal: null,
       after: Object.freeze({ ...(await observeQuietly()), dayBefore }),
       menus: [],
-      // A night that never began has no crossing hour to report; the field is published as null rather than omitted,
-      // so a reader never has to tell "not observed" apart from "not a field on this shape". When she DID go to bed
-      // this is the hour she went, which is the clock the wait is judged against.
-      bedTime: bedTimeWhenSheCommitted ?? bedTimeBeforeCrossing,
+      // A night that never began has no crossing hour to report, and it says so instead of publishing a bare null: when
+      // she DID go to bed this is the hour she went, which is the clock the wait is judged against - and the reading it
+      // came from is published beside it.
+      ...bedTimeReading([
+        [BED_TIME_FROM_HER_SLEEP, bedTimeWhenSheCommitted],
+        [BED_TIME_BEFORE_THE_CROSSING, bedTimeBeforeCrossing],
+      ]),
       reasonCode: neverStarted,
       // WHY that reason, from the receipts the wait was decided on - and only when the reason IS a sleep verdict: a
       // watch that ended on a dead bridge or a stalled world has no finding about her dispatch, and dressing one up
@@ -3301,9 +3345,12 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       menus: outcome.menus,
       cause,
       release: "calendar_advanced",
-      // The hour the night took the actor, as this watch saw the clock. A night the calendar alone witnessed still has
-      // an hour: the observations kept coming while the day was current.
-      bedTime: bedTimeBeforeCrossing,
+      // The hour the night took the actor, as this watch saw the clock, or the reason it has none. A night the calendar
+      // alone witnessed still has an hour when the observations kept coming while the day was current.
+      ...bedTimeReading([
+        [BED_TIME_BEFORE_THE_CROSSING, bedTimeBeforeCrossing],
+        [BED_TIME_FROM_HER_SLEEP, bedTimeWhenSheCommitted],
+      ]),
       // Her own lifecycle receipt, so the day record can be judged without the process's memory of this watch.
       sleepReceipt,
       reasonCode: null,
@@ -3322,7 +3369,10 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
       after: Object.freeze({ ...afterNight, dayBefore }),
       menus: outcome.menus,
       cause: null,
-      bedTime: bedTimeBeforeCrossing,
+      ...bedTimeReading([
+        [BED_TIME_BEFORE_THE_CROSSING, bedTimeBeforeCrossing],
+        [BED_TIME_FROM_HER_SLEEP, bedTimeWhenSheCommitted],
+      ]),
       sleepReceipt,
       reasonCode: `night_never_started:${String(outcome.reasonCode ?? "companion_did_not_sleep")}`,
     });
@@ -3339,7 +3389,12 @@ async function watchNightRollover(day, { dayTurnSettled = Promise.resolve() } = 
     after: Object.freeze({ ...(await observeQuietly()), dayBefore }),
     menus: outcome.menus,
     cause,
-    bedTime: bedTimeBeforeCrossing,
+    // THE HOUR THE NIGHT BEGAN, as the reading this watch holds. `round81` published `null` here under `cause: sleep`
+    // while the clock at the first sighting of her `sleep` sat in `bedTimeWhenSheCommitted`, unread by this branch.
+    ...bedTimeReading([
+      [BED_TIME_BEFORE_THE_CROSSING, bedTimeBeforeCrossing],
+      [BED_TIME_FROM_HER_SLEEP, bedTimeWhenSheCommitted],
+    ]),
     sleepReceipt,
     reasonCode: outcome.reasonCode ?? null,
   });
@@ -4533,6 +4588,10 @@ try {
           Object.freeze({
             day,
             bedTime: night.bedTime ?? null,
+            // WHERE that hour came from, or why there is none: the record a player question is judged against and the
+            // record the baseline's cause-support gate reads are the same one, so it must state its support here.
+            bedTimeSource: night.bedTimeSource ?? null,
+            bedTimeAbsent: night.bedTimeAbsent ?? null,
             passedOut: night.cause === NIGHT_CAUSE_PASS_OUT,
             cause: night.cause ?? null,
             // Which of the three uncrossed-night findings this was, when there was one - carried through to the day
@@ -4551,6 +4610,8 @@ try {
         const night = nightRecordsByDay.get(record.day) ?? null;
         record.cause = night?.cause ?? null;
         record.bedTime = night?.bedTime ?? null;
+        record.bedTimeSource = night?.bedTimeSource ?? null;
+        record.bedTimeAbsent = night?.bedTimeAbsent ?? null;
         record.passedOut = night?.passedOut ?? null;
         record.nightVerdict = night?.nightVerdict ?? null;
         record.sleepReceipt = night?.sleepReceipt ?? null;
@@ -4560,6 +4621,10 @@ try {
             day: record.day,
             cause: record.cause,
             bedTime: record.bedTime,
+            // The hour never travels alone: `bedTimeSource` names the reading it came from, and a night with none says
+            // which reading it lacked (`round81` printed a bare `"bedTime":null` beside `"cause":"sleep"`).
+            bedTimeSource: record.bedTimeSource,
+            bedTimeAbsent: record.bedTimeAbsent,
             menus: record.menus.map((menu) => menu.menuType),
           }),
         );
@@ -4696,6 +4761,9 @@ try {
       "MULTIDAY_NIGHTS",
       `endings examined ${String(assessment.worldNights.examined ?? "not_measured")} · recorded ${String(assessment.worldNights.recorded)} · missing ${String(assessment.worldNights.missing ?? "not_measured")} · witnessed-by ${(assessment.worldNights.witnessedBy ?? []).join(",") || "nobody"}`,
     );
+    // A NIGHT THAT NAMES A CAUSE MUST NAME WHAT SUPPORTS IT, printed with the population it was judged over: `bare 0`
+    // beside `causes 3` is a reading, and `bare 0` alone is also what an empty population prints.
+    console.error("MULTIDAY_NIGHT_CAUSE_SUPPORT", nightCauseSupportLine(assessment.nightCauseSupport));
     // WHICH NIGHT EACH `day_advanced` RECEIPT NAMES, in the baseline's own line, beside what this run did about it: the
     // two numbers must agree, because `paired` counts the nights with a record and `filed-by-own-night` is how many this
     // process had to move to get there.
