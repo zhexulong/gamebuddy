@@ -99,6 +99,15 @@ async function openConversation(page: Page): Promise<void> {
 const TOUCH_MINIMUM = 44;
 const ONE_ROW = TOUCH_MINIMUM + 1;
 
+/**
+ * The strip's row now that its controls are pills: 28 px of painted plate, and the target behind each
+ * one is still `TOUCH_MINIMUM` (`tests/hit-area.ts`, and the three control-floor guards).
+ *
+ * The floor did not move, the PLATE did (owner ruling 2026-11-21), so a pin that still expected a 44 px
+ * strip was measuring paint where it meant to measure the target.
+ */
+const PILL_ROW = 28;
+
 /** The editor's ceiling, the number `MessageEditor` clamps the field's height to. */
 const EDIT_FIELD_MAX_HEIGHT = 300;
 
@@ -367,6 +376,6 @@ test("the field grows with the words in it, caps, scrolls inside, and Ctrl+Enter
   const reopened = await rowGeometry("h1");
   expect(reopened.bubble, "the bubble comes back in its own box").toEqual(closed.bubble);
   expect(reopened.strip, "and the strip is one row, unchanged").toEqual(closed.strip);
-  expect(reopened.strip?.height, "the measured 44 px strip the capture read").toBe(TOUCH_MINIMUM);
+  expect(reopened.strip?.height, "the measured 28 px pill row the capture read").toBe(PILL_ROW);
   expect(await rowGeometry("h2"), "and her reply's own row never moved").toEqual(reply);
 });

@@ -37,6 +37,7 @@
  */
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "./frontend-coverage";
+import { describeHitArea, hitAreaViolations, readHitArea } from "./hit-area";
 import { messages } from "../src/i18n";
 import { LAYOUT_PAIR, VIEWPORT_SIZES } from "./viewport-policy";
 
@@ -1126,10 +1127,16 @@ test("gate 8: the message-level controls clear the touch floor with a visible af
 
   const transparent = ["transparent", "rgba(0, 0, 0, 0)"];
   const failures: string[] = [];
-  if (measured.regenerate === null) failures.push("the regenerate control is not rendered");
+  // THE SUBJECT MOVED, THE FLOOR DID NOT. The regenerate plate is a 28 px pill now and its target is
+  // still `--touch-target-min`, so the floor is read from the HIT area rather than from the border box
+  // (`tests/hit-area.ts`): 4 px outside the plate must answer this control, 1 px inside the floor must
+  // answer it, and 4 px beyond the floor must answer something else. A box read here would have failed
+  // a perfectly pressable control, and - the expensive direction - would have passed a plate that
+  // shrank with nothing behind it.
+  const regenerateHit = measured.regenerate === null ? null : await readHitArea(page.locator(".regenerate-btn").first());
+  if (measured.regenerate === null || regenerateHit === null) failures.push("the regenerate control is not rendered");
   else {
-    if (measured.regenerate.height < 44)
-      failures.push(`the regenerate control is ${measured.regenerate.height}px tall, under the 44px floor`);
+    failures.push(...hitAreaViolations("the regenerate control", regenerateHit));
     if (transparent.includes(measured.regenerate.backgroundColor))
       failures.push(`the regenerate control computes to a transparent background (${measured.regenerate.backgroundColor})`);
     if (measured.regenerate.fontSize < 12) failures.push(`the regenerate control's label is ${measured.regenerate.fontSize}px`);
@@ -1152,7 +1159,7 @@ test("gate 8: the message-level controls clear the touch floor with a visible af
 
   record(
     "gate-8",
-    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor}; opening group ${measured.openingGroup?.height}px / button ${measured.openingButton?.height}px; swipe group ${measured.swipeGroup?.height}px / button ${measured.swipeButton?.height}px; ${failures.length} failure(s)`,
+    `regenerate ${measured.regenerate?.width}x${measured.regenerate?.height} @${measured.regenerate?.fontSize}px bg=${measured.regenerate?.backgroundColor} ${regenerateHit === null ? "" : `hit(${describeHitArea(regenerateHit)})`}; opening group ${measured.openingGroup?.height}px / button ${measured.openingButton?.height}px; swipe group ${measured.swipeGroup?.height}px / button ${measured.swipeButton?.height}px; ${failures.length} failure(s)`,
   );
   expect(failures, "every message-level control is a real target").toEqual([]);
 });

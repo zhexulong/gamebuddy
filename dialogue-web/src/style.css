@@ -7662,3 +7662,71 @@
     visibility: hidden;
   }
 } /* end @layer theme.polish */
+
+/* ==========================================================================
+   The strip under a bubble is a pill row, not a block of 44 px targets
+   (owner ruling 2026-11-21, superseding the 2026-10-19 "one row, every target
+   at 44 px" reading of `.message-actions`)
+
+   THE DEFECT, measured at 400x800 with ten messages mounted: every bubble was
+   followed by a strip whose box was `--touch-target-min` tall, 8 px under the
+   bubble (the strip's own 4 px margin plus the row's gap), so each message spent
+   52 px of the transcript on controls: ten of them, 520 px, against a 543 px
+   transcript viewport in an 800 px window. Half the conversation a phone shows
+   was action rows.
+
+   WHAT CHANGES, and what does not. The strip keeps its three controls, its order,
+   its names, its words above 660 px and its pager; what it gives up is PAINT. The
+   painted plate is 28 px tall and a pill, and the target is still
+   `--touch-target-min`: the pill's `::before` grows to the floor, centred, so the
+   hit box is 44 px tall and the plate is not. The row is therefore 36 px of flow
+   per message (28 + the 8 px the bubble already had above the strip), and ten
+   messages ask 360 px instead of 520.
+
+   44 px is the floor's floor, not a shape: WCAG 2.5.8 and the product's own
+   `--touch-target-min` are about the area a finger meets. The hit area is
+   unchanged in both directions - measured after this rule, `elementFromPoint`
+   answers this control 4 px outside the painted plate on all four sides, and 1 px
+   beyond the 44 px boundary it answers the bubble or the row instead - which is
+   what `tests/hit-area.ts` and the three control-floor guards now assert
+   (`chat-message-copy`, `conversation-rendering-defects` defect 6,
+   `runtime-frontend-gates` gate 8).
+
+   The pager (`.swipe-controls`) is deliberately NOT in this rule: it is a group
+   of three targets with its own 46 px box, its own 44 px floor and its own
+   journeys (`ui-layout-tail`), and it carries a counter that needs the height.
+
+   Appended block; the rules above are untouched.
+   ========================================================================== */
+
+.message-actions {
+  /* The painted plate. One number, because the pill's radius and the hit box's
+     overshoot are both derived from it (`(28 - 44) / 2` = the 8 px each side). */
+  --message-pill-height: 28px;
+}
+
+.message-actions :is(.copy-btn, .regenerate-btn, .more-btn) {
+  position: relative;
+  block-size: var(--message-pill-height);
+  min-block-size: var(--message-pill-height);
+  padding-block: 0;
+  border-radius: 999px;
+}
+
+/* The target, which is the floor and not the plate.
+
+   The containing block of an absolutely positioned `::before` is the button's PADDING box - the border
+   box minus its 1 px frame - so `inset: -8px 0` would have produced a 42 px hit area on a 28 px
+   pill, 7 px above and 7 px below instead of 8: measured, the last pixel of the floor answered the
+   timeline (`1 px inside the touch floor's bottom edge@76,240=false:<section.timeline>`). The box is
+   therefore STATED rather than derived from the box it is drawn in: `--touch-target-min` tall,
+   centred on the plate, and one frame wider than the padding box on each side so it is exactly as
+   wide as the plate. It grows in the block direction only, because two controls 4 px apart must not
+   swallow each other's taps. */
+.message-actions :is(.copy-btn, .regenerate-btn, .more-btn)::before {
+  content: "";
+  position: absolute;
+  inset-inline: -1px;
+  inset-block-start: calc((100% - var(--touch-target-min)) / 2);
+  block-size: var(--touch-target-min);
+}

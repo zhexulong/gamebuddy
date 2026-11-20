@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { hitAreaViolations, readHitArea } from "./hit-area";
 
 import { messages } from "../src/i18n";
 
@@ -270,11 +271,23 @@ test("the strip keeps every target at the touch minimum, at both widths, without
     ).toEqual(["copy-btn", "swipe-controls", "regenerate-btn", "message-more"]);
     expect(measured.controls.length, where).toBe(4);
     // Every one of them is a real target, in both directions, and named.
-    for (const control of measured.controls) {
-      expect(control.height, `${where} ${control.name} clears the 44 px floor`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
-      expect(control.width, `${where} ${control.name} is a target`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
+    //
+    // THE SUBJECT MOVED, THE FLOOR DID NOT (owner ruling 2026-11-21): the three actions are 28 px
+    // pills now and their targets are still `--touch-target-min`, so the height reading is a HIT
+    // reading (`tests/hit-area.ts`) while the width is still the box's - the pill gave up paint in
+    // the block direction only. The failure message names this file's original subject, so a reader
+    // of a red run still knows what the line used to protect.
+    const stripChildren = page.locator(`[data-handle="${HER_HANDLE}"] .message-actions > *`);
+    const hitFailures: string[] = [];
+    for (const [index, control] of measured.controls.entries()) {
+      expect(control.width, `${where} ${control.name} is a target across`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
       expect(control.ariaLabel, `${where} ${control.name} is named`).toBeTruthy();
+      hitFailures.push(
+        ...hitAreaViolations(`${where} ${control.name} (clears the 44 px floor as a HIT area)`, await readHitArea(stripChildren.nth(index))),
+      );
     }
+    console.log(`${where} hit areas: ${hitFailures.length === 0 ? "every control reaches the floor" : JSON.stringify(hitFailures)}`);
+    expect(hitFailures, `${where} every control in the strip is still a 44 px target, whatever its plate is`).toEqual([]);
     // Each of the four BUTTONS carries the same words as its title for the pointer; the pager is a
     // group carrying only its name, which is how it has always been.
     for (const control of measured.controls.filter((candidate) => !candidate.name.includes("swipe-controls"))) {

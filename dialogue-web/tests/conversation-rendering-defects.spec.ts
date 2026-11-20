@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "./frontend-coverage";
+import { hitAreaViolations, readHitArea } from "./hit-area";
 
 /**
  * The conversation-rendering defects, each asserted through a value the browser
@@ -1164,14 +1165,25 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   // any column this transcript gets - measured here at 400x800, five targets plus the pager could not share
   // one line - so the three that change the conversation moved behind one `…`.
   expect(measured.strip.controls.length, "and it holds every control it has, none pushed out").toBe(4);
-  for (const control of measured.strip.controls) {
+  // THE SUBJECT MOVED, THE FLOOR DID NOT (owner ruling 2026-11-21): the three actions are 28 px pills
+  // and their targets are still 44, so the floor is read by HIT TESTING (`tests/hit-area.ts`) rather
+  // than off the border box - 4 px outside the plate must answer the control, 1 px inside the floor
+  // must answer it, and 4 px beyond it must answer something else. The width stays a box reading: the
+  // pill gave up paint in the block direction only. Each failure names this file's original subject.
+  const stripChildren = page.locator("ol.message-list > li").nth(2).locator(".message-actions > *");
+  const hitFailures: string[] = [];
+  for (const [index, control] of measured.strip.controls.entries()) {
     // The name is the meaning, and it is a real sentence rather than the glyph the
     // narrow form leaves visible.
     expect(control.name, `${control.className} keeps an accessible name`).not.toBe("");
     expect(control.name, `${control.className}'s name is not the bare glyph`).not.toMatch(/^[‹›<>←→×√✎🗑]+$/u);
-    expect(control.height, `${control.className} clears the 44 px floor`).toBeGreaterThanOrEqual(44);
     expect(control.width, `${control.className} is a target, not a squeezed glyph`).toBeGreaterThanOrEqual(44);
+    hitFailures.push(
+      ...hitAreaViolations(`${control.className} (clears the 44 px floor as a HIT area)`, await readHitArea(stripChildren.nth(index))),
+    );
   }
+  console.log(`[defect-6 narrow] hit areas: ${hitFailures.length === 0 ? "every control reaches the floor" : JSON.stringify(hitFailures)}`);
+  expect(hitFailures, "every control in the strip is still a 44 px target, whatever its plate is").toEqual([]);
   // The three ACTIONS share one line, and the pager alone is on the other: that is the rule, not an
   // accident of how many controls happened to fit.
   const actions = measured.strip.controls.filter((control) => !String(control.className).includes("swipe-controls"));
@@ -1282,7 +1294,15 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   expect(rewindControl?.width, "the entry keeps its word inside the panel").toBe(148);
   expect(rewindControl?.height, "and its target").toBe(44);
   expect(glyphs.regenerate?.width, "while the strip's own control is a bare 44 px target").toBe(44);
-  expect(glyphs.regenerate?.height, "which keeps the same touch floor").toBe(44);
+  // THE SUBJECT MOVED, THE FLOOR DID NOT (owner ruling 2026-11-21): the strip's plate is a 28 px pill
+  // and its target is still the floor, so this pin reads the HIT area. The panel entry above keeps a
+  // 44 px BOX because a column has the room - the two are different shapes with the same floor.
+  const regenerateHitArea = await readHitArea(page.locator("ol.message-list > li").nth(2).locator(".regenerate-btn"));
+  expect(glyphs.regenerate?.height, "which is a 28 px pill, not a 44 px box").toBe(28);
+  expect(
+    hitAreaViolations("the strip's Regenerate (clears the 44 px floor as a HIT area)", regenerateHitArea),
+    "which keeps the same touch floor",
+  ).toEqual([]);
 
   // The player's own line: as wide as the line, and no wider.
   expect(
