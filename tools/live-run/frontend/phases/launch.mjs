@@ -406,6 +406,19 @@ async function main() {
   // product's own, so it is written into the launch state instead of being left in the log.
   const roleBroker = launch.roleBrokerFacts();
   say("guardian role broker:", JSON.stringify(roleBroker));
+  // The broker's account is the only record of what the Guardian session did, and the launch this phase
+  // holds open is where a capture driver's refusal is decided. Sampled once at mount, every post-launch
+  // fact - which commands the broker answered, which refusals it minted, and how the Guardian ended -
+  // was unreadable without mounting the stage by hand and reading the broker's stderr, which
+  // `run.mjs` sends to `"ignore"` (measured 2026-11-20, `.tmp/lane-livenow5.md`: a launch was refused
+  // with no statement anywhere about the Guardian session it had just opened).
+  let lastRoleBroker = JSON.stringify(roleBroker);
+  const sayRoleBrokerChange = (when) => {
+    const rendered = JSON.stringify(launch.roleBrokerFacts());
+    if (rendered === lastRoleBroker) return;
+    lastRoleBroker = rendered;
+    say(`guardian role broker ${when}:`, rendered);
+  };
   say("child pid:", launch.child.pid, "alive=", launch.child.exitCode === null);
   say("ENTRY STDERR BYTES (=0 required):", Buffer.byteLength(stderr, "utf8"));
   if (stderr.length > 0) say("entry stderr (first 800):", stderr.slice(0, 800));
@@ -617,11 +630,15 @@ async function main() {
   say("--- waiting for the stop flag at", paths.stopFlag, "---");
   for (;;) {
     await new Promise((resolve) => setTimeout(resolve, 3000));
+    sayRoleBrokerChange("after mount");
     if (await exists(paths.stopFlag)) {
       say("stop flag seen");
       break;
     }
   }
+  // Read before the teardown closes either side of the session: after `dispose()` every fact below is
+  // this phase's own doing, and the state a reader needs is the one the launch left behind.
+  sayRoleBrokerChange("at teardown");
 
   say("=== teardown (processes only; the run root is KEPT) ===");
   try {
