@@ -6,12 +6,19 @@ import { fileURLToPath } from "node:url";
 import { readHostCompletionContracts } from "../check-stardew-postcondition-delta.mjs";
 import { modConstants } from "../check-stardew-snapshot-family-bounds.mjs";
 import { taskPurposeVerdict } from "../live-run/game/run-verdicts.mjs";
-import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION } from "./multiday-daily-tasks.mjs";
+import { MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "./multiday-baseline.mjs";
+import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION, dayTaskSchedule } from "./multiday-daily-tasks.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
   readExperimentalStardewActionIds,
 } from "./stardew-published-action-registry.mjs";
-import { judgeTaskPurpose, purposeReceipts, TASK_PURPOSE_CRITERIA } from "./task-purpose.mjs";
+import {
+  judgesAPublishedFact,
+  judgeTaskPurpose,
+  purposeReceipts,
+  readScheduledJudgement,
+  TASK_PURPOSE_CRITERIA,
+} from "./task-purpose.mjs";
 
 /**
  * The task-purpose gate.
@@ -301,11 +308,10 @@ const DECIDED_WITNESS = Object.freeze({
 
 test(GAP_DAY_GATE, (t) => {
   const days = ROTATION.map((task) => {
-    const entry = TASK_PURPOSE_CRITERIA[task];
     const judged = judgeTaskPurpose(task, []);
     return Object.freeze({
       task,
-      gap: entry?.missingFact !== undefined,
+      gap: !judgesAPublishedFact(task),
       state: judged.state,
       reasonCode: judged.reasonCode,
       // The fact is the diagnosis, and it travels on the day itself: which capability this day could not be scored on.
@@ -362,7 +368,7 @@ test(GAP_DAY_GATE, (t) => {
  * </p>
  */
 test("a run whose every day was a gap day is judged by nothing, and that is blocked rather than passed", () => {
-  const gapDays = ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task]?.missingFact !== undefined);
+  const gapDays = ROTATION.filter((task) => !judgesAPublishedFact(task));
   assert.ok(gapDays.length > 0, "the rotation is expected to hold the days whose criterion cannot be decided");
   const purposes = gapDays.map((task, index) => Object.freeze({ day: index + 1, task, ...judgeTaskPurpose(task, []) }));
   assert.equal(
@@ -378,6 +384,109 @@ test("a run whose every day was a gap day is judged by nothing, and that is bloc
   );
   // And a scenario that names no task at all is judged on its session alone - that is not a run nobody judged.
   assert.equal(taskPurposeVerdict([]), null);
+});
+
+/**
+ * THE GATE: `a_run_is_never_scheduled_on_days_nothing_can_judge`.
+ *
+ * <p>
+ * A RUN THAT WAS SCHEDULED ON NOTHING JUDGEABLE CANNOT SAY WHETHER ANYTHING WAS ACHIEVED, and that is a property of the
+ * rotation rather than of the days she lived. Measured on `round84`: `state: blocked`, `reason
+ * task_purposes_nothing_judged:3of3` - day 1 `sweep_animals_and_company`, day 2 `sweep_carried_things`, day 3
+ * `clear_east_patch` - while `violations 0`, `crossings 2 of 2` and every night's lifecycle agreed with the world. Three
+ * rotation entries in a row were criteria whose facts nothing publishes, so the run did everything right and could not
+ * say so.
+ * </p>
+ * <p>
+ * POPULATION: every run the rotation can be configured into - the day counts a run can have, from the baseline's own
+ * window (`crossNights` nights end `crossNights + 1` days), crossed with every offset `runOffsetFor` can produce. The
+ * days are read through `dayTaskSchedule`, which is the one scheduling path, so a pin, an override or a later rule lands
+ * in this reading by construction instead of in a second copy of it. The reading prints what it scheduled and how much
+ * of it the evidence can judge (`days N · judgedable J · gap G`, naming the gap days), and `J === 0` is the failure.
+ * </p>
+ * <p>
+ * BOTH FALSIFIERS ARE IN THIS TEST, because a gate over a rotation that is already correct can only ever pass: a pool
+ * whose every day is unjudgeable must fail by naming the days it chose, and the same pool with ONE day the evidence
+ * decides among them must pass.
+ * </p>
+ * <p>
+ * red-proof: inject  a pool whose every day is a gap into `scheduledRunReadings` -> this gate reds, naming the three
+ *                   days it scheduled; removing the rule from `dayTaskSchedule` (scheduling the plain rotation) reds it
+ *                   on `round84`'s own three entries
+ *                   (tools/lib/task-purpose.test.mjs)
+ * </p>
+ */
+const RUN_WINDOW_GATE = "a_run_is_never_scheduled_on_days_nothing_can_judge";
+
+/** The day counts a run can have: N nights end N+1 days (`multiday-loop.mjs`), for N inside the baseline's window. */
+const RUN_DAY_COUNTS = Object.freeze(
+  Array.from(
+    { length: MAXIMUM_BASELINE_DAYS - MINIMUM_BASELINE_DAYS + 1 },
+    (_, index) => MINIMUM_BASELINE_DAYS + index + 1,
+  ),
+);
+
+/** Every run one pool can be configured into, and what each one scheduled, in the schedule's own line. */
+function scheduledRunReadings({ rotation = ROTATION, judges = judgesAPublishedFact } = {}) {
+  const readings = [];
+  for (const days of RUN_DAY_COUNTS) {
+    for (let runOffset = 0; runOffset < rotation.length; runOffset += 1) {
+      const taskForDay = dayTaskSchedule({ runOffset, judgesAPublishedFact: judges, rotation });
+      const scheduled = Array.from({ length: days }, (_, index) => ({ day: index + 1, task: taskForDay(index + 1) }));
+      readings.push(Object.freeze({ runOffset, ...readScheduledJudgement(scheduled) }));
+    }
+  }
+  return readings;
+}
+
+test(RUN_WINDOW_GATE, (t) => {
+  const gapDay = (task) => !judgesAPublishedFact(task);
+  const readings = scheduledRunReadings();
+  const findings = readings
+    .filter((run) => run.judgeable === 0)
+    .map((run) => `${RUN_WINDOW_GATE}:offset_${String(run.runOffset)}:${String(run.days)}days - ${run.reading}`);
+  // What the rule had to move, so a rotation that happens to need no move says so rather than reading as coverage.
+  const adjacentPairs = ROTATION.map((task, index) =>
+    Object.freeze({ task, next: ROTATION[(index + 1) % ROTATION.length] }),
+  )
+    .filter((pair) => gapDay(pair.task) && gapDay(pair.next))
+    .map((pair) => `${pair.task}->${pair.next}`);
+  // The run that can be judged least, printed with the population it was taken over: zero population agrees with itself.
+  const fewest = readings.reduce((lowest, run) => (run.judgeable < lowest.judgeable ? run : lowest), readings[0]);
+  const reading =
+    `runs ${String(readings.length)} (${RUN_DAY_COUNTS.join("/")} days x ${String(ROTATION.length)} offsets) · ` +
+    `fewest judgedable ${String(fewest?.judgeable ?? "not_measured")} · ${String(fewest?.reading ?? "not_measured")} · ` +
+    `adjacent unjudgeable pairs ${String(adjacentPairs.length)}${adjacentPairs.length === 0 ? "" : `: ${adjacentPairs.join(", ")}`}`;
+  t.diagnostic(reading);
+  assert.ok(readings.length > 0, `${reading} - no run was examined, so the gate cannot fail`);
+  assert.deepEqual(findings, [], `${reading}\n${findings.join("\n")}`);
+
+  // RED: a pool whose every day is a gap. The schedule has nothing to choose, and the gate has to name the days it
+  // chose instead of only counting them - `round84`'s three, by name, are what would have made the run readable.
+  const gapPool = ROTATION.filter((task) => gapDay(task)).slice(0, 3);
+  const red = scheduledRunReadings({ rotation: gapPool }).filter((run) => run.judgeable === 0);
+  assert.ok(red.length > 0, `a pool of ${gapPool.join(", ")} must fail this gate, and it passed`);
+  assert.match(
+    red[0].reading,
+    new RegExp(`^days ${String(gapPool.length)} · judgedable 0 · gap ${String(gapPool.length)} \\(day1=`, "u"),
+    `the reading has to state the counts a reader acts on, gap days included; got ${red[0].reading}`,
+  );
+  assert.deepEqual(
+    [...new Set(red[0].gapDays.map((entry) => entry.task))],
+    gapPool,
+    `the failure has to name the days it chose; got ${red[0].reading}`,
+  );
+
+  // GREEN: the same three days with ONE the evidence decides among them is enough to tell whether anything was achieved.
+  const decidedTask = ROTATION.find((task) => judgesAPublishedFact(task));
+  const withOneJudgedable = [gapPool[0], decidedTask, gapPool[2]];
+  assert.deepEqual(
+    scheduledRunReadings({ rotation: withOneJudgedable })
+      .filter((run) => run.judgeable === 0)
+      .map((run) => run.reading),
+    [],
+    `one day the evidence decides among ${withOneJudgedable.join(", ")} must be enough for every run to be judged`,
+  );
 });
 
 /**

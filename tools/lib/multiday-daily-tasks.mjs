@@ -21,6 +21,12 @@
  * already-published actions the companion should reach for. A task that named an action the Mod does not
  * publish would make the run measure a capability gap instead of the behaviour it was built to observe.
  *
+ * AND THE DAYS IT GIVES ARE NOT ALL UNJUDGEABLE. The rotation also decides whether a run can say anything about the days
+ * it lived: measured on `round84`, three consecutive rotation entries were criteria whose facts nothing publishes, and a
+ * healthy three-day run ended `task_purposes_nothing_judged:3of3` - a property of this list, not of her day. So
+ * `dayTaskSchedule` applies the rule that two such days are never scheduled next to each other (see its own note), and
+ * `task-purpose.mjs`'s `readScheduledJudgement` prints what a run was given and how much of it the evidence can judge.
+ *
  * THE SCENARIO LIST ABOVE WAS NOT ENOUGH, so it is now followed by SWEEP TASKS derived from the published surface
  * itself. Measured when they were added: the eighteen scenario tasks named 50 of the 95 published execution
  * actions, so 45 could be finished, gated, and never once asked for - and a run stays green through that, which is
@@ -420,7 +426,8 @@ export function runOffsetFor(completedRuns) {
 }
 
 /**
- * THE ONE SCHEDULING PATH a multi-day run's days take, composed from the three ways a task is named.
+ * THE ONE SCHEDULING PATH a multi-day run's days take, composed from the three ways a task is named AND from the one
+ * rule that keeps a run from being judged by nothing.
  *
  * <p>
  * Precedence is the whole rule: an explicit `day:task` pin first (`GAMEBUDDY_TASK_FOR_DAY`), then
@@ -430,10 +437,73 @@ export function runOffsetFor(completedRuns) {
  * N" goes through this function. A prompt that asks for day 2's task and a purpose check that judges a different one is
  * one composition written twice.
  * </p>
+ * <p>
+ * THE ROTATION'S OWN ANSWERS NEVER PUT TWO UNJUDGEABLE DAYS IN A ROW, and `judgesAPublishedFact` is required rather
+ * than optional because a schedule that cannot say which of its days the evidence can decide is the run this rule
+ * exists for: measured on `round84`, three scheduled days were `sweep_animals_and_company`, `sweep_carried_things` and
+ * `clear_east_patch` - three criteria whose facts nothing publishes - and a healthy three-day run ended
+ * `task_purposes_nothing_judged:3of3`, unable to say whether anything had been achieved. So a rotation entry nothing
+ * can judge is not scheduled directly after another one: the second of the pair takes the next entry the evidence CAN
+ * decide, the walk continues from there, and a run of two or more days therefore always carries one day the evidence
+ * decides. Adjacent pairs are what the rotation's tail held (`sweep_yard_and_work`, `sweep_animals_and_company`,
+ * `sweep_carried_things`, then day 1's `clear_east_patch`), which is why the rule is applied to the WALK rather than to
+ * the list: the order is a coverage plan somebody argued for, and moving the days is a smaller change than re-arguing it.
+ * </p>
+ * <p>
+ * A PIN OR A FIRST-DAY OVERRIDE IS LEFT ALONE. Those are the operator naming a day, and the rotation does not get to
+ * overrule them; a run pinned entirely to unjudgeable days is still caught by `task_purposes_nothing_judged` in
+ * `run-verdicts.mjs`, which is the rail for the days nobody could judge.
+ * </p>
+ * <p>
+ * `rotation` is an input rather than a read of the module constant so the falsifier can hand this function a pool the
+ * repository does not have - a pool whose every day is unjudgeable, where the rule has nothing to choose and the run
+ * really is judged by nothing.
+ * </p>
  */
-export function dayTaskSchedule({ runOffset = 0, firstDayTask = undefined, pinnedTaskForDay = undefined } = {}) {
-  return (day) =>
-    pinnedTaskForDay?.(day) ?? (day === 1 && firstDayTask !== undefined ? firstDayTask : dailyTaskFor(runOffset, day));
+export function dayTaskSchedule({
+  runOffset = 0,
+  firstDayTask = undefined,
+  pinnedTaskForDay = undefined,
+  judgesAPublishedFact,
+  rotation = DAILY_TASK_ROTATION,
+} = {}) {
+  if (typeof judgesAPublishedFact !== "function")
+    throw new TypeError(
+      "task_schedule_needs_its_judgement: a schedule that cannot say which of its days the evidence can decide can schedule a run nothing judges",
+    );
+  const decided = (task) => judgesAPublishedFact(task) === true;
+  // The rotation's own answer for each day of this run, 1-based, computed on demand and kept so the same day asked twice
+  // answers the same task.
+  const answers = [];
+  const used = new Set();
+  let cursor = normaliseAgainst(runOffset, rotation.length);
+  // The next entry the evidence can decide and this run has not already been given, or -1 when the pool holds none: that
+  // is a pool no schedule can make judgeable, not a reason to stop walking.
+  const nextDecidable = (from) => {
+    for (let step = 0; step < rotation.length; step += 1) {
+      const index = (from + step) % rotation.length;
+      if (decided(rotation[index]) && !used.has(rotation[index])) return index;
+    }
+    return -1;
+  };
+  const rotationDay = (day) => {
+    while (answers.length < day) {
+      let index = cursor;
+      // THE RULE. An unjudgeable day is only ever scheduled after a day the evidence can decide.
+      if (answers.length > 0 && !decided(rotation[index]) && !decided(answers[answers.length - 1])) {
+        const substitute = nextDecidable((index + 1) % rotation.length);
+        if (substitute >= 0) index = substitute;
+      }
+      answers.push(rotation[index]);
+      used.add(rotation[index]);
+      cursor = (index + 1) % rotation.length;
+    }
+    return answers[day - 1];
+  };
+  return (day) => {
+    const wanted = Number.isFinite(day) ? Math.max(1, Math.trunc(day)) : 1;
+    return pinnedTaskForDay?.(day) ?? (day === 1 && firstDayTask !== undefined ? firstDayTask : rotationDay(wanted));
+  };
 }
 
 /**
@@ -498,8 +568,12 @@ export function describeTaskDelivery(reading) {
 }
 
 function normalise(value) {
+  return normaliseAgainst(value, DAILY_TASK_ROTATION.length);
+}
+
+function normaliseAgainst(value, size) {
   const number = Number.isFinite(value) ? Math.trunc(value) : 0;
-  return ((number % DAILY_TASK_ROTATION.length) + DAILY_TASK_ROTATION.length) % DAILY_TASK_ROTATION.length;
+  return ((number % size) + size) % size;
 }
 
 /**

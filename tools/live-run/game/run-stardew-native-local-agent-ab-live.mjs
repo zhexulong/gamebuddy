@@ -90,7 +90,7 @@ import { dayPromptWithFact, seedShortageFact } from "../../lib/seed-shortage.mjs
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
-import { judgeTaskPurpose } from "../../lib/task-purpose.mjs";
+import { judgesAPublishedFact, judgeTaskPurpose, readScheduledJudgement } from "../../lib/task-purpose.mjs";
 import { turnSettled } from "../../lib/turn-settled.mjs";
 import {
   launchVoiceGatewayChild,
@@ -4178,7 +4178,14 @@ try {
   // task, and the criterion that decides whether it was accomplished. Two call sites would let the run be judged
   // against a task it was never asked to do. The three sources (pin, first-day override, rotation) are composed in
   // `dayTaskSchedule`, which is also what the delivery reading below is driven through.
-  const taskForDay = dayTaskSchedule({ runOffset: dailyRunOffset, firstDayTask, pinnedTaskForDay });
+  // WHICH DAYS THE EVIDENCE CAN DECIDE, so the rotation's own answers never schedule two unjudgeable days in a row: a
+  // run scheduled entirely on criteria whose facts nothing publishes is judged by nothing (`round84`).
+  const taskForDay = dayTaskSchedule({
+    runOffset: dailyRunOffset,
+    firstDayTask,
+    pinnedTaskForDay,
+    judgesAPublishedFact,
+  });
   const promptForDay = (day) => {
     const entry = SCENARIO_PROMPTS[SCENARIO][localeKey];
     if (typeof entry !== "function") return entry;
@@ -4685,6 +4692,9 @@ try {
     // What each day was asked for versus what was delivered, and the tasks it never asked for, in one line.
     const taskDelivery = readTaskDelivery({ scheduled: dayTasksScheduled, delivered: taskPurposes });
     console.error("MULTIDAY_TASKS", taskDelivery.reading, taskDelivery.notDelivered.join(","));
+    // WHAT WAS SCHEDULED AND HOW MUCH OF IT CAN BE JUDGED, before any day's verdict exists: `days 3 · judgedable 2 ·
+    // gap 1 (day1=...)`. The purpose line counts the verdicts that exist; this one says whether the run ever could.
+    console.error("MULTIDAY_TASK_JUDGEABLE", readScheduledJudgement(dayTasksScheduled).reading);
     // WHAT THE RUN COULD AND COULD NOT BE SCORED ON, printed beside the tasks it delivered. A gap day no longer blocks
     // the verdict (it is `unjudged`, see `task-purpose.mjs`), so the count and the missing fact have to appear HERE - a
     // state that is silent about what it cannot judge is worse than a red that names it.

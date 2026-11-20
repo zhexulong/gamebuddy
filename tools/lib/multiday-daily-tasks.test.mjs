@@ -152,6 +152,9 @@ test("a task pinned to a later day is scheduled and delivered on that day (2026-
     runOffset: 0,
     firstDayTask: "clear_and_plant_long_patch",
     pinnedTaskForDay: overriddenTaskForDay("2:a_fish_from_the_water"),
+    // Every task counts as decidable here: this test is about the three NAMING sources, and the rule that keeps a run
+    // from being judged by nothing has its own test below.
+    judgesAPublishedFact: () => true,
   });
   const session = fakeSession({ schedule, daysEntered: 2 });
   const day1 = dailyTaskFor(0, 1);
@@ -175,7 +178,7 @@ test("a task pinned to a later day is scheduled and delivered on that day (2026-
   );
   // With no pin and no first-day override, day 1 is the rotation's and day 2 is not the pinned task - the pin is not a
   // rotation change, which is what keeps a series of runs covering different days.
-  const rotationOnly = dayTaskSchedule({ runOffset: 0 });
+  const rotationOnly = dayTaskSchedule({ runOffset: 0, judgesAPublishedFact: () => true });
   assert.equal(rotationOnly(1), day1);
   assert.notEqual(rotationOnly(2), "a_fish_from_the_water");
 });
@@ -188,7 +191,11 @@ test("a task pinned to a later day is scheduled and delivered on that day (2026-
  * same. The reading is the difference, and it has to be able to fire.
  */
 test("a scheduled day whose first turn never ran is named (round46)", () => {
-  const schedule = dayTaskSchedule({ runOffset: 0, pinnedTaskForDay: overriddenTaskForDay("2:a_fish_from_the_water") });
+  const schedule = dayTaskSchedule({
+    runOffset: 0,
+    pinnedTaskForDay: overriddenTaskForDay("2:a_fish_from_the_water"),
+    judgesAPublishedFact: () => true,
+  });
   // The loop started day 2, so its task was scheduled; the run ended before that day's first turn reached her.
   const stopped = fakeSession({ schedule, daysEntered: 2, askedFor: (day, task) => (day === 1 ? task : null) });
   assert.deepEqual(
@@ -211,4 +218,53 @@ test("a scheduled day whose first turn never ran is named (round46)", () => {
   );
   // And a run that delivered every scheduled day has nothing to report - the reading is not a permanent red.
   assert.deepEqual(fakeSession({ schedule, daysEntered: 2 }).notDelivered, []);
+});
+
+/**
+ * THE RULE THAT KEEPS A RUN FROM BEING JUDGED BY NOTHING, measured at the schedule rather than at the rotation table.
+ *
+ * <p>
+ * Measured on `round84`: `state: blocked`, `reason task_purposes_nothing_judged:3of3` - day 1
+ * `sweep_animals_and_company`, day 2 `sweep_carried_things`, day 3 `clear_east_patch`, three criteria whose facts
+ * nothing publishes - while `violations 0`, `crossings 2 of 2` and every night agreed with the world. Nothing was wrong
+ * with the days; the ROTATION had scheduled nothing a run can be judged on. The rotation's order is a coverage plan
+ * somebody argued for, so the days are not re-ordered: the walk skips an unjudgeable entry when the day before it was
+ * unjudgeable too, which is the smallest thing that makes every run of two or more days carry a judgeable one.
+ * </p>
+ * <p>
+ * The pool here is injected, which is why the rule is falsifiable at all: the repository's own rotation has no such
+ * pool any more, and a rule that can only be exercised on a healthy rotation is a rule nobody can see break. The real
+ * rotation is held to it by `a_run_is_never_scheduled_on_days_nothing_can_judge` in `task-purpose.test.mjs`.
+ * </p>
+ */
+test("an unjudgeable day is never scheduled directly after another one", () => {
+  const decided = (task) => task.startsWith("decided_");
+  const schedule = dayTaskSchedule({
+    runOffset: 0,
+    judgesAPublishedFact: decided,
+    rotation: ["gap_a", "gap_b", "gap_c", "decided_1", "decided_2", "decided_3"],
+  });
+  assert.deepEqual(
+    [1, 2, 3, 4].map((day) => schedule(day)),
+    ["gap_a", "decided_1", "decided_2", "decided_3"],
+    "the second unjudgeable day of a pair takes the next day the evidence decides, and the walk continues from it",
+  );
+  // A POOL WITH NOTHING TO CHOOSE. The rule cannot invent a day the evidence decides, and it must not pretend to: the
+  // schedule answers the rotation, and the run is judged by nothing - which is the pool the gate over the real rotation
+  // fails on, naming the days it chose.
+  const nothingToChoose = dayTaskSchedule({
+    runOffset: 0,
+    judgesAPublishedFact: decided,
+    rotation: ["gap_a", "gap_b", "gap_c"],
+  });
+  assert.deepEqual(
+    [1, 2, 3].map((day) => nothingToChoose(day)),
+    ["gap_a", "gap_b", "gap_c"],
+  );
+});
+
+test("a schedule that cannot say which days the evidence decides is refused, not composed", () => {
+  // Optional would be fail-open: a caller that forgot the predicate would get the plain rotation back and a run that
+  // nobody could judge would look scheduled.
+  assert.throws(() => dayTaskSchedule({ runOffset: 0 }), /task_schedule_needs_its_judgement/u);
 });

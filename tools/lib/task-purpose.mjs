@@ -426,6 +426,64 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
 });
 
 /**
+ * Whether a task's own purpose is decided by facts the product publishes.
+ *
+ * ONE SPELLING OF "THIS DAY IS A GAP": the `gap(...)` entry is the one that carries `missingFact` and no steps, and that
+ * is the same declaration `judgeTaskPurpose` branches on - so a schedule, its gate and the judge cannot disagree about
+ * which of a run's days the evidence can decide. A task with no entry at all is not decidable either: nothing says what
+ * would have been accomplished for it, which is a reporting gap and not a purpose.
+ */
+export function judgesAPublishedFact(taskId) {
+  const entry = TASK_PURPOSE_CRITERIA[taskId];
+  return entry !== undefined && entry.missingFact === undefined;
+}
+
+/**
+ * WHAT A RUN'S DAYS WERE, AND HOW MANY OF THEM THE EVIDENCE CAN DECIDE.
+ *
+ * <p>
+ * A run's days can each be scheduled and delivered and still leave the run unable to say whether anything was achieved.
+ * Measured on `round84`: `state: blocked`, `reason task_purposes_nothing_judged:3of3` - day 1 `sweep_animals_and_company`,
+ * day 2 `sweep_carried_things`, day 3 `clear_east_patch`, three criteria whose facts nothing publishes - while
+ * `violations 0`, `crossings 2 of 2` and every night's lifecycle agreed with the world. Nothing was wrong with the days
+ * and the run could not say whether anything was achieved, because the ROTATION had scheduled nothing judgeable and no
+ * reading said so: `readTaskDelivery` names the tasks, and the purpose line counts verdicts after the fact, so `J === 0`
+ * first appeared as a blocked run.
+ * </p>
+ * <p>
+ * `reading` is that line, and it names the gap days rather than counting them: `days 3 · judgedable 2 · gap 1
+ * (day1=sweep_animals_and_company)`. A rotation that picks three gaps is not bad luck, it is a pool where the days
+ * nothing can judge are over-represented - and a reader has to be able to see which ones it chose.
+ * </p>
+ */
+export function readScheduledJudgement(scheduled = []) {
+  const days = [];
+  for (const entry of scheduled) {
+    const task = entry?.task;
+    if (typeof task !== "string" || task.length === 0) continue;
+    days.push(
+      Object.freeze({
+        day: Number.isInteger(entry.day) ? entry.day : days.length + 1,
+        task,
+        judgeable: judgesAPublishedFact(task),
+      }),
+    );
+  }
+  const judged = days.filter((entry) => entry.judgeable);
+  const gaps = days.filter((entry) => !entry.judgeable);
+  const chosen = gaps.map((entry) => `day${String(entry.day)}=${entry.task}`).join(", ");
+  return Object.freeze({
+    days: days.length,
+    judgeable: judged.length,
+    gap: gaps.length,
+    gapDays: Object.freeze(gaps),
+    reading:
+      `days ${String(days.length)} · judgedable ${String(judged.length)} · gap ${String(gaps.length)} ` +
+      `(${gaps.length === 0 ? "none" : chosen})`,
+  });
+}
+
+/**
  * The admitted evidence a purpose may read: one entry per receipt that is BOTH a success state AND its own
  * action's postcondition, as the Host decides that question.
  *
