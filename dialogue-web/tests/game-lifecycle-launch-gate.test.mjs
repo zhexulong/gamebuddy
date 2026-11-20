@@ -928,7 +928,9 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     );
     assert.notEqual(labels.gameEndedQuarantined, labels.gameLaunchQuarantined);
   }
-  assert.match(en.gameEndedQuarantined, /quit GameBuddy itself/u);
+  // The name is the fact, not its place in the sentence: the step opens the ended sentence's last
+  // clause, so the match is case-insensitive rather than pinned to a mid-sentence position.
+  assert.match(en.gameEndedQuarantined, /quit GameBuddy itself/iu);
   assert.match(zh.gameEndedQuarantined, /退出 GameBuddy 本身/u);
   // The ONE clause the reported exit changes: the failed launch may still have a game running (its
   // outcome is unknown), while a reported exit is a game that is already gone - so only the failed
