@@ -824,6 +824,20 @@ type PendingResponse = {
   timer?: ReturnType<typeof setTimeout>;
 };
 
+/**
+ * A command this side refused before it wrote a single byte of it.
+ *
+ * The frame is larger than this channel may carry, its fields are not the ones the operation takes, or its
+ * bounded wait is not a wait: every one of those is decided from the command alone, so the session is exactly
+ * as it was. It is therefore not the wire's own loss and must not be answered like one - the one connection
+ * that could still serve the next command is the one a teardown here would destroy. On the launch path that
+ * difference is an attempt: the broker ends the Guardian's control session with the socket, so one refused
+ * frame cost the attempt the Guardian it had just armed (measured 2026-11-21, `.tmp/lane-guardexit.md`: the
+ * arm was answered, no `launch_role` ever reached the peer, and the Guardian was ended 36 ms after the
+ * refusal reached the panel).
+ */
+class GuardianCommandRefusal extends Error {}
+
 class GuardianSessionClient implements DesktopGuardianSession {
   #closed = false;
   #buffer = Buffer.alloc(0);
@@ -956,7 +970,7 @@ class GuardianSessionClient implements DesktopGuardianSession {
     return await this.serialize(async () => {
       try {
         if (this.#closed) throw unavailable("guardian_session_closed");
-        if (!validGuardianInput(operation, input)) throw unavailable("guardian_command_input_invalid");
+        if (!validGuardianInput(operation, input)) throw refusedBeforeWriting("guardian_command_input_invalid");
         const acknowledgement = await this.request(
           guardianCommandFrame(operation, this.binding, input),
           operation === "launch_role" ? input.deadlineUnixMs! - Date.now() : input.operationWaitBudgetMs!,
@@ -965,7 +979,10 @@ class GuardianSessionClient implements DesktopGuardianSession {
           throw unavailable("guardian_command_acknowledgement_invalid");
         return acknowledgement;
       } catch (error) {
-        this.fail();
+        // A refusal this side decided before writing is not a broken session: the frame was never sent, so
+        // nothing about the connection changed. Every other failure here may have left half a conversation on
+        // the wire, and the session is closed rather than trusted.
+        if (!(error instanceof GuardianCommandRefusal)) this.fail();
         throw error;
       }
     });
@@ -983,11 +1000,11 @@ class GuardianSessionClient implements DesktopGuardianSession {
 
   private request(message: Record<string, unknown>, waitBudgetMs?: number): Promise<Record<string, unknown>> {
     if (this.#closed) return Promise.reject(unavailable("guardian_session_closed"));
-    if (this.#waiter !== undefined) return Promise.reject(unavailable("guardian_request_already_pending"));
+    if (this.#waiter !== undefined) return Promise.reject(refusedBeforeWriting("guardian_request_already_pending"));
     if (waitBudgetMs !== undefined && !validWaitBudget(waitBudgetMs))
-      return Promise.reject(unavailable("guardian_wait_budget_invalid"));
+      return Promise.reject(refusedBeforeWriting("guardian_wait_budget_invalid"));
     const bytes = Buffer.from(`${JSON.stringify(message)}\n`, "utf8");
-    if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(unavailable("guardian_wire_too_long"));
+    if (bytes.length > MAX_GUARDIAN_WIRE_BYTES) return Promise.reject(refusedBeforeWriting("guardian_wire_too_long"));
     return this.awaitWaiter(bytes, waitBudgetMs);
   }
 
@@ -1697,4 +1714,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  */
 function unavailable(reason: string): Error {
   return new Error(`desktop_runtime_bootstrap_unavailable:${reason}`);
+}
+
+/**
+ * The same refusal, carrying the one fact `command` needs about it: it never reached the socket.
+ *
+ * The message is built by `unavailable`, so a caller's code and the launcher's
+ * `dialogue_exited_before_ready:<code>:<stderr>` read exactly as they did before this distinction existed.
+ */
+function refusedBeforeWriting(reason: string): Error {
+  return new GuardianCommandRefusal(unavailable(reason).message);
 }

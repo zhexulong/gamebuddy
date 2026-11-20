@@ -504,6 +504,40 @@ test("desktop bootstrap helper survives a refused attempt and serves the next on
   );
 });
 
+// A command this side refuses BEFORE writing it is not the wire's loss.
+//
+// The launch frame is the one large document this channel carries: the role environment holds the Host's
+// PATH, and a developer machine's PATH is 17 069 characters, which makes the native plan 19 331 bytes,
+// its base64url 25 775 and the frame 26 393 - over the 16 384-byte bound this channel and the Desktop's
+// own broker both enforce. The wire answers that frame with `guardian_wire_too_long` and writes nothing.
+// Ending the authenticated session there turns one refused frame into the loss of the Guardian the attempt
+// just armed: the broker ends the Guardian's control session with the socket, so a launch that dispatched
+// nothing still cost the attempt its Guardian (measured 2026-11-21, `.tmp/lane-guardexit.md`: `arm_attempt`
+// answered, no `launch_role` ever reached the peer, and the Guardian was ended 36 ms after the refusal
+// reached the panel).
+test("desktop bootstrap helper keeps the authenticated session when it refuses a command it never wrote", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("oversized-launch-frame");
+
+  // The refusal names itself, and it is this side's own bound that refused - not the peer.
+  assert.match(
+    result.stderr,
+    /wire_oversized_launch:refused:desktop_runtime_bootstrap_unavailable:guardian_wire_too_long/,
+    `the oversized frame must name the bound that refused it; stderr was ${result.stderr}`,
+  );
+  assert.doesNotMatch(result.stderr, /wire_oversized_launch:accepted/);
+
+  // And the attempt keeps the session it armed: the peer reads the next command on the SAME
+  // authenticated session, so one `hello` serves the whole attempt.
+  assert.deepEqual(
+    result.sessions.map((session) => session.map((request) => request.operation)),
+    [["hello", "arm_attempt", "contain_role"]],
+    "a command refused before it was written must not end the session that carried the arm: the peer read " +
+      "a replacement session, or the follow-up command never arrived",
+  );
+  assert.match(result.stderr, /wire_oversized_followup:contained/);
+});
+
 test("desktop bootstrap helper rejects malformed arm input before writing arm_attempt", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("malformed-arm");
@@ -642,6 +676,7 @@ async function runWireFixture(
     | "overhorizon-launch"
     | "peer-disconnect"
     | "lost-session-rearm"
+    | "oversized-launch-frame"
     | "settled-session"
     | "settled-session-owner-quit"
     | "settle-and-rearm"
@@ -711,7 +746,9 @@ async function runWireFixture(
                           ? "2"
                           : scenario === "invalid-nonce"
                             ? "3"
-                            : "8"
+                            : scenario === "oversized-launch-frame"
+                              ? "e"
+                              : "8"
   ).repeat(64);
   const guardianInstanceId =
     scenario === "success"
@@ -1251,6 +1288,14 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       await withTimeout(guardianPeerClosed, 10_000, "recovery rejection guardian cleanup");
       worker.kill("SIGTERM");
       await withTimeout(workerClose, 10_000, "recovery rejection close");
+    } else if (scenario === "oversized-launch-frame") {
+      // The refused frame is the assertion, so this waits for the operations the PEER logged instead of for
+      // the child to leave: the containment it reads afterwards is only reachable if the refusal left the
+      // session live. The process is still serving, so the harness ends it itself.
+      await withTimeout(operationsComplete, 10_000, "guardian operations");
+      exitCodeWhileServing = worker.exitCode;
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "oversized-launch-frame cleanup");
     } else if (scenario !== "malformed-arm" && scenario !== "missing-arm-executable") {
       await withTimeout(workerClose, 2_000, `${scenario} rejection`);
     }
@@ -1572,6 +1617,56 @@ async function drive(session) {
       process.stderr.write("wire_second_attempt_refused:" + String(error && error.message ? error.message : error) + "\\n");
     }
     await platform.settle();
+    return;
+  }
+  if (scenario === "oversized-launch-frame") {
+    // The launch frame at the size the product really builds it. Only PATH differs from the fixture's
+    // launch facts, and only because a real Host forwards its own PATH into the role environment
+    // (createStardewChildEnvironment): the measured 17 069-character PATH of the machine that failed
+    // the launch is what makes the plan 19 331 B, its base64url 25 775 B and the frame 26 393 B - over
+    // this channel's bound. The filler is one repeated character because only the size is measured.
+    const launchFacts = Object.freeze({
+      ...fixture.launchFacts,
+      environment: Object.freeze({ ...fixture.launchFacts.environment, PATH: "x".repeat(17_069) }),
+    });
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    await platform.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 5000,
+      armFacts: fixture.armFacts,
+      authorization: { executable: fixture.approvedExecutable },
+    });
+    process.stderr.write("wire_oversized_arm:armed\\n");
+    try {
+      await platform.launch({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        deadlineUnixMs: Date.now() + 60000,
+        role: "player_host",
+        authorization: launchFacts,
+      });
+      process.stderr.write("wire_oversized_launch:accepted\\n");
+    } catch (error) {
+      process.stderr.write("wire_oversized_launch:refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
+    // A refusal that never touched the socket leaves the session exactly as it was, so the next command
+    // still reaches the peer that armed this attempt.
+    try {
+      await platform.contain({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 5000,
+        role: "player_host",
+      });
+      process.stderr.write("wire_oversized_followup:contained\\n");
+    } catch (error) {
+      process.stderr.write("wire_oversized_followup:refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
     return;
   }
   if (scenario === "peer-disconnect" || scenario === "delayed-arm-ack") {
