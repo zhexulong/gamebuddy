@@ -465,12 +465,11 @@ public sealed partial class ModEntry
             .OrderBy(tile => Math.Max(Math.Abs(tile.X - farmArrival.X), Math.Abs(tile.Y - farmArrival.Y)))
             .ThenBy(tile => Math.Abs(tile.X - farmArrival.X) + Math.Abs(tile.Y - farmArrival.Y))
             .ToArray();
-        string[] forageIds = new[] { "(O)399", "(O)396", "(O)398", "(O)16", "(O)18", "(O)20", "(O)22" };
         Vector2 placedTile = Vector2.Zero;
         StardewValley.Object? placedForage = null;
         foreach (Vector2 tile in candidateTiles)
         {
-            foreach (string forageId in forageIds)
+            foreach (string forageId in FixtureForageItemIds)
             {
                 StardewValley.Object forage = ItemRegistry.Create<StardewValley.Object>(forageId, 1);
                 if (!forage.isForage())

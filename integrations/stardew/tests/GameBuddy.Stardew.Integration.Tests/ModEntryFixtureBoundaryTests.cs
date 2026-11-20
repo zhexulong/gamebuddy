@@ -79,6 +79,10 @@ public sealed class ModEntryFixtureBoundaryTests
         "InitializeNativeLocalInteractNpcWithItemFixture", "InitializeNativeLocalJodiHarvestDeliverFixture",
         "InitializeNativeLocalStrawberryCovenantFixture",
         "InitializeNativeLocalPlaySessionFixture", "InitializeNativeLocalNpcRelationshipFixture",
+        // The play-session world's forage props: the helper seeds them through `GameLocation.dropObject` - the only
+        // path that marks a map spawn, which is the gate the engine's forage pickup branch opens on - and reads the
+        // marker back off the map. It lives in the fixtures partial because it seeds a world.
+        "PlacePlaySessionForage",
         // The play-session world's animal Given: the coop it places and the one adult animal inside it - plus the
         // question that keeps that coop off the door->field route, asked with the multi-day predicate above.
         "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",

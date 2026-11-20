@@ -847,11 +847,23 @@ public sealed partial class ModEntry : Mod
                     LogLevel.Warn);
                 break;
             }
-            farm.objects.Add(forageSpot.Value.TargetTile, new StardewValley.Object("18", 1));
+            StardewValley.Object? forage = PlacePlaySessionForage(farm, forageSpot.Value.TargetTile);
+            if (forage is null)
+            {
+                this.Monitor.Log(
+                    $"GameBuddy play-session placed {foragePlaced} of {forageCount} forage items: native placement refused {(int)forageSpot.Value.TargetTile.X},{(int)forageSpot.Value.TargetTile.Y}",
+                    LogLevel.Warn);
+                break;
+            }
             provisioned.Add($"forage={(int)forageSpot.Value.TargetTile.X},{(int)forageSpot.Value.TargetTile.Y}");
             provisionedTiles.Add(forageSpot.Value.TargetTile);
             foragePlaced += 1;
         }
+        // The same refusal the crop family already had, for the same reason: a world budgeted forage and holding none
+        // is a world whose `forageTargets` chore cannot be answered, and the audit would read that as a capability
+        // failure. Ground too small to budget a single forage item is not this case - the loop never ran.
+        if (forageCount > 0 && foragePlaced <= 0)
+            throw new InvalidOperationException("fixture_native_local_play_session_forage_count_missing");
 
         for (int index = 0; index < weedCount; index += 1)
         {
@@ -1018,6 +1030,45 @@ public sealed partial class ModEntry : Mod
         provisioned.Add($"standing={(int)startTile.X},{(int)startTile.Y}");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; planted_crops=4; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
+    }
+
+    /// <summary>
+    /// One play-session forage prop, seeded the way the world seeds it.
+    ///
+    /// <para>
+    /// A forage item exists for the engine only if <c>GameLocation.dropObject</c> placed it: that path sets
+    /// <c>isSpawnedObject</c> (GameLocation.cs:13264), which is the gate <c>GameLocation.checkAction</c> opens its
+    /// forage branch on (<c>value.isSpawnedObject.Value || isErrorItem</c>, :7791). The constructor form
+    /// <c>objects.Add(tile, new StardewValley.Object("18", 1))</c> leaves it false (Object.cs:903), so the flower
+    /// stands there and can never be picked - the same <c>forage_80109cc4e46cdd7f</c> was refused in round66, 77, 82
+    /// and 83, and every receipt said <c>removed=false;inventory 0→0</c> because the whole objects block was skipped.
+    /// </para>
+    ///
+    /// <para>
+    /// The result is read BACK from the map instead of trusted: <c>dropObject</c> answers whether it accepted the
+    /// item, and an item that did not land where it was aimed (or landed unspawned) is a defect in this file, so it
+    /// throws rather than leaving a prop the day's work can see and cannot take. A <c>null</c> answer means every
+    /// declared forage item was refused at this tile, which is the ground's answer, not a defect.
+    /// </para>
+    /// </summary>
+    private static StardewValley.Object? PlacePlaySessionForage(StardewValley.GameLocation farm, Vector2 tile)
+    {
+        foreach (string qualifiedItemId in FixtureForageItemIds)
+        {
+            StardewValley.Object forage = ItemRegistry.Create<StardewValley.Object>(qualifiedItemId, 1);
+            if (!forage.isForage())
+                continue;
+            if (!farm.dropObject(forage, tile * 64f, Game1.viewport, initialPlacement: true))
+                continue;
+            if (!farm.objects.TryGetValue(tile, out StardewValley.Object? placed)
+                || !ReferenceEquals(placed, forage)
+                || !placed.isForage()
+                || !placed.IsSpawnedObject)
+                throw new InvalidOperationException(
+                    $"fixture_native_local_play_session_forage_not_spawned:{qualifiedItemId}:{(int)tile.X},{(int)tile.Y}");
+            return placed;
+        }
+        return null;
     }
 
     private void InitializeNativeLocalNpcRelationshipFixture(Farmer player, Farm farm)    {
@@ -1646,6 +1697,20 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
 
     /// <summary>Forage items the play-session world offers; same reasoning as the trees.</summary>
     private const int PlaySessionForageCount = 3;
+
+    /// <summary>
+    /// The forage items a fixture plants, in the order they are tried, declared ONCE for all three fixtures that
+    /// place one: the play-session world, the native-local `pickup_forage` scenario and its HostAutomation twin. Each
+    /// site keeps its own placement loop because their failure policies differ (the dedicated fixtures throw when
+    /// their one target is missing; the play-session degrades like every other prop family), but the ids are one fact
+    /// and must not be three hand-written copies.
+    ///
+    /// They are tried in this order rather than one being assumed: `dropObject` is the engine's own placement test and
+    /// it refuses a tile for reasons no caller can predict from the tile alone, and `isForage()` filters any id whose
+    /// content record does not call it forage.
+    /// </summary>
+    private static readonly string[] FixtureForageItemIds =
+        new[] { "(O)399", "(O)396", "(O)398", "(O)16", "(O)18", "(O)20", "(O)22" };
 
     /// <summary>Fewest walkable tiles the door must keep after each placement.</summary>
     ///

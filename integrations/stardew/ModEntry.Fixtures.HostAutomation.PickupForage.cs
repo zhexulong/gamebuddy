@@ -62,12 +62,11 @@ public sealed partial class ModEntry
         // placement checks and marks IsSpawnedObject, which is required by
         // GameLocation.checkAction's forage pickup branch. This remains
         // HostAutomation-only setup; the bridge never exposes object creation.
-        string[] forageIds = new[] { "(O)399", "(O)396", "(O)398", "(O)16", "(O)18", "(O)20", "(O)22" };
         Vector2 placedTile = Vector2.Zero;
         StardewValley.Object? placedForage = null;
         foreach (Vector2 tile in candidateTiles)
         {
-            foreach (string qualifiedItemId in forageIds)
+            foreach (string qualifiedItemId in FixtureForageItemIds)
             {
                 StardewValley.Object forage = ItemRegistry.Create<StardewValley.Object>(qualifiedItemId, 1);
                 if (!forage.isForage())
