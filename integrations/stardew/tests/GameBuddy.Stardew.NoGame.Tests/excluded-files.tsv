@@ -28,6 +28,7 @@ AcceptSpecialOrderActionTests.cs	mod-assembly	Handlers
 ActionDefinitionRoutingParityTests.cs	mod-assembly	Handlers
 ActorStateActionTests.cs	mod-assembly	Handlers
 AdmissionForkReconciliationTests.cs	mod-assembly	ActorWorldFacts
+AdvertisedActionReachabilityTests.cs	mod-assembly	BridgeSession, ExecutionManager, DummyMonitor@NativeFarmingContractTests.cs
 AnimalProductSingleToolTests.cs	mod-assembly	Handlers
 ApproachClassificationTests.cs	mod-assembly	Navigation, Xna, ExecutionManager, Farmer, Game1
 AreaToolFootprintTests.cs	game	Xna, StardewValley, Tool, Vector2, Farmer, Hoe, WateringCan

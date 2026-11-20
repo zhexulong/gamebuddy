@@ -16,6 +16,9 @@ const sources = await Object.fromEntries(
   await Promise.all(
     [
       ["farmhandActionDefinitions", "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"],
+      // The Mod's second registration catalog. The hello's projection is resolved to catalogs and then to ids, so the
+      // suite reads this file for the same reason the gate does.
+      ["farmhandPlanFormCatalog", "integrations/stardew/src/Core/Policy/FarmhandPlanFormCatalog.cs"],
       ["bridgeSession", "integrations/stardew/BridgeSession.cs"],
       ["executionManager", "integrations/stardew/farmhandexecutioncontroller.cs"],
       ["farmhandActionRouter", "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"],
@@ -82,15 +85,34 @@ test("promotion checker accepts the Mod-owned registration projection", () => {
   assert.deepEqual(failuresFor({}), []);
 });
 
-test("promotion checker rejects a Bridge hello that stops projecting Mod registrations", () => {
-  const failures = failuresFor({
-    bridgeSession: sources.bridgeSession.replace(
-      "FarmhandActionCatalog.Registrations.Concat(FarmhandPlanFormCatalog.Registrations).Select(registration => new FarmhandActionRegistrationWire(",
-      "Array.Empty<FarmhandActionRegistration>().Select(registration => new FarmhandActionRegistrationWire(",
-    ),
-  });
+test("promotion checker rejects a Bridge hello that stops advertising the action catalog", () => {
+  // THE MUTATION AN OPERATOR CAN MAKE: the hello projects a catalog, but not the catalog of actions. Every action the
+  // surface publishes is then missing from it, and the findings name each one rather than reporting that a line moved.
+  const replaced = sources.bridgeSession.replace(
+    "FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(",
+    "FarmhandPlanFormCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(",
+  );
+  assert.notEqual(replaced, sources.bridgeSession, "the mutation must actually apply");
 
-  assert.ok(failures.includes("bridge_hello_registration_advertisement_missing:move_to_tile"));
+  const failures = failuresFor({ bridgeSession: replaced });
+
+  assert.ok(failures.includes("bridge_hello_registration_advertisement_missing:move_to_tile"), JSON.stringify(failures));
+  assert.ok(
+    !failures.some((failure) => failure.startsWith("bridge_hello_projection_unreadable")),
+    "the shape is readable - it projects a catalog - and the finding must be about the ACTIONS it left out",
+  );
+});
+
+test("promotion checker rejects a Bridge hello whose projection cannot be resolved at all", () => {
+  const replaced = sources.bridgeSession.replace(
+    "FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(",
+    "Array.Empty<FarmhandActionRegistration>().Select(registration => new FarmhandActionRegistrationWire(",
+  );
+  assert.notEqual(replaced, sources.bridgeSession, "the mutation must actually apply");
+
+  const failures = failuresFor({ bridgeSession: replaced });
+
+  assert.ok(failures.includes("bridge_hello_projection_unreadable"), JSON.stringify(failures));
 });
 
 test("promotion checker rejects a Host admission vocabulary that drops a descriptor-eligible lifecycle", () => {

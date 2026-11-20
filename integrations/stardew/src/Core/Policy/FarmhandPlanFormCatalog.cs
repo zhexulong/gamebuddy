@@ -14,10 +14,26 @@ namespace GameBuddy.Stardew.Core.Policy;
 /// journaled exactly like any other node before the game thread expands it.
 /// </para>
 /// <para>
-/// WHY IT IS PUBLISHED AT ALL. The Host decides whether a plan is executable from the Mod's own registrations
-/// (<c>continuity-semantic-game-runtime-materializer.ts</c> `planFormNodesOutsideCatalogue`): a form the attached Mod
-/// does not publish is answered <c>for_each_execution_unavailable</c> and never sent. Publishing the form here is what
-/// makes that gate answer "this Mod can run it" - from the Mod, never from a Host-side list.
+/// WHY IT IS REGISTERED AT ALL. A form node is admitted, verified and journaled exactly like an action node, so the id
+/// has to be a member of the Body Program catalog
+/// (<see cref="GameBuddy.Stardew.Core.BodyPrograms.FarmhandBodyProgramCatalogProjection"/>) or the verifier refuses the
+/// node as <c>unknown_action</c> before the game thread ever sees it. Registering it here makes the id RUNNABLE. That is
+/// the whole of the registration, and <see cref="FarmhandActionLifecycle.Published"/> states the same thing: it is what
+/// that projection admits (`FarmhandBodyProgramCatalogProjection` takes Published and LiveVerified only), not a claim
+/// that a Host is offered the form.
+/// </para>
+/// <para>
+/// WHY IT IS NOT ADVERTISED. <c>hello_ack</c> is the Mod's advertisement, and the Host reads it as the registration
+/// authority, so an id in that list is a claim that a request frame can name it. Nothing can name a form the Host does
+/// not declare. Measured 2026-11-22: this registration was concatenated into the hello, and the Host had long since
+/// stopped declaring a plan form - <c>host/src/body-program-script.ts</c> `PLAN_FORM_ACTION_IDS` is empty and
+/// <c>body-program-preflight.ts</c> refuses any node carrying the form's one argument (`plan_form_not_declared`), so the
+/// only producer of a <c>for_each</c> node, the Host's plan compiler, refused it. The advertisement was a capability no
+/// frame could reach, and an advertisement is the one thing the Host may only NARROW, never correct. So
+/// <c>BridgeSession.TryAuthenticate</c> projects <see cref="FarmhandActionCatalog.Registrations"/> alone, and
+/// `AdvertisedActionReachabilityTests` fails naming every advertised id a frame cannot reach. The registration stays
+/// because it is still true that this Mod can RUN the form: the day a Host declares one, re-advertising it is one edit
+/// in the bridge and one in that test's reachability rule, and nothing in this catalog moves.
 /// </para>
 /// <para>
 /// THE WIRE SHAPE OF THE LOOP is one declared argument, <see cref="FarmhandForEachArguments.LoopArgument"/>, typed

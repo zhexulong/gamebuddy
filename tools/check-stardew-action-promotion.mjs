@@ -18,6 +18,9 @@ import {
   handlerFieldReads,
 } from "../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
 import { readModSources } from "../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
+// ONE READING OF THE HELLO'S PROJECTION for both artifacts that must agree about it: the producer that publishes the
+// source snapshot and this gate. Two readers would be two spellings of the same fact.
+import { helloProjectedRegistrationCatalogs } from "../integrations/stardew/action-development/src/action-source-projection-producer.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -282,6 +285,7 @@ export function findExperimentalActionsWithLiveEvidence({ definitions, promotion
 
 export function validatePromotionSources({
   farmhandActionDefinitions,
+  farmhandPlanFormCatalog,
   bridgeSession,
   executionManager,
   farmhandActionRouter,
@@ -377,6 +381,8 @@ export function validatePromotionSources({
       definitions
         .filter((definition) => descriptorEligibleLifecycles.has(definition.lifecycle))
         .map((definition) => definition.actionId),
+      definitions,
+      farmhandPlanFormCatalog,
     ),
   );
   if (!hasSnapshotCapabilitySurfaceProvenance(executionManager)) failures.push("snapshot_not_from_capability_surface");
@@ -469,17 +475,47 @@ export function validatePromotionSources({
 function assertUnique(values, label, failures) {
   if (new Set(values).size !== values.length) failures.push(label);
 }
-function findMissingBridgeHelloAdvertisements(source, expectedActionIds) {
-  // Registration identity is Mod-owned. The authenticated hello must project
-  // that catalog directly rather than reproduce a Host-side action list.
-  // The Mod owns TWO registration catalogs - the published actions and the plan FORMS (a form is admitted as a program
-  // node but is never dispatched as an action) - and the hello projects both through the one wire shape, so this marks
-  // the projection of both rather than of the action list alone.
-  return /FarmhandActionCatalog\.Registrations\.Concat\(FarmhandPlanFormCatalog\.Registrations\)\.Select\(\s*registration\s*=>\s*new\s+FarmhandActionRegistrationWire\(/u.test(
-    source,
-  )
-    ? []
-    : expectedActionIds.map((actionId) => `bridge_hello_registration_advertisement_missing:${actionId}`);
+/**
+ * THE HELLO'S REGISTRATION PROJECTION, READ AS CATALOGS RATHER THAN AS A SENTENCE.
+ *
+ * This used to test the projection's SPELLING - one literal sentence,
+ * `Registrations.Concat(Forms.Registrations).Select(registration => new FarmhandActionRegistrationWire(` - which is
+ * exactly the reading that hid this defect: the day the plan-form catalog stopped being advertisable, the pinned
+ * sentence kept the hello looking correct, so the gate would have gone on passing over a hello that offered a form
+ * nothing could invoke. Registration identity is still Mod-owned and the hello must still project a CATALOG rather than
+ * restate a list; what changed is that the population is the IDS. The projection is resolved to the catalogs it names
+ * (one reader, shared with the source-snapshot producer), each catalog's ids are read from its own declaration, and
+ * every action the surface publishes must be among them. A hand-written list, an empty array, or a catalog of forms
+ * resolves to none of them and fails here NAMING the actions, which is the thing an operator can act on.
+ */
+
+/**
+ * The ids one projected catalog advertises, or null when this gate cannot resolve it.
+ *
+ * A form is not an action, so it contributes no ACTION id - but it resolves rather than refusing, because a Hello that
+ * projects a form a Host now declares is a real shape and must not be reported as an unreadable projection.
+ */
+function catalogActionIds(catalog, definitions, planFormCatalog) {
+  if (catalog === "FarmhandActionCatalog.Registrations") return definitions.map((definition) => definition.actionId);
+  if (catalog === "FarmhandPlanFormCatalog.Registrations")
+    return [...planFormCatalog.matchAll(/const string \w*ActionId\s*=\s*"([^"]*)"/gu)].map((match) => match[1]);
+  return null;
+}
+
+function findMissingBridgeHelloAdvertisements(source, expectedActionIds, definitions, planFormCatalog) {
+  const catalogs = helloProjectedRegistrationCatalogs(source);
+  if (catalogs === null) return ["bridge_hello_projection_unreadable"];
+  const advertised = new Set();
+  for (const catalog of catalogs) {
+    const ids = catalogActionIds(catalog, definitions, planFormCatalog);
+    if (ids === null) return [`bridge_hello_projection_unreadable:${catalog}`];
+    for (const id of ids) advertised.add(id);
+  }
+  // A projection that resolves to no id at all is a blocked reading, not a pass over an empty set.
+  if (advertised.size === 0) return ["bridge_hello_projection_reads_no_action"];
+  return expectedActionIds
+    .filter((actionId) => !advertised.has(actionId))
+    .map((actionId) => `bridge_hello_registration_advertisement_missing:${actionId}`);
 }
 function parseModDefinitions(source) {
   const body = source.match(/Registrations\s*=\s*Array\.AsReadOnly\(new\[\]\s*\{([\s\S]*?)\}\);/)?.[1];
@@ -802,6 +838,9 @@ function validateRouterBoundary(bridgeSession, router) {
 async function main() {
   const paths = {
     farmhandActionDefinitions: resolve(ROOT, "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs"),
+    // The second registration catalog: the plan FORMS. It is read so the hello's projection can be resolved rather than
+    // matched as a sentence, and so a hello that advertises a form is not reported as unreadable.
+    farmhandPlanFormCatalog: resolve(ROOT, "integrations/stardew/src/Core/Policy/FarmhandPlanFormCatalog.cs"),
     bridgeSession: resolve(ROOT, "integrations/stardew/BridgeSession.cs"),
     executionManager: resolve(ROOT, "integrations/stardew/farmhandexecutioncontroller.cs"),
     farmhandActionRouter: resolve(ROOT, "integrations/stardew/src/Core/Routing/FarmhandActionRouter.cs"),

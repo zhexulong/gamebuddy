@@ -249,7 +249,11 @@ string? bodyProgramUnavailableReason = null,
              new FarmhandPolicyIdentityWire(publication.PolicyIdentity.Value, publication.CapabilityRevision),
              capabilitySet.EnabledActionIds,
             locale,
-             FarmhandActionCatalog.Registrations.Concat(FarmhandPlanFormCatalog.Registrations).Select(registration => new FarmhandActionRegistrationWire(
+             // THE ACTIONS ONLY. `FarmhandPlanFormCatalog` registers a form so the Body Program catalog can admit a node
+             // naming it, which is a statement about what this Mod can RUN - not one a Host can act on: the Host declares
+             // no plan form (`PLAN_FORM_ACTION_IDS` is empty) and refuses a node carrying one by name, so advertising the
+             // form here is a claim no frame could honour. `AdvertisedActionReachabilityTests` holds the line.
+             FarmhandActionCatalog.Registrations.Select(registration => new FarmhandActionRegistrationWire(
                  registration.ActionId,
                  registration.FamilyId,
                  registration.IdentityVersion,

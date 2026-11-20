@@ -386,15 +386,42 @@ function requireStringArray(value, code, allowEmpty = false) {
   return assertUnique(ids, `${code}_duplicates`);
 }
 
+/**
+ * The registration catalogs the hello's projection names, or null when the projection cannot be read.
+ *
+ * READ AS CATALOGS, NOT AS A SENTENCE. This used to test one literal line
+ * (`Registrations.Concat(Forms.Registrations).Select(registration => new FarmhandActionRegistrationWire(`), which is a
+ * reading that can only say "somebody wrote this sentence": it cannot tell a hello that offers the action catalog from
+ * a hello that offers a catalog of forms. That is how the plan-form registration stayed advertised for as long as the
+ * Host declared no form. The operands are read instead, so what is checked is which catalogs are offered - and a
+ * reformat of the projection, which changes the sentence but not the offer, is no longer a finding.
+ */
+export function helloProjectedRegistrationCatalogs(source) {
+  const expression =
+    /((?:[\w.]+\.Registrations)(?:\s*\.Concat\(\s*[\w.]+\.Registrations\s*\))*)\s*\.Select\(\s*registration\s*=>\s*new\s+FarmhandActionRegistrationWire\(/u.exec(
+      source,
+    )?.[1];
+  return expression === undefined
+    ? null
+    : Object.freeze(
+        expression
+          .replace(/\s/gu, "")
+          .split(".Concat(")
+          .map((part) => part.replace(/\)+$/u, "")),
+      );
+}
+
 function parseModProvenance(bridgeSession, executionController) {
-  // THE HELLO ADVERTISES THE MOD'S REGISTRATION CATALOGS, and there are two of them: the published ACTIONS, and the
-  // plan FORMS (`FarmhandPlanFormCatalog`) that are admitted as program nodes without being dispatchable actions. Both
-  // are Mod-owned catalogs projected through the one `FarmhandActionRegistrationWire` shape, which is what
-  // `helloAdvertisement: "catalog_projection"` means - never a hand-written list of ids in the Mod or in this producer.
-  const hello = /FarmhandActionCatalog\.Registrations\.Concat\(FarmhandPlanFormCatalog\.Registrations\)\.Select\(\s*registration\s*=>\s*new FarmhandActionRegistrationWire\(/u.test(
-    bridgeSession,
-  );
-  if (!hello) fail("hello_advertisement_missing");
+  // THE HELLO ADVERTISES THE MOD'S ACTION CATALOG, projected through the one `FarmhandActionRegistrationWire` shape,
+  // which is what `helloAdvertisement: "catalog_projection"` means - never a hand-written list of ids in the Mod or in
+  // this producer. A per-id assertion here would agree with itself: the ids this producer knows are the action
+  // catalog's ids, because the surface artifact is generated from that catalog, so the readable fact is the CATALOG the
+  // projection names. The plan forms are registered for the Body Program catalog and deliberately not offered - a form
+  // no Host declares has no frame that could name it.
+  const catalogs = helloProjectedRegistrationCatalogs(bridgeSession);
+  if (catalogs === null) fail("hello_advertisement_missing:unreadable_projection");
+  if (!catalogs.includes("FarmhandActionCatalog.Registrations"))
+    fail("hello_advertisement_missing:" + sorted(catalogs).join("+"));
   const capabilityIndex = executionController.indexOf(
     "IReadOnlyList<string> advertisedCapabilities = capabilityPublication.CapabilitySet.AdvertisedCapabilityIds;",
   );
@@ -418,7 +445,7 @@ function parseModProvenance(bridgeSession, executionController) {
   ) {
     fail("capability_provenance_branch_mismatch");
   }
-  return Object.freeze({ hello, capabilityProvenance: Object.freeze({
+  return Object.freeze({ capabilityProvenance: Object.freeze({
     snapshotCapabilitiesFromCapabilitySet: true,
     worldNotReadyFallback: true,
   }) });
