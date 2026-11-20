@@ -94,6 +94,52 @@ function snapshotFact(revision: number, gameTime = "0610"): WorldFact {
   };
 }
 
+/**
+ * The Mod's reading while a native performance owns the actor: `eventUp`, so nothing she does can be admitted.
+ *
+ * The `event` token is the wire's own (`WorldModel.KindForWire`), not a label this file invents.
+ */
+function performingSnapshot(revision: number): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "snapshot",
+    correlationId: `snapshot_${String(revision)}`,
+    revision,
+    payload: {
+      location: "Town",
+      gameTime: "1220",
+      revision,
+      actionable: false,
+      actorDispositionKind: "event",
+    },
+  };
+}
+
+/**
+ * One box of a cutscene, in the shape `round84` published eleven of: a `DialogueBox` that stops the clock, asks nothing,
+ * and carries no presentation source.
+ */
+function cutsceneBox(revision: number): WorldFact {
+  return {
+    source: "stardew_mod",
+    kind: "world_fact",
+    eventId: `modal_shown_${String(revision)}`,
+    sourceEventId: `modal_shown_${String(revision)}`,
+    correlationId: `modal_shown_${String(revision)}`,
+    revision,
+    semanticKind: "modal_presented",
+    payload: {
+      kind: "modal_presented",
+      modalType: "DialogueBox",
+      isQuestion: false,
+      responseKeys: [],
+      blocksTimePass: true,
+      text: "这里曾经是这个镇子的骄傲。",
+      textFrom: "modal",
+    },
+  };
+}
+
 /** A receipt for a step of a programme she dispatched: the \"it moved one tile\" shape, in its receipt spelling. */
 function programmeStep(state: string, revision: number): WorldFact {
   return {
@@ -259,6 +305,17 @@ test("fact_flushed_then_discarded: a flush that produced no turn is not a flush"
         // event identity on the wire (`protocol/bridge-v1.schema.json`), so no projection can be attached to a turn opened on
         // it. It waits in its window and the next turn that can present carries it (`event-pump.turn-surface.test.ts`).
         pump.enqueueFact(programmeStep("succeeded", 70), FACT_PRODUCER.adapterIngress);
+        await pump.flush(sink);
+      },
+    },
+    {
+      reason: NOT_OWED.worldLocked,
+      drive: async (pump, sink) => {
+        // A CUTSCENE'S DIALOGUE BOX: the world declares it is holding the actor (`blocksTimePass`) while a native
+        // performance absorbs her, and no projection can show an answer. `round84` woke her fifteen times with this shape
+        // in fifty seconds (`event-pump.world-locked-wake.test.ts`), and each turn's words were lost.
+        pump.enqueueFact(performingSnapshot(20), FACT_PRODUCER.adapterIngress);
+        pump.enqueueFact(cutsceneBox(20), FACT_PRODUCER.adapterIngress);
         await pump.flush(sink);
       },
     },

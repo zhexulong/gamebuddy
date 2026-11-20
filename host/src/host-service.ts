@@ -9,7 +9,13 @@ import {
   type NativeGameContentPresenter,
   PROVIDER_EMPTY_COMPLETION,
 } from "./companion-loop.js";
-import { type CompanionTurnOutcome, FACT_PRODUCER, type FactProducer, type WorldFact } from "./event-pump.js";
+import {
+  type ClosedWithNothingWaitFor,
+  type CompanionTurnOutcome,
+  FACT_PRODUCER,
+  type FactProducer,
+  type WorldFact,
+} from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
 import type {
@@ -92,6 +98,25 @@ export type PlayerInputRefusalCode =
 export type PlayerInputDisposition =
   | Readonly<{ accepted: true; turnOutcome: CompanionTurnOutcome }>
   | Readonly<{ accepted: false; reasonCode: PlayerInputRefusalCode }>;
+
+/**
+ * The named wait the idle arm has acted on: the wait, and the moment it is looked at.
+ *
+ * <p>
+ * ONE READING FOR ONE DECISION. `0` means the arm flushed (`there is something to ask the world for, so ask now`); a
+ * positive number means it read the wait's own bound and armed one look at that moment, after naming it in the idle line.
+ * The turn index is the population: a wait is looked at once, so a `0` that stays `0` after its look cannot become a flush
+ * per look.
+ * </p>
+ */
+export type HostNamedWaitLook = Readonly<{
+  /** The delivered turn the wait belongs to (`ClosedWithNothingWait.turn`). */
+  turn: number;
+  /** What the wait is: a reading, the body, or the world's own next word. */
+  waitingFor: ClosedWithNothingWaitFor;
+  /** The wait's own moment, as it read when the arm looked: `0` is "now". */
+  lookAgainInMs: number;
+}>;
 
 /** Source-owned settlement emitted only after exact Host/Mod STOP correlation. */
 export type StopSettledPayload = Readonly<{
@@ -416,6 +441,21 @@ export class CompanionHostService {
    * `#endIdle` (every real flush, and `close`), and re-armed only after it has fired.
    */
   #backlogTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * The one look the last delivered empty turn is owed, and the wait it was taken for (`#takeNamedWaitLook`).
+   *
+   * Armed only when the wait asks to be looked at LATER, cleared by `#endIdle` (every real flush, and `close`) like the
+   * backlog timer, and never re-armed for the same wait turn - which is what keeps a wait whose look has already happened
+   * from becoming a poll.
+   */
+  #lookTimer: ReturnType<typeof setTimeout> | undefined;
+  /**
+   * What this Host did about the last wait it read, or `undefined` before any empty turn named one.
+   *
+   * The wait itself is the pump's (`ClosedWithNothingWait`); this is the HOST's answer to it, recorded once per wait so
+   * "the arm read the sentence" and "the arm idled through it" are different readings rather than the same silence.
+   */
+  #namedWaitLook: HostNamedWaitLook | undefined;
   /** The retry ladder's first step, and the sentinel that says "the last attempt succeeded". */
   readonly #baseRetryDelayMs = 50;
   #retryDelayMs = this.#baseRetryDelayMs;
@@ -530,6 +570,7 @@ export class CompanionHostService {
     if (detachVoice !== undefined) void detachVoice();
     if (detachPlayback !== undefined) void detachPlayback();
     if (this.#retryTimer !== undefined) clearTimeout(this.#retryTimer);
+    this.#forgetNamedWait();
     // A closed session owes nothing and its reading is no longer waited on: ending both here is what keeps the export
     // free of spans that look like a stage the run never left.
     this.#endIdle();
@@ -671,6 +712,10 @@ export class CompanionHostService {
     if (!admission.accepted) return Object.freeze({ admission, outcome, settled: Promise.resolve() });
     this.#integrationAdmissionOpen = false;
     this.turnTracker.revoke();
+    // THE WAIT BELONGED TO THE TURN THIS STOP CANCELLED. The pump is cleared on the other side of this STOP
+    // (`loop.abortAndClear`), so its turn index starts again - and a look armed or taken for the old epoch would either
+    // fire into the new one or match a turn number that now belongs to it.
+    this.#forgetNamedWait();
     // Evidence is observational only: a congested/closed append or parent IPC
     // must make this run unverifiable, never prevent the already accepted STOP
     // from cancelling its old epoch.
@@ -1312,10 +1357,15 @@ export class CompanionHostService {
       // world to publish something - the silence round62 spent 165.8 s in. It is opened here rather than in the loop's
       // own idle transition because this is the layer that knows a retry is not already scheduled.
       if (this.#retryTimer === undefined && this.wakeReason === undefined) {
-        this.#beginIdle();
-        // THE ONE TURN NOBODY ELSE WILL ASK FOR: facts are held and the world has stopped talking. The pump owns the bound
-        // (`CARRIED_BACKLOG_BOUND_MS`); a turn is created by `flush`, and `flush` is this layer's to call.
-        this.#armBacklogWake();
+        // THE WAIT IS AN INSTRUCTION BEFORE IT IS A NAME. A pump whose empty turn waits for a reading, for the body, or
+        // for the world's next word names a moment (`ClosedWithNothingWait`); a moment of `0` means there is something to
+        // ask the world for NOW, and the flush that asks takes the place of idling.
+        if (!this.#takeNamedWaitLook()) {
+          this.#beginIdle();
+          // THE ONE TURN NOBODY ELSE WILL ASK FOR: facts are held and the world has stopped talking. The pump owns the bound
+          // (`CARRIED_BACKLOG_BOUND_MS`); a turn is created by `flush`, and `flush` is this layer's to call.
+          this.#armBacklogWake();
+        }
       }
     }
   }
@@ -1498,10 +1548,91 @@ export class CompanionHostService {
    *
    * The reason used to be the literal `nothing_owed`, which was true of both and therefore told a reader of the bundle
    * nothing: round65's `turns opened 26` at a median 35 s could not be attributed by anything the run wrote down.
+   *
+   * AND IT NOW CARRIES THE WAIT THE PUMP NAMED. `70f83b4f` gave the turn that closed with nothing a name and a moment
+   * (`ClosedWithNothingWait`) and `round84`'s silence was 741.9 s of `wait.idle (reason: "nothing_owed")`: the interval
+   * had a reason and the artifact did not. `waitingFor` and `lookAgainInMs` are the pump's own words, copied here, so the
+   * span a run exports says what the silence waited on and when it was looked at.
    */
   #beginIdle(): void {
     if (this.runTrace === undefined || this.#idleSpan !== undefined || this.#closed) return;
-    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { ...idleWaitReading() });
+    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { ...idleWaitReading(), ...this.#namedWaitLine() });
+  }
+
+  /** The pump's named wait as the idle span's own attributes; nothing when the last turn acted. */
+  #namedWaitLine(): Readonly<{ waitingFor?: ClosedWithNothingWaitFor; lookAgainInMs?: number }> {
+    const wait = this.loop.pump.closedWithNothing;
+    if (wait.waitingFor === undefined || wait.lookAgainInMs === undefined) return {};
+    return { waitingFor: wait.waitingFor, lookAgainInMs: wait.lookAgainInMs };
+  }
+
+  /**
+   * Read the wait the last delivered turn left, and DO what it says - once per wait.
+   *
+   * <p>
+   * A NAME NOBODY ACTS ON IS A GATE NOBODY CALLS. `70f83b4f` taught the pump to say what an empty turn waits for and when
+   * the pump should be asked again (`a_fresh_reading 0 · a_free_body 0 · the_world_s_next_fact 42.3 s`), and deliberately
+   * made it a reading: reading it opens no turn. This is the reader, and what it does is fixed by the pump's own number.
+   * </p>
+   * <p>
+   * `0` IS AN INSTRUCTION, NOT A COINCIDENCE. The three reading conditions (and the body, which only a fresh reading can
+   * show free) have something to DO - `#beginAgedReadingAsk` goes and asks the integration for a reading on the next flush
+   * - so the honest answer is "ask me now rather than at the next fact". `round84` is what the other answer costs: the
+   * cure spent its three asks seven times across 55 aged readings, eleven turns closed `world_stale` in front of a reader
+   * who could not see it happening, and five waits ran 741.9 s until the game's own clock ended them.
+   * </p>
+   * <p>
+   * AND A `0` THAT KEEPS RETURNING `0` IS NOT A SPIN. The wait is keyed on the turn that produced it
+   * (`ClosedWithNothingWait.turn`): the look is taken once, and a flush that opens no turn does not create a second wait -
+   * so this arm cannot be re-entered for the same empty turn, however many times the Host comes back to idle. What bounds
+   * it is the delivered turn, and only a delivered turn can change the answer.
+   * </p>
+   * <p>
+   * A `lookAgainInMs` ABOVE ZERO IS A WAIT WITH A MOMENT, and the moment is the pump's own measurement
+   * (`MEASURED_TURN_CADENCE_MS`, one measured turn) rather than a number invented here. It arms ONE look, named in the idle
+   * span above, and after that look the wait is spent: nothing is due until another turn closes with nothing.
+   * </p>
+   *
+   * @returns `true` when the look is NOW and the flush below has taken the place of idling.
+   */
+  #takeNamedWaitLook(): boolean {
+    if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return false;
+    const wait = this.loop.pump.closedWithNothing;
+    if (wait.turn === undefined || wait.waitingFor === undefined || wait.lookAgainInMs === undefined) return false;
+    if (this.#namedWaitLook?.turn === wait.turn) return false;
+    this.#namedWaitLook = Object.freeze({
+      turn: wait.turn,
+      waitingFor: wait.waitingFor,
+      lookAgainInMs: wait.lookAgainInMs,
+    });
+    if (wait.lookAgainInMs === 0) {
+      void this.flushSoon().catch(() => undefined);
+      return true;
+    }
+    this.#armNamedWaitLook(wait.lookAgainInMs);
+    return false;
+  }
+
+  /** One look at the moment the wait named. Armed once, cleared by `#endIdle`, never a repeating timer. */
+  #armNamedWaitLook(lookAgainInMs: number): void {
+    if (this.#closed || this.#lookTimer !== undefined) return;
+    this.#lookTimer = setTimeout(() => {
+      this.#lookTimer = undefined;
+      void this.flushSoon().catch(() => undefined);
+    }, lookAgainInMs);
+  }
+
+  /** The named wait and its look belong to a turn the session no longer has (a STOP, and `close`). */
+  #forgetNamedWait(): void {
+    this.#namedWaitLook = undefined;
+    this.#disarmNamedWaitLook();
+  }
+
+  /** The look is spent: it fired, another turn replaced the wait, or the session is ending. */
+  #disarmNamedWaitLook(): void {
+    if (this.#lookTimer === undefined) return;
+    clearTimeout(this.#lookTimer);
+    this.#lookTimer = undefined;
   }
 
   #endIdle(): void {
@@ -1510,6 +1641,16 @@ export class CompanionHostService {
     // Any real flush reaches this line, so a backlog timer set for a silence cannot outlive the silence: whatever just
     // happened is the thing that will read the facts, or the pump will report a fresh bound on the next idle.
     this.#disarmBacklogWake();
+    // The named wait's look is spent by the flush that reaches here: either it WAS the look, or another turn has taken the
+    // place of the one the wait belonged to.
+    this.#disarmNamedWaitLook();
+  }
+
+  /**
+   * The wait the last empty turn left, and what this Host did about it (`#takeNamedWaitLook`), or `undefined` before any.
+   */
+  public get namedWaitLook(): HostNamedWaitLook | undefined {
+    return this.#namedWaitLook;
   }
 
   /**

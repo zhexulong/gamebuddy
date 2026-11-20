@@ -467,6 +467,11 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: a turn that act
     turnWithoutActionShape("world_fact", TURN_WITHOUT_ACTION_REASON.nothingPending),
     "the empty turn is named by its opener and its condition",
   );
+  assert.equal(
+    pump.closedWithNothing.turn,
+    pump.turnAccount.opened,
+    "and the wait belongs to the turn that just settled: the unit a reader acts on once per (see `event-pump.ts`)",
+  );
 
   const working = {
     async deliver(): Promise<"completed"> {
@@ -482,7 +487,7 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: a turn that act
   assert.equal(flushed.kind, "opened", `the settlement opens the turn that ends the wait (${flushed.kind})`);
   assert.deepEqual(
     { ...pump.closedWithNothing },
-    { shape: undefined, waitingFor: undefined, lookAgainInMs: undefined },
+    { shape: undefined, waitingFor: undefined, lookAgainInMs: undefined, turn: undefined },
     "a turn that acted leaves no wait to name",
   );
 });

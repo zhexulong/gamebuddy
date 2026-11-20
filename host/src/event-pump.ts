@@ -376,12 +376,33 @@ export const NOT_OWED = Object.freeze({
    * shape is being invited to speak into nothing.
    * </p>
    * <p>
-   * ONE SHAPE IS NEVER ANSWERED THIS WAY: a fact that declares the world is waiting on it (`heldWorldOf`) opens its own
-   * turn and states the block in its prompt. `round76` measured what the old rule did with 29 of them in ten minutes -
-   * `no_surface_for 95`, `lost 52`, and 610 seconds of a menu nobody answered.
+   * ONE SHAPE IS NEVER ANSWERED THIS WAY WITHOUT A READING: a fact that declares the world is waiting on it
+   * (`heldWorldOf`) opens its own turn and states the block in its prompt. `round76` measured what the old rule did with
+   * 29 of them in ten minutes - `no_surface_for 95`, `lost 52`, and 610 seconds of a menu nobody answered. The one
+   * exception is `worldLocked`, where the world is holding the actor with a native performance and the fact cannot be
+   * shown: the turn would be text nobody sees AND a body that cannot move.
    * </p>
    */
   noSurface: "no_surface_for",
+  /**
+   * The flush held a fact that declares the world is holding her, and THE WORLD IS PERFORMING: a native performance has
+   * absorbed the actor, so nothing this turn could do would be admitted and nothing it said could be shown.
+   *
+   * <p>
+   * MEASURED 2026-11-20 (`round84`, the cutscene at day 4 12:20). Eleven `modal_presented (DialogueBox,
+   * isQuestion:false, blocksTimePass:true)` facts arrived 1-4 s apart, each declaring the world held and each with no
+   * presentation lease, and every one bought a turn - `held world opened`, then speech, then `lost 21
+   * {no_presentation_lease: 21}` of 91 produced. The prompts in that window each said `持有: event · 可由指令接管: 否 ·
+   * 下一步: 下一回合`: the actor was in a cutscene, so neither the action nor the line existed.
+   * </p>
+   * <p>
+   * THE FACT IS HELD, NOT DROPPED, exactly as `no_surface_for` holds its own: it keeps its place in its window, its
+   * `CarryTicket` proves where it went, and the turn that opens when the performance ends is the batch that states it.
+   * What this reason adds is that the answer names the PERFORMANCE rather than the surface, because those are different
+   * obstacles with different next steps - one waits for a projection, the other waits for the game to finish.
+   * </p>
+   */
+  worldLocked: "world_locked",
   /**
    * The flush held news she may open a turn for, and her OWN PLAN still has nodes to get through: the answer that plan
    * is about to give is the batch this news travels in.
@@ -567,6 +588,16 @@ export type ClosedWithNothingWait = Readonly<{
   waitingFor: ClosedWithNothingWaitFor | undefined;
   /** When the pump is asked again: `0` means there is something to ask the world for, so ask now. */
   lookAgainInMs: number | undefined;
+  /**
+   * The delivered turn this wait belongs to (`TurnAccount.opened`'s own index); `undefined` when the last turn acted.
+   *
+   * <p>
+   * THE UNIT A READER ACTS ONCE PER, and the half `70f83b4f` could leave out because nothing read the wait yet. Two
+   * consecutive turns can close with the same `shape`, so the shape is not an identity - and a `lookAgainInMs` of `0`
+   * stays `0` until another turn is delivered, so a caller that flushed on every `0` it read would flush in a loop that
+   * only its own guard could stop. The index is what makes "this wait has already been looked at" a fact.
+   */
+  turn: number | undefined;
 }>;
 
 /** The ONE reading of what a turn that closed with `reason` waits for - the counter's condition, not a second guess. */
@@ -2395,7 +2426,7 @@ export class CompanionEventPump {
    * are one moment rather than two that can drift. `undefined` is the honest reading for a pump whose last turn acted.
    */
   #lastClosedWithNothing:
-    | Readonly<{ shape: TurnWithoutActionShape; reason: TurnWithoutActionReason; atMs: number }>
+    | Readonly<{ shape: TurnWithoutActionShape; reason: TurnWithoutActionReason; atMs: number; turn: number }>
     | undefined;
   /**
    * Turns that produced work and delivered no speech, one count per opener, beside `#emptyTurns`.
@@ -3347,6 +3378,12 @@ export class CompanionEventPump {
    * world itself declares it will not move until the fact is answered (`heldWorldOf`).
    *
    * <p>
+   * AND THE WORLD CAN BE THE ONE HOLDING HER. A declaration buys a turn so the block can be ANSWERED; while a native
+   * performance owns the actor nothing can be, so that turn is held until the performance ends
+   * (`#waitsForThePerformanceToEnd`).
+   * </p>
+   *
+   * <p>
    * THE HELD WORLD IS NOT A HOLE IN THE SURFACE RULE, IT IS THE RULE'S OTHER SIDE. `9be6af14` removed the turns that could
    * only produce text nobody is shown, and that is right for a fact whose whole product is a line. A menu that has stopped
    * the clock is the opposite product: the turn exists to be ANSWERED, by an action (`dismiss_modal`, `answer_dialogue`),
@@ -3396,7 +3433,49 @@ export class CompanionEventPump {
   #opensTurn(fact: WorldFact): boolean {
     if (!this.#owesTurn(fact) || this.#isRestatement(fact)) return false;
     if (!(isDueFact(fact) || this.#canPresent(fact) || heldWorldOf(fact).length > 0)) return false;
+    if (this.#waitsForThePerformanceToEnd(fact)) return false;
     return !this.#waitsForThePlanToAnswer(fact);
+  }
+
+  /**
+   * Whether this fact's only claim to a turn is a world-lock that cannot be shown while a native performance holds her.
+   *
+   * <p>
+   * MEASURED 2026-11-20 (`round84`, the cutscene at day 4 12:20): eleven `modal_presented (DialogueBox, isQuestion:false,
+   * blocksTimePass:true)` facts arrived 1-4 s apart, each declaring the world held, each with no presentation lease - and
+   * each one woke her. Every turn spoke (`turn_closed_without_action`), every bubble was withheld (`lost 21
+   * {no_presentation_lease: 21}` of 91), and the prompts between `13:57:58` and `13:59:33` all carried the same body line:
+   * `持有: event · 可由指令接管: 否 · 下一步: 下一回合`. A wake with neither speech nor action available is not a turn.
+   * </p>
+   * <p>
+   * THE PERFORMANCE IS THE MOD'S OWN WORD, not a rule about dialogue boxes. `actorDispositionKind` is `event` exactly
+   * while a native performance absorbs the actor - `WorldModel.Classify` answers it for `eventUp` and for a mounted
+   * minigame, "same kind as a cutscene because the countermeasure is the same and no tool can shorten it" - and
+   * `game-world-vocabulary.ts` gives that kind no way forward but the world's own next turn (`takeover: false`). A MOUNTED
+   * MENU IS A DIFFERENT KIND (`modal`), which is why `round76`'s `DialogueBox` keeps its turn: the answer to it is an
+   * action (`answer_dialogue`, `dismiss_modal`), not a line, so the surface question never applied to it.
+   * </p>
+   * <p>
+   * IT HOLDS THE TURN, NOT THE FACT. The fact is answered `worldLocked`, keeps its place in its window, and rides the turn
+   * the world's next word opens; a performance ends by itself, so the wait has a forward path that a `no_surface_for` fact
+   * does not. THE PLAYER'S OWN WORD COMES NOWHERE NEAR THIS: `#opening` answers `player_input` before it reads a fact, so a
+   * person who speaks during a cutscene is still answered.
+   * </p>
+   */
+  #waitsForThePerformanceToEnd(fact: WorldFact): boolean {
+    if (heldWorldOf(fact).length === 0 || this.#canPresent(fact) || isDueFact(fact)) return false;
+    return this.#nativePerformancePlaying();
+  }
+
+  /**
+   * Whether the world is in the middle of something only it can finish, in the Mod's own words.
+   *
+   * `event` is one member of the wire's closed `actorDispositionKind` set (`WorldModel.KindForWire`), and the reading it
+   * comes from is the one the empty turn already asks (`#bodyHeld` reads the same snapshot): a session with no reading at
+   * all answers `false`, because "nobody looked" is not "the world is performing".
+   */
+  #nativePerformancePlaying(): boolean {
+    return this.#lastSnapshot?.payload.actorDispositionKind === "event";
   }
 
   /**
@@ -3632,7 +3711,18 @@ export class CompanionEventPump {
         producedBy: this.#producedBy.get(factSlotKey(fact)),
       });
     }
-    // THE SURFACE FIRST, because it is the one answer here that changed WHICH turn exists: a decision fact that cannot present
+    // THE LOCK NEXT, and BEFORE the surface, because the surface is the wrong answer for it: a fact that declares the
+    // world is holding her normally opens its own turn whatever the surface can show, so while a native performance owns
+    // the actor the obstacle is the performance, not the projection.
+    for (const fact of facts) {
+      if (!this.#waitsForThePerformanceToEnd(fact)) continue;
+      if (!this.#owesTurn(fact) || this.#isRestatement(fact)) continue;
+      return Object.freeze({
+        decision: NOT_OWED.worldLocked,
+        producedBy: this.#producedBy.get(factSlotKey(fact)),
+      });
+    }
+    // THE SURFACE NEXT, because it is the one answer here that changed WHICH turn exists: a decision fact that cannot present
     // is not a fact she has already been told (the re-statement below) and not a step of a programme she dispatched (the two
     // reviews after it) - it is news the surface has nowhere to put, and `#opening` declined it for exactly that reason.
     for (const fact of facts) {
@@ -4890,7 +4980,7 @@ export class CompanionEventPump {
       this.#emptyTurnsByShape[shape] += 1;
       // THE SAME MOMENT ANSWERS THE NEXT QUESTION (`closedWithNothing`): this is the turn the wait after it belongs to, so
       // the name and the count cannot describe two different turns.
-      this.#lastClosedWithNothing = Object.freeze({ shape, reason, atMs: this.#now() });
+      this.#lastClosedWithNothing = Object.freeze({ shape, reason, atMs: this.#now(), turn: this.#openedTurns });
     } else {
       this.#lastClosedWithNothing = undefined;
     }
@@ -4925,13 +5015,15 @@ export class CompanionEventPump {
    */
   public get closedWithNothing(): ClosedWithNothingWait {
     const wait = this.#lastClosedWithNothing;
-    if (wait === undefined) return Object.freeze({ shape: undefined, waitingFor: undefined, lookAgainInMs: undefined });
+    if (wait === undefined)
+      return Object.freeze({ shape: undefined, waitingFor: undefined, lookAgainInMs: undefined, turn: undefined });
     return Object.freeze({
       shape: wait.shape,
       waitingFor: closedWithNothingWaitFor(wait.reason),
       // A bound that has passed reads `0` rather than a negative number: "the look is due" is a state, and `undefined`
       // already means something else (no wait at all).
       lookAgainInMs: Math.max(0, closedWithNothingLookAgainMs(wait.reason) - (this.#now() - wait.atMs)),
+      turn: wait.turn,
     });
   }
 
