@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
@@ -26,6 +27,8 @@ import {
   createStardewChildEnvironment,
   STARDEW_CHILD_ENVIRONMENT_MAX_BYTES,
 } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import { readStardewGuardianArmBinding } from "../../games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import { probeWindowsStardewGuardianObjects } from "../../composition/stardew/stardew-guardian-object-presence.js";
 import { bindWindowsStaleLockReclaimer } from "../../path-lock.js";
 import { createTestWindowsStaleLockReclaimer } from "../../windows-stale-lock-reclaimer/index.test-support.js";
 import { assertStatementOrder, functionBody } from "../../test-support/function-body-order.test-support.js";
@@ -415,8 +418,6 @@ test("desktop bootstrap helper serves a second attempt after a settle on the sam
   );
   // Attempt 2 is a different attempt, not attempt 1 resumed: its correlation and every arm
   // binding name differ, so nothing of attempt 1 is reachable from it (ADR-0015 §4.2).
-  const armFrameOf = (request: Record<string, unknown>): Record<string, unknown> =>
-    JSON.parse(Buffer.from(String(request.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
   const firstArmFrame = armFrameOf(result.sessions[0]![1]!);
   const secondArmFrame = armFrameOf(result.sessions[1]![1]!);
   assert.notEqual(
@@ -445,6 +446,243 @@ test("desktop bootstrap helper serves a second attempt after a settle on the sam
     null,
     `pid ${String(attempts[0]!.pid)} did not survive its two attempts (exit ${String(result.exitCodeWhileServing)})`,
   );
+});
+
+/**
+ * The other half of "a second attempt is safe": a settled attempt leaves nothing the next one can pick
+ * up (ADR-0015 §4.2, §9.4 U5 items 3 and 4).
+ *
+ * What protects attempt 2, in the order a reader needs it:
+ *
+ * 1. The settled attempt's BINDING is unreservable. Its durable owner record is no longer `reserved`, so
+ *    `readStardewGuardianArmBinding` refuses attempt 1's own binding with
+ *    `stardew_bootstrap_guardian_arm_binding_mismatch` (`stardew-private-bootstrap-composer.core.internal.ts:5718-5742`),
+ *    and no launch can be authorized against it. Measured on the record itself in the test below.
+ * 2. A frame AFTER a session's arm must carry that arm's correlation
+ *    (`DesktopHostBootstrapBroker.ValidateTransition`: `:464` `correlation != next`), and one session
+ *    takes exactly one arm (`:458-460`). The peer below applies both because they are the broker's own
+ *    rules; what is asserted is the Host's answer when one of them is refused.
+ * 3. The native Guardian arms once per process (`Program.cs:82-87`; `GuardianPrivateLaunchIngress`
+ *    `ReceiveArmAsync` returns nothing on a second arm) and the broker creates one Guardian per attempt,
+ *    so there is never a second arm inside one Guardian. That one is a source reading: the native
+ *    Guardian is not this suite's subject.
+ * 4. And the asymmetry that makes the three above necessary: an arm frame CARRYING a settled attempt's
+ *    correlation is ACCEPTED on a new session, because the arm frame is what establishes the
+ *    correlation and `armed`/`correlation` are per session and cleared at settle (`TakeAttempt`,
+ *    `:323-334`). ADR-0015 §4.2 used to read as if that frame were refused. It is not: what stops a
+ *    settled attempt's authority is 1, not a replay refusal, and this scenario measures the accepted
+ *    arm instead of pretending otherwise.
+ *
+ * The objects are the OS's answer through the production probe, not this fixture's belief: attempt 1's
+ * three names are its own arm frame's, the peer holds them as real named objects while the attempt is
+ * live, and they are read once before the settle and once after the Guardian that owned them ended.
+ * Without the first reading the second would only prove that the probe never looked. The probe's
+ * contract names two objects (`playerJob`, `lease`); the third, attempt 1's ai Job, is asked through the
+ * same production probe with its name in the Job slot and only that slot's answer read - the contract is
+ * not widened, and `OpenJobObjectW` does not care which of the attempt's two Jobs a caller calls it.
+ *
+ * `instanceGeneration: 2` is the coordinator's durable reading and is proved there
+ * (`stardew-production-lifecycle-coordinator-player-host-exit.internal.test.ts`, `baa163ce`). At the wire
+ * the equivalent is what this asserts: the next attempt arrives on a fresh authenticated session with a
+ * new guardian instance and none of attempt 1's four binding names.
+ */
+test("a settled attempt leaves no named object behind, and its correlation is refused where it would spend authority", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  if (!existsSync(GUARDIAN_OBJECT_HOLDER))
+    return t.skip(
+      `not measured: ${GUARDIAN_OBJECT_HOLDER} is absent - build it with \`node scripts/build-windows-bootstrap-guardian.mjs\``,
+    );
+  const result = await runWireFixture("settle-leaves-nothing");
+
+  // Four authenticated sessions: attempt 1 (a whole attempt), attempt 1's correlation replayed, the fresh
+  // attempt with a frame carrying the settled attempt's correlation after it, and the fresh attempt on
+  // the session the one-arm-per-session rule left it.
+  assert.deepEqual(
+    result.sessions.map((session) => session.map((request) => request.operation)),
+    [
+      ["hello", "arm_attempt", "launch_role", "contain_role"],
+      ["hello", "arm_attempt"],
+      ["hello", "arm_attempt", "contain_role"],
+      ["hello", "arm_attempt", "arm_attempt"],
+    ],
+  );
+  // The peer refused exactly two frames, and each is the rule that refused it.
+  assert.deepEqual(
+    result.peerRefusals,
+    ["contain_role:correlation_mismatch", "arm_attempt:already_armed"],
+    `the peer refused ${JSON.stringify(result.peerRefusals)}`,
+  );
+  const refusalCode = "desktop_runtime_bootstrap_unavailable:guardian_session_closed";
+  assert.match(
+    result.stderr,
+    /wire_replayed_arm:armed/u,
+    "a settled attempt's arm frame was refused by this peer - ADR-0015 §4.2's old reading",
+  );
+  assert.match(result.stderr, /wire_second_arm:armed/u, "the fresh attempt did not arm on its own session");
+  assert.equal(
+    /wire_stale_correlation:refused:(\S+)/u.exec(result.stderr)?.[1],
+    refusalCode,
+    `a frame after the arm carrying the settled attempt's correlation must be refused, and the session ends with it: ${result.stderr}`,
+  );
+  assert.match(result.stderr, /wire_fresh_session_arm:armed/u, "the next session did not arm");
+  assert.equal(
+    /wire_second_arm_in_session:refused:(\S+)/u.exec(result.stderr)?.[1],
+    refusalCode,
+    `one session takes one arm: ${result.stderr}`,
+  );
+  assert.equal(
+    result.exitCodeWhileServing,
+    null,
+    `the Host did not survive all four sessions (exit ${String(result.exitCodeWhileServing)})`,
+  );
+
+  // The names probed are the ones attempt 1's own arm frame carries, not a second spelling of them.
+  const objects = result.attemptObjects;
+  assert.ok(objects !== undefined, "the fixture took no reading of attempt 1's objects");
+  const firstArmFrame = armFrameOf(result.sessions[0]![1]!);
+  const probed = [objects.binding.leaseName, objects.binding.playerJobName, objects.binding.aiJobName];
+  assert.deepEqual(
+    probed,
+    [firstArmFrame.leaseName, firstArmFrame.playerJobName, firstArmFrame.aiJobName],
+    "the objects probed must be the names attempt 1's arm frame carries",
+  );
+  // The next attempt is a fresh reservation: a new guardian instance and none of attempt 1's four names.
+  const secondArmFrame = armFrameOf(result.sessions[2]![1]!);
+  assert.notEqual(result.sessions[2]![1]!.guardianInstanceId, result.sessions[0]![1]!.guardianInstanceId);
+  for (const key of ["revision", "leaseName", "playerJobName", "aiJobName"] as const)
+    assert.notEqual(secondArmFrame[key], firstArmFrame[key], `the fresh attempt reused attempt 1's ${key}`);
+  // The replay really did carry attempt 1's own correlation and binding - otherwise the acceptance
+  // above would be a statement about a different attempt.
+  assert.equal(result.sessions[1]![1]!.attemptId, result.sessions[0]![1]!.attemptId);
+  assert.equal(result.sessions[1]![1]!.guardianInstanceId, result.sessions[0]![1]!.guardianInstanceId);
+  const replayArmFrame = armFrameOf(result.sessions[1]![1]!);
+  assert.deepEqual(
+    [replayArmFrame.leaseName, replayArmFrame.playerJobName, replayArmFrame.aiJobName],
+    [firstArmFrame.leaseName, firstArmFrame.playerJobName, firstArmFrame.aiJobName],
+  );
+
+  if ([...Object.values(objects.whileArmed), ...Object.values(objects.afterSettle)].includes("unmeasured"))
+    return t.skip(
+      "not measured: the in-box PowerShell probe could not run on this machine, so the OS was never asked about the attempt's objects",
+    );
+  // The negative that keeps the reading from being theatre: the same probe, on the same names, while the
+  // attempt was live.
+  assert.deepEqual(
+    objects.whileArmed,
+    { lease: "opened", playerJob: "opened", aiJob: "opened" },
+    "before the settle the attempt's three named objects must be openable; a not_found afterwards would otherwise only prove the probe never looked",
+  );
+  // And after the settle there is nothing left to open: the Lease mutex and both role Jobs die with the
+  // Guardian that owned them.
+  assert.deepEqual(
+    objects.afterSettle,
+    { lease: "not_found", playerJob: "not_found", aiJob: "not_found" },
+    "a settled attempt left a named object behind, so the next attempt could meet it",
+  );
+});
+
+/**
+ * The refusal that actually stops a settled attempt's binding from being spent twice.
+ *
+ * The arm facts a launch needs are read from the durable owner record, and that read accepts one state
+ * only: `reserved` (`readStardewGuardianArmBinding`). One record, one binding, two states - the state a
+ * live attempt leaves and the state a settled one leaves - so the difference the refusal rests on is the
+ * state and nothing else in the fixture.
+ */
+test("a settled attempt's arm binding is unreservable: the same read succeeds while it is reserved and refuses after it is not", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only durable owner record and its path boundary");
+  const root = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-settled-binding-"));
+  const transactionDirectory = join(root, "stardew-private-bootstrap", "bootstrap-settled");
+  const ownerPath = join(transactionDirectory, "owner.json");
+  const binding = mintGuardianBinding();
+  const guardian = Object.freeze({
+    bindingRevision: binding.revision,
+    guardianInstanceId: randomUUID(),
+    guardianEpoch: 1,
+    leaseName: binding.leaseName,
+    playerJobName: binding.playerJobName,
+    aiJobName: binding.aiJobName,
+  });
+  // One strict v4 owner record; only the four state fields and the record revision differ between the
+  // two readings, and they are the spellings the record's own declaration carries (`reserved` while the
+  // attempt may still arm, `contained` once it settled).
+  const ownerRecord = (
+    states: Readonly<{
+      state: string;
+      guardianState: string;
+      playerHostState: string;
+      aiClientState: string;
+      ownerRecordRevision: number;
+    }>,
+  ) =>
+    JSON.stringify({
+      schema: "gamebuddy-stardew-private-bootstrap-owner/v4",
+      bootstrapId: "bootstrap-settled",
+      playerId: "player-wire",
+      companionId: "companion-wire",
+      guardian,
+      ownerRecordRevision: states.ownerRecordRevision,
+      state: states.state,
+      guardianState: states.guardianState,
+      playerHostState: states.playerHostState,
+      aiClientState: states.aiClientState,
+      recoveryInstanceId: null,
+      playerHost: { kind: "launch_reserved", launchGeneration: "generation-1" },
+      aiClient: { kind: "launch_reserved", launchGeneration: "generation-1" },
+      expiresAtMs: Date.now() + 600_000,
+      cleanupDisposition: "pending",
+      managedPaths: ["owner.json"],
+    });
+  const read = (expectedOwnerRecordRevision: number) =>
+    readStardewGuardianArmBinding({
+      ownerPath,
+      containmentRoot: root,
+      bootstrapId: "bootstrap-settled",
+      playerId: "player-wire",
+      companionId: "companion-wire",
+      expectedRevision: binding.revision,
+      expectedOwnerRecordRevision,
+      nowMs: Date.now(),
+    });
+  try {
+    await mkdir(transactionDirectory, { recursive: true });
+    await writeFile(
+      ownerPath,
+      ownerRecord({
+        state: "reserved",
+        guardianState: "reserved",
+        playerHostState: "reserved",
+        aiClientState: "reserved",
+        ownerRecordRevision: 1,
+      }),
+      "utf8",
+    );
+    // While the attempt is live its own names ARE the arm facts - which is what makes the second reading
+    // a statement about the same binding rather than about a name this test chose.
+    const reserved = await read(1);
+    assert.deepEqual(
+      [reserved.leaseName, reserved.playerJobName, reserved.aiJobName],
+      [binding.leaseName, binding.playerJobName, binding.aiJobName],
+    );
+    await writeFile(
+      ownerPath,
+      ownerRecord({
+        state: "contained",
+        guardianState: "contained",
+        playerHostState: "contained",
+        aiClientState: "contained",
+        ownerRecordRevision: 2,
+      }),
+      "utf8",
+    );
+    await assert.rejects(
+      () => read(2),
+      /stardew_bootstrap_guardian_arm_binding_mismatch/,
+      "a settled attempt's binding must not be readable for a launch, so nothing of it can be spent again",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("desktop bootstrap helper rejects when guardian peer disconnects", async (t) => {
@@ -632,6 +870,141 @@ function desktopBrokerWireBound(): number {
   return MAX_GUARDIAN_WIRE_BYTES;
 }
 
+/**
+ * The two objects one attempt's arm binding names beyond its revision, plus the third one the binding
+ * carries. They are the names a Guardian creates at arm: `GuardianLease.Create` makes the lease mutex
+ * and `WindowsJobOwner.Create` makes the two role Jobs.
+ */
+type WireGuardianNames = Readonly<{ leaseName: string; playerJobName: string; aiJobName: string }>;
+type WireGuardianDesignation = WireGuardianNames & Readonly<{ revision: string }>;
+
+/**
+ * The three objects of one arm binding, as the OS answered about them through the production probe.
+ * `unmeasured` is the probe being unable to run, never an answer about an object.
+ */
+type WireGuardianObjectAnswers = Readonly<{ lease: string; playerJob: string; aiJob: string }>;
+
+/** The tokenless arm body the Host wrote into one session frame: the binding facts it carries. */
+function armFrameOf(request: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(Buffer.from(String(request.privateFrame), "base64url").toString("utf8")) as Record<string, unknown>;
+}
+
+/**
+ * Mints one attempt's arm binding names the way the attempt mints them: the production composition
+ * draws every name from `Local\\GameBuddy-${randomUUID()}` (`createStardewPrivateBootstrapProductionCore`),
+ * and `createGuardianBinding` refuses a binding whose three names are not distinct. Minted rather than
+ * fixed so an object an earlier run left behind can never make a presence reading ambiguous, and so the
+ * reading is of THESE names rather than of two strings hard-coded next to the assertion.
+ */
+function mintGuardianBinding(): WireGuardianDesignation {
+  return Object.freeze({
+    revision: randomUUID(),
+    leaseName: `Local\\GameBuddy-${randomUUID()}`,
+    playerJobName: `Local\\GameBuddy-${randomUUID()}`,
+    aiJobName: `Local\\GameBuddy-${randomUUID()}`,
+  });
+}
+
+/**
+ * The native holder that owns a Guardian's named objects in this suite.
+ *
+ * `--hold-mutex` creates the named lease mutex and `--hold-job` creates the named Job and joins the
+ * holder to it: the same two creations a real Guardian performs at arm, from the fixture that
+ * `stardew-guardian-object-presence.test.ts` measures the production probe against. Built by
+ * `node scripts/build-windows-bootstrap-guardian.mjs`.
+ */
+const GUARDIAN_OBJECT_HOLDER = resolve(
+  packageRoot,
+  "native",
+  "windows-bootstrap-guardian",
+  ".dist",
+  "fixtures",
+  "RoleRootFixture.exe",
+);
+const GUARDIAN_OBJECT_HOLDER_TIMEOUT_MS = 30_000;
+
+type WireGuardianObjectHolders = Readonly<{ ready: Promise<void>; end(): Promise<void> }>;
+
+/**
+ * Creates one attempt's three named objects and holds them, as its Guardian does.
+ *
+ * Two holders because one holder process creates one Job and one mutex while the binding names three
+ * objects. `ready` resolves once both holders reported the creation, so the arm they belong to is only
+ * answered after the objects exist; `end` kills exactly the two processes this fixture started and
+ * waits for the OS to report both exits, because an absence reading means nothing before the holders
+ * are gone - a named Job dies with the last handle open on it.
+ */
+function holdGuardianObjects(names: WireGuardianNames): WireGuardianObjectHolders {
+  const reports = [0, 1].map(() => join(tmpdir(), `gamebuddy-wire-objects-${process.pid}-${randomUUID()}.txt`));
+  const holders = [
+    spawn(
+      GUARDIAN_OBJECT_HOLDER,
+      ["--hold-mutex", names.leaseName, "--hold-job", names.playerJobName, "--signal", reports[0]!],
+      { shell: false, windowsHide: true, stdio: "ignore" },
+    ),
+    spawn(GUARDIAN_OBJECT_HOLDER, ["--hold-job", names.aiJobName, "--signal", reports[1]!], {
+      shell: false,
+      windowsHide: true,
+      stdio: "ignore",
+    }),
+  ];
+  const ready = (async () => {
+    for (const [index, report] of reports.entries()) await waitForHolderReport(report, holders[index]!);
+  })();
+  ready.catch(() => undefined);
+  return Object.freeze({
+    ready,
+    async end() {
+      await Promise.all(
+        holders.map(async (holder) => {
+          if (holder.exitCode !== null) return;
+          const exited = new Promise<void>((resolveExit) => holder.once("close", () => resolveExit()));
+          holder.kill();
+          await exited;
+        }),
+      );
+      await Promise.all(reports.map((report) => rm(report, { force: true })));
+    },
+  });
+}
+
+/** Waits for one holder's readiness report; a holder that exited first is a blocked measurement, named. */
+async function waitForHolderReport(report: string, holder: ChildProcess): Promise<void> {
+  const deadline = Date.now() + GUARDIAN_OBJECT_HOLDER_TIMEOUT_MS;
+  for (;;) {
+    try {
+      await readFile(report, "utf8");
+      return;
+    } catch {
+      if (holder.exitCode !== null)
+        throw new Error(`windows_guardian_object_holder_exited_before_report:${String(holder.exitCode)}`);
+      if (Date.now() > deadline) throw new Error("windows_guardian_object_holder_report_timeout");
+      await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+    }
+  }
+}
+
+/**
+ * The OS's answer about the three objects one attempt's arm binding names.
+ *
+ * The probe's contract names the two objects the durable reconcile decides on (`playerJob`, `lease`),
+ * and widening that contract is the game layer's to do, not this suite's. The binding names a third
+ * object (`aiJobName`), so it is asked through the SAME production probe with the ai Job in the Job
+ * slot and only that answer is read: `OpenJobObjectW` opens a name and does not care which of the
+ * attempt's two Jobs the caller calls it.
+ */
+async function readAttemptObjects(names: WireGuardianNames): Promise<WireGuardianObjectAnswers> {
+  const roles = await probeWindowsStardewGuardianObjects({
+    leaseName: names.leaseName,
+    playerJobName: names.playerJobName,
+  });
+  const ai = await probeWindowsStardewGuardianObjects({
+    leaseName: names.leaseName,
+    playerJobName: names.aiJobName,
+  });
+  return Object.freeze({ lease: roles.lease, playerJob: roles.playerJob, aiJob: ai.playerJob });
+}
+
 test("desktop bootstrap helper rejects malformed arm input before writing arm_attempt", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("malformed-arm");
@@ -775,6 +1148,7 @@ async function runWireFixture(
     | "settled-session"
     | "settled-session-owner-quit"
     | "settle-and-rearm"
+    | "settle-leaves-nothing"
     | "composition-failure"
     | "ack-write-failure"
     | "termination-failure"
@@ -821,6 +1195,19 @@ async function runWireFixture(
    * attempt. `undefined` when the scenario reads no surface of its own.
    */
   stateReadAfterLoss: Readonly<{ status: number; body: string }> | undefined;
+  /**
+   * The OS's answer about the three objects attempt 1's arm binding names, read while that attempt was
+   * live and again once its settle had ended it. `undefined` when the scenario reads no objects.
+   */
+  attemptObjects:
+    | Readonly<{
+        binding: WireGuardianNames;
+        whileArmed: WireGuardianObjectAnswers;
+        afterSettle: WireGuardianObjectAnswers;
+      }>
+    | undefined;
+  /** The frames this peer refused under the broker's own transition rules, named by what broke. */
+  peerRefusals: readonly string[];
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
@@ -874,6 +1261,23 @@ async function runWireFixture(
   };
   const moduleDirectory = join(rootLayout.programRoot, "generation");
   const endpoint = `\\\\.\\pipe\\GameBuddy.HostGuardian.${bootstrapId}`;
+  // The two attempts' arm bindings. Every scenario draws them the way a reservation does, so no
+  // Guardian object name in this suite is a literal an assertion can be written against.
+  const firstBinding = mintGuardianBinding();
+  const secondBinding = mintGuardianBinding();
+  // The one place attempt 1 may settle from: the attempt reads it after `contain_role`, and this
+  // harness writes it once it has read the attempt's objects. A settle gate rather than a sleep,
+  // because a reading taken after the settle would be a reading of the harness, not of the attempt.
+  const probeGate = join(fixtureRoot, "probe-gate.txt");
+  let objectHolders: WireGuardianObjectHolders | undefined;
+  let objectsBinding: WireGuardianNames | undefined;
+  let objectsWhileArmed: WireGuardianObjectAnswers | undefined;
+  let objectsAfterSettle: WireGuardianObjectAnswers | undefined;
+  let firstArmAckResolve!: () => void;
+  const firstArmAck = new Promise<void>((resolveAck) => {
+    firstArmAckResolve = resolveAck;
+  });
+  const peerRefusals: string[] = [];
   const requests: Record<string, unknown>[] = [];
   /**
    * Every frame the peer READ, with its exact size including the newline.
@@ -917,6 +1321,8 @@ async function runWireFixture(
     // Host says on connection 2 is a fact about its own attempt boundary.
     const session: Record<string, unknown>[] = [];
     sessions.push(session);
+    /** The correlation this session's own arm established, as `ValidateTransition` keeps it. */
+    let armedCorrelation: string | undefined;
     socket.once("close", () => {
       guardianClosed = true;
       guardianClosedResolve();
@@ -942,6 +1348,43 @@ async function runWireFixture(
         session.push(request);
         const operation = request.operation;
         frameBytes.push(Object.freeze({ operation: String(operation), bytes: newline + 1 }));
+        if (scenario === "settle-leaves-nothing" && operation !== "hello") {
+          // The rules `DesktopHostBootstrapBroker.ValidateTransition` (:458-470) applies, in the order it
+          // applies them: one arm per session (`if (armed) throw new GuardianLaunchUnavailableException()`)
+          // and, after it, every frame must carry the correlation that arm established
+          // (`correlation != next`). The arm frame itself ESTABLISHES that correlation - which is why an
+          // arm carrying a settled attempt's triple is accepted here and is measured as accepted, not
+          // refused (ADR-0015 §4.2 revised). A frame the broker refuses ends the broker session, so this
+          // peer answers nothing and destroys the socket, the shape `GuardianLaunchUnavailableException`
+          // has on the session it was raised in.
+          const correlation = `${String(request.guardianInstanceId)}/${String(request.attemptId)}`;
+          if (operation === "arm_attempt" && armedCorrelation !== undefined) {
+            peerRefusals.push("arm_attempt:already_armed");
+            socket.destroy();
+            return;
+          }
+          if (operation !== "arm_attempt" && armedCorrelation !== correlation) {
+            peerRefusals.push(`${String(operation)}:correlation_mismatch`);
+            socket.destroy();
+            return;
+          }
+          if (operation === "arm_attempt") {
+            armedCorrelation = correlation;
+            if (sessions.length === 1) {
+              // THIS peer is attempt 1's Guardian, so it creates the attempt's named objects when the
+              // arm frame arrives and answers `armed` afterwards - the order a real Guardian arms in
+              // (`Program.cs:79-82`: the lease mutex and both role Jobs exist before the arm is
+              // acknowledged). The names come from the frame the Host wrote, not from an assumption here.
+              const binding = armFrameOf(request);
+              objectsBinding = Object.freeze({
+                leaseName: String(binding.leaseName),
+                playerJobName: String(binding.playerJobName),
+                aiJobName: String(binding.aiJobName),
+              });
+              objectHolders = holdGuardianObjects(objectsBinding);
+            }
+          }
+        }
         if ((scenario === "recovery-success" || scenario === "recovery-role-rejected") && operation !== "hello") {
           // Answered at the positions the Desktop broker answers: one
           // acknowledgement for the gate, one for the post-CAS + native recover
@@ -1019,6 +1462,8 @@ async function runWireFixture(
             ...(operation !== "arm_attempt" ? { role: request.role } : {}),
           });
         socket.write(`${JSON.stringify(response)}\n`);
+        if (scenario === "settle-leaves-nothing" && operation === "arm_attempt" && sessions.length === 1)
+          firstArmAckResolve();
         if (scenario === "lost-session-rearm" && operation === "arm_attempt" && sessions.length === 2)
           operationsResolve();
         if (operation === "contain_role") {
@@ -1202,22 +1647,23 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         },
       },
       armFacts: {
-        revision: "11111111-1111-4111-8111-111111111111",
-        leaseName: "Local\\GameBuddy-Wire-Lease",
-        playerJobName: "Local\\GameBuddy-Wire-Player",
-        aiJobName: "Local\\GameBuddy-Wire-Ai",
+        revision: firstBinding.revision,
+        leaseName: firstBinding.leaseName,
+        playerJobName: firstBinding.playerJobName,
+        aiJobName: firstBinding.aiJobName,
       },
       // The second attempt's reservation draws five fresh opaque names (ADR-0015 §4.2), so
       // its arm frame must carry none of the first attempt's.
       secondGuardianInstanceId: "99999999-9999-4999-8999-999999999999",
       secondAttemptId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       secondArmFacts: {
-        revision: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-        leaseName: "Local\\GameBuddy-Wire-Lease-2",
-        playerJobName: "Local\\GameBuddy-Wire-Player-2",
-        aiJobName: "Local\\GameBuddy-Wire-Ai-2",
+        revision: secondBinding.revision,
+        leaseName: secondBinding.leaseName,
+        playerJobName: secondBinding.playerJobName,
+        aiJobName: secondBinding.aiJobName,
       },
       recoveryLeaseName: "Local\\GameBuddy-Lease-1",
+      probeGate,
       recoveryBindingRevision: "88888888-8888-4888-8888-888888888888",
       modOutcome: options.modOutcome,
       // The admission probe reports the roots the child actually received, so the fixture carries them
@@ -1397,6 +1843,31 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       exitCodeWhileServing = worker.exitCode;
       worker.kill("SIGTERM");
       await withTimeout(workerClose, 10_000, "settle-and-rearm cleanup");
+    } else if (scenario === "settle-leaves-nothing") {
+      await withTimeout(firstArmAck, 15_000, "the first attempt's arm");
+      const holders = objectHolders;
+      const binding = objectsBinding;
+      assert.ok(
+        holders !== undefined && binding !== undefined,
+        "the peer read no arm frame to take attempt 1's object names from",
+      );
+      // (1) While attempt 1 is live. Taken after the peer answered `armed` and before the gate lets the
+      // attempt settle, so this is a reading of the attempt's own objects rather than of a harness that
+      // was still holding them open.
+      await withTimeout(holders.ready, GUARDIAN_OBJECT_HOLDER_TIMEOUT_MS, "the attempt's named objects");
+      objectsWhileArmed = await readAttemptObjects(binding);
+      await writeFile(probeGate, "taken\n");
+      // (2) The settle ends attempt 1's session, and the Guardian that owned those objects is gone with
+      // it. The holders end here and nowhere earlier, and only once the OS reports both exits: a named
+      // Job dies with its last handle, so an absence reading before that exit would mean nothing.
+      await withTimeout(waitForGuardianCloses(1), 15_000, "the first attempt's session close");
+      await holders.end();
+      objectsAfterSettle = await readAttemptObjects(binding);
+      const ending = await waitForWorkerStderr(/wire_settle_leaves_nothing:done/u, "the scenario's own ending");
+      assert.ok(ending.length > 0, "the scenario never reported its own ending");
+      exitCodeWhileServing = worker.exitCode;
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "settle-leaves-nothing cleanup");
     } else if (scenario === "success" || scenario === "recovery-success" || scenario === "long-path-role-environment") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       worker.kill("SIGTERM");
@@ -1440,6 +1911,11 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       workerPid: worker.pid,
       controllerQuitExitMs,
       stateReadAfterLoss,
+      attemptObjects:
+        objectsBinding === undefined || objectsWhileArmed === undefined || objectsAfterSettle === undefined
+          ? undefined
+          : Object.freeze({ binding: objectsBinding, whileArmed: objectsWhileArmed, afterSettle: objectsAfterSettle }),
+      peerRefusals,
     };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) {
@@ -1484,6 +1960,16 @@ if (scenario === "termination-failure") {
 function reportAndStop(error) {
   process.stderr.write(String(error?.message ?? error) + "\\n");
   process.kill(process.pid, "SIGTERM");
+}
+
+async function waitForProbeGate(path) {
+  const { readFile: read } = await import("node:fs/promises");
+  const deadline = Date.now() + 60000;
+  for (;;) {
+    try { await read(path); return; } catch {}
+    if (Date.now() > deadline) throw new Error("wire_probe_gate_timeout");
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  }
 }
 
 async function drive(session) {
@@ -1835,6 +2321,54 @@ async function drive(session) {
     }
     return;
   }
+  if (scenario === "settle-leaves-nothing") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    const first = { guardianInstanceId: fixture.guardianInstanceId, guardianEpoch: 1, attemptId: fixture.attemptId };
+    const second = { guardianInstanceId: fixture.secondGuardianInstanceId, guardianEpoch: 1, attemptId: fixture.secondAttemptId };
+    const arm = async (attempt) =>
+      await platform.arm({
+        ...attempt,
+        operationWaitBudgetMs: 5000,
+        armFacts: attempt === first ? fixture.armFacts : fixture.secondArmFacts,
+        authorization: { executable: fixture.approvedExecutable },
+      });
+    const contain = async (correlation) =>
+      await platform.contain({ ...correlation, operationWaitBudgetMs: 5000, role: "player_host" });
+    const record = async (label, accepted, operation) =>
+      await operation().then(
+        () => process.stderr.write(label + ":" + accepted + "\\n"),
+        (error) => process.stderr.write(label + ":refused:" + String(error && error.message ? error.message : error) + "\\n"),
+      );
+    const settle = async (correlation) =>
+      await platform.settle({ ...correlation, operationWaitBudgetMs: 5000, launchedRoles: ["player_host"] });
+    // The whole attempt, on its own session, up to the settle.
+    await arm(first);
+    await platform.launch({
+      ...first,
+      deadlineUnixMs: Date.now() + 60000,
+      role: "player_host",
+      authorization: fixture.launchFacts,
+    });
+    await contain(first);
+    process.stderr.write("wire_first_attempt_contained\\n");
+    await waitForProbeGate(fixture.probeGate);
+    await settle(first);
+    process.stderr.write("wire_first_attempt_settled\\n");
+    await record("wire_replayed_arm", "armed", () => arm(first));
+    await settle(first);
+    // The fresh attempt, on its own session and its own reservation.
+    await record("wire_second_arm", "armed", () => arm(second));
+    // A frame AFTER that arm carrying the settled attempt's correlation: this one the broker's own
+    // correlation rule refuses, and the refusal ends the session it arrived on.
+    await record("wire_stale_correlation", "accepted", () => contain(first));
+    // The other half of the same rule, on a session of its own: one arm per session.
+    await record("wire_fresh_session_arm", "armed", () => arm(second));
+    await record("wire_second_arm_in_session", "accepted", () => arm(second));
+    await platform.settle();
+    process.stderr.write("wire_settle_leaves_nothing:done\\n");
+    return;
+  }
   if (scenario === "peer-disconnect" || scenario === "delayed-arm-ack") {
     try {
       await session.arm({
@@ -2090,6 +2624,16 @@ function waitForClose(child: ReturnType<typeof spawn>): Promise<number | null> {
   });
 }
 
+/**
+ * The one place this suite bounds a wait.
+ *
+ * A run that gives up here does NOT take the fixture child with it: the child keeps the one-instance
+ * pipe it serves (`\\\\.\\pipe\\GameBuddy.HostGuardian.<id>`, `maxInstances: 1`), so every later scenario
+ * fails with `EADDRINUSE` on that name or with `timeout_guardian operations` - which reads like a product
+ * defect and is not one. The remedy is exact: list node processes, keep only the ones whose command line
+ * names this test file or a `wire-fixture-worker.mjs`, end those PIDs and nothing else, then re-run.
+ * Measured 2026-11-21.
+ */
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
