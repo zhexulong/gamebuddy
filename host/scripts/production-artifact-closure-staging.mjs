@@ -67,8 +67,7 @@ const CACHE_SCHEMA = "host_runtime_closure_cache/v1";
 const CACHE_RECORD = "closure.json";
 const CACHE_TREE = "tree";
 /** A cache entry is assembled here and renamed into place, so a killed write is never an entry. */
-const CACHE_WRITING_SUFFIX = ".writing";
-/** How many entries survive the age floor; entries are 0.6 GB each. */
+const CACHE_WRITING_SUFFIX = ".writing";/** How many entries survive the age floor; entries are 0.6 GB each. */
 const CACHE_KEEP_ENTRIES = 3;
 /** Nothing is removed while a build on this machine could still be adopting it. */
 const CACHE_MINIMUM_AGE_MS = 24 * 60 * 60 * 1000;
@@ -316,9 +315,13 @@ async function pruneClosureCache({ cacheRoot }) {
     console.log(`runtime_closure_cache pruned removed=${removed} kept=${entries.length - removed} (entries older than ${CACHE_MINIMUM_AGE_MS / 3600000}h beyond the newest ${CACHE_KEEP_ENTRIES})`);
 }
 
-/** Record a freshly deployed tree under its key, atomically: a killed write is not an entry. */
+/**
+ * Record a freshly deployed tree under its key, atomically and per-process: a
+ * killed write is never an entry, and two builds of the same key cannot hash each
+ * other's half-copied tree.
+ */
 export async function writeClosureCache({ cacheDir, key, deployedModules }) {
-  const writing = `${cacheDir}${CACHE_WRITING_SUFFIX}`;
+  const writing = `${cacheDir}${CACHE_WRITING_SUFFIX}-${process.pid}`;
   await rm(writing, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
   await mkdir(resolve(writing, CACHE_TREE), { recursive: true });
   const stored = resolve(writing, CACHE_TREE, CLOSURE_MODULES_DIRECTORY);
@@ -327,7 +330,17 @@ export async function writeClosureCache({ cacheDir, key, deployedModules }) {
   await writeFile(resolve(writing, CACHE_RECORD), `${JSON.stringify({ schema: CACHE_SCHEMA, key, digest }, null, 2)}\n`,
     { flag: "wx" });
   await rm(cacheDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
-  await rename(writing, cacheDir);
+  try {
+    await rename(writing, cacheDir);
+  } catch (error) {
+    // Another build recorded this key while this one was copying. Its entry is
+    // verified before it is kept - and a corrupt one is reported as corrupt.
+    if (await readVerifiedClosureCache({ cacheDir, key }) === null)
+      throw new Error(`runtime_closure_cache_write_failed:${cacheDir} (${error?.code ?? error})`);
+    await rm(writing, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 }).catch(() => {});
+    console.log(`runtime_closure_cache kept the entry another build recorded key=${key.slice(0, 12)}`);
+    return JSON.parse(await readFile(resolve(cacheDir, CACHE_RECORD), "utf8")).digest;
+  }
   await pruneClosureCache({ cacheRoot: dirname(cacheDir) });
   return digest;
 }
