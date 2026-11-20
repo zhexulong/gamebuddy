@@ -4677,8 +4677,12 @@ export async function orchestrateExplicitGameRecovery(
  * the OS said about that owner, and whether the recovery ran. No path, token, credential or player text.
  */
 export type StartupGameRecoverySettlement = Readonly<{
-  settlement: "recovered" | "refused";
-  code: "game_recovery_recovered" | "game_recovery_blocked_owner_alive" | "game_recovery_blocked_owner_unknown";
+  settlement: "recovered" | "refused" | "deferred";
+  code:
+    | "game_recovery_recovered"
+    | "game_recovery_blocked_owner_alive"
+    | "game_recovery_blocked_owner_unknown"
+    | "game_recovery_deferred_probe_unavailable";
   operationId: string;
   gameSessionId: string;
   ownerPid: number;
@@ -4696,8 +4700,17 @@ export type StartupGameRecoverySettlement = Readonly<{
  *
  * The pre-check is not a courtesy: `recoverGame` itself refuses every verdict but `proven_dead`, and
  * this function never reaches it with any other one. `alive` is a real single-instance conflict that
- * must be reported as one; `mismatch`, `ambiguous` and `unavailable` are unknown, and unknown is not
- * dead, so nothing is recovered from them.
+ * must be reported as one; `mismatch` and `ambiguous` are unknown, and unknown is not dead, so nothing
+ * is recovered from them.
+ *
+ * `unavailable` is the FOURTH answer and it is not a verdict at all: the OS query never ran (a
+ * PowerShell the policy does not allow, an antivirus holding the process, the five-second bound
+ * expiring). A probe that could not run is not an owner that is still held, and it must not be the
+ * reason a Host refuses to start - the player would lose Chat, Memory and the game shell to a machine
+ * that was merely slow to answer. It is therefore reported by its own name and the launch continues,
+ * which is safe because the obligation is durable and the recovery-required lease already refuses
+ * every new Game entry (`prepareEnter`); the cost is that the Game surface stays unusable until a
+ * later launch can prove the death, and this line is the only record of why.
  */
 export async function settleDurableGameRecoveryOnStartup(
   readTarget: () => Promise<ProductionGameRecoveryTarget | null>,
@@ -4715,6 +4728,12 @@ export async function settleDurableGameRecoveryOnStartup(
     ownerOutcome,
     settledAtUnixMs: Date.now(),
   };
+  if (ownerOutcome === "unavailable") {
+    recordStartupGameRecovery(
+      Object.freeze({ ...settled, settlement: "deferred", code: "game_recovery_deferred_probe_unavailable" }),
+    );
+    return null;
+  }
   if (ownerOutcome !== "proven_dead") {
     const code = ownerOutcome === "alive" ? "game_recovery_blocked_owner_alive" : "game_recovery_blocked_owner_unknown";
     recordStartupGameRecovery(Object.freeze({ ...settled, settlement: "refused", code }));
@@ -4742,11 +4761,13 @@ async function verifyOwnerDeathOrUnknown(
  */
 function recordStartupGameRecovery(settlement: StartupGameRecoverySettlement): void {
   const what =
-    settlement.settlement === "recovered"
-      ? "recovered the Game state its dead owner left behind"
-      : settlement.code === "game_recovery_blocked_owner_alive"
-        ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
-        : "refused: the previous Game owner's death could not be proven, so nothing was recovered";
+    settlement.settlement === "deferred"
+      ? "deferred: the previous Game owner's death could not be probed - the OS query did not run - so nothing was recovered; the Game stays blocked and the next start asks again"
+      : settlement.settlement === "recovered"
+        ? "recovered the Game state its dead owner left behind"
+        : settlement.code === "game_recovery_blocked_owner_alive"
+          ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
+          : "refused: the previous Game owner's death could not be proven, so nothing was recovered";
   process.stderr.write(
     `[game-recovery] startup ${what} operation=${settlement.operationId} session=${settlement.gameSessionId} owner_pid=${String(settlement.ownerPid)} reason=${settlement.recoveryReason ?? "none"} owner=${settlement.ownerOutcome} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
   );

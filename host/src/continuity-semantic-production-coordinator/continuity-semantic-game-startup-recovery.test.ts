@@ -113,7 +113,7 @@ test("startup settlement refuses a living owner as a single-instance conflict an
   assert.doesNotMatch(diagnostics, /recovery required|unavailable/iu);
 });
 
-for (const outcome of ["mismatch", "ambiguous", "unavailable"] as const)
+for (const outcome of ["mismatch", "ambiguous"] as const)
   test(`startup settlement reads an ${outcome} owner verdict as unknown and recovers nothing`, async () => {
     let recoveries = 0;
     const { diagnostics } = await captureDiagnostics(async () => {
@@ -135,6 +135,34 @@ for (const outcome of ["mismatch", "ambiguous", "unavailable"] as const)
     assert.match(diagnostics, new RegExp(`owner=${outcome}`, "u"));
     assert.doesNotMatch(diagnostics, /another GameBuddy is already running/u);
   });
+
+test("startup settlement treats a probe that could not run as its own outcome and lets the Host start", async () => {
+  let recoveries = 0;
+  const { result, diagnostics } = await captureDiagnostics(() =>
+    settleDurableGameRecoveryOnStartup(
+      async () => target,
+      async () => {
+        recoveries++;
+        return recovered;
+      },
+      Object.freeze({
+        verify: async (exactOwner) => createTestWindowsOwnerDeathVerification(exactOwner, "unavailable"),
+      }),
+    ),
+  );
+  // A probe that could not run is not an owner that is still held, so it is not a reason to refuse the
+  // launch: the obligation stays durable and the next start asks the OS again.
+  assert.equal(result, null);
+  assert.equal(recoveries, 0, "an unavailable probe proves nothing, so no recovery may run");
+  assert.match(diagnostics, /^\[game-recovery\] startup deferred:/u);
+  assert.match(diagnostics, /owner=unavailable/u);
+  assert.match(diagnostics, /operation=operation_01/u);
+  // The sentence has to tell the operator that the GAME is what is blocked, not the launch, and that
+  // nothing was recovered.
+  assert.match(diagnostics, /the OS query did not run/u);
+  assert.match(diagnostics, /nothing was recovered/u);
+  assert.doesNotMatch(diagnostics, /already running/u);
+});
 
 test("startup settlement names the durable operation, so two Hosts cannot settle it under different ids", async () => {
   const forwarded: string[] = [];
