@@ -94,6 +94,7 @@ const RUNNING: InFlightProgrammeReading = Object.freeze({
       readAgeMs: 400,
       nodes: Object.freeze([]),
       omitted: 0,
+      unsettledTiles: Object.freeze([]),
     }),
   ]),
   omittedProgrammes: 0,

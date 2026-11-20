@@ -125,6 +125,7 @@ function runningPlan(remaining: number): InFlightProgrammeReading {
         readAgeMs: 250,
         nodes: Object.freeze([]),
         omitted: 0,
+        unsettledTiles: Object.freeze([]),
       }),
     ]),
     omittedProgrammes: 0,

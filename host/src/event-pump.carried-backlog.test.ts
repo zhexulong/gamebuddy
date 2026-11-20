@@ -101,6 +101,7 @@ function runningPlan(remaining: number): InFlightProgrammeReading {
         readAgeMs: 400,
         nodes: [],
         omitted: 0,
+        unsettledTiles: [],
       },
     ],
     omittedProgrammes: 0,

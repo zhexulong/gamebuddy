@@ -336,7 +336,8 @@ function formatHeldTool(source: GameEnvironmentFactsSource, zh: boolean): string
   const level = upgrade > 0 ? (zh ? `（+${upgrade}）` : ` (+${upgrade})`) : "";
   const category = occupant?.category;
   const name =
-    (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ?? (zh ? "一件工具" : "a tool");
+    (category === undefined ? undefined : (zh ? TOOL_NAMES_ZH : TOOL_NAMES_EN)[category]) ??
+    (zh ? "一件工具" : "a tool");
   return `${zh ? "手持" : "holding"}: ${name}${level}`;
 }
 
@@ -1179,6 +1180,25 @@ export type TargetFreshness = Readonly<{
    * </p>
    */
   gone: ReadonlySet<string>;
+  /**
+   * Tiles a node of a programme STILL IN FLIGHT addressed, as `x:y`: work already queued, so work a plan must not ask for
+   * again.
+   *
+   * <p>
+   * THE THIRD QUESTION ABOUT A ROW LIST, and the reason it is its own member beside `gone`. `gone` is a PROOF - a receipt
+   * in this delivery took the row out of the world. This is a QUEUE: nothing has happened yet, the row is still exactly as
+   * the reading describes it, and it is still not offerable because the next plan would be a second plan for the same work.
+   * Merging the two would let a queue read as a proof, which is the one thing an id set must never do.
+   * </p>
+   *
+   * <p>
+   * A TILE IS A WEAKER IDENTITY THAN AN ID (`rowTargetId`): two families can publish a row at one tile, and a row is
+   * subtracted on its tile alone. Weaker is the safe direction - a row not offered cannot be worked twice - and the weaker
+   * identity is the only one available, because the journal publishes a node's tile (`BodyProgramNodeStatus.x`/`y`) and no
+   * node's opaque target id.
+   * </p>
+   */
+  inFlight: ReadonlySet<string>;
   /** How many delivered turns ago this reading arrived: `0` is the turn it arrived in. */
   ageTurns: number;
 }>;
@@ -1186,6 +1206,7 @@ export type TargetFreshness = Readonly<{
 /** No delivery to trust: every published row stands, and the age is the caller's own. */
 export const NO_TARGET_FRESHNESS: TargetFreshness = Object.freeze({
   gone: new Set<string>(),
+  inFlight: new Set<string>(),
   ageTurns: 0,
 });
 
@@ -1240,6 +1261,11 @@ export type NearbyTargetFamily = Readonly<{
  * THE SAME RULE ONE STATE OVER: the reading says the ground is bare, the receipt says it is under the Hoe, and the row
  * leaves the line for the one delivery that carries both rather than being offered as work already done.
  *
+ * A ROW A QUEUED NODE IS WORKING IS THE SAME RULE BEFORE THE FACT. `freshness.inFlight` is the journal's own statement of
+ * the tiles the programmes still in flight addressed (`InFlightProgramme.unsettledTiles`), and a row standing on one of them
+ * is subtracted before the cap - because the next plan is composed exactly while that work is queued, and a snapshot that
+ * still offers its tiles is an invitation to plan it twice. Tile, not target id: see `TargetFreshness.inFlight`.
+ *
  * A FAMILY WHOSE ROWS IT CANNOT PLACE STILL PRINTS. The tile is read through `ROW_TILE_FIELD_PAIRS`, so a `doorTargets`
  * row is placed at its `sourceX`/`sourceY` exactly as an `animalDoorTargets` row is placed at its `x`/`y` - `round62`'s
  * falsifier: 畜舍门 (70,13) printed, and the FarmHouse door did not. The families that carry no tile at all -
@@ -1259,7 +1285,7 @@ export function nearbyTargetFamilies(
   for (const [family, label] of Object.entries(TARGET_FAMILY_LABELS)) {
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
-    const { standing, removed } = splitProvedGone(value, freshness.gone);
+    const { standing, removed, inFlight } = splitFreshRows(value, freshness);
     const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family]);
     const distance = (tile: { x: number; y: number }): number =>
       readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
@@ -1267,7 +1293,7 @@ export function nearbyTargetFamilies(
     const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
     const omitted = standing.length - shown.length;
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
-    const proved: TargetLineProof = Object.freeze({ removed, ageTurns: freshness.ageTurns });
+    const proved: TargetLineProof = Object.freeze({ removed, inFlight, ageTurns: freshness.ageTurns });
     families.push(
       Object.freeze({
         family,
@@ -1283,26 +1309,35 @@ export function nearbyTargetFamilies(
 }
 
 /**
- * One family's published rows, split by what this delivery proved about them.
+ * One family's published rows, split by what this delivery proved about them and what a plan has already queued.
  *
- * `standing` keeps the wire's order, which the cap's sort then re-ranks; `removed` is the one number the line's proof
- * sentence is composed from, so the arithmetic and the sentence cannot disagree about how many rows left.
+ * `standing` keeps the wire's order, which the cap's sort then re-ranks; `removed` and `inFlight` are the two numbers the
+ * line's own sentence is composed from, so the arithmetic and the sentence cannot disagree about how many rows left.
+ *
+ * TWO QUESTIONS, TWO TESTS, and `gone` is asked first: a row a receipt took out of the world is gone whatever a queue
+ * says about its tile, and counting it as queued would credit a plan with work that no longer exists.
  */
-function splitProvedGone(
+function splitFreshRows(
   value: readonly unknown[],
-  gone: ReadonlySet<string>,
-): Readonly<{ standing: readonly unknown[]; removed: number }> {
+  freshness: TargetFreshness,
+): Readonly<{ standing: readonly unknown[]; removed: number; inFlight: number }> {
   const standing: unknown[] = [];
   let removed = 0;
+  let inFlight = 0;
   for (const row of value) {
     const id = rowTargetId(row);
-    if (id === undefined || !gone.has(id)) {
-      standing.push(row);
+    if (id !== undefined && freshness.gone.has(id)) {
+      removed += 1;
       continue;
     }
-    removed += 1;
+    const tile = row === null || typeof row !== "object" ? undefined : rowTile(row as Record<string, unknown>);
+    if (tile !== undefined && freshness.inFlight.has(`${String(tile.x)}:${String(tile.y)}`)) {
+      inFlight += 1;
+      continue;
+    }
+    standing.push(row);
   }
-  return { standing, removed };
+  return { standing, removed, inFlight };
 }
 
 /**
@@ -1380,7 +1415,7 @@ function rowDisplayName(candidate: Record<string, unknown>): string | undefined 
  * Separate from `TargetFreshness` because it is a different fact: the delivery proves ids out of the world for every
  * family at once, and each family's sentence states only its own share of that.
  */
-type TargetLineProof = Readonly<{ removed: number; ageTurns: number }>;
+type TargetLineProof = Readonly<{ removed: number; inFlight: number; ageTurns: number }>;
 
 /**
  * THE PROVENANCE CLAIM A COUNT CARRIES WHEN A RECEIPT IN THIS DELIVERY RE-COUNTED IT, in words.
@@ -1402,7 +1437,7 @@ type TargetLineProof = Readonly<{ removed: number; ageTurns: number }>;
 export const COUNTED_AFTER_THE_STEP = "刚做完那一步之后数的";
 
 /** Nothing proved and nothing aged: the sentence a caller with no delivery (the Chat surface's own reader) gets. */
-const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, ageTurns: 0 });
+const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, inFlight: 0, ageTurns: 0 });
 
 /**
  * The sentence one family prints, or `undefined` for a family the Mod published as empty.
@@ -1426,10 +1461,10 @@ function renderTargetFamily(
   proved: TargetLineProof = NOTHING_PROVED,
 ): string | undefined {
   if (total === 0) return undefined;
-  if (proved.removed >= total)
-    return `${label} 全部 ${String(proved.removed)} 格已不在（${COUNTED_AFTER_THE_STEP}）`;
+  const standing = total - proved.removed - proved.inFlight;
+  if (proved.removed >= total) return `${label} 全部 ${String(proved.removed)} 格已不在（${COUNTED_AFTER_THE_STEP}）`;
   if (shown.length === 0)
-    return `${label} 其余 ${String(total - proved.removed)} 格未列出（这些行没有坐标）${targetLineFreshness(proved)}`;
+    return `${label} 其余 ${String(standing)} 格未列出（这些行没有坐标）${targetLineFreshness(proved)}`;
   const tiles = shown
     .map(
       (tile) =>
@@ -1447,12 +1482,14 @@ function renderTargetFamily(
  * for the line, only when a receipt did not account for every row on it.
  */
 function targetLineFreshness(proved: TargetLineProof): string {
-  const source =
-    proved.removed < 1 ? "" : `（${COUNTED_AFTER_THE_STEP}，少了 ${String(proved.removed)} 格）`;
-  if (proved.ageTurns < 1) return source;
+  const source = proved.removed < 1 ? "" : `（${COUNTED_AFTER_THE_STEP}，少了 ${String(proved.removed)} 格）`;
+  // A row a queued node is already working is not gone and is not free: the line says so, because a plan written from it
+  // would be a second plan for the same tile.
+  const queued = proved.inFlight < 1 ? "" : `（其中 ${String(proved.inFlight)} 格已经在做了，不必再排）`;
+  if (proved.ageTurns < 1) return `${source}${queued}`;
   const aged =
     proved.removed > 0 ? `（其余是 ${String(proved.ageTurns)} 轮前数的）` : `（${String(proved.ageTurns)} 轮前数的）`;
-  return `${source}${aged}`;
+  return `${source}${queued}${aged}`;
 }
 
 /**

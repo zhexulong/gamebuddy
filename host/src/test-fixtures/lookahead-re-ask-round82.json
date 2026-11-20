@@ -1,0 +1,722 @@
+{
+ "source": "tools/_multiday_routine-round82.result.json (result.programSubmissions + result.programOutcomes)",
+ "spans": [
+  {
+   "programId": "plan_0_e6891a040a3abc19",
+   "firstAtMs": 146,
+   "lastSettledMs": 2442
+  },
+  {
+   "programId": "plan_4_82099a9fe3c0520b",
+   "firstAtMs": 20664,
+   "lastSettledMs": 25867
+  },
+  {
+   "programId": "plan_13_61aed46ce10a6654",
+   "firstAtMs": 35391,
+   "lastSettledMs": 35570
+  },
+  {
+   "programId": "plan_14_e16ce77264c613fd",
+   "firstAtMs": 51650,
+   "lastSettledMs": 66217
+  },
+  {
+   "programId": "plan_14_b9a3e6e17fed35b7",
+   "firstAtMs": 66261,
+   "lastSettledMs": 84636
+  },
+  {
+   "programId": "plan_17_a2d9ac01b44d9924",
+   "firstAtMs": 84537,
+   "lastSettledMs": 90655
+  },
+  {
+   "programId": "plan_25_2000582b54d919cd",
+   "firstAtMs": 99044,
+   "lastSettledMs": 99054
+  },
+  {
+   "programId": "plan_26_960044c602e30428",
+   "firstAtMs": 113612,
+   "lastSettledMs": 150973
+  },
+  {
+   "programId": "plan_27_b7e4c6987b8b4064",
+   "firstAtMs": 151060,
+   "lastSettledMs": 151335
+  },
+  {
+   "programId": "plan_31_960044c602e30428",
+   "firstAtMs": 160312,
+   "lastSettledMs": 178918
+  },
+  {
+   "programId": "plan_33_77bbc2e5b9101ef9",
+   "firstAtMs": 255512,
+   "lastSettledMs": 281656
+  },
+  {
+   "programId": "plan_36_5222366c43fb9ed1",
+   "firstAtMs": 316464,
+   "lastSettledMs": 316679
+  },
+  {
+   "programId": "plan_40_7e9345c617db70fb",
+   "firstAtMs": 324629,
+   "lastSettledMs": 324833
+  },
+  {
+   "programId": "plan_43_930490c0d9356773",
+   "firstAtMs": 337064,
+   "lastSettledMs": 337433
+  },
+  {
+   "programId": "plan_47_73e725884bfda3a9",
+   "firstAtMs": 349779,
+   "lastSettledMs": 349810
+  },
+  {
+   "programId": "plan_48_540fdc52fcf34af7",
+   "firstAtMs": 359041,
+   "lastSettledMs": 361468
+  },
+  {
+   "programId": "plan_65_13df4f912f7328d2",
+   "firstAtMs": 369260,
+   "lastSettledMs": 375968
+  },
+  {
+   "programId": "plan_95_ca0e1fe4842c0da0",
+   "firstAtMs": 384327,
+   "lastSettledMs": 384362
+  },
+  {
+   "programId": "plan_96_9be92da85e4c7cf4",
+   "firstAtMs": 392466,
+   "lastSettledMs": 393385
+  },
+  {
+   "programId": "plan_100_331737a9cd9f9b16",
+   "firstAtMs": 401133,
+   "lastSettledMs": 403385
+  },
+  {
+   "programId": "plan_107_dfa07d82262cdd4c",
+   "firstAtMs": 408668,
+   "lastSettledMs": 408941
+  },
+  {
+   "programId": "plan_110_4b0f0f7f22c5ed7a",
+   "firstAtMs": 416465,
+   "lastSettledMs": 416750
+  },
+  {
+   "programId": "plan_116_6747292d9f5a8de4",
+   "firstAtMs": 511474,
+   "lastSettledMs": 513305
+  },
+  {
+   "programId": "plan_127_01f7c33a85d1ae1f",
+   "firstAtMs": 525776,
+   "lastSettledMs": 527443
+  },
+  {
+   "programId": "plan_131_81d801bd3df6d0c8",
+   "firstAtMs": 535400,
+   "lastSettledMs": 541523
+  },
+  {
+   "programId": "plan_137_e5b7476013ee7a18",
+   "firstAtMs": 555387,
+   "lastSettledMs": 555960
+  },
+  {
+   "programId": "plan_141_03fd294c84313fb0",
+   "firstAtMs": 584406,
+   "lastSettledMs": 592144
+  },
+  {
+   "programId": "plan_142_15d03879c6feae54",
+   "firstAtMs": 592222,
+   "lastSettledMs": 592247
+  },
+  {
+   "programId": "plan_144_e6891a040a3abc19",
+   "firstAtMs": 606425,
+   "lastSettledMs": 608683
+  },
+  {
+   "programId": "plan_149_49ebd37766f2b30d",
+   "firstAtMs": 629928,
+   "lastSettledMs": 636994
+  },
+  {
+   "programId": "plan_171_304340fc4371c90b",
+   "firstAtMs": 639130,
+   "lastSettledMs": 641460
+  },
+  {
+   "programId": "plan_174_9a66e1675f3d002f",
+   "firstAtMs": 647085,
+   "lastSettledMs": 647662
+  },
+  {
+   "programId": "plan_178_07d74a172664a997",
+   "firstAtMs": 667305,
+   "lastSettledMs": 675456
+  },
+  {
+   "programId": "plan_196_f6ecfec6345cfe26",
+   "firstAtMs": 680685,
+   "lastSettledMs": 689328
+  },
+  {
+   "programId": "plan_242_accc53b63adf3a66",
+   "firstAtMs": 711396,
+   "lastSettledMs": 712522
+  },
+  {
+   "programId": "plan_246_b527955262a05572",
+   "firstAtMs": 726868,
+   "lastSettledMs": 732200
+  },
+  {
+   "programId": "plan_248_73e725884bfda3a9",
+   "firstAtMs": 740111,
+   "lastSettledMs": 740140
+  },
+  {
+   "programId": "plan_250_b93aedc06b13e777",
+   "firstAtMs": 757304,
+   "lastSettledMs": 757556
+  },
+  {
+   "programId": "plan_254_740a2f51fdcf4757",
+   "firstAtMs": 766910,
+   "lastSettledMs": 768702
+  },
+  {
+   "programId": "plan_258_0d94fd1ce2eaecb0",
+   "firstAtMs": 774907,
+   "lastSettledMs": 775581
+  },
+  {
+   "programId": "plan_263_e308baf43cdcf3fc",
+   "firstAtMs": 783734,
+   "lastSettledMs": 786962
+  },
+  {
+   "programId": "plan_281_b2a33228347cc9b6",
+   "firstAtMs": 792321,
+   "lastSettledMs": 797906
+  },
+  {
+   "programId": "plan_316_14f617a48bf36e8c",
+   "firstAtMs": 804166,
+   "lastSettledMs": 806610
+  },
+  {
+   "programId": "plan_325_dd42c03c26ac2faa",
+   "firstAtMs": 811761,
+   "lastSettledMs": 814043
+  },
+  {
+   "programId": "plan_337_f352700150f6932b",
+   "firstAtMs": 827963,
+   "lastSettledMs": 835959
+  },
+  {
+   "programId": "plan_358_01100fa0d3c9ab47",
+   "firstAtMs": 841730,
+   "lastSettledMs": 847325
+  },
+  {
+   "programId": "plan_365_85c2731df252e464",
+   "firstAtMs": 853174,
+   "lastSettledMs": 855564
+  },
+  {
+   "programId": "plan_378_9a7fb1dd4e946586",
+   "firstAtMs": 861627,
+   "lastSettledMs": 861831
+  },
+  {
+   "programId": "plan_380_d009310a98d76cbd",
+   "firstAtMs": 870980,
+   "lastSettledMs": 882108
+  },
+  {
+   "programId": "plan_412_da3cd48a7ef57194",
+   "firstAtMs": 888373,
+   "lastSettledMs": 890476
+  },
+  {
+   "programId": "plan_417_a4c745caa6a58554",
+   "firstAtMs": 898186,
+   "lastSettledMs": 900420
+  },
+  {
+   "programId": "plan_422_6531926b06368f9e",
+   "firstAtMs": 906427,
+   "lastSettledMs": 914345
+  },
+  {
+   "programId": "plan_470_6ddfecef7e692f1a",
+   "firstAtMs": 915980,
+   "lastSettledMs": 928085
+  },
+  {
+   "programId": "plan_479_4c94ef6eece3639d",
+   "firstAtMs": 928232,
+   "lastSettledMs": 940693
+  },
+  {
+   "programId": "plan_530_d7d927fae80e81ad",
+   "firstAtMs": 949051,
+   "lastSettledMs": 954945
+  },
+  {
+   "programId": "plan_557_a6bca7864210352d",
+   "firstAtMs": 960260,
+   "lastSettledMs": 972052
+  },
+  {
+   "programId": "plan_604_561a67ffcfdb496b",
+   "firstAtMs": 978504,
+   "lastSettledMs": 993156
+  },
+  {
+   "programId": "plan_638_c21111daf43bd724",
+   "firstAtMs": 999911,
+   "lastSettledMs": 1009454
+  },
+  {
+   "programId": "plan_671_6cedc2244b586619",
+   "firstAtMs": 1015780,
+   "lastSettledMs": 1022927
+  },
+  {
+   "programId": "plan_704_7605705cbb1de0ed",
+   "firstAtMs": 1028449,
+   "lastSettledMs": 1034055
+  },
+  {
+   "programId": "plan_718_0d716426a8c64889",
+   "firstAtMs": 1040282,
+   "lastSettledMs": 1050151
+  },
+  {
+   "programId": "plan_744_d9008e3df0d685d1",
+   "firstAtMs": 1064404,
+   "lastSettledMs": 1070293
+  },
+  {
+   "programId": "plan_761_1ee34e1adcd3a2bf",
+   "firstAtMs": 1076421,
+   "lastSettledMs": 1084496
+  },
+  {
+   "programId": "plan_778_3a920b889b35f21e",
+   "firstAtMs": 1089509,
+   "lastSettledMs": 1096957
+  },
+  {
+   "programId": "plan_802_9b4a41221707baed",
+   "firstAtMs": 1097621,
+   "lastSettledMs": 1105240
+  },
+  {
+   "programId": "plan_804_9b4a41221707baed",
+   "firstAtMs": 1105999,
+   "lastSettledMs": 1106319
+  },
+  {
+   "programId": "plan_808_70e21c06346da89f",
+   "firstAtMs": 1116134,
+   "lastSettledMs": 1128781
+  },
+  {
+   "programId": "plan_810_a0676525b9166680",
+   "firstAtMs": 1128981,
+   "lastSettledMs": 1133274
+  },
+  {
+   "programId": "plan_860_e6891a040a3abc19",
+   "firstAtMs": 1143469,
+   "lastSettledMs": 1145774
+  },
+  {
+   "programId": "plan_864_e5e96ccf2c16feaa",
+   "firstAtMs": 1160778,
+   "lastSettledMs": 1163590
+  },
+  {
+   "programId": "plan_866_d14c5ae5eacfe032",
+   "firstAtMs": 1169036,
+   "lastSettledMs": 1169344
+  },
+  {
+   "programId": "plan_869_bb0ef279f15a4ca4",
+   "firstAtMs": 1175559,
+   "lastSettledMs": 1178078
+  },
+  {
+   "programId": "plan_874_63de63009c9bdefe",
+   "firstAtMs": 1182711,
+   "lastSettledMs": 1183269
+  },
+  {
+   "programId": "plan_878_fbdaae14ea0469d4",
+   "firstAtMs": 1191327,
+   "lastSettledMs": 1192756
+  },
+  {
+   "programId": "plan_882_20291d4bd82b7ee7",
+   "firstAtMs": 1205678,
+   "lastSettledMs": 1216975
+  },
+  {
+   "programId": "plan_886_3c9c91513ce3adc9",
+   "firstAtMs": 1228556,
+   "lastSettledMs": 1251802
+  },
+  {
+   "programId": "plan_889_80befb1d00deb1a6",
+   "firstAtMs": 1257637,
+   "lastSettledMs": 1257869
+  },
+  {
+   "programId": "plan_891_f1840168221d3cb5",
+   "firstAtMs": 1265035,
+   "lastSettledMs": 1271050
+  },
+  {
+   "programId": "plan_894_fa2e098ee1b61dd0",
+   "firstAtMs": 1276837,
+   "lastSettledMs": 1284630
+  },
+  {
+   "programId": "plan_895_dbc1d3bf3f8195e4",
+   "firstAtMs": 1284005,
+   "lastSettledMs": 1285744
+  },
+  {
+   "programId": "plan_902_3f08d6c6bd836668",
+   "firstAtMs": 1298015,
+   "lastSettledMs": 1298086
+  },
+  {
+   "programId": "plan_903_11bae6ac1c5f171c",
+   "firstAtMs": 1306218,
+   "lastSettledMs": 1306369
+  },
+  {
+   "programId": "plan_904_49cc5ae37444698e",
+   "firstAtMs": 1315137,
+   "lastSettledMs": 1315939
+  },
+  {
+   "programId": "plan_907_20291d4bd82b7ee7",
+   "firstAtMs": 1323443,
+   "lastSettledMs": 1332503
+  },
+  {
+   "programId": "plan_909_18f8cfdbd59dc53a",
+   "firstAtMs": 1336358,
+   "lastSettledMs": 1343430
+  },
+  {
+   "programId": "plan_912_9855611415b36931",
+   "firstAtMs": 1347403,
+   "lastSettledMs": 1347929
+  },
+  {
+   "programId": "plan_917_725603bdd64bf383",
+   "firstAtMs": 1363246,
+   "lastSettledMs": 1381042
+  },
+  {
+   "programId": "plan_922_27fb949588b4fcce",
+   "firstAtMs": 1385760,
+   "lastSettledMs": 1394173
+  },
+  {
+   "programId": "plan_926_0442da48ca242b09",
+   "firstAtMs": 1407332,
+   "lastSettledMs": 1407412
+  },
+  {
+   "programId": "plan_928_d38a268d42b37b95",
+   "firstAtMs": 1416011,
+   "lastSettledMs": 1446024
+  },
+  {
+   "programId": "plan_929_783e17b8f3477285",
+   "firstAtMs": 1430720,
+   "lastSettledMs": 1441180
+  },
+  {
+   "programId": "plan_936_671331186aeaf788",
+   "firstAtMs": 1447291,
+   "lastSettledMs": 1450280
+  },
+  {
+   "programId": "plan_939_77bbc2e5b9101ef9",
+   "firstAtMs": 1456201,
+   "lastSettledMs": 1475735
+  },
+  {
+   "programId": "plan_943_b61c91a6d387a53b",
+   "firstAtMs": 1484657,
+   "lastSettledMs": 1495023
+  },
+  {
+   "programId": "plan_945_6bd2d03765f89edd",
+   "firstAtMs": 1499668,
+   "lastSettledMs": 1503460
+  },
+  {
+   "programId": "plan_960_b9f295636487114f",
+   "firstAtMs": 1520241,
+   "lastSettledMs": 1531014
+  },
+  {
+   "programId": "plan_987_44f55c35385a1013",
+   "firstAtMs": 1532114,
+   "lastSettledMs": 1538013
+  },
+  {
+   "programId": "plan_1002_f57f58a93ba7435b",
+   "firstAtMs": 1538751,
+   "lastSettledMs": 1545545
+  },
+  {
+   "programId": "plan_1005_096c024faed28519",
+   "firstAtMs": 1542947,
+   "lastSettledMs": 1543616
+  },
+  {
+   "programId": "plan_1016_7f3423fc9514558b",
+   "firstAtMs": 1551404,
+   "lastSettledMs": 1556423
+  },
+  {
+   "programId": "plan_1026_28a93158297243b4",
+   "firstAtMs": 1559115,
+   "lastSettledMs": 1562673
+  },
+  {
+   "programId": "plan_1032_81d801bd3df6d0c8",
+   "firstAtMs": 1567990,
+   "lastSettledMs": 1574413
+  },
+  {
+   "programId": "plan_1038_a0676525b9166680",
+   "firstAtMs": 1581843,
+   "lastSettledMs": 1587120
+  }
+ ],
+ "pairs": [
+  {
+   "queuedIn": "plan_14_b9a3e6e17fed35b7",
+   "composedAs": "plan_17_a2d9ac01b44d9924"
+  },
+  {
+   "queuedIn": "plan_894_fa2e098ee1b61dd0",
+   "composedAs": "plan_895_dbc1d3bf3f8195e4"
+  },
+  {
+   "queuedIn": "plan_928_d38a268d42b37b95",
+   "composedAs": "plan_929_783e17b8f3477285"
+  },
+  {
+   "queuedIn": "plan_1002_f57f58a93ba7435b",
+   "composedAs": "plan_1005_096c024faed28519"
+  }
+ ],
+ "programmes": [
+  {
+   "programId": "plan_14_b9a3e6e17fed35b7",
+   "firstAtMs": 66261,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "move_to_tile",
+     "tile": "40:10",
+     "settledAtMs": 84383
+    },
+    {
+     "nodeId": "n02",
+     "actionId": "sweep_scythe",
+     "tile": "40:9",
+     "settledAtMs": 84636
+    }
+   ]
+  },
+  {
+   "programId": "plan_17_a2d9ac01b44d9924",
+   "firstAtMs": 84537,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "equip_tool",
+     "settledAtMs": 84558
+    },
+    {
+     "nodeId": "n02",
+     "actionId": "fish_here",
+     "tile": "25:25",
+     "targetId": "water_5ec03799984767c4",
+     "settledAtMs": 90655
+    }
+   ]
+  },
+  {
+   "programId": "plan_894_fa2e098ee1b61dd0",
+   "firstAtMs": 1276837,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "move_to_tile",
+     "tile": "90:14",
+     "settledAtMs": 1277068
+    },
+    {
+     "nodeId": "auto_walk_02",
+     "actionId": "move_to_tile",
+     "tile": "90:15",
+     "settledAtMs": 1283715
+    },
+    {
+     "nodeId": "n03",
+     "actionId": "enter_exit",
+     "tile": "90:15",
+     "settledAtMs": 1284630
+    }
+   ]
+  },
+  {
+   "programId": "plan_895_dbc1d3bf3f8195e4",
+   "firstAtMs": 1284005,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "move_to_tile",
+     "tile": "90:16",
+     "settledAtMs": 1284101
+    },
+    {
+     "nodeId": "auto_walk_02",
+     "actionId": "move_to_tile",
+     "tile": "90:15",
+     "settledAtMs": 1285469
+    },
+    {
+     "nodeId": "n03",
+     "actionId": "enter_exit",
+     "tile": "90:15",
+     "settledAtMs": 1285744
+    }
+   ]
+  },
+  {
+   "programId": "plan_928_d38a268d42b37b95",
+   "firstAtMs": 1416011,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "move_to_tile",
+     "tile": "10:90",
+     "settledAtMs": 1430440
+    },
+    {
+     "nodeId": "n02",
+     "actionId": "talk_to_npc",
+     "tile": "65:86",
+     "targetId": "npc_relationship_6c82e968318c9def",
+     "settledAtMs": 1446024
+    }
+   ]
+  },
+  {
+   "programId": "plan_929_783e17b8f3477285",
+   "firstAtMs": 1430720,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "move_to_tile",
+     "tile": "38:72",
+     "settledAtMs": 1441180
+    }
+   ]
+  },
+  {
+   "programId": "plan_1002_f57f58a93ba7435b",
+   "firstAtMs": 1538751,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "chop_stump",
+     "tile": "49:20",
+     "targetId": "tree_stump_e15a9ea9e498689d",
+     "settledAtMs": 1541632
+    },
+    {
+     "nodeId": "n02",
+     "actionId": "chop_stump",
+     "tile": "42:22",
+     "targetId": "tree_stump_b150720bc2de8b2a",
+     "settledAtMs": 1542717
+    },
+    {
+     "nodeId": "n03",
+     "actionId": "pickup_item",
+     "tile": "47:27",
+     "targetId": "item_fd735eeae6983b65",
+     "settledAtMs": 1543328
+    },
+    {
+     "nodeId": "n04",
+     "actionId": "pickup_item",
+     "tile": "47:26",
+     "targetId": "item_1d728d1833bf6b8c",
+     "settledAtMs": 1543902
+    },
+    {
+     "nodeId": "n05",
+     "actionId": "pickup_item",
+     "tile": "54:23",
+     "targetId": "item_5376a92c0f7065da",
+     "settledAtMs": 1545545
+    },
+    {
+     "nodeId": "n06",
+     "actionId": "pickup_item",
+     "tile": "47:27",
+     "targetId": "item_d18c633934497e5f"
+    }
+   ]
+  },
+  {
+   "programId": "plan_1005_096c024faed28519",
+   "firstAtMs": 1542947,
+   "nodes": [
+    {
+     "nodeId": "n01",
+     "actionId": "chop_stump",
+     "tile": "49:20",
+     "targetId": "tree_stump_e15a9ea9e498689d",
+     "settledAtMs": 1543019
+    },
+    {
+     "nodeId": "n02",
+     "actionId": "chop_stump",
+     "tile": "42:22",
+     "targetId": "tree_stump_b150720bc2de8b2a",
+     "settledAtMs": 1543616
+    }
+   ]
+  }
+ ]
+}

@@ -50,6 +50,7 @@ function programme(programId = "plan_sleep"): InFlightProgramme {
       Object.freeze({ index: 0, nodeId: "n001", actionId: "sleep", state: "running", observedInStateMs: 4_000 }),
     ]),
     omitted: 0,
+    unsettledTiles: [],
   });
 }
 

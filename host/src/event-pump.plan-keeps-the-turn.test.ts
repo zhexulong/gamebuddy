@@ -52,6 +52,7 @@ function running(remaining: number, total: number = 3): InFlightProgrammeReading
     readAgeMs: 400,
     nodes: [],
     omitted: 0,
+    unsettledTiles: [],
   };
   return { programmes: [programme], omittedProgrammes: 0 };
 }

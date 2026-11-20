@@ -547,6 +547,8 @@ function planReading(
         programme.nodes.map((node, index) => Object.freeze({ index, ...node, observedInStateMs: 0 })),
       ),
       omitted,
+      // No tile in these fixtures: the steer cases are about which turn opens, and a queued tile only subtracts rows.
+      unsettledTiles: Object.freeze([]),
     });
   });
   return Object.freeze({ programmes: Object.freeze(built), omittedProgrammes: 0 });

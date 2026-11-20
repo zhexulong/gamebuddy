@@ -65,7 +65,7 @@ const SINGLE_SIDED_MEMBERS: Readonly<Record<string, Readonly<{ carriedBy: "wire"
   sceneTarget: {
     carriedBy: "wire",
     reason:
-      "the observation binding `pickup_forage` declares, with NO reader on either side: the Host's `ActionRegistrationDescriptor` has no such member and `isValidActionDescriptor` only tolerates the key, the Mod reads `FarmhandActionDescriptor.SceneTarget` nowhere but the reply that copies it (`BridgeSession.cs`), and this projection omits it - so its absence here loses nothing, and the gateway and `tools/check-stardew-observation-consumers.mjs` that are written to accept it are reading a field nothing enforces",
+      "the observation binding an action declares (`pickup_forage` names one). It READ nowhere until this unit: the Host's `ActionRegistrationDescriptor` had no such member and `isValidActionDescriptor` only tolerated the key, so the projection omitting it lost nothing. It is read now - `lookaheadIneligibility` (`body-program-script.ts`) refuses to compose a scene-bound action into a plan that runs behind a programme still in flight - and the artifact still omits it, so the one reader sees only the live `hello_ack` value; it is stated here rather than moved onto the surface because that is a change to the Mod's publication, not to this list",
   },
   synthetic: {
     carriedBy: "surface",

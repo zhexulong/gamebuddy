@@ -1891,6 +1891,23 @@ export type ActionRegistrationDescriptor = Readonly<{
    */
   targetFamily?: string;
   /**
+   * The observation binding this action declares - what it reads out of a scene read - or absent when it addresses nothing
+   * a scene read names.
+   *
+   * <p>
+   * READ, NOT MERELY TOLERATED. It sat in `KNOWN_ACTION_DESCRIPTOR_KEYS` with no reader on either side
+   * (`descriptor-wire-keys.test.ts` said so in its own words until this member got one). What it states is that this
+   * action's meaning is BOUND to a scene somebody read, which is why `lookaheadIneligibility` (`body-program-script.ts`)
+   * will not compose it ahead of a programme still in flight: the scene it binds to may be gone by the time its node runs.
+   * </p>
+   */
+  sceneTarget?: Readonly<{
+    type: string;
+    version: number;
+    required: boolean;
+    requiredProperties: readonly string[];
+  }>;
+  /**
    * `true` on an action whose effect happens WITHOUT the NPC counter the player would use: the Mod spends the cost and
    * places the result itself instead of opening the shop or menu that owns the transaction (`build_farm_building`
    * deducts the `Data/Buildings` cost and materials and calls `GameLocation.buildStructure`, never Robin's carpenter
@@ -6176,6 +6193,21 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     // Only ever `true`. The Mod omits the member on every action that goes through its counter, so a published `false`
     // would be a second spelling of "absent" - and a second spelling is how a descriptor outlives the fact it named.
     if (value.synthetic !== true) return false;
+  }
+
+  if ("sceneTarget" in value && value.sceneTarget !== undefined) {
+    // The observation binding the action declares (`pickup_forage` names one): a version on the binding, whether it is
+    // REQUIRED, and the properties the binding needs. Read as a shape rather than passed through, because the one reader
+    // this member has (`lookaheadIneligibility`) treats presence as a statement - an unread shape would let a mangled
+    // binding read as no binding at all.
+    const scene = value.sceneTarget;
+    if (!isRecord(scene) || !hasOnlyKeys(scene, ["type", "version", "required", "requiredProperties"])) return false;
+    if (typeof scene.type !== "string" || scene.type.length === 0 || scene.type.length > 128) return false;
+    if (!Number.isSafeInteger(scene.version) || (scene.version as number) < 0) return false;
+    if (typeof scene.required !== "boolean") return false;
+    if (!Array.isArray(scene.requiredProperties)) return false;
+    if (!scene.requiredProperties.every((name) => typeof name === "string" && name.length > 0 && name.length <= 64))
+      return false;
   }
 
   return true;

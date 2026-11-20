@@ -15,6 +15,7 @@ import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./progra
 // (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
 // call already write, so the pump asks it rather than keeping a second account of what is running.
 import {
+  inFlightTargets,
   type InFlightProgramme,
   type InFlightProgrammeReading,
   readInFlightProgrammes,
@@ -1613,6 +1614,33 @@ export const MOD_STALL_VERDICT_CODE = "stalled_waiting";
  * is exactly 60 ticks").
  */
 export const STARDEW_TICKS_PER_SECOND = 60;
+
+/**
+ * How many nodes her own plan may still have left before the next turn is asked for anyway.
+ *
+ * <p>
+ * MEASURED 2026-11-20 (`round82`, its own `result.json`): **102 programme switches with 4 overlaps** - so in 98 of them she
+ * was woken only after the previous programme had answered - and **992.3 s of the run's 1,626 s spent between programmes**,
+ * 61% of the wall clock. The rule that produced it was `remaining > 0`, written when `follow_up` was 65 turns of chatter
+ * (`round60`) and every arrival opened a prompt: the answer was "wait until the plan has answered", and it is exact for the
+ * question it was written for and wrong for the next one.
+ *
+ * <p>
+ * THE UNIT IS THE DECISION, NOT THE NODE. A turn is a model round-trip that ENDS in a plan, and the Mod's journal accepts a
+ * second `Active` programme while the first still holds the body (`OpenBodyProgramJournalAuthority.Submit`) - its nodes
+ * wait their turn behind the one in flight (`FarmhandBodyProgramController.ProgramWithNodeInFlight`) and nothing is minted,
+ * so a queue is free. What was expensive was the GAP: the last node settles, the settlement fact opens a turn, the model
+ * reads, composes and submits, and only then does the body work again. Asking for that decision two nodes early overlaps
+ * the model's own seconds with the body's.
+ * </p>
+ * <p>
+ * WHY TWO AND NOT MORE. Three is the shape the old rule was measured against (`round82`'s plans are 2-3 nodes) and waking
+ * three nodes early is waking on almost every programme, which is the chatter the rule exists to prevent; zero is the
+ * defect. Two is the smallest step that overlaps a turn with the tail of a plan, and it is a COUNT OF NODES rather than a
+ * duration because the journal publishes nodes and no clock (`InFlightProgramme.remaining`).
+ * </p>
+ */
+export const PLAN_LOW_WATER_NODES = 2;
 
 /**
  * One delivered turn, at the cadence this product measured.
@@ -3280,10 +3308,14 @@ export class CompanionEventPump {
    * THE TRIGGER, NOT THE WORDING. `follow_up` - the pump opening a turn after her own turn ended - went 9 -> 65 between
    * the two sessions this file's neighbours measure, and the turn that used to take 8.2 model steps took 2.0: a fact
    * arriving had become a reason to speak. The reason a turn exists is that there is something left to PLAN, and while
-   * her own plan still has nodes the honest answer is "not yet" - the answer it is about to give is the one batch
+   * her own plan still has a tail the honest answer is "not yet" - the answer it is about to give is the one batch
    * worth waking her for.
    * </p>
    * <p>
+   * AND WHEN THE TAIL IS SHORT, THE ANSWER IS "NOW": `#planStillPlansAhead` asks the journal a finer question than "are
+   * there any nodes left" - see `PLAN_LOW_WATER_NODES` for the measurement that forced it. What has not changed is that
+   * the reading is the journal's own count of the nodes that have not happened.
+   * </p>
    * TWO THINGS DO NOT WAIT, and both are declared above rather than special-cased here. A DUE wake is the liveness
    * exception (`PUMP_MINTED_WAKE_KINDS`): a stale reading, a narration run and the Mod's stall verdict exist to make her
    * look, and a look that waits for a plan is a look that never happens. A SETTLEMENT is the plan's own answer - it is
@@ -3305,20 +3337,43 @@ export class CompanionEventPump {
     // question. Waiting for the plan's answer on the fact that is blocking the plan is a wait with no forward path.
     if (heldWorldOf(fact).length > 0) return false;
     if (fact.semanticKind === PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND) return false;
-    return this.#workLeftToPlan() > 0;
+    return this.#planStillPlansAhead();
   }
 
   /**
-   * The nodes her own plans still have to get through, as the journal counts them.
+   * Whether the next turn should still wait for her own plan rather than be opened for whatever arrived.
    *
-   * `InFlightProgramme.remaining` is `total - settled`, and the reader bounds how many programmes and node rows it
-   * names - neither can hide work, because `remaining` is computed from the journal's row count, not from the rows the
-   * block prints.
+   * <p>
+   * TWO CONDITIONS, and the second is what a QUEUE changes (`PLAN_LOW_WATER_NODES` carries the measurement):
+   * </p>
+   * <ul>
+   *   <li>A SECOND PROGRAMME IS ALREADY QUEUED. The journal holds more than one `Active` programme, so the next turn has
+   *       already spent its decision and there is nothing left to ask for - and waiting is what keeps two programmes from
+   *       being composed against the same snapshot, which is the re-ask a lookahead has to avoid.</li>
+   *   <li>THE PLAN STILL HAS A TAIL LONGER THAN THE LOW-WATER MARK. Two nodes left is about a turn's worth of body work:
+   *       the model composes the next programme while the last two settle, instead of after.</li>
+   * </ul>
+   * <p>
+   * WHAT IT IS NOT: a statement that the plan has answered. That question is `#workLeftToPlan() === 0`, and the carried
+   * backlog still asks it - facts waiting for the plan's own settlement are waiting for an answer one or two nodes away,
+   * and calling that a backlog would buy the extra turn the backlog exists to avoid. Two questions, two readings.
+   * </p>
+   */
+  #planStillPlansAhead(): boolean {
+    const programmes = this.#readInFlight().programmes;
+    const remaining = nodesLeftToPlan(programmes);
+    // A PROGRAMME THE JOURNAL STILL CALLS ACTIVE BUT HAS NOTHING LEFT IN is not a queue: it is a programme waiting to be
+    // closed, and counting it as "already asked for" would hold a turn indefinitely on an empty plan.
+    if (remaining === 0) return false;
+    if (programmes.length >= 2) return true;
+    return remaining > PLAN_LOW_WATER_NODES;
+  }
+
+  /**
+   * The nodes her own plans still have to get through, as the journal counts them (`nodesLeftToPlan`).
    */
   #workLeftToPlan(): number {
-    let remaining = 0;
-    for (const programme of this.#readInFlight().programmes) remaining += programme.remaining;
-    return remaining;
+    return nodesLeftToPlan(this.#readInFlight().programmes);
   }
 
   /**
@@ -4156,6 +4211,11 @@ export class CompanionEventPump {
         snapshot: worldState,
         events: promptFacts,
         locale,
+        // THE WORK ALREADY QUEUED IS NOT OFFERED AGAIN. The snapshot in this batch may predate the programme still in
+        // flight (`PLAN_LOW_WATER_NODES` is what opens a turn while it runs), so the rows its un-settled nodes address
+        // leave the state block for this delivery: a plan composed from a line that still offers them is a second plan
+        // for one tile. Tile, not target id - the journal publishes the tile (`InFlightProgramme.unsettledTiles`).
+        inFlightTiles: inFlightTargets(this.#readInFlight()),
       });
       const triggerEventIds = Object.freeze([
         ...inputs.map((input) => input.eventId ?? input.inputId),
@@ -4794,6 +4854,20 @@ export class CompanionEventPump {
     const location = (this.#lastSnapshot?.payload as { location?: unknown } | undefined)?.location;
     return typeof location === "string" && location.length > 0 ? location : undefined;
   }
+}
+
+/**
+ * The nodes the journal says her own programmes have not got through, added up.
+ *
+ * One sum, two readers: `#planStillPlansAhead` asks whether that tail is short enough to compose the next plan against,
+ * and `#workLeftToPlan` (the carried backlog's question) asks whether the plan has answered at all. `remaining` is
+ * `total - settled`, computed from the journal's row count rather than from the rows a block prints, so a bound on the
+ * rendering cannot make work disappear.
+ */
+function nodesLeftToPlan(programmes: readonly InFlightProgramme[]): number {
+  let remaining = 0;
+  for (const programme of programmes) remaining += programme.remaining;
+  return remaining;
 }
 
 /**

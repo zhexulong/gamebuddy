@@ -517,6 +517,69 @@ export const MODAL_CLEARING_PLAN_ACTION_IDS: readonly string[] = Object.freeze([
   "respond_level_up",
 ]);
 
+/**
+ * The Mod's `world_lifecycle` handler group, projected: the actions that move the DAY rather than the ground in front of
+ * her.
+ *
+ * <p>
+ * THE SAME SHAPE AS `MODAL_CLEARING_PLAN_ACTION_IDS`, for the same reason and from the same owner. The Mod declares the
+ * group once (`FarmhandActionHandlerGroup.WorldLifecycle`) and the wire does not publish it - `ActionRegistrationDescriptor`
+ * carries arguments, output facts, resource claims, approach, target family and (now) the scene binding, and no group - so a
+ * Host that needs the classification has to restate it and be held to it by a gate. `action-handler-groups.v1.json` is the
+ * Mod's own generated publication of that rule for every registered action, and
+ * `lookahead-eligibility.test.ts` holds this list equal to it BY NAME in both directions.
+ * </p>
+ *
+ * <p>
+ * NOT `WORLD_RESETTING_PLAN_ACTION_IDS`, which is one member of this group and answers a different question: that list is
+ * about a plan whose later nodes are compiled against a world the earlier one destroyed (`sleep` walks to a bed and rebuilds
+ * the farm). These four are about a DECISION made from a snapshot: a quest accepted, a reward claimed, a prize redeemed is
+ * a decision taken about a menu that was open when the snapshot was read. Two questions, two lists, and neither is derived
+ * from the other - a fact with two spellings would drift in one of them.
+ * </p>
+ */
+export const WORLD_LIFECYCLE_PLAN_ACTION_IDS: readonly string[] = Object.freeze([
+  "sleep",
+  "accept_daily_quest",
+  "accept_special_order",
+  "claim_museum_reward",
+  "redeem_prize_ticket",
+]);
+
+/**
+ * Why an action may NOT be composed into a plan while another programme still has nodes to run, or `undefined` when it may.
+ *
+ * <p>
+ * WHAT A LOOKAHEAD IS. The pump opens a turn when the plan in flight is down to its last nodes (`PLAN_LOW_WATER_NODES`), so
+ * the next programme is composed from a snapshot that was read while that programme was still working - the Mod queues it
+ * rather than starting it (`FarmhandBodyProgramController.ProgramWithNodeInFlight`), so its nodes run at least one node
+ * later than the picture they were written from.
+ * </p>
+ * <p>
+ * WHICH ACTIONS SURVIVE THAT GAP IS DERIVED, from two statements the Mod already makes and one it does not:
+ * </p>
+ * <ol>
+ *   <li>`handlerGroup` - `world_lifecycle` and `modal`: the action's whole subject is a day or a menu that the gap can
+ *       close. Projected above because the wire never publishes the group.</li>
+ *   <li>`descriptor.sceneTarget` - the action declares that it READS a scene, so it is bound to the scene it read.</li>
+ * </ol>
+ * <p>
+ * THE RESIDUAL IS NAMED RATHER THAN HIDDEN, because the failure direction matters: an action wrongly excluded is planned
+ * one turn later, and an action wrongly included is planned THROUGH a day. `move_to_tile` stays eligible (a walk inside the
+ * map is composable from a slightly old picture), and so does `shop_purchase` - a shop does not change the scene, only the
+ * bag - but `travel` and `enter_exit` are in `movement` and declare no `sceneTarget`, so a CROSS-MAP leg is the one member
+ * of your four that this rule cannot name. `lookahead-eligibility.test.ts` prints that residual beside its verdict.
+ * </p>
+ */
+export function lookaheadIneligibility(
+  registration: Readonly<{ actionId: string; descriptor?: ActionRegistration["descriptor"] }>,
+): "world_lifecycle" | "modal" | "scene_target" | undefined {
+  if (WORLD_LIFECYCLE_PLAN_ACTION_IDS.includes(registration.actionId)) return "world_lifecycle";
+  if (MODAL_CLEARING_PLAN_ACTION_IDS.includes(registration.actionId)) return "modal";
+  if (registration.descriptor?.sceneTarget !== undefined) return "scene_target";
+  return undefined;
+}
+
 const MAX_PLAN_SCRIPT_CHARS = 8192;
 /** The engine's message is the caller's to fix; it is bounded because it reaches a model's context. */
 const MAX_THROWN_MESSAGE_CHARS = 300;

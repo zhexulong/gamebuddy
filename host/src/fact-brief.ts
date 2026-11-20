@@ -134,7 +134,6 @@ export const ADDRESSABLE_FACTS_HEAD = "可指代的字段：";
  */
 export const MACHINE_FIELD_HEADS: readonly string[] = Object.freeze([ADDRESSABLE_ROWS_HEAD, ADDRESSABLE_FACTS_HEAD]);
 
-
 /**
  * How many delivered turns a re-stated world reading may age before its age stops being a parenthetical and becomes a
  * named fact.
@@ -265,6 +264,13 @@ export type FactBriefInput = Readonly<{
    * states the work.
    */
   events: readonly WorldFact[];
+  /**
+   * The tiles a node of a programme still in flight addressed, so the state block stops offering them (`TargetFreshness`).
+   *
+   * Absent means no plan is queued, which is the truth for every caller that has no journal at all (the Chat surface's own
+   * reader, and the steer, which states no block in the first place).
+   */
+  inFlightTiles?: ReadonlySet<string>;
   /** The language the player wrote in. The brief is Chinese; this is what a caller checks it against. */
   locale: string;
 }>;
@@ -279,7 +285,12 @@ export function composeFactBrief(input: FactBriefInput): string {
   const blocks: string[] = [];
   const speech = playerSpeech(input.inputs);
   if (speech !== "") blocks.push(speech);
-  const state = composeWorldState(input.snapshot, provedPackCounts(input.events), provedGoneTargets(input.events));
+  const state = composeWorldState(
+    input.snapshot,
+    provedPackCounts(input.events),
+    provedGoneTargets(input.events),
+    input.inFlightTiles,
+  );
   if (state !== "") blocks.push(state);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
@@ -352,17 +363,27 @@ function playerSpeech(inputs: readonly PlayerInput[]): string {
  * Mod has already answered `_gone` for is an address to nothing (`round78`: eight stones printed under a receipt block
  * naming six of them broken). It is passed as its own argument rather than folded into `provedPack`, which is a map of
  * ITEM COUNTS: the two proofs answer two different questions and a single shape would let one be read as the other.
+ *
+ * `inFlightTiles` IS THE THIRD, AND IT IS NEITHER A PROOF NOR A COUNT. Those are the tiles the journal says a programme still
+ * in flight addressed: nothing has happened there, and they are still not offerable, because the turn this block opens is
+ * the one that plans the next programme. A queue read as a proof would be a lie in the other direction, so the two keep
+ * their own arguments and the line states them apart.
  */
 export function composeWorldState(
   reading: WorldStateReading | undefined,
   provedPack: ReadonlyMap<string, number> = NO_PACK_FRESHNESS.proved,
   provedGone: ReadonlySet<string> = NO_TARGET_FRESHNESS.gone,
+  inFlightTiles: ReadonlySet<string> = NO_TARGET_FRESHNESS.inFlight,
 ): string {
   if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
   const world = reading.snapshot;
   if (world === null || typeof world !== "object") return block("world-state", NOTHING_OBSERVED);
   const freshness: PackFreshness = Object.freeze({ proved: provedPack, ageTurns: reading.ageTurns });
-  const targetFreshness: TargetFreshness = Object.freeze({ gone: provedGone, ageTurns: reading.ageTurns });
+  const targetFreshness: TargetFreshness = Object.freeze({
+    gone: provedGone,
+    inFlight: inFlightTiles,
+    ageTurns: reading.ageTurns,
+  });
   const parts: string[] = [];
   if (reading.ageTurns >= WORLD_STATE_STALE_TURNS)
     parts.push(
@@ -478,11 +499,7 @@ function formatCarrying(world: Snapshot, freshness: PackFreshness = NO_PACK_FRES
   const addressable = shown.map((row) => `${row.displayName} 槽 ${String(row.slot)} ${row.qualifiedItemId}`);
   const rest = named.length - shown.length;
   // The age covers the rows this line PRINTS: a row the bound dropped is not a count she was handed.
-  const aged = packCountsAge(
-    shown.filter((row) => row.proved).length,
-    shown.length,
-    freshness.ageTurns,
-  );
+  const aged = packCountsAge(shown.filter((row) => row.proved).length, shown.length, freshness.ageTurns);
   return Object.freeze({
     prose: `身上带着 ${sentences.join("、")}${rest > 0 ? ` 其余 ${String(rest)} 种未列出（全都要看用 stardew_observe，那里的每一行都带槽号）` : ""}${aged}`,
     addressable: Object.freeze(addressable),
@@ -760,9 +777,7 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
     if (seen.has(row.qualifiedItemId)) continue;
     seen.add(row.qualifiedItemId);
     const name =
-      typeof row.displayName === "string" && row.displayName.trim() !== ""
-        ? row.displayName.trim()
-        : "未命名的种子";
+      typeof row.displayName === "string" && row.displayName.trim() !== "" ? row.displayName.trim() : "未命名的种子";
     const proved = freshness.proved.get(row.qualifiedItemId);
     if (proved !== undefined) provedSeeds += 1;
     const count = proved ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
@@ -1011,7 +1026,10 @@ function sentence(narration: string): FactRendering | null {
  * (`08:12 pickup_item`) because two refusals in one turn would otherwise be two unlabelled token runs.
  */
 function addressOf(label: string, reasonCode: string | null, detail: string): string | null {
-  const parts = [...(reasonCode === null || reasonCode === "" ? [] : [`reasonCode=${reasonCode}`]), ...(detail === "" ? [] : [detail])];
+  const parts = [
+    ...(reasonCode === null || reasonCode === "" ? [] : [`reasonCode=${reasonCode}`]),
+    ...(detail === "" ? [] : [detail]),
+  ];
   return parts.length === 0 ? null : `${label} ${parts.join("；")}`;
 }
 
@@ -1278,8 +1296,13 @@ function settlementLine(fact: WorldFact, reading: WorldStateReading | undefined)
  * unlabelled token runs would be four addresses and no way to tell which step each belongs to.
  */
 function nodeAddress(node: SettledNode): string | null {
-  const label = typeof node.nodeId === "string" ? node.nodeId : typeof node.actionId === "string" ? node.actionId : "一步";
-  return addressOf(label, typeof node.reasonCode === "string" ? node.reasonCode : null, boundedField("reasonDetail", node.reasonDetail) ?? "");
+  const label =
+    typeof node.nodeId === "string" ? node.nodeId : typeof node.actionId === "string" ? node.actionId : "一步";
+  return addressOf(
+    label,
+    typeof node.reasonCode === "string" ? node.reasonCode : null,
+    boundedField("reasonDetail", node.reasonDetail) ?? "",
+  );
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1658,7 +1681,3 @@ function clockOf(fact: WorldFact): string {
 function block(name: FactBriefBlock, body: string): string {
   return `<${name}>\n${body}\n</${name}>`;
 }
-
-
-
-

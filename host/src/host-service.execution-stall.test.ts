@@ -79,6 +79,7 @@ function livenessReading(inFlight: boolean): InFlightProgrammeReading {
                 }),
               ]),
               omitted: 0,
+              unsettledTiles: [],
             }),
           ]
         : [],

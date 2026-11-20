@@ -250,6 +250,23 @@ export interface InFlightProgramme {
   readonly nodes: readonly InFlightProgrammeNode[];
   /** Node rows the bound left out. `0` inside the bound, and `total` above still covers them. */
   readonly omitted: number;
+  /**
+   * The tiles this programme's un-settled nodes addressed, as `x:y` - what a next plan must not ask for again.
+   *
+   * <p>
+   * TILE, NOT TARGET ID, because a tile is the only address the journal publishes for a node in flight
+   * (`BodyProgramNodeStatus.x`/`y`: "the tile this node addressed", read from the canonical arguments the Mod bound at
+   * admission). A tile is the WEAKER identity: two families can publish a row at one tile, and a subtraction keyed on it
+   * removes every row standing there. Weak is the safe direction - a row that is not offered cannot be worked twice.
+   * </p>
+   *
+   * <p>
+   * NOT BOUNDED BY `MAX_IN_FLIGHT_NODE_ROWS`, and that is the difference from `nodes`: the row list is a rendering, and
+   * its cap exists so a batch stays readable. A guarantee that a queued node's work is not offered again cannot inherit a
+   * rendering's cap, because a plan of 16 nodes would leave four tiles plainly available.
+   * </p>
+   */
+  readonly unsettledTiles: readonly string[];
 }
 
 /** Every programme the journal still shows in flight, and the ones the bound left out. */
@@ -291,7 +308,7 @@ const OBSERVATION_RETENTION_MS = 10 * 60_000;
 type ObservedProgram = {
   readonly programId: string;
   lastSeen: number;
-  nodes: Map<string, { state: string; since: number; actionId?: string }>;
+  nodes: Map<string, { state: string; since: number; actionId?: string; tile?: string }>;
 };
 
 export interface ProgramProgressObserver {
@@ -374,6 +391,16 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
           }),
         );
         const settled = rows.filter(([, anchor]) => NODE_STATES_SETTLED.has(anchor.state)).length;
+        // Every tile a node that has NOT settled addressed, from the anchors and not from the rendered rows: the row cap
+        // above is a rendering decision and must not decide what counts as work already queued.
+        const unsettledTiles: string[] = [];
+        for (const [, anchor] of rows)
+          if (
+            !NODE_STATES_SETTLED.has(anchor.state) &&
+            anchor.tile !== undefined &&
+            !unsettledTiles.includes(anchor.tile)
+          )
+            unsettledTiles.push(anchor.tile);
         live.push(
           Object.freeze({
             programId: program.programId,
@@ -383,6 +410,7 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
             readAgeMs,
             nodes: Object.freeze(nodes),
             omitted: rows.length - nodes.length,
+            unsettledTiles: Object.freeze(unsettledTiles),
           }),
         );
       }
@@ -406,8 +434,8 @@ export function createProgramProgressObserver(): ProgramProgressObserver {
  * @param nowMs The read's clock.
  */
 function observeNode(
-  anchors: Map<string, { state: string; since: number; actionId?: string }>,
-  node: Readonly<{ nodeId: string; state: string; actionId?: string }>,
+  anchors: Map<string, { state: string; since: number; actionId?: string; tile?: string }>,
+  node: Readonly<{ nodeId: string; state: string; actionId?: string; tile?: string }>,
   nowMs: number,
 ): Readonly<{
   view: ProgramNodeProgress;
@@ -416,15 +444,20 @@ function observeNode(
 }> {
   const anchor = anchors.get(node.nodeId);
   const actionId = node.actionId ?? anchor?.actionId;
+  const tile = node.tile ?? anchor?.tile;
   if (anchor === undefined || anchor.state !== node.state)
     anchors.set(node.nodeId, {
       state: node.state,
       since: nowMs,
       ...(actionId === undefined ? {} : { actionId }),
+      ...(tile === undefined ? {} : { tile }),
     });
   // The action a node runs is stable across its states, so a row that only starts naming it later (a payload that
   // dropped it, then one that carries it) fills the same anchor rather than restarting the clock above.
   else if (anchor.actionId === undefined && actionId !== undefined) anchor.actionId = actionId;
+  // The tile is a property of the node's ARGUMENTS, so it is one fact for the node's whole life and survives a payload
+  // that omits it - the same rule, one field over.
+  else if (anchor.tile === undefined && tile !== undefined) anchor.tile = tile;
   return Object.freeze({
     view: Object.freeze({
       nodeId: node.nodeId,
@@ -457,6 +490,21 @@ export const programStatusProgress: ProgramProgressObserver = createProgramProgr
  */
 export function readInFlightProgrammes(nowMs: number = Date.now()): InFlightProgrammeReading {
   return programStatusProgress.inFlight(nowMs);
+}
+
+/**
+ * Every tile an in-flight node has not got through yet: the work a next plan must not ask for a second time.
+ *
+ * <p>
+ * THE SAME READING, one question further. `InFlightProgramme.remaining` says how much is left; these are the places it is
+ * left in, so a snapshot that still publishes a tree she has already queued can stop offering it. Nothing here decides
+ * anything: it is the journal's own rows, joined on the tile the journal itself publishes.
+ * </p>
+ */
+export function inFlightTargets(reading: InFlightProgrammeReading): ReadonlySet<string> {
+  const tiles = new Set<string>();
+  for (const programme of reading.programmes) for (const tile of programme.unsettledTiles) tiles.add(tile);
+  return tiles;
 }
 
 /**
@@ -999,7 +1047,7 @@ function readPlanProgressSource(payload: unknown): {
   programId: string;
   stopEpoch: string;
   state: string;
-  nodes: readonly Readonly<{ nodeId: string; state: string; actionId?: string }>[];
+  nodes: readonly Readonly<{ nodeId: string; state: string; actionId?: string; tile?: string }>[];
 } | null {
   if (typeof payload !== "object" || payload === null) return null;
   const record = payload as Record<string, unknown>;
@@ -1007,7 +1055,7 @@ function readPlanProgressSource(payload: unknown): {
   const snapshot = record.snapshot;
   if (typeof snapshot !== "object" || snapshot === null) return null;
   const plan = snapshot as Record<string, unknown>;
-  const nodes: { nodeId: string; state: string; actionId?: string }[] = [];
+  const nodes: { nodeId: string; state: string; actionId?: string; tile?: string }[] = [];
   if (Array.isArray(plan.nodes))
     for (const node of plan.nodes) {
       if (typeof node !== "object" || node === null) continue;
@@ -1019,6 +1067,9 @@ function readPlanProgressSource(payload: unknown): {
         nodeId: String(entry.nodeId ?? ""),
         state: String(entry.state ?? ""),
         ...(typeof entry.actionId === "string" && entry.actionId !== "" ? { actionId: entry.actionId } : {}),
+        // `x`/`y` are the tile the node ADDRESSED (`BodyProgramNodeStatus`), null for a node whose arguments name none -
+        // which is a fact, not a missing value. Read here because this is the ONE reader of a status frame.
+        ...(typeof entry.x === "number" && typeof entry.y === "number" ? { tile: `${entry.x}:${entry.y}` } : {}),
       });
     }
   return {
