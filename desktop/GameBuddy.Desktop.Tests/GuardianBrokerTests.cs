@@ -198,10 +198,13 @@ public sealed class GuardianBrokerTests
         var settle = source.IndexOf("await SettleAttemptAsync()", session, StringComparison.Ordinal);
         var accept = source.IndexOf("await AcceptSessionAsync(cancellationToken)", session, StringComparison.Ordinal);
 
-        // A reconnect inside the settlement window must reach a listening instance: the pipe carries one
-        // instance, and a busy one leaves the Host waiting out the transport's retry and then reporting
-        // the pipe unreachable. The exclusion is not the busy pipe - it is that nothing is READ from the
-        // next connection until this attempt is settled, which is why the accept stays after the settle.
+        // The instance is released before the settlement, so the accept that follows runs the instant the
+        // settlement finishes. The release does NOT make the name connectable while the settlement runs - a
+        // disconnected instance still answers ERROR_PIPE_BUSY (measured; the same code as a session in
+        // flight, not ERROR_FILE_NOT_FOUND), which libuv waits out instead of reporting, and a Host cannot
+        // arm a new attempt until its own settlement has seen the Guardian objects gone. The exclusion is
+        // not the busy pipe: it is that nothing is READ from the next connection until this attempt is
+        // settled, which is why the accept stays after the settle.
         Assert.True(session > loop && disconnect > session && settle > disconnect && accept > settle);
     }
 

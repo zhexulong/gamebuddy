@@ -148,10 +148,17 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     /// will read anything from the next one.
     ///
     /// A session that ends - the Host closed control - ends that session's attempt: its Guardian is settled
-    /// here, its pid proven gone, its record retired. The pipe is released from that session at once, so a
-    /// Host that reconnects in this window connects instead of waiting out the pipe-busy retry and then
-    /// reporting the pipe unreachable; nothing is READ from that connection until the attempt above is
-    /// settled, which is where the exclusion lives. A settled attempt can therefore never be reachable from
+    /// here, its pid proven gone, its record retired. The instance is released from that session before the
+    /// settlement begins, so the accept that follows is the next thing this broker does.
+    ///
+    /// Releasing it does not make the NAME connectable while the settlement runs: a client connecting in
+    /// that window meets ERROR_PIPE_BUSY - the same code a session in flight produces, measured on this
+    /// construction, and not ERROR_FILE_NOT_FOUND - which libuv waits out (measured: ~5,5 s) instead of
+    /// reporting, so a Host that reconnects here waits rather than failing. The window is bounded from the
+    /// other side too: a Host cannot arm a new attempt until its own settlement has seen this attempt's
+    /// Guardian-owned objects gone, which is exactly the exit awaited here. What the ordering buys is
+    /// therefore the accept, not the release; nothing is READ from a connection until the attempt above is
+    /// settled, and that is where the exclusion lives. A settled attempt can therefore never be reachable from
     /// the next one, no command is served while two Guardians could be resident, and nothing of a session's
     /// correlation survives it: the next arm arrives on a connection that was authenticated again
     /// (ADR-0015 §3, §4.2).
@@ -168,8 +175,9 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
                     try { await ServeSessionAsync(attemptClosing, cancellationToken).ConfigureAwait(false); }
                     finally { sessionClosing = null; }
                 }
-                // Everything the finished attempt held is still being settled; the pipe itself is not one
-                // of those things. It is one instance, so a client finds it busy until this releases it.
+                // Everything the finished attempt held is still being settled. Releasing the instance here
+                // does not make the name connectable on its own (a disconnected instance still answers
+                // ERROR_PIPE_BUSY); it means the accept below runs the instant the settlement finishes.
                 server.Disconnect();
                 await SettleAttemptAsync().ConfigureAwait(false);
                 if (closed) return;
