@@ -3850,21 +3850,65 @@
     clip-path: inset(50%);
   }
 
-  /* The player's own mod settings, on the Game surface. The family rows are the
-     label-is-the-control recipe the delivery-pacing row uses: the row is the whole
-     tap target (44 px, the product's own minimum), and the real checkbox stays in
-     the a11y tree so a screen reader and a keyboard both reach it. */
+  /* The player's own mod settings, on the Game surface. The action policy is a region of its own
+     - a plate with its own heading, its own count line and its own rows - because it was a run of
+     twenty-one undifferentiated rows between two single-field settings, and nothing said where it
+     started or how much of it was switched off. The family rows keep the label-is-the-control
+     recipe the delivery-pacing row uses: the row is the whole tap target (44 px, the product's own
+     minimum), and the real checkbox stays in the a11y tree so a screen reader and a keyboard both
+     reach it. */
+  .game-player-settings-policy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: var(--space-2) 0 var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-card);
+  }
+
+  /* The masthead: the region's name on the left, the whole setting in one line on the right. It
+     wraps rather than clipping, so at 400 px the count line sits under the heading instead of
+     being squeezed into a column too narrow for numbers. */
+  .game-player-settings-policy-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-3);
+  }
+
   .game-player-settings-group {
-    margin: var(--space-3) 0 var(--space-1);
+    margin: 0;
     font-size: 1rem;
     font-weight: 600;
   }
 
+  /* The count line. Tabular figures keep the numbers from shifting when one is withheld or
+     restored under the player's own press; the accent says "something here is switched off"
+     without relying on colour, because the words say it too. */
+  .game-player-settings-policy-summary {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+  }
+
+  .game-player-settings-policy[data-policy-summary="some_withheld"] .game-player-settings-policy-summary {
+    color: var(--accent);
+  }
+
+  /* Two columns as soon as the plate is wide enough to hold two readable labels: twenty-one rows
+     in one column measured 964 px at every viewport, which is taller than any window this product
+     is used in. The cell is 240 px because the longest family label wraps to two lines below that,
+     and a wrapped row still keeps its 44 px floor. */
   .game-player-settings-families {
     display: grid;
-    grid-template-columns: 1fr;
-    gap: 2px;
-    margin: var(--space-1) 0 var(--space-3);
+    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+    gap: 2px var(--space-3);
+    margin: 0;
     padding: 0;
     list-style: none;
   }
@@ -3873,16 +3917,58 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-2);
     min-height: var(--touch-target-min);
-    padding: 0 4px;
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-sm);
     cursor: pointer;
+    transition: background-color var(--motion-duration-fast) var(--motion-ease-out);
   }
 
-  /* The withheld state reads as withheld without relying on colour alone: the row
-     dims and its text becomes secondary. */
-  .game-player-settings-family:has(> .surface-delivery-pacing-input:not(:checked)) > span {
+  .game-player-settings-family:hover {
+    background-color: var(--surface-hover);
+  }
+
+  .game-player-settings-family-name {
+    flex: 1 1 auto;
+  }
+
+  /* The withheld state reads as withheld without relying on colour alone: the row's own words dim,
+     and the tick beside them empties. */
+  .game-player-settings-family:has(> .surface-delivery-pacing-input:not(:checked)) > .game-player-settings-family-name {
     color: var(--text-secondary);
+  }
+
+  /* The visible face of the checkbox: the initialised input is clipped out of the visual flow, so
+     without this a player had no way to see which of twenty-one rows was switched off - the only
+     sign was dimmed text. It is decorative (the input carries the name and the state), so a screen
+     reader reads the row once, from the checkbox. */
+  .game-player-settings-tick {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-xs);
+    background-color: var(--surface-panel);
+    color: transparent;
+  }
+
+  /* The tick is the accent used as ink on the chip, not as a filled control: twenty-one filled
+     accent squares read as twenty-one alarms, while the visual question these rows answer is only
+     "which of them is switched off". */
+  .game-player-settings-family:has(> .surface-delivery-pacing-input:checked) > .game-player-settings-tick {
+    background-color: var(--surface-elevated);
+    color: var(--accent);
+  }
+
+  /* The focus ring has to move to the painted face: the input the keyboard lands on is 0x0 and
+     clipped, so the browser's own ring would be drawn on nothing. */
+  .game-player-settings-family:has(> .surface-delivery-pacing-input:focus-visible) > .game-player-settings-tick {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
   }
 
   .surface-model-field {

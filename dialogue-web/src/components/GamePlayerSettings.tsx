@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactElement } from "react";
+import { Check } from "lucide-react";
 import type { Messages } from "../i18n";
 import {
   ComposedReferenceGameProblemError,
@@ -81,6 +82,111 @@ const FAMILY_LABELS: Readonly<Record<string, (labels: Messages) => string>> = Ob
 /** The four behaviours `WindowModeManagement` implements. One spelling: the contract's union names the same four. */
 const WINDOW_MODE_KEYS = ["visible", "minimized", "hidden", "background"] as const;
 
+/**
+ * The action policy region's heading id, named once: the region is `aria-labelledby` this id, and
+ * the heading takes it. A second spelling of the string is how the two would drift apart without
+ * either of them looking wrong.
+ */
+const ACTION_POLICY_HEADING_ID = "game-player-settings-policy-heading";
+
+/** The bilingual sentence for one family, or the contract's own id when this build has no words for it. */
+function familyLabel(labels: Messages, familyId: string): string {
+  return FAMILY_LABELS[familyId]?.(labels) ?? familyId;
+}
+
+/**
+ * The action policy, as one region of its own: a masthead that states the whole setting at a
+ * glance, the hint, and one row per family the Mod publishes.
+ *
+ * WHY THE SUMMARY LINE. The list is twenty-one rows on a real published surface, which is taller
+ * than any window this product is used in (measured: 964 px of rows at 1440x900, 1280x800 and
+ * 400x800 alike). Nothing above the list said how much of it was switched off, so a player who had
+ * withheld three families had no way to learn that without reading every row. The line carries the
+ * whole truth in one sentence - how many of how many are allowed, and how many are withheld - and
+ * it is derived from the draft on screen (`denied`), not from the Host's record, so it agrees with
+ * the boxes under it while an edit is unsaved.
+ *
+ * WHY NOT GROUPS. The Mod has a grouping axis - `FarmhandActionHandlerGroup`, eight values, and
+ * `FarmhandActionHandlerGroupWire` publishes it per ACTION on the registration descriptor - but the
+ * settings wire does not carry it: `StardewActionFamilyV1` is `{familyId, denied}` and nothing else,
+ * and the browser contract publishes no family catalogue either (`capabilitySummary` is a count).
+ * Grouping here would mean inventing category boundaries the contract would not recognise, so the
+ * region is bounded and counted instead: the panel says where the setting starts, the summary says
+ * how much of it is left, and the rows stay one per family, in the Mod's own order.
+ */
+function ActionPolicyRegion({
+  families,
+  denied,
+  labels,
+  saving,
+  onToggle,
+}: Readonly<{
+  families: StardewPlayerSettingsV1["families"];
+  denied: ReadonlySet<string>;
+  labels: Messages;
+  saving: boolean;
+  onToggle(familyId: string, withheld: boolean): void;
+}>): ReactElement {
+  const total = families.length;
+  const withheld = families.filter((family) => denied.has(family.familyId)).length;
+  return (
+    <section
+      className="game-player-settings-policy"
+      aria-labelledby={ACTION_POLICY_HEADING_ID}
+      data-policy-summary={total === 0 ? "none_published" : withheld === 0 ? "all_allowed" : "some_withheld"}
+    >
+      <div className="game-player-settings-policy-head">
+        <h4 className="game-player-settings-group" id={ACTION_POLICY_HEADING_ID}>
+          {labels.gameSettingsActionPolicyTitle}
+        </h4>
+        <p className="game-player-settings-policy-summary" data-testid="game-action-policy-summary">
+          {total === 0
+            ? labels.gameSettingsActionPolicyNonePublished
+            : labels.gameSettingsActionPolicySummary
+                .replace("{{allowed}}", String(total - withheld))
+                .replace("{{total}}", String(total))
+                .replace("{{withheld}}", String(withheld))}
+        </p>
+      </div>
+      <p className="surface-model-settings-hint">{labels.gameSettingsActionPolicyHint}</p>
+      {total > 0 && (
+        <ul className="game-player-settings-families">
+          {families.map((family) => {
+            const familyText = familyLabel(labels, family.familyId);
+            return (
+              <li key={family.familyId}>
+                {/* The label is the painted row and the input is the a11y node, the same recipe
+                    the delivery-pacing row uses. The tick beside it is what makes twenty-one rows
+                    readable at a glance: the input itself is clipped out of the visual flow, so
+                    without a face the only sign of a withheld family was dimmed text. */}
+                <label className="game-player-settings-family">
+                  <span className="game-player-settings-family-name">{familyText}</span>
+                  <span className="game-player-settings-tick" aria-hidden="true">
+                    <Check size={14} aria-hidden="true" />
+                  </span>
+                  <input
+                    type="checkbox"
+                    className="surface-delivery-pacing-input"
+                    // Checked means the player LET the companion do it, so the box the
+                    // player unticks is the action they are withholding - and it reads the
+                    // draft, not the record it was seeded from: a box bound to the record
+                    // flipped straight back under the player's own press, so the choice was
+                    // made in state (`denied`, which Save sends) and never shown.
+                    checked={!denied.has(family.familyId)}
+                    disabled={saving}
+                    aria-label={familyText}
+                    onChange={(event) => onToggle(family.familyId, !event.target.checked)}
+                  />
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 export function GamePlayerSettings({
   api,
   labels,
@@ -126,7 +232,6 @@ export function GamePlayerSettings({
     };
   }, [api]);
 
-  const familyLabel = (familyId: string): string => FAMILY_LABELS[familyId]?.(labels) ?? familyId;
   /**
    * One label per mode, read by name.
    *
@@ -194,36 +299,13 @@ export function GamePlayerSettings({
         <p className="state-placeholder">{labels.loading}</p>
       ) : (
         <>
-          <h4 className="game-player-settings-group">{labels.gameSettingsActionPolicyTitle}</h4>
-          <p className="surface-model-settings-hint">{labels.gameSettingsActionPolicyHint}</p>
-          <ul className="game-player-settings-families">
-            {settings.families.map((family) => {
-              const familyText = familyLabel(family.familyId);
-              return (
-                <li key={family.familyId}>
-                  {/* The label is the painted row and the input is the a11y node, the
-                      same recipe the delivery-pacing row uses, so the browser's own
-                      checkbox face never appears inside a themed card. */}
-                  <label className="game-player-settings-family">
-                    <span>{familyText}</span>
-                    <input
-                      type="checkbox"
-                      className="surface-delivery-pacing-input"
-                      // Checked means the player LET the companion do it, so the box the
-                      // player unticks is the action they are withholding - and it reads the
-                      // draft, not the record it was seeded from: a box bound to the record
-                      // flipped straight back under the player's own press, so the choice was
-                      // made in state (`denied`, which Save sends) and never shown.
-                      checked={!denied.has(family.familyId)}
-                      disabled={saving}
-                      aria-label={familyText}
-                      onChange={(event) => toggle(family.familyId, !event.target.checked)}
-                    />
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
+          <ActionPolicyRegion
+            families={settings.families}
+            denied={denied}
+            labels={labels}
+            saving={saving}
+            onToggle={toggle}
+          />
 
           <label className="surface-model-field">
             <span>{labels.gameSettingsCoopTitle}</span>
