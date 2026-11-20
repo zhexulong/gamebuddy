@@ -81,7 +81,7 @@ function isStorageContainerKind(value: string | undefined): boolean {
  * destination LOCATION is a postcondition - the native layout picks the landing tile.
  */
 function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const keys = Object.keys(evidence);
   const generatedFloor = keys.length === 3 && "level" in evidence;
@@ -114,7 +114,7 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
  * </para>
  */
 function hasMineExitCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const keys = Object.keys(evidence);
   if (
@@ -142,7 +142,7 @@ function hasMineExitCompletionEvidence(detail: string): boolean {
 }
 
 function hasMineEntryCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const keys = Object.keys(evidence);
   if (keys.length === 3 && "level" in evidence && "tile" in evidence && "from_level" in evidence)
@@ -334,7 +334,7 @@ function hasDayAdvancedCompletionEvidence(detail: string): boolean {
  * enchantment legitimately consumes none), and the embodied stamina half closes.
  */
 function hasWateringToolCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -523,7 +523,7 @@ function declaredCompletionEvidence(
   validate: (evidence: Readonly<Record<string, string>>) => boolean,
   optional: readonly string[] = [],
 ): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   if (!required.every((key) => key in evidence)) return false;
   const declared = new Set([...required, ...optional]);
@@ -552,7 +552,7 @@ function hasNavigationCompletionEvidence(detail: string): boolean {
   // post-warp coordinator re-read at the destination. It contains only the
   // canonical opaque destination identity and a fresh actual location assertion
   // together with the two Mod postcondition markers; never a route/tile/warp.
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["destination", "location", "arrived", "postcondition"];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
@@ -984,29 +984,58 @@ function hasSweepScytheCompletionEvidence(detail: string): boolean {
   });
 }
 
-/** Parses bounded key/value evidence without accepting duplicate fields. */
-function parseSemicolonEvidence(detail: string): Readonly<Record<string, string>> | null {
-  const result: Record<string, string> = {};
-  for (const field of detail.split(";")) {
-    const separator = field.indexOf("=");
-    if (separator <= 0 || separator === field.length - 1) return null;
-    const key = field.slice(0, separator);
-    const value = field.slice(separator + 1);
-    if (
-      !(key in result) &&
-      // Camel-case keys are legal: the frozen pickup_forage contract names its key
-      // `targetIdentity`, and a lower-case-only grammar made that evidence
-      // unparseable, so the action could never complete. The point of this check is
-      // to reject protocol scalar sentinels and junk, not to forbid capitals.
-      /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) &&
-      value.length <= 512
-    ) {
-      result[key] = value;
-      continue;
-    }
-    return null;
+/**
+ * What one evidence detail came to: the fields it names, or the name of the reason it was not read.
+ *
+ * A REFUSAL IS ALWAYS NAMED, and that is the point of the tag. This reader used to answer a bare `null` for every one
+ * of its reasons at once, so a caller could not tell "the producer printed a clause this grammar cannot read" from
+ * "the value is longer than the number in this function" - and the second one refused real work. `round84` measured it:
+ * ten parsnip seeds were bought in two purchases, `money_before=500` moved to 400 and then to 300, `gained=5` both
+ * times, and BOTH receipts were refused as `succeeded_receipt_without_its_own_postcondition` because `clicks` - the
+ * click loop's own diagnostic trace, one entry per unit bought - is 731 characters at five units and every value over
+ * 512 was dropped on the floor with the whole detail.
+ */
+export type StardewEvidenceParse =
+  | Readonly<{ fields: Readonly<Record<string, string>>; refusal: null }>
+  | Readonly<{ fields: null; refusal: string }>;
+
+/** The fields one evidence detail names, or `null` when it names none this grammar can read. */
+function evidenceFields(detail: string): Readonly<Record<string, string>> | null {
+  return parseStardewEvidenceDetail(detail).fields;
+}
+
+/**
+ * Parses key/value evidence without accepting a duplicate field, and says which field it refused.
+ *
+ * NO VALUE HAS A LENGTH BOUND HERE. A receipt's evidence is bounded once, by
+ * `MAX_ACTION_RECEIPT_EVIDENCE_LENGTH` - the producer's own number - and a field a rule READS is bounded by the
+ * predicate that reads it (`hasOpaqueIdEvidenceValue`'s 128, `hasOpaqueEvidenceValue`'s 256, a tile's 0..1000). A
+ * blanket number here was a second and much tighter copy of the first that said nothing about any field: at 512 it held
+ * `shop_purchase` to four units, and at any other value it would hold the next list-valued diagnostic to whatever its
+ * next length is.
+ *
+ * Camel-case keys are legal: the frozen pickup_forage contract names its key `targetIdentity`, and a lower-case-only
+ * grammar made that evidence unparseable, so the action could never complete. The point of the key check is to reject
+ * protocol scalar sentinels and junk, not to forbid capitals.
+ */
+export function parseStardewEvidenceDetail(detail: string): StardewEvidenceParse {
+  const fields: Record<string, string> = {};
+  const clauses = detail.split(";");
+  for (let position = 0; position < clauses.length; position += 1) {
+    const clause = clauses[position] as string;
+    const separator = clause.indexOf("=");
+    // A clause with no `=`, and one that starts with it, have the same defect and no name to report: the clause's own
+    // position is the only identity it has.
+    if (separator <= 0) return { fields: null, refusal: `evidence_field_unnamed:${String(position + 1)}` };
+    const key = clause.slice(0, separator);
+    const value = clause.slice(separator + 1);
+    if (value.length === 0) return { fields: null, refusal: `evidence_field_valueless:${key}` };
+    if (key in fields) return { fields: null, refusal: `evidence_field_duplicate:${key}` };
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
+      return { fields: null, refusal: `evidence_field_name_invalid:${key.slice(0, 64)}` };
+    fields[key] = value;
   }
-  return result;
+  return { fields, refusal: null };
 }
 
 // Evidence values are serialized with up to four decimal places; allow rounding plus binary floating-point noise.
@@ -1037,7 +1066,7 @@ function hasStaminaConservationEvidence(evidence: Readonly<Record<string, string
 }
 
 function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1089,7 +1118,7 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
 }
 
 function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "target",
@@ -1127,7 +1156,7 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
 }
 
 function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "target",
@@ -1198,7 +1227,7 @@ function hasGoneSourceSettlementCompletionEvidence(detail: string, settledBy: st
 }
 
 function hasBreakResourceClumpCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1246,7 +1275,7 @@ function hasBreakResourceClumpCompletionEvidence(detail: string): boolean {
 }
 
 function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1288,7 +1317,7 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
 }
 
 function hasWoodFenceCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "source",
@@ -1339,7 +1368,7 @@ function hasWoodFenceCompletionEvidence(detail: string): boolean {
 }
 
 function hasBaitCrabPotCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "source",
@@ -1414,7 +1443,7 @@ function hasChopTreeSourceSettlementCompletionEvidence(detail: string, settledBy
 }
 
 function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "target",
@@ -1465,7 +1494,7 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
 function hasDoorTransitionCompletionEvidence(detail: string): boolean {
   // An ordinary warp/enter_exit emits exactly {expected, actual}: the ride's own
   // objective identity belongs to `ride_minecart`, whose terminal is separate.
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["expected", "actual"];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
@@ -1477,7 +1506,7 @@ function hasMinecartRideCompletionEvidence(detail: string): boolean {
   // A minecart ride ends in the same Warped postcondition, but the ride has to
   // name which published objective it actually rode: the coordinate pair alone
   // cannot distinguish two destinations on one station tile.
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["expected", "actual", "network", "destination"];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
@@ -1517,7 +1546,7 @@ function parseWarpDestination(value: string | undefined): { location: string; x:
 }
 
 function hasPickupForageCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["location", "targetIdentity", "tile", "item", "removed", "inventory_before", "inventory_after"];
   if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
@@ -1536,7 +1565,7 @@ function hasPickupForageCompletionEvidence(detail: string): boolean {
   );
 }
 function hasPickupItemCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1586,7 +1615,7 @@ function chunkRemovalAccountedFor(evidence: Readonly<Record<string, string>>): b
 
 /**
  * The pack's quality census as the harvest handler spells it (`{quality}:{stacks}`, joined by `,`), or `none` for a
- * pack that holds none of the item. A census that cannot be read is `null` - the same refusal `parseSemicolonEvidence`
+ * pack that holds none of the item. A census that cannot be read is `null` - the same refusal `evidenceFields`
  * gives a field, because a measurement nobody can parse is not a measurement.
  */
 function parseQualityCensus(value: string | undefined): ReadonlyMap<number, number> | null {
@@ -1632,7 +1661,7 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
   // has written all three since the harvest path was measured, while this rule still demanded exactly seventeen keys:
   // on `round73` every real `crop_harvested` was refused as "twenty fields, not seventeen", which is the same drift the
   // settlement envelope caused, one action down.
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1715,7 +1744,7 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
 }
 
 function hasFertilizeTileCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1745,7 +1774,7 @@ function hasFertilizeTileCompletionEvidence(detail: string): boolean {
 }
 
 function hasPlaceCrabPotCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "source",
@@ -1809,7 +1838,7 @@ function hasCrabPotOverlayEvidence(value: string | undefined): boolean {
 }
 
 function hasMachineInspectCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1847,7 +1876,7 @@ function hasMachineInspectCompletionEvidence(detail: string): boolean {
  * window (Object.OutputMachine sets `readyForHarvest` exactly when the window is zero, Object.cs:2581-2585).
  */
 function hasMachineLoadCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1903,7 +1932,7 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
 }
 
 function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -1948,7 +1977,7 @@ function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
 }
 
 function hasUseItemCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "slot",
@@ -1994,7 +2023,7 @@ function hasUseItemCompletionEvidence(detail: string): boolean {
 }
 
 function hasFeedAnimalCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -2029,7 +2058,7 @@ function hasFeedAnimalCompletionEvidence(detail: string): boolean {
 }
 
 function hasCollectAnimalProductCompletionEvidence(detail: string): boolean {
-  const evidence = parseSemicolonEvidence(detail);
+  const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = [
     "location",
@@ -4664,6 +4693,21 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // used to embed `;` inside their values - either one splits into fields this module cannot read, which is why
     // the action previously had no rule at all (a rule that cannot match the producer's real detail would look
     // like completion coverage while never accepting a success).
+    //
+    // `clicks` AND `drops` ARE THE CLICK LOOP'S OWN TRACE, and NO CLAUSE BELOW READS THEM. The Mod prints one entry per
+    // unit bought (`clicks=5[click0:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|
+    // currency=500->480|stock=2147483647->2147483647|held_after=(O)472||click1:...]`, shopactions.cs:1526-1530), and
+    // `drops` the same shape for the cursor-to-inventory placement that follows each one. They are what tells a reader
+    // WHY a click charged nothing - `native_click_refused` with an empty cursor, `held_item_occupied` with one - and
+    // the Host's world-fact projection does not even show them to the Agent (`model-field-budget.ts` drops both by
+    // name). The count they carry is already stated by `purchased`/`gained`, which the rule does read, so this is a
+    // per-item trace where a count belongs: its length grows with the quantity bought, and at ~146 characters an entry
+    // a purchase of thirty units prints ~4,400 characters of it.
+    //
+    // THE PRODUCER'S HALF IS STILL OWED, and it is another unit's file: either fold the trace the way the settlement
+    // envelope already folds a walk (`folded` + `steps_omitted`, `STARDEW_SETTLEMENT_ENVELOPE_FIELDS`) or publish the
+    // count. What is fixed HERE is the reader: a value's length is not a fact about the field, so it is no longer
+    // weighed, and the receipt bound is stated once for the whole detail (`MAX_ACTION_RECEIPT_EVIDENCE_LENGTH`).
     return (
       claim.reasonCode === "item_purchased" &&
       declaredCompletionEvidence(
@@ -4847,7 +4891,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // (:447-454) that only an Axe or a Pickaxe reaches, so a receipt claiming a gate removed by another tool is
     // not a fence this engine took down.
     //
-    // `drops` is `none` when nothing dropped: an EMPTY value splits into a field `parseSemicolonEvidence` must
+    // `drops` is `none` when nothing dropped: an EMPTY value splits into a field the key/value reader must
     // refuse, which would make the first real zero-drop removal unreadable — the same producer bug `shop_purchase`
     // carried with an empty `owner=`.
     return (
@@ -5178,6 +5222,59 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
 } satisfies Record<ExecutionRequest["action"], CompletionContract>);
 
 /**
+ * THE ONE BOUND ON ONE ACTION RECEIPT'S EVIDENCE, and it is the producer's own number.
+ *
+ * `FarmHandExecutionJournal` refuses to journal a receipt whose `Evidence` is longer than 4096 characters
+ * (`FarmHandExecutionJournal.cs:560`), so 4096 is as long as a receipt the Mod will actually mint can be - this fold
+ * used the number inline before this declaration existed and nothing changed by naming it.
+ *
+ * It is a RECEIPT bound, not a field bound, and that distinction is the fix a live run paid for. The key/value reader
+ * carried a second ceiling - every value at most 512 characters - which is not a property of any field: `shop_purchase`
+ * prints one `clicks` entry per unit bought (~146 characters each), so 512 refused the first purchase of four or more
+ * units, and it refused it by parsing the whole detail to `null`, which reads as "this receipt proves nothing".
+ * `round84` bought ten parsnip seeds in two purchases (`money_before` 500 -> 400 -> 300, `gained=5` both times) and
+ * both receipts were refused that way. Nothing replaced it: `parseStardewEvidenceDetail` bounds no field, and the
+ * fields a rule reads are bounded by the predicates that read them.
+ */
+export const MAX_ACTION_RECEIPT_EVIDENCE_LENGTH = 4_096;
+
+/** What one receipt's evidence came to: accepted, or refused with the name of the reason. */
+export type CompletionEvidenceVerdict = Readonly<{ accepted: boolean; refusal: string | null }>;
+
+/**
+ * This receipt's completion verdict, and when it is not a completion, which of the fold's facts refused it.
+ *
+ * THE NAME IS THE POINT. The boolean below is this function's `accepted`, and every caller that only needs the answer
+ * keeps using it - but a caller holding a real receipt the Host refused has to be able to say WHY, and "not a
+ * completion" cannot tell "the receipt does not claim success" from "its evidence is over the producer's own bound"
+ * from "this action has no row". `a_receipt_that_parsed_to_nothing_says_why` is the gate over the same reading.
+ *
+ * THE ROW IS ASKED FIRST, then the reader: `advance_day`'s real detail carries a duplicate key (its producer appends
+ * its settlement block to a base list that already names `topology`, `SleepAndAdvanceDayLifecycle.cs:863-894`) and its
+ * row reads field membership because of it, so a fold that parsed first would refuse a receipt that row accepts.
+ */
+export function judgeStardewCompletionEvidence(
+  actionId: string,
+  receipt: IntegrationReceiptEvidence,
+): CompletionEvidenceVerdict {
+  if (receipt.state !== "succeeded") return { accepted: false, refusal: `receipt_not_succeeded:${receipt.state}` };
+  const detail = receipt.evidence?.detail;
+  if (typeof detail !== "string" || detail.length === 0) return { accepted: false, refusal: "evidence_detail_absent" };
+  if (detail.length > MAX_ACTION_RECEIPT_EVIDENCE_LENGTH)
+    return {
+      accepted: false,
+      refusal: `evidence_too_long:${String(detail.length)}:${String(MAX_ACTION_RECEIPT_EVIDENCE_LENGTH)}`,
+    };
+  const contract = (STARDEW_COMPLETION_CONTRACTS as Readonly<Record<string, CompletionContract | undefined>>)[actionId];
+  if (contract === undefined || !Object.hasOwn(STARDEW_COMPLETION_CONTRACTS, actionId))
+    return { accepted: false, refusal: `no_completion_contract:${actionId}` };
+  const stripped = withoutSettlementEnvelope(detail);
+  if (contract({ reasonCode: receipt.reasonCode, detail: stripped })) return { accepted: true, refusal: null };
+  const parse = parseStardewEvidenceDetail(stripped);
+  return { accepted: false, refusal: parse.refusal ?? `evidence_does_not_hold:${receipt.reasonCode}` };
+}
+
+/**
  * Whether this receipt proves the action completed.
  *
  * A FOLD over `STARDEW_COMPLETION_CONTRACTS`. An id that is not in the table is refused, and the `hasOwn` check is what
@@ -5187,11 +5284,5 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
  * THE SETTLEMENT ENVELOPE IS REMOVED HERE, ONCE, for every row - see `STARDEW_SETTLEMENT_ENVELOPE_FIELDS`.
  */
 export function hasStardewCompletionEvidence(actionId: string, receipt: IntegrationReceiptEvidence): boolean {
-  const detail = receipt.evidence?.detail;
-  if (receipt.state !== "succeeded" || typeof detail !== "string" || detail.length === 0 || detail.length > 4_096)
-    return false;
-  const contract = (STARDEW_COMPLETION_CONTRACTS as Readonly<Record<string, CompletionContract | undefined>>)[actionId];
-  if (contract === undefined) return false;
-  if (!Object.hasOwn(STARDEW_COMPLETION_CONTRACTS, actionId)) return false;
-  return contract({ reasonCode: receipt.reasonCode, detail: withoutSettlementEnvelope(detail) });
+  return judgeStardewCompletionEvidence(actionId, receipt).accepted;
 }
