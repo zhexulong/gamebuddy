@@ -1031,9 +1031,12 @@ public sealed class MagnetPickupItemTests
         string source = Read("farmhandexecutioncontroller.gatheringactions.cs");
         // BOTH HALVES of one execution: `pickup_forage` walks in when the item is outside the native click radius, so
         // its request half now hands the geometry to the shared approach leg and the same terminal half runs on arrival.
-        // Reading only the request half would miss every fact that moved into the half both paths share.
+        // Reading only the request half would miss every fact that moved into the half both paths share. The VERDICT
+        // lives in `ForagePickupPostcondition` beside it - the three native facts of one attempt and the sentence they
+        // are said in - so that is read too, for the same reason.
         string forage = MethodBody(source, "public LocalExecutionReceipt RequestLocalPickupForage(")
-            + MethodBody(source, "private LocalExecutionReceipt ExecutePickupForage(");
+            + MethodBody(source, "private LocalExecutionReceipt ExecutePickupForage(")
+            + MethodBody(source, "internal readonly record struct ForagePickupPostcondition(");
         string item = MethodBody(source, "public LocalExecutionReceipt RequestLocalPickupItem(");
 
         forage.Should().NotContain("FindItemTarget(", "forage targets are location objects, not debris chunks");

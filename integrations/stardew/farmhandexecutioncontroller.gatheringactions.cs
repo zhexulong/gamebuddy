@@ -104,6 +104,12 @@ internal sealed partial class ExecutionManager
     /// neither its published item nor its published id, which is a different correction. Collapsing them into one code
     /// was invisible while nothing walked: the same tick that read the target also picked it up.
     /// </para>
+    /// <para>
+    /// THE VERDICT IS THREE FACTS AND ONLY TWO OF THEM ARE CONSEQUENCES, so the receipt names all three plus the
+    /// container they were read from (<see cref="ForagePickupPostcondition"/>). `Game1.tryToCheckAt` is the engine's own
+    /// click path, and `removed`/`inventory_after` are what it did - so a receipt that publishes only those two says
+    /// "nothing happened" without saying whether the engine declined or handled it and delivered nothing.
+    /// </para>
     /// </summary>
     private LocalExecutionReceipt ExecutePickupForage(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
     {
@@ -127,12 +133,19 @@ internal sealed partial class ExecutionManager
         LocalForagePickupSpec specification = new(executionId, requestId, location.NameOrUniqueName, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
         bool actionHandled = Game1.tryToCheckAt(tile, Game1.player);
         int afterCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
-        bool removed = !location.objects.ContainsKey(tile);
-        bool inventoryChangedExactlyOnce = afterCount == beforeCount + 1;
-        ExecutionState state = actionHandled && removed && inventoryChangedExactlyOnce ? ExecutionState.Succeeded : ExecutionState.Uncertain;
-        string reasonCode = state == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
-        string evidence = $"location={specification.Location};targetIdentity={specification.TargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};removed={removed};inventory_before={beforeCount};inventory_after={afterCount}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+        ForagePickupPostcondition outcome = new(
+            ActionHandled: actionHandled,
+            Removed: !location.objects.ContainsKey(tile),
+            InventoryBefore: beforeCount,
+            InventoryAfter: afterCount,
+            Spawned: forage.IsSpawnedObject,
+            ObjectType: forage.Type);
+        return this.RememberTerminal(
+            requestId,
+            executionId,
+            outcome.State,
+            outcome.ReasonCode,
+            outcome.Describe(specification.Location, specification.TargetId, targetX, targetY, expectedQualifiedItemId));
     }
 
     /// <summary>
@@ -367,4 +380,63 @@ internal sealed partial class ExecutionManager
             $"location={publication.Location};target={expectedTargetId};tile={publication.TileX},{publication.TileY};item={expectedQualifiedItemId};stack={publication.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={publication.InventoryAtPublication};inventory_after={inventoryNow}");
     }
 
+}
+
+/// <summary>
+/// One <c>pickup_forage</c> attempt's native facts, and the verdict plus sentence they settle on.
+///
+/// <para>
+/// WHY THE ANTECEDENT IS PUBLISHED. <c>Game1.tryToCheckAt</c> is the engine's own click entry, and it is where a forage
+/// is actually picked up; <c>removed</c> and <c>inventory_after</c> are only its CONSEQUENCES. Measured `round82`:
+/// <c>pickup_forage</c> from `(56,13)` onto a daffodil at `(57,12)` arrived exactly and answered
+/// <c>forage_postcondition_unavailable:removed=False;inventory_before=0;inventory_after=0</c> - which is true of a click
+/// the engine declined, of a click that removed the object and delivered nothing, and of a pack that took the item and
+/// lost it, and cannot tell them apart. <c>action_handled</c> is the fact that separates the first from the other two.
+/// </para>
+/// <para>
+/// THE CONTAINER IS NAMED BECAUSE IT IS THE QUESTION A "removed=False" RECEIPT ASKS. Every fact here is read from
+/// <c>location.objects</c>: it is the collection <c>DiscoverForageTargets</c> scans for this action's species AND the one
+/// the engine's own forage branch removes the object from (<c>objects.Remove(vector)</c>, GameLocation.cs:7837, inside
+/// the branch opened at :7791). A bush - the case that would make the container ambiguous - lives in
+/// <c>largeTerrainFeatures</c> and is used through <c>performUseAction</c> (:7857-7867), which is <c>harvest_bush</c>'s
+/// subject, never this action's; so this action has exactly one container and states it.
+/// </para>
+/// <para>
+/// THE TWO GATES THE ACTION'S OWN PRECONDITIONS DO NOT ASK are published beside it (<c>spawned</c>, <c>object_type</c>),
+/// because they are the engine's own answer to whether the forage branch runs at all: <c>value.isSpawnedObject.Value ||
+/// isErrorItem</c> and <c>value.Type != null || isErrorItem</c> (GameLocation.cs:7791, :7727). An object that is a
+/// forageable by <c>isForage()</c> and still fails either gate is one the click path silently refuses, and a receipt
+/// that says so is the difference between "walk again" and "this will never be picked up".
+/// </para>
+/// </summary>
+internal readonly record struct ForagePickupPostcondition(
+    bool ActionHandled,
+    bool Removed,
+    int InventoryBefore,
+    int InventoryAfter,
+    bool Spawned,
+    string? ObjectType)
+{
+    /// <summary>
+    /// The one container this action's facts come from - see the type's remarks for why it has exactly one.
+    /// </summary>
+    private const string Container = "location.objects";
+
+    /// <summary>
+    /// Succeeded only when the engine handled the click AND the object left its tile AND the pack gained exactly one of
+    /// the named item; every other combination is <see cref="ExecutionState.Uncertain"/>, because each of them is a
+    /// world where the caller cannot tell whether the flower is still there.
+    /// </summary>
+    internal ExecutionState State =>
+        this.ActionHandled && this.Removed && this.InventoryAfter == this.InventoryBefore + 1
+            ? ExecutionState.Succeeded
+            : ExecutionState.Uncertain;
+
+    internal string ReasonCode => this.State == ExecutionState.Succeeded ? "forage_picked_up" : "forage_postcondition_unavailable";
+
+    internal string Describe(string location, string targetId, int tileX, int tileY, string qualifiedItemId) =>
+        $"location={location};targetIdentity={targetId};tile={tileX},{tileY};item={qualifiedItemId};container={Container};"
+        + $"action_handled={this.ActionHandled.ToString().ToLowerInvariant()};spawned={this.Spawned.ToString().ToLowerInvariant()}"
+        + $";object_type={this.ObjectType ?? "none"};removed={this.Removed.ToString().ToLowerInvariant()}"
+        + $";inventory_before={this.InventoryBefore};inventory_after={this.InventoryAfter}";
 }
