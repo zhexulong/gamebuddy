@@ -20,7 +20,8 @@ import type { ExecutionRequest } from "./protocol.js";
  * A ROW MAY NOT BE UNIFORM, AND THE ONES THAT ARE NOT SAY SO. Most rows are one shape (`reasonCode` plus one declared key
  * set): 68 of the 102. The rest keep the predicate they need rather than being flattened - 7 rows accept MORE THAN ONE
  * terminal, each with its own evidence shape (`equip_tool`'s `tool_equipped`/`already_equipped`, `scythe_crop`'s harvest
- * and its dead-crop clear, `dismiss_modal`'s dismissal and the settlement commit already under way), and 34 delegate to
+ * and its dead-crop clear, `dismiss_modal`'s dismissal, its settlement commit already under way and its
+ * already-absent settlement), and 34 delegate to
  * a named predicate because their evidence grammar is not one key list (`sleep`'s detail carries a duplicate key the
  * key/value parser must refuse, so its row reads field membership; `cook_recipe` passes `dropped_output` because one
  * action has two delivery branches). `cook_recipe` and `interact_npc_with_item` are in both groups at once, which is why
@@ -41,7 +42,16 @@ type CompletionClaim = Readonly<{
 /** One action's completion contract: the couple `(terminal, evidence shape)` its own handler mints. */
 export type CompletionContract = (claim: CompletionClaim) => boolean;
 
-/** The four lowercase boolean spellings the Mod writes with `bool.ToString().ToLowerInvariant()`. */
+/**
+ * The four lowercase boolean spellings the Mod writes with `bool.ToString().ToLowerInvariant()`.
+ *
+ * A SPELLING READER IS ONLY AS GOOD AS ITS PRODUCER, and this one cannot tell a value from the name of the thing that
+ * computed it: `bite_observed=isNibbling` (round80, every real catch) is a string this function refuses, and the receipt
+ * that carried it proved nothing for a day. The producer's own test pins the spelling it writes
+ * (`FishingActionTests.CatchIsNotInstantViolations`), and
+ * `a_success_evidence_field_carries_a_value_the_contract_can_read` reads the Mod's own literals against this reader, so a
+ * field that starts carrying an expression's source text fails on the producer's side rather than here.
+ */
 function booleanEvidenceValue(value: string | undefined): boolean {
   return value === "true" || value === "false";
 }
@@ -3251,24 +3261,42 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // farmhandexecutioncontroller.expressionactions.cs:82-90: Farmer.doEmote arms the
     // animation synchronously, so `native_dispatched=true` under this terminal is the
     // departure proof. The animation's own completion is not a terminal fact.
+    //
+    // `stale_reading_accepted_by` is OPTIONAL because it is written only when the caller's reading was behind
+    // (`staleReadingBy > 0`, expressionactions.cs:45) - an expression changes nothing, so a stale reading is accepted
+    // there and the receipt says how far behind it was. It was undeclared, and a field the row does not know refuses
+    // the whole receipt: a delivered emote on a stale reading would have proved nothing
+    // (`StaleReadingIsNotAStaleIntentGate` drives exactly that shape).
     return (
       claim.reasonCode === "emote_started" &&
       declaredCompletionEvidence(
         claim.detail,
         ["emote", "native_dispatched"],
-        (e) => hasBoundedNonemptyEvidenceValue(e.emote) && e.native_dispatched === "true",
+        (e) =>
+          hasBoundedNonemptyEvidenceValue(e.emote) &&
+          e.native_dispatched === "true" &&
+          (e.stale_reading_accepted_by === undefined || positiveIntegerEvidence(e.stale_reading_accepted_by) !== null),
+        ["stale_reading_accepted_by"],
       )
     );
   },
   face_direction: (claim) => {
     // farmhandexecutioncontroller.movementactions.cs:800-808: the actor re-reads its own
     // FacingDirection, so the emitted direction is the frozen enum spelling.
+    //
+    // `moving` IS PART OF THE CLAIM, not decoration: `Character.MovePosition` faces the direction it steps on every
+    // movement tick (`Character.cs:851-935`), so a facing applied mid-walk is the walk's own on the next step and the
+    // receipt says so (`movementactions.cs:1357-1360`). It was missing from this list, and a field the row does not
+    // declare refuses the whole receipt - so no real `actor_facing_matches` could complete
+    // (`a_success_evidence_field_carries_a_value_the_contract_can_read`).
     return (
       claim.reasonCode === "actor_facing_matches" &&
       declaredCompletionEvidence(
         claim.detail,
-        ["direction"],
-        (e) => e.direction === "up" || e.direction === "right" || e.direction === "down" || e.direction === "left",
+        ["direction", "moving"],
+        (e) =>
+          (e.direction === "up" || e.direction === "right" || e.direction === "down" || e.direction === "left") &&
+          booleanEvidenceValue(e.moving),
       )
     );
   },
@@ -3677,15 +3705,23 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // terminals were readable on only one side, so a receipt-backed re-ask (the recovery path for a dismiss whose
     // response timed out) landed as a succeeded receipt with zero typed transitions.
     //
-    // AND THE SUCCESS THIS ROW REFUSES BY NAME. A dismiss that finds no modal answers
-    // `nothing_to_dismiss` / `modal=none` (`farmhandexecutioncontroller.modalactions.cs:84`). No close ran, nothing
-    // was cleared, and half of this action's own declared postcondition is absent - the descriptor declares
-    // `mintsPostcondition("modal_dismissed")` beside `WRITES_EFFECT` (`action-registry.ts`, MOD_DESCRIPTOR_REQUIREMENTS),
-    // and a no-op writes no effect. So the outcome keeps its own name (`nothing_to_dismiss`, "no modal was up") and
-    // is never read as the dismissal; the world fact a caller needs there is the observation, not a completion.
-    // `a_completion_contract_names_what_the_action_answers` (host/src/stardew-completion-contract-mintability.test.ts)
-    // records it as the declared no-op it is, so this refusal is a decision a later lane can read rather than a shape
-    // nobody thought about.
+    // AND THE SUCCESS THAT IS A SETTLEMENT, NOT A DISMISSAL. A dismiss that finds no modal answers
+    // `nothing_to_dismiss` (`farmhandexecutioncontroller.modalactions.cs:84`). No close ran, nothing was cleared, and
+    // half of this action's own declared postcondition is absent - the descriptor declares
+    // `mintsPostcondition("modal_dismissed")` beside `WRITES_EFFECT` (`action-registry.ts`,
+    // MOD_DESCRIPTOR_REQUIREMENTS), and a no-op writes no effect. So the outcome keeps its own name and is never read as
+    // the dismissal.
+    //
+    // IT IS STILL THE REQUEST'S END STATE, and the receipt says WHICH FACT MAKES IT ONE rather than leaving a bracket of
+    // zeroes: the Mod writes the same `settled_by=` warrant the tile-target seam prints
+    // (`TileTargetSettledBy.EngineFlag("activeClickableMenu", "none")`), naming the engine's own field and its value.
+    // Measured `round80`: three real dismissals of a box the engine had already closed were counted as succeeded
+    // receipts that proved nothing (`succeeded_receipt_without_its_own_postcondition`), so the day's purpose was
+    // unproven over work that had genuinely been asked for and was genuinely done.
+    //
+    // A RECEIPT THAT SAYS ONLY `modal=none` IS STILL REFUSED, and that is the difference the warrant draws: an absence
+    // on its own is the evidence for itself, which is what `round77` published. `a_completion_contract_names_what_the
+    // _action_answers` (host/src/stardew-completion-contract-mintability.test.ts) holds both readings.
     return (
       (claim.reasonCode === "modal_dismissed" &&
         declaredCompletionEvidence(
@@ -3714,6 +3750,12 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
             e.commit_already_driven === "true" &&
             (e.clearing === undefined || booleanEvidenceValue(e.clearing)),
           ["text", "clearing"],
+        )) ||
+      (claim.reasonCode === "nothing_to_dismiss" &&
+        declaredCompletionEvidence(
+          claim.detail,
+          ["modal", "settled_by"],
+          (e) => e.modal === "none" && e.settled_by === "engine_flag:activeClickableMenu=none",
         ))
     );
   },
@@ -3791,6 +3833,12 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
   chest_store: (claim) => {
     // farmhandexecutioncontroller.containeractions.cs:107-113: the chest took the whole stack,
     // the player slot released that same item, and the chest gained exactly the held stack.
+    //
+    // `source_slot` IS DECLARED BECAUSE THE PRODUCER WRITES IT AND THE ACTION'S OWN ARGUMENT MEANING NAMES IT
+    // (`FarmhandActionDefinitions.ChestStoreItemMeaning`: "the receipt's `source_slot` names which one moved"). It was
+    // missing from this list, and `declaredCompletionEvidence` refuses a field it was not told about - so every real
+    // `chest_store` success was unreadable for carrying a fact this row had never been taught
+    // (`a_success_evidence_field_carries_a_value_the_contract_can_read`).
     return (
       claim.reasonCode === "chest_stored" &&
       declaredCompletionEvidence(
@@ -3801,6 +3849,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "tile",
           "container",
           "item",
+          "source_slot",
           "player_stack_before",
           "player_stack_after",
           "source_consumed",
@@ -3818,6 +3867,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
             hasTileEvidenceValue(e.tile) &&
             isStorageContainerKind(e.container) &&
             hasOpaqueEvidenceValue(e.item) &&
+            validSlot(e.source_slot) &&
             playerBefore !== null &&
             integerEvidenceValue(e.player_stack_after) !== null &&
             e.source_consumed === "true" &&
@@ -4892,7 +4942,11 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
             quality <= 4 &&
             e.pull_outcome === "not_verified" &&
             e.pull_unobserved_field === "BobberBar.distanceFromCatching" &&
-            booleanEvidenceValue(e.bite_observed) &&
+            // THE BITE IS THE PULL'S OWN PRECONDITION, not a spelling to be checked: the catch window opens only from
+            // the Mod's `rod.isNibbling && !rod.hit` read (`farmhandexecutioncontroller.fishingactions.cs:384`), so a
+            // `fish_caught` receipt claiming `false` contradicts the path that minted it. It used to read
+            // `booleanEvidenceValue`, which accepts both spellings and so accepted exactly that contradiction.
+            e.bite_observed === "true" &&
             integerEvidenceValue(e.cast_to_credit_ms) !== null &&
             signedIntegerEvidenceValue(e.rod_durability_left) !== null &&
             baitBefore !== null &&

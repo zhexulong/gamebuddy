@@ -529,7 +529,7 @@ public sealed class FishingActionTests
         CatchIsNotInstantViolations(noHookGate).Should().Contain("credit_not_gated_on_the_engines_bite",
             "pulling without the engine's nibble is a catch taken from a cast, and it must be reported by name");
 
-        string unnamedHook = source.Replace("bite_observed=isNibbling", string.Empty, StringComparison.Ordinal);
+        string unnamedHook = source.Replace("bite_observed=true", string.Empty, StringComparison.Ordinal);
         CatchIsNotInstantViolations(unnamedHook).Should().Contain("receipt_does_not_name_the_observed_bite",
             "a receipt that does not name the bite cannot prove the catch was not instant");
     }
@@ -544,7 +544,12 @@ public sealed class FishingActionTests
         }
 
         Require("rod.isNibbling", "credit_not_gated_on_the_engines_bite");
-        Require("bite_observed=isNibbling", "receipt_does_not_name_the_observed_bite");
+        // THE SPELLING IS THE PRODUCER'S TO GET RIGHT, and it shipped wrong: this field printed a C# expression's own
+        // source text (`bite_observed=isNibbling`) where an evidence value belongs, and the Host's reader for a boolean
+        // accepts only `true`/`false` - so every real catch in `round80` was a `fish_caught` receipt that proved nothing.
+        // The value is `true` because this receipt is only composed on the branch the engine's bite opened
+        // (`rod.isNibbling && !rod.hit`, `:384`), which is the fact the field asserts.
+        Require("bite_observed=true", "receipt_does_not_name_the_observed_bite");
         Require("cast_to_credit_ms=", "receipt_does_not_measure_the_pull_latency");
 
         int hook = source.IndexOf("rod.isNibbling", StringComparison.Ordinal);

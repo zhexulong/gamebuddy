@@ -333,8 +333,12 @@ public sealed class ModalDismissActionTests
             receipt.State.Should().Be(ExecutionState.Succeeded,
                 "nothing to dismiss is the end state the caller asked for, so it is not a failure to report");
             receipt.ReasonCode.Should().Be("nothing_to_dismiss");
-            receipt.Evidence.Should().Be("modal=none",
-                "a success owes the evidence ADR-006 requires, and the only true claim is that no modal was there");
+            // THE WARRANT, IN THE SETTLEMENT SEAM'S OWN SPELLING: "no modal is there" is the request's outcome only
+            // when a fact says so, and the engine's field is that fact. Without it the Host cannot tell this settlement
+            // from the absence being used as its own evidence (`round77` published exactly `modal=none`).
+            (receipt.Evidence ?? string.Empty).Should().Be(
+                "modal=none;" + TileTargetSettledBy.EvidenceField + TileTargetSettledBy.EngineFlag("activeClickableMenu", "none"),
+                "a success owes the evidence ADR-006 requires, and the only true claim is that no modal was there - named by the engine field that says so");
         });
     }
 

@@ -45,7 +45,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// closeDialogue would skip the native answer lifecycle.
     ///
     /// NOTHING TO DISMISS IS THE END STATE THE CALLER ASKED FOR, so it answers `Succeeded` / `nothing_to_dismiss` with
-    /// `evidence: modal=none` rather than a refusal. The absence of a modal is a fact about the WORLD, and a caller that
+    /// `modal=none` rather than a refusal. The absence of a modal is a fact about the WORLD, and a caller that
     /// asked for "whatever is up, close it" is already where it asked to be - the same shape every idempotent
     /// set-to-closed action has. It is also the fact the Host's compiler cannot see: `body-program-script.ts` writes a
     /// `dismiss_modal` node after a body-yielding step (a `talk_to_npc` raises a box the plan cannot observe), and by the
@@ -56,6 +56,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// node identity reaches a handler), which is why ONE treatment covers both: nothing in this path refuses on a
     /// missing modal, and `modal=none` states what was (not) done. `answer_dialogue` keeps `no_modal_present`, because a
     /// caller that asked to ANSWER a question needs to know no question was there.
+    ///
+    /// THE ABSENCE CARRIES ITS WARRANT, in the shape the settlement seam already has (`TileTargetSettledBy`): "the modal
+    /// is not there" is the state the request asked for only when something says so, and the engine's own field is that
+    /// something - `Game1.activeClickableMenu` is null, printed as `settled_by=engine_flag:activeClickableMenu=none`.
+    /// The Host cannot tell a no-op from a dismissal without it: `modal=none` alone is the absence being used as the
+    /// evidence for itself, and measured `round80` its three real settlements were counted as `succeeded` receipts that
+    /// proved nothing, on top of the `round77` receipt that published exactly that shape.
     ///
     /// This is the clearance a caller ASKS FOR, and the receipt names it in both terminals of the call
     /// that performed the native close: `cleared_modal=` carries the modal type name and
@@ -81,7 +88,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         IClickableMenu? modal = Game1.activeClickableMenu;
         if (modal is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Succeeded, "nothing_to_dismiss", "modal=none");
+        {
+            string settledBy = TileTargetSettledBy.EngineFlag("activeClickableMenu", "none");
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Succeeded,
+                "nothing_to_dismiss",
+                $"modal=none;{TileTargetSettledBy.EvidenceField}{settledBy}");
+        }
 
         if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
             return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason, null);
@@ -481,7 +496,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             // had already closed the `LevelUpMenu`, `modal_type=none`, and the node failed `modal_not_level_up` for a
             // level-up that was already settled. The absence of a menu is a fact about the WORLD, and a request for
             // "settle the level-up that is being shown" is already where it asked to be when none is being shown; the
-            // sibling `dismiss_modal` answers the same shape with `nothing_to_dismiss` (`Succeeded`, `modal=none`).
+            // sibling `dismiss_modal` answers the same shape with `nothing_to_dismiss` (`Succeeded`, `modal=none` plus
+            // the settlement warrant that says which engine field makes the absence the outcome).
             //
             // THE NAME IS THE SIBLING'S WORD, not `already_answered`: this receipt cannot see whether an answer was
             // already given (a `respond_level_up` that arrives before the menu is raised reads exactly the same), and

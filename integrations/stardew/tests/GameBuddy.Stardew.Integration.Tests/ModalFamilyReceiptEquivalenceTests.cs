@@ -103,7 +103,7 @@ public sealed class ModalFamilyReceiptEquivalenceTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, Published> Before = new Dictionary<string, Published>(StringComparer.Ordinal)
     {
-        ["dismiss/no_modal"] = new Published("Succeeded", "nothing_to_dismiss", "modal=none", "<null>", "<null>", 1, false),
+        ["dismiss/no_modal"] = new Published("Succeeded", "nothing_to_dismiss", "modal=none;settled_by=engine_flag:activeClickableMenu=none", "<null>", "<null>", 1, false),
         ["dismiss/question_with_keys"] = new Published("Rejected", "modal_not_dismissible", "modal_type=DialogueBox;question=true;answer_it=answer_dialogue;response_keys=Yes,No", "offered_keys=Yes,No", "<null>", 1, false),
         ["dismiss/question_without_keys"] = new Published("Rejected", "modal_not_dismissible", "modal_type=DialogueBox;question=true;answer_it=answer_dialogue;response_keys=", "offered_keys=none", "<null>", 1, false),
         ["dismiss/shop"] = new Published("Rejected", "modal_not_dismissible", "modal_type=ShopMenu;menu_is_a_shop=true;shop_purchase_opens_its_own=true", "menu_is_a_shop:shop_purchase_opens_its_own", "<null>", 1, false),

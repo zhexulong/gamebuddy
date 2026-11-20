@@ -141,6 +141,13 @@ public sealed class ExpressionOutcomeGateTests
 
         outcome.State.Should().Be(ExecutionState.Succeeded);
         outcome.ReasonCode.Should().Be("emote_started");
+        outcome.Evidence.Should().StartWith(
+            $"emote={ExpressionCase.ClearWorld.Emote};native_dispatched=true",
+            "the receipt names the requested emote and the native dispatch");
+        outcome.Evidence.Should().NotContain(
+            "armed=",
+            "the arm is what chose this reason code, and a key the Host's rule does not declare refuses the whole "
+                + "receipt - measured `round80`, 119 real emotes landed as succeeded receipts that proved nothing");
         actor.IsEmoting.Should().BeTrue("the postcondition is the arm the receipt claims");
         actor.CurrentEmote.Should().Be(
             EmoteIndexFor(ExpressionCase.ClearWorld.Emote),

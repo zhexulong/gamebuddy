@@ -91,6 +91,13 @@ internal sealed partial class ExecutionManager
         // read that follows is the proof the balloon started - and an emote that did not arm is said plainly rather
         // than left as an uncertainty: nothing in the world changed either way, so there is nothing to be unsure
         // about. Completion/override remains an animation-time fact and is not required for the terminal receipt.
+        //
+        // THE ARM IS NOT A SECOND FIELD. `armed=true`/`armed=false` used to be appended here beside
+        // `native_dispatched`, and no reader declared it: the Host's rule for this action lists every key it reads
+        // (`host/src/stardew-completion-contracts.ts`, express_emote), and a key it was not told about refuses the whole
+        // receipt - measured `round80`, 119 real emotes landed as `succeeded_receipt_without_its_own_postcondition`.
+        // The reason code below IS the arm's reading (this `if` is what chooses it) and `native_dispatched` says the
+        // native call was reached, so the field carried the same fact a third time, in a spelling nobody read.
         actor.doEmote(emoteIndex);
 
         BridgeLocalObservation? observation = this.TryCreateLocalObservation(actor);
@@ -101,7 +108,7 @@ internal sealed partial class ExecutionManager
                 executionId,
                 ExecutionState.Succeeded,
                 "emote_started",
-                $"emote={request.Args.Emote};native_dispatched=true;armed=true" + staleReading,
+                $"emote={request.Args.Emote};native_dispatched=true" + staleReading,
                 observation);
 
         return this.RememberTerminal(
@@ -109,7 +116,7 @@ internal sealed partial class ExecutionManager
             executionId,
             ExecutionState.Rejected,
             "emote_not_started",
-            $"emote={request.Args.Emote};native_dispatched=true;armed=false" + staleReading,
+            $"emote={request.Args.Emote};native_dispatched=true" + staleReading,
             observation);
     }
 }

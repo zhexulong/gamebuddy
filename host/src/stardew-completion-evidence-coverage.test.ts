@@ -111,7 +111,12 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
   },
   face_direction: {
     reasonCode: "actor_facing_matches",
-    fields: [["direction", "up"]],
+    // `moving` is the walk's own effect on the facing (`movementactions.cs:1388-1396`), published beside the direction
+    // because a facing applied mid-walk is the walk's on the next step.
+    fields: [
+      ["direction", "up"],
+      ["moving", "false"],
+    ],
   },
   // The substituted arrival (`DescribeMoveArrival`, farmhandexecutioncontroller.movementactions.cs:56-61): the tile
   // the caller named held the thing it wanted to touch, so the body walked to a standable neighbour inside the
@@ -527,6 +532,9 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["tile", "3,4"],
       ["container", "chest"],
       ["item", "(O)388"],
+      // The backpack slot the stack came from: the action takes the FIRST stack of the item id, so the receipt is the
+      // only place that names which one moved (`FarmhandActionDefinitions.ChestStoreItemMeaning`).
+      ["source_slot", "4"],
       ["player_stack_before", "5"],
       ["player_stack_after", "0"],
       ["source_consumed", "true"],
@@ -1230,6 +1238,16 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
         ["commit_already_driven", "true"],
       ],
     },
+    {
+      actionId: "dismiss_modal",
+      reasonCode: "nothing_to_dismiss",
+      // Nothing was up to close: the request's own end state, stated as a settlement with the engine field that makes
+      // the absence one (`farmhandexecutioncontroller.modalactions.cs`).
+      fields: [
+        ["modal", "none"],
+        ["settled_by", "engine_flag:activeClickableMenu=none"],
+      ],
+    },
   ];
 
   const findings: string[] = [];
@@ -1300,6 +1318,33 @@ test("dismiss_modal: the latch's re-ask is a commit already under way, not a dis
     completionEvidence("dismiss_modal", "settlement_commit_in_progress", detail(dismissal.fields)),
     false,
     "an ordinary dismissal is not readable as the latch's re-ask, and it has its own reason code for that",
+  );
+});
+
+test("dismiss_modal: a settlement that found nothing is read only when it names its warrant", () => {
+  // `round80` counted three real ones as succeeded receipts that proved nothing; `round77` published the other side of
+  // the same terminal - `modal=none` on its own, which is the absence being used as its own evidence.
+  const warrant: readonly (readonly [string, string])[] = [
+    ["modal", "none"],
+    ["settled_by", "engine_flag:activeClickableMenu=none"],
+  ];
+  assert.equal(completionEvidence("dismiss_modal", "nothing_to_dismiss", detail(warrant)), true);
+  assert.equal(
+    completionEvidence("dismiss_modal", "nothing_to_dismiss", "modal=none"),
+    false,
+    "an absence with no warrant is not the request's end state, it is an absence",
+  );
+  assert.equal(
+    completionEvidence(
+      "dismiss_modal",
+      "nothing_to_dismiss",
+      detail([
+        ["modal", "none"],
+        ["settled_by", "engine_flag:activeClickableMenu=DialogueBox"],
+      ]),
+    ),
+    false,
+    "a warrant whose value says a modal IS up contradicts the terminal it was minted under",
   );
 });
 

@@ -221,15 +221,22 @@ test("a_completion_contract_names_what_the_action_answers:<action>", () => {
 });
 
 /**
- * THE OTHER HALF OF THE SAME QUESTION, for the two shapes a row must REFUSE, held here so a later lane cannot
+ * THE OTHER HALF OF THE SAME QUESTION, for the shapes a row must REFUSE, held here so a later lane cannot
  * widen the row into them while this file stays silent.
  *
- * `modal=none` is not a dismissal: `farmhandexecutioncontroller.modalactions.cs:84` answers a dismiss that finds no
+ * `modal=none` is not a dismissal: `farmhandexecutioncontroller.modalactions.cs` answers a dismiss that finds no
  * modal with `nothing_to_dismiss`, and the action's own descriptor declares `modal_dismissed` beside `WRITES_EFFECT`
  * (`action-registry.ts`, MOD_DESCRIPTOR_REQUIREMENTS). The terminal therefore keeps its own name - "no modal was up"
  * - and this asserts the row does not read it as the postcondition, in the shape the run actually produced.
+ *
+ * AND THE SETTLEMENT THAT IS THE REQUEST'S END STATE. `round80` counted three of these as succeeded receipts that
+ * proved nothing. A dismiss that finds nothing is an answer the caller can act on only when the receipt says WHAT
+ * makes the absence the outcome - the engine's own field, printed through the settlement vocabulary as
+ * `settled_by=engine_flag:activeClickableMenu=none` - so the warrant is what the row reads, and the shape without it
+ * (`round77`'s) stays refused. Both directions are asserted: the absence alone is still the absence being used as its
+ * own evidence.
  */
-test("dismiss_modal: a dismissal that found nothing is not the dismissal", () => {
+test("dismiss_modal: a dismissal that found nothing is a settlement, and only with its warrant", () => {
   assert.equal(
     hasStardewCompletionEvidence("dismiss_modal", {
       state: "succeeded",
@@ -237,7 +244,25 @@ test("dismiss_modal: a dismissal that found nothing is not the dismissal", () =>
       evidence: { detail: "modal=none" },
     }),
     false,
-    "no close ran, so `modal_dismissed` is not what this receipt states",
+    "no close ran, and an absence is not the evidence for itself - this is `round77`'s published shape",
+  );
+  assert.equal(
+    hasStardewCompletionEvidence("dismiss_modal", {
+      state: "succeeded",
+      reasonCode: "nothing_to_dismiss",
+      evidence: { detail: "modal=none;settled_by=engine_flag:activeClickableMenu=none" },
+    }),
+    true,
+    "the engine reports no modal and the receipt names that field: the state the request asked for already holds",
+  );
+  assert.equal(
+    hasStardewCompletionEvidence("dismiss_modal", {
+      state: "succeeded",
+      reasonCode: "nothing_to_dismiss",
+      evidence: { detail: "modal=none;settled_by=engine_flag:activeClickableMenu=some" },
+    }),
+    false,
+    "a warrant whose value says a modal IS up contradicts the terminal that carried it",
   );
   assert.equal(
     hasStardewCompletionEvidence("dismiss_modal", {

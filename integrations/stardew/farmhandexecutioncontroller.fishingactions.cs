@@ -466,7 +466,7 @@ internal sealed partial class ExecutionManager
                 int baitAfter = rod.GetBait()?.Stack ?? 0;
                 string evidence = string.Format(
                     CultureInfo.InvariantCulture,
-                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=isNibbling;cast_to_credit_ms={8};rod_durability_left={9};bait_before={10};bait_left={11};bait_consumed={12};stamina_before={13};stamina_after={14};stamina_delta={15};inventory_before={16};inventory_after={17};fish_caught_before={18};fish_caught_after={19};fish_caught_delta={20};credit=fishCaught:{18}->{19}",
+                    "location={0};target={1};tile={2},{3};caught_qualified_item_id={4};display_name={5};fish_size={6};quality={7};pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=true;cast_to_credit_ms={8};rod_durability_left={9};bait_before={10};bait_left={11};bait_consumed={12};stamina_before={13};stamina_after={14};stamina_delta={15};inventory_before={16};inventory_after={17};fish_caught_before={18};fish_caught_after={19};fish_caught_delta={20};credit=fishCaught:{18}->{19}",
                     spec.Location,
                     spec.TargetId,
                     spec.TargetX,
