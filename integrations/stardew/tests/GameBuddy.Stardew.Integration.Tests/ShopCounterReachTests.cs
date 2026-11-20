@@ -5,11 +5,14 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using Netcode;
 using StardewValley;
+using StardewValley.GameData.Shops;
 using StardewValley.Network;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -37,6 +40,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class ShopCounterReachTests
 {
     private const string ImplementationRelativePath = "integrations/stardew/farmhandexecutioncontroller.shopactions.cs";
+
+    private readonly ITestOutputHelper output;
+
+    public ShopCounterReachTests(ITestOutputHelper output) => this.output = output;
 
     /// <summary>The round42 pair: the owner's tile and the tile the actor was standing on.</summary>
     private const int OwnerX = 4;
@@ -169,12 +176,13 @@ public sealed class ShopCounterReachTests
         {
             // The four the trade can answer with.
             ["shop_closed_today"] = "the counter is here and shut today: discovery's own reason, with the game's closed text",
-            ["item_not_sold_here"] = "this counter does not offer that item at all",
+            ["item_not_sold_here"] = "THIS counter's own stock rows do not carry the item (counter=/stock=), and sold_here_by= names any counter in this room whose rows do - not that no shop in the game sells it, which is a fact only the top shop table would answer",
             ["out_of_stock"] = "the counter offers it and has none left",
             ["insufficient_money"] = "the purse is short: price=/currency=/available=/held=/short=, the comparison and its gap",
             ["shop_counter_out_of_reach"] = "a TILE counter the actor cannot act on from here, or no eligible owner can run this counter from this room",
             // Identity and request shape: what the caller asked for, not what the world offered.
             ["shop_target_unavailable"] = "this id names no counter in this room",
+            ["shop_target_is_a_shop_id_not_a_counter:*"] = "the value is a Data/Shops SHOP id, not a counter: kind=shop_id with the counters here that would run it, beside available_here",
             ["missing_expected_target_id"] = "the request named no counter",
             ["missing_expected_item"] = "the request named no item",
             ["invalid_quantity"] = "the request asked for fewer than one",
@@ -262,6 +270,208 @@ public sealed class ShopCounterReachTests
             "ShopPackRefusalEvidence(",
             "and the purchase the pack cannot hold renders ITS comparison through its own producer, before the purse pays");
     }
+
+    /// <summary>One counter in this room, built the way discovery builds it: the published opaque id, the shop it belongs
+    /// to, the owner that runs it (empty for a tile-opened stall) and the tile it is acted on from.</summary>
+    private static ExecutionManager.DiscoveredShopCounter Counter(
+        string shopId,
+        string ownerName,
+        int x,
+        int y,
+        bool opensNow = true,
+        string? closedMessage = null) =>
+        new(ExecutionManager.ShopTargetId(shopId, ownerName), shopId, new ShopData(), ownerName, x, y, opensNow, closedMessage);
+
+    /// <summary>The world's shop table as far as this file needs it: which ids `Data/Shops` keys. The real table is the
+    /// game's; a set of keys is all the identity question asks of it.</summary>
+    private static IReadOnlyDictionary<string, ShopData> Shops(params string[] shopIds) =>
+        shopIds.ToDictionary(shopId => shopId, _ => new ShopData(), StringComparer.Ordinal);
+
+    /// <summary>
+    /// THE ARGUMENT'S CONTRACT IS A COUNTER, AND `SeedShop` IS NOT ONE.
+    ///
+    /// <para>
+    /// Measured round81, two of three `shop_purchase` attempts, verbatim:
+    /// </para>
+    /// <code>
+    /// shop_purchase rejected  shop_target_unavailable
+    ///   target=SeedShop;location=SeedShop;available_here=...,SeedShop
+    /// </code>
+    /// <para>
+    /// She was standing IN `SeedShop` and had passed the shop's own `Data/Shops` id where a counter id goes; the refusal
+    /// said the target was unavailable, which names no kind, so nothing in the receipt said "that is a shop, not the
+    /// counter you meant". The value is now CLASSED against the world's shop table and refused by name, with the counters
+    /// that would run it - the ids discovery already published for them.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AShopIdPassedAsTheCounterIsRefusedByItsKindAndTheCountersItCouldMean()
+    {
+        ExecutionManager.DiscoveredShopCounter pierre = Counter("SeedShop", "Pierre", OwnerX, OwnerY);
+
+        // The two identities are different strings and the world keys only one of them.
+        ExecutionManager.NamesAKnownShop("SeedShop", Shops("SeedShop", "Carpenter")).Should().BeTrue(
+            "`SeedShop` is a `Data/Shops` key: the SHOP, which owns no counter by itself");
+        ExecutionManager.NamesAKnownShop(pierre.TargetId, Shops("SeedShop", "Carpenter")).Should().BeFalse(
+            "the counter id is minted here and is no shop's key, so the two can never be confused by this test");
+        ExecutionManager.NamesAKnownShop("NotAShop", Shops("SeedShop")).Should().BeFalse(
+            "an id the world does not key stays `shop_target_unavailable`, which is still the truthful answer for it");
+
+        ExecutionManager.ShopIdAsCounterRefusalCode("SeedShop").Should().Be(
+            "shop_target_is_a_shop_id_not_a_counter:SeedShop",
+            "the KIND is in the code, so a caller that reads only `reasonCode` still learns what it passed");
+
+        string evidence = ExecutionManager.ShopIdTargetRefusalEvidence(
+            "SeedShop", "SeedShop", new[] { pierre }, availableHere: "SeedShop");
+        evidence.Should().Be(
+            $"target=SeedShop;kind=shop_id;location=SeedShop;counters={pierre.TargetId}@{OwnerX},{OwnerY};available_here=SeedShop",
+            "the counters it could mean are spelled in the id `shop_purchase` takes, beside the shops this room has");
+        evidence.Length.Should().BeLessThanOrEqualTo(
+            SweepTargetRefusalNamingTests.RefusalActionability.ModelShare,
+            "a refusal the model cannot read in full is a refusal it cannot act on");
+
+        // The same room, a shop whose counter is NOT here: the kind is still named, and the list says `none` rather than
+        // leaving the field out - an absent field and an empty one are different facts.
+        ExecutionManager
+            .ShopIdTargetRefusalEvidence("SeedShop", "Farm", Array.Empty<ExecutionManager.DiscoveredShopCounter>(), "Joja")
+            .Should()
+            .Be("target=SeedShop;kind=shop_id;location=Farm;counters=none;available_here=Joja");
+    }
+
+    /// <summary>
+    /// A COUNTER THAT DOES NOT CARRY THE ITEM SAYS WHICH ABSENCE IT MEANS.
+    ///
+    /// <para>
+    /// Measured round81, the one attempt that reached a counter, verbatim:
+    /// </para>
+    /// <code>
+    /// shop_purchase rejected  item_not_sold_here
+    ///   shop=DesertFestival_Gus;item=(O)474;stock=5
+    /// </code>
+    /// <para>
+    /// A festival stall holding five stock rows and not this one, in a shape a counter that stocks NOTHING would have
+    /// answered identically - and those are different problems: the first says leave, the second says the stall is empty
+    /// today. So the receipt names the COUNTER it read (a shop has one counter per owner here, so `shop=` alone does not
+    /// say which) and any counter in this room whose own rows do carry the item. `available_here` in the sibling refusals
+    /// could NOT have answered this: it lists SHOPS, and a shop being here says nothing about its rows.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ACountersStockMissingTheItemSaysWhichAbsenceItMeans()
+    {
+        ExecutionManager.DiscoveredShopCounter stall = Counter("DesertFestival_Gus", string.Empty, 12, 40);
+        ExecutionManager.DiscoveredShopCounter pierre = Counter("SeedShop", "Pierre", OwnerX, OwnerY);
+
+        ExecutionManager
+            .ShopItemNotSoldEvidence(
+                "DesertFestival_Gus",
+                stall,
+                "(O)474",
+                stock: 5,
+                soldHereBy: $"{pierre.TargetId}@{OwnerX},{OwnerY}",
+                countersRead: 1)
+            .Should()
+            .Be(
+                $"shop=DesertFestival_Gus;counter={stall.TargetId}@12,40;item=(O)474;stock=5;"
+                + $"sold_here_by={pierre.TargetId}@{OwnerX},{OwnerY};counters_read=1",
+                "the counter that has it is named in the shape the action takes, which is the half `stock=5` never carried");
+
+        // Nothing in this room carries it: `none` is a fact about the room, and `counters_read=0` says there was nothing
+        // else to ask - the reading is a count of what was measured, never a silent zero.
+        ExecutionManager
+            .ShopItemNotSoldEvidence("DesertFestival_Gus", stall, "(O)474", stock: 5, soldHereBy: "none", countersRead: 0)
+            .Should()
+            .Be($"shop=DesertFestival_Gus;counter={stall.TargetId}@12,40;item=(O)474;stock=5;sold_here_by=none;counters_read=0");
+
+        // AN UNREADABLE STOCK IS NOT AN EMPTY ONE. The scan's answer is three-valued for that reason; a counter whose
+        // stock could not be read is left out of both halves rather than counted as "does not carry it".
+        ExecutionManager
+            .ShopStockCarries("DesertFestival_Gus", new ShopData(), "(O)474")
+            .Should()
+            .NotBe(true, "a world with no shop stock mounted can never answer that this counter carries anything");
+    }
+
+    /// <summary>
+    /// THE GATE: an identity argument names the kind of thing it is.
+    ///
+    /// <para>
+    /// The POPULATION is the action surface's, never this file's: every argument whose name ends in the kind word `Id`, on
+    /// every mounted execution action that declares the <c>shopTargets</c> family - the family whose ids the world can
+    /// classify, because `Data/Shops` keys the SHOP and <see cref="ExecutionManager.ShopTargetId"/> mints a COUNTER, so one
+    /// argument in this family can legitimately receive either. A new shop action's identity argument is drawn in by the
+    /// registry, not by this file remembering to add it.
+    /// </para>
+    /// <para>
+    /// CLASSIFIED means the argument's refusals spell that kind, through ONE producer the request body reaches: a value the
+    /// world can class two ways, answered by a word that names neither, is what round81's three attempts spent a day on.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnIdentityArgumentNamesTheKindOfThingItIs()
+    {
+        string handler = File.ReadAllText(RepositorySourcePath(ImplementationRelativePath));
+        string body = MethodBody(handler, "public LocalExecutionReceipt RequestLocalShopPurchase(");
+
+        List<(string ActionId, string Argument)> arguments = FarmhandActionCatalog.Registrations
+            .Where(registration => registration.Kind == FarmhandOperationKind.Execution && registration.Descriptor is not null)
+            .Where(registration => string.Equals(
+                registration.Descriptor!.TargetFamily, ShopTargetFamily, StringComparison.Ordinal))
+            .SelectMany(registration => registration.Descriptor!.Arguments
+                .Where(argument => argument.Name.EndsWith(KindWord, StringComparison.Ordinal))
+                .Select(argument => (registration.ActionId, argument.Name)))
+            .ToList();
+
+        List<string> bare = new();
+        foreach ((string actionId, string argument) in arguments)
+        {
+            if (!KindSpelling.TryGetValue(argument, out (string Token, string Producer) spelling)
+                || !body.Contains(spelling.Producer, StringComparison.Ordinal)
+                || !MethodBody(handler, spelling.Producer).Contains(spelling.Token, StringComparison.Ordinal))
+            {
+                bare.Add($"{actionId}.{argument}");
+            }
+        }
+
+        this.output.WriteLine(
+            $"an_identity_argument_names_the_kind_of_thing_it_is: arguments {arguments.Count} · "
+            + $"classified {arguments.Count - bare.Count} · bare {bare.Count}");
+
+        arguments.Should().NotBeEmpty(
+            $"a zero population agrees with itself: no mounted action declares {ShopTargetFamily} any more, so this gate "
+                + "has stopped reading the surface it was written for");
+
+        List<string> stale = KindSpelling.Keys
+            .Where(argument => !arguments.Any(entry => string.Equals(entry.Argument, argument, StringComparison.Ordinal)))
+            .OrderBy(argument => argument, StringComparer.Ordinal)
+            .ToList();
+        stale.Should().BeEmpty(
+            "a declared kind whose argument has left the surface is a stale copy, not a gate: " + string.Join(", ", stale));
+
+        bare.Should().BeEmpty(
+            "an identity argument whose value the world can class must name the kind it received; bare: "
+                + string.Join(", ", bare));
+    }
+
+    /// <summary>What an argument's NAME has to end in to be an identity argument: the kind word, not a kind.</summary>
+    private const string KindWord = "Id";
+
+    /// <summary>The published row family whose ids a shop action's counter argument takes.</summary>
+    private const string ShopTargetFamily = "shopTargets";
+
+    /// <summary>
+    /// The kind each identity argument's refusals spell, and the ONE producer that spells it. Declared here because the
+    /// kind a value is has to be chosen by someone: a `SeedShop` is a shop and a `shop_<16 hex>` is a counter, and no
+    /// naming scheme the argument could carry would say both.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, (string Token, string Producer)> KindSpelling =
+        new Dictionary<string, (string Token, string Producer)>(StringComparer.Ordinal)
+        {
+            // The value can be a counter id OR a `Data/Shops` key: the refusal names which it got.
+            ["expectedTargetId"] = ("kind=shop_id", "ShopIdTargetRefusalEvidence("),
+            // A qualified item id names its own kind by its `(T)` prefix, so the refusals that carry it have only to
+            // carry it AS an item id - which is what an `item=` field is and what a bare `stock=5` was not.
+            ["expectedQualifiedItemId"] = ("item=", "ShopPackRefusalEvidence("),
+        };
 
     /// <summary>How far the closure follows producers: request body, the producer it calls, and the one that calls.</summary>
     private const int MaxProducerHops = 3;

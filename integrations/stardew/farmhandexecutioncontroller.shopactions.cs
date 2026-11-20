@@ -56,6 +56,9 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private const int MaxShopTargets = 32;
     private const int MaxTileShopTargets = 8;
 
+    /// <summary>The most counters one refusal spells before it says how many it did not print.</summary>
+    private const int MaxSpelledCounters = 3;
+
     /// <summary>
     /// The one counter whose purchase is a TOOL UPGRADE: `Tool.actionWhenPurchased` upgrades only for this shop id
     /// (Tool.cs:875), and the entry it charges for is discarded rather than carried (ShopMenu.cs:1369-1378).
@@ -115,7 +118,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// </summary>
     internal static bool OpensNow(ShopOwnerData? resolvedOwner) => resolvedOwner is { ClosedMessage: null };
 
-    private readonly record struct DiscoveredShopCounter(
+    internal readonly record struct DiscoveredShopCounter(
         string TargetId,
         string ShopId,
         ShopData ShopData,
@@ -131,6 +134,93 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// <summary>The owner half of a refusal's evidence: a counter no NPC runs is spelled <c>none</c>, the same way
     /// every optional value is spelled here, because an empty <c>owner=</c> is a field the Host cannot reparse.</summary>
     internal static string ShopOwnerToken(string ownerName) => ownerName.Length == 0 ? "none" : ownerName;
+
+    /// <summary>
+    /// One counter as a caller can pass it BACK: the opaque id `shop_purchase` takes, and the tile to act on it from.
+    ///
+    /// <para>
+    /// Both halves are needed and neither is a second identity: the id alone is opaque (nothing in `shop_<16 hex>` says
+    /// which shop or which owner), and the tile alone names no counter. They are the published row's own two facts, so a
+    /// refusal that spells them says what it is talking about without minting anything.
+    /// </para>
+    /// </summary>
+    internal static string ShopCounterToken(DiscoveredShopCounter counter) =>
+        $"{counter.TargetId}@{counter.CounterX},{counter.CounterY}";
+
+    /// <summary>
+    /// The counters in <paramref name="counters"/> that spell, at most <see cref="MaxSpelledCounters"/> of them, with the
+    /// count of those withheld beside it - one producer, because two refusals now list counters and a list that stops at
+    /// three without saying so reads as a complete list of three.
+    /// </summary>
+    private static string SpellCounters(IReadOnlyList<DiscoveredShopCounter> counters)
+    {
+        if (counters.Count == 0)
+            return "none";
+        string spelled = string.Join(",", counters.Take(MaxSpelledCounters).Select(ShopCounterToken));
+        return counters.Count > MaxSpelledCounters
+            ? $"{spelled}(+{counters.Count - MaxSpelledCounters})"
+            : spelled;
+    }
+
+    /// <summary>
+    /// Whether the value handed to <c>expectedTargetId</c> names a SHOP rather than a counter - asked of the world's own
+    /// shop table, because the argument is opaque and its spelling says nothing.
+    ///
+    /// <para>
+    /// THE TWO ARE DIFFERENT THINGS. <see cref="ShopTargetId"/> mints one opaque id per COUNTER (a shop id and an owner
+    /// name, hashed), and `Data/Shops` keys the SHOP itself: `SeedShop` is not a counter in anybody's room, it is the
+    /// shop whose counter `SeedShop`/`Pierre` is. Measured round81: two of three `shop_purchase` attempts passed
+    /// `target=SeedShop` while the actor stood IN SeedShop, and both were answered `shop_target_unavailable` - a word
+    /// that names no kind, so nothing in the receipt said "that is a shop, not the counter you meant".
+    /// </para>
+    /// </summary>
+    internal static bool NamesAKnownShop(string targetId, IReadOnlyDictionary<string, ShopData> shops) =>
+        shops.ContainsKey(targetId);
+
+    /// <summary>The code a shop id handed to the counter argument is refused under. The KIND is in the code as well as in
+    /// the evidence, so a caller that reads only <c>reasonCode</c> still learns what it passed, and a caller that reads the
+    /// evidence learns what it could have passed instead.</summary>
+    internal static string ShopIdAsCounterRefusalCode(string shopId) =>
+        $"shop_target_is_a_shop_id_not_a_counter:{shopId}";
+
+    /// <summary>The world's own shop table, or an empty one when the content cannot be read. What it feeds is a refusal's
+    /// WORDING and never a gate, so an unreadable table makes the refusal quieter rather than louder - the counter scan
+    /// in front of it still answers, and `shop_target_unavailable` is still true when nothing can be classed.</summary>
+    private static IReadOnlyDictionary<string, ShopData> KnownShops()
+    {
+        try
+        {
+            return DataLoader.Shops(Game1.content);
+        }
+        catch (Exception)
+        {
+            return new Dictionary<string, ShopData>(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// What a <c>ShopId</c> handed to the counter argument is refused with, and the counters here that would run it.
+    ///
+    /// <para>
+    /// `<c>kind=shop_id</c>` is the whole point of the refusal: the argument's contract is a COUNTER, and a shop id does
+    /// not say which counter (a shop can have several owners standing in one room, and only one of them may be open
+    /// today) - so resolving one here would be a second identity for a counter discovery already published one for. The
+    /// caller is given the ids it COULD have meant instead, in the same `targetId@x,y` shape, beside the shop ids this
+    /// room does have (`available_here`) - the token the other refusal already carried.
+    /// </para>
+    /// </summary>
+    internal static string ShopIdTargetRefusalEvidence(
+        string targetId,
+        string location,
+        IReadOnlyList<DiscoveredShopCounter> counters,
+        string availableHere)
+    {
+        DiscoveredShopCounter[] runIt = counters
+            .Where(counter => string.Equals(counter.ShopId, targetId, StringComparison.Ordinal))
+            .ToArray();
+        return $"target={targetId};kind=shop_id;location={location};counters={SpellCounters(runIt)};"
+            + $"available_here={availableHere}";
+    }
 
     /// <summary>
     /// The one spelling of "which counter, which body, which radius" - the three tokens a caller computes an approach
@@ -728,6 +818,78 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal static string ShopInventoryRefusal(Item held) => $"inventory_cannot_accept:{held.QualifiedItemId}";
 
     /// <summary>
+    /// Whether THIS counter's own stock rows carry an item - asked of the same <c>ShopBuilder.GetShopStock</c> call the
+    /// published `shopTargets` row's `stockItemIds` are built from. Null when the stock could not be read at all, which
+    /// is a different answer from "its rows do not carry it".
+    /// </summary>
+    internal static bool? ShopStockCarries(string shopId, ShopData shopData, string qualifiedItemId)
+    {
+        try
+        {
+            Dictionary<ISalable, ItemStockInformation>? stock = ShopBuilder.GetShopStock(shopId, shopData);
+            if (stock is null)
+                return null;
+            return stock.Keys.Any(offer => string.Equals(offer.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The evidence a counter that does not carry the item is refused with, saying WHICH absence this is.
+    ///
+    /// <para>
+    /// THE DEFECT. Measured round81: `shop=DesertFestival_Gus;item=(O)474;stock=5` - a festival stall that held five stock
+    /// rows and not this one - and the same word, in the same shape, would have been answered by a counter that stocks
+    /// nothing at all. `stock=` and the code alone cannot separate "this counter does not sell it" from "nothing in this
+    /// room sells it", and the second of those is what a caller has to act on: leave.
+    /// </para>
+    /// <para>
+    /// So the receipt names the counter it read (`counter=`, the passable id - not only the shop, which has one counter
+    /// per owner here), and <c>sold_here_by=</c> the counters IN THIS ROOM whose own rows do carry the item, with
+    /// <c>counters_read=</c> saying how many were actually readable. `none` therefore means "no counter here positively
+    /// carries it", never "no shop in the game does": `available_here` in the sibling refusals names SHOPS, and a shop
+    /// being here says nothing about whether its rows carry an item - which is why it could not have answered this, and
+    /// why the list that does (`shopTargets`' own `stockItemIds`) is spelled here instead.
+    /// </para>
+    /// </summary>
+    internal static string ShopItemNotSoldEvidence(
+        string shopId,
+        DiscoveredShopCounter counter,
+        string itemId,
+        int stock,
+        string soldHereBy,
+        int countersRead) =>
+        $"shop={shopId};counter={ShopCounterToken(counter)};item={itemId};stock={stock};"
+        + $"sold_here_by={soldHereBy};counters_read={countersRead}";
+
+    /// <summary>The counters beside <paramref name="asked"/> whose own stock carries <paramref name="qualifiedItemId"/>, and
+    /// how many of them could be read - the two halves of <see cref="ShopItemNotSoldEvidence"/>'s `sold_here_by` answer.
+    /// </summary>
+    private static (string SoldBy, int Read) CountersCarryingItem(
+        IReadOnlyList<DiscoveredShopCounter> counters,
+        DiscoveredShopCounter asked,
+        string qualifiedItemId)
+    {
+        List<DiscoveredShopCounter> carrying = new();
+        int read = 0;
+        foreach (DiscoveredShopCounter counter in counters)
+        {
+            if (string.Equals(counter.TargetId, asked.TargetId, StringComparison.Ordinal))
+                continue;
+            if (ShopStockCarries(counter.ShopId, counter.ShopData, qualifiedItemId) is not bool carries)
+                continue;
+            read++;
+            if (carries)
+                carrying.Add(counter);
+        }
+
+        return (SpellCounters(carrying), read);
+    }
+
+    /// <summary>
     /// The evidence a purchase the pack cannot hold is refused with, stated BEFORE the purse pays.
     ///
     /// <para>
@@ -1019,6 +1181,21 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
 
             string knownHere = string.Join(",", counters.Where(c => c.OpensNow).Select(c => c.ShopId).Distinct().Take(8));
+
+            // THE ARGUMENT'S CONTRACT IS A COUNTER, AND A SHOP ID IS NOT ONE. Measured round81: two of three attempts
+            // passed `target=SeedShop` while the actor stood IN SeedShop, and both answered `shop_target_unavailable` -
+            // a word that named no kind, so the receipt could not say the value was a shop rather than a counter that had
+            // gone away. Classifying it costs one read of the world's own shop table and names what it could mean.
+            if (NamesAKnownShop(targetId, KnownShops()))
+            {
+                return this.RememberTerminal(
+                    request.RequestId,
+                    executionId,
+                    ExecutionState.Rejected,
+                    ShopIdAsCounterRefusalCode(targetId),
+                    ShopIdTargetRefusalEvidence(targetId, location.NameOrUniqueName, counters, knownHere));
+            }
+
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
@@ -1095,12 +1272,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             string.Equals(item.QualifiedItemId, expectedItemId, StringComparison.Ordinal));
         if (offer is null)
         {
+            (string soldHereBy, int countersRead) = CountersCarryingItem(counters, target, expectedItemId);
             return this.RememberTerminal(
                 request.RequestId,
                 executionId,
                 ExecutionState.Rejected,
                 "item_not_sold_here",
-                $"shop={target.ShopId};item={expectedItemId};stock={stock.Count}");
+                ShopItemNotSoldEvidence(target.ShopId, target, expectedItemId, stock.Count, soldHereBy, countersRead));
         }
 
         // The price the menu charges, read from the SAME stock entry this purchase is made from. ShopMenu
