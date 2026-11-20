@@ -1733,9 +1733,11 @@ for (const line of readings.lines()) process.stdout.write(`${line}\n`);
 // A BLOCKED ending is a refused reading, in the same code `no run directory` already uses: this verdict cannot say anything
 // about a run whose own process never closed the record, and exiting 0 over it is how `round65`-`round67` read as passes.
 if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
-// A WALL CLOCK WITH SECONDS IN NO BUCKET FAILS THE VERDICT, naming the largest stretch: a partition that leaves a share
-// unexplained behind one authoritative number is how `idleMs 1,234 s` pointed a reader at the wrong cause for a round. A run
-// whose wall or buckets could not be READ is `not_measured` in the block above (visible, never green) and is not the same
-// failure: a live run has no bundle yet, and failing it here would read as a defect in the run. `Math.abs(null)` is 0, so
-// an unpriced wall falls through this line rather than failing on an absence.
-else if (readings.failed() || Math.abs(standstill.unexplainedMs) >= 1) process.exitCode = 1;
+// A WALL CLOCK WITH SECONDS IN NO BUCKET FAILS THE VERDICT, ONCE THE RUN'S OWN HEAD, TAIL AND CLOCK SKEW ARE NAMED: the
+// run head before its first body step and the run tail after its last settlement are facts about the run and are buckets,
+// and what head, tail and the four causes still cannot name is judged against the disagreement this run's own two clocks
+// show. A run whose wall, buckets or admission spans could not be READ is `not_measured` in the block above (visible,
+// never green) and is not the same failure: a live run has no bundle yet, and failing it here would read as a defect in
+// the run. `round84` is why the tolerance exists - its 58.4 s of "unexplained" was 38.3 s of run head plus 24.6 s of run
+// tail with 4.5 s counted twice, so the old `unexplained >= 1` failed a run whose wall was fully accounted for.
+else if (readings.failed() || standstill.gate === "failed") process.exitCode = 1;

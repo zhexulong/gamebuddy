@@ -21,9 +21,16 @@ import { median, seconds, shareToATenth } from "./action-cadence.mjs";
  * exists to remove.
  * </p>
  * <p>
- * THE FIVE READINGS: the body's duty cycle (and the longest single standstill), the standstill partition with its residue,
- * the autonomy horizon (how long one programme lasts against how long one turn costs), the cognitive tax the tool surface
- * charges in turns and in nodes, and the intent yield of a delivered turn against the three ways its work reaches nobody.
+ * THE FIVE READINGS: the body's duty cycle (and the longest single standstill), the standstill partition with its
+ * residue, the autonomy horizon (how long one programme lasts against how long one turn costs), the cognitive tax the
+ * tool surface charges in turns and in nodes, and the intent yield of a delivered turn against the three ways its work
+ * reaches nobody.
+ * </p>
+ * <p>
+ * AND THE RESIDUE NAMES TWO THINGS THAT ARE NOT THE SAME. The run's head (before its first body step) and its tail
+ * (after its last settlement) are FACTS about the run, not measurement error, so they are buckets; what head and tail
+ * cannot name is the disagreement between the two clocks this report reads, and the run measures how far apart those
+ * clocks are, so the residual prints against a tolerance derived from its own timestamps instead of against 1 ms.
  * </p>
  * <p>
  * ONE THING HERE IS READ ON A SHARED ORIGIN. A programme's stamps come from the Mod's journal clock and a turn's window from
@@ -34,7 +41,7 @@ import { median, seconds, shareToATenth } from "./action-cadence.mjs";
  * </p>
  */
 
-const STANDSTILL_GATE = "a_standstill_is_attributed_to_a_named_cause";
+const STANDSTILL_GATE = "a_residual_is_either_named_or_bounded";
 const RUN_TRACE_NAME = "run-trace.json";
 // The Mod's own turn account: the only record of how many readings went stale and how many refresh attempts were spent on
 // them. It is printed on one line of the runner log, so a run whose log never reached the verdict answers `not_measured`
@@ -241,13 +248,17 @@ function programmeSwitches(windows, turns) {
 /**
  * The body's window placed in the run's wall clock, from the Host's own admission spans.
  *
- * A programme's stamps and a turn's span are read from two clocks, and the two do not share an origin: measured on
- * `round84`, all 329 node admissions pair a Host span with its journal stamp at a CONSTANT 22,745 ms, because the Mod's
- * clock opens when its body-program journal does and the trace's opens when the runner process does. `clockOffsetMs` is
- * that constant, printed so a reader can see what the split above is measuring across.
+ * A programme's stamps and a turn's span are read from two clocks, and the two do not share an origin: the Mod's clock
+ * opens when its body-program journal does and the trace's opens when the runner process does. `clockOffsetMs` is the
+ * median distance between them, printed so a reader can see what the split above is measuring across. Measured on
+ * `round84`: 328 paired admissions at a median of 22,746 ms - and they are NOT one constant, which is the whole reason
+ * the residual below needs a tolerance: the pairs span 13,639..22,774 ms because one dispatch carries a stamp 9.1 s from
+ * where the other clock puts it.
  *
  * The window itself needs no offset: each node's own exposure is `admission.ts + its duration`, a difference inside one
  * clock, so the head (run start -> the first step) and the tail (the last settlement -> run end) are wall-clock facts.
+ * `firstSkewMs` and `lastSkewMs` are how far the two clocks place the window's TWO ENDS apart, which is where a
+ * residual that survives head and tail has to sit.
  */
 function placeBodyWindow({ events, windows, originMs, result }) {
   const admissions = events.filter(
@@ -262,22 +273,35 @@ function placeBodyWindow({ events, windows, originMs, result }) {
   let firstMs = Infinity;
   let lastMs = -Infinity;
   let paired = 0;
+  let firstPaired = null;
+  let lastPaired = null;
   for (const admission of admissions) {
     const atMs = admission.ts / 1000;
     firstMs = Math.min(firstMs, atMs);
     const execution = stamps.get(`${admission.args.programId}/${admission.args.nodeId}`);
     if (execution === undefined || execution.settledAtMs === null || execution.settledAtMs < execution.atMs) continue;
     paired += 1;
-    lastMs = Math.max(lastMs, atMs + (execution.settledAtMs - execution.atMs));
+    const endMs = atMs + (execution.settledAtMs - execution.atMs);
+    lastMs = Math.max(lastMs, endMs);
     offsets.push(atMs - execution.atMs);
+    if (firstPaired === null || atMs < firstPaired.traceMs) firstPaired = { traceMs: atMs, journalMs: execution.atMs };
+    if (lastPaired === null || endMs > lastPaired.traceEndMs)
+      lastPaired = { traceEndMs: endMs, journalMs: execution.settledAtMs };
   }
   if (paired === 0) return null;
   const wallOf = (traceMs) => originMs + traceMs;
+  const widest = Math.max(...offsets);
+  const narrowest = Math.min(...offsets);
   return {
     paired,
     unpaired: admissions.length - paired,
     clockOffsetMs: median(offsets),
     clockOffsetPairs: offsets.length,
+    clockOffsetSpreadMs: widest - narrowest,
+    clockOffsetNarrowestMs: narrowest,
+    clockOffsetWidestMs: widest,
+    firstSkewMs: firstPaired === null ? null : firstPaired.traceMs - firstPaired.journalMs,
+    lastSkewMs: lastPaired === null ? null : lastPaired.traceEndMs - lastPaired.journalMs,
     headMs: Math.max(0, wallOf(firstMs) - result.startedAtMs),
     tailMs: Math.max(0, result.endedAtMs - wallOf(lastMs)),
     firstWallMs: wallOf(firstMs),
@@ -397,6 +421,23 @@ function measureIntentYield({ result, turns, traceEvents }) {
   };
 }
 
+/**
+ * Whether the residual is inside what the run's own timestamps can produce: `failed`, `within`, or `blocked`.
+ *
+ * <p>
+ * A residual is SIGNED and both directions are wrong in their own way: negative means the middle buckets charge more
+ * than the window between the first step and the last settlement holds, positive means that window holds seconds no
+ * bucket charges. Either way it is judged against the same tolerance, and a run that could not be read - no wall, no
+ * buckets, or no admission span to place the window with - is `blocked` rather than green or red, because a number
+ * nobody measured is neither a pass nor a defect.
+ * </p>
+ */
+function residualVerdict({ wallMs, explainedMs, residualMs, toleranceMs }) {
+  if (wallMs === null || explainedMs === null) return "blocked";
+  if (residualMs === null || toleranceMs === null) return "failed";
+  return Math.round(Math.abs(residualMs)) > Math.round(toleranceMs) ? "failed" : "within";
+}
+
 export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath }) {
   const wallMs =
     Number.isFinite(result?.startedAtMs) && Number.isFinite(result?.endedAtMs) && result.endedAtMs > result.startedAtMs
@@ -431,6 +472,17 @@ export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath
       ? null
       : bodyMs + switches.turnGapMs + switches.queueMs + body.intraMs;
   const unexplainedMs = wallMs === null || explainedMs === null ? null : wallMs - explainedMs;
+  // NAMED OR BOUNDED. The four middle buckets are charged on the same window the head and the tail leave, so what they
+  // miss is `windowMs - explainedMs`: negative when they charge more than the window holds (two programme windows
+  // overlapping, or a published body sum counting steps no programme holds), positive when the window holds seconds no
+  // bucket charges. Measured on `round84`: -4,486 ms of a 2,065,870 ms wall - 58,383 ms of "unexplained" was 38,265 ms
+  // of run head and 24,604 ms of run tail with 4,486 ms charged twice, so the run the gate was failing was the run the
+  // gate should have passed.
+  const residualMs = explainedMs === null || placed === null ? null : placed.windowMs - explainedMs;
+  // THE TOLERANCE THIS RUN'S OWN TIMESTAMPS PRODUCE, not a number chosen here: a dispatch is written twice, as a
+  // `run-trace.json` admission and as the same node's `result.json` stamp, and the widest disagreement between any two of
+  // those pairs is the largest amount by which this run places one instant twice.
+  const toleranceMs = placed === null ? null : placed.clockOffsetSpreadMs;
   const programmeLives =
     programmes === null ? [] : programmes.windows.map((window) => window.lastSettledMs - window.firstAtMs);
   return {
@@ -447,6 +499,9 @@ export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath
     placed,
     explainedMs,
     unexplainedMs,
+    residualMs,
+    toleranceMs,
+    gate: residualVerdict({ wallMs, explainedMs, residualMs, toleranceMs }),
     autonomy: {
       programmeMedianMs: median(programmeLives),
       programmes: programmeLives.length,
@@ -521,31 +576,51 @@ export function standstillLines(report) {
     push(
       `${statusLabel("clock_offset")} ${String(Math.round(report.placed.clockOffsetMs))} ms over ${String(
         report.placed.paired,
-      )} of ${String(report.placed.paired + report.placed.unpaired)} node admissions  <- a run-trace.json admission span and the same node's result.json atMs are one dispatch read from two clocks, and they count from different origins, so the split above reads them on one origin as the owning fixture does and this line states how far apart they are`,
+      )} of ${String(report.placed.paired + report.placed.unpaired)} node admissions, the pairs spanning ${seconds(
+        report.placed.clockOffsetSpreadMs,
+      )} (${String(Math.round(report.placed.clockOffsetNarrowestMs))}..${String(
+        Math.round(report.placed.clockOffsetWidestMs),
+      )} ms)  <- a run-trace.json admission span and the same node's result.json atMs are one dispatch read from two clocks, and they count from different origins, so the split above reads them on one origin as the owning fixture does; the SPAN is the tolerance the residual below is judged against`,
     );
-  // THE ACCOUNTING, WITH THE RESIDUE NAMED RATHER THAN ABSORBED. The residue has an address: it is the run's head (before
-  // the first step was dispatched) and its tail (after the last one settled), less whatever the buckets count twice where
-  // two programmes overlapped - the body's own exposure is summed, so an overlap is in `body` and in no gap.
+  // THE ACCOUNTING, WITH THE RESIDUE NAMED RATHER THAN ABSORBED. The run's head (before the first step was dispatched) and
+  // its tail (after the last one settled) are facts about this run, so they are named; what the four middle buckets miss of
+  // the window those two leave is the residual, and its sign says whether they charged too much or too little.
   if (report.explainedMs === null)
     push(
       `${statusLabel("accounted")} not_measured (a bucket above could not be read, so no share of this wall can be priced)`,
     );
-  else {
-    const overlapMs = report.placed === null ? null : report.explainedMs - report.placed.windowMs;
-    const composition =
-      overlapMs === null || report.unexplainedMs === null
-        ? ""
-        : ` = run head ${seconds(report.placed.headMs)} + run tail ${seconds(report.placed.tailMs)} - ${seconds(
-            Math.max(0, overlapMs),
-          )} counted twice where two programmes overlapped`;
+  else if (report.residualMs === null)
     push(
       `${statusLabel("accounted")} body ${seconds(report.bodyMs)} + turn gap ${seconds(
         report.switches.turnGapMs,
       )} + queue wait ${seconds(report.switches.queueMs)} + intra-program ${seconds(
         report.body?.intraMs ?? null,
-      )} = ${seconds(report.explainedMs)} of the ${seconds(report.wallMs)} wall; unexplained ${seconds(report.unexplainedMs)}${composition} (blocked/modal is in no sum here: this run measured none, so whatever it held is in the residue)`,
+      )} = ${seconds(report.explainedMs)} of the ${seconds(
+        report.wallMs,
+      )} wall; the other ${seconds(report.unexplainedMs)} cannot be named, because no admission span placed the body's window and so there is no run head and no run tail to name it with`,
     );
-  }
+  else
+    push(
+      `${statusLabel("accounted")} body ${seconds(report.bodyMs)} + turn gap ${seconds(
+        report.switches.turnGapMs,
+      )} + queue wait ${seconds(report.switches.queueMs)} + intra-program ${seconds(
+        report.body?.intraMs ?? null,
+      )} = ${seconds(report.explainedMs)} of the ${seconds(report.wallMs)} wall; the other ${seconds(
+        report.unexplainedMs,
+      )} is named rather than assumed: run head ${seconds(report.placed.headMs)} before the first body step + run tail ${seconds(
+        report.placed.tailMs,
+      )} after the last settlement, which leaves a residual of ${seconds(report.residualMs)} ${
+        Math.round(report.residualMs) === 0
+          ? `- the middle buckets and the ${seconds(report.placed.windowMs)} window those two leave agree to the millisecond`
+          : report.residualMs < 0
+            ? `- the middle buckets charging ${seconds(-report.residualMs)} more than the ${seconds(
+                report.placed.windowMs,
+              )} window those two leave`
+            : `- ${seconds(report.residualMs)} inside that ${seconds(
+                report.placed.windowMs,
+              )} window that no bucket charges`
+      } (blocked/modal is in no sum here: this run measured none, so whatever it held is in that residual)`,
+    );
   // 3. THE AUTONOMY HORIZON. She thinks longer than she acts, and no wake threshold changes that: a programme shorter than
   // one turn has drained before the answer that a wake would carry could arrive.
   push(
@@ -616,59 +691,118 @@ export function standstillLines(report) {
 }
 
 /**
- * The gate: every millisecond of the wall attributed to a name, and the largest stretch nobody can name.
+ * The gate: every millisecond of the wall either NAMED or BOUNDED, and the two printed as different numbers.
  *
- * The population is the wall clock itself, so a bucket that could not be read BLOCKS the line instead of passing it - a
- * partition printed over an unreadable run would be a green number over nothing. `U > 0` fails and names the largest
- * unexplained stretch by its start, its end and what the body was doing then, because that is the difference between a
- * remainder a reader can chase and the single authoritative number that cost a round.
+ * <p>
+ * NAMED: the run's head, before its first body step, and its tail, after its last settlement, are facts about this run.
+ * A partition that calls them "unexplained" reads a clean run as a broken one - measured on `round84`, whose 58,383 ms
+ * of residue was 38,265 ms of head plus 24,604 ms of tail with 4,486 ms charged twice, and the old gate failed it for
+ * 2.8 % of its wall clock that was not error at all.
+ * </p>
+ * <p>
+ * BOUNDED: with head and tail named as buckets, what is left is the disagreement between the two clocks this block reads,
+ * and the run measures that disagreement itself - the swing of the per-admission offsets between `run-trace.json` and
+ * `result.json` - so the residual is judged against the largest amount THIS run could misplace an instant by. A run
+ * whose two sources agree exactly gets a tolerance of 0 ms and must partition its wall exactly.
+ * </p>
+ * <p>
+ * The four middle buckets and the two named ones print on the line with their milliseconds; over the tolerance the gate
+ * fails and names the stretch, with its start, its end and what the body was doing there, so a remainder is something a
+ * reader can chase rather than one authoritative number. `blocked/modal` stays `not_measured` and is in no sum: a bucket
+ * nobody measured is not a bucket measured as zero.
+ * </p>
  */
 export function standstillGateLines(report) {
+  const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : "an unreported time");
+  const ms = (value) => (value === null ? "not_measured" : String(Math.round(value)));
+  const placed = report.placed;
+  const toleranceWhy =
+    placed === null
+      ? "no admission span paired the two clocks, so this run states no skew of its own"
+      : `the widest disagreement between the two clocks this run reads: ${String(placed.paired)} node admissions paired a run-trace.json span with the same node's result.json stamp, and the offsets span ${String(
+          Math.round(placed.clockOffsetNarrowestMs),
+        )}..${String(Math.round(placed.clockOffsetWidestMs))} ms`;
   const parts = [
-    `body ${report.bodyMs === null ? "not_measured" : String(Math.round(report.bodyMs))}`,
-    `turn gap ${report.switches === null ? "not_measured" : String(Math.round(report.switches.turnGapMs))}`,
-    `queue wait ${report.switches === null ? "not_measured" : String(Math.round(report.switches.queueMs))}`,
-    `intra-program ${report.body === null ? "not_measured" : String(Math.round(report.body.intraMs))}`,
+    `named ${placed === null ? "not_measured" : ms(placed.headMs + placed.tailMs)}${
+      placed === null ? "" : ` (run head ${ms(placed.headMs)} + run tail ${ms(placed.tailMs)})`
+    }`,
+    `body ${ms(report.bodyMs)}`,
+    `turn gap ${ms(report.switches === null ? null : report.switches.turnGapMs)}`,
+    `queue wait ${ms(report.switches === null ? null : report.switches.queueMs)}`,
+    `intra-program ${ms(report.body === null ? null : report.body.intraMs)}`,
     `blocked/modal not_measured`,
-    `unexplained ${report.unexplainedMs === null ? "not_measured" : String(Math.round(report.unexplainedMs))}`,
+    `residual ${ms(report.residualMs)}`,
+    `tolerance ${ms(report.toleranceMs)} (${toleranceWhy})`,
   ];
   if (report.wallMs === null)
     return [
       `  ${STANDSTILL_GATE}:blocked - result.json published no readable startedAtMs..endedAtMs, so there is no wall clock to attribute and nothing here is green`,
     ];
-  const line = `  ${STANDSTILL_GATE} wall ${String(Math.round(report.wallMs))} · ${parts.join(" · ")}`;
-  if (report.unexplainedMs === null)
+  const line = `  ${STANDSTILL_GATE} wall ${ms(report.wallMs)} · ${parts.join(" · ")}`;
+  if (report.gate === "blocked")
     return [
       line,
-      `  ${STANDSTILL_GATE}:blocked - ${report.explainedMs === null ? "a bucket above could not be read" : "the wall could not be read"}`,
+      `  ${STANDSTILL_GATE}:blocked - ${report.explainedMs === null ? "a bucket above could not be read" : "the wall could not be read"}, so whether the residual is inside the tolerance is not_measured rather than green`,
     ];
-  if (Math.abs(report.unexplainedMs) < 1) return [line];
-  // The largest stretch, located. `head` and `tail` are the only two addresses a residue can have once every switch and
-  // every step is in a bucket, but they are MEASURED rather than assumed: a residue that neither explains is a defect in
-  // this report and the line says so by leaving the address out.
-  const places = [];
-  if (report.placed !== null && report.unexplainedMs > 0) {
-    places.push({
-      ms: report.placed.headMs,
-      fromMs: report.wallMs === null ? null : report.placed.firstWallMs - report.placed.headMs,
-      toMs: report.placed.firstWallMs,
-      doing: "the body doing nothing: no programme had been dispatched yet",
-    });
-    places.push({
-      ms: report.placed.tailMs,
-      fromMs: report.placed.lastWallMs,
-      toMs: report.placed.lastWallMs + report.placed.tailMs,
-      doing: "the body drained: the last programme had settled and nothing followed it",
-    });
-  }
-  const largest = places.sort((left, right) => right.ms - left.ms)[0] ?? null;
-  const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : "an unreported time");
+  // A run whose body window was never placed cannot name its head or its tail at all, so the seconds that head and tail
+  // would have named are still unexplained and the gate fails on them rather than calling them bounded.
+  if (placed === null)
+    return [
+      line,
+      `  ${STANDSTILL_GATE}:residual ${ms(report.unexplainedMs)} ms of the ${ms(
+        report.wallMs,
+      )} ms wall is in no bucket (${
+        report.wallMs === 0 ? "not_measured" : shareToATenth(report.unexplainedMs, report.wallMs)
+      }) and cannot be named at all: no admission span placed the body's window, so there is no run head and no run tail to name them with`,
+    ];
+  if (report.gate === "within")
+    return [
+      line,
+      `  ${STANDSTILL_GATE}:within ${ms(report.residualMs)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
+        report.wallMs === 0 ? "not_measured" : shareToATenth(report.residualMs, report.wallMs)
+      }) and inside the ${ms(report.toleranceMs)} ms this run's own timestamps can misplace an instant by, so it is alignment error and not a finding: run head ${seconds(
+        placed.headMs,
+      )} before the first body step and run tail ${seconds(
+        placed.tailMs,
+      )} after the last settlement are named, and the middle buckets ${
+        Math.round(report.residualMs) === 0
+          ? "fill their window exactly"
+          : report.residualMs < 0
+            ? "charge more than their window holds"
+            : "leave part of their window uncharged"
+      }`,
+    ];
+  // The failure: the stretch, located. A negative residual over-charges the window the head and the tail leave; a positive
+  // one leaves seconds inside it, and the two clocks put the window's ends apart - so the end that disagrees most is where
+  // the uncharged stretch is.
+  const headSkew = placed.firstSkewMs;
+  const tailSkew = placed.lastSkewMs;
+  const atHead = Number.isFinite(headSkew) && (!Number.isFinite(tailSkew) || Math.abs(headSkew) >= Math.abs(tailSkew));
+  let stretch;
+  if (report.residualMs < 0)
+    stretch = `no middle stretch is unnamed - the buckets charge ${seconds(-report.residualMs)} more than the ${seconds(
+      placed.windowMs,
+    )} window between the first step at ${iso(placed.firstWallMs)} and the last settlement at ${iso(
+      placed.lastWallMs,
+    )}${
+      report.switches.inHand === 0
+        ? " and no two programme windows overlapped, so a bucket counts seconds its own executions do not hold"
+        : `, where ${String(report.switches.inHand)} of ${String(
+            report.switches.gaps.length + report.switches.inHand,
+          )} programme switch(es) overlapped and two windows counted the same seconds`
+    }`;
+  else if (atHead)
+    stretch = `the largest stretch no bucket covers is ${seconds(
+      Math.abs(headSkew),
+    )} from ${iso(placed.firstWallMs - headSkew)} to ${iso(placed.firstWallMs)}, where the two clocks disagree about the first step: the journal records it at the left instant and the trace at the right, and nothing in the run was working in between`;
+  else
+    stretch = `the largest stretch no bucket covers is ${seconds(
+      Math.abs(tailSkew),
+    )} from ${iso(placed.lastWallMs - tailSkew)} to ${iso(placed.lastWallMs)}, where the two clocks disagree about the last settlement: the journal records the body drained at the left instant and the trace holds it working until the right`;
   return [
     line,
-    `  ${STANDSTILL_GATE}:unexplained ${String(Math.round(report.unexplainedMs))} ms of the ${String(
-      Math.round(report.wallMs),
-    )} ms wall is in no bucket (${
-      report.wallMs === 0 ? "not_measured" : shareToATenth(report.unexplainedMs, report.wallMs)
-    }) - the largest single stretch is ${largest === null ? "unlocated: no admission span placed the body's window" : `${seconds(largest.ms)} from ${iso(largest.fromMs)} to ${iso(largest.toMs)}, ${largest.doing}`}`,
+    `  ${STANDSTILL_GATE}:residual ${ms(report.residualMs)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
+      report.wallMs === 0 ? "not_measured" : shareToATenth(report.residualMs, report.wallMs)
+    }), past the ${ms(report.toleranceMs)} ms tolerance this run's own timestamps allow - ${stretch}`,
   ];
 }
