@@ -20,11 +20,14 @@ import {
   NIGHT_CAUSE_SLEEP,
   NIGHT_CAUSE_SLEEP_UNSETTLED,
   nightCause,
+  nightReceiptPairingLine,
+  nightReceiptPairings,
   parseReceiptEvidence,
   reconcileDaysWithTheWorld,
   WAIT_ROLLOVER_MENUS,
   worldDayStartsFromFacts,
   worldNightEndingsFromFacts,
+  worldWitnessedNightRecord,
 } from "./multiday-baseline.mjs";
 
 const EVIDENCE = (overrides = {}) =>
@@ -886,6 +889,8 @@ test("the rule catalogue lists every rule the gate can fire (round18)", () => {
       worldNightEndings: [{ day: 5, cause: "pass_out" }],
     },
     { dayRecords: [DAY(), DAY({ day: 2 })], worldNightEndings: [{ day: 20, cause: "pass_out" }] },
+    // A `day_advanced` receipt filed on a record whose own calendar names another night (round80's shape).
+    { dayRecords: ROUND80_WATCHED, worldNightEndings: worldNightEndingsFromFacts(ROUND80_FACTS) },
     // The promise she did not take: a night the engine took, beside a turn stream that said she was going to bed and a
     // `sleep` submission that never came (the round47 shape).
     {
@@ -1574,14 +1579,14 @@ test("a night her own sleep ended is an ending with a cause, exactly as a pass-o
     worldNightEndingsFromFacts([
       { type: "world_fact", worldFactKind: "night_ended_pass_out", eventId: "night_ended_pass_out_day_4" },
     ]).map((ending) => ({ ...ending })),
-    [{ day: 4, cause: NIGHT_CAUSE_PASS_OUT }],
+    [{ day: 4, cause: NIGHT_CAUSE_PASS_OUT, dayAfter: null }],
   );
   assert.deepEqual(
     worldNightEndingsFromFacts(ROUND77_FACTS).map((ending) => ({ ...ending })),
     [
-      { day: 4, cause: NIGHT_CAUSE_SLEEP },
-      { day: 5, cause: NIGHT_CAUSE_SLEEP },
-      { day: 6, cause: NIGHT_CAUSE_SLEEP },
+      { day: 4, cause: NIGHT_CAUSE_SLEEP, dayAfter: 5 },
+      { day: 5, cause: NIGHT_CAUSE_SLEEP, dayAfter: 6 },
+      { day: 6, cause: NIGHT_CAUSE_SLEEP, dayAfter: 7 },
     ],
     "three nights she ended, read from the receipts that carried the crossing",
   );
@@ -1655,9 +1660,206 @@ test("the third night of round77 was hers, and the ledger now counts it instead 
     worldNightEndings: worldEndings,
   });
   assert.ok(
-    codes(unreconciled).includes(
-      `a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_SLEEP}:7`,
-    ),
+    codes(unreconciled).includes(`a_night_the_world_had_is_not_missing_from_the_record:${NIGHT_CAUSE_SLEEP}:7`),
     `a night nothing recorded is named by cause and by day; got ${JSON.stringify(codes(unreconciled))}`,
+  );
+});
+
+// ------------------------------------------------------------------------------------------------------------
+// A RECEIPT THAT ARRIVES AFTER THE EVENT IT EXPLAINS CANNOT BE ATTRIBUTED BY SEQUENCE.
+//
+// Measured 2026-11-19 (`round80`, `.live-runs/game-ladder/2026-11-19T21-44-19-653Z-multiday_routine`): `bridgeFacts`
+// held THREE successful `sleep -> day_advanced` receipts (day 4 -> 5, 5 -> 6, 6 -> 7), and each one was emitted 18-122
+// ms AFTER the `day_started` of the day it opened (`day_started_day_5` 1795125372121 vs its receipt 1795125372149, and
+// so on). The first night's receipt was therefore still the freshest terminal when the SECOND night's watch ran, and it
+// was filed on `dayRecords[1]` - so `dayRecords[0]` (whose own calendar shows day 6 of the month, i.e. the crossing)
+// lost its receipt and read `engine`, `dayRecords[1]` carried `day_after=5` beside a calendar of day 7, and the ledger
+// padded two nights into four (`crossings 4 of 2`).
+//
+// The identity is the receipt's own days: `day_before` is the `TotalDays` the night ended on, `day_after` the day it
+// opened, and a record's `after.dayOfMonth` IS that opened day. Below: the facts in their real arrival order, and the
+// two watched records as the run wrote them.
+// ------------------------------------------------------------------------------------------------------------
+
+/** One `sleep -> day_advanced` receipt, in the shape the run's fact log records it. */
+const CROSSING_FACT = (dayBefore) =>
+  Object.freeze({
+    type: "execution_receipt",
+    reasonCode: "day_advanced",
+    requestId: `round80-night-${String(dayBefore)}`,
+    worldFactPayload: Object.freeze({
+      actionId: "sleep",
+      state: "succeeded",
+      reasonCode: "day_advanced",
+      evidence: Object.freeze({
+        detail: EVIDENCE({
+          dayBefore,
+          daysBefore: dayBefore + 1,
+          dayAfter: dayBefore + 1,
+          daysAfter: dayBefore + 2,
+        }),
+      }),
+    }),
+  });
+
+/** The same receipt as the loop wrote it onto a day record: `terminal` is the receipt itself. */
+const CROSSING_RECEIPT = (dayBefore) => ({
+  requestId: `round80-night-${String(dayBefore)}`,
+  state: "succeeded",
+  reasonCode: "day_advanced",
+  evidence: {
+    detail: EVIDENCE({ dayBefore, daysBefore: dayBefore + 1, dayAfter: dayBefore + 1, daysAfter: dayBefore + 2 }),
+  },
+});
+
+const ROUND80_FACTS = Object.freeze([
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_5" }),
+  CROSSING_FACT(4),
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_6" }),
+  CROSSING_FACT(5),
+  Object.freeze({ type: "world_fact", worldFactKind: "day_started", eventId: "day_started_day_7" }),
+  CROSSING_FACT(6),
+]);
+
+const ROUND80_WATCHED = Object.freeze([
+  Object.freeze({
+    day: 1,
+    terminal: null,
+    after: Object.freeze({ dayOfMonth: 6, dayBefore: 5, seasonIndex: 0, timeOfDay: 600 }),
+    menus: Object.freeze([]),
+    cause: NIGHT_CAUSE_ENGINE,
+    nextDayAccomplishedActionIds: Object.freeze(["break_rock", "chop_tree"]),
+  }),
+  Object.freeze({
+    day: 2,
+    // THE FIRST NIGHT'S RECEIPT, FILED ON THE SECOND NIGHT'S RECORD: minted 28 ms after `day_started_day_5`, it was
+    // still the freshest terminal when the second watch ran.
+    terminal: CROSSING_RECEIPT(4),
+    after: Object.freeze({ dayOfMonth: 7, seasonIndex: 0, timeOfDay: 600 }),
+    menus: Object.freeze([{ menuType: "ShippingMenu", decision: "wait", clearedAt: 1795125376493 }]),
+    cause: NIGHT_CAUSE_SLEEP,
+    nextDayAccomplishedActionIds: Object.freeze(["cut_weeds", "fish_here", "water_crop"]),
+  }),
+]);
+
+test("a night receipt is paired by its own day, not by the record it was filed on (round80)", () => {
+  const endings = worldNightEndingsFromFacts(ROUND80_FACTS);
+  const pairings = nightReceiptPairings({ dayRecords: ROUND80_WATCHED, worldNightEndings: endings });
+  assert.deepEqual(
+    pairings.entries.map((entry) => ({
+      day: entry.day,
+      dayAfter: entry.dayAfter,
+      namedBy: [...entry.namedBy],
+      filedOn: [...entry.filedOn],
+      records: [...entry.records],
+    })),
+    [
+      // The first night: its receipt names record 0 (day 6 of the month) and is FILED on record 1. Two landings, and
+      // that is the whole defect.
+      { day: 4, dayAfter: 5, namedBy: [0], filedOn: [1], records: [0, 1] },
+      // The second night: its receipt names record 1 (day 7), and nothing carries it.
+      { day: 5, dayAfter: 6, namedBy: [1], filedOn: [], records: [1] },
+      // The closing night: its receipt names the day after the last record, and no record covers it yet.
+      { day: 6, dayAfter: 7, namedBy: [], filedOn: [], records: [] },
+    ],
+    "the pairing is keyed on the receipt's own days, and says where each one landed",
+  );
+  assert.equal(
+    nightReceiptPairingLine(pairings),
+    "receipts 3 · paired 1 · unpaired 1 · double-paired 1",
+    "the gate prints its population with the criterion, never the count alone",
+  );
+
+  const judged = assessMultiDayBaseline({
+    dayRecords: ROUND80_WATCHED,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(ROUND80_FACTS),
+    worldNightEndings: endings,
+  });
+  // THE THREE FINDINGS THE MISFILING PRODUCED ARE GONE, and the misfiling itself is named.
+  assert.ok(
+    !codes(judged).includes("night_cause_claims_a_sleep_without_a_receipt"),
+    `the first night HAS a receipt, filed one record away; got ${JSON.stringify(codes(judged))}`,
+  );
+  assert.ok(
+    !codes(judged).some((code) => code.startsWith("night_world_calendar_mismatch")),
+    `day 7 is not a mismatch for a night whose own receipt is day 5 -> 6; got ${JSON.stringify(codes(judged))}`,
+  );
+  assert.ok(
+    codes(judged).includes("a_night_receipt_is_paired_by_its_own_day:4->5:dayRecords[0],dayRecords[1]"),
+    `the receipt that landed twice must be named with both records; got ${JSON.stringify(codes(judged))}`,
+  );
+  assert.ok(
+    codes(judged).includes("a_night_receipt_is_paired_by_its_own_day:6->7:no_record"),
+    `the closing night's receipt has no record until it is reconciled; got ${JSON.stringify(codes(judged))}`,
+  );
+
+  // RECONCILED, the closing night gets its record and the night count agrees - and the ONE thing still red is the
+  // misfiling, which is the loop's, not the night's.
+  const reconciliation = reconcileDaysWithTheWorld({ dayRecords: ROUND80_WATCHED, worldNightEndings: endings });
+  assert.equal(reconciliation.watched, 2, "the loop stood over two nights");
+  assert.equal(reconciliation.recorded, 3, "the ledger covers the three the run lived, not four");
+  assert.equal(reconciliation.records[2].endedDayOfMonth, 7, "the closing night ended on day 7 of the month");
+  assert.equal(reconciliation.records[2].nextDayIssued, false, "and no turn followed it");
+  const settled = assessMultiDayBaseline({
+    dayRecords: reconciliation.records,
+    daysRequested: MINIMUM_BASELINE_DAYS,
+    worldDayStarts: worldDayStartsFromFacts(ROUND80_FACTS),
+    worldNightEndings: endings,
+  });
+  assert.deepEqual(
+    codes(settled),
+    ["a_night_receipt_is_paired_by_its_own_day:4->5:dayRecords[0],dayRecords[1]"],
+    "the night is attributed, the count agrees, and only the misfiled receipt is left red",
+  );
+  assert.equal(settled.daysCrossed, 3);
+  assert.equal(settled.worldDaysCrossed, 3);
+  assert.equal(
+    nightReceiptPairingLine(settled.nightReceipts),
+    "receipts 3 · paired 2 · unpaired 0 · double-paired 1",
+    "the reconciled reading pairs every night and still names the one that landed twice",
+  );
+});
+
+test("the pairing is keyed on the receipt's own days, so reordering the facts cannot move it", () => {
+  const endings = worldNightEndingsFromFacts(ROUND80_FACTS);
+  const original = nightReceiptPairings({ dayRecords: ROUND80_WATCHED, worldNightEndings: endings });
+  // THE FALSIFIER: the same receipts, in the opposite arrival order. A pairing keyed on arrival - or on the record a
+  // receipt happened to be filed on - moves; this one cannot, because it reads only the days each receipt carries.
+  const reordered = nightReceiptPairings({
+    dayRecords: ROUND80_WATCHED,
+    worldNightEndings: worldNightEndingsFromFacts([...ROUND80_FACTS].reverse()),
+  });
+  assert.deepEqual(reordered, original, "reordering the facts must not move a single pairing");
+  assert.deepEqual(
+    reordered.entries.map((entry) => entry.day),
+    [4, 5, 6],
+    "and the entries are ordered by the calendar the receipts name, not by when they arrived",
+  );
+});
+
+test("a record whose next day was never issued is not measured, wherever the padding puts it", () => {
+  // round80's own padding, reproduced: the loop's two records plus the two nights the world ended, so the record that
+  // really is the closing night sits at index 2 of 4 - no longer the array's end, which is all `isLast` ever said.
+  const padded = [
+    DAY({ day: 1, nextDayAccomplishedActionIds: ["cut_weeds"] }),
+    DAY({ day: 2, nextDayAccomplishedActionIds: ["cut_weeds"] }),
+    worldWitnessedNightRecord({ day: 8, cause: NIGHT_CAUSE_SLEEP }),
+    worldWitnessedNightRecord({ day: 9, cause: NIGHT_CAUSE_SLEEP }),
+  ];
+  const result = assessMultiDayBaseline({ dayRecords: padded, daysRequested: MINIMUM_BASELINE_DAYS });
+  assert.ok(
+    !codes(result).includes("next_day_produced_no_farm_work"),
+    `no turn followed the reconciled nights, so nothing was measured to produce work; got ${JSON.stringify(codes(result))}`,
+  );
+  // THE RULE'S FORCE, KEPT: a record the loop stood over had its following day played, so an empty list there is the
+  // day producing nothing - and that is still red, wherever the record sits.
+  const idle = assessMultiDayBaseline({
+    dayRecords: [DAY({ day: 1, nextDayAccomplishedActionIds: [] }), DAY({ day: 2 })],
+    daysRequested: MINIMUM_BASELINE_DAYS,
+  });
+  assert.ok(
+    codes(idle).includes("next_day_produced_no_farm_work"),
+    `a day that was given a turn and did nothing is still red; got ${JSON.stringify(codes(idle))}`,
   );
 });

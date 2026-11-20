@@ -111,6 +111,20 @@ export function dayOfMonthForTotalDays(totalDays) {
 }
 
 /**
+ * The day of the month BEFORE this one, in the same base.
+ *
+ * The other direction of `dayOfMonthForTotalDays`, and it is what turns a record's observed calendar into the night it
+ * records: a record shows the day a night OPENED, and the night ended on the day before it. `1` goes back to `28`
+ * because a season wraps, exactly as the engine's own calendar does.
+ */
+function dayOfMonthBefore(dayOfMonth) {
+  if (!isFiniteNumber(dayOfMonth)) return null;
+  const day = Math.trunc(dayOfMonth);
+  if (day < 1 || day > DAYS_PER_SEASON) return null;
+  return ((day + DAYS_PER_SEASON - 2) % DAYS_PER_SEASON) + 1;
+}
+
+/**
  * The day a `night_ended_*` fact names, in the ONE base this ledger uses.
  *
  * The Mod mints `night_ended_pass_out_day_<TotalDays>` (`Sensory/StardewSalientEventHooks.cs:64-75`), while every day a
@@ -474,7 +488,7 @@ function nightEndingOf(fact) {
     const match = /^night_ended_([a-z_]+)_day_(\d+)$/u.exec(typeof eventId === "string" ? eventId : "");
     if (match === null) return null;
     const day = Number.parseInt(match[2], 10);
-    return Number.isInteger(day) ? { day, cause: match[1] } : null;
+    return Number.isInteger(day) ? { day, cause: match[1], dayAfter: null } : null;
   }
   return sleepCrossingOf(fact);
 }
@@ -498,7 +512,46 @@ function sleepCrossingOf(receipt) {
   if (actionId !== SLEEP_ACTION_ID) return null;
   const facts = parseReceiptEvidence(receipt.evidence ?? payload.evidence);
   const day = Number.parseInt(facts.day_before ?? "", 10);
-  return Number.isInteger(day) ? { day, cause: NIGHT_CAUSE_SLEEP } : null;
+  if (!Number.isInteger(day)) return null;
+  // THE DAY IT OPENED, as the receipt itself states it. That is the number a day record's own calendar shows - a
+  // record observes the day AFTER its night - so it is the identity a receipt is paired to a record by. `null` when the
+  // receipt does not state it, which is a reading in its own right rather than a guess of `day + 1`.
+  const dayAfter = Number.parseInt(facts.day_after ?? "", 10);
+  return { day, cause: NIGHT_CAUSE_SLEEP, dayAfter: Number.isInteger(dayAfter) ? dayAfter : null };
+}
+
+/**
+ * THE CROSSING RECEIPT A DAY RECORD CARRIES, with the days it names, or `null`.
+ *
+ * The runner puts it on `terminal` when the lifecycle's own terminal IS the crossing, and on `sleepReceipt` when the
+ * record was crossed by the calendar and the receipt travelled beside it. Both are the same claim, so both are read
+ * here - and only a receipt whose reason is the crossing counts: a blocked lifecycle receipt is how a night STARTED,
+ * not a claim that it crossed.
+ */
+function crossingReceiptOf(record) {
+  for (const candidate of [record?.terminal, record?.sleepReceipt]) {
+    if (!isPlainObject(candidate) || candidate.reasonCode !== CROSSING_OUTCOME.reasonCode) continue;
+    const facts = parseReceiptEvidence(candidate.evidence ?? candidate.worldFactPayload?.evidence);
+    const dayBefore = Number.parseInt(facts.day_before ?? "", 10);
+    if (!Number.isInteger(dayBefore)) continue;
+    const dayAfter = Number.parseInt(facts.day_after ?? "", 10);
+    return Object.freeze({ dayBefore, dayAfter: Number.isInteger(dayAfter) ? dayAfter : null });
+  }
+  return null;
+}
+
+/**
+ * Does this record show that a night crossed?
+ *
+ * The calendar moved, the record's own receipt claims the crossing, or the record is a reconciled night that names the
+ * day it ended on. Asked before a record's ending day is allowed to say which world night it covers: a record that
+ * shows no crossing covers no night, and a day derived from its calendar would otherwise claim the night before it.
+ */
+function showsACrossing(record) {
+  if (!isPlainObject(record)) return false;
+  if (isFiniteNumber(record.endedDayOfMonth)) return true;
+  if (calendarCrossed(record.after) === true) return true;
+  return crossingReceiptOf(record) !== null;
 }
 
 /**
@@ -513,6 +566,12 @@ function sleepCrossingOf(receipt) {
  * `watched: false` and the CAUSE are the two things this record exists to say. A night nobody watched and cannot say how
  * it ended is two silences, and `day` is `null` rather than invented: the loop's day numbers are its own iterations and
  * this night has none.
+ *
+ * `nextDayIssued: false` is the third thing, and it is a FACT rather than an inference from the record's position. The
+ * loop fills `nextDayAccomplishedActionIds` from the turn it issued after a night, so an empty list on a record it stood
+ * over means the day produced nothing; a night appended here has no turn of its own at all, and `[]` must not read as a
+ * day that was given a turn and did nothing (measured `round80`: the closing night's day lived 8.9 s before the runner
+ * stopped, and the assertion fired on it only because the reconciled records had moved it away from the array's end).
  */
 export function worldWitnessedNightRecord(ending) {
   return Object.freeze({
@@ -521,6 +580,9 @@ export function worldWitnessedNightRecord(ending) {
     after: null,
     menus: Object.freeze([]),
     nextDayAccomplishedActionIds: Object.freeze([]),
+    // No turn followed this night: the loop had already stopped when it ended. Stated, so the rule that asks for farm
+    // work after a night reads the fact instead of the record's index.
+    nextDayIssued: false,
     watched: false,
     cause: ending.cause,
     passedOut: ending.cause === NIGHT_CAUSE_PASS_OUT,
@@ -553,11 +615,7 @@ export function reconcileDaysWithTheWorld({ dayRecords = [], worldNightEndings =
     return Object.freeze({ records: dayRecords, watched, examined: null, recorded: watched, missing: null });
   }
   const covered = new Set(
-    dayRecords
-      .map((record) =>
-        isFiniteNumber(record?.endedDayOfMonth) ? record.endedDayOfMonth : nightEndedDayOfMonth(null, record),
-      )
-      .filter(isFiniteNumber),
+    dayRecords.map((record) => (showsACrossing(record) ? nightEndedDayOfMonth(record) : null)).filter(isFiniteNumber),
   );
   const open = endings.filter((ending) => {
     const day = worldEndingDayOfMonth(ending);
@@ -573,32 +631,101 @@ export function reconcileDaysWithTheWorld({ dayRecords = [], worldNightEndings =
 }
 
 /**
- * The calendar day (1..28) the night ENDED on, from whichever witness carried the crossing.
+ * The calendar day (1..28) the night ENDED on, from whichever witness the RECORD itself carries.
  *
- * THREE SHAPES, ONE QUESTION. A receipt-witnessed night carries the engine's own totals, so its `dayBefore` is a
- * `TotalDays`; a calendar-witnessed night carries the runner's `after.dayBefore`, which is a `dayOfMonth`; and a record
- * whose snapshot published no `dayBefore` at all still carries the receipt it crossed with, whose `day_before` is the
- * same `TotalDays`. All three are "the day the night started on", which is the day it ended. `null` when none was
- * published: a night whose ending day nobody recorded cannot be matched against the world's endings, and guessing would
- * attribute a pass-out to the wrong night - which is worse than saying nothing.
+ * FOUR SHAPES, ONE QUESTION. A reconciled record names the day it ended on (`endedDayOfMonth`); a calendar-witnessed
+ * night carries the runner's `after.dayBefore`, which is the `dayOfMonth` the watch began on; a record whose snapshot
+ * published only `after.dayOfMonth` shows the day the night OPENED, and the night ended on the day before it; and a
+ * record with no calendar at all still carries the receipt it crossed with, whose `day_before` is the engine's
+ * `TotalDays`. All four answer "the day the night ended on". `null` when none was published: a night whose ending day
+ * nobody recorded cannot be matched against the world's endings, and guessing would attribute a pass-out to the wrong
+ * night - which is worse than saying nothing.
+ *
+ * THE RECORD'S OWN CALENDAR OUTRANKS THE RECEIPT IT CARRIES, and that ordering is the fix for a measured mispairing
+ * (`round80`, 2026-11-19). Her `day_advanced` receipt is minted 18-122 ms AFTER the `day_started` of the day it opened,
+ * so it arrives inside the NEXT day's watch: a reader that trusts whichever receipt a record holds attributes the first
+ * night's receipt to the second night's record, and then the night it really names is left looking uncovered. The
+ * receipt is evidence about the night ITS OWN days name, not about the record it happens to sit on - so the record's
+ * calendar answers here, and `nightReceiptPairings` says which night each receipt names.
  */
-function nightEndedDayOfMonth(night, record) {
+function nightEndedDayOfMonth(record) {
+  if (isFiniteNumber(record?.endedDayOfMonth)) return record.endedDayOfMonth;
   // THE WORLD'S OWN READING FIRST. A record's `after.dayBefore` is the `dayOfMonth` the watch began on - the world's own
   // number - and the receipt's `day_before` is a `TotalDays` that has to be converted before it means anything. They
   // agreed by construction until a run whose first night the receipt called day 4 while the world called it day 5, and
   // two spellings of one day is how a night gets attributed to its neighbour.
-  if (isFiniteNumber(record?.endedDayOfMonth)) return record.endedDayOfMonth;
   if (isFiniteNumber(record?.after?.dayBefore)) return record.after.dayBefore;
-  if (isFiniteNumber(night?.dayBefore)) return dayOfMonthForTotalDays(night.dayBefore);
-  // THE RECORD'S OWN RECEIPT, WHEN THE SNAPSHOT CARRIED NO `dayBefore`.
-  //
-  // Measured 2026-11-19 (`round77`): both watched day records published `after.dayOfMonth` and NO `after.dayBefore`, so
-  // this function answered `null` for every night the watcher saw - nothing a world ending could be matched to. It went
-  // unnoticed while the only endings were pass-outs the watcher had also seen; the moment her own receipts became
-  // endings, every one of them read as a night no record covered. The receipt's `day_before` is the same number the
-  // classified night carries, read from the record the accounting is already walking.
-  const carried = Number.parseInt(parseReceiptEvidence(record?.terminal?.evidence).day_before ?? "", 10);
-  return Number.isInteger(carried) ? dayOfMonthForTotalDays(carried) : null;
+  // THE DAY IT OPENED IS THE CALENDAR'S OWN STATEMENT ABOUT THIS NIGHT, and the ending is the day before it. Measured
+  // 2026-11-19 (`round77`): both watched records published `after.dayOfMonth` and NO `after.dayBefore`, so this function
+  // answered `null` for every night the watcher saw and every one of her receipts read as a night no record covered.
+  // That fix read the receipt instead; this reads the calendar the record already published, which is the same number
+  // and does not move when the receipt is filed on the wrong night.
+  if (isFiniteNumber(record?.after?.dayOfMonth)) return dayOfMonthBefore(record.after.dayOfMonth);
+  // A RECORD WITH NO CALENDAR AT ALL has only its receipt left, and its `day_before` is the one number it carries.
+  const carried = crossingReceiptOf(record);
+  return carried === null ? null : dayOfMonthForTotalDays(carried.dayBefore);
+}
+
+/**
+ * WHICH NIGHT EACH `day_advanced` RECEIPT NAMES, and which day record that night has - keyed on the receipt's OWN days.
+ *
+ * THE QUESTION THIS ANSWERS IS NOT "WHICH RECEIPT ARRIVED FIRST". A receipt that arrives after the event it explains
+ * cannot be attributed by sequence: measured `round80` (`2026-11-19T21-44-19-653Z-multiday_routine`), each of the run's
+ * three `sleep -> day_advanced` receipts was emitted 18-122 ms AFTER the `day_started` of the day it opened, so all
+ * three arrived inside the NEXT day's watch. The identity is the day the receipt opened (`day_after`, the engine's own
+ * `TotalDays`, converted once to the `dayOfMonth` every record carries) and the day the night ended on (`day_before`):
+ * a record observes the day AFTER its night, so `after.dayOfMonth` IS the day the receipt opened.
+ *
+ * A receipt LANDS on a record two ways, and both are reported because they can disagree:
+ *   - `namedBy`: the record's own day is the day the receipt opened - the identity above;
+ *   - `filedOn`: the record carries this receipt as its crossing, whichever of `terminal` / `sleepReceipt` it sits on.
+ * A receipt with one landing is PAIRED; with none it is UNPAIRED (the night it crossed has no record); with two or more
+ * it is DOUBLE-PAIRED - which is exactly what an arrival-order attribution produces, because the receipt of night N
+ * is still the freshest one on the record of night N+1.
+ *
+ * `entries` is ordered by the receipt's own day, never by arrival: reordering the facts cannot change this reading, and
+ * that is the property the gate asserts rather than assumes.
+ */
+export function nightReceiptPairings({ dayRecords = [], worldNightEndings = null } = {}) {
+  const records = Array.isArray(dayRecords) ? dayRecords : [];
+  const endedDays = records.map((record) => nightEndedDayOfMonth(record));
+  const filedReceipts = records.map((record) => crossingReceiptOf(record));
+  const entries = [];
+  for (const ending of Array.isArray(worldNightEndings) ? worldNightEndings : []) {
+    if (!isPlainObject(ending) || ending.cause !== NIGHT_CAUSE_SLEEP || !Number.isInteger(ending.day)) continue;
+    const endedDayOfMonth = worldEndingDayOfMonth(ending);
+    const namedBy = [];
+    const filedOn = [];
+    for (const [index, endedDay] of endedDays.entries()) {
+      if (endedDayOfMonth !== null && endedDay === endedDayOfMonth) namedBy.push(index);
+      if (filedReceipts[index] !== null && filedReceipts[index].dayBefore === ending.day) filedOn.push(index);
+    }
+    const landsOn = [...new Set([...namedBy, ...filedOn])].sort((left, right) => left - right);
+    entries.push(
+      Object.freeze({
+        day: ending.day,
+        dayAfter: Number.isInteger(ending.dayAfter) ? ending.dayAfter : null,
+        endedDayOfMonth,
+        namedBy: Object.freeze(namedBy),
+        filedOn: Object.freeze(filedOn),
+        records: Object.freeze(landsOn),
+      }),
+    );
+  }
+  entries.sort((left, right) => left.day - right.day);
+  return Object.freeze({
+    examined: entries.length,
+    paired: entries.filter((entry) => entry.records.length === 1).length,
+    unpaired: entries.filter((entry) => entry.records.length === 0).length,
+    doublePaired: entries.filter((entry) => entry.records.length > 1).length,
+    entries: Object.freeze(entries),
+  });
+}
+
+/** The one line a run's pairing is read off: `receipts R · paired P · unpaired U · double-paired D`. */
+export function nightReceiptPairingLine(pairings) {
+  const count = (field) => (pairings === null ? "not_measured" : String(pairings[field]));
+  return `receipts ${count("examined")} · paired ${count("paired")} · unpaired ${count("unpaired")} · double-paired ${count("doublePaired")}`;
 }
 
 /**
@@ -796,6 +923,11 @@ export function assessMultiDayBaseline({
   // The days (in `dayOfMonth` terms) a record's own night ended on, so a world fact is matched to the night it names
   // and never to the night beside it.
   const recordedEndedDays = new Set();
+  // WHICH NIGHT EACH `day_advanced` RECEIPT NAMES, computed once and read by every rule below that needs to know
+  // whether a night has a receipt at all. `null` when nobody supplied the facts: a pairing computed against no
+  // population is not a pairing, and `not_measured` is not `nothing was paired`.
+  const nightReceipts =
+    worldEndings === null ? null : nightReceiptPairings({ dayRecords, worldNightEndings: worldEndings });
 
   let daysCrossed = 0;
   let shoppingMenuDismissals = 0;
@@ -824,16 +956,33 @@ export function assessMultiDayBaseline({
       violations.push(violation("day_record_not_object", where));
       continue;
     }
+    // THE DAY THIS NIGHT ENDED ON, AND THE WORLD'S FACT FOR IT - both found BEFORE the night is classified: a night
+    // nobody watched has no receipt and no calendar inside the record, and the fact is its only witness. The day comes
+    // from the record's OWN calendar (`nightEndedDayOfMonth`), never from whichever receipt the record happens to hold.
+    const endedDayOfMonth = nightEndedDayOfMonth(record);
+    const worldEndingForThisNight =
+      worldEndings === null || endedDayOfMonth === null
+        ? undefined
+        : worldEndings.find((entry) => worldEndingDayOfMonth(entry) === endedDayOfMonth);
+    // A RECEIPT IS EVIDENCE ABOUT THE NIGHT ITS OWN DAYS NAME, NOT ABOUT THE RECORD IT SITS ON.
+    //
+    // Measured `round80`: the first night's `day_advanced` receipt is minted 18-122 ms after the `day_started` of the day
+    // it opened, so it was still the freshest receipt on the SECOND night's record. Judged as that record's own receipt,
+    // its `day_after=5` contradicted the record's calendar (day 7) and the assessment called a correct night
+    // `night_world_calendar_mismatch`. The pairing says which record the receipt names; when it names another one and
+    // THIS record has a witness of its own, the receipt is set aside rather than obeyed - and when it does not, it stays,
+    // because dropping the only witness would turn a contradiction into a missing terminal.
+    const filedReceipt = crossingReceiptOf(record);
+    const filedNight =
+      filedReceipt === null
+        ? null
+        : (nightReceipts?.entries.find((entry) => entry.day === filedReceipt.dayBefore) ?? null);
+    const filedElsewhere = filedNight !== null && !filedNight.namedBy.includes(index);
+    const witnessedOtherwise = calendarCrossed(record.after) === true || worldEndingForThisNight !== undefined;
     const night = classifyNight({
-      terminal: record.terminal,
+      terminal: filedElsewhere && witnessedOtherwise ? null : record.terminal,
       after: record.after,
-      // A reconciled night names its own ending day, so the world's fact is found BEFORE the night is classified rather
-      // than after it: a night nobody watched has no receipt and no calendar inside the record, and the fact is its only
-      // witness.
-      worldEnding:
-        worldEndings === null || !isFiniteNumber(record.endedDayOfMonth)
-          ? null
-          : (worldEndings.find((entry) => worldEndingDayOfMonth(entry) === record.endedDayOfMonth) ?? null),
+      worldEnding: worldEndingForThisNight ?? null,
     });
     if (!night.advanced) {
       // `where` NAMES A FIELD THE RECORD ACTUALLY HAS.
@@ -860,7 +1009,13 @@ export function assessMultiDayBaseline({
     // re-judges a run from its artifact (`check-live-run-multiday-baseline.mjs --run-dir`) see the same facts.
     const enteredVia = typeof night.facts.entered_via === "string" ? night.facts.entered_via : null;
     const sleepReceipt = isPlainObject(record.sleepReceipt) ? record.sleepReceipt : null;
-    const sleepEnteredVia = sleepReceipt === null ? null : parseReceiptEvidence(sleepReceipt.evidence).entered_via;
+    // `sleep_unsettled` IS A LIFECYCLE RECEIPT THAT DID NOT CARRY THE CROSSING. A `sleepReceipt` whose reason IS the
+    // crossing is this night's crossing claim, and reading it as the unsettled witness turns a settled night into a
+    // disagreement - measured `round80`, where the runner copies the crossing receipt onto both fields.
+    const sleepEnteredVia =
+      sleepReceipt === null || sleepReceipt.reasonCode === CROSSING_OUTCOME.reasonCode
+        ? null
+        : parseReceiptEvidence(sleepReceipt.evidence).entered_via;
     // WHAT THE RECORD'S OWN WITNESSES SAY, from the crossing receipt and the night's own sleep receipt.
     const claimed = nightCause({
       enteredVia,
@@ -874,11 +1029,7 @@ export function assessMultiDayBaseline({
     // the world published `night_ended_pass_out_day_6` at 26:00 with `gameTime=2600`, and the assessment answered
     // `passOutNights: 0` with `night_mechanism_unobserved` - it counted its own bookkeeping and never opened the fact
     // that said how the night ended. `engine` stays the answer only when NOBODY says: no receipt and no world fact.
-    const endedDayOfMonth = nightEndedDayOfMonth(night, record);
-    const worldEnding =
-      worldEndings === null || endedDayOfMonth === null
-        ? undefined
-        : worldEndings.find((entry) => worldEndingDayOfMonth(entry) === endedDayOfMonth);
+    const worldEnding = worldEndingForThisNight;
     if (worldEnding !== undefined) recordedEndedDays.add(worldEndingDayOfMonth(worldEnding));
     const cause = worldEnding === undefined ? claimed : worldEnding.cause;
     // A DISAGREEMENT IS NAMED, NEVER SILENCED. A record whose receipt says her sleep crossed the night, beside a world
@@ -941,7 +1092,16 @@ export function assessMultiDayBaseline({
     // runner's own observation of the hold is a witness, and the engine taking the night needs none, as recorded.
     //
     // `sleep_unsettled` is NOT this claim: it is derived from a receipt, so reaching it means the receipt is in hand.
-    if (cause === NIGHT_CAUSE_SLEEP && night.witness === "calendar") {
+    //
+    // AND THE RECEIPT IS THE RUN'S, NOT THE RECORD'S: a receipt filed on the wrong day still proves the companion's own
+    // `advance_day` crossed the night it names, so the rule asks the PAIRING whether this night has one. Without that,
+    // `round80`'s first night - whose receipt was filed on the second record - was called a sleep with no receipt while
+    // the receipt sat one record away. What the rule still refuses is a night NO receipt in the run names.
+    const receiptNamesThisNight =
+      nightReceipts === null
+        ? filedReceipt !== null && !filedElsewhere
+        : nightReceipts.entries.some((entry) => entry.endedDayOfMonth === endedDayOfMonth);
+    if (cause === NIGHT_CAUSE_SLEEP && night.witness === "calendar" && !receiptNamesThisNight) {
       violations.push(violation("night_cause_claims_a_sleep_without_a_receipt", `${where}.cause`));
     }
     // A CALENDAR WITNESS SAYS THE DAY CHANGED. IT CANNOT SAY HOW, AND "nobody recorded how" IS NOT A PASS.
@@ -1067,9 +1227,17 @@ export function assessMultiDayBaseline({
     }
 
     // The day AFTER this night must still produce the companion's own work: that is what makes this
-    // a loop. The final night has no following day inside the record, so it is not asserted.
-    const isLast = index === dayRecords.length - 1;
-    if (!isLast) {
+    // a loop.
+    //
+    // WHETHER A TURN FOLLOWED THE NIGHT IS A FACT ABOUT THE RECORD, NOT ITS POSITION. `isLast` is a positional identity -
+    // the same shape as a dedupe keyed on line number - and it stopped holding the moment `reconcileDaysWithTheWorld`
+    // appended the world's own nights after the loop's records: measured `round80`, the record that really is the closing
+    // night became index 2 of 4, and the assertion fired on a night whose next day lived 8.9 s and was never given a turn.
+    // So a record that states no turn followed it (`nextDayIssued: false`, which is what the reconciled records say) is
+    // NOT MEASURED wherever it sits, and the loop's own records - whose following day was always played, and whose empty
+    // list therefore means the day produced nothing - keep the array-end exemption they had.
+    const nextDayIssued = record.nextDayIssued ?? index !== dayRecords.length - 1;
+    if (nextDayIssued) {
       const accomplished = Array.isArray(record.nextDayAccomplishedActionIds)
         ? record.nextDayAccomplishedActionIds
         : [];
@@ -1123,6 +1291,29 @@ export function assessMultiDayBaseline({
       return day !== null && recordedEndedDays.has(day);
     }).length;
   }
+  // EVERY `day_advanced` RECEIPT IS PAIRED BY ITS OWN DAY, OR THE RUN SAYS WHICH ONE WAS NOT.
+  //
+  // THE POPULATION IS THE RECEIPTS IN THE RUN'S OWN FACTS - not a list kept here, and not the records: a receipt that
+  // arrived after the event it explains cannot be attributed by sequence, so the pairing is keyed on the days the
+  // receipt carries (`day_before` / `day_after`) and on the day each record's own calendar shows. A receipt with no
+  // record is UNPAIRED (a night the ledger does not cover); one that lands on two records is DOUBLE-PAIRED, which is the
+  // exact shape an arrival-order attribution produces. `round80` measured it: three receipts, and the first night's was
+  // still filed on the second record because it was minted 18-122 ms after the `day_started` of the day it opened.
+  //
+  // BOTH NUMBERS ARE PRINTED, because `0 unpaired` beside `receipts 0` is what an empty population says, and a run with
+  // no receipt at all is a fact about the run rather than a pairing that agreed with itself.
+  if (nightReceipts !== null) {
+    for (const entry of nightReceipts.entries) {
+      if (entry.records.length === 1) continue;
+      const days =
+        entry.dayAfter === null ? `day${String(entry.day)}` : `${String(entry.day)}->${String(entry.dayAfter)}`;
+      const landedOn =
+        entry.records.length === 0
+          ? "no_record"
+          : entry.records.map((landed) => `dayRecords[${String(landed)}]`).join(",");
+      violations.push(violation(`a_night_receipt_is_paired_by_its_own_day:${days}:${landedOn}`, "worldNightEndings"));
+    }
+  }
   // THE POPULATION COMES FROM THE AUTHORITY, NOT FROM THE ASSESSOR'S OWN LOOP COUNT.
   //
   // `daysCrossed` counts the records THIS function was handed, and those records are the loop's own iterations. Measured
@@ -1173,6 +1364,18 @@ export function assessMultiDayBaseline({
     // which one of them the engine's pass-out was the consequence of. `sleepPromisesNotTaken: null` is NOT MEASURED.
     sleepPromisesNotTaken: promises === null ? null : Object.freeze([...promises]),
     passOutCauses: Object.freeze(passOutCauses),
+    // WHICH NIGHT EACH `day_advanced` RECEIPT NAMES, and whether that night has a record. `null` is "nobody supplied the
+    // facts" - not "nothing was paired", which is `examined 0` beside an empty run.
+    nightReceipts:
+      nightReceipts === null
+        ? null
+        : Object.freeze({
+            examined: nightReceipts.examined,
+            paired: nightReceipts.paired,
+            unpaired: nightReceipts.unpaired,
+            doublePaired: nightReceipts.doublePaired,
+            entries: nightReceipts.entries,
+          }),
     worldDaysCrossed,
     dayCountWitness,
     // EVERY WAY A DAY CAN END, AGAINST WHAT THE RECORD COVERS: the gate's own population, printed with the criterion so
@@ -1189,7 +1392,8 @@ export function assessMultiDayBaseline({
       recorded: worldEndingsRecorded,
       missing: worldEndingsExamined === null ? null : worldEndingsExamined - worldEndingsRecorded,
       watched: dayRecords.filter((record) => isPlainObject(record) && record.watched !== false).length,
-      witnessedBy: worldEndings === null ? null : Object.freeze([...new Set(worldEndings.map((entry) => entry.cause))].sort()),
+      witnessedBy:
+        worldEndings === null ? null : Object.freeze([...new Set(worldEndings.map((entry) => entry.cause))].sort()),
     }),
     // The attribution the judgement actually used, per night: the world's own endings when the caller could read them,
     // `null` when nobody supplied the facts (which is not "the world said nothing"). A reader must be able to see WHICH
@@ -1233,5 +1437,6 @@ const CHECKED_RULES = Object.freeze([
   "day_count_disagrees_with_the_world",
   "night_cause_disagrees_with_the_world",
   "a_night_the_world_had_is_not_missing_from_the_record",
+  "a_night_receipt_is_paired_by_its_own_day",
   "first_night_shipping_menu_never_dismissed",
 ]);
