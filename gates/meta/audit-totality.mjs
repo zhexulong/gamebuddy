@@ -74,7 +74,11 @@
  * `cannot-prove` and says why, rather than growing the tree another number.
  *
  * Reporting shape: one summary line, then violations grouped by class and
- * ranked by "a player reaches it and it fails badly". Every violation carries
+ * ranked by "a player reaches it and it fails badly". A violation that an owner
+ * ruling has not yet settled is advisory and does not decide the exit
+ * (`ADVISORY_READINGS`), and the `verdict:` line under the summary says which
+ * findings did decide it, by name, so the report and the exit code cannot be
+ * read as disagreeing. Every violation carries
  * `path:line`. A class that reports by *kind* (today only `hygiene`, whose
  * findings are all instances of one pattern) prints one line per kind with its
  * count and at most ten of its sites, because a list of identical complaints is
@@ -82,7 +86,7 @@
  * every site, and `--json` carries every site either way. Aggregation is a
  * reading aid, never a smaller total: the counts are the counts that were
  * found. `--only=<class>` runs one class; `--json` emits the same facts as
- * data. Exit status is non-zero when any blocking class has a violation.
+ * data. Exit status is non-zero when any non-advisory violation was found.
  *
  * A gate that is wrong is worse than no gate, so each class's own test
  * (`audit-totality.test.mjs`) injects one violation into a scratch copy of the
@@ -1615,7 +1619,7 @@ export function unprovenReadings(results) {
     rows.push({
       className: result.id,
       count: advisory.length,
-      reading: `advisory finding(s)${kinds.length === 0 ? "" : ` of ${kinds.join(", ")}`} - an owner ruling is pending, so these do not decide the run`,
+      reading: `advisory finding(s)${kinds.length === 0 ? "" : ` of ${kinds.join(", ")}`} - they print without deciding the exit, and the advisory line names the ruling that would change that`,
       walked: advisory.length,
       classification: { decided: 0, needsDeclaration: advisory.length, cannotProve: 0 },
       sites: [],
@@ -1629,11 +1633,97 @@ function classificationLine(row) {
   return `${row.walked} walked (${row.classification.decided} decided by this run, ${row.classification.needsDeclaration} need a declaration, ${row.classification.cannotProve} cannot be proved statically)`;
 }
 
+/**
+ * The exit, in words: the findings that decided it by name, and what printed without deciding it.
+ *
+ * The count beside `blocking` is not enough on the screen a reader meets first. A red run whose loudest line is an
+ * advisory one that says it decides nothing gets read as a red run caused by that line, and a green run under a
+ * heading that says NOT CLEAN gets read as red. Both are the same defect: the report never said which of its rows the
+ * exit was about.
+ */
+function verdictLines(results) {
+  const ranked = results.flatMap((result) => result.violations).sort((left, right) => left.rank - right.rank);
+  const blocking = ranked.filter((violation) => violation.advisory !== true);
+  const advisory = ranked.filter((violation) => violation.advisory === true);
+  if (blocking.length > 0) {
+    const named = blocking.slice(0, 3).map((violation) => `${violation.class}:${violation.where}`);
+    const rest = blocking.length > named.length ? `, +${blocking.length - named.length} more printed below` : "";
+    return [
+      `verdict: RED - exit 1; the ${blocking.length} blocking finding(s) below decide it: ${named.join(", ")}${rest}`,
+      advisory.length === 0
+        ? "  no advisory finding prints this run, so no row here waits for a ruling"
+        : `  ${advisory.length} advisory finding(s) print below and decide nothing: the advisory line names the ruling, its owner and its expiry`,
+    ];
+  }
+  if (advisory.length > 0)
+    return [
+      `verdict: PASS - exit 0; no blocking finding. ${advisory.length} advisory finding(s) print below and decide nothing: the advisory line names the ruling, its owner and its expiry`,
+    ];
+  return [
+    `verdict: PASS - exit 0; no blocking finding, and nothing below decides it. The ${unprovenReadings(results).filter((row) => row.count > 0).length} reading(s) further down were walked but not proved clean, printed so exit 0 cannot be read as "nothing unknown"`,
+  ];
+}
+
+/**
+ * The exemptions in force, with the ruling that ends each: the count, its owner, the decision and the condition.
+ *
+ * One line per reading whose findings actually print, because an exemption with nothing to license is reported as
+ * stale instead (`staleAdvisories`) and printing it here would read as a licence somebody still needs.
+ */
+function advisoryLines(results, advisories = ADVISORY_READINGS) {
+  const lines = [];
+  for (const entry of advisories) {
+    const findings = results
+      .flatMap((result) => result.violations)
+      .filter(
+        (violation) =>
+          violation.advisory === true && violation.class === entry.className && violation.kind === entry.kind,
+      ).length;
+    if (findings === 0) continue;
+    lines.push(
+      `advisory: ${entry.className}/${entry.kind} - ${findings} finding(s); owner: ${entry.owner}; they decide the exit the day this ruling is taken: ${entry.ruling}; ${entry.expires}`,
+    );
+  }
+  return lines;
+}
+
+/**
+ * The exemptions whose population is gone, as findings that decide the run.
+ *
+ * An entry licenses findings of one kind, so with no finding left it licenses nothing - and the next export, comment
+ * or quiet line of that shape becomes advisory without anybody deciding it should. The check runs on the command and
+ * not inside `runAudit`, because it is a fact about this repository's own ledger rather than about whatever tree the
+ * audit is pointed at.
+ */
+export function staleAdvisories(results, advisories = ADVISORY_READINGS) {
+  const stale = [];
+  for (const entry of advisories) {
+    const result = results.find((candidate) => candidate.id === entry.className);
+    if (result === undefined) continue;
+    const found = result.violations.filter(
+      (violation) => violation.advisory === true && violation.kind === entry.kind,
+    ).length;
+    if (found > 0) continue;
+    stale.push({
+      class: entry.className,
+      rank: 4,
+      kind: "stale advisory reading",
+      where: "gates/meta/audit-totality.mjs",
+      message: `the ${entry.className}/${entry.kind} reading reports 0 finding(s) over this tree, so the entry in ADVISORY_READINGS licenses nothing and must be deleted in this commit; ${entry.expires} (owner: ${entry.owner})`,
+    });
+  }
+  return stale;
+}
+
 export function formatReport(results, { all = false } = {}) {
   const summary = totals(results);
   const lines = [
     `audit-totality: ${summary.classes} classes, ${summary.declared} declared items walked, ${summary.violations} violations (${summary.blocking} blocking, ${summary.advisory} advisory), ${summary.unproven} reading(s) this run cannot call clean`,
   ];
+  // The exit, then the exemptions, on the lines a reader of the ladder always sees: the first line for every rung and
+  // the first twenty on red. A report that states NOT CLEAN below and nothing about its own exit leaves the reader to
+  // guess which row caused it, and the guess is the advisory row that says it decides nothing.
+  lines.push(...verdictLines(results), ...advisoryLines(results));
   const width = Math.max(...results.map((result) => result.id.length), 8);
   for (const result of results)
     lines.push(
@@ -1730,9 +1820,22 @@ function parseArguments(argv) {
   }
   return options;
 }
+
+/**
+ * The command's audit: this tree's findings, plus the exemptions this repository's ledger no longer licenses.
+ */
+export function runAuditWithLedger(options = {}) {
+  const results = runAudit(options);
+  for (const violation of staleAdvisories(results))
+    results.find((result) => result.id === violation.class)?.violations.push(violation);
+  return results;
+}
+
 function main() {
   const options = parseArguments(process.argv.slice(2));
-  const results = runAudit(options);
+  // An exemption with no finding left is a finding itself, and it decides the exit: the ledger describes this
+  // repository, so it is checked on the run over it rather than inside the audit of any tree.
+  const results = runAuditWithLedger(options);
   const summary = totals(results);
   if (options.json) process.stdout.write(`${JSON.stringify({ summary, results }, null, 2)}\n`);
   else process.stdout.write(`${formatReport(results, { all: options.all })}\n`);
@@ -3186,12 +3289,18 @@ function runDelegated(sources, gate) {
 // ---------------------------------------------------------------------------
 
 /**
- * The readings whose findings print but do not fail the run, each with the ruling it awaits.
+ * The readings whose findings print but do not fail the run, each with the ruling it awaits, the owner who owes it
+ * and the condition that ends the exemption.
  *
  * Membership is per READING, not per class, and that is the point: a class is a rule, but a reading inside it is a
  * defect or a decision, and the two deserve different answers. `hygiene` carries one of each - `test-only export` is
  * findings of one pattern that one ruling settles, while `suppression directive` and `commented-out code` are site
  * defects with none today, so those two block and cannot come back unnoticed.
+ *
+ * `owner`, `ruling` and `expires` are not documentation: the report prints all three beside the count on every run,
+ * because an exemption that names no owner, no decision and no end is the one that outlives its reason. An entry
+ * whose population is gone is a stale exemption and decides the run (`staleAdvisories`), so it cannot silently
+ * re-arm the next finding of its kind.
  *
  * A reading belongs here for ONE reason: its findings are a ruling the owner has not taken, so a red from it would veto
  * an unmade decision rather than report a defect this repository already holds wrong. It is not a licence for a rule
@@ -3224,6 +3333,11 @@ export const ADVISORY_READINGS = Object.freeze(
     {
       className: "hygiene",
       kind: "test-only export",
+      owner: "engineering",
+      ruling:
+        "one decision per export, owed by the lane of the module that declares it: delete it, move it to a test-support module, or name the test that pins it `.private.test.ts`",
+      expires:
+        "expires when this reading reports no finding, so the entry is deleted in the commit that removes the last one - a finding added while the entry is here is the export the ruling has not reached",
       reason:
         "three populations under one reading - scaffolding that belongs in a test-support module, a production module a test pins at its boundary and declares as `.private.test.ts`, and a module an operator or build harness loads - so the ruling is per export, and this reading reports the ones that carry none of the three",
     },

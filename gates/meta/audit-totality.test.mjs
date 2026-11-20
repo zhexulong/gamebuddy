@@ -38,7 +38,15 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { ADVISORY_READINGS, formatReport, runAudit, totals, unprovenReadings } from "./audit-totality.mjs";
+import {
+  ADVISORY_READINGS,
+  formatReport,
+  runAudit,
+  runAuditWithLedger,
+  staleAdvisories,
+  totals,
+  unprovenReadings,
+} from "./audit-totality.mjs";
 
 function write(root, path, text) {
   const file = join(root, path);
@@ -886,6 +894,121 @@ test("a hygiene site defect blocks while the test-only export reading does not",
       /^\s+hygiene\s+1\s+advisory finding\(s\) of test-only export/mu,
       "the section names the advisory kind and its count, not the class alone",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the verdict and the exit code say the same thing, in both directions", () => {
+  const root = fixture();
+  try {
+    // The reading that decides nothing: the fixture's one export is named only by a test, and the entry licensing
+    // that reading is still waiting for its ruling. Exit 0 is right - and the report has to say so in words, because
+    // the section below it is headed NOT CLEAN and a reader met the two as a contradiction.
+    write(root, "host/src/only-a-test-exports.ts", "export const readOnlyByTests = 1;\n");
+    write(
+      root,
+      "host/src/only-a-test-exports.test.ts",
+      'import test from "node:test";\nimport { readOnlyByTests } from "./only-a-test-exports.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+    );
+    const quiet = runAudit({ root, only: ["hygiene"] });
+    const quietReport = formatReport(quiet);
+    assert.equal(totals(quiet).blocking, 0, "the advisory reading decides nothing");
+    assert.match(
+      quietReport,
+      /^verdict: PASS - exit 0; no blocking finding/mu,
+      `the verdict agrees with exit 0:\n${quietReport}`,
+    );
+    // The ladder prints the gate's first line for every rung and the first twenty on red, so the split has to be on
+    // the line the ladder always shows: a green rung still states how many findings print without deciding it.
+    assert.match(quietReport.split("\n")[0], /\(0 blocking, 1 advisory\)/u, quietReport.split("\n")[0]);
+
+    // The other direction: a site defect decides the run, and the verdict names the site rather than the class.
+    write(root, "host/src/suppressed-store.ts", "// @ts-ignore\nexport const suppressed = 1;\n");
+    const loud = runAudit({ root, only: ["hygiene"] });
+    const loudReport = formatReport(loud);
+    assert.equal(totals(loud).blocking, 1, "the suppression decides it");
+    assert.match(
+      loudReport,
+      /^verdict: RED - exit 1; the 1 blocking finding\(s\) below decide it: hygiene:host\/src\/suppressed-store\.ts:1$/mu,
+      `the verdict names the finding that decided the run:\n${loudReport}`,
+    );
+    assert.match(
+      loudReport,
+      /^advisory: hygiene\/test-only export - 1 finding\(s\)/mu,
+      "and the advisory count stays printed on a red run, so it cannot go unseen",
+    );
+    assert.doesNotMatch(
+      loudReport,
+      /so these do not decide the run/u,
+      "a line that says 'do not decide' beside exit 1 is the disagreement itself",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("every advisory reading names its owner, the ruling that would make it decide, and its expiry", () => {
+  // An advisory reading is an exemption: it prints, decides nothing, and licenses the next finding of its kind. An
+  // exemption that names no owner, no ruling and no expiry is the one nobody ever ends.
+  for (const entry of ADVISORY_READINGS) {
+    assert.match(entry.owner, /^[a-z][a-z-]+$/u, `${entry.className}/${entry.kind} names an owner, not a placeholder`);
+    assert.ok(entry.ruling.length > 40, `${entry.className}/${entry.kind} states the ruling that would make it decide`);
+    assert.match(
+      entry.expires,
+      /^expires when /u,
+      `${entry.className}/${entry.kind} states the condition that ends it`,
+    );
+  }
+  const root = fixture();
+  try {
+    write(root, "host/src/only-a-test-exports.ts", "export const readOnlyByTests = 1;\n");
+    write(
+      root,
+      "host/src/only-a-test-exports.test.ts",
+      'import test from "node:test";\nimport { readOnlyByTests } from "./only-a-test-exports.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+    );
+    const report = formatReport(runAudit({ root, only: ["hygiene"] }));
+    const [entry] = ADVISORY_READINGS;
+    const line = report.split("\n").find((row) => row.startsWith("advisory:"));
+    assert.notEqual(line, undefined, `the report carries the advisory ledger:\n${report}`);
+    assert.ok(line.includes(entry.owner), line);
+    assert.ok(line.includes(entry.ruling), line);
+    assert.ok(line.includes(entry.expires), `the expiry prints verbatim, so the two cannot drift:\n${line}`);
+    assert.match(line, /1 finding\(s\)/u, line);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an advisory entry whose population is gone is a stale exemption, and decides the run", () => {
+  const root = fixture();
+  try {
+    // The fixture has no export that only a test names, so the entry licenses nothing here - and an entry left in
+    // place would make the next such export advisory with nobody having decided it should be.
+    const results = runAudit({ root, only: ["hygiene"] });
+    assert.deepEqual(results[0].violations, [], "the fixture itself has nothing to report");
+    const stale = staleAdvisories(results);
+    assert.equal(stale.length, 1, JSON.stringify(stale));
+    assert.match(stale[0].message, /reports 0 finding/u, stale[0].message);
+    assert.match(stale[0].message, /ADVISORY_READINGS/u, "the message names the entry to delete");
+    assert.equal(stale[0].advisory, undefined, "it is not advisory: an expiry that decides nothing is not an expiry");
+    // The command's own path, so the red that ends an exemption is the red a reader meets.
+    const withLedger = runAuditWithLedger({ root, only: ["hygiene"] });
+    assert.equal(totals(withLedger).blocking, 1, formatReport(withLedger));
+    assert.match(
+      formatReport(withLedger),
+      /^verdict: RED - exit 1; the 1 blocking finding\(s\) below decide it: hygiene:gates\/meta\/audit-totality\.mjs$/mu,
+    );
+
+    // And the entry is not stale while it still has a population.
+    write(root, "host/src/only-a-test-exports.ts", "export const readOnlyByTests = 1;\n");
+    write(
+      root,
+      "host/src/only-a-test-exports.test.ts",
+      'import test from "node:test";\nimport { readOnlyByTests } from "./only-a-test-exports.js";\nvoid readOnlyByTests;\ntest("x", () => {});\n',
+    );
+    assert.deepEqual(staleAdvisories(runAudit({ root, only: ["hygiene"] })), []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
