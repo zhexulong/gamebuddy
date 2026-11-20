@@ -4,7 +4,7 @@
 //
 // A synthetic chara_card_v3 card is staged through the paste lane (in-page textarea + native input
 // event; nothing leaves the browser). The review is then cancelled, so no companion is provisioned.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanel } = require("./common.cjs");
 const { companionNames, sameCompanions } = require("./companion-names.cjs");
 
 const CARD = JSON.stringify({
@@ -90,6 +90,19 @@ const cancelReview = () => {
   return "cancelled";
 };
 
+/**
+ * The Characters panel, read as a panel: its loading line gone, and the companion list's presence holding across
+ * two reads. The list is the one thing this driver compares, and `[data-companion-list]` is simply not in the DOM
+ * until the panel's own read lands - so the first read of a slower machine sees an ABSENT list, which is not an
+ * empty one. `frontend--r13` read `before={"present":false}`, then compared two readings of which one had
+ * nothing to compare, and failed with `companion_list_unobserved`; `t` and `m` failed at the same pin for the same
+ * reason (a fixed delay shorter than the surface needed).
+ */
+const CHARACTERS_PANEL = { name: "characters-surface", panel: '[data-testid="characters-surface"]', item: "[data-companion-list]" };
+
+/** The staged card's review: it mounts when the Host's derive lands, and is gone once the cancel has discarded it. */
+const CARD_REVIEW = { name: "card-import-review", panel: "[data-card-import-review]" };
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("j-card-import.txt");
@@ -97,7 +110,7 @@ const cancelReview = () => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(`${PAGE_HELPERS};undefined`);
   await activateSurface(page, "角色");
-  await page.waitForTimeout(1500);
+  await waitForPanel(page, CHARACTERS_PANEL);
 
   const before = await page.evaluate(surfaceFacts);
   const companionsBefore = await readCompanions(page);
@@ -124,12 +137,15 @@ const cancelReview = () => {
     process.exit(0);
   }
 
-  let review = null;
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    await page.waitForTimeout(1500);
-    review = await page.evaluate(reviewFacts);
-    if (review.present) break;
+  try {
+    // The review mounts when the Host's staged derive lands, and its own loading line (when it draws one) is the
+    // panel's statement that the derive is still in flight. A staged card that produces no review inside the
+    // budget is reported below as the skip it has always been, with what the wait saw instead of a bare sleep.
+    await waitForPanel(page, { ...CARD_REVIEW, timeoutMs: 45000 });
+  } catch (error) {
+    say(`the review never mounted: ${String(error).slice(0, 400)}`);
   }
+  const review = await page.evaluate(reviewFacts);
   say("=== ITEM: the card-import review (staged, pre-confirm) ===");
   say(JSON.stringify(review, null, 1));
   say("review verdict:", review.present ? await page.evaluate(reviewVerdict) : "SKIPPED:no_review_after_stage");
@@ -140,7 +156,19 @@ const cancelReview = () => {
 
   const cancelled = await page.evaluate(cancelReview);
   say("cancel:", cancelled);
-  await page.waitForTimeout(800);
+  /*
+   * The cancel's settled state is the staged review's own removal: 取消 discards the card, so the panel stops
+   * drawing `[data-card-import-review]`. Waiting for that is what makes the next read a comparison of two
+   * settled lists rather than of a list the cancel was still rewriting - which is what the fixed 800 ms stood in
+   * for.
+   */
+  const cancelSettledAt = Date.now();
+  const reviewGone = await page
+    .locator("[data-card-import-review]")
+    .waitFor({ state: "detached", timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  say(`the staged review is ${reviewGone ? "gone" : "STILL DRAWN"} ${String(Date.now() - cancelSettledAt)}ms after the cancel`);
   const companionsAfter = await readCompanions(page);
   say("=== ITEM: durable companion list unchanged after cancel ===");
   say(

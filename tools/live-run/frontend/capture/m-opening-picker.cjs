@@ -11,6 +11,9 @@ const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observa
 const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
 
 const NEW_CHAT = '[data-testid="new-chat"]';
+// The Chats list, read as a panel: a row count that has stopped changing, with no loading line left. Every read
+// of it below waits for that instead of for a duration (see `waitForPanel`).
+const CHATS_LIST = { name: "chats-list", panel: '[data-testid="chats-surface"]', item: '[data-testid="chat-item"]' };
 // The opening editor mounts with its section before its card read lands, so every read of it waits for
 // the panel to be loaded rather than for a duration (see `waitForPanel`).
 const OPENING_EDITOR = { name: "opening-editor", panel: "[data-opening-editor]", item: ".opening-variant-row" };
@@ -123,6 +126,50 @@ const clickButtonNamed = ({ selector, text }) => {
   return "clicked";
 };
 
+/**
+ * The press on 新建聊天 is answered one of two ways, and which one is the companion's own fact: the picker mounts
+ * when she has openings to choose from, and the Chat is created - with the shell landing in it - when she has
+ * none. A fixed sleep answers for one of them only. `frontend--r13` waited 2600 ms for the single-opening press
+ * on a machine whose build took 10.3 min against run 1's 4.2 and read a picker that had not mounted; the same
+ * code passed at `40c9b7f5`, which is what makes this a driver reading rather than a product regression.
+ *
+ * `conversationShown` is the shell's own statement of the second answer (the surface route, not the parked
+ * conversation's presence), and the picker's `data-testid` is the first. Bounded, and the answer is reported as
+ * a fact (`picker` / `conversation` / `neither`) whether or not it arrived in time.
+ */
+const waitForNewChatAnswered = async (page, timeoutMs = 20000) => {
+  const started = Date.now();
+  for (;;) {
+    if (await page.evaluate(() => document.querySelector('[data-testid="opening-picker"]') !== null))
+      return { answer: "picker", waitedMs: Date.now() - started };
+    if (await page.evaluate(conversationShown)) return { answer: "conversation", waitedMs: Date.now() - started };
+    if (Date.now() - started > timeoutMs) return { answer: "neither", waitedMs: Date.now() - started };
+    await page.waitForTimeout(250);
+  }
+};
+
+/**
+ * The 保存开场白 round trip, from the control that starts it.
+ *
+ * The editor publishes nothing else about a save: no loading line and no `data-state`. What it does publish is
+ * the control itself - it reads 保存中… (so `saveDisabled`, which is read by the name 保存开场白, is null) while
+ * the Host call is in flight and 保存开场白 again when the answer has landed - so the wait requires the press to
+ * be SEEN taken before it accepts the control's return, and a click the panel refused cannot be answered with
+ * the state that was there before it.
+ */
+const waitForOpeningSaveSettled = async (page, timeoutMs = 20000) => {
+  const started = Date.now();
+  let tookThePress = false;
+  let facts = await page.evaluate(openingEditorFacts);
+  while (Date.now() - started < timeoutMs) {
+    if (facts.saveDisabled !== false) tookThePress = true;
+    else if (tookThePress) return { facts, tookThePress, waitedMs: Date.now() - started };
+    await page.waitForTimeout(250);
+    facts = await page.evaluate(openingEditorFacts);
+  }
+  return { facts, tookThePress, waitedMs: Date.now() - started };
+};
+
 // The commit is the picker's own `opening-option-commit` (`用这个开场`), not the card's prose: since
 // `c55ea777` the card is a container a player reads, selects and copies, and the prose creates
 // nothing. Clicking it answered "clicked" while nothing was committed, which is why every run from
@@ -164,11 +211,12 @@ const clickOption = (index) => {
   say("=== ITEM: New Chat with openings to choose from ===");
   // The New Chat control lives on the Chats LIST (会话), not in the open conversation (聊天).
   await activateSurface(page, "会话");
-  await page.waitForTimeout(1600);
+  await waitForPanel(page, CHATS_LIST);
   const rowsBefore = await page.evaluate(chatRows);
   say(`chat rows before: ${rowsBefore.rows.length} (the list is ${rowsBefore.present ? "mounted" : "NOT mounted"})`);
   await page.locator(NEW_CHAT).first().click();
-  await page.waitForTimeout(1500);
+  const firstAnswer = await waitForNewChatAnswered(page);
+  say(`the press was answered by the ${firstAnswer.answer} after ${String(firstAnswer.waitedMs)}ms`);
   const picker = await page.evaluate(pickerFacts);
   say(JSON.stringify(picker, null, 1));
   say(`picker present: ${picker.present}; options=${picker.optionCount}`);
@@ -234,7 +282,7 @@ const clickOption = (index) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(900);
     await activateSurface(page, "会话");
-    await page.waitForTimeout(1400);
+    await waitForPanel(page, CHATS_LIST);
     const created = await page.evaluate(createdCard);
     const rowsAfterChoice = await page.evaluate(chatRows);
     say(`the panel's card for the created Chat: ${JSON.stringify(created)}`);
@@ -276,7 +324,14 @@ const clickOption = (index) => {
       break;
     }
     removed += 1;
-    await page.waitForTimeout(500);
+    try {
+      // The editor re-renders its rows on a discard, so the next read must not see the count this iteration
+      // acted on: a stale 6 would drop a SIXTH row. `waitForPanel`'s two-read stability is that guarantee.
+      await waitForPanel(page, OPENING_EDITOR);
+    } catch (error) {
+      say(`the opening editor did not settle after the discard, so this loop stops here: ${String(error).slice(0, 240)}`);
+      break;
+    }
   }
   const edited = await page.evaluate(openingEditorFacts);
   say(`rows discarded: ${removed}`);
@@ -284,18 +339,22 @@ const clickOption = (index) => {
   say(
     `saving the one-opening set: ${await page.evaluate(clickButtonNamed, { selector: "[data-opening-editor]", text: "保存开场白" })}`,
   );
-  await page.waitForTimeout(2200);
-  const saved = await page.evaluate(openingEditorFacts);
+  const saveWait = await waitForOpeningSaveSettled(page);
+  const saved = saveWait.facts;
+  say(
+    `the save settled after ${String(saveWait.waitedMs)}ms (the panel was seen calling the Host: ${String(saveWait.tookThePress)})`,
+  );
   say(JSON.stringify(saved, null, 1));
   say(`notice after saving: ${JSON.stringify(saved.notice)}`);
   await shot(page, "85-opening-editor-single-1440x900.png");
 
   say("=== ITEM: New Chat with exactly one opening — no picker at all ===");
   await activateSurface(page, "会话");
-  await page.waitForTimeout(1600);
+  await waitForPanel(page, CHATS_LIST);
   const rowsBeforeSingle = await page.evaluate(chatRows);
   await page.locator(NEW_CHAT).first().click();
-  await page.waitForTimeout(2600);
+  const singleAnswer = await waitForNewChatAnswered(page);
+  say(`the press was answered by the ${singleAnswer.answer} after ${String(singleAnswer.waitedMs)}ms`);
   const singlePicker = await page.evaluate(pickerFacts);
   const landed = await page.evaluate(conversationShown);
   say(`picker present: ${singlePicker.present}; options=${singlePicker.optionCount ?? 0}`);
@@ -306,7 +365,7 @@ const clickOption = (index) => {
   );
   await shot(page, "85-new-chat-single-opening-1440x900.png");
   await activateSurface(page, "会话");
-  await page.waitForTimeout(1600);
+  await waitForPanel(page, CHATS_LIST);
   const rowsAfterSingle = await page.evaluate(chatRows);
   const createdSingle = await page.evaluate(createdCard);
   say(`chat rows before=${rowsBeforeSingle.rows.length} after=${rowsAfterSingle.rows.length} (a Chat was created without a step in between)`);

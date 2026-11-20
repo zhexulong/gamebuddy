@@ -86,7 +86,8 @@
 //   NOT-MEASURED: guardian_pipe_unreachable | game_prerequisites_missing | game_install_absent |
 //                 smapi_install_absent | guardian_image_absent |
 //                 installation_registration_refused | lifecycle_activation_refused |
-//                 no_installation_panel | no_installation_discovered | game_state_unreadable |
+//                 no_installation_panel | no_installation_discovered |
+//                 installation_panel_never_settled | game_state_unreadable |
 //                 game_surface_cannot_start_turn | cabin_handoff_not_offered
 //   BLOCKED-BY-PRODUCT: instance_status_never_running | attach_needs_native_save |
 //                 cabin_offer_expires_before_any_ui_can_answer | farmhand_not_initialized
@@ -108,6 +109,7 @@ const {
   canStartTurn,
   observe,
   observationStart,
+  waitForPanelSettled,
   REPO_ROOT,
 } = require("./common.cjs");
 const {
@@ -136,7 +138,11 @@ const {
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
 const { stepRecorder } = require("./game-surface-states.cjs");
-const { INSTALLATION_CONTROL } = require("./installation-panel-names.cjs");
+const {
+  INSTALLATION_CONTROL,
+  INSTALLATION_DISCOVERY_STATES,
+  INSTALLATION_PANEL_SELECTOR,
+} = require("./installation-panel.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -1361,16 +1367,41 @@ async function hostAnswers(port) {
      */
     let panel = await page.evaluate(readInstallationPanel);
     const panelBegan = Date.now();
+    const remaining = () => BUDGET.discoveryMs - (Date.now() - panelBegan);
     const terminal = new Set(["no-candidates", "source-unavailable", "error", "cancelled", "expired"]);
     let rescans = 0;
-    while (Date.now() - panelBegan < BUDGET.discoveryMs && panel.present === true && panel.candidates.length === 0) {
-      if (!terminal.has(panel.dataState)) {
-        await sleep(1000);
-        panel = await page.evaluate(readInstallationPanel);
-        continue;
-      }
+    while (panel.present === true && remaining() > 0) {
+      /*
+       * THE PANEL'S OWN STATEMENT THAT IT HAS STOPPED WORKING, never a fixed tick.
+       *
+       * This loop used to continue on `!terminal.has(dataState)` with a blind 1000 ms sleep and stop at `panel
+       * .candidates.length > 0` - and a candidate row is drawn WHILE a scan is outstanding (`showsCandidates` is
+       * true for `retrying`, `confirming` and `cancelled`), so "a candidate exists" was never "the panel has
+       * settled". `frontend--r13` read the first candidate in `retrying`, found its 确认 disabled (`scannerDisabled`
+       * is `pending !== "none"`), reported `no_installation_discovered: the first candidate offered no enabled
+       * confirm control` with `confirm requests: 0`, and x/y/z named the missing registration behind it - on a
+       * machine that held a registered-and-ready installation.
+       */
+      const settledWait = await waitForPanelSettled(page, {
+        name: "installation",
+        panel: INSTALLATION_PANEL_SELECTOR,
+        settledStates: INSTALLATION_DISCOVERY_STATES.settled,
+        timeoutMs: Math.max(0, remaining()),
+      }).catch((error) => ({ failure: String(error?.message ?? error).slice(0, 600) }));
+      panel = await page.evaluate(readInstallationPanel);
+      if (settledWait.failure !== undefined)
+        return await notMeasured(
+          browser,
+          "installation_panel_never_settled",
+          `${settledWait.failure}; the panel reads data-state=${JSON.stringify(panel.dataState)} with ${String(panel.candidates.length)} candidate row(s) after ${String(rescans)} re-scan press(es)`,
+        );
+      say(
+        `the panel settled in data-state=${JSON.stringify(settledWait.state)} after ${String(settledWait.waitedMs)}ms (every state read while waiting: ${JSON.stringify(settledWait.observed)}), holding ${String(panel.candidates.length)} candidate row(s)`,
+      );
+      if (panel.candidates.length > 0) break;
+      if (!terminal.has(panel.dataState)) break;
       const findAgain = page
-        .locator(".game-installation-panel")
+        .locator(INSTALLATION_PANEL_SELECTOR)
         .getByRole("button", { name: new RegExp(`${INSTALLATION_CONTROL.findAgain.zh}|${INSTALLATION_CONTROL.findAgain.en}`, "u") })
         .first();
       if ((await findAgain.count()) === 0 || !(await findAgain.isEnabled().catch(() => false))) break;

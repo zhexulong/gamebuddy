@@ -354,6 +354,72 @@ async function waitForPanel(page, { name, panel, item = null, timeoutMs = 20000,
 }
 
 /**
+ * Wait until a panel that publishes its own typed state has SETTLED, and never read a working state as an answer.
+ *
+ * `waitForPanel` above answers "this panel has drawn its data"; this answers the other half - "this panel has
+ * stopped working" - for the one panel that publishes the fact: `StardewInstallationDiscovery.tsx:304` renders
+ * `<section className="game-installation-panel" ... data-state={state}>`, and its state machine
+ * (`InstallationDiscoveryState`, `dialogue-web/src/game-presentation.ts:149`) has three members it publishes ONLY
+ * while a request of its own is outstanding:
+ *
+ *   loading      a scan is in flight (`read()` sets it before it awaits the Host)
+ *   confirming   确认 is in flight (`action("confirm")`)
+ *   retrying     重新查找 is in flight (`action("retry")`)
+ *
+ * The measured defect is a driver that sleeps instead of waiting for one of the others. `frontend--r13` (a loaded
+ * machine: 10.3 min build against run 1's 4.2, the same code in both - `git diff --stat 40c9b7f5 088f1f99` is
+ * empty for the product and this kit) had the Host answer `{"answer":"resolved","candidateCount":1}` while the
+ * panel still read `retrying`, and driver T - which had slept 2200 ms after pressing 重新查找 - asserted the Host's
+ * answer against a panel that had not finished drawing it. The same sleep left driver W's 确认 disabled
+ * (`scannerDisabled` is `pending !== "none"`), so no launch was ever requested and x/y/z named the missing
+ * registration behind it. Neither red is a product reading: both are a driver that took "still working" for "the
+ * answer".
+ *
+ * `settledStates` is the set the caller accepts as ITS answer, and it must contain no member the panel publishes
+ * while it works: `INSTALLATION_DISCOVERY_STATES` (the panel's own vocabulary, shared by both drivers) keeps the
+ * two apart, and `wait-for-panel.test.mjs` holds that split against the product's union. A caller that has just
+ * pressed a control passes the states that control can settle ON (取消 answers `cancelled`, or a refusal) rather
+ * than every settled state, because the panel republishes the state it already had while the request is
+ * outstanding - "any settled state" would answer with the press's own past.
+ *
+ * A reading is accepted only when the same state is still there `settleMs` later, which is the rule
+ * `waitForPanel` already applies to its item count and the reason a press whose re-render has not flushed yet
+ * cannot be answered with the state from before it.
+ */
+async function waitForPanelSettled(page, { name, panel, settledStates, timeoutMs = 20000, settleMs = 300 }) {
+  if (typeof name !== "string" || name.length === 0) throw new Error("waitForPanelSettled_requires_a_name");
+  if (typeof panel !== "string" || panel.length === 0)
+    throw new Error(`waitForPanelSettled_${name}_requires_a_panel_selector`);
+  if (!Array.isArray(settledStates) || settledStates.length === 0)
+    throw new Error(`waitForPanelSettled_${name}_requires_the_states_it_accepts`);
+  const started = Date.now();
+  const observed = [];
+  let previous = null;
+  let reading = { panel: false, state: null };
+  for (;;) {
+    reading = await page.evaluate((panelSelector) => {
+      const root = document.querySelector(panelSelector);
+      if (root === null) return { panel: false, state: null };
+      return { panel: true, state: root.getAttribute("data-state") };
+    }, panel);
+    if (reading.panel && observed[observed.length - 1] !== reading.state) observed.push(reading.state);
+    const settled = reading.panel && settledStates.includes(reading.state);
+    if (settled && previous === reading.state) return { state: reading.state, observed, waitedMs: Date.now() - started };
+    previous = settled ? reading.state : null;
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(
+        `panel_never_settled:${name} after ${Date.now() - started}ms: waited for ${panel} to report one of ${JSON.stringify(
+          settledStates,
+        )} on two reads ${settleMs}ms apart; ${
+          reading.panel ? `it reported ${JSON.stringify(observed)}` : `no element matched ${panel}`
+        }`,
+      );
+    }
+    await page.waitForTimeout(settleMs);
+  }
+}
+
+/**
  * Whether the shell is SHOWING the conversation, as opposed to merely carrying it.
  *
  * The conversation is the one surface that stays MOUNTED while another one is selected: the shell
@@ -429,6 +495,7 @@ module.exports = {
   PAGE_HELPERS,
   activateSurface,
   waitForPanel,
+  waitForPanelSettled,
   shot,
   readDurableTranscript,
   canStartTurn,

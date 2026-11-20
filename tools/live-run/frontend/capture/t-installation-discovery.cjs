@@ -23,9 +23,14 @@
 // 选择游戏文件夹 opens the OS folder picker: the control is read (name, box, disabled), and the driver
 // says plainly that the native dialog is out of its reach. 确认 registers an installation into this run's
 // durable state, which the task scopes this driver out of; it too is read, not clicked.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, observe, observationStart, waitForPanelSettled } = require("./common.cjs");
 const { reconciliationVerdict } = require("./reconciliation-verdict.mjs");
-const { INSTALLATION_CONTROL: CONTROL } = require("./installation-panel-names.cjs");
+const {
+  INSTALLATION_CONTROL: CONTROL,
+  INSTALLATION_CANCEL_STATES,
+  INSTALLATION_DISCOVERY_STATES,
+  INSTALLATION_PANEL_SELECTOR,
+} = require("./installation-panel.cjs");
 
 const WIDTHS = [
   { w: 1440, h: 900, tag: "1440x900" },
@@ -51,19 +56,13 @@ const SENTENCE = {
 };
 /** `labels.gameInstallationAria`, which tells the driver which locale's sentences to match. */
 const ARIA = { zh: "游戏安装设置", en: "Game installation setup" };
-/** The panel's own accessible names, in one copy shared with driver W (`installation-panel-names.cjs`). */
-const ALL_STATES = [
-  "not_configured",
-  "loading",
-  "candidates",
-  "confirming",
-  "retrying",
-  "cancelled",
-  "source-unavailable",
-  "no-candidates",
-  "expired",
-  "error",
-];
+/**
+ * Every state this run could have produced, from the panel's own vocabulary
+ * (`installation-panel.cjs`, held against the product's union by `wait-for-panel.test.mjs`). The states that are
+ * still unobserved at the end are reported as named skips below, so a state the product adds is reported by name
+ * instead of quietly leaving this list behind.
+ */
+const ALL_STATES = INSTALLATION_DISCOVERY_STATES.all;
 /**
  * The Host's diagnostics that name a source it could not read
  * (`host/src/stardew-game-install/discovery.ts` and `windows-stardew-installation-discovery/internal.ts`).
@@ -339,13 +338,26 @@ const scrollPanelIntoView = () => {
     await activateSurface(page, "游戏");
     const firstSample = await page.evaluate(readPanel);
     if (firstSample.dataState) observed.add(firstSample.dataState);
-    await page.waitForTimeout(1600);
+    /*
+     * What the panel settles in, never how long it usually takes. The sleep this replaces (1600 ms) read the
+     * panel while a scan was still outstanding on a loaded machine, and `retrying` is a state the panel publishes
+     * WITH the candidate rows it already has - so the read looked like an answer.
+     */
+    const settledWait = await waitForPanelSettled(page, {
+      name: `installation@${size.tag}`,
+      panel: INSTALLATION_PANEL_SELECTOR,
+      settledStates: INSTALLATION_DISCOVERY_STATES.settled,
+    });
+    for (const state of settledWait.observed) if (state) observed.add(state);
     const settled = await page.evaluate(readPanel);
     if (settled.dataState) observed.add(settled.dataState);
     const result = await reconcile(`@${size.tag}`);
     if (result.panel.dataState) observed.add(result.panel.dataState);
     lastAnswer = result.expected.host;
     say(`===== INSTALLATION PANEL @${size.tag} =====`);
+    say(
+      `the panel settled in data-state=${JSON.stringify(settledWait.state)} after ${String(settledWait.waitedMs)}ms (every state read while waiting: ${JSON.stringify(settledWait.observed)})`,
+    );
     say(`the surface, immediately after it mounted (the first sample): ${JSON.stringify({ dataState: firstSample.dataState, statusText: firstSample.statusText })}`);
     say(`the settled panel facts: ${JSON.stringify(settled, null, 1)}`);
     say(`panel testids: ${JSON.stringify({ panelTestid: settled.panelTestid, testidsInside: settled.testids })}`);
@@ -364,8 +376,20 @@ const scrollPanelIntoView = () => {
   say(`re-scan click: ${retryClick}`);
   const during = await page.evaluate(readPanel);
   if (during.dataState) observed.add(during.dataState);
-  say(`immediately after the click (the searching-again moment): ${JSON.stringify({ dataState: during.dataState, statusText: during.statusText })}`);
-  await page.waitForTimeout(2200);
+  say(`immediately after the click, before anything is waited for: ${JSON.stringify({ dataState: during.dataState, statusText: during.statusText })}`);
+  /*
+   * The Host's answer, at the moment the panel has drawn it - not at a fixed 2200 ms. `frontend--r13` slept, then
+   * asserted `data-state='candidates'` against a panel that still read `retrying` for a Host answer of `resolved`.
+   */
+  const rescanned = await waitForPanelSettled(page, {
+    name: "installation-after-rescan",
+    panel: INSTALLATION_PANEL_SELECTOR,
+    settledStates: INSTALLATION_DISCOVERY_STATES.settled,
+  });
+  for (const state of rescanned.observed) if (state) observed.add(state);
+  say(
+    `the re-scan settled in data-state=${JSON.stringify(rescanned.state)} after ${String(rescanned.waitedMs)}ms (every state read while waiting: ${JSON.stringify(rescanned.observed)})`,
+  );
   const afterRetry = await reconcile("after the re-scan");
   if (afterRetry.panel.dataState) observed.add(afterRetry.panel.dataState);
   lastAnswer = afterRetry.expected.host;
@@ -375,7 +399,21 @@ const scrollPanelIntoView = () => {
   say("===== DRIVING THE CANCEL (取消) =====");
   const wireBeforeCancel = wire.length;
   say(`cancel click: ${await page.evaluate(clickNamedControl, { labels: names("cancel") })}`);
-  await page.waitForTimeout(1600);
+  /*
+   * The cancel's own answer. The panel leaves `data-state` where it was while the request is outstanding (the
+   * press shows on its controls instead: every one of them is disabled while `pending !== "none"`), so this waits
+   * for the states 取消 can settle ON rather than for "a settled state" - the latter would read the state the press
+   * started from.
+   */
+  const cancellation = await waitForPanelSettled(page, {
+    name: "installation-after-cancel",
+    panel: INSTALLATION_PANEL_SELECTOR,
+    settledStates: INSTALLATION_CANCEL_STATES,
+  });
+  for (const state of cancellation.observed) if (state) observed.add(state);
+  say(
+    `the cancel settled in data-state=${JSON.stringify(cancellation.state)} after ${String(cancellation.waitedMs)}ms (every state read while waiting: ${JSON.stringify(cancellation.observed)})`,
+  );
   const afterCancel = await page.evaluate(readPanel);
   if (afterCancel.dataState) observed.add(afterCancel.dataState);
   const cancelWire = wire.slice(wireBeforeCancel);
@@ -428,6 +466,17 @@ const scrollPanelIntoView = () => {
         return `the Host's own answer on this machine was '${lastAnswer}', so the not-found sentence ${lastAnswer === "resolved" ? "cannot be produced while a real installation is present" : "is not what this machine's scan reports"}`;
       case "candidates":
         return `the Host's own answer on this machine was '${lastAnswer}', so the found-installations sentence ${lastAnswer === "nothing-found" ? "cannot be produced while no installation is present" : "is not what this machine's scan reports"}`;
+      case "install-cannot-load-mods":
+        return "only the Microsoft Store layout diagnostic produces it, and this machine's scan named none";
+      case "result-unavailable":
+        return "only a refusal the client cannot classify produces it, and every refusal this run met named its own cause";
+      case "mod-loader-missing":
+      case "not-stardew-installation":
+      case "reparse-point":
+      case "selection-unavailable":
+        return "it is produced only by 确认 or 选择游戏文件夹, and this driver reads those controls without pressing them";
+      case "confirmed":
+        return "it is produced only by a registration, which driver W performs for this run and this driver does not";
       case "cancelled":
         return "the cancel path was not driven on this machine";
       default:
