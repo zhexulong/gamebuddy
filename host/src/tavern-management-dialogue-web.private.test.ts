@@ -500,6 +500,91 @@ test("management handler exposes the draft-capable profile and CSRF-protected mu
   assert.equal(recorder.closes, 1);
 });
 
+/**
+ * The drain inside `close()` exists for exactly this shape: a request the shell has ALREADY
+ * accepted is answered before any socket dies.
+ *
+ * The rename is inside its own management call when the close starts, and that call ends with a
+ * refusal the panel can act on - which is only true if `close()` keeps the socket alive until the
+ * answer is written. Destroying the connections first wrote the answer into a dead socket, and the
+ * panel recorded one request with no answer at all.
+ */
+test("management shell answers an accepted request before it destroys the socket", async () => {
+  // The two points this test owns: the route is inside its rename, and the route may answer it.
+  let entered!: () => void;
+  const renameEntered = new Promise<void>((resolveEntered) => {
+    entered = resolveEntered;
+  });
+  let refused!: () => void;
+  const renameRefused = new Promise<void>((resolveRefused) => {
+    refused = resolveRefused;
+  });
+  const recorder = { lists: 0, renames: 0, draftReads: 0, draftSaves: 0, draftDiscards: 0, closes: 0 };
+  const server = await startTavernManagementDialogueWebServer({
+    managementStateFacade: facade,
+    managementService: Object.freeze({
+      ...service(recorder),
+      async renameChatTitle() {
+        recorder.renames += 1;
+        entered();
+        await renameRefused;
+        // A stale revision is the ordinary refusal a read-then-write race ends with.
+        throw new Error("chat_management_revision_conflict");
+      },
+    }),
+    worldInfoService: worldInfoService(),
+    profile,
+    playerPreferenceStore: voicePreferenceStore,
+    bootstrapToken: token,
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const snapshot = (await bootstrap.json()) as { csrfToken: string };
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const rename = fetch(`${server.origin}/api/tavern/v1/chat/title`, {
+      method: "PUT",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": snapshot.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        chatHandle: handle,
+        expectedManagementRevision: 1,
+        title: "New Farm Chat",
+      }),
+    });
+    await renameEntered;
+
+    // The close begins while this rename is still inside its management call; the wait below is what
+    // let the old order destroy the connection before the answer existed.
+    const closing = server.close();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    refused();
+
+    const response = await rename;
+    assert.equal(
+      response.status,
+      409,
+      "the management request this shell had already accepted must be answered, not destroyed with its socket",
+    );
+    assert.equal(((await response.json()) as { code: string }).code, "draft_conflict");
+    assert.equal(recorder.renames, 1);
+    await closing;
+  } finally {
+    await server.close().catch(() => {});
+  }
+  assert.equal(recorder.closes, 1);
+});
+
 test("management handler maps a missing target, a foreign binding and a stale revision to bounded problem semantics", async () => {
   const recorder = {
     lists: 0,
