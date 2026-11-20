@@ -2099,12 +2099,14 @@ test("closed composition has exact public keys and no registrar, launch, or pers
   }
   assert.deepEqual(Object.keys(composition.broker).sort(), ["close", "confirm"]);
   assert.deepEqual(Object.keys(composition.aiClientProcessOwner).sort(), [
+    "noteAiClientEnded",
     "readOwnedAiClientGeneration",
     "readStatus",
     "reserveAiClientLaunch",
     "stopOwnedAiClient",
   ]);
   assert.deepEqual(Object.keys(composition.playerHostProcessOwner).sort(), [
+    "notePlayerHostEnded",
     "readStatus",
     "reservePlayerHostLaunch",
     "stopOwnedPlayerHost",
