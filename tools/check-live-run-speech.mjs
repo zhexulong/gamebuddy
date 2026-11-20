@@ -22,12 +22,28 @@
  *   - `总算/终于/已经 … 了` is NOT a marker, although `西头这一圈总算能看出地皮了` is plainly a progress report. It fires
  *     on a greeting (`总算回来了`), and a gate that fails a good run is worse than one that misses a bubble. The missed
  *     shape is stated in the report rather than papered over.
+ *   - `V完就…` IS A PLAN, and this test read it as a receipt until `round84`. `这一小片扫完我就去捡地上那些零碎` and
+ *     `我把地上这点零碎捡完就回屋` name what happens WHEN the work is done, so the completion particle is the condition
+ *     and not the receipt; the clause's own `就` is the marker, and it is now read (`PLAN_THEN`). Two of that run's eleven
+ *     flagged bubbles were this shape.
+ *   - `V完，我…` IS STILL READ AS A RECEIPT: `西头这片清完，我把地上的木料石头零碎挨个捡一圈再收手` is a plan whose
+ *     second clause carries the forward marker, and the clause that carries the particle has none. Named, not hidden.
  *   - A REMAINING count is not a DONE count: `还剩一棵花椰菜卡在那块地上` and `还落了一棵没掰` are the card's own
  *     forbidden shape and this test does not catch them, because `还剩`/`没掰` name what is LEFT. Named, not hidden.
  *
- * THE FREQUENCY CLAUSE. `speech_is_not_a_metronome` reads `presentation.speechFrequency.shortestGapMs` (the run's own
- * reading; `tools/lib/presentation-delivery-account.mjs`) and fails when two bubbles arrived closer together than
- * `SHORTEST_BUBBLE_GAP_MS`. THE FLOOR'S PROVENANCE IS IN ITS OWN COMMENT: it is not a taste.
+ * THE FREQUENCY CLAUSE. `speech_is_not_a_metronome` reads the gaps between the delivered bubbles from the pieces' own
+ * absolute moments and fails when the shortest is under `SHORTEST_BUBBLE_GAP_MS`. THE FLOOR'S PROVENANCE IS IN ITS OWN
+ * COMMENT: it is not a taste. THE READING PRINTS ITS WHOLE POPULATION - `shortest gap` AND `N of G gaps under the floor` -
+ * because the minimum alone says nothing about a run: `round84`'s 2 850 ms was read as one tight pair, and the bundle's
+ * own pieces carry ELEVEN of its sixty-one gaps under 10 000 ms, one every five or six bubbles, which is a cadence and not
+ * an accident. A reading that prints only its extreme invites either a threshold raised to hide it or a verdict dismissed
+ * as a fluke.
+ *
+ * EACH RULE NAMES WHAT IT COUNTED, AND `a_speech_gate_names_what_it_counted` IS THE GATE OVER THAT. Every gate in this
+ * module and in `dialogue-gates.mjs` declares a unit (`COUNT_UNITS`) and a threshold beside itself (`speechRules()` here,
+ * the gates' own `measure` there), and a gate that stops declaring one fails by name instead of passing over a verdict
+ * nobody can trace. `round84` is why: `turn-initiative-split` failed `companion_spoke_a_paragraph` about a 119-character window whose
+ * longest bubble was 48 characters, and neither number was in the artifact.
  *
  * Usage:
  *   node tools/check-live-run-speech.mjs                      # the falsifiers: one synthetic case per rule
@@ -51,6 +67,8 @@ export const gateDeclaration = {
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { COUNT_UNITS, SCHEDULED_DIALOGUE_GATES } from "./live-run/dialogue-gates.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -128,6 +146,12 @@ const FORWARD_MARKERS = /先|要|该|得|再|去|马上|一会儿|等下|待会|
 const NEGATED = /[不没别未]$/u;
 
 /**
+ * A completion particle followed by `就`/`才`/`再`/`然后`/`接着` is a WHEN, not a receipt: `捡完就回屋` says what happens
+ * next, so the particle is the condition on the next step rather than the step having happened.
+ */
+const PLAN_THEN = /^(?:我|你|俺|咱)?(?:就|才|再|然后|接着)/u;
+
+/**
  * A clause that states a condition, not a receipt: `西边这一片清完，下午我再看北头` is about what happens AFTER, and both
  * halves of it are one sentence. The consequent marker is in the NEXT clause, so a clause followed by one names a
  * condition rather than a finished step.
@@ -165,7 +189,10 @@ export function progressReportClauses(text) {
         for (let at = clause.indexOf(verb); at >= 0 && !reported; at = clause.indexOf(verb, at + 1)) {
           if (NEGATED.test(clause.slice(0, at))) continue;
           const rest = clause.slice(at + verb.length);
-          if (COMPLETION_PARTICLES.some((particle) => rest.startsWith(particle))) reported = true;
+          const particle = COMPLETION_PARTICLES.find((candidate) => rest.startsWith(candidate));
+          if (particle === undefined) continue;
+          if (PLAN_THEN.test(rest.slice(particle.length))) continue;
+          reported = true;
         }
         if (reported) break;
       }
@@ -185,12 +212,82 @@ export const TEXT_TESTS = Object.freeze([
   Object.freeze({
     id: "progress_report",
     anchor: "不报进度",
+    unit: "sentences",
+    threshold: 0,
     statement:
       "a bubble is a progress report when a clause names a step's state change: a work verb directly followed by a " +
       "completion particle, in a clause with no forward marker and no negated verb",
     clauses: progressReportClauses,
   }),
 ]);
+
+/**
+ * The metronome rule, declared where its floor is: the cadence between two delivered bubbles.
+ *
+ * `unit` is the bubble because the gap is between bubbles; `threshold` is the floor in milliseconds. The pair is what
+ * `a_speech_gate_names_what_it_counted` reads, so a reading that compared bubbles with something other than the floor
+ * would have to say so here.
+ */
+export const METRONOME_RULE = Object.freeze({
+  id: "speech_is_not_a_metronome",
+  unit: "bubbles",
+  threshold: SHORTEST_BUBBLE_GAP_MS,
+  statement: "the shortest gap between two delivered bubbles, compared with SHORTEST_BUBBLE_GAP_MS",
+});
+
+/** Every rule this module states, each carrying the unit it counts and the bound it compares that count with. */
+export function speechRules() {
+  return [...TEXT_TESTS, METRONOME_RULE];
+}
+
+/**
+ * The gate `a_speech_gate_names_what_it_counted:<gate>`: does every speech verdict trace to a stated count and a bound?
+ *
+ * THE POPULATION IS DERIVED, NOT LISTED: every gate in `dialogue-gates.mjs` (imported, so a gate added tomorrow is in the
+ * population without an edit here) crossed with every rule this module states. `round84` is the reason the question is
+ * asked per gate instead of in prose: `turn-initiative-split` failed `companion_spoke_a_paragraph` on a reply whose
+ * longest bubble was 48 characters, and both the count and the bound existed only in the gate's head.
+ *
+ * THREE ANSWERS, not two: a gate is `failed` when it declares no unit or no bound, `unmeasured` when the unit is not one
+ * of `COUNT_UNITS` (the module may count something this repository has no word for, but it has to be given one), and
+ * `passed` only when both are stated. `T` counts the gates that stated a bound, and the caller prints it beside `G`.
+ */
+export function countedGateChecks({ dialogueGates = SCHEDULED_DIALOGUE_GATES, rules = speechRules() } = {}) {
+  const population = [
+    ...dialogueGates.map((gate) => ({ id: gate.id, declaration: gate.measure ?? null })),
+    ...rules.map((rule) => ({ id: rule.id, declaration: rule })),
+  ];
+  const checks = population.map((entry) => {
+    const unit = entry.declaration?.unit ?? null;
+    const bound = entry.declaration?.threshold;
+    const stated = bound !== undefined && bound !== null && bound !== "";
+    const status = !stated ? "failed" : COUNT_UNITS.includes(unit) ? "passed" : "unmeasured";
+    return {
+      id: `a_speech_gate_names_what_it_counted:${entry.id}`,
+      status,
+      detail:
+        status === "passed"
+          ? `counts ${String(unit)} · threshold ${String(bound)} · ${String(entry.declaration.statement ?? "")}`
+          : status === "failed"
+            ? `the verdict has no stated threshold, so nothing can check it: ${JSON.stringify(entry.declaration)}`
+            : `counts ${String(unit)}, which is not one of ${COUNT_UNITS.join(" / ")}`,
+    };
+  });
+  const by = (unit) => population.filter((entry) => entry.declaration?.unit === unit).length;
+  const stated = population.filter(
+    (entry) => entry.declaration?.threshold !== undefined && entry.declaration?.threshold !== null,
+  ).length;
+  return {
+    checks,
+    population,
+    reading:
+      `gates ${String(population.length)} · count-sentences ${String(by("sentences"))} · ` +
+      `count-chars ${String(by("chars"))} · count-bubbles ${String(by("bubbles"))} · ` +
+      `threshold-stated ${String(stated)}`,
+    thresholdStated: stated,
+    gates: population.length,
+  };
+}
 
 /**
  * Which of the card's own sections carry a stated test, and the rules they declare.
@@ -224,23 +321,23 @@ export function deliveredBubbles(result) {
 }
 
 /**
- * The shortest gap between two bubbles, from the run's own reading.
+ * The gaps between consecutive delivered bubbles, from the pieces' own absolute moments.
  *
- * `presentation.speechFrequency` is the run's published reading (`tools/lib/presentation-delivery-account.mjs`); a bundle
- * that predates it is measured here from the pieces' own moments, so an older run is not silently unmeasurable. `null`
- * when neither can place two bubbles, and the caller says which of the three zeroes that is.
+ * The population is DELIVERED bubbles that carry a moment: a bubble the presentation lease refused never reached the
+ * player, so it cannot be half of a gap. `publishedShortestGapMs` is the run's own reading of the same population
+ * (`tools/lib/presentation-delivery-account.mjs`, derived from these same pieces) and is carried so a disagreement between
+ * the two is visible in the reading instead of one of them being silently preferred.
  */
-export function shortestGapMs(result, bubbles) {
-  const published = result?.presentation?.speechFrequency?.shortestGapMs;
-  if (typeof published === "number" && Number.isFinite(published)) return published;
+export function bubbleGaps(result, bubbles) {
   const placed = bubbles.filter((bubble) => bubble.atMs !== null);
-  if (placed.length < 2) return null;
-  let shortest = null;
-  for (let index = 1; index < placed.length; index += 1) {
-    const gap = placed[index].atMs - placed[index - 1].atMs;
-    if (shortest === null || gap < shortest) shortest = gap;
-  }
-  return shortest;
+  const gaps = [];
+  for (let index = 1; index < placed.length; index += 1) gaps.push(placed[index].atMs - placed[index - 1].atMs);
+  const published = result?.presentation?.speechFrequency?.shortestGapMs;
+  return {
+    gaps,
+    placed: placed.length,
+    publishedShortestGapMs: typeof published === "number" && Number.isFinite(published) ? published : null,
+  };
 }
 
 /**
@@ -277,9 +374,15 @@ export function readProgressReports({ bindings, bubbles }) {
   return { checks, reports };
 }
 
-/** The metronome reading as one check: the shortest gap, printed, and the floor it was compared with. */
-export function readMetronome({ gapMs, floorMs = SHORTEST_BUBBLE_GAP_MS, bubbles }) {
-  if (gapMs === null)
+/**
+ * The metronome reading as one check: the shortest gap AND the population of gaps under the floor, both printed.
+ *
+ * The minimum alone is not a reading. `round84`'s 2 850 ms was read as a single tight pair while the bundle carried
+ * eleven of its sixty-one gaps under 10 000 ms; `round82` carried eleven of forty-seven. A verdict about a cadence has to
+ * say how much of the run the cadence covers, or the next reader either dismisses it as a fluke or raises the floor.
+ */
+export function readMetronome({ gaps = null, floorMs = SHORTEST_BUBBLE_GAP_MS, bubbles, published = null }) {
+  if (gaps === null || gaps.length === 0)
     return {
       id: "speech_is_not_a_metronome:unmeasured",
       status: "unmeasured",
@@ -288,17 +391,30 @@ export function readMetronome({ gapMs, floorMs = SHORTEST_BUBBLE_GAP_MS, bubbles
         "an absent reading is not a passing one",
       gapMs: null,
       floorMs,
+      gapsUnderFloor: null,
+      gapsMeasured: 0,
     };
+  const shortest = Math.min(...gaps);
+  const under = gaps.filter((gap) => gap < floorMs).length;
+  const disagreement =
+    published === null || published === undefined || published === shortest
+      ? ""
+      : ` · the run published ${String(published)} ms`;
   return {
-    id: `speech_is_not_a_metronome:${String(Math.round(gapMs))}`,
-    status: gapMs < floorMs ? "failed" : "passed",
+    id: `speech_is_not_a_metronome:${String(Math.round(shortest))}`,
+    status: shortest < floorMs ? "failed" : "passed",
     detail:
-      `shortest gap ${String(gapMs)} ms between two of ${String(bubbles)} bubbles; floor ${String(floorMs)} ms` +
-      (gapMs < floorMs
-        ? ` - two bubbles ${String(gapMs)} ms apart is one bubble per step: the cadence the card's 不报进度 family forbids`
-        : ""),
-    gapMs,
+      `shortest gap ${String(shortest)} ms between two of ${String(bubbles)} bubbles; floor ${String(floorMs)} ms; ` +
+      `${String(under)} of ${String(gaps.length)} gaps under the floor` +
+      (under === 0
+        ? " - no two bubbles arrived closer than the floor"
+        : ` - ${String(under)} of this run's bubbles arrived less than ${String(floorMs)} ms after the one before: the ` +
+          "cadence the card's 不报进度 family forbids") +
+      disagreement,
+    gapMs: shortest,
     floorMs,
+    gapsUnderFloor: under,
+    gapsMeasured: gaps.length,
   };
 }
 
@@ -368,30 +484,55 @@ export function rulesChecks({ root = REPOSITORY_ROOT } = {}) {
     status: checkStatus(condition.length === 0),
     detail: condition.length === 0 ? "a consequent clause keeps a condition out" : `clauses: ${condition.join(" · ")}`,
   });
-  const metronome = readMetronome({ gapMs: 7_133, floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
+  const metronome = readMetronome({ gaps: [7_133], floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
   checks.push({
     id: "a_seven_second_gap_is_a_metronome",
     status: checkStatus(metronome.status === "failed"),
     detail: metronome.detail,
   });
-  const turnPerBubble = readMetronome({ gapMs: 13_000, floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
+  const turnPerBubble = readMetronome({ gaps: [40_000, 13_000], floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
   checks.push({
     id: "a_thirteen_second_gap_is_not_a_metronome",
     status: checkStatus(turnPerBubble.status === "passed"),
     detail: turnPerBubble.detail,
   });
-  const unplaceable = readMetronome({ gapMs: null, floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
+  const unplaceable = readMetronome({ gaps: [], floorMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
   checks.push({
     id: "an_unmeasurable_cadence_is_not_a_pass",
     status: checkStatus(unplaceable.status === "unmeasured"),
     detail: unplaceable.detail,
   });
+  // The falsifier the cadence POPULATION needs: one tight pair printed alone reads as a fluke (`round84`'s 2 850 ms), so
+  // the reading is exercised on a run whose shortest gap is one of eleven.
+  const burst = readMetronome({
+    gaps: [2_850, ...Array.from({ length: 10 }, () => 6_000), 40_000],
+    floorMs: 10_000,
+    bubbles: 13,
+  });
+  checks.push({
+    id: "a_cadence_says_how_much_of_the_run_it_covers",
+    status: checkStatus(burst.gapsUnderFloor === 11 && /11 of 12 gaps under the floor/u.test(burst.detail)),
+    detail: burst.detail,
+  });
+  // The falsifier the traceability gate needs: a gate that states no bound cannot be checked, so it fails by name.
+  const untraceable = countedGateChecks({
+    dialogueGates: [{ id: "a_gate_with_no_bound", measure: { unit: "chars", statement: "no bound, no reading" } }],
+    rules: [],
+  });
+  checks.push({
+    id: "a_gate_that_names_no_bound_fails_by_name",
+    status: checkStatus(untraceable.checks[0]?.status === "failed" && untraceable.thresholdStated === 0),
+    detail: untraceable.checks[0]?.detail ?? "the falsifier produced no check at all",
+  });
+  const counted = countedGateChecks();
+  checks.push(...counted.checks);
   return {
     checks,
     examined: checks.length,
     rules: rules.length,
     boundRules: bindings.reduce((total, binding) => total + binding.rules, 0),
     bindings,
+    counted,
   };
 }
 
@@ -435,16 +576,24 @@ export function runDirChecks(runDir, { root = REPOSITORY_ROOT } = {}) {
       blocked: "run_presented_no_bubble",
     };
   const reading = readProgressReports({ bindings, bubbles });
-  const gapMs = shortestGapMs(result, bubbles);
-  const metronome = readMetronome({ gapMs, bubbles: bubbles.length });
+  const gaps = bubbleGaps(result, bubbles);
+  const metronome = readMetronome({
+    gaps: gaps.gaps,
+    bubbles: bubbles.length,
+    published: gaps.publishedShortestGapMs,
+  });
+  const counted = countedGateChecks();
   return {
-    checks: [...reading.checks, metronome],
+    checks: [...reading.checks, metronome, ...counted.checks],
     examined: bubbles.length,
     rules: rules.length,
     boundRules: bindings.reduce((total, binding) => total + binding.rules, 0),
     bubbles: bubbles.length,
     reports: reading.reports,
-    gapMs,
+    gaps: gaps.gaps.length,
+    gapMs: metronome.gapMs,
+    gapsUnderFloor: metronome.gapsUnderFloor,
+    counted: counted.reading,
   };
 }
 
@@ -476,7 +625,8 @@ const report = {
 };
 const population =
   `rules examined ${String(report.rulesExamined)} · with a stated text test ${String(reading.boundRules ?? 0)}` +
-  (runDir === null ? "" : ` · bubbles examined ${String(report.bubblesExamined)} · reports ${String(report.reports)}`);
+  (runDir === null ? "" : ` · bubbles examined ${String(report.bubblesExamined)} · reports ${String(report.reports)}`) +
+  ` · ${String(reading.counted?.reading ?? countedGateChecks().reading)}`;
 process.stdout.write(`${population}\n`);
 process.stdout.write(`${JSON.stringify(report)}\n`);
 if (status === "blocked") process.exitCode = 2;

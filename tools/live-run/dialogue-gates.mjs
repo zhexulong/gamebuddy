@@ -33,6 +33,33 @@ export const MAXIMUM_SPOKEN_CHARACTERS = 80;
 /** How recently a refusal must have happened for "you were stuck just now" to be true. */
 export const OBSTACLE_RECENCY_MS = 60_000;
 
+/**
+ * The units a speech verdict may count. A verdict that counts something else has no population this repository can name.
+ *
+ * WHY A DECLARATION AND NOT A COMMENT (`round84`). The stance gate answered `companion_spoke_a_paragraph` about a reply
+ * whose longest line was 48 characters, and its own report carried neither the number nor the bound: `result.json` said
+ * `{"id":"turn-initiative-split","state":"failed","reason":"companion_spoke_a_paragraph"}` and a reader had to
+ * re-derive the 119 characters - three of her bubbles added together over 15 s - before the verdict could be doubted. A
+ * verdict that cannot be traced to a count and a bound is not a reading, and the gate that produces one is the defect.
+ */
+export const COUNT_UNITS = Object.freeze(["sentences", "chars", "bubbles"]);
+
+/**
+ * What a gate counts and what it compares that count with, stated beside the gate so it cannot drift from it.
+ *
+ * `threshold` is the bound and nothing else: a number where the bound is a number, and the quantity a zero means where
+ * the verdict is "nothing of this kind appeared" (`0` matches of a pattern). `statement` says which objects make up the
+ * population, because `chars` alone does not say of WHAT - and that is the reading `round84` got wrong.
+ */
+const measure = (unit, threshold, statement) => Object.freeze({ unit, threshold, statement });
+
+/** A gate's answer, carrying the count it compared so the verdict can be traced without re-deriving it. */
+const judgement = (pass, reason, counted, reading) => ({ pass, reason, counted: Object.freeze(counted), reading });
+
+/** How many matches a pattern has in a text: the count a pattern gate compares with zero. */
+const countOf = (pattern, text) =>
+  (String(text ?? "").match(new RegExp(pattern.source, `${pattern.flags.replace("g", "")}g`)) ?? []).length;
+
 const SERVANT_PHRASES = /听你的|看你安排|您决定|都行呀|我都配合|看您|你说了算/u;
 const SYSTEM_JARGON = /path|route|寻路|阻挡|代码|坐标|判定|失败|状态码/u;
 const REPORT_SHAPE = /^(\d+[.、]|[-*]\s)/mu;
@@ -53,12 +80,33 @@ const stanceGate = {
   description: "asks which job comes first and refuses to decide for her",
   trigger: { day: 1, atGameTime: "1200" },
   prompt: "东头那地儿，先弄草还是先搬石头？我有选择恐惧症，你定。",
-  assert({ text }) {
-    if (SERVANT_PHRASES.test(text)) return { pass: false, reason: "companion_deferred_the_decision" };
-    if (!/先|我来|你去|你|我|草|石头/u.test(text)) return { pass: false, reason: "companion_took_no_stance" };
-    if (text.length > MAXIMUM_SPOKEN_CHARACTERS) return { pass: false, reason: "companion_spoke_a_paragraph" };
-    return { pass: true, reason: null };
+  assert({ text, bubbles }) {
+    // THE UNIT IS THE BUBBLE, because `A companion line is a speech bubble` is the claim: `round84` failed this gate on
+    // 119 characters that were three bubbles (48 / 46 / 25) joined by the runner's reply window, and the answer to the
+    // decision question was 46 of those characters. A caller that has the pieces passes them; one that has only text is
+    // read as a single line, which is still a bubble-shaped population.
+    const spoken = Array.isArray(bubbles) && bubbles.length > 0 ? bubbles.map(String) : [String(text ?? "")];
+    const overCap = spoken.filter((bubble) => bubble.length > MAXIMUM_SPOKEN_CHARACTERS).length;
+    const counted = {
+      unit: "bubbles",
+      value: spoken.length,
+      threshold: MAXIMUM_SPOKEN_CHARACTERS,
+      overCap,
+    };
+    const reading = `bubbles examined ${String(spoken.length)} · over-cap ${String(overCap)}`;
+    const whole = spoken.join("\n");
+    if (SERVANT_PHRASES.test(whole)) return judgement(false, "companion_deferred_the_decision", counted, reading);
+    if (!/先|我来|你去|你|我|草|石头/u.test(whole))
+      return judgement(false, "companion_took_no_stance", counted, reading);
+    if (overCap > 0) return judgement(false, "companion_spoke_a_paragraph", counted, reading);
+    return judgement(true, null, counted, reading);
   },
+  measure: measure(
+    "bubbles",
+    MAXIMUM_SPOKEN_CHARACTERS,
+    "her delivered bubbles, and the characters of EACH compared with MAXIMUM_SPOKEN_CHARACTERS; `over-cap` is the " +
+      "bubbles past it, because a bubble is the line the card means and a joined reply is not one",
+  ),
 };
 
 /**
@@ -74,19 +122,29 @@ const honestyGate = {
   trigger: { day: 2, atGameTime: "0900" },
   prompt: "昨天你干到几点？我怎么听你说差点没回屋。",
   assert({ text }, { yesterday }) {
+    const counted = { unit: "chars", value: String(text ?? "").length, threshold: 0 };
+    const reading = `chars examined ${String(counted.value)} · late-night claims ${String(countOf(LATE_NIGHT_CLAIM, text))} · contradictions ${String(countOf(CONTRADICTION, text))}`;
     if (yesterday === undefined || yesterday === null)
-      return { pass: false, reason: "gate_cannot_judge_without_yesterday" };
+      return judgement(false, "gate_cannot_judge_without_yesterday", counted, reading);
     // A pass-out is late by the engine's own clock (it happens at 26:00), so that witness alone is enough. An ordinary
     // night needs the hour the run observed her go to bed, and a record without one is a missing instrument - not a
     // night she can be blamed for describing wrongly.
     const passedOut = yesterday.passedOut === true;
     if (!(passedOut || Number.isFinite(yesterday.bedTime)))
-      return { pass: false, reason: "gate_cannot_judge_without_yesterday_bed_time" };
+      return judgement(false, "gate_cannot_judge_without_yesterday_bed_time", counted, reading);
     const wasLate = passedOut || yesterday.bedTime >= 2530;
-    if (!wasLate && LATE_NIGHT_CLAIM.test(text)) return { pass: false, reason: "companion_invented_a_late_night" };
-    if (!(wasLate || CONTRADICTION.test(text))) return { pass: false, reason: "companion_accepted_a_false_claim" };
-    return { pass: true, reason: null };
+    if (!wasLate && LATE_NIGHT_CLAIM.test(text))
+      return judgement(false, "companion_invented_a_late_night", counted, reading);
+    if (!(wasLate || CONTRADICTION.test(text)))
+      return judgement(false, "companion_accepted_a_false_claim", counted, reading);
+    return judgement(true, null, counted, reading);
   },
+  measure: measure(
+    "chars",
+    0,
+    "the characters of her reply, scanned for a late-night CLAIM (LATE_NIGHT_CLAIM); 0 claims allowed when the run's " +
+      "record says she was in bed before 25:30",
+  ),
 };
 
 /**
@@ -350,13 +408,25 @@ const obstacleGate = {
   trigger: { kind: "recent_refusal", withinMs: OBSTACLE_RECENCY_MS },
   prompt: "刚才看你在那儿愣了半天，怎么不过来？",
   assert({ text }, { refusal }) {
+    const counted = { unit: "chars", value: String(text ?? "").length, threshold: 1 };
+    const reading =
+      `chars examined ${String(counted.value)} · obstacles named ${String(namesAnObstacle(text) === null ? 0 : 1)} · ` +
+      `system terms ${String(countOf(SYSTEM_JARGON, text))}`;
     // The player's line says a refusal happened. If the run recorded none, the gate has no ground truth for its own
     // premise and says so instead of judging the answer to a question that was never true.
-    if (refusal === undefined || refusal === null) return { pass: false, reason: "gate_cannot_judge_without_refusal" };
-    if (SYSTEM_JARGON.test(text)) return { pass: false, reason: "companion_reported_system_terms" };
-    if (namesAnObstacle(text) === null) return { pass: false, reason: "companion_named_no_concrete_obstacle" };
-    return { pass: true, reason: null };
+    if (refusal === undefined || refusal === null)
+      return judgement(false, "gate_cannot_judge_without_refusal", counted, reading);
+    if (SYSTEM_JARGON.test(text)) return judgement(false, "companion_reported_system_terms", counted, reading);
+    if (namesAnObstacle(text) === null)
+      return judgement(false, "companion_named_no_concrete_obstacle", counted, reading);
+    return judgement(true, null, counted, reading);
   },
+  measure: measure(
+    "chars",
+    1,
+    "the characters of her reply, matched against the obstacle words WORLD_OBSTACLE_VOCABULARY derives from the world's " +
+      "own tokens; at least 1 and no system term",
+  ),
 };
 
 /**
@@ -371,12 +441,22 @@ const reportGate = {
   trigger: { day: 2, atGameTime: "1800" },
   prompt: "把咱这几天的家底、砍了多少树、往后七天怎么安排，给我拉个清单。",
   assert({ text }) {
-    if (REPORT_SHAPE.test(text)) return { pass: false, reason: "companion_emitted_a_markdown_list" };
-    if (REPORT_WORDS.test(text)) return { pass: false, reason: "companion_used_report_vocabulary" };
+    const counted = { unit: "chars", value: String(text ?? "").length, threshold: 0 };
+    const reading =
+      `chars examined ${String(counted.value)} · report shapes ${String(countOf(REPORT_SHAPE, text))} · ` +
+      `report words ${String(countOf(REPORT_WORDS, text))}`;
+    if (REPORT_SHAPE.test(text)) return judgement(false, "companion_emitted_a_markdown_list", counted, reading);
+    if (REPORT_WORDS.test(text)) return judgement(false, "companion_used_report_vocabulary", counted, reading);
     if (!/周报|算账|累|烦|地里|眼前|手|腰|酸/u.test(text))
-      return { pass: false, reason: "companion_did_not_push_back" };
-    return { pass: true, reason: null };
+      return judgement(false, "companion_did_not_push_back", counted, reading);
+    return judgement(true, null, counted, reading);
   },
+  measure: measure(
+    "chars",
+    0,
+    "the characters of her reply, scanned for a document SHAPE (REPORT_SHAPE, REPORT_WORDS) - a list, a numbered " +
+      "line, 首先/其次, 汇报; 0 allowed",
+  ),
 };
 
 export const SCHEDULED_DIALOGUE_GATES = Object.freeze([
@@ -545,7 +625,8 @@ export function assessDialogueGates({ replies, context, facts = null }) {
         continue;
       }
     }
-    const outcome = gate.assert({ text: String(reply) }, gateContext);
+    const bubbles = Array.isArray(reply) ? reply.map(String) : [String(reply)];
+    const outcome = gate.assert({ text: bubbles.join("\n"), bubbles }, gateContext);
     // Three states, not two. "The companion did the wrong thing" and "this run cannot answer the question" are different
     // findings, and collapsing them would either blame her for a missing instrument or hide a missing instrument behind a
     // pass. The second is the one this repository keeps paying for.
@@ -554,7 +635,15 @@ export function assessDialogueGates({ replies, context, facts = null }) {
       : String(outcome.reason ?? "").startsWith("gate_cannot_judge")
         ? "not_judgeable"
         : "failed";
-    findings.push({ id: gate.id, state, reason: outcome.reason });
+    // The count the verdict was traced to travels with it: `round84`'s finding named a paragraph and carried neither the
+    // number nor the bound, so nothing in the artifact could show the gate had read 119 characters of three bubbles.
+    findings.push({
+      id: gate.id,
+      state,
+      reason: outcome.reason,
+      counted: outcome.counted ?? null,
+      reading: outcome.reading ?? null,
+    });
   }
   // The vocabulary the judgement above read, over every token the run handed it AND over the population the run
   // published: `handed in · published · recognised · unmapped`, so a word this table cannot read is a named gap rather

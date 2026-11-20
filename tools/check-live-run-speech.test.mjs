@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  bubbleGaps,
   cardConductRules,
   CARD_PATH,
+  countedGateChecks,
   deliveredBubbles,
+  METRONOME_RULE,
   progressReportClauses,
   readMetronome,
   readProgressReports,
@@ -16,6 +19,7 @@ import {
   rulesUnderTest,
   runDirChecks,
   SHORTEST_BUBBLE_GAP_MS,
+  speechRules,
   TEXT_TESTS,
 } from "./check-live-run-speech.mjs";
 
@@ -168,16 +172,115 @@ test("round73's seven bubbles: two report a finished step, five do not, and whic
 });
 
 test("the metronome clause fails a 7-second gap by name, passes a turn-per-bubble cadence, and never passes unmeasured", () => {
-  const fast = readMetronome({ gapMs: ROUND73.presentation.speechFrequency.shortestGapMs, bubbles: 7 });
+  const fast = readMetronome({
+    gaps: [ROUND73.presentation.speechFrequency.shortestGapMs],
+    bubbles: 7,
+  });
   assert.equal(fast.status, "failed");
   assert.equal(fast.id, `speech_is_not_a_metronome:${String(fast.gapMs)}`);
   assert.equal(fast.floorMs, SHORTEST_BUBBLE_GAP_MS);
   assert.match(fast.detail, /shortest gap 7133 ms between two of 7 bubbles/u);
-  const slow = readMetronome({ gapMs: SHORTEST_BUBBLE_GAP_MS, bubbles: 7 });
+  const slow = readMetronome({ gaps: [SHORTEST_BUBBLE_GAP_MS, 31_000], bubbles: 7 });
   assert.equal(slow.status, "passed", "a gap exactly at the floor is not under it");
-  const unmeasured = readMetronome({ gapMs: null, bubbles: 7 });
+  const unmeasured = readMetronome({ gaps: [], bubbles: 7 });
   assert.equal(unmeasured.status, "unmeasured");
   assert.match(unmeasured.detail, /an absent reading is not a passing one/u);
+});
+
+// The reading that started this: `round84`'s published `shortestGapMs: 2850` was read as one tight pair, and the bundle's
+// own pieces carry ELEVEN of its sixty-one gaps under the floor. The minimum is not the population, and a verdict about a
+// cadence that prints only its extreme either gets dismissed as a fluke or buys a raised floor.
+test("a cadence is a population: the reading prints how many of the gaps are under the floor", () => {
+  const gaps = [9_103, 4_496, 7_836, 3_916, 33_000, 15_000];
+  const reading = readMetronome({ gaps, bubbles: 7 });
+  assert.equal(reading.gapMs, 3_916);
+  assert.equal(reading.gapsUnderFloor, 4);
+  assert.equal(reading.gapsMeasured, gaps.length);
+  assert.match(reading.detail, /shortest gap 3916 ms between two of 7 bubbles/u);
+  assert.match(reading.detail, /4 of 6 gaps under the floor/u);
+  const quiet = readMetronome({ gaps: [20_000, 30_000], bubbles: 3 });
+  assert.match(quiet.detail, /0 of 2 gaps under the floor - no two bubbles arrived closer than the floor/u);
+  assert.equal(quiet.status, "passed");
+});
+
+// RED ON REAL HISTORY. `round84`'s 2 850 ms was read as one tight pair and dismissed; its own pieces carry ELEVEN of
+// sixty-one gaps under the floor, and `round82` eleven of forty-seven - the same rate, so the cadence is the run's and
+// not the minimum's. Skipped when the bundle is not on this machine, like the other artifact comparisons here.
+test("round84 is not one tight pair: its own pieces put 11 of 61 gaps under the floor", () => {
+  const bundles = [
+    [".live-runs/game-ladder/2026-11-20T13-52-51-386Z-multiday_routine", 11, 61],
+    [".live-runs/game-ladder/2026-11-20T09-09-58-562Z-multiday_routine", 11, 47],
+  ];
+  for (const [relative, under, measured] of bundles) {
+    const path = resolve(REPOSITORY_ROOT, relative, "result.json");
+    if (!existsSync(path)) continue;
+    const result = JSON.parse(readFileSync(path, "utf8"));
+    const bubbles = deliveredBubbles(result);
+    const read = bubbleGaps(result, bubbles);
+    const metronome = readMetronome({
+      gaps: read.gaps,
+      bubbles: bubbles.length,
+      published: read.publishedShortestGapMs,
+    });
+    assert.equal(metronome.gapsUnderFloor, under, `${relative}: gaps under the floor`);
+    assert.equal(metronome.gapsMeasured, measured, `${relative}: gaps measured`);
+    assert.equal(metronome.status, "failed");
+  }
+});
+
+test("the gaps are measured from the pieces' own moments and a disagreement with the run's reading is printed", () => {
+  const placed = deliveredBubbles(ROUND73);
+  const read = bubbleGaps(ROUND73, placed);
+  assert.equal(read.placed, 7);
+  assert.equal(read.gaps.length, 6);
+  assert.equal(read.publishedShortestGapMs, 7_133);
+  assert.equal(Math.min(...read.gaps), 7_133, "the pieces reproduce the run's own published shortest gap");
+  const disagreeing = readMetronome({ gaps: read.gaps, bubbles: 7, published: 9_999 });
+  assert.match(disagreeing.detail, /the run published 9999 ms/u);
+});
+
+test("a when-clause is a plan, not a receipt: V完/了就… is out of the progress-report population", () => {
+  // Both are `round84`'s own bubbles, verbatim, and both were counted as progress reports before this rule.
+  assert.deepEqual(progressReportClauses("这一小片扫完我就去捡地上那些零碎，捡完再看看有啥别的可干。"), []);
+  assert.deepEqual(progressReportClauses("天擦黑了，我把地上这点零碎捡完就回屋。"), []);
+  assert.deepEqual(progressReportClauses("木料进包了，树桩也清干净，剩最后一颗零碎捡了我就换活儿。"), []);
+  // And a receipt that happens to mention 就 elsewhere in the clause is still a receipt.
+  assert.deepEqual(progressReportClauses("门口那两块石头我顺手敲了。"), ["门口那两块石头我顺手敲了"]);
+  // The shape this rule does NOT read, stated so the gap is a decision: 完 in a subordinate clause whose forward marker
+  // sits in the next clause.
+  assert.deepEqual(progressReportClauses("西头这片清完，我把地上的木料石头零碎挨个捡一圈再收手。"), ["西头这片清完"]);
+});
+
+test("every speech gate names what it counted, and threshold-stated is all of them", () => {
+  const counted = countedGateChecks();
+  assert.ok(counted.gates > 0, "a population of zero agrees with itself");
+  assert.equal(counted.checks.length, counted.gates);
+  assert.equal(counted.thresholdStated, counted.gates, `reading: ${counted.reading}`);
+  assert.match(
+    counted.reading,
+    /gates \d+ · count-sentences \d+ · count-chars \d+ · count-bubbles \d+ · threshold-stated \d+/u,
+  );
+  for (const check of counted.checks) assert.equal(check.status, "passed", `${check.id}: ${String(check.detail)}`);
+  // The population is derived: both modules' gates are in it, by name.
+  assert.ok(counted.checks.some((check) => check.id.endsWith(":turn-initiative-split")));
+  assert.ok(counted.checks.some((check) => check.id.endsWith(`:${METRONOME_RULE.id}`)));
+  assert.equal(speechRules().length, TEXT_TESTS.length + 1);
+});
+
+test("a gate that stops stating its bound fails by name instead of passing over an untraceable verdict", () => {
+  const falsified = countedGateChecks({
+    dialogueGates: [{ id: "a_gate_with_no_bound", measure: { unit: "chars" } }],
+    rules: [],
+  });
+  assert.equal(falsified.thresholdStated, 0);
+  assert.equal(falsified.checks[0].id, "a_speech_gate_names_what_it_counted:a_gate_with_no_bound");
+  assert.equal(falsified.checks[0].status, "failed");
+  // A unit this repository has no word for is unmeasured, not passed: the count cannot be read by anything downstream.
+  const alien = countedGateChecks({
+    dialogueGates: [{ id: "counts_vibes", measure: { unit: "vibes", threshold: 3 } }],
+    rules: [],
+  });
+  assert.equal(alien.checks[0].status, "unmeasured");
 });
 
 test("the gate cannot pass without being able to fail: every rule in --rules mode is exercised", () => {

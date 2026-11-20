@@ -2176,16 +2176,19 @@ async function deliverDialogueGatesForDay(day, tools) {
         gate.id,
         Object.freeze({ ...claimed, admission: `refused:${admission.lastRefusal ?? "unknown"}` }),
       );
-      dialogueReplies.set(gate.id, "");
+      dialogueReplies.set(gate.id, []);
       continue;
     }
     await new Promise((resolve) => setTimeout(resolve, DIALOGUE_REPLY_WINDOW_MS));
+    // THE BUBBLES, not their concatenation. The gates' unit is the speech bubble (`MAXIMUM_SPOKEN_CHARACTERS`), and one
+    // joined string destroyed it: `round84` failed `companion_spoke_a_paragraph` on 119 characters that were three
+    // bubbles of 48 / 46 / 25, in reply to a decision question it answered in 46. The normalisation is unchanged - it is
+    // applied per bubble now instead of to the sum.
     const spoken = presentationPieces
       .slice(piecesBefore)
       .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-      .join("")
-      .replace(/\s+/gu, " ")
-      .trim();
+      .map((text) => text.replace(/\s+/gu, " ").trim())
+      .filter((text) => text.length > 0);
     dialogueDelivery.set(gate.id, Object.freeze({ ...claimed, admission: "accepted" }));
     dialogueReplies.set(gate.id, spoken);
   }

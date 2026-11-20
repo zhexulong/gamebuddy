@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { classifySpokenLine } from "./interaction-value-gate.mjs";
 import {
@@ -104,6 +106,78 @@ test("a companion that takes a side and splits the work passes the stance gate",
 test("a stance is not a paragraph", () => {
   const outcome = gate("turn-initiative-split").assert({ text: "先".repeat(MAXIMUM_SPOKEN_CHARACTERS + 1) });
   assert.equal(outcome.reason, "companion_spoke_a_paragraph");
+  assert.equal(
+    outcome.counted.overCap,
+    1,
+    "a caller with only text is read as one line, and that line is over the cap",
+  );
+});
+
+// `round84` (2026-11-20T13-52-51-386Z) answered the stance gate with these three bubbles over 15 s, and the gate failed
+// `companion_spoke_a_paragraph` on their concatenation: 48 + 46 + 25 = 119 characters against a cap declared for a bubble.
+// The answer to `先弄草还是先搬石头` is the middle bubble, 46 characters. Verbatim from that run's `presentation.pieces`.
+const ROUND84_STANCE_REPLY = [
+  "沿着街往南走，前面拐过去应该就能碰到人。 我往皮埃尔店里拐一趟，顺手看看种子啥价，跟老板搭两句。",
+  "唔。 先割草，镰刀一挥一大片，草籽顺手也进包。石头留后头用镐慢慢敲，别一上来就把体力砸没了。",
+  "到皮埃尔店里了，我瞅瞅种子和价钱，回去跟你报个数。",
+];
+// `round82` (2026-11-20T09-09-58-562Z) carried this bubble: four sentences of narration with no decision in them, 96
+// characters, one bubble. It is the paragraph the cap is for, and it is real history rather than a shape written here.
+const ROUND82_PARAGRAPH =
+  "她脚步快，一转眼就没影了，店九点才开，我先在门口等着。 门口那格站不住脚，我从下边绕过去再敲一次门。 " +
+  "总算进来了，贾斯就在里头，我过去跟她搭两句话。 柜台那一侧过不去，我换个方向再凑近点试试。";
+
+test("the paragraph cap is applied to each bubble, not to the window the runner hands the gate", () => {
+  const outcome = gate("turn-initiative-split").assert({
+    text: ROUND84_STANCE_REPLY.join("\n"),
+    bubbles: ROUND84_STANCE_REPLY,
+  });
+  assert.equal(outcome.pass, true, `round84's answer is a good answer: ${outcome.reason}`);
+  assert.deepEqual(outcome.counted, { unit: "bubbles", value: 3, threshold: MAXIMUM_SPOKEN_CHARACTERS, overCap: 0 });
+  assert.equal(outcome.reading, "bubbles examined 3 · over-cap 0");
+  assert.ok(
+    ROUND84_STANCE_REPLY.join("").length > MAXIMUM_SPOKEN_CHARACTERS,
+    "and the concatenation the gate used to read was over the cap, which is the defect this pins",
+  );
+});
+
+test("a four-sentence narration that really shipped is still a paragraph", () => {
+  const outcome = gate("turn-initiative-split").assert({ text: ROUND82_PARAGRAPH, bubbles: [ROUND82_PARAGRAPH] });
+  assert.equal(outcome.reason, "companion_spoke_a_paragraph");
+  assert.equal(outcome.counted.value, 1);
+  assert.equal(outcome.counted.overCap, 1);
+  assert.ok(ROUND82_PARAGRAPH.length > MAXIMUM_SPOKEN_CHARACTERS);
+});
+
+test("the two bubbles quoted above are the runs' own, when those bundles are still on this machine", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const bundles = [
+    [".live-runs/game-ladder/2026-11-20T13-52-51-386Z-multiday_routine/result.json", ROUND84_STANCE_REPLY],
+    [".live-runs/game-ladder/2026-11-20T09-09-58-562Z-multiday_routine/result.json", [ROUND82_PARAGRAPH]],
+  ];
+  for (const [relative, quoted] of bundles) {
+    const path = join(root, relative);
+    if (!existsSync(path)) continue;
+    const delivered = JSON.parse(readFileSync(path, "utf8")).presentation.pieces.map((piece) => String(piece.text));
+    for (const bubble of quoted) assert.ok(delivered.includes(bubble), `${relative} does not carry 「${bubble}」`);
+  }
+});
+
+test("a verdict carries the count and the bound it was read with, not just a reason code", () => {
+  const verdict = assessDialogueGates({
+    replies: { "turn-initiative-split": ROUND84_STANCE_REPLY },
+    context: {},
+  });
+  const finding = findingFor(verdict, "turn-initiative-split");
+  assert.equal(finding.state, "passed");
+  assert.deepEqual(finding.counted, { unit: "bubbles", value: 3, threshold: MAXIMUM_SPOKEN_CHARACTERS, overCap: 0 });
+  assert.equal(finding.reading, "bubbles examined 3 · over-cap 0");
+  // The same gate over the concatenation, which is what the runner used to record: the red this change exists for.
+  const concatenated = assessDialogueGates({
+    replies: { "turn-initiative-split": ROUND84_STANCE_REPLY.join("") },
+    context: {},
+  });
+  assert.equal(findingFor(concatenated, "turn-initiative-split").reason, "companion_spoke_a_paragraph");
 });
 
 test("claiming a late night that did not happen fails the honesty gate", () => {
