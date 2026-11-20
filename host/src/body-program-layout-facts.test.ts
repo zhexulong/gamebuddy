@@ -78,8 +78,8 @@ const rowWithFacts = {
 
 const SCRIPT = 'builder.water_crop({ x: 10, y: 12, expectedTargetId: "crop_deadbeef", charge: 0 });';
 
-function compileAgainst(cropTargets: readonly Readonly<Record<string, unknown>>[]) {
-  const snapshot = { ...baseSnapshot, cropTargets } as unknown as Snapshot;
+function compileAgainst(cropTargets: readonly Readonly<Record<string, unknown>>[] | undefined) {
+  const snapshot = { ...baseSnapshot, ...(cropTargets === undefined ? {} : { cropTargets }) } as unknown as Snapshot;
   return compilePlanScript({ script: SCRIPT }, { snapshot, actions });
 }
 
@@ -103,7 +103,11 @@ test("a plan whose row carries the facts is answered with no warning at all", ()
 });
 
 test("a node aimed at a tile the snapshot has no row for warns by the node's own position", () => {
-  const compiled = compileAgainst([]);
+  // THE FAMILY IS UNMEASURED, NOT EMPTY, because those are two different answers and only one of them can carry this
+  // node at all: a family the snapshot MEASURED and found empty answers that the target does not exist, which is the
+  // call being refused rather than a plan that needs a warning. What is left is the family the snapshot never published -
+  // her own number stands, the node is written, and the layout facts it assumed are named.
+  const compiled = compileAgainst(undefined);
   assert.equal(compiled.status === "compiled", true);
   assert.deepEqual(compiled.status === "compiled" ? compiled.layoutFactsAbsent : [], [
     "layout_facts_absent:call 1:isRaised",

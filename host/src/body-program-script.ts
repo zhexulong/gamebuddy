@@ -385,6 +385,19 @@ type RunnablePlan = Readonly<{
   /** Every binding, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
   boundFromSnapshotCount: number;
   /**
+   * The arguments this compiler could NOT read out of the snapshot, one per reading, spelled
+   * `unmeasured=<actionId>.<argument>;family_not_published=<family>` - the argument, and the family the SURFACE declares
+   * for the action that the snapshot does not carry.
+   *
+   * Present for the same reason `boundFromSnapshot` is, from the other side. A family the snapshot does not publish at
+   * all cannot answer: her own number stays in the program, and that number is the one argument this side never checked -
+   * so the answer names it instead of leaving her to believe the harness verified it. Bounded;
+   * `readingsUnmeasuredCount` is the population.
+   */
+  readingsUnmeasured: readonly string[];
+  /** Every unmeasured reading, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  readingsUnmeasuredCount: number;
+  /**
    * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
    * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
    * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
@@ -1571,6 +1584,8 @@ export function compilePlanScript(
     insertedNodeIds: Object.freeze(state.insertedNodeIds.map(programNodeId)),
     boundFromSnapshot: Object.freeze(state.boundFromSnapshot.slice(0, MAX_REPORTED_PLAN_READINGS)),
     boundFromSnapshotCount: state.boundFromSnapshot.length,
+    readingsUnmeasured: Object.freeze(state.readingsUnmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
+    readingsUnmeasuredCount: state.readingsUnmeasured.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
@@ -1679,6 +1694,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     inserted: [],
     insertedNodeIds: [],
     boundFromSnapshot: [],
+    readingsUnmeasured: [],
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
@@ -1884,6 +1900,16 @@ type PlanScriptState = {
    * `<actionId>.<argument>` beside the path it was read from. Narrowed once, where the answer is built.
    */
   boundFromSnapshot: string[];
+  /**
+   * The arguments this compiler could NOT read out of the snapshot, in the order the calls were written, each
+   * `unmeasured=<actionId>.<argument>;family_not_published=<family>` - the argument, and the family the SURFACE declares
+   * for the action that the snapshot does not carry.
+   *
+   * The other half of `boundFromSnapshot`, and the half that used to be silence: a family the snapshot never published
+   * leaves her number in the program, so nothing refused her AND nothing told her - and her number is the one value this
+   * side could not check. Narrowed once, where the answer is built.
+   */
+  readingsUnmeasured: string[];
   /**
    * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
@@ -2386,6 +2412,12 @@ function refuseUnknownArguments(
  * published at all (an older Mod, or a world that measured nothing): the snapshot cannot answer, so her number stands
  * exactly as it did before, and a call that omitted it is refused as a missing argument.
  * </p>
+ * <p>
+ * (2) COVERS THE FAMILY THAT IS MEASURED AND EMPTY, which `planSnapshotRows` used to fold into (3): a published family
+ * holding no row at all is the snapshot saying the target does not exist, and it is refused for the reason every
+ * unmatched tile is. (3) IS NOT SILENT: her number stands, so the answer names the argument the harness could not read
+ * (`readingsUnmeasured`) - a value nothing on this side checked is a fact she has to know about the program she submits.
+ * </p>
  */
 function bindSnapshotReadings(
   action: PublishedPlanAction,
@@ -2397,11 +2429,26 @@ function bindSnapshotReadings(
   const readings = action.arguments.filter((argument) => planReadingField(argument.name) !== undefined);
   const familyName = action.targetFamily;
   if (readings.length === 0 || familyName === null) return [];
-  const rows = planSnapshotRows(snapshot, familyName);
+  const family = planSnapshotRows(snapshot, familyName);
   // NOT MEASURED, which is a different answer from "measured, and nothing is there": the doctrine every family in
-  // `protocol.ts` states (`soilTiles` null versus an empty array). An unmeasured row cannot overrule the author's own
-  // number, and it cannot refuse her either.
-  if (rows.length === 0) return [];
+  // `protocol.ts` states (`soilTiles` null versus an empty array). An unmeasured family cannot overrule the author's own
+  // number and cannot refuse her either - but it SAYS SO, because a number nothing on this side checked is the one fact
+  // she has to know about the program that is about to run.
+  if (!family.measured) {
+    for (const reading of readings)
+      state.readingsUnmeasured.push(`unmeasured=${action.actionId}.${reading.name};family_not_published=${familyName}`);
+    return [];
+  }
+  const rows = family.rows;
+  // MEASURED, AND THE FAMILY HOLDS NOTHING: no row can match, so the target this step names does not exist. Refusing
+  // here is the difference the fold used to lose - an empty family used to be read as "not measured", the answer that
+  // leaves her number standing, and the plan ran to answer `seed_target_unavailable` once per node.
+  if (rows.length === 0)
+    rejectPlanCall(
+      `plan_script_target_not_in_the_submitted_snapshot:${familyName}:${planNamedPlace(canonical)}`,
+      state,
+      requirement,
+    );
   const fields = planRowFields(rows);
   // SELECTION IS EXACT FIRST, and the assertion's own name is the fallback: an action that names no field its family
   // publishes exactly (`use_item` writes `expectedQualifiedItemId` against a row publishing `qualifiedItemId`) still
@@ -2461,11 +2508,30 @@ function planReadingField(argumentName: string): string | undefined {
   return PLAN_SNAPSHOT_READINGS.get(argumentName);
 }
 
-/** The rows one published family carries in this snapshot, or none when the snapshot does not publish it. */
-function planSnapshotRows(snapshot: Snapshot, family: string): readonly Readonly<Record<string, unknown>>[] {
+/** The one answer a family the snapshot does not publish at all gets: nothing was measured, so nothing can refuse. */
+const PLAN_FAMILY_UNMEASURED: Readonly<{ measured: false }> = Object.freeze({ measured: false });
+
+/**
+ * The rows one published family carries in this snapshot, or the fact that the snapshot does not publish it at all.
+ *
+ * <p>
+ * THE TWO USED TO BE ONE ANSWER, and that fold is the defect: `undefined`, `null` and a MEASURED `[]` all became
+ * `rows = []`, so a family the snapshot measured and found empty - the family saying "there is no such target" - was
+ * answered exactly like a family it never published, and the caller kept the number she wrote. The distinction is the
+ * doctrine every family in `protocol.ts` states (`soilTiles` null versus an empty array), and it is the whole of the
+ * answer: measured-and-empty is a refusal, unmeasured is not a refusal but a thing to say.
+ * </p>
+ */
+function planSnapshotRows(
+  snapshot: Snapshot,
+  family: string,
+): Readonly<{ measured: false }> | Readonly<{ measured: true; rows: readonly Readonly<Record<string, unknown>>[] }> {
   const rows = (snapshot as Readonly<Record<string, unknown>>)[family];
-  if (!Array.isArray(rows)) return [];
-  return rows.filter((row): row is Readonly<Record<string, unknown>> => isRecord(row));
+  if (!Array.isArray(rows)) return PLAN_FAMILY_UNMEASURED;
+  return Object.freeze({
+    measured: true as const,
+    rows: Object.freeze(rows.filter((row): row is Readonly<Record<string, unknown>> => isRecord(row))),
+  });
 }
 
 /** Every field name the family's own rows carry, which is what a selection may match by. */
@@ -2531,6 +2597,28 @@ function planSelectedPlace(selections: readonly PlanRowSelection[]): string {
   const y = selections.find((selection) => selection.field === "y");
   if (x !== undefined && y !== undefined) return `${x.value},${y.value}`;
   return selections.map((selection) => `${selection.field}=${selection.value}`).join(";");
+}
+
+/**
+ * Where a refusal says the target is when the family published NO row to select it from.
+ *
+ * `planSelectedPlace` reads the place off a row's own field, which a measured-empty family has none of - so the tile
+ * comes from the intentions she wrote, and the answer still points at the call she has to change rather than at a family
+ * alone. A reading is skipped for the same reason the selection skips it: it is never an intention.
+ */
+function planNamedPlace(canonical: Readonly<Record<string, PlanArgument>>): string {
+  const text = (name: string): string | undefined => {
+    const value = canonical[name];
+    return value !== undefined && "canonicalValue" in value ? value.canonicalValue : undefined;
+  };
+  const x = text("x");
+  const y = text("y");
+  if (x !== undefined && y !== undefined) return `${x},${y}`;
+  const named = Object.entries(canonical)
+    .filter(([name]) => planReadingField(name) === undefined)
+    .map(([name]) => `${name}=${text(name) ?? "selector"}`)
+    .join(";");
+  return named.length === 0 ? "no-target-named" : named;
 }
 
 function emitPlanNode(

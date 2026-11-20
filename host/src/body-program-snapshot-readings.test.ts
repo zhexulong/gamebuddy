@@ -404,6 +404,60 @@ test("a family the snapshot does not publish leaves the number she wrote alone",
 });
 
 /**
+ * MEASURED-EMPTY IS A REFUSAL; UNMEASURED IS A STATEMENT - and the two used to be one answer.
+ *
+ * <p>
+ * `planSnapshotRows` folded `undefined`, `null` and a MEASURED `[]` into `rows = []`, so the family that says "there is
+ * no such target" and the family that was never published both left her number standing. The first is the shape the
+ * plan pays for once per node (`seed_target_unavailable` twenty-two times in `round84`); the second is a number nothing
+ * on this side can check, and the one answer it may not get is silence. The gate below drives both for every published
+ * reading, and prints the population it examined.
+ * </p>
+ */
+test("a_measured_empty_family_refuses_and_an_unmeasured_one_is_named:<action>.<argument>", () => {
+  const faults: string[] = [];
+  let measuredEmpty = 0;
+  let unmeasured = 0;
+  for (const action of PLAN_ACTIONS) {
+    if (action.targetFamily === null) continue;
+    const family = action.targetFamily;
+    const readings = action.arguments.filter((argument) => PLAN_SNAPSHOT_READINGS.has(argument.name));
+    if (readings.length === 0) continue;
+    // (1) MEASURED, AND THE FAMILY HOLDS NOTHING: the target does not exist, so the call is refused by family and place.
+    const empty = compile(callScript(action), snapshotCarrying(bareSnapshot(action.actionId), family, []));
+    const code = empty.status === "compiled" ? "accepted" : empty.reasonCode;
+    const prefix = `plan_script_target_not_in_the_submitted_snapshot:${family}:`;
+    if (!code.startsWith(prefix)) faults.push(`${action.actionId}: a measured-empty ${family} answered ${code}`);
+    else if (
+      action.arguments.some((argument) => argument.name === "x") &&
+      code !== `${prefix}${String(ROW_TILE.x)},${String(ROW_TILE.y)}`
+    )
+      faults.push(`${action.actionId}: the refusal names ${code.slice(prefix.length)} rather than the tile she wrote`);
+    else measuredEmpty += 1;
+    // (2) UNMEASURED: never refused, and the answer names every reading it could not read.
+    const absent = compile(callScript(action), bareSnapshot(action.actionId));
+    if (absent.status !== "compiled") {
+      faults.push(`${action.actionId}: an unpublished ${family} answered ${absent.reasonCode}`);
+      continue;
+    }
+    const expected = readings.map(
+      (reading) => `unmeasured=${action.actionId}.${reading.name};family_not_published=${family}`,
+    );
+    if (JSON.stringify(absent.readingsUnmeasured) !== JSON.stringify(expected))
+      faults.push(
+        `${action.actionId}: the answer named ${JSON.stringify(absent.readingsUnmeasured)} rather than ${JSON.stringify(expected)}`,
+      );
+    else unmeasured += 1;
+  }
+  console.log(
+    `a_measured_empty_family_refuses_and_an_unmeasured_one_is_named: measured-empty ${String(measuredEmpty)} · unmeasured ${String(unmeasured)}`,
+  );
+  assert.ok(measuredEmpty > 20, `examined ${String(measuredEmpty)} actions with a measured-empty family`);
+  assert.ok(unmeasured > 20, `examined ${String(unmeasured)} actions with an unpublished family`);
+  assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
  * THE GATE, over the whole published vocabulary: `a_defence_the_submitter_cannot_know_is_not_the_submitter's`.
  *
  * The population is the surface's own argument declarations crossed with the one place this product states which of them
