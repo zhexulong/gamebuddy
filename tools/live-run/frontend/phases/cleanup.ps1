@@ -1,5 +1,5 @@
-# Phase cleanup: ask the launch driver to tear down, sweep for \\?\ guardian orphans, kill only this
-# lane's own browser/driver processes, verify the ports are closed, verify NO tracked file in the main
+# Phase cleanup: ask the launch driver to tear down, sweep for this run's own leftover stage processes, kill only
+# this lane's own browser/driver processes, verify the ports are closed, verify NO tracked file in the main
 # checkout changed, and report the KEPT run root. Nothing here touches the main checkout's files.
 param(
   [Parameter(Mandatory = $true)][string]$StageRoot,
@@ -63,17 +63,28 @@ if (-not $done) {
   Start-Sleep -Seconds 5
 }
 
-Log "=== 3. orphan sweep: guardian / `\\?\`-prefixed children ==="
+Log "=== 3. orphan sweep: this run's own guardian/host processes ==="
+# The population is THIS run's stage root inside the executable path - not a path FORM and not an image name.
+# Both of those named processes this run never started: measured 2026-11-20 on `frontend--r12`, the predicate
+# `ExecutablePath -like '*\\?\*GameBuddy*'` killed pid 20304, another lane's GameBuddy.Desktop.Tests Host
+# (`\\?\C:\Users\long\AppData\Local\Temp\GameBuddy.Desktop.Tests\b5bf2f14…\Programs\GameBuddy\…\runtime\node.exe`,
+# started 04:06:35), and `Name -like '*Guardian*'` would equally claim an operator's installed GameBuddy.
+# A process this run launched runs out of this run's stage root; that is the fact, so that is the query.
+function Test-RunOwnedPath([string]$exePath) {
+  if ([string]::IsNullOrWhiteSpace($exePath)) { return $false }
+  $normalized = $exePath.Replace('\\?\', '')
+  return $normalized.StartsWith($StageRoot, [System.StringComparison]::OrdinalIgnoreCase)
+}
 for ($i = 0; $i -lt 4; $i++) {
   $all = Get-CimInstance Win32_Process
-  $orphans = $all | Where-Object { $_.ExecutablePath -like '*\\?\*GameBuddy*' -or $_.Name -like '*Guardian*' }
+  $orphans = $all | Where-Object { Test-RunOwnedPath $_.ExecutablePath }
   if (@($orphans).Count -eq 0) { break }
   foreach ($p in $orphans) { Log ("  killing orphan pid=" + $p.ProcessId + " name=" + $p.Name + " path=" + $p.ExecutablePath); Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Seconds 3
 }
 $all = Get-CimInstance Win32_Process
-$guardians = $all | Where-Object { $_.ExecutablePath -like '*\\?\*GameBuddy*' -or $_.Name -like '*Guardian*' }
-Log ("  guardian / \\?\ processes remaining: " + @($guardians).Count)
+$guardians = $all | Where-Object { Test-RunOwnedPath $_.ExecutablePath }
+Log ("  stage-root processes remaining: " + @($guardians).Count)
 
 Log "=== 4. this lane's own browser (only its own user-data-dir) and stage processes ==="
 $profile = Join-Path $StageRoot "browser-profile"
