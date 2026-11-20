@@ -100,9 +100,12 @@ public sealed class RockSourceSwingOutcomeTests
     /// The invariant the old docblock spelled and this change must keep: discovery and admission ask the SAME
     /// predicate, so the scanner can never advertise a rock the action then refuses.
     ///
-    /// Behaviour alone cannot prove it — both sides would have to be driven through a live swing. What can be
-    /// proved is that there is exactly ONE definition and that every side names it: the two admission sites in the
-    /// resource-tool partial, the radar, and the scene scanner.
+    /// Behaviour alone cannot prove it — both sides would have to be driven through a live swing. What can be proved
+    /// is that there is exactly ONE definition of "a stone" and that every side reaches it: the radar asks the native
+    /// predicate, and the two admission sites each ask ONE answer function with the request's own four facts. So this
+    /// reads the answer function out of the two revalidation bodies and requires them to name the same one, which means
+    /// a rename moves the reading with it; what it can no longer see is a literal count of one spelling, which is what
+    /// redded it when the shared answer was lifted out from under both sites.
     /// </summary>
     [Fact]
     public void DiscoveryAndAdmissionAskTheSamePredicate()
@@ -114,13 +117,19 @@ public sealed class RockSourceSwingOutcomeTests
         DiscoveryBody(controller).Should().Contain("NativeItemPredicates.IsBreakableStone(",
             "the radar and the action must not disagree about which rocks exist");
 
-        // ONE RESOLVER, TWO CALLERS. Both revalidations (the pre-approach gate and the execution body's own) ask the
-        // same three-way resolver, so the positive predicate is spelled once and the two sites cannot drift about which
-        // rocks exist. A second spelling would be a second authority over "is this a stone".
+        // ONE ANSWER, TWO CALLERS. Both revalidations (the pre-approach gate and the execution body's own) ask one
+        // function with the same four facts - the location, the tile and the identity the request carries - and it must
+        // be the SAME one: a second answer is a second authority over "which rocks exist".
+        string askedByGate = RockAnswerAskedBy(GateBody(tools));
+        RockAnswerAskedBy(ExecutionBody(tools)).Should().Be(askedByGate,
+            "both revalidations ask the same rock answer, so they cannot drift about which rocks exist");
+        CountOccurrences(tools, $"{askedByGate}(").Should().Be(3,
+            $"`{askedByGate}` is declared once and asked by the pre-approach gate and the execution body; a fourth naming is a third path deciding what a stone is");
+
+        // ONE PREDICATE, ASKED ONCE: whichever function answers, "is this a stone" is spelled in exactly one place on
+        // the action side, so no site can carry its own idea of what a stone is.
         CountOccurrences(tools, "NativeItemPredicates.IsBreakableStone(")
-            .Should().Be(1, "one resolver decides what a stone is; both revalidations ask it");
-        CountOccurrences(tools, "ResolveRockSource(")
-            .Should().Be(3, "the resolver's own declaration plus the gate and the execution body that ask it");
+            .Should().Be(1, "one resolver decides what a stone is; both revalidations reach it");
 
         // The whole CALL, closing parens included: a prefix would still match a `&& item.MinutesUntilReady == 1`
         // appended after it, which is the exact regression this pins.
@@ -168,37 +177,60 @@ public sealed class RockSourceSwingOutcomeTests
             "private LocalExecutionReceipt ExecuteBreakRock(string executionId, string requestId, int slot, int targetX, int targetY, string expectedTargetId)";
         int at = tools.IndexOf(declaration, StringComparison.Ordinal);
         at.Should().BeGreaterThanOrEqualTo(0, "the rock execution body must be findable by its declaration");
+        return BracedBody(tools, at, "ExecuteBreakRock");
+    }
+
+    /// <summary>
+    /// The `gate:` the rock request hands the seam, braces and all - that lambda IS the pre-approach revalidation.
+    /// </summary>
+    private static string GateBody(string tools)
+    {
+        int request = tools.IndexOf("RequestLocalBreakRockSource(", StringComparison.Ordinal);
+        request.Should().BeGreaterThanOrEqualTo(0, "the rock request is where the pre-approach gate lives");
+        int at = tools.IndexOf("gate: location =>", request, StringComparison.Ordinal);
+        at.Should().BeGreaterThanOrEqualTo(0, "the rock request's gate reads the actor's own location");
+        return BracedBody(tools, at, "the break-rock gate");
+    }
+
+    /// <summary>The balanced `{...}` that follows <paramref name="at"/>, cut from <paramref name="at"/>.</summary>
+    private static string BracedBody(string source, int at, string what)
+    {
         int depth = 0;
         bool started = false;
-        for (int i = tools.IndexOf('{', at); i < tools.Length; i++)
+        for (int i = source.IndexOf('{', at); i >= 0 && i < source.Length; i++)
         {
-            if (tools[i] == '{') { depth++; started = true; }
-            else if (tools[i] == '}')
+            if (source[i] == '{') { depth++; started = true; }
+            else if (source[i] == '}')
             {
                 depth--;
-                if (started && depth == 0) return tools[at..(i + 1)];
+                if (started && depth == 0) return source[at..(i + 1)];
             }
         }
-        throw new InvalidOperationException("unbalanced ExecuteBreak body");
+
+        throw new InvalidOperationException($"unbalanced {what}");
     }
+
+    /// <summary>
+    /// The one call in <paramref name="body"/> shaped `<name>(location, targetX, targetY, expectedTargetId)` - the four
+    /// facts a rock identity is answered from - and the name of whatever answers them.
+    /// </summary>
+    private static string RockAnswerAskedBy(string body)
+    {
+        MatchCollection answers = RockAnswerCall.Matches(body);
+        answers.Count.Should().Be(1, "a revalidation asks exactly one answer with the request's own four facts");
+        return answers[0].Groups["name"].Value;
+    }
+
+    private static readonly Regex RockAnswerCall = new(
+        @"(?<name>[A-Za-z_][A-Za-z0-9_]*)\(location, targetX, targetY, expectedTargetId\)",
+        RegexOptions.CultureInvariant);
 
     private static string DiscoveryBody(string controller)
     {
         const string declaration = "private static IReadOnlyList<BridgeRockSourceTarget> DiscoverRockSourceTargets(Farmer player)";
         int at = controller.IndexOf(declaration, StringComparison.Ordinal);
         at.Should().BeGreaterThanOrEqualTo(0, "the rock radar must be findable by its declaration");
-        int depth = 0;
-        bool started = false;
-        for (int i = controller.IndexOf('{', at); i < controller.Length; i++)
-        {
-            if (controller[i] == '{') { depth++; started = true; }
-            else if (controller[i] == '}')
-            {
-                depth--;
-                if (started && depth == 0) return controller[at..(i + 1)];
-            }
-        }
-        throw new InvalidOperationException("unbalanced DiscoverRockSourceTargets body");
+        return BracedBody(controller, at, "DiscoverRockSourceTargets");
     }
 
     private static int CountOccurrences(string text, string needle)

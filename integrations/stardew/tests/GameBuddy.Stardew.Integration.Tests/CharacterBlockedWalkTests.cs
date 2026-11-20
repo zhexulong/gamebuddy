@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using FluentAssertions;
+using Microsoft.Xna.Framework;
 using Xunit;
 
 namespace GameBuddy.Stardew.Integration.Tests;
@@ -143,16 +144,54 @@ public sealed class CharacterBlockedWalkTests
     }
 
     /// <summary>
-    /// The stall evidence used to answer the TYPE (`Pet` / `Horse` / `Npc`), which is a class rather than a thing.
+    /// The stall evidence answers the CHARACTER, not its type (`Pet` / `Horse` / `Npc` is a class rather than a thing).
+    ///
+    /// <para>
+    /// The token is composed rather than interpolated now: `RefusalLayerKind.Character` supplies the word, a colon
+    /// separates it from the name and the tile the probe saw, and `StallRefusalCode` splits that same word back off.
+    /// So this reads the PREFIX that parser declares and the token the producer formats, and requires one to be the
+    /// other's word followed by the name and the tile; what it can no longer see is the interpolation that once spelled
+    /// the token inline, and `RefusalProbe.Named`'s choice between the occupant's name and its type, which needs a live
+    /// NPC standing on a live tile.
+    /// </para>
     /// </summary>
     [Fact]
     public void TheStallEvidenceNamesTheCharacterInsteadOfItsType()
     {
         string controller = ControllerSource();
-        controller.Should().Contain("character:{RefusalProbe.WithoutSpaces(name)}@",
-            "the stall token keeps the same `character:` vocabulary the refusal probe uses");
+
+        // THE VOCABULARY: one word, and both ends of it spell that word - the parser that splits the stall token, and
+        // the layer that produces it.
+        string prefix = StallTokenPrefix(controller);
+        prefix.Should().Be("character:", "the stall token names the character layer, not a type");
+        prefix.Should().Be($"{RefusalLayerKind.Character.ToWireValue()}:",
+            "the body controller splits the same word the refusal probe emits, so one reader handles both fields");
+
+        // THE COMPOSITION: the token that reaches `stopped_by=` is that prefix, the name the player sees and the tile it
+        // stands on - the name and the tile spelled by the probe's own helpers, so the reading is of the composed token
+        // rather than of a second copy of its shape.
+        string detail = $"{RefusalProbe.WithoutSpaces("Mr Qi")}@{RefusalProbe.FormatPoint(new Vector2(24, 22))}";
+        string stalled = new RefusalLayerToken(RefusalLayerKind.Character, detail).Format();
+        stalled.Should().Be($"{prefix}Mr_Qi@24,22", "a character token is the layer's word, the name and its tile");
+        StardewBodyController.StallRefusalCode(stalled).Should().Be("path_blocked_by_character:mr_qi",
+            "the refusal reads the producer's own token back to the occupant's name");
+
         controller.Should().NotContain("return \"Pet\";", "a type is not a name and not a tile");
         controller.Should().NotContain("return \"Horse\";");
         controller.Should().NotContain("return \"Npc\";");
+    }
+
+    /// <summary>
+    /// The prefix `StallRefusalCode` splits a blocker token on, read out of that method's own body - the same habit
+    /// <see cref="AssertHostAccepts"/> uses for the Host's pattern, so the word is not copied here either.
+    /// </summary>
+    private static string StallTokenPrefix(string controller)
+    {
+        int at = controller.IndexOf("StallRefusalCode(string stalledBy)", StringComparison.Ordinal);
+        at.Should().BeGreaterThanOrEqualTo(0, "the stall refusal mapping is where the blocker token is parsed");
+        System.Text.RegularExpressions.Match prefix = System.Text.RegularExpressions.Regex.Match(
+            controller[at..], "const string prefix = \"([^\"]*)\";");
+        prefix.Success.Should().BeTrue("the parser names the vocabulary it splits on, and this test reads that constant");
+        return prefix.Groups[1].Value;
     }
 }
