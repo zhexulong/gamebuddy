@@ -25,10 +25,17 @@ export type TypedPrivateGameAuthorizationProducer = (
   authorization: (privateGameFacts: TypedPrivateGameFacts) => void,
 ) => void | Promise<void>;
 
-export type RedactedRoleLaunchOutcome = Readonly<{
-  readonly role: ContainmentRole;
-  readonly status: "succeeded" | "failed";
-}>;
+/**
+ * A role launch's redacted result.
+ *
+ * A failure carries the bounded name of the refusal that produced it, or `null` when the step that
+ * refused named nothing this contract may cross. A name and never a message: a refusal's text can
+ * carry a path, an OS error or a session's raw detail, and the runtime's own launch step is the one
+ * place that ever saw it.
+ */
+export type RedactedRoleLaunchOutcome =
+  | Readonly<{ readonly role: ContainmentRole; readonly status: "succeeded" }>
+  | Readonly<{ readonly role: ContainmentRole; readonly status: "failed"; readonly refusal: string | null }>;
 
 export type RedactedContainmentOutcome = Readonly<{
   readonly role: ContainmentRole;

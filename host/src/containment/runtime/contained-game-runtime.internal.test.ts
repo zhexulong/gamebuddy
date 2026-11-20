@@ -26,6 +26,11 @@ const produce: TypedPrivateGameAuthorizationProducer = (authorization) => author
 type PlatformOptions = {
   readonly failArm?: boolean;
   readonly failLaunch?: boolean;
+  /**
+   * The message the launch step refuses with. The default names nothing a bounded token would
+   * match, which is the shape an OS-level failure has.
+   */
+  readonly launchRefusal?: string;
   readonly failContain?: boolean;
   readonly failSettle?: boolean;
   readonly onArm?: () => void;
@@ -40,7 +45,7 @@ function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGa
     },
     launch: async (input) => {
       log.push(`launch:${input.role}`);
-      if (options.failLaunch) throw new Error("launch failed");
+      if (options.failLaunch) throw new Error(options.launchRefusal ?? "launch failed");
     },
     contain: async (input) => {
       log.push(`contain:${input.role}`);
@@ -174,9 +179,36 @@ test("authorization is invocation-bound and binding is snapshotted", async () =>
 test("failed launch is terminal and does not retry the native session call", async () => {
   const log: string[] = [];
   const runtime = createContainedGameRuntime(fakePlatform(log, { failLaunch: true }), binding);
-  assert.deepEqual(await runtime.launchRole("role", launchOperation(), produce), { role: "role", status: "failed" });
+  assert.deepEqual(await runtime.launchRole("role", launchOperation(), produce), {
+    role: "role",
+    status: "failed",
+    // The step named nothing this layer may carry, and the outcome says so rather than quoting it.
+    refusal: null,
+  });
   await assert.rejects(() => runtime.launchRole("role", launchOperation(), produce), /already launched/);
   assert.deepEqual(log, ["arm:player", "launch:role"]);
+});
+
+/**
+ * The reason a launch failed exists in exactly one place - the step that refused - and it used to be
+ * discarded there (measured 2026-11-20, `.tmp/lane-launchdetail.md`), so every failed role launch
+ * answered one opaque word. The name crosses; the message text never does.
+ */
+test("a refused launch keeps the bounded name it was given and never carries the message text", async () => {
+  const named = createContainedGameRuntime(
+    fakePlatform([], { failLaunch: true, launchRefusal: "guardian_command_acknowledgement_invalid" }),
+    binding,
+  );
+  assert.deepEqual(await named.launchRole("role", launchOperation(), produce), {
+    role: "role",
+    status: "failed",
+    refusal: "guardian_command_acknowledgement_invalid",
+  });
+  const osLevel = "spawn E:\\Steam\\Stardew Valley\\StardewModdingAPI.exe ENOENT";
+  const text = createContainedGameRuntime(fakePlatform([], { failLaunch: true, launchRefusal: osLevel }), binding);
+  const outcome = await text.launchRole("role", launchOperation(), produce);
+  assert.deepEqual(outcome, { role: "role", status: "failed", refusal: null });
+  assert.equal(JSON.stringify(outcome).includes("Steam"), false, "no path crosses a redacted outcome");
 });
 
 test("containment is terminal and duplicate contain rejects before native call", async () => {

@@ -986,6 +986,27 @@ test("the launch wrapper's distinct causes stop collapsing into one masked answe
     ],
     // The bounded code may sit deeper than the first cause.
     [wrapped(nested), { code: "game_unavailable", cause: "stardew_contained_runtime_arm_unavailable" }],
+    // The contained launch decision's two shapes (`.tmp/lane-launchdetail.md`): the refusal the runtime's
+    // launch step kept is the DECISION's message, with the seam's own class code on the chain behind it.
+    // A Guardian transport refusal is the class `game_launch_unreachable` already names; any other bounded
+    // refusal reaches the player as the cause of the generic wrapper, instead of one word standing for every
+    // failed role launch.
+    [
+      wrapped(
+        new Error("guardian_command_acknowledgement_invalid", {
+          cause: new Error("stardew_contained_player_host_launch_failed"),
+        }),
+      ),
+      { code: "game_launch_unreachable" },
+    ],
+    [
+      wrapped(
+        new Error("stardew_native_launch_plan_executable_invalid", {
+          cause: new Error("stardew_contained_player_host_launch_failed"),
+        }),
+      ),
+      { code: "game_unavailable", cause: "stardew_native_launch_plan_executable_invalid" },
+    ],
     // An OS-level failure is not a coordinator code: only the wrapper may cross.
     [wrapped(osLevel), { code: "game_unavailable", cause: "stardew_player_host_launch_failed" }],
     // Refusals that carry no cause fall back to their own bounded name.

@@ -120,6 +120,21 @@ const rejected = (message: string): never => {
   throw new Error(`contained game runtime: ${message}`);
 };
 
+/**
+ * The shape a refusal's name may cross in: lowercase words joined by single underscores.
+ *
+ * It is the bound, not a preference. The message can be an OS error, a game path or a session's raw
+ * detail, and none of those may enter an outcome that leaves this layer - so anything that is not a
+ * code reads as a refusal that named nothing rather than as text wearing a code's clothes.
+ */
+const BOUNDED_REFUSAL_NAME = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
+
+/** The bounded name a refused step's error carries, or `null` when it carries none that may cross. */
+const refusalName = (error: unknown): string | null =>
+  error instanceof Error && error.message.length <= 96 && BOUNDED_REFUSAL_NAME.test(error.message)
+    ? error.message
+    : null;
+
 export function createContainedGameRuntime(
   platform: ContainedGameRuntimePlatform,
   binding: RuntimeBinding,
@@ -137,8 +152,10 @@ export function createContainedGameRuntime(
   type RoleState = "launching" | "launched" | "containing" | "contained" | "launch-failed" | "contain-failed";
   const roleStates = new Map<ContainmentRole, RoleState>();
 
-  const outcome = (role: ContainmentRole, status: "succeeded" | "failed"): RedactedRoleLaunchOutcome =>
-    Object.freeze({ role, status });
+  const launched = (role: ContainmentRole): RedactedRoleLaunchOutcome =>
+    Object.freeze({ role, status: "succeeded" as const });
+  const launchRefused = (role: ContainmentRole, refusal: string | null): RedactedRoleLaunchOutcome =>
+    Object.freeze({ role, status: "failed" as const, refusal });
   const containmentOutcome = (role: ContainmentRole, status: "succeeded" | "failed"): RedactedContainmentOutcome =>
     Object.freeze({ role, status });
   const ensureOpen = (deadlineUnixMs: number) => {
@@ -204,8 +221,8 @@ export function createContainedGameRuntime(
         try {
           await platform.launch({ ...bindingSnapshot, deadlineUnixMs, role, authorization: authorizedValue });
           roleStates.set(role, "launched");
-          return outcome(role, "succeeded");
-        } catch {
+          return launched(role);
+        } catch (error) {
           roleStates.set(role, "launch-failed");
           // Deliberately over-conservative: a launch that failed BEFORE dispatching
           // any native frame is recorded as `launch-failed` too, which blocks
@@ -214,7 +231,12 @@ export function createContainedGameRuntime(
           // the safe direction and leaves the attempt to recovery/quarantine. Do not
           // "fix" this into a dispatch assertion: that would let an uncertain side
           // effect settle as if nothing happened.
-          return outcome(role, "failed");
+          //
+          // The refusal's own bounded name IS kept. The conservatism above is about the role's
+          // state, not about the reason: a failed launch used to answer one word for every cause
+          // (measured 2026-11-20, `.tmp/lane-launchdetail.md`), and this catch is the only place
+          // the reason was ever seen.
+          return launchRefused(role, refusalName(error));
         }
       });
     },

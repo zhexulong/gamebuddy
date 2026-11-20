@@ -1209,6 +1209,74 @@ test("contained runtime adapters surface every refusal as a rejection rather tha
  * did, including when it examined nothing: a pass that found no records must not
  * read like a pass that found nothing wrong.
  */
+/**
+ * A role launch that did not succeed is not one failure: it is the refusal the launch step
+ * carried. Measured 2026-11-20 (`.tmp/lane-livenow4.md`): a real launch answered
+ * `409 {"code":"game_unavailable","cause":"stardew_contained_player_host_launch_failed"}` -
+ * one word standing for every failed role launch - while the step that refused had named its own
+ * cause and this seam discarded it. A refusal that named nothing bounded keeps the class.
+ */
+test("a contained role launch that did not succeed answers the refusal it carried, not one opaque word", async () => {
+  const owner = Object.freeze({}) as unknown as StardewOwnedPlayerHostBootstrap;
+  const playerLaunch: StardewContainedPlayerHostLaunchSeam = Object.freeze({
+    role: "player_host",
+    launchGeneration: "generation-1",
+    provideAuthorization: () => undefined,
+  });
+  const aiClientLaunch: StardewContainedAiClientLaunchSeam = Object.freeze({
+    role: "ai_client",
+    launchGeneration: "generation-1",
+    provideAuthorization: () => undefined,
+  });
+  // The boundary this test does not own is the game; the launch DECISION is ours, so a stubbed
+  // role outcome is the right double. Every other member is here because the seam is one object.
+  const collaborator = (refusal: string | null): StardewPlayerHostRuntimeLaunchCollaborator =>
+    Object.freeze({
+      launchPlayerHost: async () => ({ role: "player_host", status: "failed", refusal }),
+      launchAiClient: async () => ({ role: "ai_client", status: "failed", refusal }),
+      containPlayerHost: async () => ({ role: "player_host", status: "succeeded" }),
+      containAiClient: async () => ({ role: "ai_client", status: "succeeded" }),
+      recovery: () => {
+        throw new Error("a launch decision never reads the recovery drive");
+      },
+      settle: async () => undefined,
+      close: async () => undefined,
+    }) as unknown as StardewPlayerHostRuntimeLaunchCollaborator;
+  const cases = [
+    {
+      name: "the Player Host launch",
+      refusal: "guardian_command_acknowledgement_invalid",
+      classCode: "stardew_contained_player_host_launch_failed",
+      decision: (refusal: string | null) =>
+        containedPlayerHostLaunchDecision(collaborator(refusal), owner, playerLaunch),
+    },
+    {
+      name: "the AI-client launch",
+      refusal: "stardew_native_launch_plan_executable_invalid",
+      classCode: "stardew_contained_ai_client_launch_failed",
+      decision: (refusal: string | null) =>
+        containedAiClientLaunchDecision(collaborator(refusal), owner, aiClientLaunch),
+    },
+  ];
+
+  for (const one of cases) {
+    const refused = await one.decision(one.refusal).catch((error: unknown) => error);
+    assert.ok(refused instanceof Error, `${one.name} must reject`);
+    assert.equal(refused.message, one.refusal, `${one.name} names the refusal the launch carried`);
+    assert.equal(
+      refused.cause instanceof Error ? refused.cause.message : null,
+      one.classCode,
+      `${one.name} keeps the seam's own class on the chain`,
+    );
+    // A launch that named nothing bounded is still exactly one class: its own code, and no
+    // invented name beside it.
+    const unnamed = await one.decision(null).catch((error: unknown) => error);
+    assert.ok(unnamed instanceof Error, `${one.name} must reject`);
+    assert.equal(unnamed.message, one.classCode, `${one.name} answers its class when nothing was named`);
+    assert.equal(unnamed.cause, undefined, `${one.name} invents no cause`);
+  }
+});
+
 test("the boot reconcile line counts what it examined and prints a counted zero", () => {
   assert.equal(
     formatStardewBootstrapRegistrationReconcile({ examined: 0, released: 0, finalised: 0, records: [] }),

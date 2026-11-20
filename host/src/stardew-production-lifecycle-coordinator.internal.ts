@@ -835,6 +835,36 @@ export function createStardewPlayerHostRoleLaunchOperation(nowMs: () => number =
 }
 
 /**
+ * The bounded code each role's contained launch answers when the refusal it carried named nothing
+ * that may cross. One per role, because the two launches are two different runtime roles and a
+ * reader acting on one must not be sent to the other.
+ */
+const CONTAINED_ROLE_LAUNCH_FAILED_CODE = Object.freeze({
+  player_host: "stardew_contained_player_host_launch_failed",
+  ai_client: "stardew_contained_ai_client_launch_failed",
+} as const);
+
+/**
+ * The refusal a role-launch outcome that is not `succeeded` becomes.
+ *
+ * A failed role launch is not one failure: it is the refusal the runtime's launch step caught, and
+ * that step is the only place the reason ever existed. The runtime hands it over as a bounded name,
+ * and the name IS the answer; the seam's own class code stays on the `cause` chain, so the wire's
+ * bounded-cause projection names why the launch failed instead of one word standing for a lost
+ * Guardian session, a refused native plan and an authorization failure alike.
+ *
+ * An outcome that named nothing keeps the class code alone: inventing a name for a refusal that gave
+ * none is the opaque word again, wearing a longer spelling.
+ */
+function containedRoleLaunchRefusal(
+  role: keyof typeof CONTAINED_ROLE_LAUNCH_FAILED_CODE,
+  refusal: string | null,
+): Error {
+  const classCode = CONTAINED_ROLE_LAUNCH_FAILED_CODE[role];
+  return refusal === null ? new Error(classCode) : new Error(refusal, { cause: new Error(classCode) });
+}
+
+/**
  * Composes the coordinator-side launch decision for the contained runtime
  * path: after the core claim seam is handed over, create the invocation's
  * RoleLaunchOperation, request the contained role launch through the
@@ -861,7 +891,7 @@ export async function containedPlayerHostLaunchDecision(
     createStardewPlayerHostRoleLaunchOperation(nowMs),
     launch,
   );
-  if (outcome.status !== "succeeded") throw new Error("stardew_contained_player_host_launch_failed");
+  if (outcome.status !== "succeeded") throw containedRoleLaunchRefusal("player_host", outcome.refusal);
 }
 
 /**
@@ -883,7 +913,7 @@ export async function containedAiClientLaunchDecision(
     createStardewPlayerHostRoleLaunchOperation(nowMs),
     launch,
   );
-  if (outcome.status !== "succeeded") throw new Error("stardew_contained_ai_client_launch_failed");
+  if (outcome.status !== "succeeded") throw containedRoleLaunchRefusal("ai_client", outcome.refusal);
 }
 
 /**
