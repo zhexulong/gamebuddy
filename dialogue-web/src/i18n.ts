@@ -806,10 +806,13 @@ const en = {
   problemStepNoStepAlreadyTrue: "Nothing to do here: this is already the state you asked for.",
   problemStepNoStepNotThisArtifact:
     "Nothing here can change this: what this names is not something GameBuddy can act on.",
+  // The card for a fault this build cannot name. Three parts, and no code: what happened, the honest
+  // reason (we do not know which check failed - that is what an unnamed fault is), and the two steps
+  // left. The code the error really carried is not lost - it stays on the error for the record, and
+  // `problemTextWithCode`'s own rule says a code is contract vocabulary and never part of the sentence.
   problemInternalErrorTitle: "Something failed inside GameBuddy",
-  problemInternalErrorDetail: "GameBuddy reported an internal error (code {{code}}).",
-  problemInternalErrorCauseDetail: "GameBuddy reported an internal error (code {{code}}; cause {{cause}}).",
-  problemInternalErrorNoCode: "none reported",
+  problemInternalErrorDetail:
+    "Something inside GameBuddy broke, rather than in your chats. Nothing here can say which part, and GameBuddy has recorded it. Read it again, and if it comes back the same way, quit GameBuddy from the tray icon (Quit GameBuddy) and open it again.",
   // The mount's own five causes (`composedBootstrapProblemView`). A failed first read has no session
   // behind it, so these are the only problem sentences that must name what is missing - the chats,
   // never "the app". Four of them are a step the card's own read cannot change: the read asks the
@@ -986,11 +989,9 @@ const en = {
   gameProblemUnavailableTitle: "The game did not go ahead",
   gameProblemUnavailableDetail:
     "GameBuddy could not carry out this step of the game. What this page shows is the last state it read from the game; check Game installation, then try again.",
-  // The one templated game pair. `game_unavailable` is the wrapper the Host answers with when a
-  // step of the game's own lifecycle failed, and the bounded `stardew_*` cause it registers is
-  // what says which step: without a cause, the generic sentence above is the whole truth.
-  gameProblemUnavailableCauseDetail:
-    "GameBuddy could not carry out this step of the game (registered cause {{cause}}). What this page shows is the last state it read from the game; check Game installation, then try again.",
+  // The wrapper the Host answers with when a step of the game's own lifecycle failed. The bounded
+  // `stardew_*` cause it registers says which step, and that name is for the record and for a report:
+  // a player cannot act on it, so this sentence is the same one with or without it.
   gameProblemPrerequisitesMissingTitle: "Companion play is not ready yet",
   gameProblemPrerequisitesMissingDetail:
     "GameBuddy has not started a game for you yet. Enable companion play first, then try this again.",
@@ -2086,9 +2087,8 @@ const zh: Messages = {
   problemStepNoStepAlreadyTrue: "这里不用做什么：这已经就是你要的状态。",
   problemStepNoStepNotThisArtifact: "这里改变不了：这个名字指向的东西不是 GameBuddy 能对它做什么的东西。",
   problemInternalErrorTitle: "GameBuddy 内部出错了",
-  problemInternalErrorDetail: "GameBuddy 报告了内部错误（代码 {{code}}）。",
-  problemInternalErrorCauseDetail: "GameBuddy 报告了内部错误（代码 {{code}}；原因 {{cause}}）。",
-  problemInternalErrorNoCode: "未报告任何代码",
+  problemInternalErrorDetail:
+    "是 GameBuddy 自己出了错，不是你的聊天出了问题。这一页说不清是哪一部分，GameBuddy 已经把它记下来了。请再读一次；如果还是一样，从系统托盘退出 GameBuddy（Quit GameBuddy），再重新打开。",
   problemBootHostNotAnsweringTitle: "GameBuddy 没有响应",
   problemBootHostNotAnsweringDetail:
     "提供这个页面的 GameBuddy 没有在运行，所以这里没有聊天可读。请从系统托盘图标启动 GameBuddy，再打开它给出的页面。",
@@ -2209,8 +2209,6 @@ const zh: Messages = {
   gameProblemUnavailableTitle: "游戏没有进行下去",
   gameProblemUnavailableDetail:
     "GameBuddy 无法完成这一步游戏操作。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
-  gameProblemUnavailableCauseDetail:
-    "GameBuddy 无法完成这一步游戏操作（登记的原因：{{cause}}）。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
   gameProblemPrerequisitesMissingTitle: "伙伴陪玩还没有准备好",
   gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为你启动游戏。请先启用伙伴陪玩，再重试。",
   gameProblemInstanceGoneTitle: "那个游戏已经不在了",

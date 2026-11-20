@@ -11,7 +11,7 @@ import {
   createComposedReferenceGameBrowserApi,
   validateComposedReferenceGameRoot,
 } from "../src/composed-reference-game-browser-api.ts";
-import { composedProblemView } from "../src/composed-problem-view.ts";
+import { composedProblemView, observedProblemCause, observedProblemCode } from "../src/composed-problem-view.ts";
 import { createManagementPipelineApi } from "../src/management-pipeline-api.ts";
 import { messages } from "../src/i18n.ts";
 import { composeReferenceGameBrowserProfile } from "../../host/src/composed-browser-contract/index.js";
@@ -1341,28 +1341,30 @@ test("a retryable unavailability keeps its own presentation", async () => {
   }
 });
 
-test("anything the client cannot classify shows the code it actually received", async () => {
+test("anything the client cannot classify says the fault is ours, and keeps the code in the record", async () => {
   const labels = messages("en");
-  // An unknown code is the case that turns tonight's confusion into a one-minute
-  // diagnosis: it must reach the text, not be re-worded as reconciliation.
-  const unknown = composedProblemView(await refusal({ code: "invented_failure_code" }, 409), labels);
-  assert.equal(unknown.title, labels.problemInternalErrorTitle);
-  assert.equal(
-    unknown.detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", "invented_failure_code"),
-  );
+  // This test used to be called "anything the client cannot classify shows the code it actually
+  // received", and that was the ruling it held: an unknown code reached the text so tonight's
+  // confusion became a one-minute diagnosis. The owner's second ruling split the two claims it was
+  // carrying. The player must never be shown a code they cannot act on; the diagnosis must not be
+  // lost. So the code lives on the error, where `observedProblemCause`/`observedProblemCode` read it
+  // for the record and a report takes it from, and the card says the one thing that is true and
+  // actionable - the fault is ours, and here is the step.
+  const unknown = await refusal({ code: "invented_failure_code" }, 409);
+  const view = composedProblemView(unknown, labels);
+  assert.equal(view.title, labels.problemInternalErrorTitle);
+  assert.equal(view.detail, labels.problemInternalErrorDetail);
+  assert.equal(view.detail.includes("invented_failure_code"), false, "a code is not a sentence a player can read");
+  assert.equal(observedProblemCode(unknown), "invented_failure_code", "and the code is not lost: the record has it");
 
-  // A code with a named bounded cause shows both.
-  const caused = composedProblemView(
-    await refusal({ code: "game_unavailable", cause: "stardew_player_host_launch_failed" }, 409),
-    labels,
-  );
-  assert.equal(caused.title, labels.gameProblemUnavailableTitle);
-  assert.equal(
-    caused.detail,
-    labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", "stardew_player_host_launch_failed"),
-  );
-  assert.equal(caused.detail.includes("game_unavailable"), false, "the code is not shown back at the player");
+  // A code with a named bounded cause is the same card: the cause is the record's, not the player's.
+  const caused = await refusal({ code: "game_unavailable", cause: "stardew_player_host_launch_failed" }, 409);
+  const causedView = composedProblemView(caused, labels);
+  assert.equal(causedView.title, labels.gameProblemUnavailableTitle);
+  assert.equal(causedView.detail, labels.gameProblemUnavailableDetail);
+  assert.equal(causedView.detail.includes("stardew_player_host_launch_failed"), false, "the cause is not printed");
+  assert.equal(causedView.detail.includes("game_unavailable"), false, "the code is not shown back at the player");
+  assert.equal(observedProblemCause(caused), "stardew_player_host_launch_failed", "the record keeps which step failed");
 
   // A malformed composed root is the client's own protocol failure: it names its
   // own closed reason instead of being re-worded as something it is not. This is
@@ -1372,19 +1374,19 @@ test("anything the client cannot classify shows the code it actually received", 
     labels,
   );
   assert.equal(malformedRoot.title, labels.problemInternalErrorTitle);
+  assert.equal(malformedRoot.detail, labels.problemInternalErrorDetail);
   assert.equal(
-    malformedRoot.detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", "invalid_composed_root"),
+    observedProblemCode(new ComposedReferenceGameProtocolError("invalid_composed_root")),
+    "invalid_composed_root",
+    "the reason the client closed on is the record's",
   );
 
-  // A transport-level failure has no server code at all; the absence is stated
-  // rather than replaced by an invented one.
+  // A transport-level failure has no server code at all; the same card says the same thing, and the
+  // absence is a fact of the record rather than an invented word on the screen.
   const offline = composedProblemView(new Error("socket closed"), labels);
   assert.equal(offline.title, labels.problemInternalErrorTitle);
-  assert.equal(
-    offline.detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", labels.problemInternalErrorNoCode),
-  );
+  assert.equal(offline.detail, labels.problemInternalErrorDetail);
+  assert.equal(observedProblemCode(new Error("socket closed")), null);
 });
 
 // A management refusal is raised by the other client module and caught by the composed
@@ -1448,8 +1450,9 @@ test("a management protocol failure is named as a protocol failure, not as none 
   );
   assert.equal(
     composedProblemView(protocol, labels).detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", "tavern_protocol_error"),
+    labels.problemInternalErrorDetail,
   );
+  assert.equal(observedProblemCode(protocol), "tavern_protocol_error", "the protocol failure's own reason is what the record keeps");
 });
 
 // ─── Cross-boundary: a real Host body through the real client mapping ────────
@@ -1520,10 +1523,12 @@ test("a real composed refusal reaches the player as its own category, over real 
   // strict reader and its own presentation.
   //
   // A renewed disagreement fails HERE: re-collapsing the server to a bare
-  // `game_unavailable` breaks the code assertions, dropping the bounded cause
-  // breaks the cause assertion, and re-wording any non-retryable refusal as
-  // reconciliation - the exact regression this lane exists for - breaks the
-  // session and title assertions.
+  // `game_unavailable` breaks the code assertions, dropping the bounded cause from the
+  // RECORD breaks the `causeCode`/`observedProblemCause` assertions, and re-wording any
+  // non-retryable refusal as reconciliation - the exact regression this lane exists for
+  // - breaks the session and title assertions. (The cause used to be asserted in the
+  // rendered detail as well; that half moved down to the record when the owner ruled
+  // that a player never reads a code.)
   const wrapped = (cause) => {
     const error = new Error("stardew_player_host_launch_failed");
     error.cause = cause;
@@ -1575,17 +1580,23 @@ test("a real composed refusal reaches the player as its own category, over real 
     assert.equal(absentRuntime.causeCode, null);
 
     // Tonight's actual shape: a launch that failed after admission, whose cause is
-    // not a known code. The code is still generic, so the bounded cause is what
-    // makes it diagnosable - and it must reach the player's text.
+    // not a known code. The code stays the generic wrapper and the record keeps the
+    // bounded cause - which is what makes it diagnosable - while the text the player
+    // reads is the one sentence for that wrapper. This assertion used to require the
+    // cause in the detail; what it was protecting (that the cause is not silently
+    // dropped on the way) is still held, one layer down: `causeCode` on the error and
+    // `observedProblemCause`.
     thrown = wrapped(new Error("stardew_private_launch_admission_failed"));
     const wrappedFailure = await launchRefusalOf("M".repeat(21) + "A");
     assert.ok(wrappedFailure instanceof ComposedReferenceGameProblemError, String(wrappedFailure));
     assert.equal(wrappedFailure.code, "game_unavailable");
     assert.equal(wrappedFailure.causeCode, "stardew_private_launch_admission_failed");
+    assert.equal(observedProblemCause(wrappedFailure), "stardew_private_launch_admission_failed");
 
     const launchView = composedProblemView(wrappedFailure, en);
     assert.equal(launchView.title, en.gameProblemUnavailableTitle);
-    assert.ok(launchView.detail.includes("stardew_private_launch_admission_failed"), launchView.detail);
+    assert.equal(launchView.detail, en.gameProblemUnavailableDetail, "the card is the sentence a player can act on");
+    assert.equal(launchView.detail.includes("stardew_private_launch_admission_failed"), false, "the cause is not printed");
     assert.equal(launchView.detail.includes("game_unavailable"), false, "the raw code never reaches the player");
     assert.equal(launchView.detail.includes(en.problemReconciliationFailedDetail), false);
   } finally {

@@ -109,7 +109,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
-import { composedProblemView, problemTextWithCode } from "../src/composed-problem-view.ts";
+import { composedProblemView, observedProblemCause, problemTextWithCode } from "../src/composed-problem-view.ts";
 import { turnFailureText } from "../src/components/turn-failure-text.ts";
 import { messages } from "../src/i18n.ts";
 import { problemCodeFor } from "../src/management-pipeline-api.ts";
@@ -703,13 +703,9 @@ test("problem-code.8: every declared code reaches the player as its own sentence
       const view = composedProblemView(problemFor(code), labels);
       // The detail is the sentence: what told the player they had hit a system fault was the detail
       // naming a raw code, not a shared heading (`problem-code.14` holds the headings themselves
-      // apart).
-      const internalDetails = [
-        labels.problemInternalErrorDetail.replace("{{code}}", code),
-        labels.problemInternalErrorCauseDetail
-          .replace("{{code}}", code)
-          .replace("{{cause}}", labels.problemInternalErrorNoCode),
-      ];
+      // apart). The internal-error card is now one sentence whatever code it carried - the code stays
+      // on the error for the record - so this reading is that single string.
+      const internalDetails = [labels.problemInternalErrorDetail];
       if (internalDetails.includes(view.detail)) internalReadings += 1;
       if (view.kind !== "problem" || view.title.length === 0 || view.detail.length === 0)
         failures.push(`${locale} ${code} has no sentence`);
@@ -904,12 +900,7 @@ test("problem-code.10: every declared game code reaches the player as its own se
     const labels = messages(locale);
     for (const code of declared) {
       const view = composedProblemView(gameProblemFor(code), labels);
-      const internalDetails = [
-        labels.problemInternalErrorDetail.replace("{{code}}", code),
-        labels.problemInternalErrorCauseDetail
-          .replace("{{code}}", code)
-          .replace("{{cause}}", labels.problemInternalErrorNoCode),
-      ];
+      const internalDetails = [labels.problemInternalErrorDetail];
       if (internalDetails.includes(view.detail)) internalReadings += 1;
       if (view.kind !== "problem" || view.title.length === 0 || view.detail.length === 0)
         failures.push(`${locale} ${code} has no sentence`);
@@ -940,19 +931,20 @@ test("problem-code.10: every declared game code reaches the player as its own se
   assert.deepEqual(failures, [], "every declared game code must reach the player as its own sentence");
 
   // The one game sentence that carries producer vocabulary: `game_unavailable` is the wrapper the
-  // Host answers with when a step of the game's lifecycle failed, and the bounded `stardew_*` cause
-  // it registers is what names the step. That diagnostic must survive - and the code itself must
-  // not, which is what separates the sentence from the internal-error line it replaced.
+  // Host answers with when a step of the game's lifecycle failed, and the bounded `stardew_*` cause it
+  // registers is what names the step. This assertion used to require that name in the detail - "the
+  // bounded cause the Host registered is the only thing that names which step failed". The fact it
+  // protected was that the cause is not silently dropped: it is not - it stays on the error, and
+  // `observedProblemCause` reads it for the record. What it must no longer do is reach a player, who
+  // can neither read nor act on `stardew_private_launch_admission_failed`.
   const labels = messages("en");
-  const diagnosed = composedProblemView(
-    gameProblemFor("game_unavailable", 409, "stardew_private_launch_admission_failed"),
-    labels,
-  );
+  const cause = "stardew_private_launch_admission_failed";
+  const caused = gameProblemFor("game_unavailable", 409, cause);
+  const diagnosed = composedProblemView(caused, labels);
   t.diagnostic(`problem-code.10 diagnostic: ${diagnosed.title} / ${diagnosed.detail}`);
-  assert.ok(
-    diagnosed.detail.includes("stardew_private_launch_admission_failed"),
-    "the bounded cause the Host registered is the only thing that names which step failed",
-  );
+  assert.equal(observedProblemCause(caused), cause, "the bounded cause the Host registered is kept for the record");
+  assert.equal(diagnosed.detail, labels.gameProblemUnavailableDetail, "and the card is the sentence a player can act on");
+  assert.equal(diagnosed.detail.includes(cause), false, "the cause is not printed at the player");
   assert.equal(diagnosed.detail.includes("game_unavailable"), false);
 
   // The mutation half: a game code with no entry in the map falls through to the internal-error
@@ -960,7 +952,7 @@ test("problem-code.10: every declared game code reaches the player as its own se
   const undeclared = composedProblemView(gameProblemFor("gate_invented_game_code"), labels);
   assert.equal(
     undeclared.detail,
-    labels.problemInternalErrorDetail.replace("{{code}}", "gate_invented_game_code"),
+    labels.problemInternalErrorDetail,
     "an undeclared game code is the shape a missing sentence takes",
   );
 });

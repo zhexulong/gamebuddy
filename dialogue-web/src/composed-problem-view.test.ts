@@ -115,10 +115,28 @@ void test("a refusal this build does not know leaves the caller's own sentence i
 
 void test("the game's own refusals are read against the game's vocabulary first", () => {
   const labels = messages("en");
-  // `game_unavailable` is templated on the bounded coordinator cause the shell named.
-  const withCause = declaredProblemSentence(gameProblem("game_unavailable", "stardew_bridge_timeout"), labels);
-  assert.notEqual(withCause, null);
-  assert.ok(withCause?.includes("stardew_bridge_timeout"), "the cause the Host published is dropped");
+  // The premise this assertion carried until the owner's second ruling was "the cause the Host
+  // published is not dropped": a bounded `stardew_*` name said which game step failed, and the card
+  // printed it. The fact it was protecting is still held - the cause stays on the error and
+  // `observedProblemCause` reads it for the record - but the card no longer prints it, because a
+  // player can neither read nor act on one. What changed hands is where the name lives, not whether
+  // it survives.
+  const caused = gameProblem("game_unavailable", "stardew_bridge_timeout");
+  assert.equal(
+    observedProblemCause(caused),
+    "stardew_bridge_timeout",
+    "the cause the Host published is kept for the record",
+  );
+  assert.equal(
+    declaredProblemSentence(caused, labels),
+    labels.gameProblemUnavailableDetail,
+    "and the card is one sentence",
+  );
+  assert.equal(
+    declaredProblemSentence(caused, labels)?.includes("stardew_bridge_timeout"),
+    false,
+    "the cause reaches the player as neither word nor code",
+  );
   assert.equal(declaredProblemSentence(gameProblem("game_unavailable"), labels), labels.gameProblemUnavailableDetail);
 });
 
@@ -183,15 +201,30 @@ void test("the card's step line and its own control are one decision, never both
   }
 });
 
-void test("an unnamed failure is a diagnostic, and a retryable one says so", () => {
+void test("an unnamed failure says the fault is ours, and a retryable one says so", () => {
   const labels = messages("en");
-  const internal = composedProblemView(gameProblem("a_code_from_a_future_host"), labels);
+  // The premise this assertion carried until the owner's second ruling was "the diagnostic shows the
+  // code it received". The diagnostic is still kept - on the error, where `observedProblemCode`
+  // reads it and a report takes it from - and the card now says the one true thing a player can act
+  // on: the fault is ours, and here is the step.
+  const unknown = gameProblem("a_code_from_a_future_host");
+  const internal = composedProblemView(unknown, labels);
   assert.equal(internal.title, labels.problemInternalErrorTitle);
-  assert.ok(internal.detail.includes("a_code_from_a_future_host"), "the diagnostic drops the code it received");
+  assert.equal(internal.detail, labels.problemInternalErrorDetail, "one sentence, whatever the code was");
+  assert.equal(
+    internal.detail.includes("a_code_from_a_future_host"),
+    false,
+    "a code is not something a player can read",
+  );
+  assert.equal(
+    observedProblemCode(unknown),
+    "a_code_from_a_future_host",
+    "and the code is not lost: the record has it",
+  );
 
   const noCode = composedProblemView(new Error("plain"), labels);
-  assert.equal(noCode.title, labels.problemInternalErrorTitle);
-  assert.ok(noCode.detail.includes(labels.problemInternalErrorNoCode));
+  assert.equal(noCode.detail, labels.problemInternalErrorDetail);
+  assert.equal(observedProblemCode(new Error("plain")), null, "an error with no code records none");
 
   const retryable = composedProblemView(tavernProblem("a_code_from_a_future_host", true), labels);
   assert.equal(retryable.title, labels.problemTemporarilyUnavailableTitle);

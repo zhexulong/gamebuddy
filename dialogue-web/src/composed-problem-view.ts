@@ -42,10 +42,12 @@ import { ReferencePipelineSessionError } from "./reference-pipeline-session";
  *  - **the raw member never reaches the player.** Every sentence is a catalogue string; no code,
  *    cause, path or producer text is rendered.
  *
- * Below the union is the untyped boundary, stated rather than hidden: a code arrives off the wire,
- * and a value neither contract declares reaches the internal-error sentence carrying the code it
- * actually received - a diagnostic for a build that met a Host it does not know, never the normal
- * path.
+ * Below the union is the untyped boundary, stated rather than hidden: a code arrives off the wire and
+ * a value neither contract declares reaches the internal-error sentence - a build that met a Host it
+ * does not know. That sentence says the fault is ours and where the step is; the code stays on the
+ * error, where `observedProblemCause` reads it for the record and for a report, and
+ * `player-vocabulary.8` drives every declared code and every `stardew_*` cause this repository
+ * declares through this module to hold the line that no sentence prints one.
  *
  * The composed shell serves a second contract, `game_browser_api/v1`
  * (`host/src/game-browser-contract/index.ts`), and the same defect lived there: of its twenty-three
@@ -670,16 +672,17 @@ function isDeclaredProblemCode(code: string): code is TavernProblemCode {
  * something went wrong without saying whether the command ran - a stop that may or may not have
  * stopped the game. The distinction is not decoration: the game panel's per-operation line says
  * "the result is uncertain", which is the truth for the second class and a false claim for the
- * first. `game_unavailable` is the one wrapper whose cause carries the meaning, so its sentence is
- * templated on the bounded `stardew_*` cause; `game_runtime_unavailable`,
- * `game_endgame_settlement_unavailable` and `state_unavailable` are unsettled because the Host
- * names a failure whose effect on the command it cannot state.
+ * first. `game_unavailable` is the one wrapper whose cause carries the meaning, and the cause is the
+ * record's, not the player's: the bounded `stardew_*` name says which step failed and is read by
+ * `observedProblemCause`, while the sentence a player reads is the one above it, with or without a
+ * cause. `game_runtime_unavailable`, `game_endgame_settlement_unavailable` and `state_unavailable`
+ * are unsettled because the Host names a failure whose effect on the command it cannot state.
  */
 type GameOutcome = "refused" | "unsettled";
 
 type GameProblemView = Readonly<{
   outcome: GameOutcome;
-  sentence: (labels: Messages, cause: string | null) => ProblemViewState;
+  sentence: (labels: Messages) => ProblemViewState;
 }>;
 
 /** A game refusal whose words are one catalogue pair, with no cause to name. */
@@ -748,6 +751,13 @@ const gameRouteUnavailable: ProblemSentence = (labels) =>
 const gameStateUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail, RETRY_READ);
 /**
+ * The Host's wrapper for a step of the game's own lifecycle that failed. The bounded `stardew_*`
+ * cause it carries names the step for the record; a player cannot act on that name, so the sentence
+ * is one sentence whether or not the Host sent one.
+ */
+const gameUnavailable: ProblemSentence = (labels) =>
+  sentence(labels.gameProblemUnavailableTitle, labels.gameProblemUnavailableDetail, RETRY_READ);
+/**
  * The game process itself ended. The Host states it (the Guardian reported the exit and the code
  * that came with it), so this is a fact, not a failure of a read: the retry that `state_unavailable`
  * offers cannot change it. Two routes answer with it - the cabin read, which would otherwise ask a
@@ -814,17 +824,7 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   idempotency_expired: refused(gameNotRepeated),
   idempotency_in_progress: refused(stillRunning),
 
-  game_unavailable: {
-    outcome: "unsettled",
-    sentence: (labels, cause) =>
-      sentence(
-        labels.gameProblemUnavailableTitle,
-        cause === null
-          ? labels.gameProblemUnavailableDetail
-          : labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", cause),
-        RETRY_READ,
-      ),
-  },
+  game_unavailable: unsettled(gameUnavailable),
   game_prerequisites_missing: refused(gamePrerequisitesMissing),
   game_instance_not_found: refused(gameInstanceGone),
   game_attachment_conflict: refused(gameAttachmentMoved),
@@ -874,8 +874,7 @@ export type GameOperationFailure = Readonly<{ kind: "unsettled" }> | Readonly<{ 
 export function gameOperationFailure(error: unknown, labels: Messages): GameOperationFailure {
   if (error instanceof ComposedReferenceGameProblemError) {
     const view = gameProblemView(error.code);
-    if (view !== null && view.outcome === "refused")
-      return { kind: "refused", sentence: view.sentence(labels, error.causeCode).detail };
+    if (view !== null && view.outcome === "refused") return { kind: "refused", sentence: view.sentence(labels).detail };
   }
   return { kind: "unsettled" };
 }
@@ -913,19 +912,23 @@ export function observedProblemCode(error: unknown): string | null {
   return null;
 }
 
-/** The bounded coordinator cause the composed shell reported, when it named one. */
+/**
+ * The bounded coordinator cause the composed shell reported, when it named one.
+ *
+ * The record's own accessor: it is what a report, a log line or an operator asks for when a game step
+ * failed, and it is deliberately never rendered. The name says which step the Host stopped at, which
+ * a player can neither read nor act on, so `player-vocabulary.8` holds every sentence this module
+ * produces to containing no code at all.
+ */
 export function observedProblemCause(error: unknown): string | null {
   return error instanceof ComposedReferenceGameProblemError ? error.causeCode : null;
 }
 
-function internalProblem(error: unknown, labels: Messages): ProblemViewState {
-  const code = observedProblemCode(error) ?? labels.problemInternalErrorNoCode;
-  const cause = observedProblemCause(error);
-  const template = cause === null ? labels.problemInternalErrorDetail : labels.problemInternalErrorCauseDetail;
+function internalProblem(labels: Messages): ProblemViewState {
   return {
     kind: "problem",
     title: labels.problemInternalErrorTitle,
-    detail: template.replace("{{code}}", code).replace("{{cause}}", cause ?? ""),
+    detail: labels.problemInternalErrorDetail,
     step: RETRY_READ,
   };
 }
@@ -944,12 +947,12 @@ function namedProblemView(error: unknown, labels: Messages): ProblemViewState | 
   // is not on), so a game refusal is answered by the game map first.
   if (code !== null && error instanceof ComposedReferenceGameProblemError) {
     const view = gameProblemView(code);
-    if (view !== null) return view.sentence(labels, error.causeCode);
+    if (view !== null) return view.sentence(labels);
   }
   if (code !== null && isDeclaredProblemCode(code)) return PROBLEM_SENTENCES[code](labels);
   if (code !== null) {
     const view = gameProblemView(code);
-    if (view !== null) return view.sentence(labels, null);
+    if (view !== null) return view.sentence(labels);
   }
   return null;
 }
@@ -997,7 +1000,7 @@ export function composedProblemView(error: unknown, labels: Messages): ProblemVi
       step: RETRY_READ,
     };
   }
-  return internalProblem(error, labels);
+  return internalProblem(labels);
 }
 
 /**
