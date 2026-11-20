@@ -203,10 +203,11 @@ test(
       return native;
     };
     try {
-      // The production role environment: the exact seven-key allowlist both the Host
-      // encoder and the native's `IsAllowedEnvironment` carry.
+      // The production role environment: the exact six-key allowlist both the Host
+      // encoder and the native's `IsAllowedEnvironment` carry. No `PATH`: the role is
+      // created by absolute image, and forwarding the Host's own PATH is what once pushed
+      // this frame past the Guardian session's bound.
       const environment = Object.freeze({
-        PATH: process.env.PATH ?? "C:\\Windows\\System32",
         SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
         WINDIR: process.env.WINDIR ?? "C:\\Windows",
         TEMP: process.env.TEMP ?? "C:\\Windows\\Temp",
@@ -375,7 +376,7 @@ test(
         assert.deepEqual(
           Object.keys(decoded.environment as Record<string, unknown>).sort(),
           Object.keys(environment).sort(),
-          `(c) the ${role} launch frame must carry the exact seven-key role environment`,
+          `(c) the ${role} launch frame must carry the exact six-key role environment`,
         );
         assert.equal(
           host.standIn.nativeAnswers.at(-1),

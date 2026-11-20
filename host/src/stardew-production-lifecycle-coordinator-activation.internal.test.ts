@@ -585,7 +585,7 @@ test("contained Player Host success constructs the real contained runtime and se
       const decode = (frame: Uint8Array) => JSON.parse(new TextDecoder().decode(frame)) as Record<string, unknown>;
       const plan = decode(new Uint8Array(launchCall.input.privateFrame as readonly number[]));
       // ParseLaunch schema: exactly the ten keys, fully qualified executable/cwd,
-      // and the seven-key environment allowlist with the generation var.
+      // and the six-key environment allowlist with the generation var.
       assert.deepEqual(
         Object.keys(plan).sort(),
         [

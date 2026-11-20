@@ -9,7 +9,6 @@ import {
 } from "./stardew-native-role-launch-plan.private.js";
 
 const makeEnvironment = (): Record<string, string> => ({
-  PATH: "C:\\Windows\\System32",
   SystemRoot: "C:\\Windows",
   WINDIR: "C:\\Windows",
   TEMP: "C:\\Users\\tester\\AppData\\Local\\Temp",
@@ -128,6 +127,15 @@ test("an empty arguments array is legal exactly as in ParseLaunch", () => {
 });
 
 test("rejects undeclared or missing environment keys fail-closed like ParseLaunch", () => {
+  // `PATH` is the shape a caller must not be able to add back: it is what made a real launch
+  // frame larger than the channel that carries it (see the allowlist's own note).
+  assert.throws(
+    () =>
+      modelStardewNativeRoleLaunchPlan(
+        makePlanInput({ environment: { ...makeEnvironment(), PATH: "C:\\Windows\\System32" } }),
+      ),
+    /environment_key_disallowed/,
+  );
   assert.throws(
     () =>
       modelStardewNativeRoleLaunchPlan(
@@ -144,7 +152,7 @@ test("rejects undeclared or missing environment keys fail-closed like ParseLaunc
   assert.throws(
     () =>
       modelStardewNativeRoleLaunchPlan(
-        makePlanInput({ environment: { ...makeEnvironment(), PATH: "bad\u0000value" } }),
+        makePlanInput({ environment: { ...makeEnvironment(), SystemRoot: "bad\u0000value" } }),
       ),
     /environment_value_invalid/,
   );

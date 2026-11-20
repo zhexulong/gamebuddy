@@ -348,7 +348,6 @@ export type StardewPlayerHostRuntimeLaunchCollaborator = Readonly<{
 }>;
 
 type StardewPrivateChildEnvironment = Readonly<{
-  PATH: string;
   SystemRoot: string;
   WINDIR: string;
   TEMP: string;
@@ -5998,7 +5997,30 @@ function isOpaque(value: unknown): value is string {
   return typeof value === "string" && OPAQUE.test(value);
 }
 
-function createStardewChildEnvironment(launchGeneration: string): StardewPrivateChildEnvironment {
+/**
+ * The most the role's environment may weigh in the launch frame.
+ *
+ * The frame that carries it is base64url'd into one Guardian session frame bounded at
+ * 16 384 bytes (`MAX_GUARDIAN_WIRE_BYTES`, which is the Desktop broker's own
+ * `MaxWireBytes`), so the environment's share of that frame has to be stated instead of
+ * inherited. What a role legitimately needs is two system directories, one temp
+ * directory, the profile and one bounded generation - a few hundred bytes - so this
+ * leaves the plan's own absolute paths their room. Measured on the machine that failed:
+ * 17 069 forwarded PATH characters were the whole difference between a launch that
+ * shipped and one the Host refused before writing it.
+ */
+export const STARDEW_CHILD_ENVIRONMENT_MAX_BYTES = 1_024;
+
+/**
+ * The exact role environment for one launch invocation.
+ *
+ * Every value is a fact the Host reads for the role itself; nothing is copied wholesale,
+ * and `PATH` is absent because nothing in the role resolves a name (see
+ * `STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS`). A value that would push the environment past
+ * its stated budget is refused here, where the code can still name it, instead of
+ * surfacing later as a frame too large to send.
+ */
+export function createStardewChildEnvironment(launchGeneration: string): StardewPrivateChildEnvironment {
   if (!isOpaque(launchGeneration)) throw new Error("invalid_stardew_child_launch_generation");
   const required = (name: string): string => {
     const value = process.env[name];
@@ -6006,15 +6028,17 @@ function createStardewChildEnvironment(launchGeneration: string): StardewPrivate
       throw new Error("stardew_child_environment_invalid");
     return value;
   };
-  return Object.freeze({
-    PATH: required("PATH"),
+  const environment: StardewPrivateChildEnvironment = {
     SystemRoot: required("SystemRoot"),
     WINDIR: required("WINDIR"),
     TEMP: required("TEMP"),
     TMP: required("TMP"),
     USERPROFILE: required("USERPROFILE"),
     [LAUNCH_GENERATION_ENVIRONMENT_VARIABLE]: launchGeneration,
-  });
+  };
+  if (Buffer.byteLength(JSON.stringify(environment), "utf8") > STARDEW_CHILD_ENVIRONMENT_MAX_BYTES)
+    throw new Error("stardew_child_environment_too_long");
+  return Object.freeze(environment);
 }
 
 function freezeBootstrapFacts(

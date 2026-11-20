@@ -3219,7 +3219,7 @@ test("launch callback permits exactly one invocation even before callback return
   assert.equal(harness.spawnCalls.length, 1);
 });
 
-test("direct Stardew child launches use the exact seven-key environment and exclude poisoned ambient values", async () => {
+test("direct Stardew child launches use the exact six-key environment and exclude poisoned ambient values", async () => {
   const poisonName = "GAMEBUDDY_STARDEW_POISON_ENV";
   const previousPoison = process.env[poisonName];
   process.env[poisonName] = "must-not-cross-process-owner-boundary";
@@ -3273,7 +3273,6 @@ test("direct Stardew child launches use the exact seven-key environment and excl
     );
 
     const expectedBase = {
-      PATH: process.env.PATH,
       SystemRoot: process.env.SystemRoot,
       WINDIR: process.env.WINDIR,
       TEMP: process.env.TEMP,

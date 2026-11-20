@@ -11,9 +11,20 @@ import { randomUUID } from "node:crypto";
 
 export type StardewNativeRole = "player_host" | "ai_client";
 
-/** Exact allowlisted role-process environment; no ambient inheritance. */
+/**
+ * Exact allowlisted role-process environment; no ambient inheritance.
+ *
+ * `PATH` is deliberately not one of them. The Guardian creates the role with
+ * `CreateProcessW(executable, ...)` - the absolute image as `lpApplicationName`
+ * (`WindowsRoleLauncher.CreateProcessW`) - in an absolute working directory, with
+ * absolute arguments, so Windows resolves no name to start it; nothing the role then
+ * runs resolves one either: `StardewModdingAPI.exe` starts the game beside itself, and
+ * the Mod reads only `GAMEBUDDY_STARDEW_LAUNCH_GENERATION` (`ModEntry.cs`). Forwarding
+ * the Host's own PATH into this plan is what made one launch frame 26 393 bytes against
+ * the 16 384-byte Guardian session bound, so the launch was refused before it was
+ * written.
+ */
 export const STARDEW_NATIVE_ROLE_ENVIRONMENT_KEYS = [
-  "PATH",
   "SystemRoot",
   "WINDIR",
   "TEMP",

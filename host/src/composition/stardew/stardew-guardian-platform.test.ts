@@ -59,7 +59,6 @@ const ack = (operation: string, role?: string): GuardianAck => ({
 });
 
 const launchEnvironment = (): Record<string, string> => ({
-  PATH: "C:\\Windows\\System32",
   SystemRoot: "C:\\Windows",
   WINDIR: "C:\\Windows",
   TEMP: "C:\\Users\\tester\\AppData\\Local\\Temp",
@@ -226,7 +225,7 @@ test("composition-private platform relays arm facts and encodes launch exactly a
   });
 
   // Launch is the encoder output: exactly the ten ParseLaunch keys, GUID D
-  // planId, fully qualified executable/cwd, and the exact seven-key allowlist.
+  // planId, fully qualified executable/cwd, and the exact six-key allowlist.
   const decoded = JSON.parse(new TextDecoder().decode(calls[1]!.frame)) as Record<string, unknown>;
   assert.deepEqual(Object.keys(decoded).sort(), PARSE_LAUNCH_KEYS);
   assert.match(String(decoded.planId), GUID_D);
