@@ -222,7 +222,6 @@ internal sealed partial class ExecutionManager
             : MagneticPickupReach.SelectStandTile(
                 magnetSubject,
                 actorTile,
-                Game1.player.StandingPixel,
                 magnetRadius,
                 tile => StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
                     && !IsWarpBufferTile(location, tile),
@@ -240,12 +239,10 @@ internal sealed partial class ExecutionManager
         {
             // The point `Debris.playerInRange` compares: it adds the half tile to the mean before it measures, so a
             // reader subtracting `subject_px` from a standing pixel is 32 px short of the engine's own number.
-            (int X, int Y) compared = (
-                (int)(magnetSubject.X + MagneticPickupReach.ChunkCentreOffset),
-                (int)(magnetSubject.Y + MagneticPickupReach.ChunkCentreOffset));
+            Vector2 compared = MagneticPickupReach.SubjectCentre(magnetSubject);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_out_of_reach",
                 $"tile={liveTargetTile.X},{liveTargetTile.Y};actor={actorTile.X},{actorTile.Y};radius={magnetRadius};"
-                    + $"subject_px={(int)magnetSubject.X},{(int)magnetSubject.Y};subject_centre_px={compared.X},{compared.Y};"
+                    + $"subject_px={(int)magnetSubject.X},{(int)magnetSubject.Y};subject_centre_px={(int)compared.X},{(int)compared.Y};"
                     + $"{reach.Describe()};nearest_why={DescribeStandRefusal(location, Game1.player, actorTile, reach.NearestRefused)}"
                     + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, reach.RefusalDetail).Format()}");
         }
@@ -291,11 +288,12 @@ internal sealed partial class ExecutionManager
     /// <c>ItemPickupMagnetWindowTicks</c> bounds.
     /// </para>
     /// <para>
-    /// THE DISTANCE IT ASKS IS NOT THE DISTANCE THE RECEIPT PRINTS. <c>playerInRange</c> adds the half tile before it
-    /// compares (Debris.cs:590, <c>position.X + 32f - standingPixel.X</c>), so a body 118 px from the published
-    /// <c>subject_px</c> is 150 px from the point the engine measures - and `round81` read that pair as a guard refusing
-    /// inside its own radius. <see cref="MagneticPickupReach.InReach"/> is that whole predicate, essential-item answer
-    /// included, so this cannot disagree with the engine about either half.
+    /// THE DISTANCE IT ASKS IS THE DISTANCE THE RECEIPT PRINTS, from the same owner: <c>playerInRange</c> adds the half
+    /// tile before it compares (Debris.cs:590, <c>position.X + 32f - standingPixel.X</c>), and `round81` read
+    /// <c>subject_px</c> - 32 px short of the point the engine measures - as a guard refusing inside its own radius.
+    /// <see cref="MagneticPickupReach.AxisDistance"/> is that subtraction, <see cref="MagneticPickupReach.WithinMagnet"/> is
+    /// the engine's <c>&lt;=</c> over it and <c>axis_distance_px</c> is the same two numbers, so neither half can drift
+    /// from the engine.
     /// </para>
     /// </remarks>
     private static string? BrokenItemPickupPrecondition(Farmer actor, Debris debris)
@@ -335,10 +333,9 @@ internal sealed partial class ExecutionManager
     private static string DescribeItemPickupReach(Farmer actor, Point chunkTile, Vector2 subject)
     {
         Point standing = actor.StandingPixel;
-        float distanceX = subject.X + MagneticPickupReach.ChunkCentreOffset - standing.X;
-        float distanceY = subject.Y + MagneticPickupReach.ChunkCentreOffset - standing.Y;
+        Vector2 distance = MagneticPickupReach.AxisDistance(subject, standing);
         return $"actor_tile={(int)actor.Tile.X},{(int)actor.Tile.Y};chunk_tile={chunkTile.X},{chunkTile.Y};"
-            + $"axis_distance_px={distanceX.ToString("0.#", CultureInfo.InvariantCulture)},{distanceY.ToString("0.#", CultureInfo.InvariantCulture)};radius={MagneticPickupReach.ReachPixels(actor)}";
+            + $"axis_distance_px={distance.X.ToString("0.#", CultureInfo.InvariantCulture)},{distance.Y.ToString("0.#", CultureInfo.InvariantCulture)};radius={MagneticPickupReach.ReachPixels(actor)}";
     }
 
     private LocalExecutionReceipt? TrySettleMagnetCollectedItem(

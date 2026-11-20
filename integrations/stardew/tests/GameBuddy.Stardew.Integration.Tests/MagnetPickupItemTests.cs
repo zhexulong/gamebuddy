@@ -634,9 +634,9 @@ public sealed class MagnetPickupItemTests
     ///
     /// <para>
     /// It also records the asymmetry the radius does not show: the reach is a PIXEL rectangle measured from the body's
-    /// own standing pixel, so a tile two tiles away towards the body's sub-tile offset is one or two dozen pixels
-    /// outside it, while the tile on the other side is inside. "Two tiles away" is therefore not a promise that any
-    /// particular two-tile ring tile works - which is exactly why the refusal may not answer with a radius alone.
+    /// own standing pixel, so a tile two tiles away has its span partly inside and partly outside it, while the span of
+    /// the tile on the other side is wholly inside. "Two tiles away" is therefore not a promise that any particular
+    /// two-tile ring tile works - which is exactly why the refusal may not answer with a radius alone.
     /// </para>
     /// </summary>
     [Fact]
@@ -646,9 +646,6 @@ public sealed class MagnetPickupItemTests
         harness.StandAt(7, 39);
         Vector2 subject = MagneticPickupReach.Subject(harness.Farm.debris[0]);
         int reach = harness.MagnetRadius;
-        Point standing = harness.Actor.StandingPixel;
-        int offsetX = standing.X - (int)harness.Actor.Tile.X * 64;
-        int offsetY = standing.Y - (int)harness.Actor.Tile.Y * 64;
         Func<Vector2, bool>? walkable = StardewBodyController.BuildWalkableComponent(harness.Farm, harness.Actor);
 
         var table = new List<string>();
@@ -657,17 +654,16 @@ public sealed class MagnetPickupItemTests
         {
             for (int x = 2; x <= 6; x++)
             {
-                var pixel = new Point(x * 64 + offsetX, y * 64 + offsetY);
-                bool inReach = MagneticPickupReach.WithinMagnet(subject, pixel, reach);
+                bool inReach = MagneticPickupReach.MagnetCoversTile(subject, (x, y), reach);
                 bool standable = StardewBodyController.IsStandableTile(harness.Farm, harness.Actor, new Vector2(x, y));
                 bool reachable = walkable is not null && walkable(new Vector2(x, y));
-                table.Add($"({x},{y}) in_reach={inReach} standable={standable} reachable={reachable}");
+                table.Add($"({x},{y}) whole_tile_in_reach={inReach} standable={standable} reachable={reachable}");
                 if (inReach && standable && reachable)
                     inside.Add((x, y));
             }
         }
 
-        this.output.WriteLine($"actor={harness.Actor.Tile.X},{harness.Actor.Tile.Y};drop=4,38;reach={reach};offset={offsetX},{offsetY}");
+        this.output.WriteLine($"actor={harness.Actor.Tile.X},{harness.Actor.Tile.Y};drop=4,38;reach={reach}");
         foreach (string line in table)
             this.output.WriteLine($"  {line}");
 
@@ -679,7 +675,6 @@ public sealed class MagnetPickupItemTests
         MagneticStandSearch search = MagneticPickupReach.SelectStandTile(
             subject,
             ((int)harness.Actor.Tile.X, (int)harness.Actor.Tile.Y),
-            standing,
             reach,
             tile => StardewBodyController.IsStandableTile(harness.Farm, harness.Actor, new Vector2(tile.X, tile.Y))
                 && !ExecutionManager.IsWarpBufferTile(harness.Farm, tile),
@@ -704,11 +699,21 @@ public sealed class MagnetPickupItemTests
     /// </para>
     ///
     /// <para>
-    /// The three answers it pins: the sixteen ARE the whole population (the search asked the right place - the window is
-    /// not the defect the round suspected); her own tile is not one of them (4886 + 32 against 4768 is 150 px on the x
-    /// axis, past the 128 px reach, which is why a walk was needed at all); and the nearest of the sixteen is (75,39) at
-    /// one tile, exactly the tile the live receipt named as refused. What no number in that receipt says is how many of
-    /// the sixteen could be STOOD on, which is the field the search now carries.
+    /// The three answers it pins: the sixteen ARE the whole population under the POINT model that printed them (the
+    /// search asked the right place - the window is not the defect the round suspected); her own tile is not one of them
+    /// (4886 + 32 against 4768 is 150 px on the x axis, past the 128 px reach, which is why a walk was needed at all); and
+    /// the nearest of the sixteen is (75,39) at one tile, exactly the tile the live receipt named as refused. What no
+    /// number in that receipt says is how many of the sixteen could be STOOD on, which is the field the search now
+    /// carries.
+    /// </para>
+    ///
+    /// <para>
+    /// `round82` THEN SHOWED WHAT THAT SIXTEEN WAS WORTH: sixteen tiles admitted by a PREDICTED pixel, and four of them
+    /// refused <c>pickup_precondition_broken:player_in_range</c> once she stood on them. So this case keeps both readings
+    /// of the same rectangle - the point model that printed the live <c>16</c>, and the span model the search now decides
+    /// on, where a tile is admitted only if the rectangle covers all of it - and prints the difference. The count falls
+    /// 16 to 9, and that is the price rather than a hidden fact: the far column (x=78) is admitted by one pixel of the
+    /// tile and refused by the rest, and so is the far row (y=37), so no walk could promise either.
     /// </para>
     /// </summary>
     [Fact]
@@ -723,29 +728,60 @@ public sealed class MagnetPickupItemTests
         (int X, int Y) refused = (75, 39);
         const string refusedBy = "standability";
 
-        var table = new List<(int X, int Y, int Distance)>();
+        var pointModel = new List<(int X, int Y, int Distance)>();
+        var spanModel = new List<(int X, int Y, int Distance)>();
         for (int x = 70; x <= 82; x++)
         {
             for (int y = 35; y <= 43; y++)
             {
+                int distance = Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y);
                 if (MagneticPickupReach.WithinMagnet(subject, new Point(x * 64 + 32, y * 64 + 32), reach))
-                    table.Add((x, y, Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y)));
+                    pointModel.Add((x, y, distance));
+                if (MagneticPickupReach.MagnetCoversTile(subject, (x, y), reach))
+                    spanModel.Add((x, y, distance));
             }
         }
 
         this.output.WriteLine(
-            $"round81: actor={actorTile.X},{actorTile.Y};subject_px={(int)subject.X},{(int)subject.Y};reach={reach};tiles={table.Count}");
-        foreach ((int x, int y, int distance) in table.OrderBy(tile => tile.Distance).ThenBy(tile => tile.Y).ThenBy(tile => tile.X))
+            $"round81: actor={actorTile.X},{actorTile.Y};subject_px={(int)subject.X},{(int)subject.Y};reach={reach};"
+                + $"point_model={pointModel.Count};span_model={spanModel.Count}");
+        foreach ((int x, int y, int distance) in pointModel.OrderBy(tile => tile.Distance).ThenBy(tile => tile.Y).ThenBy(tile => tile.X))
         {
             string standable = (x, y) == refused && refusedBy == "standability" ? "no" : "unrecorded";
-            this.output.WriteLine($"  ({x},{y}) distance={distance} standable={standable}");
+            string span = spanModel.Any(tile => tile.X == x && tile.Y == y) ? "whole" : "part";
+            this.output.WriteLine($"  ({x},{y}) distance={distance} span_in_reach={span} standable={standable}");
         }
 
-        table.Should().HaveCount(16, "the live receipt counted `in_reach=16`, and this rectangle has to account for every one");
-        table.Select(tile => tile.X).Distinct().OrderBy(x => x).Should().Equal(75, 76, 77, 78);
-        table.Select(tile => tile.Y).Distinct().OrderBy(y => y).Should().Equal(37, 38, 39, 40);
-        table.OrderBy(tile => tile.Distance).First().Should().Be(
+        pointModel.Should().HaveCount(16, "the live receipt counted `in_reach=16`, and this rectangle has to account for every one");
+        pointModel.Select(tile => tile.X).Distinct().OrderBy(x => x).Should().Equal(75, 76, 77, 78);
+        pointModel.Select(tile => tile.Y).Distinct().OrderBy(y => y).Should().Equal(37, 38, 39, 40);
+        pointModel.OrderBy(tile => tile.Distance).First().Should().Be(
             (refused.X, refused.Y, 1), "the live receipt named `nearest=75,39`, and one tile is the nearest anything can be");
+
+        // The seven the point model admitted on a pixel and the span model refuses: one pixel of such a tile is inside
+        // the rectangle and another is outside, and a tile-granular walk can leave her on the outside one.
+        List<(int X, int Y, int Distance)> pixelsOnly = pointModel.Where(tile => !spanModel.Contains(tile)).ToList();
+        pixelsOnly.Should().HaveCount(7, "the far column and the far row are the whole difference between the two readings");
+        foreach ((int x, int y, _) in pixelsOnly)
+        {
+            Rectangle span = MagneticPickupReach.StandingSpanOf((x, y));
+            var corners = new[]
+            {
+                new Point(span.Left, span.Top), new Point(span.Right - 1, span.Top),
+                new Point(span.Left, span.Bottom - 1), new Point(span.Right - 1, span.Bottom - 1),
+            };
+            bool centreInside = MagneticPickupReach.WithinMagnet(subject, MagneticPickupReach.StandingPixelOf((x, y)), reach);
+            List<Point> outside = corners.Where(corner => !MagneticPickupReach.WithinMagnet(subject, corner, reach)).ToList();
+            centreInside.Should().BeTrue($"({x},{y}) was admitted by the point model, so its centre pixel is inside the rectangle");
+            outside.Should().NotBeEmpty($"({x},{y}) is refused by the span model only because a pixel she can halt on is outside");
+            this.output.WriteLine(
+                $"  lost ({x},{y}): outside at "
+                    + string.Join(", ", outside.Select(corner => $"{corner.X},{corner.Y}")));
+        }
+
+        spanModel.Should().HaveCount(9);
+        spanModel.Select(tile => tile.X).Distinct().OrderBy(x => x).Should().Equal(75, 76, 77);
+        spanModel.Select(tile => tile.Y).Distinct().OrderBy(y => y).Should().Equal(38, 39, 40);
 
         Math.Abs(subject.X - standing.X).Should().Be(
             118,
@@ -755,25 +791,25 @@ public sealed class MagnetPickupItemTests
                 + "the rectangle, which is why this request needed a walk instead of an immediate collection");
 
         MagneticStandSearch free = MagneticPickupReach.SelectStandTile(
-            subject, actorTile, standing, reach, isStandable: _ => true, isReachable: _ => true);
-        free.InReach.Should().Be(16, "the window the search walks is this rectangle, so sixteen is what it asked");
-        free.Standable.Should().Be(16);
-        free.Reachable.Should().Be(16);
+            subject, actorTile, reach, isStandable: _ => true, isReachable: _ => true);
+        free.InReach.Should().Be(9, "the window the search walks is this rectangle, so nine tiles are its whole population");
+        free.Standable.Should().Be(9);
+        free.Reachable.Should().Be(9);
         free.Tile.Should().Be(
-            refused, "in a world where all sixteen are free the search settles on the tile the live receipt called `nearest`");
+            refused, "in a world where all nine are free the search settles on the tile the live receipt called `nearest`");
 
         // The two worlds `blocked_by=range:standability` used to collapse into one word, told apart by the two counts.
         MagneticStandSearch occupied = MagneticPickupReach.SelectStandTile(
-            subject, actorTile, standing, reach, isStandable: _ => false, isReachable: _ => true);
+            subject, actorTile, reach, isStandable: _ => false, isReachable: _ => true);
         occupied.Tile.Should().BeNull();
-        occupied.Standable.Should().Be(0, "sixteen occupied tiles is the WORLD's answer: the caller should stop");
+        occupied.Standable.Should().Be(0, "nine occupied tiles is the WORLD's answer: the caller should stop");
         occupied.Reachable.Should().Be(0);
         occupied.RefusalDetail.Should().Be("standability");
 
         MagneticStandSearch walledOff = MagneticPickupReach.SelectStandTile(
-            subject, actorTile, standing, reach, isStandable: _ => true, isReachable: _ => false);
+            subject, actorTile, reach, isStandable: _ => true, isReachable: _ => false);
         walledOff.Tile.Should().BeNull();
-        walledOff.Standable.Should().Be(16, "sixteen free tiles walled off from her is a WALK problem, not the world's answer");
+        walledOff.Standable.Should().Be(9, "nine free tiles walled off from her is a WALK problem, not the world's answer");
         walledOff.Reachable.Should().Be(0);
         walledOff.RefusalDetail.Should().Be("reachability");
     }
@@ -791,13 +827,12 @@ public sealed class MagnetPickupItemTests
     {
         var subject = new Vector2(0, 2 * 64);
         var actor = (X: 4, Y: 2);
-        var standing = new Point(4 * 64 + 32, 2 * 64 + 32);
 
         MagneticStandSearch search = MagneticPickupReach.SelectStandTile(
-            subject, actor, standing, 128, isStandable: _ => true, isReachable: _ => true);
+            subject, actor, 128, isStandable: _ => true, isReachable: _ => true);
 
         search.Tile.Should().Be(
-            (2, 2),
+            (1, 2),
             "the rectangle is built on the debris' mean, so the nearest standable tile inside it is found from there - "
                 + "a window centred on a chunk six tiles away from that mean would have examined nothing in the rectangle");
         search.InReach.Should().BeGreaterThan(1, "the tiles the rectangle covers are the population, and it is not one");
@@ -830,11 +865,9 @@ public sealed class MagnetPickupItemTests
         int.Parse(evidence["in_reach"], System.Globalization.CultureInfo.InvariantCulture).Should().BeGreaterThan(
             1, "the refusal says how many tiles it examined, so `none` is a measured answer about a population");
         (int nearestX, int nearestY) = ParseTile(evidence["nearest"]);
-        MagneticPickupReach.WithinMagnet(
-            MagneticPickupReach.Subject(harness.Farm.debris[0]),
-            new Point(nearestX * 64 + (harness.Actor.StandingPixel.X - (int)harness.Actor.Tile.X * 64), nearestY * 64 + (harness.Actor.StandingPixel.Y - (int)harness.Actor.Tile.Y * 64)),
-            harness.MagnetRadius)
-            .Should().BeTrue("the tile it offers is one the engine's own rectangle covers");
+        MagneticPickupReach.MagnetCoversTile(
+            MagneticPickupReach.Subject(harness.Farm.debris[0]), (nearestX, nearestY), harness.MagnetRadius)
+            .Should().BeTrue("the tile it offers is one whose whole standing span the engine's own rectangle covers");
         evidence["blocked_by"].Should().Be("range:standability", "and the layer names which predicate refused it");
         evidence["standable"].Should().Be(
             "0",
@@ -847,8 +880,9 @@ public sealed class MagnetPickupItemTests
 
         Vector2 subject = MagneticPickupReach.Subject(harness.Farm.debris[0]);
         evidence["subject_px"].Should().Be($"{(int)subject.X},{(int)subject.Y}", "the debris' mean, as the engine reads it");
+        Vector2 compared = MagneticPickupReach.SubjectCentre(subject);
         evidence["subject_centre_px"].Should().Be(
-            $"{(int)(subject.X + MagneticPickupReach.ChunkCentreOffset)},{(int)(subject.Y + MagneticPickupReach.ChunkCentreOffset)}",
+            $"{(int)compared.X},{(int)compared.Y}",
             "and the point `Debris.playerInRange` actually compares, so no reader has to add the half tile themselves");
     }
 
@@ -908,39 +942,44 @@ public sealed class MagnetPickupItemTests
     }
 
     /// <summary>
-    /// The choice of where to stand: the nearest tile to the body that is inside the rectangle AND that the body can
-    /// stand on and walk to, and null when the rectangle holds no such tile. The predicates are supplied, the way
-    /// <see cref="GameBuddy.Stardew.Core.ApproachTileSelector"/> takes them, so this is arithmetic rather than a world.
+    /// The choice of where to stand: the nearest tile to the body whose whole standing span is inside the rectangle AND
+    /// that the body can stand on and walk to, and null when the rectangle holds no such tile. The predicates are
+    /// supplied, the way <see cref="GameBuddy.Stardew.Core.ApproachTileSelector"/> takes them, so this is arithmetic
+    /// rather than a world.
     /// </summary>
     [Fact]
     public void TheStandTileIsTheNearestStandableTileInsideTheRectangle()
     {
         var subject = new Vector2(5 * 64, 2 * 64);
         var actor = (X: 2, Y: 2);
-        var standing = new Point(2 * 64 + 32, 2 * 64 + 32);
         int reach = 128;
 
-        MagneticPickupReach.SelectStandTile(
-                subject, actor, standing, reach,
-                isStandable: tile => tile != (5, 2),
-                isReachable: _ => true)
-            .Tile.Should().Be((3, 2), "the nearest standable tile inside the rectangle wins, and the chunk's own tile is not standable");
+        // The tile that used to win: its CENTRE pixel is inside the rectangle, its far one is not. A walk onto it can
+        // leave her on either, so the span rule refuses it - which is the `round82` shape in one tile.
+        MagneticPickupReach.WithinMagnet(subject, MagneticPickupReach.StandingPixelOf((3, 2)), reach).Should().BeTrue();
+        MagneticPickupReach.MagnetCoversTile(subject, (3, 2), reach).Should().BeFalse();
 
         MagneticPickupReach.SelectStandTile(
-                subject, actor, standing, reach,
+                subject, actor, reach,
+                isStandable: tile => tile != (5, 2),
+                isReachable: _ => true)
+            .Tile.Should().Be((4, 2), "the nearest standable tile whose whole span is inside the rectangle wins, and the chunk's own tile is not standable");
+
+        MagneticPickupReach.SelectStandTile(
+                subject, actor, reach,
                 isStandable: _ => false,
                 isReachable: _ => true)
             .Tile.Should().BeNull("nowhere to stand inside the rectangle is a refusal, not a guess");
 
         MagneticPickupReach.SelectStandTile(
-                subject, actor, standing, reach,
+                subject, actor, reach,
                 isStandable: _ => true,
                 isReachable: _ => false)
             .Tile.Should().BeNull("a tile the body cannot walk to is the walk that comes back no_native_path");
 
         // A reach that does not span the gap leaves nothing: the rule cannot be satisfied by wishing.
         // A reach narrower than one tile leaves only the chunk's own tile in range, so refusing it is the whole answer.
-        MagneticPickupReach.SelectStandTile(subject, actor, standing, 32, isStandable: tile => tile != (5, 2), isReachable: _ => true)
+        MagneticPickupReach.SelectStandTile(subject, actor, 32, isStandable: tile => tile != (5, 2), isReachable: _ => true)
             .Tile.Should().BeNull("one tile of reach covers only the chunk's own tile here, and that tile cannot be stood on");
     }
 

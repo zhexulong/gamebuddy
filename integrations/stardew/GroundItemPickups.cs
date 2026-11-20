@@ -109,6 +109,26 @@ internal sealed class GroundItemPickupLedger
 /// same defect committed by the same line, <c>new LocalMoveSpec(..., liveTargetTile, ...)</c>.
 /// </para>
 /// <para>
+/// THE TILE IS THE UNIT OF THE WALK AND THE PIXEL IS THE UNIT OF THE ENGINE'S PREDICATE, so a stand tile is admitted
+/// only when the rectangle covers EVERY pixel a body on that tile can report (<see cref="MagnetCoversTile"/>).
+/// Predicting the pixel a walk will leave her on is what `round82` did four times out of four: the search measured
+/// <c>x * 64 + offset</c> with her CURRENT sub-tile remainder (<c>offset = herStandingPixel - herTile * 64</c> carried
+/// onto a tile she had not reached), while <c>Debris.updateChunks</c> re-asks the engine about the pixel she actually
+/// has. Arrival is tile-granular (`LocalMoveSpec` + `IsArrivalTile` accept a tile, not a pixel), so the remainder is
+/// never carried: measured four refusals of `pickup_precondition_broken:player_in_range` where she stood exactly on the
+/// tile the search chose - `stand_at=73,27;actor_tile=73,27;axis_distance_px=153.9;radius=128`, with 144.1, 140.1 and
+/// 177.9 beside it, every one overshooting by 12 to 50 px. For that one tile the two origins are side by side:
+/// <c>4672 + 48 = 4720</c> (her remainder carried, 119.9 px from the chunk centre, so admitted) against
+/// <c>4672 + 14 = 4686</c> (where she actually halted, 153.9 px, so refused).
+/// </para>
+/// <para>
+/// WHAT THAT COSTS, in the same arithmetic: for a drop centred on a tile and a 128 px reach, the ring of admissible
+/// stand tiles goes from 5x5 at its widest - a carried remainder of exactly the half tile puts a tile two columns away
+/// on the 128 px boundary - to 3x3, because the far side of a two-tile reach can only be promised on one pixel of the
+/// tile and not on the tile. Nothing is fudged into that: the 128 is untouched and the tile's own width enters as the
+/// span.
+/// </para>
+/// <para>
 /// The number is read from the engine on every call (<see cref="ReachPixels"/>); nothing here spells a tile count.
 /// The geometry is arithmetic over supplied predicates, in the shape <see cref="GameBuddy.Stardew.Core.ApproachTileSelector"/>
 /// established, so the rule is testable without a world and the caller keeps the game questions.
@@ -145,10 +165,65 @@ internal static class MagneticPickupReach
         return chunks == 0 ? total : total / chunks;
     }
 
+    /// <summary>
+    /// The point <c>Debris.playerInRange</c> measures FROM: the debris' mean plus the half tile the engine adds
+    /// (Debris.cs:590). The one place that addition happens, so a receipt and the comparison cannot disagree.
+    /// </summary>
+    internal static Vector2 SubjectCentre(Vector2 subject) =>
+        new(subject.X + ChunkCentreOffset, subject.Y + ChunkCentreOffset);
+
+    /// <summary>
+    /// The signed per-axis distance <c>Debris.playerInRange</c> compares: subject centre minus the body's standing
+    /// pixel. The one place this arithmetic exists - <see cref="WithinMagnet"/> is the engine's <c>&lt;=</c> over it,
+    /// and the refusal's <c>axis_distance_px</c> is the same numbers, so the two spellings cannot drift apart.
+    /// </summary>
+    internal static Vector2 AxisDistance(Vector2 subject, Point standingPixel)
+    {
+        Vector2 centre = SubjectCentre(subject);
+        return new Vector2(centre.X - standingPixel.X, centre.Y - standingPixel.Y);
+    }
+
     /// <summary>Whether a body standing on <paramref name="standingPixel"/> is inside the engine's rectangle.</summary>
-    internal static bool WithinMagnet(Vector2 subject, Point standingPixel, int reachPixels) =>
-        Math.Abs(subject.X + ChunkCentreOffset - standingPixel.X) <= reachPixels
-        && Math.Abs(subject.Y + ChunkCentreOffset - standingPixel.Y) <= reachPixels;
+    internal static bool WithinMagnet(Vector2 subject, Point standingPixel, int reachPixels)
+    {
+        Vector2 distance = AxisDistance(subject, standingPixel);
+        return Math.Abs(distance.X) <= reachPixels && Math.Abs(distance.Y) <= reachPixels;
+    }
+
+    /// <summary>
+    /// The pixel a body has when it stands in the middle of <paramref name="tile"/>: the engine's own placement
+    /// convention (a warp puts a 32 px-tall farmer at <c>tile * 64 + (0, 16)</c>, whose bounding-box centre is
+    /// <c>tile * 64 + 32</c> on both axes). It is the tile's representative point and the anchor of
+    /// <see cref="StandingSpanOf"/> - never a prediction of where a particular walk will halt.
+    /// </summary>
+    internal static Point StandingPixelOf((int X, int Y) tile) =>
+        new(tile.X * Game1.tileSize + (Game1.tileSize / 2), tile.Y * Game1.tileSize + (Game1.tileSize / 2));
+
+    /// <summary>
+    /// Every standing pixel a body on <paramref name="tile"/> can report: <c>Character.Tile</c> is
+    /// <c>StandingPixel / 64</c> (Character.cs:361-373), so a body on a tile is somewhere inside that tile's own
+    /// 64-pixel square. A tile therefore does not name one pixel; it names this span.
+    /// </summary>
+    internal static Rectangle StandingSpanOf((int X, int Y) tile)
+    {
+        Point centre = StandingPixelOf(tile);
+        int half = Game1.tileSize / 2;
+        return new Rectangle(centre.X - half, centre.Y - half, Game1.tileSize, Game1.tileSize);
+    }
+
+    /// <summary>
+    /// The engine's rectangle covers EVERY pixel a body on this tile can report, so <c>Debris.playerInRange</c> answers
+    /// true wherever the walk leaves it. This is the same predicate asked about a family of pixels instead of one, and
+    /// the four corners decide it because the engine's test is a rectangle on each axis.
+    /// </summary>
+    internal static bool MagnetCoversTile(Vector2 subject, (int X, int Y) tile, int reachPixels)
+    {
+        Rectangle span = StandingSpanOf(tile);
+        return WithinMagnet(subject, new Point(span.Left, span.Top), reachPixels)
+            && WithinMagnet(subject, new Point(span.Right - 1, span.Top), reachPixels)
+            && WithinMagnet(subject, new Point(span.Left, span.Bottom - 1), reachPixels)
+            && WithinMagnet(subject, new Point(span.Right - 1, span.Bottom - 1), reachPixels);
+    }
 
     /// <summary>
     /// The engine's whole answer to `Debris.playerInRange` - which is not the rectangle alone.
@@ -165,9 +240,9 @@ internal static class MagneticPickupReach
         debris.isEssentialItem() || WithinMagnet(Subject(debris), farmer.StandingPixel, ReachPixels(farmer));
 
     /// <summary>
-    /// The tile the body should stand on: the nearest one to where it already is that lies inside the engine's
-    /// rectangle, or <see langword="null"/> - carried on <see cref="MagneticStandSearch"/> - when the rectangle holds no
-    /// tile this body could stand on and walk to.
+    /// The tile the body should stand on: the nearest one to where it already is whose whole standing span lies inside
+    /// the engine's rectangle, or <see langword="null"/> - carried on <see cref="MagneticStandSearch"/> - when the
+    /// rectangle holds no tile this body could stand on and walk to.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -176,6 +251,12 @@ internal static class MagneticPickupReach
     /// <i>silent</i> about which tiles it asked: <see cref="MagneticStandSearch"/> carries how many tiles the rectangle
     /// covered, how many of them each predicate admitted, and which of them came closest, so a caller's refusal can name
     /// the tile it could not use instead of asserting that no such tile exists.
+    /// </para>
+    /// <para>
+    /// THE DECISION IS THE ENGINE'S PREDICATE OVER A TILE'S WHOLE STANDING SPAN (<see cref="MagnetCoversTile"/>), which
+    /// is the only statement about a walk that cannot turn out false: the walk ends on a TILE, so the pixel she reports
+    /// there is one this search never saw, and the previous spelling - her current sub-tile remainder carried onto the
+    /// candidate tile - promised a pixel nobody would occupy. See the class remarks for the four `round82` refusals.
     /// </para>
     /// <para>
     /// THE POPULATION IS THE RECTANGLE, NOT A RING AROUND THE DROP'S TILE. The engine measures
@@ -192,24 +273,19 @@ internal static class MagneticPickupReach
     internal static MagneticStandSearch SelectStandTile(
         Vector2 subject,
         (int X, int Y) actorTile,
-        Point actorStandingPixel,
         int reachPixels,
         Func<(int X, int Y), bool> isStandable,
         Func<(int X, int Y), bool> isReachable)
     {
         int tileSize = Game1.tileSize;
-        // The body keeps its own sub-tile standing offset, so a candidate's standing pixel is this actor's own
-        // reading moved by whole tiles. Nothing here assumes the offset is the tile's centre.
-        int offsetX = actorStandingPixel.X - actorTile.X * tileSize;
-        int offsetY = actorStandingPixel.Y - actorTile.Y * tileSize;
-        float centreX = subject.X + ChunkCentreOffset - offsetX;
-        float centreY = subject.Y + ChunkCentreOffset - offsetY;
-        // One tile of slack on each side absorbs the rounding of a standing pixel that lands exactly on a boundary; the
-        // DECISION below is the engine's own predicate, so a bound one tile too wide costs iterations, never correctness.
-        int minX = (int)Math.Floor((centreX - reachPixels) / tileSize) - 1;
-        int maxX = (int)Math.Floor((centreX + reachPixels) / tileSize) + 1;
-        int minY = (int)Math.Floor((centreY - reachPixels) / tileSize) - 1;
-        int maxY = (int)Math.Floor((centreY + reachPixels) / tileSize) + 1;
+        // The rectangle's own pixel range, in tiles. One tile of slack on each side absorbs the rounding of a pixel that
+        // lands exactly on a boundary; the DECISION below is the engine's own predicate, so a bound one tile too wide
+        // costs iterations, never correctness.
+        Vector2 centre = SubjectCentre(subject);
+        int minX = (int)Math.Floor((centre.X - reachPixels) / tileSize) - 1;
+        int maxX = (int)Math.Floor((centre.X + reachPixels) / tileSize) + 1;
+        int minY = (int)Math.Floor((centre.Y - reachPixels) / tileSize) - 1;
+        int maxY = (int)Math.Floor((centre.Y + reachPixels) / tileSize) + 1;
 
         (int X, int Y)? best = null;
         int bestDistance = int.MaxValue;
@@ -224,8 +300,7 @@ internal static class MagneticPickupReach
             for (int y = minY; y <= maxY; y++)
             {
                 (int X, int Y) candidate = (x, y);
-                Point standing = new(x * tileSize + offsetX, y * tileSize + offsetY);
-                if (!WithinMagnet(subject, standing, reachPixels))
+                if (!MagnetCoversTile(subject, candidate, reachPixels))
                     continue;
                 inReach++;
 
@@ -282,9 +357,10 @@ internal static class MagneticPickupReach
 /// reader whether the rectangle was empty or full.
 /// </para>
 /// <para>
-/// <see cref="InReach"/> is the population - how many tiles the engine's own rectangle covered - and it is printed
-/// whether or not a tile was chosen, so zero is a measured zero rather than a silence. <see cref="NearestRefused"/> and
-/// <see cref="NearestRefusal"/> name the tile the search could not use and the predicate that refused it.
+/// <see cref="InReach"/> is the population - how many tiles the engine's own rectangle covered ENTIRELY (see
+/// <see cref="MagneticPickupReach.MagnetCoversTile"/>) - and it is printed whether or not a tile was chosen, so zero is
+/// a measured zero rather than a silence. <see cref="NearestRefused"/> and <see cref="NearestRefusal"/> name the tile
+/// the search could not use and the predicate that refused it.
 /// </para>
 /// <para>
 /// THE POPULATION IS SPLIT, BECAUSE ONE NUMBER CANNOT SAY WHICH WORLD REFUSED. Measured `round81`: a refusal read
