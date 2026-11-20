@@ -282,6 +282,44 @@ public sealed class MagnetPickupItemTests
         evidence["inventory_after"].Should().Be("0", "the drop never arrived");
     }
 
+    /// <summary>
+    /// THE OTHER THING <c>playerInRange</c> READS, and it is not a distance at all: for a drop the player may not lose
+    /// it answers TRUE before it measures anything (Debris.cs:584-587, <c>(O)73</c> or any item <c>canBeTrashed</c>
+    /// refuses), and the drag path skips such a drop entirely (:676 <c>if (!isEssentialItem())</c>). A guard that asked
+    /// only the rectangle therefore names a precondition the engine does not have, which is the second half of the
+    /// `round81` question - the receipt read `pickup_precondition_broken:player_in_range` about a drop the engine was
+    /// still prepared to pull in.
+    /// </summary>
+    [Fact]
+    public void AnEssentialDropIsNotBrokenByADistanceTheEngineDoesNotCheck()
+    {
+        using var harness = MagnetPickupHarness.Create(debrisTileX: 4, debrisTileY: 2, heldAtPublication: 0);
+        harness.MakeTheDropEssential();
+        string targetId = harness.PublishTargetId();
+        ExecutionManager manager = harness.Manager;
+
+        harness.StandAt(3, 2);
+        harness.OccupyTile(4, 2);
+        LocalExecutionReceipt accepted = manager.RequestLocalPickupItem(
+            "req_essential", 4, 2, DroppedItemId, targetId, harness.DeadlineMs);
+        accepted.State.Should().Be(ExecutionState.Accepted, accepted.Evidence);
+
+        harness.StandOnePixelBeyondTheMagnet();
+        harness.EngineSeesTheChunk().Should().BeFalse(
+            "the rectangle says out, and that is the whole reading a radius-only guard has");
+        harness.Farm.debris[0].isEssentialItem().Should().BeTrue(
+            "the fixture's drop must be one the engine itself says it will not let anyone lose");
+
+        LocalExecutionReceipt settled = harness.Ticks(manager, "req_essential", 1);
+
+        settled.State.Should().Be(
+            ExecutionState.Accepted,
+            "`Debris.playerInRange` is true for an essential drop wherever the body stands, so no distance ends this wait");
+        settled.ReasonCode.Should().NotBe(
+            "pickup_precondition_broken:player_in_range",
+            "and the guard may not name a condition the engine never measured");
+    }
+
     // ---- the bound the engine's own magnet justifies -----------------------------------
 
     /// <summary>
@@ -653,6 +691,94 @@ public sealed class MagnetPickupItemTests
     }
 
     /// <summary>
+    /// `round81`'s refusal, replayed from its own numbers, and the table the receipt could not print.
+    ///
+    /// <para>
+    /// The live refusal was <c>item_target_out_of_reach</c> with
+    /// <c>tile=76,39;actor=74,39;radius=128;subject_px=4886,2468;stand_at=none;in_reach=16;nearest=75,39;
+    /// blocked_by=range:standability</c> - a population of sixteen, an answer about ONE of them, and a reader who
+    /// subtracts 4886 from her standing pixel, gets 118, and concludes the body was inside its own 128-pixel magnet.
+    /// This case fixes the geometry from those numbers alone: the sixteen are DERIVED here rather than listed, so the
+    /// <c>in_reach=16</c> the live run printed is checked against the arithmetic, and each tile is printed with the one
+    /// thing the live receipt said about it.
+    /// </para>
+    ///
+    /// <para>
+    /// The three answers it pins: the sixteen ARE the whole population (the search asked the right place - the window is
+    /// not the defect the round suspected); her own tile is not one of them (4886 + 32 against 4768 is 150 px on the x
+    /// axis, past the 128 px reach, which is why a walk was needed at all); and the nearest of the sixteen is (75,39) at
+    /// one tile, exactly the tile the live receipt named as refused. What no number in that receipt says is how many of
+    /// the sixteen could be STOOD on, which is the field the search now carries.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheRound81RefusalCoversSixteenTilesAndHerOwnIsNotOneOfThem()
+    {
+        var subject = new Vector2(4886, 2468);
+        var actorTile = (X: 74, Y: 39);
+        var standing = new Point(74 * 64 + 32, 39 * 64 + 32);
+        const int reach = 128;
+        // The two facts the live receipt stated about its population: the tile it named, and the predicate that refused
+        // it. Everything else it published was about the population's SIZE, not about its members.
+        (int X, int Y) refused = (75, 39);
+        const string refusedBy = "standability";
+
+        var table = new List<(int X, int Y, int Distance)>();
+        for (int x = 70; x <= 82; x++)
+        {
+            for (int y = 35; y <= 43; y++)
+            {
+                if (MagneticPickupReach.WithinMagnet(subject, new Point(x * 64 + 32, y * 64 + 32), reach))
+                    table.Add((x, y, Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y)));
+            }
+        }
+
+        this.output.WriteLine(
+            $"round81: actor={actorTile.X},{actorTile.Y};subject_px={(int)subject.X},{(int)subject.Y};reach={reach};tiles={table.Count}");
+        foreach ((int x, int y, int distance) in table.OrderBy(tile => tile.Distance).ThenBy(tile => tile.Y).ThenBy(tile => tile.X))
+        {
+            string standable = (x, y) == refused && refusedBy == "standability" ? "no" : "unrecorded";
+            this.output.WriteLine($"  ({x},{y}) distance={distance} standable={standable}");
+        }
+
+        table.Should().HaveCount(16, "the live receipt counted `in_reach=16`, and this rectangle has to account for every one");
+        table.Select(tile => tile.X).Distinct().OrderBy(x => x).Should().Equal(75, 76, 77, 78);
+        table.Select(tile => tile.Y).Distinct().OrderBy(y => y).Should().Equal(37, 38, 39, 40);
+        table.OrderBy(tile => tile.Distance).First().Should().Be(
+            (refused.X, refused.Y, 1), "the live receipt named `nearest=75,39`, and one tile is the nearest anything can be");
+
+        Math.Abs(subject.X - standing.X).Should().Be(
+            118,
+            "the distance a reader computes from `subject_px`, which is NOT the number the engine compares");
+        MagneticPickupReach.WithinMagnet(subject, standing, reach).Should().BeFalse(
+            "4886 + 32 against her standing 4768 is 150 px on the x axis, past the 128 px reach - her own tile is not in "
+                + "the rectangle, which is why this request needed a walk instead of an immediate collection");
+
+        MagneticStandSearch free = MagneticPickupReach.SelectStandTile(
+            subject, actorTile, standing, reach, isStandable: _ => true, isReachable: _ => true);
+        free.InReach.Should().Be(16, "the window the search walks is this rectangle, so sixteen is what it asked");
+        free.Standable.Should().Be(16);
+        free.Reachable.Should().Be(16);
+        free.Tile.Should().Be(
+            refused, "in a world where all sixteen are free the search settles on the tile the live receipt called `nearest`");
+
+        // The two worlds `blocked_by=range:standability` used to collapse into one word, told apart by the two counts.
+        MagneticStandSearch occupied = MagneticPickupReach.SelectStandTile(
+            subject, actorTile, standing, reach, isStandable: _ => false, isReachable: _ => true);
+        occupied.Tile.Should().BeNull();
+        occupied.Standable.Should().Be(0, "sixteen occupied tiles is the WORLD's answer: the caller should stop");
+        occupied.Reachable.Should().Be(0);
+        occupied.RefusalDetail.Should().Be("standability");
+
+        MagneticStandSearch walledOff = MagneticPickupReach.SelectStandTile(
+            subject, actorTile, standing, reach, isStandable: _ => true, isReachable: _ => false);
+        walledOff.Tile.Should().BeNull();
+        walledOff.Standable.Should().Be(16, "sixteen free tiles walled off from her is a WALK problem, not the world's answer");
+        walledOff.Reachable.Should().Be(0);
+        walledOff.RefusalDetail.Should().Be("reachability");
+    }
+
+    /// <summary>
     /// THE SHAPE THE REACH MODEL HAD: a candidate window centred on the tile the REQUEST NAMES, while the rectangle is
     /// built on the debris' own mean. For a single chunk the two are the same tile and nothing shows; for a pile - the
     /// normal case, since a drop scatters and a magnet drags - the named chunk's tile can sit several tiles from the
@@ -710,29 +836,45 @@ public sealed class MagnetPickupItemTests
             harness.MagnetRadius)
             .Should().BeTrue("the tile it offers is one the engine's own rectangle covers");
         evidence["blocked_by"].Should().Be("range:standability", "and the layer names which predicate refused it");
+        evidence["standable"].Should().Be(
+            "0",
+            "every tile the rectangle covers holds a chest, so the refusal is the WORLD's answer and the caller can stop "
+                + "instead of re-aiming at another tile");
+        evidence["reachable"].Should().Be("0", "nothing free was reached either, so the two counts agree about this farm");
+        evidence["nearest_why"].Should().Be(
+            $"object:(BC)130@{nearestX},{nearestY}",
+            "the tile it could not use is refused by a named layer, through the one vocabulary `blocked_by` uses");
+
+        Vector2 subject = MagneticPickupReach.Subject(harness.Farm.debris[0]);
+        evidence["subject_px"].Should().Be($"{(int)subject.X},{(int)subject.Y}", "the debris' mean, as the engine reads it");
+        evidence["subject_centre_px"].Should().Be(
+            $"{(int)(subject.X + MagneticPickupReach.ChunkCentreOffset)},{(int)(subject.Y + MagneticPickupReach.ChunkCentreOffset)}",
+            "and the point `Debris.playerInRange` actually compares, so no reader has to add the half tile themselves");
     }
 
     /// <summary>
-    /// The four sentences a stand-tile search can answer with, as one table: the tile, and - when there is none - the
-    /// population it covered and the tile that came closest. A `none` with no population is the shape this closes.
+    /// The sentences a stand-tile search can answer with, as one table: the tile, and - when there is none - the
+    /// population it covered, how much of that population each predicate admitted, and the tile that came closest. A
+    /// `none` with no population is the shape this closes; `standable`/`reachable` are what tell "the world is full"
+    /// from "the world is walled off", which one `blocked_by=range:standability` about a single tile cannot.
     /// </summary>
     [Fact]
     public void AStandSearchSaysWhatItExaminedAndWhyItRefused()
     {
         MagneticStandSearch.AlreadyInReach((7, 39)).Describe().Should().Be("stand_at=7,39");
 
-        var walled = new MagneticStandSearch(null, 12, (6, 39), "standability");
-        walled.Describe().Should().Be("stand_at=none;in_reach=12;nearest=6,39");
+        var walled = new MagneticStandSearch(null, InReach: 12, Standable: 0, Reachable: 0, (6, 39), "standability");
+        walled.Describe().Should().Be("stand_at=none;in_reach=12;standable=0;reachable=0;nearest=6,39");
         walled.RefusalDetail.Should().Be("standability", "the layer word is the measurement, not a claim beside it");
 
-        var walledOff = new MagneticStandSearch(null, 4, (3, 2), "reachability");
-        walledOff.Describe().Should().Be("stand_at=none;in_reach=4;nearest=3,2");
+        var walledOff = new MagneticStandSearch(null, InReach: 4, Standable: 4, Reachable: 0, (3, 2), "reachability");
+        walledOff.Describe().Should().Be("stand_at=none;in_reach=4;standable=4;reachable=0;nearest=3,2");
         walledOff.RefusalDetail.Should().Be("reachability");
 
         // A rectangle that holds no tile at all (a reach narrower than half a tile, or a centre that falls between two
         // candidate pixels) is a measured zero rather than a silence, and it must not borrow a predicate's name.
-        var empty = new MagneticStandSearch(null, 0, null, null);
-        empty.Describe().Should().Be("stand_at=none;in_reach=0;nearest=none");
+        var empty = new MagneticStandSearch(null, InReach: 0, Standable: 0, Reachable: 0, null, null);
+        empty.Describe().Should().Be("stand_at=none;in_reach=0;standable=0;reachable=0;nearest=none");
         empty.RefusalDetail.Should().Be("in_reach_none");
     }
 
@@ -1016,6 +1158,10 @@ public sealed class MagnetPickupItemTests
             Game1.locationContextData = new Dictionary<string, StardewValley.GameData.LocationContexts.LocationContextData>(StringComparer.Ordinal);
             Game1.netWorldState.Value.GetWeatherForLocation("Default");
             Game1.locationContextData["Default"] = new StardewValley.GameData.LocationContexts.LocationContextData();
+            // `Object.canBeTrashed` reads the object data table (Object.cs:2793-2804) and `Debris.isEssentialItem` asks
+            // it about the waiting chunk on every update, so the fixture has to answer with the table a save carries
+            // instead of throwing on a null one.
+            Game1.objectData = new Dictionary<string, StardewValley.GameData.Objects.ObjectData>(StringComparer.Ordinal);
 
             var farm = new Farm();
             var map = new xTile.Map();
@@ -1169,6 +1315,12 @@ public sealed class MagnetPickupItemTests
 
         /// <summary>The same tile, a different stack - and so a different opaque identity for the chunk on it.</summary>
         internal void SetObservedStack(int stack) => this.debris.item!.Stack = stack;
+
+        /// <summary>
+        /// The drop nobody may lose: <see cref="Debris.isEssentialItem"/> answers for `(O)73` and for any item whose
+        /// `canBeTrashed` refuses, and <c>Debris.playerInRange</c> returns TRUE for one before it measures a distance.
+        /// </summary>
+        internal void MakeTheDropEssential() => this.debris.itemId.Set("(O)73");
 
         /// <summary>
         /// The engine's OWN pathfinder holding the body, which is the one hold admission does not answer: it is not a

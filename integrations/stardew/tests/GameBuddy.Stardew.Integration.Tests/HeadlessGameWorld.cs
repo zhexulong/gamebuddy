@@ -67,7 +67,7 @@ internal static class HeadlessGameWorld
     internal static readonly string[] GameStatics =
     {
         "game1", "netWorldState", "_locationLookup", "_player", "random", "recentMultiplayerRandom", "otherFarmers",
-        "hudMessages", "locationContextData", "petData",
+        "hudMessages", "locationContextData", "petData", "objectData",
     };
 
     /// <summary>

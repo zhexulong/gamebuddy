@@ -231,14 +231,24 @@ internal sealed partial class ExecutionManager
                     : _ => true);
         // THE REFUSAL PUBLISHES THE GEOMETRY IT ASKED, because its two answers need different repairs and the sentence
         // must not have to be believed. `subject_px` is the point the engine's rectangle is built on
-        // (`Debris.approximatePosition`, the debris' mean - NOT the chunk's tile); `in_reach` is how many tiles that
-        // rectangle covered; `nearest` is the tile that came closest and `blocked_by` names the predicate that refused
-        // it. Measured `round80`: seven refusals in one burst, all `stand_at=none`, none of them saying which.
+        // (`Debris.approximatePosition`, the debris' mean - NOT the chunk's tile), `subject_centre_px` is the point it is
+        // actually COMPARED at (`playerInRange` adds the half-tile, Debris.cs:590), `in_reach` is how many tiles that
+        // rectangle covered with `standable`/`reachable` splitting them, `nearest` is the tile that came closest,
+        // `nearest_why` is the layer that refuses that tile and `blocked_by` names the search's own predicate. Measured
+        // `round80`: seven refusals in one burst, all `stand_at=none`, none of them saying which.
         if (reach.Tile is not { } standTile)
+        {
+            // The point `Debris.playerInRange` compares: it adds the half tile to the mean before it measures, so a
+            // reader subtracting `subject_px` from a standing pixel is 32 px short of the engine's own number.
+            (int X, int Y) compared = (
+                (int)(magnetSubject.X + MagneticPickupReach.ChunkCentreOffset),
+                (int)(magnetSubject.Y + MagneticPickupReach.ChunkCentreOffset));
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_target_out_of_reach",
                 $"tile={liveTargetTile.X},{liveTargetTile.Y};actor={actorTile.X},{actorTile.Y};radius={magnetRadius};"
-                    + $"subject_px={(int)magnetSubject.X},{(int)magnetSubject.Y};{reach.Describe()}"
+                    + $"subject_px={(int)magnetSubject.X},{(int)magnetSubject.Y};subject_centre_px={compared.X},{compared.Y};"
+                    + $"{reach.Describe()};nearest_why={DescribeStandRefusal(location, Game1.player, actorTile, reach.NearestRefused)}"
                     + $";blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, reach.RefusalDetail).Format()}");
+        }
 
         int beforeCount = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
@@ -280,16 +290,47 @@ internal sealed partial class ExecutionManager
     /// admission and not re-asked here. The bounce timer (:636-637) is a wait, not a refusal: it is what
     /// <c>ItemPickupMagnetWindowTicks</c> bounds.
     /// </para>
+    /// <para>
+    /// THE DISTANCE IT ASKS IS NOT THE DISTANCE THE RECEIPT PRINTS. <c>playerInRange</c> adds the half tile before it
+    /// compares (Debris.cs:590, <c>position.X + 32f - standingPixel.X</c>), so a body 118 px from the published
+    /// <c>subject_px</c> is 150 px from the point the engine measures - and `round81` read that pair as a guard refusing
+    /// inside its own radius. <see cref="MagneticPickupReach.InReach"/> is that whole predicate, essential-item answer
+    /// included, so this cannot disagree with the engine about either half.
+    /// </para>
     /// </remarks>
     private static string? BrokenItemPickupPrecondition(Farmer actor, Debris debris)
     {
-        if (!MagneticPickupReach.WithinMagnet(MagneticPickupReach.Subject(debris), actor.StandingPixel, MagneticPickupReach.ReachPixels(actor)))
+        if (!MagneticPickupReach.InReach(actor, debris))
             return "player_in_range";
         bool acceptsTheDrop = debris.item is { } held
             ? actor.couldInventoryAcceptThisItem(held)
             : actor.couldInventoryAcceptThisItem(debris.itemId.Value, 1, debris.itemQuality);
         return acceptsTheDrop ? null : "inventory_full";
     }
+
+    /// <summary>
+    /// What refuses the tile the search came closest to and could not use, in the one layer vocabulary, or `none` when
+    /// the search refused no tile at all.
+    ///
+    /// <para>
+    /// `standability` says which of the search's two predicates spoke; this says what the world puts there. Measured
+    /// `round81`: seven refusals carried `stand_at=none;in_reach=16;nearest=75,39;blocked_by=range:standability`, which
+    /// names one tile out of sixteen and no reason for it - so the sentence could not be checked against the farm.
+    /// </para>
+    /// </summary>
+    private static string DescribeStandRefusal(
+        StardewValley.GameLocation location,
+        Farmer actor,
+        (int X, int Y) actorTile,
+        (int X, int Y)? refusedTile) =>
+        refusedTile is { } refused
+            ? RefusalProbe.DescribeWorld(
+                action: null,
+                location,
+                new Vector2(refused.X, refused.Y),
+                new Vector2(actorTile.X, actorTile.Y),
+                actor).Format()
+            : "none";
 
     private static string DescribeItemPickupReach(Farmer actor, Point chunkTile, Vector2 subject)
     {

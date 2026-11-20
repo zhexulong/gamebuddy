@@ -151,6 +151,20 @@ internal static class MagneticPickupReach
         && Math.Abs(subject.Y + ChunkCentreOffset - standingPixel.Y) <= reachPixels;
 
     /// <summary>
+    /// The engine's whole answer to `Debris.playerInRange` - which is not the rectangle alone.
+    ///
+    /// <para>
+    /// A drop the player may not lose comes back TRUE before any distance is measured
+    /// (<c>Debris.cs:584-587</c>): <c>(O)73</c>, or any item whose <c>canBeTrashed()</c> says no. The drag path skips
+    /// essentials entirely (<c>:676</c> <c>if (!isEssentialItem())</c>), so such a chunk is pulled toward a Farmer from
+    /// anywhere on the map and no distance can break that wait. Asking only the rectangle answers a condition the engine
+    /// does not have, which is the shape this predicate keeps out.
+    /// </para>
+    /// </summary>
+    internal static bool InReach(Farmer farmer, Debris debris) =>
+        debris.isEssentialItem() || WithinMagnet(Subject(debris), farmer.StandingPixel, ReachPixels(farmer));
+
+    /// <summary>
     /// The tile the body should stand on: the nearest one to where it already is that lies inside the engine's
     /// rectangle, or <see langword="null"/> - carried on <see cref="MagneticStandSearch"/> - when the rectangle holds no
     /// tile this body could stand on and walk to.
@@ -160,8 +174,8 @@ internal static class MagneticPickupReach
     /// Null is the honest answer and the caller's refusal: a chunk in the middle of a pond whose bank is three tiles
     /// away is out of a 128-pixel magnet's reach, and no walk would change that. What the answer may never be is
     /// <i>silent</i> about which tiles it asked: <see cref="MagneticStandSearch"/> carries how many tiles the rectangle
-    /// covered and which of them came closest, so a caller's refusal can name the tile it could not use instead of
-    /// asserting that no such tile exists.
+    /// covered, how many of them each predicate admitted, and which of them came closest, so a caller's refusal can name
+    /// the tile it could not use instead of asserting that no such tile exists.
     /// </para>
     /// <para>
     /// THE POPULATION IS THE RECTANGLE, NOT A RING AROUND THE DROP'S TILE. The engine measures
@@ -203,6 +217,8 @@ internal static class MagneticPickupReach
         int nearestRefusedDistance = int.MaxValue;
         string? nearestRefusal = null;
         int inReach = 0;
+        int standableTiles = 0;
+        int reachableTiles = 0;
         for (int x = minX; x <= maxX; x++)
         {
             for (int y = minY; y <= maxY; y++)
@@ -218,7 +234,11 @@ internal static class MagneticPickupReach
                 int distance = Math.Abs(x - actorTile.X) + Math.Abs(y - actorTile.Y);
                 bool standable = isStandable(candidate);
                 bool reachable = standable && isReachable(candidate);
-                if (!standable || !reachable)
+                if (standable)
+                    standableTiles++;
+                if (reachable)
+                    reachableTiles++;
+                if (!reachable)
                 {
                     if (Nearer(distance, candidate, nearestRefused, nearestRefusedDistance))
                     {
@@ -238,7 +258,7 @@ internal static class MagneticPickupReach
             }
         }
 
-        return new MagneticStandSearch(best, inReach, nearestRefused, nearestRefusal);
+        return new MagneticStandSearch(best, inReach, standableTiles, reachableTiles, nearestRefused, nearestRefusal);
     }
 
     /// <summary>
@@ -266,22 +286,35 @@ internal static class MagneticPickupReach
 /// whether or not a tile was chosen, so zero is a measured zero rather than a silence. <see cref="NearestRefused"/> and
 /// <see cref="NearestRefusal"/> name the tile the search could not use and the predicate that refused it.
 /// </para>
+/// <para>
+/// THE POPULATION IS SPLIT, BECAUSE ONE NUMBER CANNOT SAY WHICH WORLD REFUSED. Measured `round81`: a refusal read
+/// `stand_at=none;in_reach=16;nearest=75,39;blocked_by=range:standability` - sixteen tiles examined, and the sentence
+/// spoken about ONE of them. &quot;All sixteen are occupied&quot; (the world's answer: stop), &quot;all sixteen are free but walled
+/// off&quot; (a walk nobody planned) and &quot;the nearest is occupied and the rest were never asked&quot; are three different
+/// repairs behind that one word, and the live run had no field to tell them apart. <see cref="Standable"/> counts the
+/// tiles that passed the standability predicate and <see cref="Reachable"/> the ones that also passed reachability, so a
+/// reader can see which half refused: `standable=0` is the world, `standable=16;reachable=0` is a walk.
+/// </para>
 internal readonly record struct MagneticStandSearch(
     (int X, int Y)? Tile,
     int InReach,
+    int Standable,
+    int Reachable,
     (int X, int Y)? NearestRefused,
     string? NearestRefusal)
 {
     /// <summary>The body is already inside the rectangle: nothing to search, and nothing to walk.</summary>
-    internal static MagneticStandSearch AlreadyInReach((int X, int Y) actorTile) => new(actorTile, 1, null, null);
+    internal static MagneticStandSearch AlreadyInReach((int X, int Y) actorTile) =>
+        new(actorTile, InReach: 1, Standable: 1, Reachable: 1, null, null);
 
     /// <summary>
-    /// The stand-tile half of a receipt: the tile, or the refusal with the two facts that make it checkable.
+    /// The stand-tile half of a receipt: the tile, or the refusal with the facts that make it checkable - the population
+    /// the search examined, how much of it survived each predicate, and the tile that came closest.
     /// </summary>
     internal string Describe() =>
         this.Tile is { } tile
             ? $"stand_at={tile.X},{tile.Y}"
-            : $"stand_at=none;in_reach={this.InReach};nearest="
+            : $"stand_at=none;in_reach={this.InReach};standable={this.Standable};reachable={this.Reachable};nearest="
                 + (this.NearestRefused is { } refused ? $"{refused.X},{refused.Y}" : "none");
 
     /// <summary>
