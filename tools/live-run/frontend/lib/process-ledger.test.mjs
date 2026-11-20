@@ -396,3 +396,54 @@ test("the reading says how many rows the process table could not date, instead o
     "a registry row with no name and no start time is partial, and the reading has to say so",
   );
 });
+
+test("a Host pid whose number now belongs to another process is not this run's, and the reading says why", () => {
+  /*
+   * Measured 2026-11-20 on `D:/gb-modcheck/frontend--r12`: the Host exited, Windows handed its number to a
+   * process that started eight minutes after the launch, and the ledger reported that stranger as the Host
+   * this run had left behind - the only reason a run whose 26 drivers all passed exited 1 over a cleanup that
+   * left nothing. The launch state records the process's start time beside the pid for exactly this.
+   */
+  const HOST = 8080;
+  const SUPERVISOR = 7070;
+  const LAUNCHED = "2026-11-20T19:56:40.0000000+08:00";
+  const RECYCLED = "2026-11-20T20:04:35.6623664+08:00";
+  // The stranger's parent is neither this run's stage nor the supervisor, exactly as a recycled number is
+  // adopted by whatever process happened to ask for it.
+  const stranger = row(HOST, 9000, "cmd.exe", { startTime: RECYCLED });
+  const before = tableOf([row(4, 0, "System"), row(SUPERVISOR, 4, "GameBuddy.Desktop.exe")]);
+  const ledger = openProcessLedger({
+    stageRoot: STAGE,
+    hostPid: HOST,
+    hostStartTime: LAUNCHED,
+    readTable: before,
+  });
+  const collected = collectProcessLedger(ledger, {
+    hostStartTime: LAUNCHED,
+    query: queriesOf({}),
+    readTable: tableOf([row(4, 0, "System"), row(SUPERVISOR, 4, "GameBuddy.Desktop.exe"), stranger]),
+  });
+  assert.deepEqual(collected.entries, [], "a pid whose start time is not the recorded one is not this run's Host");
+  assert.match(collected.notes.join("\n"), /host pid 8080 now belongs to cmd\.exe started 2026-11-20T20:04:35/u);
+  const reading = closeProcessLedger(ledger, collected, {
+    readTable: tableOf([row(4, 0, "System"), row(SUPERVISOR, 4, "GameBuddy.Desktop.exe"), stranger]),
+  });
+  assert.deepEqual(reading.leftovers, [], "the number is in the table; the process this run launched is not");
+  assert.match(describeProcessLedger(reading).join("\n"), /the pid was reused, so nothing was claimed for it/u);
+});
+
+test("a recorded start time is what the close compares, so a recycled number is not a survivor", () => {
+  const RUNNING = "2026-11-15T06:00:00.0000000+08:00";
+  const RECYCLED = "2026-11-20T20:04:35.6623664+08:00";
+  const ledger = openProcessLedger({ stageRoot: STAGE, readTable: tableOf([row(4, 0, "System")]) });
+  const collected = collectProcessLedger(ledger, {
+    query: queriesOf({ [STAGE]: [row(900, 4, "msedge.exe")] }),
+    readTable: tableOf([row(4, 0, "System"), row(900, 4, "msedge.exe")]),
+  });
+  assert.equal(collected.entries[0].startTime, RUNNING);
+  const reading = closeProcessLedger(ledger, collected, {
+    readTable: tableOf([row(4, 0, "System"), row(900, 4, "node.exe", { startTime: RECYCLED })]),
+  });
+  assert.equal(reading.entries[0].stillAliveAfter, false);
+  assert.deepEqual(reading.leftovers, []);
+});

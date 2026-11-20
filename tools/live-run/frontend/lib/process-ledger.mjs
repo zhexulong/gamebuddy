@@ -44,7 +44,7 @@ export const LEDGER_PREFIX = "PROCESS-LEDGER";
  * only a process that appeared after the run opened is attributed to it. That basis is recorded on the
  * reading rather than implied, so a row that appeared mid-run and was never ours can be spotted.
  */
-export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, guardianPid = null }) {
+export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, hostStartTime = null, guardianPid = null }) {
   const markers = [
     {
       id: "stage",
@@ -70,14 +70,19 @@ export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, guardianP
       reason: "the game process under that loader, created after this run opened",
     });
   }
-  if (Number.isSafeInteger(hostPid) && hostPid > 0)
-    markers.push({
+  if (Number.isSafeInteger(hostPid) && hostPid > 0) {
+    const host = {
       id: "host",
       kind: "pid",
       pid: hostPid,
       createdOnly: false,
       reason: "the Host child this run launched (launch.json -> childPid)",
-    });
+    };
+    // Only where the launch state also recorded the process's own start time. Without it the marker is a
+    // bare number, which names whatever process holds it now (see `collectProcessLedger`).
+    if (typeof hostStartTime === "string" && hostStartTime.length > 0) host.startTime = hostStartTime;
+    markers.push(host);
+  }
   if (Number.isSafeInteger(guardianPid) && guardianPid > 0)
     markers.push({
       id: "guardian-tree",
@@ -91,7 +96,13 @@ export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, guardianP
 
 /** The pid set and the parent relation, from one table read; `null` when this machine could not answer. */
 const snapshotOf = (table) =>
-  table === null ? null : { examined: table.examined, pids: new Set(table.rows.map((row) => row.pid)) };
+  table === null
+    ? null
+    : {
+        examined: table.examined,
+        pids: new Set(table.rows.map((row) => row.pid)),
+        starts: new Map(table.rows.map((row) => [row.pid, row.startTime])),
+      };
 
 /**
  * Open the ledger: the "before" snapshot, and the markers that will decide what counts as ours.
@@ -103,6 +114,7 @@ export function openProcessLedger({
   stageRoot,
   gameDir = null,
   hostPid = null,
+  hostStartTime = null,
   guardianPid = null,
   readTable = processTable,
 }) {
@@ -111,8 +123,9 @@ export function openProcessLedger({
     stageRoot,
     gameDir,
     hostPid,
+    hostStartTime,
     guardianPid,
-    markers: ownershipMarkers({ stageRoot, gameDir, hostPid, guardianPid }),
+    markers: ownershipMarkers({ stageRoot, gameDir, hostPid, hostStartTime, guardianPid }),
     before,
     openedAt: new Date().toISOString(),
   });
@@ -153,6 +166,7 @@ export function collectProcessLedger(
   {
     registry = [],
     hostPid = null,
+    hostStartTime = null,
     guardianPid = null,
     query = processesWithCommandLine,
     readTable = processTable,
@@ -161,10 +175,18 @@ export function collectProcessLedger(
   const table = readTable();
   const roles = new Map(registry.map((record) => [record.pid, record.role]));
   const host = Number.isSafeInteger(hostPid) ? hostPid : ledger.hostPid;
+  const hostStarts = typeof hostStartTime === "string" ? hostStartTime : (ledger.hostStartTime ?? null);
   if (table === null) {
     return {
       entries: [],
-      markers: ownershipMarkers({ stageRoot: ledger.stageRoot, gameDir: ledger.gameDir, hostPid: host, guardianPid }),
+      notes: [],
+      markers: ownershipMarkers({
+        stageRoot: ledger.stageRoot,
+        gameDir: ledger.gameDir,
+        hostPid: host,
+        hostStartTime: hostStarts,
+        guardianPid,
+      }),
       table: null,
       evidence: "process_table_unavailable",
     };
@@ -192,11 +214,14 @@ export function collectProcessLedger(
     stageRoot: ledger.stageRoot,
     gameDir: ledger.gameDir,
     hostPid: host,
+    hostStartTime: hostStarts,
     guardianPid: guardian,
   });
 
   /** One pid's attribution, with the marker that claimed it. First marker wins; the order above is the claim order. */
   const claimed = new Map();
+  /** Claims a marker refused, each with the fact that refused it - a refusal is a reading, not a silence. */
+  const notes = [];
   const claim = (pid, marker) => {
     if (claimed.has(pid)) return;
     if (marker.createdOnly === true && before !== null && before.has(pid)) return;
@@ -209,7 +234,24 @@ export function collectProcessLedger(
       const measured = marker.id === "stage" ? { rows: [...stageClaimed].map((pid) => ({ pid })) } : query(marker.text);
       for (const row of measured?.rows ?? []) claim(row.pid, marker);
     } else if (marker.kind === "pid") {
-      claim(marker.pid, marker);
+      /*
+       * The pid is only an identity together with the start time the launch state recorded for it. Windows
+       * reuses pids, so the same number can belong to a process this run never started: on
+       * `D:/gb-modcheck/frontend--r12` the Host's number was handed to a stranger eight minutes after the
+       * launch, and the ledger read that stranger as the Host this run had left behind. A row whose start
+       * time is not the recorded one (or is absent) is not ours, and saying so is what keeps the leftover
+       * reading a fact about this run.
+       */
+      const row = byPid.get(marker.pid);
+      if (marker.startTime === undefined || (row !== undefined && row.startTime === marker.startTime)) {
+        claim(marker.pid, marker);
+      } else {
+        notes.push(
+          row === undefined
+            ? `host pid ${String(marker.pid)} is gone: the process launched at ${String(marker.startTime)} is not in the table, so nothing was claimed for it`
+            : `host pid ${String(marker.pid)} now belongs to ${row.name} started ${String(row.startTime)}, not the process launched at ${String(marker.startTime)} - the pid was reused, so nothing was claimed for it`,
+        );
+      }
     } else if (marker.kind === "descendants") {
       for (const pid of descendantsOf(table, marker.pid)) claim(pid, marker);
     }
@@ -244,6 +286,7 @@ export function collectProcessLedger(
   }
   return Object.freeze({
     entries: entries.sort((left, right) => left.pid - right.pid),
+    notes,
     registered: roles.size,
     markers: Object.freeze(
       markers.map((marker) => ({ id: marker.id, kind: marker.kind, createdOnly: marker.createdOnly === true })),
@@ -270,7 +313,18 @@ export function closeProcessLedger(
   const kept = new Map(keptAlive.map((entry) => [entry.pid, entry.reason]));
   const entryPids = new Set(collected.entries.map((entry) => entry.pid));
   const entries = collected.entries.map((entry) => {
-    const stillAliveAfter = after === null ? null : after.pids.has(entry.pid);
+    /*
+     * Two readings of one identity, because a pid is not one on its own: a process whose start time was
+     * recorded is looked for by (pid, start time), so a number Windows has since handed to another process
+     * does not read as this run's process still being there. Entries the table could not answer for when they
+     * were collected carry no start time and keep the pid comparison they always had.
+     */
+    const stillAliveAfter =
+      after === null
+        ? null
+        : entry.startTime === null
+          ? after.pids.has(entry.pid)
+          : after.starts.get(entry.pid) === entry.startTime;
     const reason = kept.get(entry.pid) ?? null;
     return { ...entry, stillAliveAfter, leftDeliberately: reason };
   });
@@ -309,6 +363,7 @@ export function closeProcessLedger(
     population: entries.length > 0 ? "measured" : (collected.registered ?? 0) > 0 ? "unmeasured" : "nothing_created",
     registered: collected.registered ?? 0,
     entries,
+    notes: collected.notes ?? [],
     examined: entries.length,
     leftovers,
     deliberatelyLeft,
@@ -346,6 +401,9 @@ export function describeProcessLedger(reading) {
     lines.push(
       `${LEDGER_PREFIX}: deliberately left ${reading.deliberatelyLeft.map((entry) => `${entry.pid}(${entry.leftDeliberately})`).join(" ")}`,
     );
+  // A marker that claimed nothing says so, with the fact that refused it: a boundary that silently drops a
+  // process is indistinguishable from one that never looked.
+  for (const note of reading.notes ?? []) lines.push(`${LEDGER_PREFIX}: ${note}`);
   /*
    * A process the run created and stopped BEFORE the ledger collected it is recorded from the registry alone: its
    * pid and its role, with no name and no start time for the table to give. That is a true row, and it is also a

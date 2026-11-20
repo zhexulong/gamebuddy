@@ -330,16 +330,20 @@ async function phaseLaunch(paths, run) {
 }
 
 /**
- * The pid of the Host child this run launched, read from the launch state (`<stage>/state/launch.json` ->
- * `childPid`). `null` before a mount: the ledger then carries no host or guardian marker, and the collect on
- * the way out is what resolves them from the table.
+ * The Host child this run launched, as the launch state recorded it: the pid together with the start time of
+ * the process that pid named when the launch was written (`<stage>/state/launch.json`). `null` before a mount.
+ *
+ * `pid` alone is what a ledger cannot hold: Windows hands a dead process's number to the next one, and a bare
+ * number then names a stranger (measured on `D:/gb-modcheck/frontend--r12`, see `phases/launch.mjs`).
  */
-function readHostPid(paths) {
+function readHostIdentity(paths) {
   try {
     const state = JSON.parse(readFileSync(paths.launchStateFile, "utf8"));
-    return Number.isSafeInteger(state?.childPid) && state.childPid > 0 ? state.childPid : null;
+    const pid = Number.isSafeInteger(state?.childPid) && state.childPid > 0 ? state.childPid : null;
+    const startTime = typeof state?.childStartTime === "string" ? state.childStartTime : null;
+    return { pid, startTime };
   } catch {
-    return null;
+    return { pid: null, startTime: null };
   }
 }
 
@@ -471,9 +475,11 @@ async function main() {
     // cannot see it (`Stardew Valley.exe` is launched with no arguments), and the product deliberately keeps a
     // player's world alive when the Host dies - so a harness that opened a game must name it and take it back.
     const gameRecord = recordRunGame({ paths, stageRoot: paths.stageRoot });
+    const host = readHostIdentity(paths);
     const collected = collectProcessLedger(ledger, {
       registry: registeredRunProcesses(paths),
-      hostPid: readHostPid(paths),
+      hostPid: host.pid,
+      hostStartTime: host.startTime,
     });
     if (teardown === "keep") {
       const kept = registeredRunProcesses(paths);

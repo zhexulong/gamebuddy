@@ -22,6 +22,7 @@ import { acquireCdpPortLock, cdpPortLockDir } from "../lib/cdp-port-lock.mjs";
 import { seedRunConnection } from "../lib/seed-connection.mjs";
 import { seedRunLocale } from "../lib/seed-locale.mjs";
 import { seedRunPreset } from "../lib/preset-seed.mjs";
+import { processRow } from "../lib/process-table.mjs";
 import { startWireCapture } from "../lib/wire-capture.mjs";
 
 const run = loadRunConfig({ runConfigFile: process.argv[2] });
@@ -533,6 +534,16 @@ async function main() {
   say("entry alive after mount:", launch.child.exitCode === null);
   say("ENTRY STDERR BYTES after mount:", Buffer.byteLength(stderr, "utf8"));
 
+  /*
+   * A pid is not an identity. This run's ledger consumed `childPid` alone and reported the Host as left
+   * behind on a run that had cleaned up: the Host had exited and Windows handed its number to a process
+   * that started eight minutes after the launch (`D:/gb-modcheck/frontend--r12`, pid 38520 recorded at
+   * 19:57 and re-read as a cmd.exe started 20:04:35). The launch state is where that pid is authored, so
+   * the process's own start time is written beside it and only the pair claims the Host.
+   */
+  const childPid = Number.isSafeInteger(launch.child.pid) ? launch.child.pid : null;
+  const childStartTime = childPid === null ? null : (processRow(childPid)?.startTime ?? null);
+
   // Holding the port with no mounted page is a failed launch: the run cannot proceed from here, and
   // holding the stop-flag wait would leave this run's processes alive under the claimed port.
   if (target === null || mounted !== true) {
@@ -548,7 +559,8 @@ async function main() {
           commit: run.commit,
           port,
           cdpPort,
-          childPid: launch.child.pid ?? null,
+          childPid,
+          childStartTime,
           browserPid: browser.pid ?? null,
           runRoot: paths.runRoot,
           detail,
@@ -574,7 +586,8 @@ async function main() {
         commit: run.commit,
         port,
         cdpPort,
-        childPid: launch.child.pid ?? null,
+        childPid,
+        childStartTime,
         browserPid: browser.pid ?? null,
         runRoot: paths.runRoot,
         manifestPath: paths.deploymentManifest,
