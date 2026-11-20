@@ -1,0 +1,354 @@
+{
+ "source": "round84 · .live-runs/game-ladder/2026-11-20T13-52-51-386Z-multiday_routine/{result.json (programSubmissions, programOutcomes) · run-trace.json (delivery and stardew_* spans)} · read 2026-11-20",
+ "run": "2026-11-20T13-52-51-386Z-multiday_routine",
+ "recorded": {
+  "programmes": 57,
+  "shorterThanWait": 40,
+  "continuedInTheSameTurn": 9,
+  "nodePaceMs": 629
+ },
+ "programmes": [
+  {
+   "programId": "plan_0_9191ba7165178c9a",
+   "nodes": 3,
+   "spanMs": 2322,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_5_55580059b4336acc",
+   "nodes": 3,
+   "spanMs": 5194,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_14_bb0ef279f15a4ca4",
+   "nodes": 3,
+   "spanMs": 4071,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_19_fbdaae14ea0469d4",
+   "nodes": 2,
+   "spanMs": 729,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_22_cef66135058e8f36",
+   "nodes": 1,
+   "spanMs": 52017,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_26_e8452f83bdb2b5a2",
+   "nodes": 1,
+   "spanMs": 2480,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_28_e8f9f520c3799f5b",
+   "nodes": 1,
+   "spanMs": 148,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_29_3962d6b0d3d40fc4",
+   "nodes": 2,
+   "spanMs": 2386,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_32_dfaf26d8c0b4c861",
+   "nodes": 3,
+   "spanMs": 2594,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_37_5d8930f5175c33fc",
+   "nodes": 1,
+   "spanMs": 7866,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_39_e1f6a1e66b3fdb7a",
+   "nodes": 2,
+   "spanMs": 2136,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_43_27b2507344dac234",
+   "nodes": 3,
+   "spanMs": 214,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_43_c72e8776268bc5ee",
+   "nodes": 1,
+   "spanMs": 21,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_43_1d66869369c986de",
+   "nodes": 3,
+   "spanMs": 2817,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_49_77bbc2e5b9101ef9",
+   "nodes": 1,
+   "spanMs": 19118,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_52_b22e08bc6d713788",
+   "nodes": 10,
+   "spanMs": 2178,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_76_ab37f7051285e209",
+   "nodes": 5,
+   "spanMs": 11736,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_85_15d03879c6feae54",
+   "nodes": 1,
+   "spanMs": 19,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_86_9191ba7165178c9a",
+   "nodes": 3,
+   "spanMs": 2354,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_91_4ce46c6991175778",
+   "nodes": 10,
+   "spanMs": 3816,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_115_5d10d5cc52483b31",
+   "nodes": 1,
+   "spanMs": 3174,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_118_9effff83d391c543",
+   "nodes": 3,
+   "spanMs": 2501,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_123_01f17212285554fd",
+   "nodes": 3,
+   "spanMs": 891,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_127_7a0a1181189e99b7",
+   "nodes": 5,
+   "spanMs": 3661,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_137_b7e800297720bc3b",
+   "nodes": 2,
+   "spanMs": 18,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_138_951828da0ad085d9",
+   "nodes": 9,
+   "spanMs": 4863,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_159_5af31e8cb7bb5927",
+   "nodes": 4,
+   "spanMs": 2273,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_167_a227e48970aa0ca1",
+   "nodes": 3,
+   "spanMs": 1567,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_174_740a2f51fdcf4757",
+   "nodes": 2,
+   "spanMs": 323,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_178_fbcbbc562834b66e",
+   "nodes": 5,
+   "spanMs": 4204,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_189_99d05d04df6f3d5c",
+   "nodes": 1,
+   "spanMs": 629,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_192_9effff83d391c543",
+   "nodes": 3,
+   "spanMs": 3047,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_197_32552eff71a19473",
+   "nodes": 3,
+   "spanMs": 909,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_201_bae9002a3dab081b",
+   "nodes": 2,
+   "spanMs": 7529,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_205_9191ba7165178c9a",
+   "nodes": 3,
+   "spanMs": 2361,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_210_48062f8e9d920d6a",
+   "nodes": 7,
+   "spanMs": 5676,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_229_fd7956e2cb90ef6e",
+   "nodes": 12,
+   "spanMs": 5007,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_255_6d7dd984c01f270c",
+   "nodes": 9,
+   "spanMs": 5608,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_278_bd2c2f20aa28da9e",
+   "nodes": 16,
+   "spanMs": 8766,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_312_e085ba32c0d0d583",
+   "nodes": 12,
+   "spanMs": 6065,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_340_bffe85ee39f843b0",
+   "nodes": 9,
+   "spanMs": 3710,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_353_1094391a91b765c9",
+   "nodes": 17,
+   "spanMs": 9778,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_397_7351e6b85120072c",
+   "nodes": 17,
+   "spanMs": 9823,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_438_913990d169ab2ffb",
+   "nodes": 15,
+   "spanMs": 4950,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_473_e48ced0724472053",
+   "nodes": 16,
+   "spanMs": 6658,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_511_441013a21f5c8164",
+   "nodes": 17,
+   "spanMs": 9173,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_550_326514fd30d73d05",
+   "nodes": 15,
+   "spanMs": 6631,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_583_7a6cbbe44a7f4398",
+   "nodes": 11,
+   "spanMs": 10481,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_612_db6f09f58eb41b8a",
+   "nodes": 12,
+   "spanMs": 8127,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_642_24e1c1cbde9e756c",
+   "nodes": 6,
+   "spanMs": 10452,
+   "continuedInTheSameTurn": true
+  },
+  {
+   "programId": "plan_652_de22790a76fa21a0",
+   "nodes": 4,
+   "spanMs": 6887,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_668_1cb537570fe5373e",
+   "nodes": 6,
+   "spanMs": 4113,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_676_3c8014fa68e895df",
+   "nodes": 2,
+   "spanMs": 294,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_680_89fd90adcff580db",
+   "nodes": 12,
+   "spanMs": 5559,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_698_81d801bd3df6d0c8",
+   "nodes": 3,
+   "spanMs": 12320,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_703_5d4507b656447ca3",
+   "nodes": 1,
+   "spanMs": 878,
+   "continuedInTheSameTurn": false
+  },
+  {
+   "programId": "plan_705_2197bd186944c381",
+   "nodes": 3,
+   "spanMs": 1033,
+   "continuedInTheSameTurn": true
+  }
+ ]
+}

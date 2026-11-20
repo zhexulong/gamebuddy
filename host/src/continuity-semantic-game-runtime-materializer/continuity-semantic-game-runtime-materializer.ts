@@ -17,6 +17,9 @@ import {
   legalPlanActionIds,
   lookaheadIneligibility,
   MAX_PLAN_NODES,
+  MAX_PLAN_SELF_WAIT_NODES,
+  PLAN_NODE_PACE_MS,
+  PLAN_SELF_WAIT_BUDGET_MS,
   PLAN_TOOL_SLOT_MEANING,
   type PlanScriptRequest,
   type PublishedPlanAction,
@@ -488,18 +491,30 @@ function createBodyProgramTools(
               programStatusProgress.observe(result);
               return result;
             };
-            // WAITING IS OPT-IN, AND THE DEFAULT IS NOT TO.
+            // WHEN THIS CALL RETURNS, FOR WHICH PLAN.
             //
-            // The first version blocked until the program settled, to save one model round trip. It does save that -
-            // measured, polling fell from 48 calls to 4 - and it takes away the control points that make a body program
-            // usable: while the call is held the model cannot stop, append or redirect, so `program_stop` is unreachable
-            // exactly when it is needed, and a player's steering message waits behind the call for up to
-            // MAX_PROGRAM_STATUS_WAIT_MS. A companion you cannot interrupt mid-swing is not this product.
+            // The first version blocked until the program settled, to save one model round trip. It did save that -
+            // measured, polling fell from 48 calls to 4 - and it took away the control points that make a body program
+            // usable: while the call is held the model cannot stop, append or redirect, so `program_stop` is
+            // unreachable exactly when it is needed, and a player's steering message waits behind the call. A companion
+            // you cannot interrupt mid-swing is not this product - so waiting became opt-in, and a caller that wanted the
+            // settled answer had to name `waitMs`. It then paid 10.1 s of delivery (median, `round84`) to learn two
+            // seconds later what the call it had already made would have answered.
             //
-            // So the call returns as soon as the Mod accepts. A caller that genuinely wants to block passes `waitMs`, and
-            // the capability survives without being imposed on everyone.
+            // Neither extreme is right, because the population is not one shape: measured `round84`, 33 of 59
+            // programmes were 1-3 nodes and a plan executes in 1-4 s, so for most of her work the turn boundary costs
+            // more than the work. A SHORT plan is therefore held until it settles, and the threshold is DERIVED
+            // (`planSelfWaitDecision`: the plan's node count times the observed per-node pace, against
+            // `PLAN_SELF_WAIT_BUDGET_MS`) rather than a node count picked by hand. The bound is no larger than one
+            // decision, so a wait that expires costs no more than the turn it was meant to save. A plan past the
+            // threshold returns on acceptance exactly as before.
+            //
+            // This is the opposite of a lookahead: nothing is planned before the result exists. And the wait is NOT a new
+            // mechanism: it is the same reader, the same cap and the same progress ledger the status tool uses, so a plan
+            // that outlives the bound returns exactly what a status call would have, saying `waited.settled: false`.
             const { waitMs } = params as { waitMs?: number };
-            if (typeof waitMs !== "number" || !Number.isFinite(waitMs) || waitMs <= 0) {
+            const selfWait = planSelfWaitDecision(nodes.length, waitMs);
+            if (!selfWait.wait) {
               // The submit already carries the Mod's journal as the Mod recorded it, so the non-waiting answer needs no
               // second call and no invented state: a program accepted as `idempotent` reports the state its nodes are in
               // NOW, which is how an identical resubmission comes back saying "step 3 was refused" instead of
@@ -512,16 +527,21 @@ function createBodyProgramTools(
                 programs: null,
                 programCount: 0,
               });
-              return answerOf(planBatchAnswer(nodes, recorded, programStatusProgress.observe(reading)?.nodes ?? []));
+              // `waited: false` AND THE REASON, from the same call: an answer silent about it leaves "this plan settles
+              // in a second" and "this plan outlasts the bound" looking alike, and only one of them is worth a wait.
+              return answerOf(planBatchAnswer(nodes, recorded, programStatusProgress.observe(reading)?.nodes ?? []), {
+                waited: false,
+                waitReason: selfWait.reasonCode,
+              });
             }
-            const bounded = Math.min(waitMs, MAX_PROGRAM_STATUS_WAIT_MS);
+            const startedAtMs = Date.now();
             const first = await readStatus();
             const settled = isTerminalProgramStatus(first)
               ? Object.freeze({
                   result: first,
                   waited: Object.freeze({ terminality: "terminal" as const, unreadable: null, snapshotChanged: false }),
                 })
-              : await waitForTerminalProgramStatus(readStatus, first, bounded);
+              : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
             return answerOf(
               planBatchAnswer(
                 nodes,
@@ -529,10 +549,20 @@ function createBodyProgramTools(
                 programStatusProgress.observe(settled.result)?.nodes ?? [],
               ),
               {
+                // What the wait itself PROVED, on every arm: `settled` is true only when the read it ended on said the
+                // plan stopped, `waitedMs` is how long this call held the turn, and `snapshotChanged` answers whether the
+                // journal published anything while it did. "Still running" and "I could not read your plan" therefore
+                // never arrive in the same shape.
+                waited: Object.freeze({
+                  settled: settled.waited.terminality === "terminal",
+                  waitedMs: Math.max(0, Date.now() - startedAtMs),
+                  terminality: settled.waited.terminality,
+                  unreadable: settled.waited.unreadable,
+                  snapshotChanged: settled.waited.snapshotChanged,
+                }),
                 // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
                 // what is left and whether anything moved while this one held the turn.
                 status: settled.result,
-                ...(settled.waited.snapshotChanged ? {} : { unchangedWhileWaiting: true }),
               },
             );
           } catch (error) {
@@ -946,6 +976,48 @@ const PLAN_UNIDENTIFIED_FAMILIES: readonly string[] = Object.freeze([
   "warpItemTargets",
 ]);
 
+/** Why this call did not hold its turn for the plan's own settlement. */
+export type PlanSelfWaitRefusal =
+  /** The caller said so (`waitMs: 0`): it is about to stop, append to or redirect the plan, and that is the point of the call. */
+  | "caller_asked_never"
+  /** The plan's nodes are predicted to outlast the budget, so a held turn would expire instead of answering. */
+  | "plan_outlasts_the_wait_bound";
+
+/**
+ * Whether `stardew_plan_work` holds its turn for the settlement of the plan it just submitted, and for how long.
+ *
+ * <p>
+ * THE DECISION IS DERIVED FROM THE WORK, not from a node count someone picked. `predictedMs` is the plan's node count
+ * times the observed per-node pace (`PLAN_NODE_PACE_MS`), and `PLAN_SELF_WAIT_BUDGET_MS` is one decision's worth of
+ * time, so the two numbers that decide are both measurements - a threshold written as "two nodes" would be a number no
+ * later reading could contradict. `plan-self-wait.test.ts` re-derives it over `round84`'s own programmes.
+ * </p>
+ *
+ * <p>
+ * A CALLER'S OWN BOUND WINS, in both directions, because the wait is the one thing that takes the stop away: `0` keeps
+ * the turn free for a caller about to stop or change the plan, and a positive bound is capped by the same maximum the
+ * status tool obeys. Only an OMITTED bound is the rule's to decide.
+ * </p>
+ */
+export type PlanSelfWaitDecision =
+  | Readonly<{ wait: true; boundMs: number; predictedMs: number }>
+  | Readonly<{ wait: false; boundMs: 0; predictedMs: number; reasonCode: PlanSelfWaitRefusal }>;
+
+export function planSelfWaitDecision(nodeCount: number, requestedWaitMs: number | undefined): PlanSelfWaitDecision {
+  const predictedMs = nodeCount * PLAN_NODE_PACE_MS;
+  if (typeof requestedWaitMs === "number" && Number.isFinite(requestedWaitMs))
+    return requestedWaitMs <= 0
+      ? Object.freeze({ wait: false, boundMs: 0, predictedMs, reasonCode: "caller_asked_never" })
+      : Object.freeze({
+          wait: true,
+          boundMs: Math.min(Math.trunc(requestedWaitMs), MAX_PROGRAM_STATUS_WAIT_MS),
+          predictedMs,
+        });
+  return predictedMs <= PLAN_SELF_WAIT_BUDGET_MS
+    ? Object.freeze({ wait: true, boundMs: PLAN_SELF_WAIT_BUDGET_MS, predictedMs })
+    : Object.freeze({ wait: false, boundMs: 0, predictedMs, reasonCode: "plan_outlasts_the_wait_bound" });
+}
+
 function planToolParameters() {
   return Type.Object(
     {
@@ -956,16 +1028,22 @@ function planToolParameters() {
       }),
       /**
        * Declared here because the tool already reads it: a parameter the implementation honours but the schema hides is
-       * a capability nothing can reach - and a caller who wants the SETTLED per-node answer has no other one call to
-       * make. The default is still not to wait (`a plan does not hold the turn unless the caller asks it to`), the cap
-       * is the same `MAX_PROGRAM_STATUS_WAIT_MS` the status tool obeys, and the text says what the wait costs.
+       * a capability nothing can reach. The DEFAULT is the rule's now (`planSelfWaitDecision`: a plan that fits one wait is
+       * held for it), so this is what a caller passes to overrule the rule in either direction - `0` to keep the turn
+       * free, a longer bound when this plan genuinely needs the settled answer - and the text says what each costs.
        */
       waitMs: Type.Optional(
         Type.Integer({
           minimum: 0,
           maximum: MAX_PROGRAM_STATUS_WAIT_MS,
           description:
-            "A rare opt-in: hold this turn until every node of the plan has stopped, or this many milliseconds pass, so `nodes` comes back terminal. While it holds the turn you cannot stop, append or steer - the plan runs either way and each step's receipt still arrives on its own, so leave it out unless this turn genuinely needs the settled answer.",
+            "Leave it out. A plan of " +
+            String(MAX_PLAN_SELF_WAIT_NODES) +
+            " nodes or fewer is already held until it settles (bound " +
+            String(PLAN_SELF_WAIT_BUDGET_MS) +
+            " ms, no more than one of your own decisions costs), and a longer plan is not held: holding it would spend the bound on nodes that outlast it. Pass 0 to never hold this turn - do that when you are about to stop, append to or redirect the plan - or a positive bound up to " +
+            String(MAX_PROGRAM_STATUS_WAIT_MS) +
+            " when this particular plan needs the settled answer. While the call is held you cannot stop, append or steer.",
         }),
       ),
     },

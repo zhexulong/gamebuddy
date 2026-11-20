@@ -31,6 +31,13 @@ import { createIntegrationActionCatalog, type GameIntegrationAdapter } from "../
 import type { ConfigurableIntegrationLauncher } from "../integration-catalog.js";
 import { type IntegrationLaunchHandle, RECEIPT_BACKED_INTEGRATION_AUTHORITY } from "../integration-launcher.js";
 import { bindWindowsStaleLockReclaimer } from "../path-lock.js";
+import {
+  MAX_PLAN_NODES,
+  MAX_PLAN_SELF_WAIT_NODES,
+  PLAN_NODE_PACE_MS,
+  PLAN_SELF_WAIT_BUDGET_MS,
+} from "../body-program-script.js";
+import { MAX_PROGRAM_STATUS_WAIT_MS } from "../program-status-wait.js";
 import { StardewExecutionRecoverySupervisor } from "../stardew-execution-recovery-supervisor.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
@@ -41,6 +48,7 @@ import {
   MAX_PLAN_VERIFICATION_DIAGNOSTICS,
   MAX_PLAN_VERIFICATION_TEXT_CHARS,
   planRefusalAnswer,
+  planSelfWaitDecision,
 } from "./continuity-semantic-game-runtime-materializer.js";
 import { createTestGameRuntimeMaterializer } from "./continuity-semantic-game-runtime-materializer.test-support.js";
 
@@ -1104,37 +1112,99 @@ const FAMILIES_NOT_IN_PLAN_PARAMETERS: Readonly<Record<string, string>> = Object
     "why a family came back empty this turn - a diagnostic roster the fact line reads, never a target any action addresses",
 });
 
-test("a plan does not hold the turn unless the caller asks it to", async () => {
-  // This is a CORRECTION, and the assertion exists so it cannot be undone by accident.
-  //
-  // `plan_work` first blocked until the program settled, which saved one model round trip (polling fell 48 -> 4) and
-  // took away the control points that make a body program usable: while the call is held the model cannot `stop`,
-  // `append` or redirect, so `program_stop` is unreachable exactly when a player needs it, and a steering message waits
-  // behind the call for up to MAX_PROGRAM_STATUS_WAIT_MS. A companion you cannot interrupt mid-swing is not the product.
+test("a plan that outlasts the wait bound is answered on acceptance; one that fits is held", async () => {
+  // THE CORRECTION STAYS AND BECOMES A MEASUREMENT. `plan_work` first blocked until the program settled, which saved
+  // one model round trip (polling fell 48 -> 4) and took away the control points that make a body program usable: while
+  // the call is held the model cannot `stop`, `append` or redirect, so `program_stop` is unreachable exactly when a
+  // player needs it. Waiting then became opt-in - and a plan measured `round84` (33 of 59 programmes are 1-3 nodes, a
+  // plan executes in 1-4 s) paid 10.1 s of delivery to learn what the call it had already made would have answered. Each
+  // arm below is one of those two facts, and the threshold between them is DERIVED: the budget over the recorded
+  // per-node pace, never a node count written here.
+  assert.equal(
+    MAX_PLAN_SELF_WAIT_NODES,
+    Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PLAN_NODE_PACE_MS),
+    "the threshold is the budget over the observed pace, so a re-measurement moves it and a hand-picked count cannot",
+  );
+  assert.ok(
+    MAX_PLAN_SELF_WAIT_NODES > 0,
+    "blocked: a zero threshold would hold no plan at all and this file would pass",
+  );
+  for (let nodeCount = 1; nodeCount <= MAX_PLAN_SELF_WAIT_NODES; nodeCount += 1) {
+    const held = planSelfWaitDecision(nodeCount, undefined);
+    assert.equal(held.wait, true, `${String(nodeCount)} nodes fit inside one decision`);
+    assert.equal(
+      held.boundMs,
+      PLAN_SELF_WAIT_BUDGET_MS,
+      "held for the budget, not for the 30 s the status tool allows",
+    );
+    assert.equal(
+      held.predictedMs,
+      nodeCount * PLAN_NODE_PACE_MS,
+      "the prediction is the node count at the observed pace",
+    );
+  }
+  const past = planSelfWaitDecision(MAX_PLAN_SELF_WAIT_NODES + 1, undefined);
+  assert.deepEqual(
+    past,
+    {
+      wait: false,
+      boundMs: 0,
+      predictedMs: (MAX_PLAN_SELF_WAIT_NODES + 1) * PLAN_NODE_PACE_MS,
+      reasonCode: "plan_outlasts_the_wait_bound",
+    },
+    "a plan predicted to outlast the bound is answered on acceptance, and says why it was not held",
+  );
+  // A CALLER'S OWN BOUND WINS IN BOTH DIRECTIONS: `0` is how a caller about to stop or redirect keeps the turn free,
+  // and a named bound is obeyed (capped by the same maximum the status tool obeys) whatever the node count says.
+  const neverAsked = planSelfWaitDecision(1, 0);
+  assert.ok(!neverAsked.wait, "`waitMs: 0` never holds the turn");
+  assert.equal(neverAsked.reasonCode, "caller_asked_never", "and the answer says the caller asked for that");
+  assert.equal(planSelfWaitDecision(1, 250).boundMs, 250);
+  assert.equal(
+    planSelfWaitDecision(1, 90_000).boundMs,
+    MAX_PROGRAM_STATUS_WAIT_MS,
+    "a caller cannot ask for more than the wire's own maximum",
+  );
+  assert.equal(
+    planSelfWaitDecision(MAX_PLAN_NODES, 5_000).wait,
+    true,
+    "and a long plan is held when the caller asks for it",
+  );
+
+  // The declined arm AWAITS NOTHING: it answers from the journal the submit already carried, so it cannot hold the turn
+  // while a player's steering message waits behind it. Read out of the normalised source rather than one line's spelling.
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
   const { shape: source } = readSourceShape(
     join(root, "continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts"),
   );
-  const plan = source.slice(source.indexOf("const submitted = await submitProgram({ programId, nodes });"));
-  const guard = plan.indexOf("waitMs <= 0");
-  const wait = plan.indexOf("waitForTerminalProgramStatus(");
-  assert.ok(guard > 0, "the plan tool guards on the caller's own waitMs");
-  assert.ok(wait > guard, "and reaches the shared waiter only past that guard, so the default cannot block");
-  // Re-anchored when the answer stopped saying `settled: false` unconditionally: that field now reports the BATCH, so a
-  // source assertion about its spelling was a proxy for this property rather than the property itself. What makes the
-  // default non-blocking is that the immediate branch awaits nothing - it answers from the snapshot the submit already
-  // carried - so the assertion is that the region between the guard and the first awaited read contains no await.
-  const waiterAt = plan.indexOf("const bounded =");
-  assert.ok(waiterAt > guard, "the guarded branch ends where the bounded wait begins");
+  const plan = source.slice(source.indexOf("const selfWait = planSelfWaitDecision(nodes.length, waitMs);"));
+  const declined = plan.indexOf("if (!selfWait.wait) {");
+  assert.ok(declined > 0, "the plan tool decides with the derived rule before it reads anything");
+  const heldAt = plan.indexOf("const startedAtMs =");
+  assert.ok(heldAt > declined, "and the held arm begins after the declined one");
   assert.doesNotMatch(
-    plan.slice(guard, waiterAt),
+    plan.slice(declined, heldAt),
     /await |readStatus\(|port\.status\(/u,
-    "the immediate answer awaits nothing: it answers from the journal the submit already carried, so it cannot hold the turn",
+    "the declined answer awaits nothing: it answers from the journal the submit already carried",
   );
   assert.match(
-    plan.slice(guard, wait),
+    plan.slice(declined, heldAt),
+    /waited: false,\s+waitReason: selfWait\.reasonCode,/u,
+    "and it says the turn was not held, and why",
+  );
+  assert.match(
+    plan.slice(declined, heldAt),
     /planBatchAnswer\(nodes, recorded,/u,
-    "and the immediate answer still names every node the caller wrote",
+    "while still naming every node the caller wrote",
+  );
+  // The held arm reports what the wait proved and how long it held the turn, so "still running" and "I could not read
+  // your plan" cannot arrive in the same shape.
+  assert.match(source, /settled: settled\.waited\.terminality === "terminal",/u);
+  assert.match(source, /waitedMs: Math\.max\(0, Date\.now\(\) - startedAtMs\),/u);
+  assert.match(
+    source,
+    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.boundMs\)/u,
+    "by WAITING for it with the one waiter and the decision's own bound",
   );
 });
 
@@ -1350,7 +1420,7 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /status: settled\.result,/, "and carries the status a second call would have fetched");
   assert.match(
     source,
-    /await waitForTerminalProgramStatus\(readStatus, first, bounded\)/u,
+    /await waitForTerminalProgramStatus\(readStatus, first, selfWait\.boundMs\)/u,
     "by WAITING for it with the one waiter, not by returning early and inviting a poll",
   );
   // The run artifact keeps the script, the snapshot it read and the program it produced, so a failed plan can be

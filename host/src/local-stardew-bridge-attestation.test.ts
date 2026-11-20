@@ -26,6 +26,7 @@ import { loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import {
   MAX_PLAN_NODES,
+  MAX_PLAN_SELF_WAIT_NODES,
   PLAN_ACTION_LIFECYCLES,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
@@ -725,8 +726,12 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
         };
         const submissions = () => requests.filter((request) => request.type === "program_submit");
 
+        // `waitMs: 0`: the wait is its own contract (`a plan that fits one wait comes back settled from the same call`),
+        // and this test is about what the Mod RECEIVES - so it keeps the turn free instead of holding it for a fixture
+        // whose journal never settles.
         const planned = await execute("stardew_plan_work", {
           script: "builder.move_to_tile({ x: snapshot.tile.x + 1, y: snapshot.tile.y });",
+          waitMs: 0,
         });
         const [submittedByPlan] = submissions();
         assert.ok(submittedByPlan, "an accepted plan reaches the Mod");
@@ -761,6 +766,9 @@ test("a plan compiled against the live catalog reaches the Mod by the same submi
           // Measured `round43`: 29 of 96 turns were status polls; the paragraph that used to sit here answered them with
           // a description of a message that would arrive later.
           settlementNote: planSettlementNote(1, payload.programId),
+          // The turn was not held, and the caller asked for that: reported rather than left to be inferred.
+          waited: false,
+          waitReason: "caller_asked_never",
         });
         assert.deepEqual(
           plannedNodes.map(({ elapsedMs: _clock, ...rest }) => rest),
@@ -1153,6 +1161,208 @@ test("a plan answers each node's own state by index, so a refusal cannot be read
     },
   );
 });
+
+/**
+ * A SHORT PLAN'S OWN OUTCOME COMES BACK IN THE CALL THAT SUBMITTED IT, through the real tool, socket and Mod shapes.
+ *
+ * Measured 2026-11-20 (`round84`): 33 of 59 programmes were 1-3 nodes and a plan executes in 1-4 s, while one model turn
+ * cost a median 6.18 s to decide and 10.1 s to deliver - so for most of her work the turn boundary cost more than the
+ * work. The call now holds its own turn for a plan whose nodes fit `MAX_PLAN_SELF_WAIT_NODES` (derived in
+ * `plan-self-wait.test.ts`) and answers a longer one on acceptance, saying `waited: false` and why.
+ *
+ * BOTH ARMS ARE DRIVEN HERE, because the boundary is the product: a test that only proved the short arm would pass for a
+ * rule that held every plan, which is the behaviour that made `program_stop` unreachable mid-swing.
+ */
+test(
+  "a plan that fits one wait comes back settled from the same call, and a longer one says why it was not held",
+  { timeout: 20_000 },
+  async () => {
+    const requests: BridgeMessage[] = [];
+    // The submit echo is always a plan still running; the JOURNAL settles on the first read. So a settled answer cannot be
+    // the submit's own echo - it proves the call read the plan.
+    let settledNodes: readonly Readonly<{ nodeId: string; actionId: string }>[] = [];
+    const journalSnapshot = (programId: string, state: string, nodeState: string) => ({
+      programId,
+      state,
+      catalogRevision: 1,
+      stopEpoch: 0,
+      eventHighWater: nodeState === "succeeded" ? 9 : 0,
+      nodes: settledNodes.map((node) => ({
+        nodeId: node.nodeId,
+        actionId: node.actionId,
+        state: nodeState,
+        nodeAttempt: 1,
+        admissionAttempt: 1,
+      })),
+    });
+    await withHelloAck(
+      "farmhand_client",
+      generation,
+      async (pipeName) => {
+        const client = await LocalStardewBridgeClient.connectFarmhand(
+          scope,
+          pipeName,
+          token,
+          generation,
+          Date.now() + 10_000,
+          testAdapter,
+        );
+        const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+          client,
+          Object.freeze({
+            playerId: "player_attestation",
+            companionId: scope.companionId,
+            continuityId,
+            saveId: scope.saveId,
+            worldId: scope.worldId,
+          }),
+          { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+        );
+        const binding = await receiptBackedBinding(launch);
+        let materialized:
+          | Awaited<ReturnType<ReturnType<typeof createHostGameRuntimeMaterializer>["materializeEnter"]>>
+          | undefined;
+        try {
+          materialized = await binding.executeWithBinding((bindingToken) =>
+            withConsumedBindingExecution(bindingToken, (execution) =>
+              createHostGameRuntimeMaterializer().materializeEnter(
+                reserveGameRuntimeMaterialization(execution),
+                enterPermit(execution),
+              ),
+            ),
+          );
+          const tools = observeMaterializedProductionRuntimeForTest(materialized).session.agent.state.tools;
+          const execute = async (name: string, params: Record<string, unknown>) => {
+            const tool = tools.find((current) => current.name === name);
+            assert.ok(tool, `missing ${name}`);
+            const result = await tool.execute("self_wait", params, new AbortController().signal, () => undefined);
+            return result.details as Record<string, unknown>;
+          };
+          // (1) PAST THE THRESHOLD: ten nodes, no `waitMs`. The call must NOT hold the turn, and must say why - an answer
+          // silent about it leaves "this plan settles in a second" and "this plan outlasts the bound" looking alike.
+          const longScript = Array.from(
+            { length: MAX_PLAN_SELF_WAIT_NODES + 1 },
+            (_unused, index) => `builder.move_to_tile({ x: ${String(index + 2)}, y: 12 });`,
+          ).join("\n");
+          const long = await execute("stardew_plan_work", { script: longScript });
+          assert.equal(long.accepted, true, "the Mod accepts a plan the call declines to hold");
+          assert.equal(
+            long.waited,
+            false,
+            `a plan of ${String(MAX_PLAN_SELF_WAIT_NODES + 1)} nodes is answered on acceptance, not behind a bound it would outlast`,
+          );
+          assert.equal(long.waitReason, "plan_outlasts_the_wait_bound", "and the answer names the reason");
+          assert.equal(long.settled, false, "the batch itself is answered as the Mod recorded it");
+          assert.equal(
+            long.remaining,
+            MAX_PLAN_SELF_WAIT_NODES + 1,
+            "with every step still to run, none claimed as done",
+          );
+          // (2) INSIDE THE THRESHOLD: two nodes, no `waitMs`. The call reads the journal, holds the turn until it settles,
+          // and answers with the terminal state - which is the whole point: the same turn continues with the outcome.
+          const short = await execute("stardew_plan_work", {
+            script: "builder.move_to_tile({ x: 5, y: 8 });\nbuilder.move_to_tile({ x: 6, y: 8 });",
+          });
+          assert.equal(short.accepted, true);
+          const waited = short.waited as
+            | Readonly<{ settled: boolean; waitedMs: number; terminality: string; snapshotChanged: boolean }>
+            | false;
+          assert.notEqual(waited, false, "a plan of two nodes is held by its own call");
+          assert.equal(
+            (waited as Readonly<{ settled: boolean }>).settled,
+            true,
+            "and the wait ended on a read that said the plan stopped",
+          );
+          assert.equal((waited as Readonly<{ terminality: string }>).terminality, "terminal");
+          assert.equal(
+            typeof (waited as Readonly<{ waitedMs: unknown }>).waitedMs,
+            "number",
+            "the answer says how long the turn was held",
+          );
+          assert.equal(short.settled, true, "so the batch is answered terminal, in this answer");
+          assert.equal(short.remaining, 0);
+          assert.deepEqual(
+            (short.nodes as readonly Record<string, unknown>[]).map(({ elapsedMs: _clock, ...rest }) => rest),
+            [
+              { index: 0, actionId: "move_to_tile", state: "succeeded", tile: { x: 5, y: 8 } },
+              { index: 1, actionId: "move_to_tile", state: "succeeded", tile: { x: 6, y: 8 } },
+            ],
+            "every step at the index the caller wrote it, in the Mod's own terminal state",
+          );
+          assert.equal(
+            (short.status as Readonly<{ code: string }>).code,
+            "found",
+            "and the observation a status call would have fetched",
+          );
+          // (3) THE ESCAPE HATCH: `waitMs: 0` keeps the turn free even for a plan that would have been held - the caller that
+          // is about to stop or steer says so.
+          const declined = await execute("stardew_plan_work", {
+            script: "builder.move_to_tile({ x: 7, y: 8 });",
+            waitMs: 0,
+          });
+          assert.equal(declined.waited, false, "`waitMs: 0` never holds the turn");
+          assert.equal(declined.waitReason, "caller_asked_never", "and says the caller asked for it");
+          assert.ok(
+            requests.filter((request) => request.type === "program_submit").length >= 3,
+            "every plan reached the Mod: declining the wait does not decline the work",
+          );
+        } finally {
+          await materialized?.close();
+          await binding.close();
+        }
+      },
+      (request, socket) => {
+        requests.push(request);
+        const programId = (request.payload as { programId?: string } | undefined)?.programId ?? "program_self_wait";
+        if (request.type === "program_submit") {
+          settledNodes = (request.payload as { nodes: readonly Readonly<{ nodeId: string; actionId: string }>[] })
+            .nodes;
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_self_wait_submit",
+              type: "program_submit_result",
+              payload: {
+                code: "accepted",
+                verification: { accepted: true, catalogRevision: 1, diagnostics: [] },
+                snapshot: journalSnapshot(programId, "active", "pending"),
+              },
+            }),
+          );
+          return true;
+        }
+        if (request.type === "program_status") {
+          socket.write(
+            frame({
+              ...request,
+              messageId: "mod_self_wait_status",
+              type: "program_status_result",
+              payload: {
+                code: "found",
+                snapshot: journalSnapshot(programId, "succeeded", "succeeded"),
+                programs: null,
+                programCount: 1,
+              },
+            }),
+          );
+          return true;
+        }
+      },
+      {
+        registrations: [
+          {
+            actionId: "move_to_tile",
+            familyId: "movement_navigation",
+            identityVersion: 1,
+            lifecycle: "published",
+            kind: "execution",
+            descriptor: { argumentSchema: { x: { type: "integer" }, y: { type: "integer" } } },
+          },
+        ],
+      },
+    );
+  },
+);
 
 /**
  * The plan example is only better than no example if every name in it exists, so the checks below read the names

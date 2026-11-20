@@ -11,6 +11,7 @@ import {
   compilePlanScript,
   GAME_PROSE_PAIR_BUDGET_CHARS,
   MAX_PLAN_NODES,
+  MAX_PLAN_SELF_WAIT_NODES,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
   PLAN_ITERATION_CONDITIONS,
@@ -2987,9 +2988,9 @@ test("the pair gate turns red on added prose, and on a sentence that moved witho
  * The three program tools' descriptions as the model is handed them: `stardew_plan_work` is compiled here, and the two
  * readers are written inline beside the tools that mount them, so they are read off that source.
  *
- * One reader for all three, because the defect this pins is a CONVERSATION between them: `plan_work` returns as soon as the
- * plan is accepted, so a description that advertises watching the plan is the instruction that fills the gap - whichever
- * of the three states it.
+ * One reader for all three, because the defect this pins is a CONVERSATION between them: `plan_work` holds a short plan's
+ * turn and answers a longer one on acceptance, so a description that advertises watching the plan is the instruction that
+ * fills the gap - whichever of the three states it.
  */
 function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus" | "programEvents", string>> {
   const source = readFileSync(
@@ -3022,12 +3023,29 @@ function descriptionOfToolAfter(source: string, marker: string): string {
   return body.replace(/\\([\s\S])/gu, "$1");
 }
 
-test("stardew_plan_work says when it returns, what wakes the companion, and that the turn keeps composing", () => {
-  // `plan_work` returns the moment the Mod accepts. That is only safe if the companion expects the outcome to arrive on
-  // its own: measured 2026-11-03 (`round29`), a description that said nothing about a wake produced 48
-  // `stardew_action_program_status` calls, `waitMs` median 30,000 (the cap), 248 s blocked.
+test("stardew_plan_work says when it returns, for which plan, and that the turn keeps composing", () => {
+  // THE TWO ARMS ARE TWO FACTS, and the condition between them is the product's own threshold rather than a number
+  // written here: a description that said "two nodes" while the rule waited for nine would be a second spelling of the
+  // same fact, and the model would plan against the wrong one. `round84` is why the first arm exists at all - 33 of 59
+  // programmes were 1-3 nodes and a plan runs in 1-4 s, so for most of her work the turn boundary cost more than the
+  // work (`1,265.2 s` of the run's `1,702.7 s` between programmes), while a description that said nothing about a wake
+  // produced 48 `stardew_action_program_status` calls and 248 s blocked (`round29`).
   const { planWork } = programToolDescriptions();
-  assert.match(planWork, /returns as soon as the plan is accepted/u, "the plan tool says when it returns");
+  assert.match(
+    planWork,
+    new RegExp(`A plan of ${String(MAX_PLAN_SELF_WAIT_NODES)} nodes or fewer is held until it settles`, "u"),
+    "the condition under which the call holds its turn is stated, with the rule's own threshold",
+  );
+  assert.match(
+    planWork,
+    /so its outcome is in this answer/u,
+    "and what that buys: the outcome is in the answer, so the same turn carries on",
+  );
+  assert.match(
+    planWork,
+    /a longer plan returns as soon as it is accepted/u,
+    "the other arm says when IT returns, so neither plan is left guessing",
+  );
   assert.match(planWork, /do NOT poll/u, "and forbids polling it");
   assert.match(
     planWork,
