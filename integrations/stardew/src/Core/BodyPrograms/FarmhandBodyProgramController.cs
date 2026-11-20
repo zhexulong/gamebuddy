@@ -213,6 +213,45 @@ public sealed class FarmhandBodyProgramController
     /// </summary>
     private readonly Dictionary<string, long> admissionAttachmentGenerations = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Each programme's CARRIED ADMISSION: the Host's grant for that programme's first node, kept for the programme's
+    /// own lifetime so the nodes after it are not each asked the same question over the pipe.
+    ///
+    /// <para>
+    /// WHY THE ANSWER COVERS THE PROGRAMME AND NOT THE NODE. Everything the Host decides per node - the action's
+    /// membership of the catalogue, the policy identity and capability revision, the catalogue revision - is a fact
+    /// about the PROGRAMME's scope, and the Host compiled and preflighted the whole programme under it before the Mod
+    /// could submit it. A later node's challenge cannot get a different answer unless that scope moved, and a scope
+    /// that moved is a policy-identity change, a STOP, or the attachment going away. So the round trip bought the
+    /// second answer to a question already answered: measured `round84`, 331 `admission` challenges for 329 program
+    /// nodes and 272 intra-programme node switches costing 43.7 s (161 ms each, about ten frames).
+    /// </para>
+    /// <para>
+    /// WHAT IT IS NOT. It replaces no check: every node is still minted by `TryCreateAdmissionChallenge` (policy
+    /// revision, deadline derivation, exact materialized arguments), still admitted through
+    /// `TryConsumeHostGrant`/`TryGrant` (live policy identity, live deadline, exact grant identity, live catalog and
+    /// claim conformance), still bound by `TryBeginNativeDispatch`, and still executed against the world preconditions
+    /// in the executor. What goes is the cross-process wait, not the gate.
+    /// </para>
+    /// <para>
+    /// WHAT KILLS IT: the programme ending - STOP, cancellation, completion or recovery, dropped by `Update` beside
+    /// `DropRunningTuple` - the authenticated attachment generation changing, and the live policy identity moving, which
+    /// makes the mint answer `PolicyIdentityStale` and drops the lease here. It needs no clock of its own: each node's
+    /// deadline is derived at its own mint and `TryGrant` refuses the tuple past it, so a carried admission cannot
+    /// outlive the node it covers.
+    /// </para>
+    /// </summary>
+    private readonly Dictionary<string, ProgramAdmissionLease> programAdmissionLeases = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// One programme's carried admission exactly as the Host minted it, so a later node's grant can repeat the
+    /// Host's own answer instead of a second guess at it.
+    /// </summary>
+    /// <param name="TransportGeneration">The authenticated generation the answer arrived on. A different one is a different session, and an admission carried out of it is a claim nobody made.</param>
+    /// <param name="AttachmentGeneration">The Host's own name for the attachment it answered on.</param>
+    /// <param name="PolicyRevision">The policy revision the Host answered under.</param>
+    private sealed record ProgramAdmissionLease(long TransportGeneration, string AttachmentGeneration, string PolicyRevision);
+
     public BodyProgramJournalOpenStatus OpenStatus => this.authority.OpenStatus;
 
     /// <summary>Revokes this controller's exact authority tuple and drains any active update.</summary>
@@ -221,6 +260,7 @@ public sealed class FarmhandBodyProgramController
         this.boundRunning.Clear();
         this.admissionChallenges.Clear();
         this.admissionAttachmentGenerations.Clear();
+        this.programAdmissionLeases.Clear();
         return this.authority.Close();
     }
 
@@ -265,6 +305,9 @@ public sealed class FarmhandBodyProgramController
                     // Running, so its retained continuation tuples are dropped
                     // instead of being revisited or left to leak.
                     this.DropRunningTuple(program.Program.ProgramId);
+                    // A finished programme carries no admission: its carried answer dies with it, so a resubmission under
+                    // the same id cannot inherit one.
+                    this.programAdmissionLeases.Remove(program.Program.ProgramId);
                     continue;
                 }
                 this.StartEligibleNodes(program.Program.ProgramId);
@@ -314,7 +357,12 @@ public sealed class FarmhandBodyProgramController
             BodyProgramControllerResult<NodeAdmissionChallenge> started = this.authority.TryCreateAdmissionChallenge(programId);
             if (!started.IsSuccess)
             {
-                // A not-yet-eligible node is the ordinary state of a program whose current action is running.
+                // A policy that moved on ends the programme's carried admission here, where the mint saw it: the
+                // answer the Host gave was for the policy this node's attempt would have been minted under, and the
+                // next node must ask again. A not-yet-eligible node is the ordinary state of a program whose current
+                // action is running, and changes nothing.
+                if (started.Code == BodyProgramControllerResultCode.PolicyIdentityStale)
+                    this.DropAdmissionLease(programId, "policy_identity_stale");
                 this.DiagnoseWaiting(programId, started.Code);
                 return;
             }
@@ -323,12 +371,20 @@ public sealed class FarmhandBodyProgramController
                 this.Diagnose($"lifecycle_closed_before_send;program={programId}");
                 return;
             }
-            this.Diagnose($"sending;program={programId};node={started.Value!.NodeId}");
             // Recorded BEFORE the send: the answer is taken on a later tick, and the question it has to be compared
             // against is which attachment this admission was ASKED through, not which one happens to be current.
             string attemptKey = AttemptKey(programId, started.Value!.NodeId, started.Value!.NodeAttempt);
             this.admissionAttachmentGenerations[attemptKey] = this.admission!.AttachmentGeneration;
             this.admissionChallenges[attemptKey] = started.Value!;
+            // THE PROGRAMME'S CARRIED ADMISSION IS TAKEN, NOT RE-ASKED. The challenge is minted and recorded exactly as
+            // it is for a first node - it is what the journal's own gates and the deadline settlement present - and
+            // the pass that follows admits this node from it, so nothing goes on the pipe and nothing waits.
+            if (this.LiveAdmissionLease(programId) is not null)
+            {
+                this.Diagnose($"admission_lease_carried;program={programId};node={started.Value!.NodeId}");
+                return;
+            }
+            this.Diagnose($"sending;program={programId};node={started.Value!.NodeId}");
             if (this.admission!.Send(started.Value!) is { } refusal)
             {
                 // THE QUEUE'S REFUSAL IS THE NODE'S OUTCOME. The frame never left this process, so no answer can ever
@@ -365,6 +421,67 @@ public sealed class FarmhandBodyProgramController
             asked,
             refusalCode,
             $"transport={refusalCode};phases=send;delivered=false;node_attempt={asked.NodeAttempt}");
+    }
+
+    /// <summary>
+    /// This programme's carried admission while it still stands, or null.
+    ///
+    /// The attachment generation is checked here rather than at the point of use because it is the one part of the
+    /// Host's answer that is about the ATTACHMENT: an admission answered through one authenticated generation says
+    /// nothing about another, and a lease that outlived its generation would dispatch into a session the Host never
+    /// admitted the programme on.
+    /// </summary>
+    private ProgramAdmissionLease? LiveAdmissionLease(string programId)
+    {
+        if (!this.programAdmissionLeases.TryGetValue(programId, out ProgramAdmissionLease? lease)) return null;
+        long current = this.admission!.AttachmentGeneration;
+        if (lease.TransportGeneration == current) return lease;
+        this.DropAdmissionLease(programId, $"attachment_changed;askedOn={lease.TransportGeneration};generation={current}");
+        return null;
+    }
+
+    /// <summary>Ends one programme's carried admission, saying why, so the next node asks the Host again.</summary>
+    private void DropAdmissionLease(string programId, string reason)
+    {
+        if (!this.programAdmissionLeases.Remove(programId)) return;
+        this.Diagnose($"admission_lease_dropped;program={programId};reason={reason}");
+    }
+
+    /// <summary>
+    /// Admits and runs one node under its programme's carried admission. False means there was nothing to carry, or the
+    /// journal refused the tuple it covers - and then the caller's ordinary path takes over, with the challenge already
+    /// back on the pipe so a real answer can still arrive.
+    ///
+    /// <para>
+    /// THE CHALLENGE IS THE ARGUMENT, not a reconstruction of one: it carries the attempt's own policy identity, its
+    /// derived deadline, its materialized canonical arguments and its descriptor-owned claims, and it is the object the
+    /// journal minted. Only the three fields the Host owns - the grant id, the attachment generation and the policy
+    /// revision - come from the lease, which is what makes this the Host's answer repeated rather than a second decision.
+    /// The grant id says so in the durable record: a `lease_` grant is one this pump minted under a carried admission,
+    /// a `grant_` one is the Host's own.
+    /// </para>
+    /// </summary>
+    private bool TryRunUnderCarriedAdmission(string programId, BodyProgramJournalNode node)
+    {
+        if (this.LiveAdmissionLease(programId) is not { } lease) return false;
+        if (!this.admissionChallenges.TryGetValue(AttemptKey(programId, node.NodeId, node.NodeAttempt), out NodeAdmissionChallenge? challenge)) return false;
+        BodyProgramControllerResult<HostAdmissionGrant> consumed = this.authority.TryConsumeHostGrant(
+            new HostAdmissionGrant(challenge.ProgramId, challenge.NodeId, challenge.NodeAttempt, challenge.AdmissionAttempt,
+                challenge.StopEpoch, challenge.CatalogRevision, challenge.PolicyIdentity, challenge.ActionId,
+                challenge.CanonicalArguments, challenge.DerivedResourceClaims, challenge.DeadlineMs,
+                $"lease_{Guid.NewGuid():N}", lease.AttachmentGeneration, lease.PolicyRevision));
+        if (consumed.IsSuccess && consumed.Value is not null)
+        {
+            this.RunAdmittedNode(consumed.Value);
+            return true;
+        }
+        // THE CARRIED ANSWER NO LONGER COVERS THIS NODE: the journal refused the exact tuple, which is what a live policy
+        // identity that moved (or an attempt identity that no longer matches what it minted) looks like from here. The
+        // programme stops carrying an admission and asks the Host again, so the rest of its nodes are settled by a real
+        // answer instead of by an answer that has stopped being true.
+        this.DropAdmissionLease(programId, $"node_refused;node={node.NodeId};code={consumed.Code}");
+        if (this.admission!.Send(challenge) is { } refusal) this.SettleRefusedSend(programId, challenge, refusal);
+        return false;
     }
 
     /// <summary>
@@ -477,6 +594,9 @@ public sealed class FarmhandBodyProgramController
                     return;
                 }
             }
+            // The programme's own answer, taken once for its first node, admits this one without a round trip. False
+            // here means the lease is gone or was refused, and the ordinary transport path below asks the Host.
+            if (this.TryRunUnderCarriedAdmission(programId, node)) continue;
             BodyNodeAdmissionResult? admissionResult = this.admission!.TryTakeResult(programId, node.NodeId, node.NodeAttempt, node.AdmissionAttempt);
             if (!this.authority.IsLifecycleOpen) return;
             if (admissionResult is null)
@@ -501,6 +621,13 @@ public sealed class FarmhandBodyProgramController
             }
             if (admissionResult is not BodyNodeAdmissionGrantedResult granted || this.executor is null) continue;
             BodyProgramControllerResult<HostAdmissionGrant> consumed = this.authority.TryConsumeHostGrant(granted.Grant);
+            if (consumed.IsSuccess)
+            {
+                // The Host answered for this programme, so the answer covers the programme's remaining nodes. It is
+                // recorded only for a grant the journal ACCEPTED: a refused one admitted nothing and carries nothing.
+                this.programAdmissionLeases[programId] = new ProgramAdmissionLease(
+                    this.admission.AttachmentGeneration, granted.Grant.AttachmentGeneration, granted.Grant.PolicyRevision);
+            }
             if (!consumed.IsSuccess || consumed.Value is null)
             {
                 // AN ANSWER THAT WAS TAKEN IS AN ANSWER THAT WILL NOT COME AGAIN: `TryTakeResult` removed it on its way

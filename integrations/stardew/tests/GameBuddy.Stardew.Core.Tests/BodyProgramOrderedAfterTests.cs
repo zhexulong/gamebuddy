@@ -55,7 +55,10 @@ public sealed class BodyProgramOrderedAfterTests
         executor.Hold = false;
         controller.Update();
         controller.Update();
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("a", "b");
+        // THE SECOND NODE WAS ADMITTED, which is now a journal fact rather than a pipe fact: the programme's carriage
+        // answers for its later nodes, so only its first challenge ever reaches the wire.
+        admission.Sent.Should().ContainSingle().Which.NodeId.Should().Be("a");
+        AdmissionChallenges(authority).Should().Equal("a", "b");
         authority.Status("program").Snapshot!.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
     }
 
@@ -88,7 +91,8 @@ public sealed class BodyProgramOrderedAfterTests
 
         controller.Update();
 
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("a", "b");
+        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("a");
+        AdmissionChallenges(authority).Should().Equal("a", "b");
         BodyProgramStatusSnapshot settled = authority.Status("program").Snapshot!;
         settled.Nodes.Single(node => node.NodeId == "b").State.Should().Be(BodyProgramNodeState.Succeeded);
         settled.State.Should().Be(BodyProgramState.Failed, "one step failed; the neighbour that ran is not a skip");
@@ -186,7 +190,8 @@ public sealed class BodyProgramOrderedAfterTests
 
         controller.Update();
 
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("a", "c");
+        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("a");
+        AdmissionChallenges(authority).Should().Equal("a", "c");
         BodyProgramStatusSnapshot settled = authority.Status("program").Snapshot!;
         settled.Nodes.Single(node => node.NodeId == "c").State.Should().Be(BodyProgramNodeState.Succeeded);
         settled.Nodes.Single(node => node.NodeId == "b").State.Should().Be(BodyProgramNodeState.SkippedDependency);
@@ -224,6 +229,17 @@ public sealed class BodyProgramOrderedAfterTests
         authority.Events("program", 0, 32).Events.Where(@event => @event.Kind is "stopped" or "node_skipped").Should().ContainSingle()
             .Which.Kind.Should().Be("stopped");
     }
+
+    /// <summary>
+    /// Every node this programme's pump ADMITTED, in order, from the journal's own <c>admission_challenge</c> events.
+    ///
+    /// The durable mint is the authority for "this node was admitted", not the pipe: a programme's later nodes are
+    /// admitted under the answer its first node was given, so measuring admission at the transport would report a
+    /// programme that ran as one that never started.
+    /// </summary>
+    private static IReadOnlyList<string?> AdmissionChallenges(OpenBodyProgramJournalAuthority authority) =>
+        authority.Events("program", 0, 32).Events.Where(@event => @event.Kind == "admission_challenge")
+            .Select(@event => @event.NodeId).ToArray();
 
     private static int InFlight(BodyProgramStatusSnapshot status) => status.Nodes.Count(node => node.State
         is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running);

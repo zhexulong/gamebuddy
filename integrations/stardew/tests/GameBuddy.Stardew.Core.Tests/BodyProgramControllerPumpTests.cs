@@ -134,12 +134,13 @@ public sealed class BodyProgramControllerPumpTests
         status.State.Should().Be(BodyProgramState.Succeeded);
         status.Nodes.Should().OnlyContain(node => node.State == BodyProgramNodeState.Succeeded);
 
-        NodeAdmissionChallenge load = admission.Sent.Single(challenge => challenge.NodeId == "load");
-        // B's exact challenge was minted by the same controller from A's exact
-        // producing {programId,nodeId,nodeAttempt} fact, without any Agent B
-        // request and without echoing the candidate literal.
+        // B's exact dispatch was materialized by the same controller from A's exact producing
+        // {programId,nodeId,nodeAttempt} fact, without any Agent B request and without echoing the
+        // candidate literal. Read from the native dispatch, which is where the admitted tuple arrives.
+        NodeAdmissionChallenge load = admission.Sent.Single(challenge => challenge.NodeId == "inspect");
         load.ProgramId.Should().Be("program");
-        load.CanonicalArguments["expectedTargetId"].CanonicalValue.Should().Be("opaque-machine-7");
+        executor.Runs.Single(run => run.Execution.NodeId == "load").Arguments["expectedTargetId"].CanonicalValue
+            .Should().Be("opaque-machine-7");
 
         BodyProgramEventsResult events = authority.Events("program", 0, 32);
         events.Events.Should().ContainSingle(@event => @event.Kind == "accepted");
@@ -728,12 +729,12 @@ public sealed class BodyProgramControllerPumpTests
         // Exactly one run per dispatched node: no duplicate execution of load.
         executor.Runs.Should().HaveCount(2);
         executor.Runs[1].Execution.NodeId.Should().Be("load");
-        // No successor challenge and no retry after settlement.
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("inspect", "load");
+        // No successor challenge and no retry after settlement: `verify` was never admitted.
+        AdmissionChallenges(authority).Should().Equal("inspect", "load");
 
         controller.Update();
         executor.Runs.Should().HaveCount(2);
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("inspect", "load");
+        AdmissionChallenges(authority).Should().Equal("inspect", "load");
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "verify").State.Should().Be(BodyProgramNodeState.Pending);
         authority.Events("program", 0, 32).Events.Should().ContainSingle(@event => @event.Kind == "node_settled");
 
@@ -886,7 +887,8 @@ public sealed class BodyProgramControllerPumpTests
         controller.Update();
         executor.LoadVisits.Should().Be(1);
         authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "load").State.Should().Be(BodyProgramNodeState.RecoveryRequired);
-        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("inspect", "load");
+        admission.Sent.Select(challenge => challenge.NodeId).Should().Equal("inspect");
+        AdmissionChallenges(authority).Should().Equal("inspect", "load");
 
         // Durable: a fresh reopen of the same store retains the exact settlement.
         OpenBodyProgramJournalAuthority reopened = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
@@ -973,6 +975,17 @@ public sealed class BodyProgramControllerPumpTests
 
     private static OpenBodyProgramJournalAuthority Open(BodyProgramActionCatalog? catalog = null, Func<long>? now = null) =>
         OpenBodyProgramJournalAuthority.Open(new MemoryStore(), catalog ?? MachineCatalog(), Scope(), () => Policy(), now ?? (() => 10));
+
+    /// <summary>
+    /// Every node this programme's pump ADMITTED, in order, from the journal's own <c>admission_challenge</c> events.
+    ///
+    /// The durable mint is the authority for "this node was admitted", not the pipe: a programme's later nodes are
+    /// admitted under the answer its first node was given, so a reading taken at the transport would report a programme
+    /// that ran as one that never started.
+    /// </summary>
+    private static IReadOnlyList<string?> AdmissionChallenges(OpenBodyProgramJournalAuthority authority) =>
+        authority.Events("program", 0, 32).Events.Where(@event => @event.Kind == "admission_challenge")
+            .Select(@event => @event.NodeId).ToArray();
 
     private static BodyProgramActionCatalog MachineCatalog() => new(7, new[]
     {
