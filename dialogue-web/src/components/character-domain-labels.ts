@@ -560,7 +560,7 @@ const en: CharacterLabels = Object.freeze({
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
   importReviewTitle: "Review before importing",
   importReviewHint:
-    "Nothing has been imported yet. This is what the Host staged from the card - what it will keep and what it could not use - and the companion is created only when you confirm.",
+    "Nothing has been imported yet. This is what the card says about her - what GameBuddy will keep and what it could not use - and she is created only when you confirm.",
   importReviewName: "The card names it {{name}}.",
   importReviewWillKeep: "Will keep {{count}} card field entries: {{fields}}.",
   importReviewConfirm: "Import this card",
@@ -608,7 +608,8 @@ const en: CharacterLabels = Object.freeze({
   companionActivateFailed: "The choice could not be recorded.",
   companionActivateUnsupported: "This build does not serve choosing a companion. Update GameBuddy or reload the page.",
   companionSwitchAlreadyInPlay: "She is already the companion in play, so there is nothing to choose.",
-  companionSwitchRequiresNoSession: "Stop the game first. A running session is bound to the companion it started with.",
+  companionSwitchRequiresNoSession:
+    "Stop the game first. She stays with the game that is already running, so another companion can join only once it stops.",
   companionSwitchRequestStale:
     "This installation started a different companion since you chose her, so the choice was dropped. Choose again here.",
   companionSwitchRecordUnreadable:
@@ -631,13 +632,13 @@ const en: CharacterLabels = Object.freeze({
   companionInspectorWorldBookAbsent: "She was made without a world book.",
   companionInspectorAbsent: "She was made without one.",
   newCompanionTitle: "New companion",
-  newCompanionHint: "A display name only; GameBuddy mints every identity.",
+  newCompanionHint: "You choose her name and nothing else: GameBuddy creates the rest of her.",
   newCompanionCreate: "Create companion",
   newCompanionNameRequired: "Give her a display name before creating her.",
 
   voiceTitle: "Performance directive",
   voiceHint:
-    "The card's own direction for how this companion performs, kept after the Host's floor. You can rewrite it or clear it; a cleared directive is absent from the prompt rather than empty.",
+    "The card's own direction for how this companion performs, kept after GameBuddy's own rules. You can rewrite it or clear it; a cleared direction is left out entirely rather than sent empty.",
   voiceEmptyHint:
     "This companion has no performance directive yet. You can write one here; it is stored with her and used when she performs.",
   voiceFromCard: "From the card",
@@ -779,7 +780,7 @@ const en: CharacterLabels = Object.freeze({
     "The world book her card carried, kept here with her. An entry is used when your own words match one of its trigger words, unless it is marked as always on.",
   companionWorldBookReadFailed: "Her own world book could not be read. Reading it again may work.",
   companionWorldBookReplyUnreadable:
-    "GameBuddy could not make sense of the Host's answer about her own world book. Reading it again is unlikely to help, because this build does not understand that reply.",
+    "GameBuddy could not make sense of the answer about her own world book. Reading it again is unlikely to help: this version of GameBuddy does not understand that answer.",
   companionWorldBookCount: "Entries in her own book: {{count}}",
   companionWorldBookTriggerWords: "Trigger words: {{keys}}",
   companionWorldBookSecondCondition: "Also needs: {{keys}} ({{logic}})",
@@ -810,10 +811,10 @@ const en: CharacterLabels = Object.freeze({
     "Her book no longer has these entries, so they are not the ones you opened: {{titles}}. Your version of their text is still in this editor, and saving again will put it back.",
   companionWorldBookAbsent: "She has no own world book to edit.",
   companionWorldBookInvalid:
-    "The Host cannot keep this as it stands - every entry needs a title and text, and a field may be over its limit. Nothing was saved.",
+    "GameBuddy cannot keep this as it stands: every entry needs a title and text, and a field may be over its limit. Nothing was saved. Give every entry a title and text, shorten what is over its limit, then save again.",
   companionWorldBookUnreadable: "Her own world book could not be read, so nothing was saved.",
   companionWorldBookBindingPartial:
-    "Her own book was changed, but the conversations that were reading it could not be moved to the new revision. Restart GameBuddy before continuing them.",
+    "Her own book was saved, but the conversations that were reading it could not be switched over to the new copy. Start GameBuddy again before you continue them.",
   companionWorldBookNotSaved:
     "Nothing was saved: her own book or her conversations' storage is unavailable. Try again.",
 
@@ -906,8 +907,7 @@ const zh: CharacterLabels = Object.freeze({
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
   importReviewTitle: "导入前确认",
-  importReviewHint:
-    "尚未导入任何内容。以下是 Host 从卡片中暂存的结果——将保留什么、无法使用什么；只有你确认后才会创建伙伴。",
+  importReviewHint: "尚未导入任何内容。下面是卡片里关于她的内容——会保留什么、哪些用不上；只有你确认后才会创建她。",
   importReviewName: "卡片中的名称为 {{name}}。",
   importReviewWillKeep: "将保留 {{count}} 个卡片字段条目：{{fields}}。",
   importReviewConfirm: "导入此角色卡",
@@ -953,7 +953,8 @@ const zh: CharacterLabels = Object.freeze({
   companionActivateFailed: "没能记下这个选择。",
   companionActivateUnsupported: "当前版本不支持选择伙伴。请更新 GameBuddy 或重新加载页面。",
   companionSwitchAlreadyInPlay: "她已经就是在玩的伙伴，不用再选。",
-  companionSwitchRequiresNoSession: "先停掉游戏再换。正在跑的会话已经绑在它启动时的那位伙伴身上了。",
+  companionSwitchRequiresNoSession:
+    "先停掉游戏再换。她跟着已经在运行的那个游戏，所以只有等它停下来，另一位伙伴才能加入。",
   companionSwitchRequestStale: "这次启动换了一位伙伴，所以那个选择被作废了。请在这里重新选一次。",
   companionSwitchRecordUnreadable: "上次启动读不出记下的选择，已经作废，什么都没有变。请重新选她。",
   companionSwitchUnavailable: "没能把她的资料收好，所以在玩的伙伴保持原样。什么都没丢——再选一次就好。",
@@ -973,13 +974,13 @@ const zh: CharacterLabels = Object.freeze({
   companionInspectorWorldBookAbsent: "创建她时没有世界书。",
   companionInspectorAbsent: "创建她时没有这项设定。",
   newCompanionTitle: "新建伙伴",
-  newCompanionHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
+  newCompanionHint: "你只需要给她起个名字，她其余的身份由 GameBuddy 生成。",
   newCompanionCreate: "创建伙伴",
   newCompanionNameRequired: "先给她一个显示名称，才能创建。",
 
   voiceTitle: "演出指导",
   voiceHint:
-    "卡片自带的演出指令，位于 Host 底层规则之后。你可以改写或清除；清除后提示词中不再出现该指令，而不是留下一段空文本。",
+    "卡片自带的演出指令，排在 GameBuddy 自己的规则之后。你可以改写或清除；清除后她收到的内容里不再有这条指令，而不是留下一段空文本。",
   voiceEmptyHint: "这位伙伴还没有演出指导。你可以在这里写一条；它会随她保存，并在她演出时用于提示词。",
   voiceFromCard: "来自卡片",
   voiceEditedByYou: "你已修改",
@@ -1116,7 +1117,7 @@ const zh: CharacterLabels = Object.freeze({
     "她卡片自带的世界书，一直保存在她这里。当你自己的话命中某条词条的触发词时，这条词条才会被用到；标为常驻的除外。",
   companionWorldBookReadFailed: "无法读取她自己的世界书，可以再读一次。",
   companionWorldBookReplyUnreadable:
-    "GameBuddy 读不懂 Host 关于她自己的世界书给出的回复。再读一次大概也没用，因为这一版 GameBuddy 认不出这种回复。",
+    "GameBuddy 读不懂关于她自己的世界书的那份回复。再读一次大概也没用，因为这一版 GameBuddy 认不出这种回复。",
   companionWorldBookCount: "她自己的世界书里有 {{count}} 条词条",
   companionWorldBookTriggerWords: "触发词：{{keys}}",
   companionWorldBookSecondCondition: "附加条件：{{keys}}（{{logic}}）",
@@ -1146,10 +1147,11 @@ const zh: CharacterLabels = Object.freeze({
   companionWorldBookConflictEntryGone:
     "这些词条已经不在她的世界书里了，已经不是你打开时的那几条：{{titles}}。它们的内容仍在这个编辑器里，再保存一次就会把它们写回去。",
   companionWorldBookAbsent: "她还没有自己的世界书可编辑。",
-  companionWorldBookInvalid: "Host 无法保留这次改动——每条词条都需要标题和正文，也可能有字段超出上限。这次没有保存。",
+  companionWorldBookInvalid:
+    "GameBuddy 无法保留这次改动：每条词条都需要标题和正文，也可能有字段超出上限。这次没有保存。给每条词条补上标题和正文，把过长的内容缩短，再保存一次。",
   companionWorldBookUnreadable: "无法读取她自己的世界书，这次没有保存。",
   companionWorldBookBindingPartial:
-    "她的世界书已改动，但正在读取它的对话无法迁移到新版本。请重新启动 GameBuddy 后再继续这些对话。",
+    "她的世界书已经保存，但正在读它的那些对话没能换到新的这一份。请重新启动 GameBuddy 后再继续这些对话。",
   companionWorldBookNotSaved: "没有保存：她的世界书或她对话的存储暂时不可用。请重试。",
 
   exportTitle: "把她另存为角色卡",
