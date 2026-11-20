@@ -78,6 +78,78 @@ test("a three-letter first segment is a code, not a shortening of one", () => {
   }
 });
 
+/**
+ * The measured shape (`.tmp/lane-livenow4.md`, r15): `w-game-launch` exited 1 and the phase exited 3
+ * for it, while `z-game-disconnect` measured nothing and said so. The operator's line quoted `z`'s
+ * `game_never_reached_ready` - a code that answers "was this measured", never "why did the phase
+ * exit" - because the reading took the last named code in an append-only log. The failing driver's
+ * own section is where the reason is, and `DRIVER <key> FAILED (exit n)` is the phase's own record
+ * of which driver that is.
+ */
+test("the phase's line names the driver that failed, not the driver that ran last", () => {
+  const log = logWith([
+    "===== capture invocation 2026-11-20T15:01:16.649Z drivers=[a,w,x,y,z] force=true =====",
+    "========== w-game-launch ==========",
+    "  | CHAIN 2/9 launch admitted",
+    "  | FAILED: game_launch_unavailable:game_unavailable/stardew_contained_player_host_launch_failed",
+    "  exit=1 elapsed=9s",
+    "  DRIVER w-game-launch FAILED (exit 1)",
+    "========== x-game-death ==========",
+    "  | NOT-MEASURED: game_never_reached_ready: the instance never reached instance=running",
+    "  NOT-MEASURED x-game-death: game_never_reached_ready - instance=crashed",
+    "  exit=0 elapsed=0s",
+    "========== z-game-disconnect ==========",
+    "  | NOT-MEASURED: game_never_reached_ready: the instance never reached instance=running",
+    "  NOT-MEASURED z-game-disconnect: game_never_reached_ready - instance=crashed",
+    "  exit=0 elapsed=0s",
+    "DONE-CAPTURE failed=1 of 5 ran=5 skipped=0 not-selected=0 not-measured=2 blocked-by-product=0 failed-drivers=[w-game-launch] not-measured-drivers=[x-game-death:game_never_reached_ready,z-game-disconnect:game_never_reached_ready]",
+  ]);
+  try {
+    const line = describePhaseFailure({ phase: "capture", code: 3, logPath: log.path });
+    assert.equal(
+      line,
+      "phase capture failed (exit 3) - w-game-launch: game_launch_unavailable:game_unavailable/stardew_contained_player_host_launch_failed",
+    );
+    // The not-measured verdict is a different fact and must not be quoted as this phase's reason.
+    assert.equal(line.includes("game_never_reached_ready"), false);
+  } finally {
+    log.cleanup();
+  }
+});
+
+test("a failing driver whose own lines named nothing answers its name and no borrowed code", () => {
+  const log = logWith([
+    "========== w-game-launch ==========",
+    "  | the tab closed before the launch request was answered",
+    "  DRIVER w-game-launch FAILED (exit 9)",
+    "========== z-game-disconnect ==========",
+    "  NOT-MEASURED z-game-disconnect: game_never_reached_ready - instance=crashed",
+  ]);
+  try {
+    assert.equal(
+      describePhaseFailure({ phase: "capture", code: 3, logPath: log.path }),
+      "phase capture failed (exit 3) - w-game-launch",
+    );
+  } finally {
+    log.cleanup();
+  }
+});
+
+test("a log with no per-driver failure record keeps the phase's own last named refusal", () => {
+  const log = logWith([
+    "=== PIN: detached worktree at abc123 ===",
+    "  previous_worktree_not_cleared:D:\\gb\\shots.stage\\worktree",
+  ]);
+  try {
+    assert.equal(
+      describePhaseFailure({ phase: "pin", code: 1, logPath: log.path }),
+      "phase pin failed (exit 1) - previous_worktree_not_cleared:D:\\gb\\shots.stage\\worktree",
+    );
+  } finally {
+    log.cleanup();
+  }
+});
+
 test("a log that cannot be read is not a refusal", () => {
   assert.equal(lastNamedRefusal(join(tmpdir(), "gb-no-such-phase.log")), null);
   assert.equal(describePhaseFailure({ phase: "build", code: 1, logPath: null }), "phase build failed (exit 1)");
