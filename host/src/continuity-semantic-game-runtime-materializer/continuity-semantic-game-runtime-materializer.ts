@@ -15,6 +15,7 @@ import {
   type CompiledPlan,
   compilePlanScript,
   legalPlanActionIds,
+  lookaheadIneligibility,
   MAX_PLAN_NODES,
   PLAN_TOOL_SLOT_MEANING,
   type PlanScriptRequest,
@@ -65,6 +66,7 @@ import {
   watchProgramSettlement,
 } from "../program-settlement-digest.js";
 import {
+  type InFlightProgrammeReading,
   isTerminalProgramStatus,
   MAX_PROGRAM_STATUS_WAIT_MS,
   type PlanAnswerNode,
@@ -73,6 +75,7 @@ import {
   type ProgramStatusWaitFacts,
   planBatchAnswer,
   programStatusProgress,
+  readInFlightProgrammes,
   waitForTerminalProgramStatus,
 } from "../program-status-wait.js";
 import {
@@ -83,6 +86,7 @@ import {
   type BodyProgramEventsRequest,
   type BodyProgramStatusRequest,
   type BodyProgramStatusResult,
+  type BodyProgramSubmitResult,
   type FarmhandPolicyIdentity,
   type Snapshot,
   validateBodyProgramCandidateRequest,
@@ -261,6 +265,12 @@ function createBodyProgramTools(
   const submitProgram = async (request: BodyProgramCandidateRequest) => {
     if (!isBodyProgramCandidateRequest(request)) throw new Error("invalid_body_program_tool_arguments");
     assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, request);
+    // ONE ASK, AND ONE READ OF THE PUMP'S OWN SOURCE (`readInFlightProgrammes`, inside it): the plan this Host is about
+    // to submit would be QUEUED behind the programme that still has nodes, so it runs at least one node later than the
+    // snapshot it was written from. `lookaheadIneligibility` is the rule that says which actions cannot survive that gap;
+    // until this call existed nothing asked it, and a `sleep` composed ahead could end a day the body had not finished.
+    const ahead = planLookaheadRefusalForSubmission(connection.state, request.nodes);
+    if (ahead !== null) return toolResult(ahead, null);
     const result = await invoke(request, validateBodyProgramCandidateRequest, validateBodyProgramSubmitResult, (port) =>
       port.submit(request),
     );
@@ -1122,6 +1132,171 @@ function assertFreshBodyProgramPreflight(
   );
   const refusal = bodyProgramPreflightRefusal(request.nodes, catalogue);
   if (refusal !== null) throw new Error(refusal);
+}
+
+/**
+ * The action declarations a connection is holding, as the wire published them: the descriptors a lookahead reads and the
+ * revision they were published at.
+ *
+ * <p>
+ * THE SAME `state.catalogRegistrations` `readPlanActions` reads, and not `module.readState`'s projection:
+ * `IntegrationActionRegistration` carries an id, a lifecycle and a kind, and NO descriptor - so a rule that reads
+ * `descriptor.sceneTarget` cannot be asked of it. The two are populated by the same `hello_ack` in production
+ * (`local-stardew-bridge.ts`), so the revision beside the registrations is the one they arrived with.
+ * </p>
+ * <p>
+ * A CONNECTION THAT PUBLISHES NO REVISION ANSWERS `0`, which is the only reading this Host can defend: the refusal says
+ * what THIS Host judged against, and no reader compares its revision with the Mod's journal. In practice the preflight
+ * has already refused every node such a connection could carry - an empty registration list makes every action id
+ * `unknown_action` - so this field is filled from a catalogue that really arrived.
+ * </p>
+ */
+function readDeclaredPlanCatalogue(state: unknown): Readonly<{
+  registrations: readonly ActionRegistration[];
+  catalogRevision: number;
+}> {
+  const declared = state as
+    | { catalogRegistrations?: readonly ActionRegistration[]; catalogRevision?: number }
+    | undefined;
+  return Object.freeze({
+    registrations: declared?.catalogRegistrations ?? [],
+    catalogRevision: declared?.catalogRevision ?? 0,
+  });
+}
+
+/** The three groups `lookaheadIneligibility` can name, DERIVED from its own answer so the two cannot drift. */
+type LookaheadRefusalGroup = Exclude<ReturnType<typeof lookaheadIneligibility>, undefined>;
+
+/**
+ * One node a plan may not compose ahead of a programme in flight: which node, which action, and which group refused it.
+ *
+ * `actionId` and `group` are kept apart rather than pre-joined into the code, so the code has ONE spelling
+ * (`lookaheadRefusalCode`) and the message can say what the group means.
+ */
+export type PlanLookaheadRefusal = Readonly<{
+  nodeId: string;
+  actionId: string;
+  group: LookaheadRefusalGroup;
+}>;
+
+/** What each group means, in the words the refusal carries beside its code. */
+const LOOKAHEAD_REFUSAL_MESSAGES: Readonly<Record<LookaheadRefusalGroup, string>> = Object.freeze({
+  world_lifecycle:
+    "another programme still has nodes to run, so an action whose subject is a day would run a node later than the world it was chosen from",
+  modal:
+    "another programme still has nodes to run, so an action that acts on an open menu would run a node later than the menu that was read",
+  scene_target:
+    "another programme still has nodes to run, so an action bound to a scene would run a node later than the scene it read",
+});
+
+/** The refusal's exact code: what refused the node, which action, and which group - `<prefix>:<actionId>:<group>`. */
+function lookaheadRefusalCode(refusal: Readonly<{ actionId: string; group: LookaheadRefusalGroup }>): string {
+  return `plan_action_not_composable_ahead:${refusal.actionId}:${refusal.group}`;
+}
+
+/**
+ * Why a plan may not be submitted while another programme still has nodes to run, node by node; empty when it may.
+ *
+ * <p>
+ * THE GAP THIS ANSWERS. The pump opens a turn when the plan in flight is down to `PLAN_LOW_WATER_NODES`, so the next
+ * plan is composed from a snapshot read while that programme was still working - and the Mod QUEUES it
+ * (`FarmhandBodyProgramController.ProgramWithNodeInFlight`) rather than starting it, so its nodes run at least one node
+ * later than the picture they were written from. `lookaheadIneligibility` states which actions cannot survive that gap
+ * (a day, a menu, a scene somebody read). This asks it of every node, so the ONE submission path both tools take can
+ * refuse the whole program by name.
+ * </p>
+ * <p>
+ * NOTHING IN FLIGHT MEANS NOTHING TO LOOK PAST. The first plan of a day has no programme ahead of it and must compose
+ * freely - a plan's LAST action may be the `sleep` that ends the day, and a rule that fired there would refuse every
+ * day at its opening turn. The condition is the journal's own `remaining`, not "a programme was read": a programme whose
+ * nodes have all happened is a settlement the watch still owes, not work a next plan queues behind.
+ * </p>
+ * <p>
+ * THE RESIDUAL IS NAMED, NOT HIDDEN. `movement` legs declare no scene binding, so a cross-map leg (`travel`,
+ * `enter_exit`) stays composable here - the failure direction that was chosen deliberately, because an action wrongly
+ * excluded is planned one turn later and an action wrongly included is planned THROUGH a day. The queued-tile
+ * subtraction is what catches the movement case (`lookahead-re-ask.test.ts`), and `plan-lookahead-refusal.test.ts`
+ * prints the residual beside its verdict.
+ * </p>
+ */
+export function planLookaheadRefusals(
+  nodes: readonly Readonly<{ nodeId: string; actionId: string }>[],
+  registrations: readonly ActionRegistration[],
+  inFlight: InFlightProgrammeReading,
+): readonly PlanLookaheadRefusal[] {
+  if (!inFlight.programmes.some((programme) => programme.remaining > 0)) return Object.freeze([]);
+  const descriptors = new Map(registrations.map((registration) => [registration.actionId, registration.descriptor]));
+  const refusals: PlanLookaheadRefusal[] = [];
+  for (const node of nodes) {
+    const descriptor = descriptors.get(node.actionId);
+    const group = lookaheadIneligibility(
+      descriptor === undefined ? { actionId: node.actionId } : { actionId: node.actionId, descriptor },
+    );
+    if (group !== undefined) refusals.push(Object.freeze({ nodeId: node.nodeId, actionId: node.actionId, group }));
+  }
+  return Object.freeze(refusals);
+}
+
+/**
+ * A refused submission in the Mod's OWN answer shape, so both tools read it as a refusal rather than as a failed call.
+ *
+ * <p>
+ * THE SHAPE IS THE WIRE'S ON PURPOSE (`BodyProgramSubmitResult`): `code: rejected`, `snapshot: null`, and one
+ * `verification` diagnostic per refused node. That is the frame every reader already handles - `stardew_plan_work`
+ * names the node and the code through `planRefusalAnswer`, `stardew_submit_action_program` answers exactly what the Mod
+ * would, and neither has to learn a second vocabulary for a refusal that came from this side of the bridge. A thrown
+ * error would instead read as a BROKEN CALL: the reason is reachable in the text and outside the plan answer, and the
+ * next step for the companion ("drop the sleep, resubmit") is not expressible.
+ * </p>
+ */
+export function planLookaheadRefusalResult(
+  refusals: readonly PlanLookaheadRefusal[],
+  catalogRevision: number,
+): BodyProgramSubmitResult {
+  return Object.freeze({
+    code: "rejected",
+    verification: Object.freeze({
+      accepted: false,
+      catalogRevision,
+      diagnostics: Object.freeze(
+        refusals.map((refusal) =>
+          Object.freeze({
+            severity: "error",
+            code: lookaheadRefusalCode(refusal),
+            nodeId: refusal.nodeId,
+            path: "",
+            message: LOOKAHEAD_REFUSAL_MESSAGES[refusal.group],
+          }),
+        ),
+      ),
+    }),
+    snapshot: null,
+  });
+}
+
+/**
+ * The lookahead refusal for one submission, or `null` when the program may be submitted as it stands.
+ *
+ * <p>
+ * THIS IS THE PRODUCTION ASK. `submitProgram` - the ONE path both `stardew_submit_action_program` and
+ * `stardew_plan_work` take - reads this connection's own declarations and the journal's in-flight ledger
+ * (`readInFlightProgrammes`, the same reading the pump composes its batch from), asks `planLookaheadRefusals` of every
+ * node, and answers either a refusal in the Mod's frame or nothing. It is exported so the whole ask can be driven
+ * against a real connection state and the real ledger, rather than re-implemented beside it in a test.
+ * </p>
+ * <p>
+ * ONE READ, AND THE RIGHT ONE: the ledger is asked rather than the connection's `activeExecution`, because
+ * `activeExecution` is one native action in flight while the fact this rule needs is a whole PROGRAMME with nodes still
+ * to run - the programme the Mod would queue this one behind.
+ * </p>
+ */
+export function planLookaheadRefusalForSubmission(
+  connectionState: unknown,
+  nodes: readonly Readonly<{ nodeId: string; actionId: string }>[],
+): BodyProgramSubmitResult | null {
+  const catalogue = readDeclaredPlanCatalogue(connectionState);
+  const refusals = planLookaheadRefusals(nodes, catalogue.registrations, readInFlightProgrammes());
+  return refusals.length === 0 ? null : planLookaheadRefusalResult(refusals, catalogue.catalogRevision);
 }
 
 /**
