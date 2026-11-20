@@ -970,6 +970,100 @@ test("composed shell closes and drains both handlers including delegated Tavern 
   }
 }); // ─── game.resume / game.create / game.resume.cancel wiring (B-path gap) ────
 
+/**
+ * The other half of the drain: a request that was already accepted is ANSWERED before any socket
+ * is destroyed.
+ *
+ * The measured run (`w-game-launch.txt`, 2026-11-15) lost exactly this answer - the launch was in
+ * flight when the Host began to leave, `close()` destroyed the connection before the route had
+ * written its refusal, and the panel recorded one request with no answer followed by nine
+ * `net::ERR_CONNECTION_REFUSED` `/state` reads. The order inside `close()` is what decides it, so
+ * the reading here is a real socket's bytes: the request is accepted, the close starts while the
+ * route is still inside its own call, and only then does the route learn it failed.
+ */
+test("composed shell answers an accepted request before it destroys the socket", async () => {
+  const fixture = await artifactFixture();
+  const idempotencyKey = "A".repeat(22);
+  // The two points this test owns: the route is inside its launch, and the route may answer it.
+  let entered!: () => void;
+  const launchEntered = new Promise<void>((resolveEntered) => {
+    entered = resolveEntered;
+  });
+  let answered!: () => void;
+  const launchAnswered = new Promise<void>((resolveAnswered) => {
+    answered = resolveAnswered;
+  });
+  const lifecycleSink = Object.freeze({
+    bindBrowserAdmissionIssuer() {
+      // The launch never consumes its admission: this attempt ends inside its own Guardian call.
+    },
+    async launchPlayerHost() {
+      entered();
+      await launchAnswered;
+      // What the coordinator wraps an arm refused by a lost Guardian session in.
+      throw new Error("stardew_player_host_launch_failed", { cause: new Error("guardian_session_closed") });
+    },
+  });
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile: launchProfile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    async readGame(context) {
+      const state = GameBrowserFixtureV1.state();
+      return {
+        ...state,
+        build: { ...state.build, profileId: launchProfile.gameProfile!.profileId },
+        csrfToken: context.csrfToken,
+        browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      };
+    },
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    lifecycleActivationBindingSink: lifecycleSink,
+  });
+  try {
+    const bootstrap = await fetch(`${server.origin}/api/composed-reference-game/v1/bootstrap`, {
+      method: "POST",
+      headers: { Origin: server.origin, "Content-Type": "application/json" },
+      body: JSON.stringify({ apiVersion: 1, bootstrapToken: token }),
+    });
+    assert.equal(bootstrap.status, 200);
+    const root = (await bootstrap.json()) as { chat: { csrfToken: string } };
+    const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+
+    const launch = fetch(`${server.origin}/api/composed-reference-game/v1/game/launch`, {
+      method: "POST",
+      headers: {
+        Origin: server.origin,
+        Cookie: cookie,
+        "Content-Type": "application/json",
+        "X-CSRF-Token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({ apiVersion: 1, idempotencyKey, expectedInstanceGeneration: 1 }),
+    });
+    await launchEntered;
+
+    // The close begins while this request is in flight, which is the state the measured run was
+    // in; the wait below is what let the old order destroy the connection first.
+    const closing = server.close();
+    await new Promise((resolveWait) => setTimeout(resolveWait, 150));
+    answered();
+
+    const response = await launch;
+    assert.equal(
+      response.status,
+      409,
+      "the launch this shell had already accepted must be answered, not destroyed with its socket",
+    );
+    assert.deepEqual(await response.json(), { code: "game_launch_unreachable" });
+    await closing;
+  } finally {
+    await server.close().catch(() => {});
+    await fixture.dispose();
+  }
+});
+
 test("composed shell wires game.resume, game.create, and game.resume.cancel through the lifecycle sink", async () => {
   const fixture = await artifactFixture();
   const idempotencyKey = "A".repeat(22);

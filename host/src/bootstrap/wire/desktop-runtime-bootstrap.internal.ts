@@ -193,7 +193,7 @@ async function runAdmittedHostBootstrap(artifactRoot: string, controller: Deskto
   await writeStatus(preparation.outcome);
   const rootAuthority = mintDesktopRootLayoutCapability(rootLayout);
   const guardianAuthority = mintDesktopGuardianSessionCapability(frame);
-  const { composition, session } = await createDesktopProductCompositionForBootstrap(
+  const composition = await createDesktopProductCompositionForBootstrap(
     rootAuthority,
     guardianAuthority,
     assemblyInput,
@@ -207,20 +207,27 @@ async function runAdmittedHostBootstrap(artifactRoot: string, controller: Deskto
   let termination: ReturnType<typeof waitForTermination> | undefined;
   try {
     termination = waitForTermination();
-    // Two channels prove the Desktop which started this process still exists, and the one the
-    // launcher holds for the whole run is the controller channel: its EOF is what a quit closes.
+    // ONE channel proves the Desktop which started this process still exists: the controller
+    // channel, which the launcher holds open for the whole run and closes on a quit. Its EOF is
+    // what a quit closes, so losing it is the same request as a SIGTERM and both are idempotent.
     //
-    // The authenticated Guardian session cannot be that proof on its own. Under ADR-0015 §3 a
-    // session IS one attempt: the composition closes it when the attempt ends and re-opens the next
-    // one with the next attempt's first command, so a Host whose last game ended holds no socket at
-    // all - and a quit then closes a pipe nobody is connected to (measured: still serving 5 000 ms
-    // after both closures, until the launcher's watchdog terminated it at the deadline it
-    // published). Losing either channel is the same controller EOF, and both requests are
-    // idempotent. Leaving does NOT end the player's world; the reclamation below drains AI
-    // authority only.
+    // The authenticated Guardian session is deliberately not a second proof. Under ADR-0015 §3 a
+    // session IS one attempt: the composition closes it when the attempt ends and the next
+    // attempt's first command opens the next one, so a Host whose last game ended holds no socket
+    // at all - and a quit then closes a pipe nobody is connected to (measured: still serving
+    // 5 000 ms after both closures, until the launcher's watchdog terminated it at the deadline it
+    // published). It also ends when the broker REFUSES the attempt: a Desktop generation that
+    // ships no resident Guardian serves the hello and then destroys the socket on the attempt's
+    // first command (`role_broker_hello_only_refused:arm_attempt`). Losing a session therefore
+    // says one attempt is over, never that the owner is gone: the command in flight answers its
+    // own bounded code, the surface publishes that attempt unattached, and this process keeps
+    // serving Chat, the browser and the next attempt's session. Ending the process here turned an
+    // attempt-level refusal into the loss of the whole product (measured: the launch press took
+    // the Host's port with it, and the panel read `ERR_CONNECTION_REFUSED` where the product had a
+    // code to name). Leaving does NOT end the player's world either; the reclamation below drains
+    // AI authority only.
     const armedTermination = termination;
     controller.onLost(() => armedTermination.request());
-    session.onLost(() => armedTermination.request());
     await writeAcknowledgement(frame);
     await termination.promise;
   } catch (error) {
@@ -571,7 +578,7 @@ async function createDesktopProductCompositionForBootstrap(
   rootAuthority: DesktopRootLayoutCapability,
   guardianAuthority: DesktopGuardianSessionCapability,
   assemblyInput: DesktopHostAssemblyInput,
-): Promise<Readonly<{ composition: DesktopPrivateHostComposition; session: GuardianAttemptSessions }>> {
+): Promise<DesktopPrivateHostComposition> {
   const consumedRootAuthority = consumeDesktopRootLayoutCapability(rootAuthority);
   await writeStatus("guardian-session");
   const session = await createAuthenticatedDesktopGuardianSession(
@@ -588,10 +595,9 @@ async function createDesktopProductCompositionForBootstrap(
     // budget is therefore measured from here, which is the fact this stage exists to
     // state.
     await writeStatus("provisioning");
-    const composition = await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
-    // The session is returned alongside the composition because the entry keeps
-    // the one watcher the composition cannot own: its loss stops this process.
-    return Object.freeze({ composition, session });
+    // The composition owns the session from here on: `release_guardian_session` is its own
+    // reclamation step, so nothing in this entry keeps a second handle on it.
+    return await createDesktopProductComposition(consumedRootAuthority, session, assemblyInput);
   } catch (error) {
     try {
       await session.close();
@@ -723,10 +729,14 @@ async function createAuthenticatedDesktopGuardianSession(
  * (`DesktopHostBootstrapBroker.ServeSessionsAsync`). So no correlation, armed flag, role
  * or Guardian of a finished attempt is reachable from the next one, and closing a
  * session never has to mean that the owner disappeared (ADR-0015 §3, §5.1 U4b).
+ *
+ * The same holds for a session that ended the other way round: the broker going away
+ * mid-attempt (`role_broker_hello_only_refused:<operation>` is how a generation with no
+ * resident Guardian refuses one) ends that attempt and nothing else, so the slot below is
+ * read for whether it still holds a live session rather than for whether it is filled.
  */
 class GuardianAttemptSessions implements DesktopGuardianSession {
   #current: GuardianSessionClient | undefined;
-  #lost: (() => void) | undefined;
   #roleExit: ((exit: GuardianRoleExit) => void) | undefined;
 
   constructor(private readonly binding: DesktopGuardianSessionBinding) {}
@@ -740,14 +750,6 @@ class GuardianAttemptSessions implements DesktopGuardianSession {
    */
   async open(): Promise<void> {
     await this.#open();
-  }
-
-  /**
-   * The one watcher a loss drives, applied to this attempt's session and to every later
-   * one. A session this side closes never reaches it, and neither does the close.
-   */
-  onLost(callback: () => void): void {
-    this.#lost = callback;
   }
 
   onRoleExit(handler: (exit: GuardianRoleExit) => void): void {
@@ -778,7 +780,7 @@ class GuardianAttemptSessions implements DesktopGuardianSession {
   /** This attempt's session, opening the next attempt's when the previous one ended. */
   async #session(): Promise<GuardianSessionClient> {
     const current = this.#current;
-    if (current !== undefined) return current;
+    if (current !== undefined && !current.ended) return current;
     return await this.#open();
   }
 
@@ -793,9 +795,6 @@ class GuardianAttemptSessions implements DesktopGuardianSession {
       await session.close();
       throw error;
     }
-    // Only an authenticated session can be lost, which is why both watchers are mounted
-    // after the hello it answered and never before it.
-    session.onLost(() => this.#lost?.());
     if (this.#roleExit !== undefined) session.onRoleExit(this.#roleExit);
     this.#current = session;
     return session;
@@ -827,13 +826,6 @@ type PendingResponse = {
 
 class GuardianSessionClient implements DesktopGuardianSession {
   #closed = false;
-  #lost: (() => void) | undefined;
-  /**
-   * Why the session ended: the other end going away (`true`) or this side ending the
-   * attempt it was driving (`false`). It is what a watcher registered AFTER the fact is
-   * told, so a close this side initiated can never be read as an owner that vanished.
-   */
-  #endedByLoss = false;
   #buffer = Buffer.alloc(0);
   #waiter: PendingResponse | undefined;
   #roleExit: ((exit: GuardianRoleExit) => void) | undefined;
@@ -850,23 +842,16 @@ class GuardianSessionClient implements DesktopGuardianSession {
   }
 
   /**
-   * Registers the one watcher a session's LOSS drives.
+   * Whether this session is over, whichever side ended it.
    *
-   * A loss is the other end going away - EOF, a socket error, a frame that can no
-   * longer be written or read, an acknowledgement that never came - and it is the only
-   * evidence this process has that the Desktop which started it is gone: nothing may be
-   * written to it again. A session this side closes is NOT that. The composition closes
-   * the session an attempt ran on at the end of the attempt - an explicit endgame, or
-   * the next launch press - while the Desktop still holds the one-instance pipe for the
-   * next one (ADR-0015 §3: one session per attempt), so a close this side initiates ends
-   * the attempt and reaches no watcher, including one registered afterwards.
+   * A session is one attempt's connection (ADR-0015 §3), so the attempt that owns it has to
+   * know when it is gone before it can ask it anything: the next command opens the next
+   * session on the same one-instance pipe with a fresh hello, instead of writing to a socket
+   * the broker already destroyed and answering `guardian_session_closed` for the rest of the
+   * run.
    */
-  onLost(callback: () => void): void {
-    if (this.#closed) {
-      if (this.#endedByLoss) callback();
-      return;
-    }
-    this.#lost = callback;
+  get ended(): boolean {
+    return this.#closed;
   }
 
   /**
@@ -947,13 +932,13 @@ class GuardianSessionClient implements DesktopGuardianSession {
   /**
    * Ends this attempt's session on purpose.
    *
-   * The attempt is over; the Desktop is not. It goes through the one teardown path with
-   * the loss report switched off, so the connection is destroyed and a pending operation
-   * is refused exactly like any other closure, but the one watcher that would make this
-   * process ask to die is never called.
+   * The attempt is over; the Desktop is not. It goes through the one teardown path, so the
+   * connection is destroyed and a pending operation is refused exactly like any other
+   * closure - `ended` is the only thing any caller reads from it afterwards, and the next
+   * command opens the next attempt's session.
    */
   async close(): Promise<void> {
-    this.fail(false);
+    this.fail();
   }
 
   async hello(): Promise<void> {
@@ -1077,24 +1062,18 @@ class GuardianSessionClient implements DesktopGuardianSession {
    * The one teardown of a session, for both ways a session can end: the other end went
    * away, or this side closed the attempt it was driving.
    *
-   * `loss` is which of the two this is, and it is the caller's own fact - EOF and socket
-   * errors are a loss, `close()` is not. It is a parameter rather than a field read here
-   * so the teardown itself stays one path with one meaning.
+   * The pending operation is refused FIRST: a command whose session died must report its own
+   * bounded code (`guardian_session_closed`) to the caller waiting for it, because that caller
+   * is the attempt whose ending the player's surface publishes.
    */
-  private fail(loss = true): void {
+  private fail(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#endedByLoss = loss;
     this.socket.destroy();
     const waiter = this.#waiter;
     this.#waiter = undefined;
     if (waiter?.timer !== undefined) clearTimeout(waiter.timer);
-    const lost = loss ? this.#lost : undefined;
-    this.#lost = undefined;
     waiter?.reject(unavailable("guardian_session_closed"));
-    // After the waiter settles, so an operation this loss interrupted reports its
-    // own refusal before the process begins to leave.
-    lost?.();
   }
 }
 

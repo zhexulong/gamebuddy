@@ -453,6 +453,57 @@ test("desktop bootstrap helper rejects when guardian peer disconnects", async (t
   assert.match(result.stderr, /(?:^|\n)desktop_runtime_bootstrap_unavailable:guardian_session_closed\n$/);
 });
 
+// The peer a generation with no resident Guardian runs: it serves the hello and destroys the socket
+// on the attempt's first command (`role_broker_hello_only_refused:arm_attempt`, the broker's own
+// refusal for a generation that publishes no Guardian). That refusal is what the measured launch
+// press met, and the Host left with it: the panel's launch was never answered and every later
+// `/state` read was `net::ERR_CONNECTION_REFUSED`.
+//
+// A refused attempt ends the ATTEMPT. The in-flight command answers the wire's own code, the
+// surface publishes that attempt unattached, the process keeps serving, and the next attempt opens
+// the next session on the same one-instance pipe with a fresh hello.
+test("desktop bootstrap helper survives a refused attempt and serves the next one on a fresh session", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("lost-session-rearm");
+
+  // (a) The command in flight is answered with the wire's own code, not with a dead connection.
+  assert.match(
+    result.stderr,
+    /wire_lost_command_refused:desktop_runtime_bootstrap_unavailable:guardian_session_closed/,
+    `the refused attempt's command must answer its own code; stderr was ${result.stderr}`,
+  );
+
+  // (b) The surface that attempt belonged to is still served, by the same process.
+  assert.equal(
+    result.stateReadAfterLoss?.status,
+    200,
+    `the Host stopped serving its own port with the refused attempt (${String(result.stateReadAfterLoss?.status)}: ${result.stateReadAfterLoss?.body ?? "<no answer>"})`,
+  );
+  assert.deepEqual(JSON.parse(result.stateReadAfterLoss!.body), { state: "served", pid: result.workerPid });
+
+  // (c) The process was not asked to leave.
+  assert.equal(
+    result.exitCodeWhileServing,
+    null,
+    `the Host left with the refused attempt (exit ${String(result.exitCodeWhileServing)}); a session is one attempt, not the owner`,
+  );
+
+  // (d) The next attempt opened the NEXT session on the same pipe: its own hello, its own arm, and
+  // none of the refused attempt's correlation.
+  assert.deepEqual(
+    result.sessions.map((session) => session.map((request) => request.operation)),
+    [
+      ["hello", "arm_attempt"],
+      ["hello", "arm_attempt"],
+    ],
+  );
+  assert.notEqual(
+    result.sessions[1]![1]!.attemptId,
+    result.sessions[0]![1]!.attemptId,
+    "the next attempt must not reuse the refused attempt's identity",
+  );
+});
+
 test("desktop bootstrap helper rejects malformed arm input before writing arm_attempt", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
   const result = await runWireFixture("malformed-arm");
@@ -590,6 +641,7 @@ async function runWireFixture(
     | "expired-launch"
     | "overhorizon-launch"
     | "peer-disconnect"
+    | "lost-session-rearm"
     | "settled-session"
     | "settled-session-owner-quit"
     | "settle-and-rearm"
@@ -626,6 +678,11 @@ async function runWireFixture(
    * or `undefined` when it was still serving at the end of the measured window.
    */
   controllerQuitExitMs: number | undefined;
+  /**
+   * The Host's own surface, read over HTTP from the port it published, AFTER the peer refused its
+   * attempt. `undefined` when the scenario reads no surface of its own.
+   */
+  stateReadAfterLoss: Readonly<{ status: number; body: string }> | undefined;
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
@@ -691,6 +748,7 @@ async function runWireFixture(
   let armReceiptAt: number | undefined;
   let exitCodeWhileServing: number | null = null;
   let controllerQuitExitMs: number | undefined;
+  let stateReadAfterLoss: Readonly<{ status: number; body: string }> | undefined;
   let guardianClosed = false;
   let guardianClosedResolve!: () => void;
   const guardianPeerClosed = new Promise<void>((resolve) => {
@@ -780,6 +838,14 @@ async function runWireFixture(
           socket.destroy();
           return;
         }
+        // The broker a generation with NO resident Guardian runs
+        // (`tools/lib/guardian-role-broker.mjs`: `role_broker_hello_only_refused:<operation>`): the
+        // hello is served, and the attempt's first command destroys the socket instead of being
+        // answered. That is the peer the measured launch press met.
+        if (scenario === "lost-session-rearm" && operation === "arm_attempt" && sessions.length === 1) {
+          socket.destroy();
+          return;
+        }
         const response: Record<string, unknown> = {
           schema: "gamebuddy-desktop-guardian-session/v1",
           protocolVersion: 1,
@@ -805,6 +871,8 @@ async function runWireFixture(
             ...(operation !== "arm_attempt" ? { role: request.role } : {}),
           });
         socket.write(`${JSON.stringify(response)}\n`);
+        if (scenario === "lost-session-rearm" && operation === "arm_attempt" && sessions.length === 2)
+          operationsResolve();
         if (operation === "contain_role") {
           containRoles += 1;
           // Every attempt of the per-attempt scenarios arms, launches and contains its
@@ -1043,6 +1111,21 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     worker.stderr!.on("data", (chunk: Buffer) => {
       workerStderr = (workerStderr + chunk.toString()).slice(-4096);
     });
+    // The child narrates the facts this fixture cannot see from the peer side (the code its own
+    // command ended with, the port its own surface listens on); a scenario that waits for one of
+    // them waits for the line the child actually wrote instead of for a duration.
+    const waitForWorkerStderr = async (pattern: RegExp, label: string): Promise<RegExpMatchArray> => {
+      const deadline = performance.now() + 10_000;
+      for (;;) {
+        const match = workerStderr.match(pattern);
+        if (match !== null) return match;
+        if (performance.now() > deadline)
+          throw new Error(
+            `${label} never appeared (worker=${worker?.exitCode ?? "running"}); stderr was ${workerStderr || "<empty>"}`,
+          );
+        await new Promise((resolveTick) => setTimeout(resolveTick, 25));
+      }
+    };
     // The frame is the controller channel's first line; the channel then STAYS OPEN for the run,
     // because its end is the launcher's one owner-liveness signal (a quit closes it, and a Host
     // that has no attempt session would otherwise never learn that its owner left).
@@ -1094,6 +1177,34 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         worker.kill("SIGTERM");
         await withTimeout(workerClose, 10_000, "shutdown-malformed cleanup");
       }
+    } else if (scenario === "lost-session-rearm") {
+      // The refusal has to be READ from the child, not inferred from its exit: the peer destroyed
+      // the socket, so the only place the attempt's own code exists is the child's own report.
+      const port = Number((await waitForWorkerStderr(/wire_state_port:(\d+)/, "the Host's surface port"))[1]);
+      const refused = await waitForWorkerStderr(/wire_lost_command_refused:(\S+)/, "the refused attempt");
+      assert.equal(refused[1], "desktop_runtime_bootstrap_unavailable:guardian_session_closed");
+
+      // (b) The surface the refused attempt belonged to is still served, from the same process.
+      const stateResponse = await fetch(`http://127.0.0.1:${port}/state`);
+      stateReadAfterLoss = Object.freeze({ status: stateResponse.status, body: await stateResponse.text() });
+
+      // (d) The next attempt reached the peer, on the next session.
+      const nextAttempt = await waitForWorkerStderr(
+        /wire_second_attempt_(armed|refused:\S+)/,
+        "the next attempt's arm",
+      );
+      assert.equal(
+        nextAttempt[1],
+        "armed",
+        "the next attempt must reach the Guardian, not answer on the session the peer destroyed",
+      );
+      await withTimeout(operationsComplete, 10_000, "the next attempt's arm receipt");
+      await withTimeout(waitForGuardianCloses(2), 10_000, "both attempt sessions closed");
+      await new Promise((resolveSettle) => setTimeout(resolveSettle, 750));
+      // (c) The process is still the one serving: read before this harness's own kill.
+      exitCodeWhileServing = worker.exitCode;
+      worker.kill("SIGTERM");
+      await withTimeout(workerClose, 10_000, "lost-session-rearm cleanup");
     } else if (scenario === "settled-session") {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
       // The attempt is over. The Host closes its own end of the session and nothing else
@@ -1161,6 +1272,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       exitCodeWhileServing,
       workerPid: worker.pid,
       controllerQuitExitMs,
+      stateReadAfterLoss,
     };
   } finally {
     if (worker !== undefined && worker.exitCode === null && !worker.killed) {
@@ -1428,6 +1540,40 @@ async function drive(session) {
     }
     return;
   }
+  if (scenario === "lost-session-rearm") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    try {
+      await platform.arm({
+        guardianInstanceId: fixture.guardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.attemptId,
+        operationWaitBudgetMs: 5000,
+        armFacts: fixture.armFacts,
+        authorization: { executable: fixture.approvedExecutable },
+      });
+      process.stderr.write("wire_lost_command_accepted\\n");
+    } catch (error) {
+      process.stderr.write("wire_lost_command_refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
+    // The next attempt: its own correlation, its own authenticated session, the same
+    // one-instance pipe (ADR-0015 §5.1 U4b).
+    try {
+      await platform.arm({
+        guardianInstanceId: fixture.secondGuardianInstanceId,
+        guardianEpoch: 1,
+        attemptId: fixture.secondAttemptId,
+        operationWaitBudgetMs: 5000,
+        armFacts: fixture.secondArmFacts,
+        authorization: { executable: fixture.approvedExecutable },
+      });
+      process.stderr.write("wire_second_attempt_armed\\n");
+    } catch (error) {
+      process.stderr.write("wire_second_attempt_refused:" + String(error && error.message ? error.message : error) + "\\n");
+    }
+    await platform.settle();
+    return;
+  }
   if (scenario === "peer-disconnect" || scenario === "delayed-arm-ack") {
     try {
       await session.arm({
@@ -1480,7 +1626,38 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   process.stderr.write("wire_publish_ready:called\\n");
   const operationTask = (async () => { await drive(session); })();
   operationTask.catch(() => undefined);
+  if (scenario === "lost-session-rearm") return mountStateSurface(session, operationTask, assemblyInput);
   return { async close() { await operationTask; await session.close(); return cleanExitReason; } };
+}
+
+/**
+ * The Host's own surface, for the one scenario that reads it: a real listener on a real loopback
+ * port, so "the Host was still serving after its peer refused its attempt" is a socket answer and
+ * not a field this fixture wrote down.
+ */
+async function mountStateSurface(session, operationTask, assemblyInput) {
+  const { createServer } = await import("node:http");
+  const server = createServer((request, response) => {
+    if (request.url !== "/state") {
+      response.writeHead(404, { "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    response.end(JSON.stringify({ state: "served", pid: process.pid }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const port = server.address().port;
+  process.stderr.write("wire_state_port:" + port + "\\n");
+  assemblyInput?.publishLaunchUrl?.("http://127.0.0.1:" + port + "/#profile=composed-reference-game");
+  return {
+    async close() {
+      await operationTask;
+      await new Promise((resolveClose) => server.close(() => resolveClose()));
+      await session.close();
+      return Object.freeze({ schema: "gamebuddy-desktop-host-exit/v1", outcome: "clean", reason: "clean_exit", steps: [] });
+    },
+  };
 }
 
 await mock.module(fixture.compositionUrl, { namedExports: { createDesktopProductComposition: mockComposition, prepareDesktopHostLaunch: mockPrepareDesktopHostLaunch } });
@@ -1675,11 +1852,11 @@ test("desktop bootstrap helper remains private and has no entrypoint", async () 
   assert.doesNotMatch(source, /import.meta.main/);
   assert.doesNotMatch(source, /desktop-host-entry.internal.js/);
   // The private bootstrap factory is invoked once, positionally, through the three
-  // authorities it consumes. Pin the call and its argument order, not the line breaks
-  // the formatter chose between them (the source broke the call across lines in
+  // authorities it consumes. Pin the call and its argument order, not the line breaks or the
+  // trailing comma the formatter chooses between them (the source broke the call across lines in
   // e891adee, which is what left this assertion reading a call that no longer exists).
   const compositionCall =
-    /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,\s*\)/;
+    /createDesktopProductCompositionForBootstrap\(\s*rootAuthority,\s*guardianAuthority,\s*assemblyInput,?\s*\)/;
   assert.match(source, compositionCall);
   // The launch preparation belongs to the composition root: this wire receives the stage and the
   // outcome as two bounded tokens and publishes them, so the file that must stay game-free names
