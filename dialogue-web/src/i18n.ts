@@ -674,9 +674,24 @@ const en = {
   // destructive and has no undo, so the arm states exactly what goes - this message, not the
   // conversation after it - and only the confirm sends it, the same shape the Chats row's trash uses.
   deleteMessage: "Delete",
-  deleteMessageName: "Delete this message: the model stops reading it from the next turn on",
+  // The name carried the same promise the contract did, and word for word: "the model stops reading it
+  // from the next turn on". It does stop reading the ROW - and it is not the only thing the model reads
+  // about these words. The fold summarises the conversation into Magic Context's `compartments`, the
+  // cached prefix replays that summary every turn, and this operation reaches neither, so the name says
+  // both facts and stops there.
+  deleteMessageName:
+    "Delete this message: it leaves this chat and her session - memory the fold already made from it stays",
   deleteConfirmPrompt: "Delete this message? This cannot be undone.",
   deleteConfirmYes: "Delete",
+  // What a rewind and a delete owe the player once they land (`message-mutation`). Both take words out
+  // of the transcript and out of the model's own session, and neither takes them out of what the fold
+  // already wrote: that summary lives in `compartments` and in the cached m[0]/m[1] prefix, which the
+  // Host may not write (`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`). So the
+  // promise is narrowed to what the operation really reaches, out loud, instead of being claimed
+  // silently by the absence of a sentence. `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs`
+  // holds it to that, in both catalogues.
+  removedWordsMayStillBeInMemory:
+    "The words are gone from this chat. Memory the fold already made from them may still reach her until that memory is rebuilt.",
   // The negative answer to every destructive confirmation in this product is the same word -
   // `取消` / `Cancel` (the owner's ruling, 2026-10-20). It is the way OUT of the press, never a
   // second name for the state the row is already in; the affirmative is the one that says what
@@ -1941,9 +1956,19 @@ const zh: Messages = {
   // 删除控件：消息自己的操作条上一个按钮，只删这一条。删除不可撤销，所以先确认、并说清删掉的是什么
   // ——是这一条，而不是它之后的整个对话，与会话行上的删除同一形状。
   deleteMessage: "删除",
-  deleteMessageName: "删除这条消息：模型从下一轮开始不再读到它",
+  // 这个名称原本也承诺了与合同同一句话：「模型从下一轮开始不再读到它」。模型确实不再读到**这一行**，
+  // 但关于这些字，模型读到的并不只有这一行：折叠会把这对话写进 Magic Context 的 `compartments`，
+  // 缓存前缀每轮把那份摘要重新放进去，而这两个操作都碰不到它。所以名称只说两件事，不多说。
+  deleteMessageName: "删除这条消息：它会从这段对话和她的会话里离开——折叠时已写进她记忆的部分会留下",
   deleteConfirmPrompt: "删除这条消息？此操作无法撤销。",
   deleteConfirmYes: "删除",
+  // 回退与删除落地之后欠玩家的一句话（见 `message-mutation`）。两者都把字从对话和模型自己的会话里
+  // 拿走，但都没有从折叠已经写下的内容里拿走：那份摘要在 `compartments` 与缓存的 m[0]/m[1] 前缀里，
+  // 而 Host 不得写它（`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`）。所以承诺被
+  // 收窄到操作真正能触及的范围，并且说出来，而不是靠「没有这句话」默默把它当成例外。
+  // `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs` 在两个语言里看着它。
+  removedWordsMayStillBeInMemory:
+    "这些话已从这段对话中删除。但折叠时已写进她记忆的部分，在记忆重建之前，她仍可能读到。",
   deleteConfirmNo: "取消",
   // 复制控件：她的行和玩家自己的行都有。它把这条消息**自己的文字**放到剪贴板——与 SillyTavern 复制 `mes`
   // 一致：不带说话人前缀、不带时间戳，Markdown 照原样复制。名称里说清按下之后对话会发生什么：什么都不变，

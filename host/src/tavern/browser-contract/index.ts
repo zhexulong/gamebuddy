@@ -2555,6 +2555,24 @@ export const RegenerateMessageCommandV1Schema = strictObject({
  * player can regenerate what followed, or answer their own kept line again. A rewind that only hid
  * rows in the projection would leave the model reading text the player can no longer see.
  *
+ * What the operation reaches, exactly, and what it does not: it removes `tavern_messages` rows and
+ * appends Pi context edits, and those two authorities are the whole of it. Words the fold has already
+ * summarised are not among them - Magic Context renders the conversation's history from its own
+ * `compartments` and replays a cached m[0]/m[1] prefix every turn, this cut touches neither, and no
+ * Host path may write that store (`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`).
+ * So the promise is the transcript and the session, and folded memory is a STATED limit rather than a
+ * silent exception: the surface says it after every rewind, in both catalogues
+ * (`removedWordsMayStillBeInMemory`, held there by
+ * `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs`), and no wording here may claim the
+ * model has forgotten summarised words.
+ *
+ * The limit is stated unconditionally because nothing the Host can read places the boundary: the
+ * fold's own line survives only as the vendor's Pi compaction marker, whose `firstKeptEntryId` is
+ * absent exactly when the vendor's drain could not put the boundary on this branch - and the renderer
+ * then draws m[1] from every compartment there is. `no marker` therefore means `boundary unknown`,
+ * never `nothing was folded`, so a conditional answer would say `no` where it cannot know; the smaller
+ * lie is the sentence the player gets either way.
+ *
  * `expectedOrder` is the transcript position the browser rendered that message at. The transcript
  * is what the position means, so a message that has moved - because a turn landed between the read
  * and the click - is refused rather than used as a rewind point the player never chose.
@@ -2602,6 +2620,14 @@ export const EditMessageResultV1Schema = strictObject({
  * that row's entry - which is the invariant the whole operation exists for, the same one a rewind and
  * an edit keep. A delete that only removed the bubble would leave the model answering words the player
  * can no longer read, and one that removed MORE than the named row would be a rewind.
+ *
+ * The limit above is the rewind's, and this operation is the worse half of it: the row leaves
+ * `tavern_messages` and its Pi entry is omitted from the model's session, while a summary the fold has
+ * already made from it stays in `compartments` and in the cached m[0]/m[1] prefix, which no Host path
+ * may write. A rewind at least takes the fold's own anchor off the branch, so the vendor pauses that
+ * session's fold and says so; a hole in the MIDDLE leaves the anchor where it was and the alignment
+ * aligned, so nothing signals it at all. The surface therefore says the same limit after every delete
+ * (`removedWordsMayStillBeInMemory`), for the same reason and with the same force.
  *
  * `expectedOrder` is the transcript position the browser rendered that message at. The transcript is
  * what the position means, so a row that has moved - because a turn landed between the read and the

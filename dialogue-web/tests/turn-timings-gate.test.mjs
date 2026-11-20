@@ -182,6 +182,11 @@ test("every turn-starting mutation joins the turn ledger it opens", async () => 
  * visible) and commit the problem view if the reread fails too; release the latch in `finally`.
  * Six of the copies were byte-identical and the seventh was `handleRegenerate`'s.
  *
+ * The envelope says two sentences now, and they belong to two different outcomes: the refusal, before
+ * the reread, and the limit a landed REMOVAL owes (`removedWordsMayStillBeInMemory`) between the wire
+ * call and the same reread. Both are named here rather than counted together, so deleting either one
+ * fails this case instead of being absorbed by the other's presence.
+ *
  * A copy is the defect: any one of them can drop the release (a row that stays busy until the page
  * is reloaded), the sentence (a refusal that flickers and reverts with nothing said - measured once
  * already, which is why the notice exists), or the reread (a local guess at what the Host holds).
@@ -233,15 +238,19 @@ test("the shell writes no message-mutation envelope of its own", async (t) => {
 	const envelope = await read("message-mutation.ts");
 	const moduleReleases = matchesWithOwner(envelope, /chatMutationRef\.current = false\s*;/gu);
 	const moduleSentences = matchesWithOwner(envelope, /setMessageMutationNotice\(/gu);
+	const moduleRefusal = matchesWithOwner(envelope, /setMessageMutationNotice\(composedProblemView/gu);
+	const moduleLanded = matchesWithOwner(envelope, /setMessageMutationNotice\(messages\(/gu);
 	const { CHAT_MUTATION_KINDS } = await import("../src/components/message-mutation.ts");
 	const undispatched = CHAT_MUTATION_KINDS.filter((kind) => !shell.includes(`kind: "${kind}"`));
 
 	t.diagnostic(
-		`envelope (module): ${moduleReleases.length} release(s), ${moduleSentences.length} sentence(s); ` +
+		`envelope (module): ${moduleReleases.length} release(s), ${moduleSentences.length} sentence(s) ` +
+			`(${moduleRefusal.length} refusal, ${moduleLanded.length} landed removal); ` +
 			`${CHAT_MUTATION_KINDS.length - undispatched.length}/${CHAT_MUTATION_KINDS.length} mutation kinds dispatched`,
 	);
 	assert.equal(moduleReleases.length, 1, "the envelope must still release the latch it took");
-	assert.equal(moduleSentences.length, 1, "the envelope must still say the refusal it carries");
+	assert.equal(moduleRefusal.length, 1, "the envelope must still say the refusal it carries");
+	assert.equal(moduleLanded.length, 1, "the envelope must still say the limit a landed removal owes");
 	assert.deepEqual(
 		undispatched,
 		[],

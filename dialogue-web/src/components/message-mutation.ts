@@ -23,6 +23,20 @@ export const CHAT_MUTATION_KINDS = [
 /** One of them, named. */
 export type ChatMutationKind = (typeof CHAT_MUTATION_KINDS)[number];
 
+/**
+ * The mutations that take words OUT of the conversation, as opposed to a swipe that selects one of
+ * them or an edit that rewrites one in place.
+ *
+ * They are the two the fold can already have summarised, and that is why they are declared apart: a
+ * rewind and a delete reach the transcript and the model's own session, and neither reaches the
+ * `compartments` the fold wrote from those words
+ * (`design/tasks/active/finding-tavern-cut-leaves-folded-history.md`). A landed press therefore owes
+ * the player the one sentence in `removedWordsMayStillBeInMemory`, and
+ * `dialogue-web/tests/removal-keeps-folded-memory-gate.test.mjs` judges the catalogue by this
+ * declaration rather than by a second list of its own.
+ */
+export const FOLD_REACHING_REMOVAL_KINDS = ["rewind", "delete"] as const satisfies readonly ChatMutationKind[];
+
 /** The facts a press sends, taken from the view it was admitted against. */
 type MessageMutationAdmission = Readonly<{ selectionGeneration: number; csrfToken: string }>;
 
@@ -117,6 +131,13 @@ export function createMessageMutation(input: MessageMutationInput): MessageMutat
         selectionGeneration: selection.generation,
         csrfToken: current.session.snapshot.csrfToken,
       });
+      // A removal that landed took the words out of the transcript and out of the session, and did not
+      // take them out of what the fold already summarised from them: so the press owes that limit as a
+      // sentence rather than as the silence every other mutation is entitled to. Set here, between the
+      // wire call and the read, so a read that then fails is answered by the refusal's own sentence in
+      // the catch below - a press whose transcript could not be reread is not a press that landed.
+      if ((FOLD_REACHING_REMOVAL_KINDS as readonly ChatMutationKind[]).includes(request.kind))
+        input.setMessageMutationNotice(messages(current.locale).removedWordsMayStillBeInMemory);
       await input.rereadChat();
       return { kind: "landed" };
     } catch (error) {
