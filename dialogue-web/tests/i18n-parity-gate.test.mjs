@@ -387,6 +387,30 @@ test("i18n.6 (mutation): a placeholder dropped in one language fails with file a
 const UNREAD_INDIRECT_READS = [
   {
     reason:
+      "read through a computed key: the Game surface's situation card (`components/GameSurface.tsx`) maps a closed, " +
+      "phase-typed `GAME_SITUATION_FACTS` through `GAME_SITUATION_WHERE_MESSAGE`, `GAME_SITUATION_CONDITION_MESSAGE` and a " +
+      "`labels[...]` read, so the fifteen sentences are the closed list those three declarations name - and a clause " +
+      "that has no fact is not declared at all",
+    keys: [
+      "gameSituationArriving",
+      "gameSituationConnecting",
+      "gameSituationDropped",
+      "gameSituationFarm",
+      "gameSituationGameGone",
+      "gameSituationGameRunning",
+      "gameSituationMovedIn",
+      "gameSituationNextInstall",
+      "gameSituationNextReturnToGame",
+      "gameSituationNextSeeBelow",
+      "gameSituationNextWaitConnection",
+      "gameSituationNextWaitGame",
+      "gameSituationNotInFarm",
+      "gameSituationNotRead",
+      "gameSituationPaused",
+    ],
+  },
+  {
+    reason:
       "read through a computed key: `connectionFailureText`'s closed `labels[key]` union in components/management-panels.tsx",
     keys: [
       "connectionFailureInvalidEndpoint",

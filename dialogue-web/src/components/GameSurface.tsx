@@ -1,4 +1,4 @@
-import { Gamepad2 } from "lucide-react";
+import { Gamepad2, Users } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Messages } from "../i18n";
 import type { ManagementPipelineApi } from "../management-pipeline-api";
@@ -17,6 +17,7 @@ import {
   deriveGameSessionControls,
   setupStagedNothing,
   type CabinLaunchWaitState,
+  type GameSessionPhase,
 } from "../game-lifecycle-controls";
 import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
 import {
@@ -1515,6 +1516,19 @@ export function GameSurface({
   const gettingGoing = installationRegistered
     ? [gameStatePanel, installationDiscovery]
     : [installationDiscovery, gameStatePanel];
+  /**
+   * The companion situation card, or `null` when the Host published no Game projection.
+   *
+   * It is derived here rather than inside the state panel because it states the whole surface's
+   * situation: with no installation registered the installation panel leads the page, so a card
+   * mounted inside the state panel would sit below it - the one place a card about her must not be.
+   */
+  const gameSituation = deriveGameSituation({
+    phase: sessionControls.phase,
+    installationRequired: sessionControls.installationRequired,
+    cabinAdmitted: cabinView.kind === "admitted",
+    companionName: game?.game.companionName ?? null,
+  });
   if (!opened) return null;
 
   return (
@@ -1529,6 +1543,10 @@ export function GameSurface({
       className="surface-game"
       restoreFocusTo={restoreFocusTo}
     >
+      {/* Who is waiting, where she is, and the one next thing to do. It leads the surface: every
+          group below answers a question about the machinery, and this answers the question a player
+          opens the page with. It is absent only when the Host published no projection at all. */}
+      {gameSituation !== null && <GameSituationCard situation={gameSituation} labels={labels} />}
       {/* The shell's arrival refresh could not be made, so the panel below is the projection it
           already held and this says so. It sits above the panel rather than inside it: the fact is
           about the read, not about any group's contents, and a status line inside the region would
@@ -1559,5 +1577,179 @@ export function GameSurface({
           for the reachability evidence. */}
       <GameDiagnosticsDisclosure game={game} labels={labels} />
     </SurfaceView>
+  );
+}
+
+/**
+ * Where the card says she is, as one of the facts the projection publishes.
+ *
+ * Each member is a different published fact, not a different tone: `in_farm` is
+ * `attachment.status: "attached"`, `arriving` is `instance.status: "launching"`, `game_running` is
+ * a Player Host that is up while this browser holds no attachment, `not_in_farm` is
+ * `instance.status: "none"` (nothing is staged or running), `game_gone` is the Host's
+ * `crashed`/`stopped` row, and `not_read` is `instance.status: "unread"` - the Host holds no read
+ * of the player's game at all.
+ */
+type GameSituationWhere = "in_farm" | "arriving" | "game_running" | "not_in_farm" | "game_gone" | "not_read";
+
+/**
+ * The connection fact worth adding to the sentence, or `null` when the published facts add nothing.
+ *
+ * `paused` is `actionAuthority: "paused"` (the companion is in the farm and will not act until the
+ * player resumes her), `connecting` is `connectionStatus: "syncing" | "reconnecting"`, and `dropped`
+ * is `"failed" | "disconnected"` - the three shapes of a live attachment whose line is not carrying.
+ */
+type GameSituationCondition = "paused" | "connecting" | "dropped";
+
+/**
+ * What the situation card says, per session phase.
+ *
+ * The record's key is `GameSessionPhase`, so a phase the product adds is a missing entry and the
+ * compiler refuses it - the card cannot silently go quiet on a state. `next` is either the label of
+ * the control this surface really draws for that step (`action`, read from the same catalogue the
+ * control reads, so the card and the button can never name the step differently) or a sentence for
+ * the steps that are not a control on this page (`text`).
+ *
+ * `where: null` is `no_projection`, which renders no card at all: with no projection there is no
+ * companion fact on this surface to state.
+ */
+const GAME_SITUATION_FACTS: Readonly<
+  Record<
+    GameSessionPhase,
+    Readonly<{
+      where: GameSituationWhere | null;
+      condition: GameSituationCondition | null;
+      next: Readonly<{ action: keyof Messages }> | Readonly<{ text: keyof Messages }>;
+    }>
+  >
+> = Object.freeze({
+  no_projection: { where: null, condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  pre_activation: { where: "not_in_farm", condition: null, next: { action: "gameActivation" } },
+  activated_not_launched: { where: "not_in_farm", condition: null, next: { action: "gameLaunch" } },
+  launching: { where: "arriving", condition: null, next: { text: "gameSituationNextWaitGame" } },
+  running_without_attachment: { where: "game_running", condition: null, next: { text: "gameSituationNextWaitGame" } },
+  launch_failed: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  game_ended: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  game_not_read: { where: "not_read", condition: null, next: { action: "gameReadAgain" } },
+  attached_connected: { where: "in_farm", condition: null, next: { text: "gameSituationNextReturnToGame" } },
+  attached_actions_paused: { where: "in_farm", condition: "paused", next: { action: "gameReopen" } },
+  attached_stopping: { where: "in_farm", condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  attached_stopped: { where: "in_farm", condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  attached_syncing: { where: "in_farm", condition: "connecting", next: { text: "gameSituationNextWaitConnection" } },
+  attached_reconnecting: {
+    where: "in_farm",
+    condition: "connecting",
+    next: { text: "gameSituationNextWaitConnection" },
+  },
+  attached_unconnected: { where: "in_farm", condition: null, next: { text: "gameSituationNextWaitConnection" } },
+  attached_resumable: { where: "in_farm", condition: "dropped", next: { action: "gameResume" } },
+  attached_unsettled: { where: "in_farm", condition: "dropped", next: { action: "gameResume" } },
+  attached_resume_failed: { where: "in_farm", condition: "dropped", next: { action: "gameRetry" } },
+});
+
+/** The situation card's whole content, derived once for the render. */
+type GameSituation = Readonly<{
+  phase: GameSessionPhase;
+  where: GameSituationWhere;
+  condition: GameSituationCondition | null;
+  /** This surface's own cabin confirmation, stated only while she is on her way in. */
+  movedIn: boolean;
+  next: Readonly<{ kind: "action" | "text"; message: keyof Messages }>;
+  /** Her initial, or `null` when the Host published no companion name. */
+  monogram: string | null;
+}>;
+
+/**
+ * The card's facts, or `null` when there is nothing to state.
+ *
+ * Two of the clauses are this surface's own state rather than the projection's: `cabinAdmitted` is
+ * the cabin confirmation this page watched land (`cabinView.kind === "admitted"`), and it is folded
+ * in only while she is not yet attached - once `attachment.status` is `attached` the handoff is
+ * over, and repeating "moving in now" beside "I'm on your farm" would be the card narrating a
+ * moment that has passed. `installationRequired` is the session derivation's own fact that the
+ * Host holds no ready installation registration, and it replaces the activation label with the step
+ * that can actually succeed (the installation panel on this page).
+ */
+function deriveGameSituation(
+  view: Readonly<{
+    phase: GameSessionPhase;
+    installationRequired: boolean;
+    cabinAdmitted: boolean;
+    companionName: string | null;
+  }>,
+): GameSituation | null {
+  const facts = GAME_SITUATION_FACTS[view.phase];
+  if (facts.where === null) return null;
+  let next: GameSituation["next"];
+  if (view.phase === "pre_activation" && view.installationRequired)
+    next = { kind: "text", message: "gameSituationNextInstall" };
+  else if ("action" in facts.next) next = { kind: "action", message: facts.next.action };
+  else next = { kind: "text", message: facts.next.text };
+  const name = view.companionName?.trim() ?? "";
+  return Object.freeze({
+    phase: view.phase,
+    where: facts.where,
+    condition: facts.condition,
+    movedIn: view.cabinAdmitted && facts.where !== "in_farm",
+    next,
+    monogram: name === "" ? null : (Array.from(name)[0] ?? null),
+  });
+}
+
+/** The one sentence each where-fact is, and each condition: one declaration, no ternary chain. */
+const GAME_SITUATION_WHERE_MESSAGE: Readonly<Record<GameSituationWhere, keyof Messages>> = Object.freeze({
+  in_farm: "gameSituationFarm",
+  arriving: "gameSituationArriving",
+  game_running: "gameSituationGameRunning",
+  not_in_farm: "gameSituationNotInFarm",
+  game_gone: "gameSituationGameGone",
+  not_read: "gameSituationNotRead",
+});
+
+const GAME_SITUATION_CONDITION_MESSAGE: Readonly<Record<GameSituationCondition, keyof Messages>> = Object.freeze({
+  paused: "gameSituationPaused",
+  connecting: "gameSituationConnecting",
+  dropped: "gameSituationDropped",
+});
+
+/**
+ * The companion situation card: her picture, where she is, and the one next thing to do.
+ *
+ * It sits at the top of the Game surface, above every panel, because it is the only part of this
+ * page that is about *her* rather than about the machinery: before it, the first thing a player
+ * read on this surface was an installation panel and a three-step runbook.
+ *
+ * Every sentence is a published fact (see `GAME_SITUATION_FACTS` and `deriveGameSituation`); a
+ * fact the projection does not publish has no sentence here, so a companion the Host has not named
+ * has no monogram rather than an invented one, and a game that has not published a connection
+ * status says nothing about the connection. `data-situation` carries the where-fact so a journey
+ * can ask which situation the card is in without reading the copy.
+ */
+function GameSituationCard({ situation, labels }: { situation: GameSituation; labels: Messages }) {
+  let condition: keyof Messages | null = null;
+  if (situation.movedIn) condition = "gameSituationMovedIn";
+  else if (situation.condition !== null) condition = GAME_SITUATION_CONDITION_MESSAGE[situation.condition];
+  return (
+    <section
+      className="game-situation"
+      data-testid="game-situation"
+      data-situation={situation.where}
+      aria-label={labels.gameSituationAria}
+    >
+      <span className="avatar game-situation-avatar" aria-hidden="true">
+        {situation.monogram ?? <Users size={18} aria-hidden="true" />}
+      </span>
+      <div className="game-situation-body">
+        <p className="game-situation-line" data-testid="game-situation-line">
+          {labels[GAME_SITUATION_WHERE_MESSAGE[situation.where]]}
+        </p>
+        {condition !== null && <p className="game-situation-line">{labels[condition]}</p>}
+        <p className="game-situation-next" data-testid="game-situation-next">
+          {situation.next.kind === "action"
+            ? labels.gameSituationNextAction.replace("{{action}}", labels[situation.next.message])
+            : labels[situation.next.message]}
+        </p>
+      </div>
+    </section>
   );
 }

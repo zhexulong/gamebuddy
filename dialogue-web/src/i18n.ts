@@ -156,6 +156,30 @@ const en = {
   gameNotRead:
     "GameBuddy has not read your game yet, so it cannot say what your companion could do here. Read it again.",
   gameReadAgain: "Read my game again",
+  // --- The Game surface's situation card ------------------------------------------------
+  // One sentence in her voice, from facts the projection already publishes, and one next step.
+  // Every clause below is a fact the surface holds: `attachment.status` (she is in the farm),
+  // `cabinView` (this surface's own cabin confirmation), `instance.status` (launching / running /
+  // crashed / stopped / unread), `connectionStatus` and `actionAuthority`. A fact the projection
+  // does not publish has no sentence here, so the card says less instead of guessing a place or
+  // a mood. New keys only: the copy above this block belongs to the copy lane.
+  gameSituationAria: "How your companion is doing",
+  gameSituationFarm: "I'm on your farm.",
+  gameSituationArriving: "The game is starting; I'm on my way in.",
+  gameSituationGameRunning: "The game is running, but I haven't made it onto your farm yet.",
+  gameSituationNotInFarm: "I'm not on your farm yet.",
+  gameSituationGameGone: "The game is gone, so I'm waiting out here.",
+  gameSituationNotRead: "I haven't seen your game yet.",
+  gameSituationPaused: "My hands are still - say the word and I'll carry on.",
+  gameSituationConnecting: "I'm getting back in step with the game.",
+  gameSituationDropped: "My line to you dropped.",
+  gameSituationMovedIn: "I've taken the cabin - moving in now.",
+  gameSituationNextAction: "Next: {{action}}",
+  gameSituationNextReturnToGame: "Come back to the game and you'll see me.",
+  gameSituationNextWaitGame: "Waiting for the game to bring the farm in.",
+  gameSituationNextWaitConnection: "Once this reconnects, I'll carry on.",
+  gameSituationNextInstall: "First, tell me where the game lives.",
+  gameSituationNextSeeBelow: "What's left is stated just below.",
   stardewCabinSelection: "Stardew cabin selection",
   stardewCabinsLoading: "Loading available cabins…",
   // The list is read once, when the page opens, and the Host serves it only while
@@ -1619,6 +1643,26 @@ const zh: Messages = {
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
+  // 游戏页顶端那张“她现在怎么样”的卡片。每一句都对应投影里已经发布的事实：`attachment.status`
+  // （她在农场里）、这张页面自己的小屋确认、`instance.status`、`connectionStatus` 与
+  // `actionAuthority`。投影没有发布的事实就不说，所以卡片宁可说得少，也不猜地点或心情。
+  gameSituationAria: "伙伴现在的情况",
+  gameSituationFarm: "我在你的农场上。",
+  gameSituationArriving: "游戏正在开，我还在往里走。",
+  gameSituationGameRunning: "游戏开着，我还没进到你的农场。",
+  gameSituationNotInFarm: "我还没进到你的农场。",
+  gameSituationGameGone: "游戏不在了，我在外面等你。",
+  gameSituationNotRead: "我还没看到你的游戏。",
+  gameSituationPaused: "行动先停着，等你说一声继续。",
+  gameSituationConnecting: "正在和游戏对一遍现在的样子。",
+  gameSituationDropped: "我和你的连接断了。",
+  gameSituationMovedIn: "小屋我收下了，这就搬进去。",
+  gameSituationNextAction: "下一步：{{action}}",
+  gameSituationNextReturnToGame: "回到游戏里就能看到我。",
+  gameSituationNextWaitGame: "等游戏把农场载进来。",
+  gameSituationNextWaitConnection: "这边接上，我就接着玩。",
+  gameSituationNextInstall: "先告诉我游戏装在哪里。",
+  gameSituationNextSeeBelow: "接下来做什么，下面写清了。",
   stardewCabinSelection: "星露谷小屋选择",
   stardewCabinsLoading: "正在读取可用小屋…",
   stardewCabinsUnavailable: "小屋会在你启动的游戏准备过程中变为可读。先载入农场，再读一次。",
