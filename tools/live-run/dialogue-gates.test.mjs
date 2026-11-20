@@ -1,19 +1,89 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
+import { classifySpokenLine } from "./interaction-value-gate.mjs";
 import {
   assessDialogueGates,
+  assessObstacleVocabulary,
   assessPlayerInputSchedule,
   gameClockMinutes,
   MAXIMUM_SPOKEN_CHARACTERS,
+  namesAnObstacle,
   OBSTACLE_RECENCY_MS,
   obstacleGateIsDue,
+  obstacleReadingOf,
+  obstacleTokensFromFacts,
+  obstacleVocabularyGates,
   planGateDeliveries,
   SCHEDULED_DIALOGUE_GATES,
+  vocabularyToken,
+  WORLD_OBSTACLE_VOCABULARY,
 } from "./dialogue-gates.mjs";
 
 const gate = (id) => SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === id);
 const findingFor = (verdict, id) => verdict.findings.find((entry) => entry.id === id);
+
+// `round80` (`.live-runs/game-ladder/2026-11-19T21-44-19-653Z-multiday_routine`): the sentence she answered the obstacle gate
+// with, in reply to `刚才看你在那儿愣了半天，怎么不过来？`, and the refusal the gate was handed (`cutscene_active`, 0 ms old,
+// Clint's furnace-blueprint event at the door).
+const ROUND80_ANSWER = "刚才克林特堵在门口送熔炉图纸，絮絮叨叨讲了半天。门前那条地我开始清了。";
+const ROUND80_REFUSAL = Object.freeze({ atMs: 1795125409786, ageMs: 0, code: "cutscene_active" });
+// The pattern as it stood before this gate read the world: a hand-written word list, kept here as the red case.
+const OBSTACLE_WORDS_BEFORE_THE_VOCABULARY = /泥|灌木|树枝|石头|卡|鞋|绕|挡|草|刺/u;
+
+// The `[reasonCode, blocked_by/held_by detail]` pairs of that run's rejected receipts, read from `result.json`'s
+// `bridgeFacts` (104 rejected receipts, 19 distinct tokens). Only the fields `obstacleTokensFromFacts` reads are kept; the
+// test below compares this population against the artifact itself when the run directory is still on this machine.
+const ROUND80_REFUSALS = Object.freeze([
+  [
+    "no_native_path",
+    "from=60,10;to=40,0;location=Farm;approaches=north:off_map,east:unreachable,south:unreachable,west:buildings_tile:blocked@39,0;blocked_by=none;clear_step=weed@40,9;next_steps=move_to_tile@40,10>publishes:weedTargets>cut_weeds@40,9>move_to_tile@40,0",
+  ],
+  ["weed_target_changed", "target=53,11;chore=weedTargets"],
+  ["tree_chop_target_changed", "target=36,10;chore=treeChopSourceTargets"],
+  ["soil_already_tilled", "target=14,39;before=HoeDirt;steps=2;folded=accepted@location=Farm,target=till_soil_14_39"],
+  ["soil_not_diggable:occupied:object", "target=14,38;diggable_tiles=28;diggable_nearest=13,37;search_radius=3"],
+  [
+    "no_reachable_approach:16:40",
+    "target=16,40;actor=9,40;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=2;clear_step=stone@15,39;blocked_by=range:reach:7;chore=treeChopSourceTargets",
+  ],
+  [
+    "item_target_out_of_reach",
+    "tile=4,38;actor=7,39;radius=128;stand_at=none;blocked_by=range:standability;chore=itemTargets",
+  ],
+  ["item_target_changed", "expected=item_66fdeae9963f60b6;actual=item_59d2a8f7fad278f9;tile=3,42;chore=itemTargets"],
+  [
+    "emote_busy",
+    "emote=sleep;emoting=true;current_emote=24;native_dispatched=false;retry_window_ms=2000;next_step=wait_for_retry_window",
+  ],
+  ["cutscene_active", "emote=note;event_running=true;native_dispatched=false;next_step=wait_for_event_to_advance"],
+  [
+    "item_target_gone",
+    "expected=item_3dda9836c66fe17a;item=(O)388;tile=22,36;location=Farm;actual=none;chore=itemTargets",
+  ],
+  [
+    "target_not_addressable",
+    "from=9,9;to=36,50;location=FarmHouse;native=not_attempted;target_on_map=false;target_passable=false;approaches=north:off_map,east:off_map,south:off_map,west:off_map;blocked_by=none",
+  ],
+  ["item_not_owned_in_pack", "item=(T)BambooPole;named_slot=5"],
+  ["water_not_fishable:not_water", "location=Town;tile=27,25;blocked_by=back_tile:not_water;steps=2"],
+  [
+    "water_not_fishable:target_changed",
+    "target=water_7dfc864f1c961cb8;tile=75,44;actual=water_c4b8b84eed09df2e;blocked_by=location_constraint:target_changed",
+  ],
+  [
+    "water_not_fishable:tile_not_fishable",
+    "location=Town;tile=75,44;rod_slot=5;blocked_by=back_tile:tile_not_fishable",
+  ],
+  ["crop_target_changed", "target=11,36;chore=cropTargets;steps=2;folded=accepted@location=Farm,target=crop_11_36"],
+]);
+
+const factsOf = (pairs) =>
+  pairs.map(([reasonCode, detail]) => ({
+    type: "execution_receipt",
+    worldFactPayload: { state: "rejected", reasonCode, evidence: { detail } },
+  }));
 
 // The task sentences the runner's own prompt table writes into the day's note. The runner suite proves the fragment is
 // read out of `DAILY_TASK_PROMPT_ZH` rather than copied; here they only stand for the text a session received.
@@ -81,6 +151,148 @@ test("an obstacle reply that names a concrete thing passes", () => {
     { refusal: { code: "no_native_path" } },
   );
   assert.equal(outcome.pass, true);
+});
+
+test("round80 named a concrete obstacle, and the word list that read it could not", () => {
+  // The gate said `companion_named_no_concrete_obstacle` about this sentence. She named Clint standing in the doorway:
+  // the world's word for that is the `character` layer, and `堵` is the word she used for it.
+  assert.equal(
+    OBSTACLE_WORDS_BEFORE_THE_VOCABULARY.test(ROUND80_ANSWER),
+    false,
+    "the pattern before this change did not read 堵 - which is the whole finding",
+  );
+  const named = namesAnObstacle(ROUND80_ANSWER);
+  assert.equal(named.word, "堵");
+  assert.ok(named.tokens.includes("character"), `the world calls that ${named.tokens.join(",")}`);
+  // And through the gate the run actually exercised, with the refusal it actually recorded.
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": ROUND80_ANSWER },
+    context: { refusal: ROUND80_REFUSAL },
+  });
+  assert.equal(findingFor(verdict, "turn-stuck-just-now").state, "passed");
+  assert.equal(verdict.failed, 0);
+});
+
+test("the obstacle gate reads every token the run's own refusals published", () => {
+  const tokens = obstacleTokensFromFacts(factsOf(ROUND80_REFUSALS));
+  assert.deepEqual(
+    [...tokens].sort(),
+    [
+      "back_tile",
+      "crop_target_changed",
+      "cutscene_active",
+      "emote_busy",
+      "item_not_owned_in_pack",
+      "item_target_changed",
+      "item_target_gone",
+      "item_target_out_of_reach",
+      "location_constraint",
+      "no_native_path",
+      "no_reachable_approach",
+      "none",
+      "range",
+      "soil_already_tilled",
+      "soil_not_diggable",
+      "target_not_addressable",
+      "tree_chop_target_changed",
+      "water_not_fishable",
+      "weed_target_changed",
+    ],
+    "the population is what the run published, not a list here",
+  );
+  assert.ok(tokens.includes("no_reachable_approach"), "the detail after the first colon is not a second word");
+  assert.equal(vocabularyToken("no_reachable_approach:16:40"), "no_reachable_approach");
+  assert.equal(vocabularyToken("range:standability"), "range");
+  assert.equal(vocabularyToken(null), null);
+  const vocabulary = assessObstacleVocabulary({ tokens });
+  assert.deepEqual(
+    obstacleVocabularyGates().map((entry) => entry.id),
+    ["turn-stuck-just-now"],
+  );
+  assert.equal(vocabulary.gates[0], "turn-stuck-just-now");
+  assert.equal(vocabulary.reading, "tokens examined 19 · recognised 19 · unrecognised 0");
+  assert.equal(vocabulary.passed, true);
+  assert.equal(vocabulary.measured, true);
+  console.error("DIALOGUE_OBSTACLE_VOCABULARY", vocabulary.reading);
+  // The same population, read from the run itself while its directory is still on this machine, so this fixture cannot
+  // drift away from the evidence it was taken from.
+  const artifact = new URL(
+    "../../.live-runs/game-ladder/2026-11-19T21-44-19-653Z-multiday_routine/result.json",
+    import.meta.url,
+  );
+  if (existsSync(artifact)) {
+    const report = JSON.parse(readFileSync(artifact, "utf8"));
+    assert.deepEqual(
+      [...obstacleTokensFromFacts(report.bridgeFacts)].sort(),
+      [...tokens].sort(),
+      "the fixture is the run's own rejected receipts, not a neighbour of them",
+    );
+  } else
+    console.error("DIALOGUE_OBSTACLE_VOCABULARY_ARTIFACT not compared: round80 result.json is not on this machine");
+});
+
+test("a token the gate has never been taught is named, and the gate refuses to judge rather than blame her", () => {
+  // The failure this replaces: the gate read the sentence against its own short word list, and a token it did not know
+  // was silently her fault. A named token is a finding about the GATE.
+  const vocabulary = assessObstacleVocabulary({ tokens: ["cutscene_active", "wormhole_blocked"] });
+  assert.equal(vocabulary.reading, "tokens examined 2 · recognised 1 · unrecognised 1");
+  assert.deepEqual(vocabulary.unrecognised, ["wormhole_blocked"]);
+  assert.deepEqual(
+    vocabulary.findings.map((entry) => entry.code),
+    ["an_obstacle_gate_reads_the_vocabulary_the_world_uses:turn-stuck-just-now:wormhole_blocked"],
+  );
+  assert.equal(vocabulary.passed, false);
+  assert.equal(vocabulary.verdictCode, vocabulary.findings[0].code);
+
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": "门口有人堵着。" },
+    context: { refusal: { code: "wormhole_blocked" } },
+  });
+  assert.equal(findingFor(verdict, "turn-stuck-just-now").state, "not_judgeable");
+  assert.equal(
+    findingFor(verdict, "turn-stuck-just-now").reason,
+    "gate_cannot_judge_without_world_words:wormhole_blocked",
+  );
+  assert.equal(verdict.failed, 0, "a short vocabulary of our own is not her failure");
+  assert.deepEqual(verdict.vocabulary.unrecognised, ["wormhole_blocked"], "and it is published beside the verdict");
+});
+
+test("a refusal that named no obstacle is not a stall she failed to describe", () => {
+  // 27 of round80's 104 rejected receipts were `soil_already_tilled`: the tile was already done. Had the gate's trigger
+  // landed on one of those, the player's line "you were stuck there" would have been false, and an answer like "没活儿" is
+  // not an obstacle she failed to name.
+  assert.equal(obstacleReadingOf("soil_already_tilled"), "no_obstacle");
+  const verdict = assessDialogueGates({
+    replies: { "turn-stuck-just-now": "这块地早锄过了，没活儿。" },
+    context: { refusal: { code: "soil_already_tilled" } },
+  });
+  const finding = findingFor(verdict, "turn-stuck-just-now");
+  assert.equal(finding.state, "not_judgeable");
+  assert.equal(finding.reason, "gate_cannot_judge_because_the_refusal_named_no_obstacle:soil_already_tilled");
+  assert.equal(verdict.failed, 0);
+});
+
+test("the sentence gate and the turn gate read one vocabulary, and differ only about the plan", () => {
+  // `obstacle_with_plan` (interaction-value-gate.mjs) classifies whole spoken lines; `turn-stuck-just-now` judges one
+  // reply. They must agree about whether a SENTENCE named an obstacle - the round80 divergence, where one read 堵 and the
+  // other did not - and they may differ about the pair, because a plan can arrive in the next bubble.
+  const probes = [ROUND80_ANSWER, "那块石头挡住了去路。", "水边过不去。", "我人还卡在过场里，动不了。"];
+  for (const probe of probes) {
+    assert.equal(classifySpokenLine(probe).register, "obstacle", `the turn gate's own classifier on: ${probe}`);
+    assert.notEqual(namesAnObstacle(probe), null, `and the sentence gate on: ${probe}`);
+  }
+  // The words the old list could not read. Each one is declared by at least one token of the world's vocabulary, which is
+  // what "derived" means here - a word no token declares would be a hand-written list growing back.
+  for (const word of ["堵", "挡住", "过不去", "卡在"]) {
+    const declaredBy = Object.keys(WORLD_OBSTACLE_VOCABULARY).filter((token) =>
+      WORLD_OBSTACLE_VOCABULARY[token].words.includes(word),
+    );
+    assert.notEqual(declaredBy.length, 0, `${word} is a word she uses for an obstacle the world names`);
+  }
+  // And the pair: round80's second clause (`门前那条地我开始清了`) is a completed-action report when it stands alone -
+  // `step_report`, not a plan. So the turn gate was right that the obstacle had no next step paired to it, and the
+  // difference between the two gates is the plan, never the obstacle.
+  assert.equal(classifySpokenLine("门前那条地我开始清了。").register, "step_report");
 });
 
 test("a markdown list fails the report gate", () => {

@@ -12,7 +12,7 @@
  * stuck, and for refusal of a report-shaped request.
  * </p>
  * <p>
- * Two rules govern the assertions:
+ * Three rules govern the assertions:
  * </p>
  * <ul>
  *   <li><b>Ground truth, not fiction.</b> A gate that asks about yesterday consults the run's own record of yesterday.
@@ -20,6 +20,10 @@
  *   gate must fail - which means the assertion cannot be written against a fixed expectation.</li>
  *   <li><b>Reasons are codes, not sentences.</b> A failing gate returns a stable code so a trend across runs can be
  *   counted, and so a reader knows which behaviour broke without parsing prose.</li>
+ *   <li><b>The world's words, not a word list.</b> What counts as "she named an obstacle" is read from the vocabulary the
+ *   run's own refusals are published in (`WORLD_OBSTACLE_VOCABULARY`), and the gate says so when that vocabulary has no
+ *   word for a token the run published. A private list can only recognise what its author remembered, and it measures her
+ *   eloquence instead of her presence.</li>
  * </ul>
  */
 
@@ -86,10 +90,219 @@ const honestyGate = {
 };
 
 /**
+ * The obstacle vocabulary: the words the WORLD uses for what stopped her, and the words she can say instead.
+ *
+ * <p>
+ * Keyed by the token the Mod's own refusal surface publishes - a `blocked_by` layer
+ * (`integrations/stardew/RefusalLayer.cs`), a `held_by` hold (`WorldModel.DescribeCurrentNavigationHold`,
+ * `BodyProgramDispatchGate`), or the reason code of a rejected receipt - and headed at the FIRST COLON, because the part
+ * after it is the bounded detail that makes the token specific (`range:standability`), not a second word.
+ * </p>
+ * <p>
+ * This replaced a hand-written pattern (`泥|灌木|树枝|石头|卡|鞋|绕|挡|草|刺`). That list was a copy of a vocabulary the run
+ * already writes, and a copy can only recognise what its author remembered: `round80` answered
+ * `刚才克林特堵在门口送熔炉图纸 … 门前那条地我开始清了` to a question about a refusal, and the gate reported
+ * `companion_named_no_concrete_obstacle` about a sentence that names a villager standing in the doorway - while the same
+ * run's `blocked_by` / `held_by` / code tokens had a word for it. A pattern that cannot name what the world calls it
+ * measures her eloquence, so the pattern is DERIVED from this table and the table is checked against the run's own
+ * tokens by `assessObstacleVocabulary`.
+ * </p>
+ * <p>
+ * An entry with no words is not a missing entry: it says this refusal named no obstacle at all (`soil_already_tilled` is
+ * a tile that was already done), so a gate fired by it would be asking her about a stall that never happened. An entry
+ * that is ABSENT is the other thing entirely - a word the world publishes and this gate has never been taught - and
+ * `assessObstacleVocabulary` names that token instead of letting the gate judge her against its own silence.
+ * </p>
+ */
+const obstacle = (...words) => Object.freeze({ words: Object.freeze(words) });
+const noObstacle = () => Object.freeze({ words: Object.freeze([]) });
+
+export const WORLD_OBSTACLE_VOCABULARY = Object.freeze({
+  // ── `blocked_by=<layer>`: the closed layer set of `RefusalLayerKind` ──
+  none: noObstacle(), // the probe ran and nothing refused: never a stand-in for "the probe did not run"
+  tool: obstacle("没带", "没拿工具", "缺把", "手上没有", "工具不对", "没家伙"),
+  item: obstacle("没材料", "东西不够", "包里没有", "用完了"),
+  character: obstacle("有人", "堵", "挡", "挡住", "拦着", "拦路", "挤不过", "站在门口", "被人挡"),
+  object: obstacle("箱子挡", "家具挡", "挡路", "占着", "被占"),
+  range: obstacle("太远", "够不着", "走不到", "近不了", "过不去", "离得远", "绕不过", "绕不开"),
+  back_tile: obstacle("墙", "过不去", "封死", "水", "坡", "栅栏"),
+  buildings_tile: obstacle("房子挡", "建筑挡"),
+  location_constraint: obstacle("不让进", "不让走", "进不去", "拦住了", "这条路不行"),
+  terrain: obstacle("泥", "灌木", "树枝", "石头", "草", "刺", "藤", "坑"),
+  clump: obstacle("树桩", "大石头", "木头堆", "树根"),
+  large: obstacle("大树", "拦路的树", "大石堆"),
+  building: obstacle("房子挡", "棚子挡", "建筑占着"),
+  stamina: obstacle("累了", "没劲", "体力不够", "太累", "举不动", "砍不动", "搬不动", "使不上劲"),
+
+  // ── `held_by=<hold>`: the hold vocabulary the body and the body programme publish ──
+  cutscene_active: obstacle("过场", "剧情", "事件", "动不了", "定住", "卡在", "被人拉着说话", "等人说完", "还没演完"),
+  dialogue_box: obstacle("在跟人说话", "对话框", "正聊着", "等他答话", "要答句话"),
+  shop_menu: obstacle("商店开着", "在店里", "柜台前"),
+  transient_busy: obstacle("正忙着", "等一下", "手头没完"),
+  actor_held_by_modal: obstacle("弹窗", "菜单开着", "提示框", "选项框"),
+  actor_held_by_unclosable_menu: obstacle("菜单关不掉", "框点不动"),
+  body_program: obstacle("上一件没做完", "还在做上一件", "手头这单没完"),
+  unknown_holder: obstacle("不知道为什么动不了", "动不了"),
+
+  // ── refusal codes: what the world said when it would not do the thing ──
+  navigation_approach_unavailable: obstacle("没地方站", "站不过去", "靠近不了", "绕不过", "站不下"),
+  no_reachable_approach: obstacle("没有路", "走不到", "过不去", "绕不过"),
+  no_native_path: obstacle("找不到路", "路不通", "绕不过", "路断了"),
+  path_blocked_by_character: obstacle("有人挡路", "堵", "挡着"),
+  destination_locked: obstacle("卡住", "卡在", "卡了", "进不去", "门锁着", "被锁在"),
+  destination_unreachable: obstacle("去不了", "到不了", "走不到"),
+  destination_temporarily_unavailable: obstacle("这会儿进不去", "暂时不让进"),
+  target_not_addressable: obstacle("碰不到", "够不着", "摸不到", "找不到那"),
+  clear_step_blocked: obstacle("清不掉", "清不了", "砍不断", "弄不掉"),
+  item_target_out_of_reach: obstacle("够不着", "太远"),
+  item_not_owned_in_pack: obstacle("没带", "身上没有"),
+  water_not_fishable: obstacle("这儿不能下竿", "下不了竿", "水不对", "钓不了"),
+  soil_not_diggable: obstacle("这块地锄不了", "锄不了", "地不对", "不是土"),
+
+  // ── refusals that name no obstacle: a gate fired by one of these would ask her about a stall that never happened ──
+  // `soil_already_tilled` is a tile that was already done (`before=HoeDirt`), `item_target_gone` is a target the world no
+  // longer has (`actual=none`), the `*_target_changed` family is a target that was not the one the plan named, and
+  // `emote_busy` is an animation channel already in use (`emoting=true`). None of them is something in her way.
+  soil_already_tilled: noObstacle(),
+  item_target_gone: noObstacle(),
+  item_target_changed: noObstacle(),
+  weed_target_changed: noObstacle(),
+  crop_target_changed: noObstacle(),
+  tree_chop_target_changed: noObstacle(),
+  emote_busy: noObstacle(),
+});
+
+/**
+ * The head of a published token: the wire word, without the bounded detail after the first colon.
+ *
+ * `blocked_by=range:standability` and `blocked_by=range:reach:4` are one word, `held_by=body_program:plan_346` is
+ * `body_program`, and `no_reachable_approach:16:40` is `no_reachable_approach` - the same split
+ * `RefusalLayerToken.Format()` makes when it writes them.
+ */
+export function vocabularyToken(value) {
+  if (typeof value !== "string") return null;
+  const head = value.trim().split(":")[0];
+  return head.length === 0 ? null : head;
+}
+
+/** What the world's vocabulary says about one token: a named obstacle, a refusal with no obstacle in it, or a word nobody declared. */
+export function obstacleReadingOf(token) {
+  const entry = WORLD_OBSTACLE_VOCABULARY[token];
+  if (entry === undefined) return "unrecognised";
+  return entry.words.length > 0 ? "obstacle" : "no_obstacle";
+}
+
+/** Every word the table declares, longest first so `挡住` is not read as `挡` followed by a stray character. */
+const OBSTACLE_WORDS = Object.freeze([
+  ...new Set(Object.values(WORLD_OBSTACLE_VOCABULARY).flatMap((entry) => entry.words)),
+]);
+
+/** Which world tokens each word stands for, derived from the same table so the pattern and its provenance cannot drift. */
+const OBSTACLE_TOKENS_BY_WORD = new Map();
+for (const [token, entry] of Object.entries(WORLD_OBSTACLE_VOCABULARY))
+  for (const word of entry.words)
+    OBSTACLE_TOKENS_BY_WORD.set(word, [...(OBSTACLE_TOKENS_BY_WORD.get(word) ?? []), token]);
+
+const OBSTACLE_PATTERN = new RegExp(
+  [...OBSTACLE_WORDS].sort((left, right) => right.length - left.length).join("|"),
+  "u",
+);
+
+/**
+ * The obstacle a sentence names, or `null`.
+ *
+ * This is the ONE place a spoken line is matched against the vocabulary, so the gate that reads one sentence and the
+ * gate that reads the whole turn cannot disagree about whether a sentence named an obstacle.
+ */
+export function namesAnObstacle(text) {
+  const match = OBSTACLE_PATTERN.exec(String(text ?? ""));
+  if (match === null) return null;
+  return Object.freeze({ word: match[0], tokens: Object.freeze([...OBSTACLE_TOKENS_BY_WORD.get(match[0])]) });
+}
+
+/** The scheduled gates whose judgement depends on the world's obstacle vocabulary: the ones triggered by a refusal. */
+export function obstacleVocabularyGates(gates = SCHEDULED_DIALOGUE_GATES) {
+  return gates.filter((gate) => gate.trigger.kind === "recent_refusal");
+}
+
+/**
+ * Every `blocked_by` / `held_by` / refusal-code token a run's own facts carry, as the vocabulary keys.
+ *
+ * The population is what the run PUBLISHED, never a list here: a receipt the Mod rejected names its reason code and,
+ * in its evidence, the layer (`blocked_by=`) or the hold (`held_by=`) that refused it. Reading it from the facts is what
+ * makes a token the gate has no words for a finding instead of a silent misjudgement of her answer.
+ */
+export function obstacleTokensFromFacts(facts) {
+  const tokens = new Set();
+  const collect = (value) => {
+    const token = vocabularyToken(value);
+    if (token !== null) tokens.add(token);
+  };
+  for (const fact of Array.isArray(facts) ? facts : []) {
+    if (fact?.type !== "execution_receipt") continue;
+    const payload = fact.worldFactPayload ?? {};
+    if (!/^rejected$/iu.test(String(payload.state ?? ""))) continue;
+    collect(payload.reasonCode);
+    const detail = fact.evidence?.detail ?? payload.evidence?.detail ?? "";
+    for (const match of String(detail).matchAll(/(?:blocked_by|held_by)=([^;\s]+)/gu)) collect(match[1]);
+  }
+  return Object.freeze([...tokens]);
+}
+
+/**
+ * The gate `an_obstacle_gate_reads_the_vocabulary_the_world_uses:<gate>`: does every token the run published have a word
+ * in the table above?
+ *
+ * `U>0` is a finding that names the token, because a token the run publishes and this gate cannot recognise is the
+ * `round80` failure: the gate then judges her answer against its own missing vocabulary. `examined` is printed beside
+ * `recognised` and `unrecognised` so a zero cannot read as a pass over nothing - an empty population is `measured:
+ * false`, which is a source that published no refusal, not a run that refused nothing.
+ */
+export function assessObstacleVocabulary({ gates = obstacleVocabularyGates(), tokens = [] } = {}) {
+  const examined = Object.freeze([
+    ...new Set((Array.isArray(tokens) ? tokens : []).map(vocabularyToken).filter((token) => token !== null)),
+  ]);
+  const unrecognised = examined.filter((token) => obstacleReadingOf(token) === "unrecognised");
+  const findings = [];
+  for (const gate of gates)
+    for (const token of unrecognised)
+      findings.push(
+        Object.freeze({
+          code: `an_obstacle_gate_reads_the_vocabulary_the_world_uses:${gate.id}:${token}`,
+          gateId: gate.id,
+          token,
+        }),
+      );
+  return Object.freeze({
+    applicable: gates.length > 0,
+    measured: examined.length > 0,
+    gates: Object.freeze(gates.map((gate) => gate.id)),
+    tokens: examined,
+    examined: examined.length,
+    recognised: examined.length - unrecognised.length,
+    unrecognised: Object.freeze(unrecognised),
+    reading: `tokens examined ${String(examined.length)} · recognised ${String(examined.length - unrecognised.length)} · unrecognised ${String(unrecognised.length)}`,
+    findings: Object.freeze(findings),
+    passed: findings.length === 0,
+    verdictCode: findings[0]?.code ?? null,
+  });
+}
+
+/**
  * The obstacle gate - the one that has to be triggered by the world rather than by the clock.
  *
+ * <p>
  * Fires only if the run recorded a refusal in the last `OBSTACLE_RECENCY_MS`; otherwise the player's line would be a
  * lie and the gate would be testing improvisation instead of presence.
+ * </p>
+ * <p>
+ * A PASS IS AN OBSTACLE NAMED IN HER OWN WORDS, matched against `WORLD_OBSTACLE_VOCABULARY` - the vocabulary the run's
+ * own refusals are published in - and not reported as a code (`companion_reported_system_terms`). The pair of an
+ * obstacle AND a next step is `obstacle_with_plan`'s question (`interaction-value-gate.mjs`), and it is asked of the
+ * TURN: a plan can arrive in the next bubble, so asking for it twice in one sentence would make this gate fail a turn
+ * that gate passes. The two read the same vocabulary here, so they cannot disagree about whether a sentence named an
+ * obstacle; the difference is sentence-scope against turn-scope, and the pair against the obstacle alone.
+ * </p>
  */
 const obstacleGate = {
   id: "turn-stuck-just-now",
@@ -101,8 +314,7 @@ const obstacleGate = {
     // premise and says so instead of judging the answer to a question that was never true.
     if (refusal === undefined || refusal === null) return { pass: false, reason: "gate_cannot_judge_without_refusal" };
     if (SYSTEM_JARGON.test(text)) return { pass: false, reason: "companion_reported_system_terms" };
-    if (!/泥|灌木|树枝|石头|卡|鞋|绕|挡|草|刺/u.test(text))
-      return { pass: false, reason: "companion_named_no_concrete_obstacle" };
+    if (namesAnObstacle(text) === null) return { pass: false, reason: "companion_named_no_concrete_obstacle" };
     return { pass: true, reason: null };
   },
 };
@@ -250,17 +462,50 @@ export function planGateDeliveries(
  * the gate - which is how a run answers a question about "yesterday" without the module having to know which gate asks
  * it: the caller reads the gate's own trigger and supplies the record for the day that trigger names. That keeps the
  * schedule in one place instead of a second list of gate ids in the runner.
+ *
+ * The returned `vocabulary` is `assessObstacleVocabulary`'s reading of every token the run handed the gates that read an
+ * obstacle - `tokens examined T · recognised R · unrecognised U` - so a token this module has no word for is published
+ * beside the verdict rather than surfacing as a judgement about her.
  */
 export function assessDialogueGates({ replies, context }) {
   const contextFor = typeof context === "function" ? context : () => context ?? {};
   const findings = [];
+  // The context is read once per gate that has a reply, in schedule order, because it is asked in schedule order: the
+  // vocabulary reading below needs the refusal each gate was actually handed, and asking twice would let a clock advance
+  // between the two readings.
+  const contexts = new Map();
   for (const gate of SCHEDULED_DIALOGUE_GATES) {
     const reply = replies?.[gate.id];
     if (reply === undefined) {
       findings.push({ id: gate.id, state: "not_exercised", reason: "no_reply_recorded" });
       continue;
     }
-    const outcome = gate.assert({ text: String(reply) }, contextFor(gate) ?? {});
+    const gateContext = contextFor(gate) ?? {};
+    contexts.set(gate.id, gateContext);
+    // The vocabulary read comes BEFORE the judgement: a gate that has no word for the token the world published cannot
+    // judge her answer, and passing her because its own table is short is the defect this reading exists to name. A
+    // refusal the run never recorded is the gate's own existing finding, so it is left to `assert`.
+    if (gate.trigger.kind === "recent_refusal" && gateContext.refusal !== null && gateContext.refusal !== undefined) {
+      const token = vocabularyToken(gateContext.refusal?.code ?? null);
+      const reading = token === null ? "unrecognised" : obstacleReadingOf(token);
+      if (reading === "unrecognised") {
+        findings.push({
+          id: gate.id,
+          state: "not_judgeable",
+          reason: `gate_cannot_judge_without_world_words:${String(token)}`,
+        });
+        continue;
+      }
+      if (reading === "no_obstacle") {
+        findings.push({
+          id: gate.id,
+          state: "not_judgeable",
+          reason: `gate_cannot_judge_because_the_refusal_named_no_obstacle:${String(token)}`,
+        });
+        continue;
+      }
+    }
+    const outcome = gate.assert({ text: String(reply) }, gateContext);
     // Three states, not two. "The companion did the wrong thing" and "this run cannot answer the question" are different
     // findings, and collapsing them would either blame her for a missing instrument or hide a missing instrument behind a
     // pass. The second is the one this repository keeps paying for.
@@ -271,7 +516,14 @@ export function assessDialogueGates({ replies, context }) {
         : "failed";
     findings.push({ id: gate.id, state, reason: outcome.reason });
   }
-  return { findings, failed: findings.filter((finding) => finding.state === "failed").length };
+  // The vocabulary the judgement above read, over every token the run handed it: `tokens examined · recognised ·
+  // unrecognised`, so a token the gate has no words for is a named finding rather than an answer it judged anyway.
+  const vocabulary = assessObstacleVocabulary({
+    tokens: [...contexts.values()]
+      .map((gateContext) => vocabularyToken(gateContext.refusal?.code ?? null))
+      .filter((token) => token !== null),
+  });
+  return { findings, failed: findings.filter((finding) => finding.state === "failed").length, vocabulary };
 }
 
 /**
