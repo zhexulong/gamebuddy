@@ -232,6 +232,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "A TURN MAY DELIVER NO BUBBLE, AND THE HEADER NOW SAYS SO - PAID FOR BY COMPRESSING THE SAME LINE, NOT BY ADDING PROSE. MEASURED 2026-11-19 (`round79`): one turn carried one real line and THREE deliveries of `chars 5 / 5 / 2`, every one of them ellipses, so the owner read '…' as almost everything her companion says. The delivery's half is `native-companion-content.ts` (a paragraph of nothing but silence markers is withheld as `punctuation_only:<chars>`, and a turn whose every message was one of those delivers no bubble at all); the header's half is one clause stating that a turn may carry no bubble. Measured by the test against the product's builder: `systemChars` 2,805 and `conductBlock.chars` 280 - both -3, and the two deltas AGREE because the edit is inside the block and nowhere else (the clause and the compression that pays for it are both in the one Chinese line, MEASURED on the two texts). The share is re-derived from that pair as 280 / 2,805 = 0.0998. THE PAIR HAD NO HEADROOM, which is why the line was compressed rather than extended: at `remeasured_2026_11_24_b` the plan description (7,234) plus this block (283) was EXACTLY `GAME_PROSE_PAIR_BUDGET_CHARS` (7,517), and the pair now reads 7,514. `envelopeChars`/`envelopeBytes`, `systemTokens` and the conduct `tokens` column are carried UNCHANGED under `remeasured_2026_11_05`'s convention - no session was materialized for this unit.",
     remeasured_2026_11_25:
       "DEFAULT_COMPANION_PRESET (card.json) shifted to Route A co-op framing outside the game body (+320 chars in the rendered prompt; conductBlock.chars unchanged at 162), so systemChars moves from 2,687 to 3,007 and charShareOfSystemPrompt re-derives as 162 / 3,007 = 0.0539. envelopeChars (23,255 -> 23,576, +321 JSON-escaped chars) and envelopeBytes (32,572 -> 33,495, +923 UTF-8 bytes) follow the measured prompt delta against HEAD.",
+    remeasured_2026_11_25_b:
+      "Natural first-person gamer speech wording in DEFAULT_COMPANION_PRESET (card.json) removing stiff '按小人/我人物' phrasing while retaining Route A internal mindset (-9 chars in the rendered prompt; conductBlock.chars unchanged at 162), moving systemChars 3,007 -> 2,998 and charShareOfSystemPrompt to 162 / 2,998 = 0.0540. envelopeChars (23,576 -> 23,567, -9 JSON-escaped chars) and envelopeBytes (33,495 -> 33,462, -33 UTF-8 bytes) follow the measured prompt delta against HEAD.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -239,16 +241,16 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 3,007 after the Route A card revision (was 2,687 at
-    // `remeasured_2026_11_24_d`). The token column below is the 2026-11-05 MEASUREMENT.
-    systemChars: 3007,
+    // Re-derived from the product's builder by the test itself: 2,998 after natural first-person Route A wording (was 3,007 at
+    // `remeasured_2026_11_25`). The token column below is the 2026-11-05 MEASUREMENT.
+    systemChars: 2998,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's measured JSON-escaped delta (+321 characters): the tool array
+    // The recorded envelope plus this change's measured JSON-escaped delta (-9 characters vs remeasured_2026_11_25): the tool array
     // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19_c`.
-    envelopeChars: 23576,
-    // Same change in UTF-8 JSON bytes: 32,572 + 923.
-    envelopeBytes: 33495,
+    envelopeChars: 23567,
+    // Same change in UTF-8 JSON bytes: 33,495 - 33.
+    envelopeBytes: 33462,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
@@ -256,8 +258,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // list; the name is kept because the pair-budget gate reads this column, and what it measures is stated here.
     chars: 162,
     tokens: 1227,
-    // The measured slice over the measured prompt: 162 / 3,007.
-    charShareOfSystemPrompt: 0.0539,
+    // The measured slice over the measured prompt: 162 / 2,998.
+    charShareOfSystemPrompt: 0.054,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([
