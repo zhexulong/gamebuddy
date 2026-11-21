@@ -51,6 +51,8 @@
  * the sentence was the only place the fact and the missing producer were written down.
  */
 
+import { readFileSync } from "node:fs";
+
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../host/dist-test/stardew-game-integration-adapter.js";
 
 import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
@@ -232,6 +234,69 @@ export const CARRIED_ITEM_SPEND_ACTIONS = Object.freeze(
 export const CARRIED_ITEM_USE_ACTIONS = Object.freeze(
   CARRIED_ITEM_SPEND_ACTIONS.filter((actionId) => actionId !== "ship_item"),
 );
+
+/**
+ * The population of movement actions, read from the group the Mod's own registrations declare.
+ *
+ * <p>
+ * Measured 2026-11-21 (`round88`, day 1, `a_fish_from_the_water`): three smallmouth bass came back - three `fish_here`
+ * receipts, `fish_caught`, `location=Forest`, `tile=46,25` - and the criterion answered `not_achieved`, because its
+ * waypoint half named `navigate_to_destination` and `travel` as the only ways to reach the water. That day's two
+ * `navigate_to_destination` dispatches were both abandoned on a large bush (`navigation_approach_unavailable`,
+ * `approach_blocked_by=large:Bush@49,10`); she walked there herself instead - `move_to_tile` to `40,64` and
+ * `enter_exit` at `Farm:41,65 -> Forest:68,0` - and the row graded the route rather than the day.
+ * </p>
+ * <p>
+ * SO THE POPULATION IS THE SURFACE'S, NOT A LIST HERE. `action-handler-groups.v1.json` is the generated statement of
+ * which handler group each registration belongs to (`FarmhandActionHandlerGroup.Movement` in
+ * `integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs`), written by
+ * `integrations/stardew/action-development/src/action-source-projection-producer.mjs` and held to that source by the
+ * surface's own drift gates; `handlerGroup: "movement"` is the Mod saying "this action moves her". A movement action
+ * added tomorrow answers the waypoint half with no edit here, which is the point: the criterion is about being at
+ * fishable water, never about which seam carried her.
+ * </p>
+ */
+const ACTION_HANDLER_GROUPS = new URL(
+  "../../integrations/stardew/action-development/contracts/generated/action-handler-groups.v1.json",
+  import.meta.url,
+);
+
+/**
+ * THE TWO MOVEMENTS WHOSE OWN RECEIPT NAMES NO PLACE SHE CAME TO REST, and what it carries instead.
+ *
+ * Declared rather than dropped quietly, for the reason every exemption in this tree is declared: an exclusion nobody
+ * enumerates is a debt. `face_direction`'s `actor_facing_matches` evidence is `direction` and `moving`, and
+ * `mount_transport`'s `horse_mounted` is `target`, `horse_id`, `mounted` and `mounting`
+ * (`host/src/stardew-completion-contracts.ts`) - each proves an act of movement and no arrival, so neither can answer
+ * "she went to the water".
+ *
+ * WHAT THE GATE CAN AND CANNOT READ: whether a receipt says where she ended is a sentence about one action's evidence,
+ * so the gate does not re-derive it from a key name - `mount_transport`'s `target` names the horse rather than a tile, and
+ * `ride_bus` names its stations `origin`/`destination`, so any key-name rule lands on the wrong side of both. The two
+ * things it does hold are
+ * the two it can: the criterion reads exactly the derived group minus these rows, and every row here is still an action
+ * the surface groups as movement with a reason attached, so the exemption expires instead of outliving its subject.
+ */
+export const MOVEMENT_ACTIONS_WITHOUT_ARRIVAL = Object.freeze({
+  face_direction: "turns her where she stands: `direction` and `moving`, no tile she arrived on",
+  mount_transport: "puts her on the transport: `target`, `horse_id`, `mounted` and `mounting`, no tile she arrived on",
+});
+
+/**
+ * Every action the Mod publishes as movement, the two above excepted.
+ *
+ * Fails closed on an artifact that declares no movement action, for the reason `readExecutionPopulation` in
+ * `multiday-daily-tasks.mjs` does: an empty population would answer every fishing day with "no movement happened"
+ * while looking like a reading.
+ */
+function readMovementActions() {
+  const artifact = JSON.parse(readFileSync(ACTION_HANDLER_GROUPS, "utf8"));
+  const movement = (artifact.actions ?? []).filter((row) => row.handlerGroup === "movement");
+  if (movement.length === 0) throw new Error("stardew_action_handler_groups_have_no_movement_actions");
+  return movement.map((row) => row.actionId).filter((actionId) => !(actionId in MOVEMENT_ACTIONS_WITHOUT_ARRIVAL));
+}
+
+const MOVEMENT_ACTIONS = Object.freeze(readMovementActions());
 
 /**
  * What each rotation task's purpose requires, keyed by the task ids in `multiday-daily-tasks.mjs`.
@@ -418,14 +483,15 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
     { ordered: false },
   ),
   // Two steps, because the purpose is not "an action succeeded": it is that she went to water and came back with a
-  // fish. `navigate_to_destination`/`travel` is how a day reaches water `waterTargets` named, and `fish_here` is the
-  // catch; a one-step criterion would be a single success standing in for the whole purpose.
+  // fish. The waypoint half is EVERY movement the surface publishes (`MOVEMENT_ACTIONS`), not the one seam a particular
+  // day happens to use - `round88` is the measurement: she caught three fish after walking there, and a criterion that
+  // named `navigate_to_destination`/`travel` alone reported the two abandoned navigations instead of the day.
   a_fish_from_the_water: criterion(
     "she went to the water and came back with a fish",
-    [anyOf("navigate_to_destination", "travel"), step("fish_here")],
+    [anyOf(...MOVEMENT_ACTIONS), step("fish_here")],
     {
       because:
-        "`fish_here` casts where she stands, so `navigate_to_destination` or `travel` is what makes the catch the water she went to",
+        "`fish_here` casts where she stands, so the movement receipt has to come first - whether she walked there with `move_to_tile`, stepped through a door with `enter_exit`, rode or warped; a movement after the cast is another trip",
     },
   ),
   home_and_hearth: gap(

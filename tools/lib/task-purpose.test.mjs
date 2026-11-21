@@ -17,6 +17,7 @@ import {
   CARRIED_ITEM_SPEND_ACTIONS,
   judgesAPublishedFact,
   judgeTaskPurpose,
+  MOVEMENT_ACTIONS_WITHOUT_ARRIVAL,
   purposeReceipts,
   readScheduledJudgement,
   TASK_PURPOSE_CRITERIA,
@@ -1809,4 +1810,179 @@ test("round77 day 2: a refusal of an action the criterion DOES read still leaves
   ]);
   assert.equal(judged.state, "unproven");
   assert.equal(judged.reasonCode, "task_purpose_evidence_without_postcondition");
+});
+
+/**
+ * THE FISHING WAYPOINT: the purpose is being at water and fishing, never the seam that carried her there.
+ *
+ * Measured 2026-11-21 (`round88`, day 1, `a_fish_from_the_water`): three smallmouth bass came back - three `fish_here`
+ * receipts, `fish_caught`, `location=Forest`, `tile=46,25` - and the day was reported `not_achieved`, because the
+ * waypoint half named `navigate_to_destination` and `travel` and that day's two navigations were both abandoned on a
+ * large bush (`Bush@49,10`). She walked there herself: `move_to_tile` to `40,64`, then `enter_exit` into
+ * `Forest:68,0`. The row graded the route instead of the day.
+ *
+ * The population is the Mod's own handler group (`handlerGroup: "movement"` in `action-handler-groups.v1.json`), read
+ * here from that artifact rather than from the criterion, so a movement action the Mod adds tomorrow is covered by
+ * existing and one it retires fails naming itself. Two members' receipts name no arrival and are declared with that
+ * reason in `MOVEMENT_ACTIONS_WITHOUT_ARRIVAL`; the staleness assertion below makes that exemption expire.
+ *
+ * red-proof: inject  `[anyOf("navigate_to_destination", "travel"), step("fish_here")]` back into
+ *                   `a_fish_from_the_water` and this gate and `round88 day 1` both red - the measured defect;
+ *                   exempt an action the surface does not group as movement and the staleness assertion reds naming it
+ *                   (tools/lib/task-purpose.test.mjs). What this gate does NOT read is whether an exempted receipt names
+ *                   an arrival at all - `MOVEMENT_ACTIONS_WITHOUT_ARRIVAL` says why no key-name rule can.
+ */
+const HANDLER_GROUPS_ARTIFACT = new URL(
+  "../../integrations/stardew/action-development/contracts/generated/action-handler-groups.v1.json",
+  import.meta.url,
+);
+
+/** The Mod's movement population, read from the artifact the Mod generates. */
+function surfaceMovementActions() {
+  const artifact = JSON.parse(readFileSync(HANDLER_GROUPS_ARTIFACT, "utf8"));
+  return (artifact.actions ?? [])
+    .filter((row) => row.handlerGroup === "movement")
+    .map((row) => row.actionId)
+    .sort();
+}
+
+test("the_fish_waypoint_is_the_movements_the_surface_declares", (t) => {
+  const declared = surfaceMovementActions();
+  const exempted = Object.keys(MOVEMENT_ACTIONS_WITHOUT_ARRIVAL);
+  const criterion = TASK_PURPOSE_CRITERIA.a_fish_from_the_water;
+  const waypoint =
+    criterion.steps[0].actionId === undefined ? [...criterion.steps[0].anyOf] : [criterion.steps[0].actionId];
+  const expected = declared.filter((actionId) => !exempted.includes(actionId));
+  t.diagnostic(
+    `movement group: ${String(declared.length)} in ${HANDLER_GROUPS_ARTIFACT.pathname.split("/").pop()} · waypoint reads ` +
+      `${String(expected.length)} · exempt ${exempted.join(", ")} · ${declared.join(" ")}`,
+  );
+  assert.deepEqual(
+    [...waypoint].sort(),
+    [...expected].sort(),
+    "the waypoint half no longer reads the movements the Mod declares, so a fishing day is judged by its route again",
+  );
+  assert.deepEqual(criterion.steps[1], { actionId: "fish_here" }, "the catch is the other half, and it is one receipt");
+  assert.deepEqual(
+    exempted.filter((actionId) => !declared.includes(actionId)),
+    [],
+    `MOVEMENT_ACTIONS_WITHOUT_ARRIVAL exempts an action the surface no longer groups as movement: ${exempted.join(", ")}`,
+  );
+  for (const [actionId, reason] of Object.entries(MOVEMENT_ACTIONS_WITHOUT_ARRIVAL))
+    assert.ok(
+      typeof reason === "string" && reason.trim().length > 20,
+      `${actionId} is kept out of the waypoint half with no reason a reader can check`,
+    );
+});
+
+/** `round88`'s two `navigate_to_destination` dispatches, verbatim: one rejected on reachability, one uncertain. */
+const ROUND88_ABANDONED_NAVIGATIONS = Object.freeze([
+  Object.freeze({
+    actionId: "navigate_to_destination",
+    state: "rejected",
+    reasonCode: "no_native_path",
+    evidence: {
+      detail:
+        "from=37,48;to=40,0;location=Farm;native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;target_enclosed=true;component_tiles=1862;gate=reachability_flood;approaches=north:off_map,east:unreachable,south:unreachable,west:buildings_tile:blocked@39,0;target_standable=true;target_walkable=true;blocked_by=none;progress=none;clear_to_reach=weed@40,9;clear_tiles=1;clear_cost=5;clear_step=weed@40,9;stand_at=40,10;remaining_clears=1;blocker_occupant=weed@40,9;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);blocker_target=unpublished:weedTargets;next_steps=move_to_tile@40,10>publishes:weedTargets>cut_weeds@40,9>move_to_tile@40,0;reachable=34,6;detour_steps=none;walk_limit_steps=75",
+    },
+  }),
+  Object.freeze({
+    actionId: "navigate_to_destination",
+    state: "uncertain",
+    reasonCode: "navigation_approach_unavailable",
+    evidence: {
+      detail:
+        "phase=multi_hop;approach=unavailable;never_retry=true;approaches=north:off_map,east:off_map,south:off_map,west:large:Bush@49,10;approach_blocked_by=large:Bush@49,10;entry=49,10;entry_blocked_by=large:Bush@49,10;next_step=clear_the_approach_or_choose_another_target;steps=1;folded=accepted@navigation=accepted,phase=approaching",
+    },
+  }),
+]);
+
+/** The walk she made instead: `move_to_tile` to the Farm's `40,64`, then `enter_exit` into the Forest at `68,0`. */
+const ROUND88_WALK = Object.freeze([
+  Object.freeze({
+    actionId: "move_to_tile",
+    state: "succeeded",
+    reasonCode: "target_reached",
+    evidence: {
+      detail:
+        "tile=40,64;target=40,64;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=41,target=40,64,requested=41,65,approach=substituted",
+    },
+  }),
+  Object.freeze({
+    actionId: "enter_exit",
+    state: "succeeded",
+    reasonCode: "enter_exit_completed",
+    evidence: {
+      detail:
+        "expected=Forest:68,0;actual=Forest:68,0;steps=1;folded=accepted@source=Farm:41,65,target=Forest:68,0,entry=none",
+    },
+  }),
+]);
+
+/** `round88`'s three catches, verbatim: the same water, the same fish, and a `fishCaught` count that rises each time. */
+const ROUND88_CATCHES = Object.freeze([
+  Object.freeze({
+    actionId: "fish_here",
+    state: "succeeded",
+    reasonCode: "fish_caught",
+    evidence: {
+      detail:
+        "location=Forest;target=water_360abce006039168;tile=46,25;caught_qualified_item_id=(O)137;display_name=小嘴鲈鱼;fish_size=13;quality=0;pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=true;cast_to_credit_ms=4108;rod_durability_left=-1;bait_before=0;bait_left=0;bait_consumed=0;stamina_before=270;stamina_after=262;stamina_delta=-8;inventory_before=0;inventory_after=1;fish_caught_before=0;fish_caught_after=1;fish_caught_delta=1;credit=fishCaught:0->1;steps=3;folded=accepted@location=Forest,target=water_360abce006039168,tile=46,25,distance=25,reach=1,approach=adjacent,stand_at=47,26|tool_approach_completed@tile=47,26,target=47,26,arrival=exact,path=stardew_native|accepted@location=Forest,target=water_360abce006039168,tile=46,25,rod=(T)BambooPole,rod_slot=5,stamina_before=270,bait_before=0,phase=waiting_for_bite",
+    },
+  }),
+  Object.freeze({
+    actionId: "fish_here",
+    state: "succeeded",
+    reasonCode: "fish_caught",
+    evidence: {
+      detail:
+        "location=Forest;target=water_360abce006039168;tile=46,25;caught_qualified_item_id=(O)137;display_name=小嘴鲈鱼;fish_size=13;quality=0;pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=true;cast_to_credit_ms=10938;rod_durability_left=-1;bait_before=0;bait_left=0;bait_consumed=0;stamina_before=262;stamina_after=254;stamina_delta=-8;inventory_before=1;inventory_after=2;fish_caught_before=1;fish_caught_after=2;fish_caught_delta=1;credit=fishCaught:1->2;steps=1;folded=accepted@location=Forest,target=water_360abce006039168,tile=46,25,rod=(T)BambooPole,rod_slot=5,stamina_before=262,bait_before=0,phase=waiting_for_bite",
+    },
+  }),
+  Object.freeze({
+    actionId: "fish_here",
+    state: "succeeded",
+    reasonCode: "fish_caught",
+    evidence: {
+      detail:
+        "location=Forest;target=water_360abce006039168;tile=46,25;caught_qualified_item_id=(O)137;display_name=小嘴鲈鱼;fish_size=13;quality=0;pull_outcome=not_verified;pull_unobserved_field=BobberBar.distanceFromCatching;bite_observed=true;cast_to_credit_ms=4985;rod_durability_left=-1;bait_before=0;bait_left=0;bait_consumed=0;stamina_before=254;stamina_after=246;stamina_delta=-8;inventory_before=2;inventory_after=3;fish_caught_before=2;fish_caught_after=3;fish_caught_delta=1;credit=fishCaught:2->3;steps=1;folded=accepted@location=Forest,target=water_360abce006039168,tile=46,25,rod=(T)BambooPole,rod_slot=5,stamina_before=254,bait_before=0,phase=waiting_for_bite",
+    },
+  }),
+]);
+
+test("round88 day 1: three smallmouth bass after walking to the Forest are a fish from the water", () => {
+  // The day in the order the world saw it: the two abandoned navigations, then the walk, then the catches.
+  const judged = judgeTaskPurpose("a_fish_from_the_water", [
+    ...ROUND88_ABANDONED_NAVIGATIONS,
+    ...ROUND88_WALK,
+    ...ROUND88_CATCHES,
+  ]);
+  assert.equal(
+    judged.state,
+    "achieved",
+    "she walked to the Forest, caught three smallmouth bass and came back; the criterion answered the two abandoned " +
+      "navigations instead of the day",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_achieved");
+  assert.deepEqual(
+    judged.admittedActionIds.filter((actionId) => actionId !== "fish_here"),
+    ["enter_exit", "move_to_tile"],
+    "the walk's own two receipts are the waypoint half, and the abandoned navigations are not receipts at all",
+  );
+  assert.deepEqual(judged.refusedReceipts, [], "every receipt of this day carries its own postcondition");
+});
+
+test("a_fish_from_the_water: the catch alone is not the walk", () => {
+  const judged = judgeTaskPurpose("a_fish_from_the_water", [...ROUND88_CATCHES]);
+  assert.equal(judged.state, "not_achieved", "a fish that was never walked to is half the purpose, not the purpose");
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+});
+
+test("a_fish_from_the_water: a walk after the catch is not the water she fished", () => {
+  const judged = judgeTaskPurpose("a_fish_from_the_water", [...ROUND88_CATCHES, ...ROUND88_WALK]);
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "`fish_here` casts where she stands, so the movement has to come first - arriving afterwards is another trip",
+  );
 });

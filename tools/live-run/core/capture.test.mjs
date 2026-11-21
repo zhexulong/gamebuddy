@@ -6,6 +6,20 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { DEFAULT_LIVE_RUN_ROOT, LIVE_RUN_ROOT_ENV, openLiveRunCapture, resolveLiveRunRoot } from "./capture.mjs";
+import { writeLaunchReceipt } from "./run-closure.mjs";
+
+/**
+ * A run's start instant, as its launch receipt states it (`startedAtMs`). Written by the launcher that outlives the run,
+ * and the one fact a session directory can be bound to.
+ */
+const RUN_STARTED_AT_MS = Date.parse("2026-11-21T17:47:00.000Z");
+
+/** A session record of `bytes` bytes, named with the instant the runtime opened it (`<utc>_<sessionId>.jsonl`). */
+async function sessionRecord(sessionDir, name, bytes) {
+  await mkdir(sessionDir, { recursive: true });
+  await writeFile(join(sessionDir, name), "x".repeat(bytes), "utf8");
+  return join(sessionDir, name);
+}
 
 /**
  * The Host's own filename for what the environment provider RENDERED into each assembled request
@@ -48,6 +62,8 @@ test("a run directory holds JSON records and a summary", async (t) => {
   assert.ok(existsSync(join(capture.dir, "capture-summary.json")));
   const recorded = JSON.parse(await readFile(join(capture.dir, "capture-summary.json"), "utf8"));
   assert.equal(recorded.schema, "gamebuddy_live_run_capture/v1");
+  // No runtime root was captured, so which session this bundle holds is `not_attempted` - a third reading, not "none".
+  assert.equal(recorded.session.state, "not_attempted");
   // The numbers INSIDE the summary describe everything captured before it (the
   // one observation); the returned totals include the summary file itself. Both
   // are reported so neither is ambiguous.
@@ -116,9 +132,12 @@ test("the file budget truncates loudly instead of filling the disk", async (t) =
   // Copy-path skips carry their path; the close-time summary record may also be
   // skipped (budget exhausted) which is honest. Only the copy skips must be
   // max_files.
-  const copySkips = summary.skipped.filter((entry) => typeof entry.path === "string");
+  const copySkips = summary.skipped.filter((entry) => entry.reason === "over_cap");
   assert.ok(copySkips.length > 0, "copy skips present");
-  assert.ok(copySkips.every((entry) => entry.reason === "max_files"));
+  assert.ok(
+    copySkips.every((entry) => typeof entry.path === "string" && typeof entry.bytes === "number"),
+    "a skipped copy names its path and the bytes it refused, so the gap is countable",
+  );
 });
 
 test("the rendered environment record travels with the run, beside the session it describes", async (t) => {
@@ -148,6 +167,192 @@ test("the rendered environment record travels with the run, beside the session i
   );
 });
 
+test("a shared root's historical session does not take the bundle from this run's own record", async (t) => {
+  // Measured 2026-11-21 (`round88`): the bundle copied 309 files / 266.8 MB out of a SHARED runtime root, hit the byte cap
+  // before it reached this run's own 4 843 990-byte record, and `round-verdict` then read a leftover `13-38-33` session from
+  // an earlier run - so every model-time and turn number in that verdict belonged to another run. The falsifier is that
+  // same shape: two records, the historical one sorting FIRST in walk order, and a cap that fits only one. The run's own
+  // record must be in the bundle, the one it skipped must be NAMED, and the summary must say which session it kept.
+  const OWN_BYTES = 512 * 1024;
+  const HISTORICAL_BYTES = 512 * 1024;
+  const OWN_RECORD = "2026-11-21T17-48-50-387Z_01a1b2c3-0000-7000-8000-000000000001.jsonl";
+  const HISTORICAL_RECORD = "2026-11-21T13-38-33-000Z_01a1b2c3-0000-7000-8000-000000000000.jsonl";
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  const context = join(source, "contexts", "identity");
+  const historical = await sessionRecord(
+    join(context, "surface-sessions", "game-1795280000000", "sessions"),
+    HISTORICAL_RECORD,
+    HISTORICAL_BYTES,
+  );
+  const own = await sessionRecord(
+    join(context, "surface-sessions", "game-1795283329340", "sessions"),
+    OWN_RECORD,
+    OWN_BYTES,
+  );
+  const rendered = join(context, "surface-sessions", "game-1795283329340", "environment-facts.jsonl");
+  await writeFile(rendered, `${JSON.stringify({ revision: 1, text: "位置: x" })}\n`, "utf8");
+
+  const runDir = join(root, "run");
+  writeLaunchReceipt({ dir: runDir, kind: "game-ladder", startedAtMs: RUN_STARTED_AT_MS, pid: 4_242 });
+  const capture = await openLiveRunCapture({
+    kind: "game-ladder",
+    dir: runDir,
+    budget: { maxBytes: OWN_BYTES + 4_096 },
+  });
+  await capture.captureRuntimeRoot(source);
+  const summary = await capture.close();
+
+  const bundle = join(capture.dir, "runtime-root", "contexts", "identity", "surface-sessions");
+  assert.ok(existsSync(join(bundle, "game-1795283329340", "sessions", OWN_RECORD)), "this run's own record is kept");
+  assert.equal(
+    existsSync(join(bundle, "game-1795280000000", "sessions", HISTORICAL_RECORD)),
+    false,
+    "the earlier run's record is not this bundle's",
+  );
+  // The rendered environment record travels with the same run, outside the cap for the same reason.
+  assert.ok(existsSync(join(bundle, "game-1795283329340", "environment-facts.jsonl")));
+
+  const recorded = JSON.parse(await readFile(join(capture.dir, "capture-summary.json"), "utf8"));
+  assert.equal(recorded.session.state, "bound");
+  assert.equal(recorded.session.directory, "runtime-root/contexts/identity/surface-sessions/game-1795283329340");
+  assert.equal(recorded.session.startedAtMs, Date.parse("2026-11-21T17:48:50.387Z"));
+  assert.equal(recorded.session.launchedAtMs, RUN_STARTED_AT_MS);
+  assert.deepEqual(
+    recorded.session.records,
+    [
+      {
+        path: `runtime-root/contexts/identity/surface-sessions/game-1795283329340/sessions/${OWN_RECORD}`,
+        bytes: OWN_BYTES,
+      },
+    ],
+    "the summary names WHICH session it kept, with the bytes it took",
+  );
+  // The one it left behind is named too, with its own reason - so a reader can tell "the wrong session" from "no session".
+  assert.deepEqual(recorded.skipped, [
+    {
+      path: `runtime-root/contexts/identity/surface-sessions/game-1795280000000/sessions/${HISTORICAL_RECORD}`,
+      bytes: HISTORICAL_BYTES,
+      reason: "not_this_run",
+    },
+  ]);
+  assert.equal(summary.session.records.length, 1);
+  assert.equal(existsSync(historical), true, "the source root is untouched");
+  assert.equal(existsSync(own), true);
+});
+
+/**
+ * The other half of the same falsifier: a run that opened no session of its own must publish `none`, never another run's
+ * record and never silence. A reader has to be able to tell the two apart without opening a file.
+ */
+test("a run that opened no session of its own publishes none, and bundles no other run's", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  const historicalRecord = "2026-11-21T13-38-33-000Z_01a1b2c3-0000-7000-8000-000000000000.jsonl";
+  await sessionRecord(
+    join(source, "contexts", "identity", "surface-sessions", "game-1795280000000", "sessions"),
+    historicalRecord,
+    4_096,
+  );
+  const runDir = join(root, "run");
+  writeLaunchReceipt({ dir: runDir, kind: "game-ladder", startedAtMs: RUN_STARTED_AT_MS, pid: 4_242 });
+  const capture = await openLiveRunCapture({ kind: "game-ladder", dir: runDir });
+  await capture.captureRuntimeRoot(source);
+  await capture.close();
+
+  const recorded = JSON.parse(await readFile(join(capture.dir, "capture-summary.json"), "utf8"));
+  assert.equal(recorded.session.state, "none");
+  assert.equal(recorded.session.reason, "no_session_record_at_or_after_the_run_start");
+  assert.equal(recorded.session.directory, null);
+  assert.deepEqual(recorded.session.records, []);
+  assert.equal(
+    recorded.skipped.filter((entry) => entry.reason === "not_this_run").length,
+    1,
+    "the record it refused is named, so `none` is a decision and not an empty directory",
+  );
+  const bundle = join(capture.dir, "runtime-root", "contexts", "identity", "surface-sessions");
+  assert.equal(existsSync(join(bundle, "game-1795280000000", "sessions", historicalRecord)), false);
+});
+
+test("a run whose launch instant cannot be read keeps nothing out, and says the session is unbound", async (t) => {
+  // The third reading: a receipt that states no start instant cannot bind a session at all. Refusing every record would
+  // throw away evidence, and claiming one would be the round88 defect again - so the summary names the state and the
+  // reason, and the records are copied like any other evidence.
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  const record = "2026-11-21T17-48-50-387Z_01a1b2c3-0000-7000-8000-000000000001.jsonl";
+  await sessionRecord(
+    join(source, "contexts", "identity", "surface-sessions", "game-1795283329340", "sessions"),
+    record,
+    1_024,
+  );
+  const runDir = join(root, "run");
+  await mkdir(runDir, { recursive: true });
+  await writeFile(
+    join(runDir, "launch.json"),
+    `${JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", kind: "game-ladder" })}\n`,
+    "utf8",
+  );
+  const capture = await openLiveRunCapture({ kind: "game-ladder", dir: runDir });
+  await capture.captureRuntimeRoot(source);
+  await capture.close();
+
+  const recorded = JSON.parse(await readFile(join(capture.dir, "capture-summary.json"), "utf8"));
+  assert.equal(recorded.session.state, "unbound");
+  assert.equal(recorded.session.reason, "no_launch_instant");
+  assert.deepEqual(recorded.skipped, [], "an unbound run refuses no evidence on a guess");
+  assert.ok(
+    existsSync(
+      join(
+        capture.dir,
+        "runtime-root",
+        "contexts",
+        "identity",
+        "surface-sessions",
+        "game-1795283329340",
+        "sessions",
+        record,
+      ),
+    ),
+  );
+});
+
+test("the run's own record is kept even when it alone is over the byte cap", async (t) => {
+  const root = await scratch(t);
+  const source = join(root, "runtime-root");
+  const context = join(source, "contexts", "identity");
+  const record = "2026-11-21T17-48-50-387Z_01a1b2c3-0000-7000-8000-000000000001.jsonl";
+  await sessionRecord(join(context, "surface-sessions", "game-1795283329340", "sessions"), record, 4_096);
+  await writeFile(join(context, "identity-profile.json"), "y".repeat(4_096), "utf8");
+  const runDir = join(root, "run");
+  writeLaunchReceipt({ dir: runDir, kind: "game-ladder", startedAtMs: RUN_STARTED_AT_MS, pid: 4_242 });
+  const capture = await openLiveRunCapture({ kind: "game-ladder", dir: runDir, budget: { maxBytes: 1_024 } });
+  await capture.captureRuntimeRoot(source);
+  const summary = await capture.close();
+
+  assert.ok(
+    existsSync(
+      join(
+        capture.dir,
+        "runtime-root",
+        "contexts",
+        "identity",
+        "surface-sessions",
+        "game-1795283329340",
+        "sessions",
+        record,
+      ),
+    ),
+    "a cap that can starve the subject of the report is not a cap",
+  );
+  assert.ok(
+    summary.skipped.some(
+      (entry) => entry.path === "runtime-root/contexts/identity/identity-profile.json" && entry.reason === "over_cap",
+    ),
+    "what remains is still capped, and the refusal is named",
+  );
+});
+
 test("a missing source is recorded as a failure and never throws", async (t) => {
   const root = await scratch(t);
   const capture = await openLiveRunCapture({ kind: "memory-loop", root });
@@ -165,8 +370,12 @@ test("append and record are budgeted too (audit MEDIUM-1): runaway stderr cannot
   await capture.record("obs.json", { text: "c".repeat(150) });
   const summary = await capture.close();
   assert.ok(summary.skipped.length >= 2, "over-budget appends/records recorded as skipped");
-  assert.ok(summary.skipped.some((entry) => entry.reason === "max_bytes_append"));
-  assert.ok(summary.skipped.some((entry) => entry.reason === "max_bytes_record"));
+  assert.ok(summary.skipped.every((entry) => entry.reason === "over_cap"));
+  assert.deepEqual(
+    summary.skipped.map((entry) => entry.path),
+    ["child-stderr.log", "obs.json"],
+    "each refused write names itself rather than a shared word for both",
+  );
   // The file that fit is on disk; its content is preserved.
   const text = await readFile(join(capture.dir, "child-stderr.log"), "utf8");
   assert.equal(text.length, 150);
@@ -183,7 +392,7 @@ test("a failed copy rolls back its charge (audit NOTE-2)", async (t) => {
   // Blow the file budget: the SECOND copy is refused before writing.
   assert.equal(await capture.copyFileInto(join(source, "evidence.db"), "b.db"), false);
   const summary = await capture.close();
-  assert.equal(summary.skipped[0].reason, "max_files");
+  assert.equal(summary.skipped[0].reason, "over_cap");
   assert.equal(existsSync(join(capture.dir, "b.db")), false);
 });
 
