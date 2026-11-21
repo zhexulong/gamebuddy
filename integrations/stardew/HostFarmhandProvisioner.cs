@@ -241,7 +241,7 @@ internal sealed class HostFarmhandProvisioner
         string state = this.GetHostState();
         if (state != "ready" || !NativeLanEndpoint.TryRead(out string endpoint))
         {
-            this.RemoveAdvertisementAndManifestOrQuarantine();
+            this.WithdrawAdvertisementOrQuarantine();
             return;
         }
 
@@ -253,7 +253,7 @@ internal sealed class HostFarmhandProvisioner
         }
         catch (Exception exception)
         {
-            this.RemoveAdvertisementAndManifestOrQuarantine();
+            this.WithdrawAdvertisementOrQuarantine();
             this.monitor.Log($"GameBuddy HostFarmhandProvisioner withheld the ready advertisement because binding facts were unavailable: {exception.GetType().Name}/{exception.Message}/{exception.StackTrace?.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "no_stack"}.", LogLevel.Error);
             return;
         }
@@ -421,7 +421,7 @@ internal sealed class HostFarmhandProvisioner
         string hostState = this.GetHostState();
         if (hostState != "ready")
         {
-            this.RemoveAdvertisementAndManifestOrQuarantine();
+            this.WithdrawAdvertisementOrQuarantine();
             return this.quarantined
                 ? new("rejected", "publication_cleanup_failed")
                 : new("rejected", hostState);
@@ -550,7 +550,7 @@ internal sealed class HostFarmhandProvisioner
         string observedSaveSlot = ComposeObservedSaveSlot(Game1.GetSaveGameName(set_value: false), Game1.uniqueIDForThisGame);
         if (!NativeLanEndpoint.TryRead(out string endpoint))
         {
-            this.RemoveAdvertisementAndManifestOrQuarantine();
+            this.WithdrawAdvertisementOrQuarantine();
             return this.quarantined
                 ? new("rejected", "publication_cleanup_failed")
                 : new("rejected", "native_lan_endpoint_unavailable");
@@ -925,14 +925,33 @@ internal sealed class HostFarmhandProvisioner
         return removed;
     }
 
-    private bool RemoveAdvertisementAndManifestOrQuarantine()
+    /// <summary>
+    /// Withdraws the heartbeat for a beat on which this Host cannot describe its world, and nothing else.
+    ///
+    /// <para>
+    /// TWO PUBLISHED FILES, TWO LIFETIMES, AND ONLY ONE OF THEM IS WITHDRAWN HERE. The advertisement is a heartbeat:
+    /// it is republished every second, it expires three seconds after its stamp, and the Host re-reads it every
+    /// 100 ms. Withholding it is how this Host says "not this instant" - the engine is save-loading, it is saving, it
+    /// is not the master game, its LAN endpoint is unreadable - and every reader treats its absence as a moment to
+    /// wait for.
+    /// </para>
+    /// <para>
+    /// THE MANIFEST IS THE ANSWER TO ONE ADMITTED REQUEST, and it is never withdrawn here. It names that request's id
+    /// and carries its own `ExpiresAtUnixMs`; the Host admits it only against the request it names, and
+    /// <see cref="ProcessRequest"/> deletes it before the next request could issue a new one, so a manifest left on
+    /// disk can never be admitted by a later join. Deleting it with the heartbeat instead destroyed the reply a first
+    /// attach was in the middle of reading, and NOTHING REWRITES IT: it is written only by <see cref="IssueManifest"/>,
+    /// and the request file that call is made for is deleted before the answer is written. Measured live on a world
+    /// this product creates (2026-11-21): the FIRST binding of a world is owed to the engine's save cycle, so the Mod
+    /// opens the native `SaveGameMenu` immediately after admitting, and the very next publication beat can find
+    /// `IsSaving` true - one second after the beat that issued the manifest.
+    /// </para>
+    /// </summary>
+    private bool WithdrawAdvertisementOrQuarantine()
     {
-        bool advertisementRemoved = this.RemoveAdvertisement();
-        bool manifestRemoved = this.DeleteIfOwned(FarmhandProvisioningProtocol.ManifestFileName);
-        bool removed = advertisementRemoved && manifestRemoved;
-        if (!removed)
+        if (!this.RemoveAdvertisement())
             this.EnterQuarantine("publication_cleanup_failed");
-        return removed;
+        return !this.quarantined;
     }
 
     private void RemovePublishedFiles()

@@ -66,22 +66,68 @@ public sealed class HostFarmhandProvisionerPublicationTests
         }
     }
 
+    /// <summary>
+    /// A world this Host cannot describe for one beat must not take back the manifest it has already admitted.
+    ///
+    /// <para>
+    /// THE MANIFEST IS AN ANSWER, NOT A HEARTBEAT. `GetHostState` reports `host_not_ready` while the engine is saving
+    /// (and while the LAN endpoint is unreadable), and the publication beat withholds the advertisement then - which is
+    /// right, because the advertisement is a 3 s heartbeat the Host re-reads every 100 ms. The manifest is the answer
+    /// to ONE admitted request: it carries that request's id and its own expiry, the Host admits it against the same
+    /// advertisement and refuses any other request's manifest, and `ProcessRequest` replaces it before issuing the
+    /// next one. Deleting it with the heartbeat therefore destroys the reply a first join is in the middle of reading
+    /// and nothing ever rewrites it - the request file it would be re-issued from is already deleted.
+    /// </para>
+    /// <para>
+    /// Why it is a first join specifically: the FIRST binding of a world is owed to the engine's save cycle, so the
+    /// Mod opens the native `SaveGameMenu` right after admitting, and `IsSaving` can then be true on the very next
+    /// publication beat - one second after the beat that issued the manifest.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void ReadyManifestCleanupFailure_QuarantinesAndSuppressesFurtherPublication()
+    public void AWorldThatCannotBeDescribedWithdrawsTheHeartbeatAndKeepsTheAdmittedManifest()
     {
         string directory = Path.Combine(Path.GetTempPath(), $"gamebuddy-provisioning-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
-        Directory.CreateDirectory(Path.Combine(directory, FarmhandProvisioningProtocol.ManifestFileName));
+        File.WriteAllText(Path.Combine(directory, FarmhandProvisioningProtocol.AdvertisementFileName), "{}");
+        File.WriteAllText(Path.Combine(directory, FarmhandProvisioningProtocol.ManifestFileName), "{}");
         try
         {
             object provisioner = CreateUninitializedProvisioner(directory);
 
-            InvokePrivate<bool>(provisioner, "RemoveAdvertisementAndManifestOrQuarantine").Should().BeFalse();
+            InvokePrivate<bool>(provisioner, "WithdrawAdvertisementOrQuarantine").Should().BeTrue();
+
+            IsQuarantined(provisioner).Should().BeFalse();
+            File.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.AdvertisementFileName)).Should().BeFalse();
+            File.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.ManifestFileName))
+                .Should()
+                .BeTrue("the manifest is the answer to one admitted request and nothing else re-issues it");
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void AHeartbeatThatCannotBeWithdrawn_QuarantinesAndSuppressesFurtherPublication()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"gamebuddy-provisioning-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        Directory.CreateDirectory(Path.Combine(directory, FarmhandProvisioningProtocol.AdvertisementFileName));
+        try
+        {
+            object provisioner = CreateUninitializedProvisioner(directory);
+            // The withdrawal only attempts the delete when it has an advertisement to withdraw (or last published
+            // one), so the un-removable artifact has to be the file this seam would still try: a directory is not a
+            // file, and `File.Exists` is false for it.
+            SetField(provisioner, "lastAdvertisement", new FarmhandSessionAdvertisement { SchemaVersion = FarmhandProvisioningProtocol.Version });
+
+            InvokePrivate<bool>(provisioner, "WithdrawAdvertisementOrQuarantine").Should().BeFalse();
 
             IsQuarantined(provisioner).Should().BeTrue();
             InvokePrivate<object>(provisioner, "PublishFixtureReadiness", "fixture", "save", "fixture_ready", "ready");
-            File.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.AdvertisementFileName)).Should().BeFalse();
-            Directory.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.ManifestFileName)).Should().BeTrue();
+            Directory.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.AdvertisementFileName)).Should().BeTrue();
             File.Exists(Path.Combine(directory, FarmhandProvisioningProtocol.FixtureReadinessFileName)).Should().BeFalse();
         }
         finally
