@@ -10,7 +10,9 @@ import {
   overriddenTaskForDay,
   readTaskDelivery,
   runOffsetFor,
+  SWEEP_DAILY_TASKS,
 } from "./multiday-daily-tasks.mjs";
+import { judgesAPublishedFact, judgeTaskPurpose, TASK_PURPOSE_CRITERIA } from "./task-purpose.mjs";
 
 /**
  * A fake multi-day session: the loop starts a day, which SCHEDULES its task, and then that day's first turn either reaches
@@ -267,4 +269,119 @@ test("a schedule that cannot say which days the evidence decides is refused, not
   // Optional would be fail-open: a caller that forgot the predicate would get the plain rotation back and a run that
   // nobody could judge would look scheduled.
   assert.throws(() => dayTaskSchedule({ runOffset: 0 }), /task_schedule_needs_its_judgement/u);
+});
+
+const stepReceipts = (actionId, count) => {
+  const details = {
+    shop_purchase: {
+      reasonCode: "item_purchased",
+      detail:
+        "shop=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=25;purchased=25;unit_price=20;money_before=1060;money_after=560;owned_before=0;owned_after=25;gained=25;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=ok;drops=ok",
+    },
+    till_soil: (x, y) => ({
+      reasonCode: "soil_tilled",
+      detail: `location=Farm;target=${String(x)},${String(y)};tool_selected=hoe;slot=3;tool_before=none;slot_before=0;before=none;after=HoeDirt;charge_requested=0;charge_applied=0;window=${String(x - 5)},${String(y - 5)}:${String(x + 5)},${String(y + 5)};tiles_changed=1;changed=${String(x)}:${String(y)};stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=none`,
+    }),
+    plant_seed: (x, y) => ({
+      reasonCode: "seed_planted",
+      detail: `location=Farm;target=soil_01;tile=${String(x)},${String(y)};item=(O)472;crop=Parsnip;inventory_before=25;inventory_after=24`,
+    }),
+    water_crop: (x, y) => ({
+      reasonCode: "crop_watered",
+      detail: `location=Farm;target=crop_${String(x)}_${String(y)};tile=${String(x)},${String(y)};tool_selected=watering_can;slot=2;tool_before=watering_can;slot_before=2;before_watered=false;after_watered=true;water_before=40;water_after=39;water_consumed=true;water_expected_cost=1;charge_requested=0;charge_applied=0;window=${String(x - 5)},${String(y - 5)}:${String(x + 5)},${String(y + 5)};tiles_changed=1;changed=${String(x)}:${String(y)};stamina_before=254;stamina_after=252;stamina_delta=-2;expected_stamina_cost=2;tool_restored=watering_can`,
+    }),
+  };
+  const entry = details[actionId];
+  return Array.from({ length: count }, (_, index) => {
+    const resolved = typeof entry === "function" ? entry(12 + index, 4) : entry;
+    return Object.freeze({
+      actionId,
+      state: "succeeded",
+      reasonCode: resolved.reasonCode,
+      evidence: { detail: resolved.detail },
+    });
+  });
+};
+
+test("the_rotation_leads_with_concrete_decidable_work", (t) => {
+  const scenarioTasks = DAILY_TASK_ROTATION.slice(0, DAILY_TASK_ROTATION.length - SWEEP_DAILY_TASKS.length);
+  const findings = [];
+  const opener = scenarioTasks[0];
+  const openerEntry = TASK_PURPOSE_CRITERIA[opener];
+  if (!judgesAPublishedFact(opener)) {
+    findings.push(`rotation_opener_is_unjudgeable:${opener}`);
+  } else if (
+    openerEntry?.patch === undefined &&
+    !(openerEntry?.steps ?? []).some((candidate) => (candidate.count ?? 1) >= 15)
+  ) {
+    findings.push(`rotation_opener_lacks_quantified_scale:${opener}`);
+  }
+  for (let index = 0; index + 1 < scenarioTasks.length; index += 1) {
+    const left = scenarioTasks[index];
+    const right = scenarioTasks[index + 1];
+    if (!(judgesAPublishedFact(left) || judgesAPublishedFact(right))) {
+      findings.push(`adjacent_unjudgeable_scenario_pair:${left}->${right}`);
+    }
+  }
+  const patchTasks = DAILY_TASK_ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task]?.patch !== undefined);
+  if (patchTasks.length < 2) {
+    findings.push(`insufficient_patch_tasks:${String(patchTasks.length)} (${patchTasks.join(", ")})`);
+  }
+  const shopAndSowTasks = DAILY_TASK_ROTATION.filter((task) => {
+    const steps = TASK_PURPOSE_CRITERIA[task]?.steps ?? [];
+    const buys = steps.some((candidate) => candidate.actionId === "shop_purchase");
+    const sowsScaled = steps.some((candidate) => candidate.actionId === "plant_seed" && (candidate.count ?? 1) >= 15);
+    return buys && sowsScaled;
+  });
+  if (shopAndSowTasks.length < 1) {
+    findings.push(`missing_shop_purchase_plus_scaled_sowing_task:${String(shopAndSowTasks.length)}`);
+  }
+  const reading =
+    `scenario ${String(scenarioTasks.length)} · opener=${opener} · ` +
+    `patches=${String(patchTasks.length)} · shop+sow=${String(shopAndSowTasks.length)}`;
+  t.diagnostic(reading);
+  assert.deepEqual(findings, [], `${reading}\n${findings.join("\n")}`);
+});
+
+test("a_step_with_a_count_is_not_satisfied_by_fewer_receipts", (t) => {
+  const countedTasks = DAILY_TASK_ROTATION.filter((task) =>
+    (TASK_PURPOSE_CRITERIA[task]?.steps ?? []).some((candidate) => candidate.count !== undefined),
+  );
+  assert.ok(countedTasks.length > 0, "blocked: no rotation criterion declares a quantified step count");
+  const receiptsFor = (steps, reduceTaskIndex = -1) =>
+    steps.flatMap((candidate, index) => {
+      const actionId = candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId;
+      const needed = candidate.count ?? 1;
+      return stepReceipts(actionId, index === reduceTaskIndex ? needed - 1 : needed);
+    });
+  const findings = [];
+  for (const task of countedTasks) {
+    const entry = TASK_PURPOSE_CRITERIA[task];
+    for (const [index, candidate] of entry.steps.entries()) {
+      if (candidate.count === undefined) continue;
+      if (!Number.isInteger(candidate.count) || candidate.count < 2) {
+        findings.push(`${task}: step ${String(index)} has invalid count ${String(candidate.count)}`);
+        continue;
+      }
+      const short = judgeTaskPurpose(task, receiptsFor(entry.steps, index));
+      if (short.state !== "not_achieved") {
+        findings.push(
+          `${task}: step ${String(index)} (${candidate.actionId ?? candidate.anyOf.join("/")}) passed on ` +
+            `${String(candidate.count - 1)}/${String(candidate.count)} receipts (${short.state})`,
+        );
+      } else {
+        const label = candidate.actionId ?? candidate.anyOf.join("/");
+        const expectedProgress = `${label} ${String(candidate.count - 1)}/${String(candidate.count)}`;
+        if (!String(short.detail ?? "").includes(expectedProgress)) {
+          findings.push(`${task}: short verdict detail missed ${expectedProgress}: ${String(short.detail ?? "")}`);
+        }
+      }
+    }
+    const full = judgeTaskPurpose(task, receiptsFor(entry.steps));
+    if (full.state !== "achieved") {
+      findings.push(`${task}: exact count receipts answered ${full.state} (${full.reasonCode})`);
+    }
+  }
+  t.diagnostic(`counted_criteria ${String(countedTasks.length)}: ${countedTasks.join(", ")}`);
+  assert.deepEqual(findings, [], findings.join("\n"));
 });

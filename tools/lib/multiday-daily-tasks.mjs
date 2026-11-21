@@ -131,9 +131,37 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "cut_weeds",
     "clear_debris",
     "break_rock",
+    "travel",
+    "shop_purchase",
+    "chest_retrieve",
     "till_soil",
     "plant_seed",
     "water_crop",
+    "refill_watering_can",
+  ]),
+  plant_market_strip: Object.freeze([
+    "cut_weeds",
+    "clear_debris",
+    "break_rock",
+    "travel",
+    "shop_purchase",
+    "chest_retrieve",
+    "till_soil",
+    "plant_seed",
+    "water_crop",
+    "refill_watering_can",
+  ]),
+  buy_seeds_and_expand_plot: Object.freeze([
+    "cut_weeds",
+    "clear_debris",
+    "break_rock",
+    "travel",
+    "shop_purchase",
+    "chest_retrieve",
+    "till_soil",
+    "plant_seed",
+    "water_crop",
+    "refill_watering_can",
   ]),
   // THE ONLY TASK THAT ASKS FOR A WATER ACTION. `fish_here` is published and no task named it, which is the same
   // coverage hole `enter_mine` was in: an action can be finished, gated, and never exercised because nothing asked.
@@ -306,34 +334,34 @@ export function sweepTaskPrompts() {
  * allowed to end in "there is nothing here to do" - which is a true observation, not a failed task.
  */
 export const DAILY_TASK_ROTATION = Object.freeze([
-  "clear_east_patch",
-  "water_and_harvest",
-  "forage_and_trees",
-  "craft_and_place_machine",
-  "town_market",
-  "town_visit",
-  "mine_delve",
-  "store_and_sort",
-  "till_and_sow",
-  "tidy_and_repair",
-  "tend_the_animals",
-  "dress_and_display",
-  "clear_and_cultivate",
-  "home_and_hearth",
-  "home_upgrade",
-  "mine_ladder_to_depth",
-  "furnish_and_arrange",
-  "run_the_machines",
-  // APPENDED after the farming tasks rather than interleaved: it is the last of the scenario days, and the sweep tasks
-  // stay the tail of the rotation. A day that has to till sixty tiles should not be what the first run of a series
-  // begins with, and `runOffsetFor` still walks the whole list one first-day per run.
+  // Lead with concrete, decidable, economic/spatial tasks (`3x20`, autonomous seed purchase + 20-tile expansion,
+  // `2x18` market bed, mine depth, fishing, machines, harvest/replant) so default 2-3 day runs open on real
+  // planning and SeedShop trade-offs instead of unjudgeable gaps and 1-tile errands.
   "clear_and_plant_long_patch",
-  // APPENDED beside the long patch for the same reason it was: the first days belong to what a bare farm can satisfy,
-  // and a fishing day depends on water she has to walk to. The action exists and no task had ever asked for it.
+  "buy_seeds_and_expand_plot",
+  "mine_ladder_to_depth",
+  "plant_market_strip",
   "a_fish_from_the_water",
-  // The sweep tasks come LAST, deliberately. The nineteen above are a coverage plan somebody argued for, in an
-  // order that puts what a bare farm can satisfy first; appending rather than interleaving keeps that plan intact
-  // and makes the new days the tail of the rotation rather than a silent reordering of every run that came before.
+  "craft_and_place_machine",
+  "water_and_harvest",
+  "mine_delve",
+  "run_the_machines",
+  "till_and_sow",
+  // Interleave each remaining scenario gap cleanly after a decidable day so no two scenario gaps sit adjacent.
+  "tend_the_animals",
+  "town_market",
+  "clear_and_cultivate",
+  "clear_east_patch",
+  "dress_and_display",
+  "town_visit",
+  "store_and_sort",
+  "home_and_hearth",
+  "tidy_and_repair",
+  "home_upgrade",
+  "forage_and_trees",
+  "furnish_and_arrange",
+  // The sweep tasks stay at the tail of the rotation so remaining published actions stay covered without
+  // displacing flagship scenario work.
   ...SWEEP_TASKS.map((task) => task.id),
 ]);
 

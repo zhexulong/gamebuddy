@@ -848,8 +848,8 @@ await assertLiveRunArtifactFresh();
  */
 const DAILY_TASK_PROMPT_ZH = Object.freeze({
   clear_east_patch: "东头那片地该收拾了，杂草和石头都清一清。",
-  water_and_harvest: "地里长好的都收下来，收完再把空地种上。",
-  forage_and_trees: "林子和树那边看看，能捡的捡了，能摇的摇了。",
+  water_and_harvest: "地里熟了的菜全收下来丢进出货箱卖钱，空出来的地补买些种子重新种满并浇上水。",
+  forage_and_trees: "林子和农场周边的野货捡一捡、树也多摇几棵，顺便砍几棵挡路的树收点木头。",
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   // `town_errand` was the key here and it is no species of task: the rotation asks for `town_market` and
   // `town_visit`, so both days were handed the literal string "undefined" instead of a task. The prompt table is
@@ -857,17 +857,20 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   town_market: "去一趟镇上买点东西，回来把信箱里的信取出来。",
   town_visit: "去一趟镇上，找个人说说话。",
   mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
-  // The size is deliberately the companion's call: a number picked here would be a quota, and the point of the
-  // task is to observe how it decides where a clearing should be and how much is enough.
-  clear_and_cultivate: "林子东边太挤了，清一片空地出来，顺手种点东西浇上水。多大你自己定。",
+  clear_and_cultivate:
+    "林子东边太挤了，清出一片像样的空地（能摆下十来格庄稼），种子不够就去镇上买些回来，翻好土种上浇透水。",
   home_and_hearth: "屋里太空了，收拾一下、摆点东西，让它像个家。",
   home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
-  till_and_sow: "把空地翻一翻，种上种子，浇上水。",
+  till_and_sow: "门前多翻出十来格空地，种子不够就去镇上买合算的春菜种子，种下去全浇透水。",
   // ONE sentence, and the size is the point of the sentence: a plot twenty tiles long cannot fit in the 13x13 window
   // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
   // hers - and no instruction about how to plan it is appended, because the shape is the task.
   clear_and_plant_long_patch: "门前横着开一条长地，三格宽、二十格长，清出来种上。",
+  plant_market_strip:
+    "挑种回本快又合算的春菜，去镇上把种子买齐，在门前开一条两格宽、十八格长的菜畦，全翻好种上浇透水。",
+  buy_seeds_and_expand_plot:
+    "屋前新开一块至少二十格的菜地；手头种子不够就去镇上商店挑合算的春菜种子买足，翻好、种满并浇透水。",
   // No number of fish and no destination: `waterTargets` is the world's own answer to "where is water I can fish",
   // and picking a spot here would be a second one.
   a_fish_from_the_water: "找片水，钓条鱼回来。",
@@ -886,18 +889,25 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
   home_upgrade: "the house is cramped - go ask the carpenter about extending it.",
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
-  water_and_harvest: "bring in what is ripe, then plant the empty ground. ",
-  forage_and_trees: "check the woods and the trees - pick up what is there, shake what can be shaken. ",
+  water_and_harvest:
+    "harvest everything ripe in the field and ship it for gold, buy more seeds in town if needed, and replant and water the ground. ",
+  forage_and_trees:
+    "sweep the woods and farm edges for forage, shake plenty of trees, and chop down a few in the way for wood. ",
   craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
   town_market: "go into town, buy something at a shop, and bring the post in. ",
   town_visit: "go into town and talk to somebody there. ",
   mine_delve: "go down the mine and come back with some ore. ",
   clear_and_cultivate:
-    "the woods on the east side are too thick - clear a patch of open ground, then plant and water something in it. Size is your call.",
+    "the woods on the east side are too thick - clear an opening big enough for a dozen crops, buy more seeds in town if short, and till, plant, and water it.",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
-  till_and_sow: "turn the bare ground, put seeds in it, and water them. ",
+  till_and_sow:
+    "turn a dozen-tile patch of bare ground out front, buy worthwhile spring seeds in town if you run short, plant them, and water them well. ",
   clear_and_plant_long_patch:
     "open up a long strip out front - three tiles wide, twenty long - clear it and plant it. ",
+  plant_market_strip:
+    "pick a profitable, fast-turning spring crop, buy enough seeds in town, and lay out a bed out front - two tiles wide, eighteen long - tilled, planted, and watered all along.",
+  buy_seeds_and_expand_plot:
+    "open up a new vegetable plot out front of at least twenty tiles; buy enough worthwhile spring seeds in town if what you have falls short, and get every tile tilled, planted, and watered.",
   a_fish_from_the_water: "find some water and bring a fish back from it. ",
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
   tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",

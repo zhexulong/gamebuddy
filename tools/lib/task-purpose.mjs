@@ -56,8 +56,8 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../host/dist-test/stardew-g
 import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
 import { bestWindow, largestFilledRectangle, windowHoldsAll } from "./tile-patch.mjs";
 
-/** A step of a criterion: one admitted postcondition. */
-const step = (actionId) => Object.freeze({ actionId });
+/** A step of a criterion: one admitted postcondition, or `count` distinct receipts of it. */
+const step = (actionId, { count = 1 } = {}) => Object.freeze(count === 1 ? { actionId } : { actionId, count });
 
 /** A step satisfied by any one of several actions - the same purpose reached by different native seams. */
 const anyOf = (...actionIds) => Object.freeze({ anyOf: Object.freeze(actionIds) });
@@ -185,16 +185,25 @@ const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField }
 export const CARRIED_ITEM_ACTIONS = Object.freeze({
   // A pack count falls: the stack named by the receipt is spent to do the thing.
   bait_crab_pot: Object.freeze({ spends: true, because: "the bait leaves the pack into the pot" }),
-  dye_clothing_with_item: Object.freeze({ spends: true, because: "the dye items the receipt names are spent on the garment" }),
+  dye_clothing_with_item: Object.freeze({
+    spends: true,
+    because: "the dye items the receipt names are spent on the garment",
+  }),
   fertilize_tile: Object.freeze({ spends: true, because: "the fertilizer stack leaves the pack onto the soil" }),
-  open_geode: Object.freeze({ spends: true, because: "the geode leaves the pack and the counter hands back what was inside" }),
+  open_geode: Object.freeze({
+    spends: true,
+    because: "the geode leaves the pack and the counter hands back what was inside",
+  }),
   place_crab_pot: Object.freeze({ spends: true, because: "the pot leaves the pack onto the water's edge" }),
   place_owned_object: Object.freeze({ spends: true, because: "the stack leaves the pack onto the ground" }),
   place_wood_fence: Object.freeze({ spends: true, because: "the fence leaves the pack onto the field" }),
   plant_sapling: Object.freeze({ spends: true, because: "the sapling leaves the pack into the ground" }),
   plant_seed: Object.freeze({ spends: true, because: "the seed stack leaves the pack into the soil" }),
   redeem_prize_ticket: Object.freeze({ spends: true, because: "the prize ticket leaves the pack into the machine" }),
-  ship_item: Object.freeze({ spends: true, because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells" }),
+  ship_item: Object.freeze({
+    spends: true,
+    because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells",
+  }),
   tailor_clothing: Object.freeze({ spends: true, because: "the cloth the receipt names is spent on the garment" }),
   use_item: Object.freeze({ spends: true, because: "the food the actor was carrying is eaten" }),
   use_warp_item: Object.freeze({ spends: true, because: "the warp item is spent by arriving" }),
@@ -204,10 +213,17 @@ export const CARRIED_ITEM_ACTIONS = Object.freeze({
   claim_museum_reward: Object.freeze({ spends: false, because: "the museum's reward arrives in the pack" }),
   collect_animal_product: Object.freeze({ spends: false, because: "the product arrives in the pack" }),
   collect_crab_pot_output: Object.freeze({ spends: false, because: "the pot's catch arrives in the pack" }),
-  cook_recipe: Object.freeze({ spends: false, because: "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule" }),
+  cook_recipe: Object.freeze({
+    spends: false,
+    because:
+      "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule",
+  }),
   fish_here: Object.freeze({ spends: false, because: "the catch arrives in the pack" }),
   harvest_crop: Object.freeze({ spends: false, because: "the harvest arrives in the pack" }),
-  move_placed_furniture: Object.freeze({ spends: false, because: "the piece is picked UP off the floor into the pack" }),
+  move_placed_furniture: Object.freeze({
+    spends: false,
+    because: "the piece is picked UP off the floor into the pack",
+  }),
   pan_ore: Object.freeze({ spends: false, because: "the ore arrives in the pack" }),
   pickup_forage: Object.freeze({ spends: false, because: "the forage arrives in the pack" }),
   pickup_item: Object.freeze({ spends: false, because: "the item arrives in the pack" }),
@@ -392,6 +408,29 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       tilledBy: [tileProof("till_soil", "target")],
       croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
     },
+  ),
+  // A second spatial + seed-shortage patch (36 tiles > 15 chest seeds, 18 > 13x13 window): fits inside starter gold
+  // even for higher-value spring crops while still forcing SeedShop planning and refill capacity.
+  plant_market_strip: patch(
+    "one spring market bed, two tiles wide and eighteen long, was tilled and sown the whole way",
+    {
+      width: 2,
+      height: 18,
+      tilledBy: [tileProof("till_soil", "target")],
+      croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
+    },
+  ),
+  // Explicit shop-purchase + scaled-cultivation loop: 20 tiles exceeds starter chest seeds and explicitly requires a
+  // `shop_purchase` receipt alongside twenty distinct till, sow, and water postconditions.
+  buy_seeds_and_expand_plot: criterion(
+    "seeds were bought from a shop and a twenty-tile plot was tilled, planted, and watered",
+    [
+      step("shop_purchase"),
+      step("till_soil", { count: 20 }),
+      step("plant_seed", { count: 20 }),
+      step("water_crop", { count: 20 }),
+    ],
+    { ordered: false },
   ),
   // Two steps, because the purpose is not "an action succeeded": it is that she went to water and came back with a
   // fish. `navigate_to_destination`/`travel` is how a day reaches water `waterTargets` named, and `fish_here` is the
@@ -639,12 +678,35 @@ function criterionSatisfied(entry, admitted) {
   const used = new Set();
   let cursor = -1;
   for (const candidate of entry.steps) {
-    const index = matchingIndexIn(admitted, used, entry.ordered === false ? 0 : cursor + 1, candidate);
-    if (index < 0) return false;
-    used.add(index);
-    cursor = index;
+    const needed = candidate.count ?? 1;
+    for (let hit = 0; hit < needed; hit += 1) {
+      const index = matchingIndexIn(admitted, used, entry.ordered === false ? 0 : cursor + 1, candidate);
+      if (index < 0) return false;
+      used.add(index);
+      cursor = index;
+    }
   }
   return true;
+}
+
+/** Per-step matched counts for quantified criteria so shortfall verdicts report how far each step got. */
+function quantifiedProgressDetail(entry, admitted) {
+  if (!(entry.steps ?? []).some((candidate) => (candidate.count ?? 1) > 1)) return undefined;
+  const used = new Set();
+  const parts = [];
+  for (const candidate of entry.steps) {
+    const needed = candidate.count ?? 1;
+    const label = candidate.actionId ?? candidate.anyOf.join("/");
+    let matched = 0;
+    for (let hit = 0; hit < needed; hit += 1) {
+      const index = matchingIndexIn(admitted, used, 0, candidate);
+      if (index < 0) break;
+      used.add(index);
+      matched += 1;
+    }
+    parts.push(`${label} ${String(matched)}/${String(needed)}`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -1057,11 +1119,13 @@ export function judgeTaskPurpose(taskId, receipts, observations = null) {
       missingFact: null,
     });
   }
+  const detail = quantifiedProgressDetail(entry, admitted);
   return Object.freeze({
     ...common,
     state: "not_achieved",
     reasonCode: "task_purpose_not_achieved",
     purpose: entry.purpose,
     missingFact: null,
+    ...(detail === undefined ? {} : { detail }),
   });
 }

@@ -355,3 +355,19 @@ test("the fact is appended to the day's prompt once, and the prompt is untouched
   // No fact (a covered patch, or a task with no shape) leaves the prompt exactly as it was: nothing is added.
   assert.equal(dayPromptWithFact(prompt, null, "zh"), prompt);
 });
+
+test("new concrete strip and shop-and-plot tasks carry seed shortage and supply facts", () => {
+  const stripFact = seedShortageFact({ taskId: "plant_market_strip", snapshot: snapshotWith([parsnip]), locale: "zh" });
+  assert.equal(taskPatchTiles("plant_market_strip"), 36);
+  assert.equal(stripFact.reasonCode, "seed_shortage");
+  assert.equal(stripFact.shortfall, 34);
+  assert.ok(stripFact.text.includes("任务 36 格"), stripFact.text);
+
+  const expandFact = seedShortageFact({
+    taskId: "buy_seeds_and_expand_plot",
+    snapshot: snapshotWith([parsnip]),
+    locale: "zh",
+  });
+  assert.equal(expandFact.reasonCode, "seed_supply");
+  assert.ok(expandFact.text.includes("SeedShop"), expandFact.text);
+});
