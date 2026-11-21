@@ -1,6 +1,6 @@
 // The two product chains, step by step, and which live-run driver measures each step.
 //
-// The chains themselves are written down for a reader in `design/handbook/stardew-live-chains.md`:
+// The chains themselves are written down for a reader in `design/handbook/live-run-chains.md`:
 // OOBE is a player's first ever run (installation registration through her client standing in the
 // world) and daily use is the session a farm that already exists gets. This module is the same two
 // chains in the shape a gate can hold: one declaration per step, its owning code seam, the single
@@ -106,9 +106,15 @@ export const CHAIN_STEPS = Object.freeze([
   step({
     id: "oobe-cabin-seat",
     chain: "oobe",
-    title: "the companion has a cabin to be provisioned into",
+    title:
+      "the companion has a cabin to be provisioned into (the rung's two proofs: the engine's released unclaimed native slot, or a cabin the Mod built on a free pad)",
     driver: "w-game-launch",
-    fact: "unclaimed native Farmhand slot",
+    // The rung, not one of its two sentences. The driver accepts both (`capture/w-game-launch.cjs`
+    // `CHAIN_LOG_PATTERNS`, where the Mod's own line is a build on a free pad or a released native slot), and a
+    // fresh world takes either branch: `frontend--r23` met the build, `livenow10` met the release. Naming one
+    // sentence here made the step read as unmeasured on the other branch, which is how the first draft of this
+    // declaration would have reported a seat the run had already measured.
+    fact: "cabin ready",
     owner: "integrations/stardew/HostFarmhandProvisioning/CompanionCabinProvisioning.cs",
   }),
   step({

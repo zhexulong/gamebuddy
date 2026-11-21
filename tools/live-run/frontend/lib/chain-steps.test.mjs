@@ -173,3 +173,19 @@ test("a duplicated step id and an unknown kind are refused", () => {
     `a kind outside ${STEP_KINDS.join("/")} must be refused:\n${describe(other.problems)}`,
   );
 });
+
+test("a cabin-seat step names the rung the driver records, not one of the two branches it accepts", () => {
+  // `capture/w-game-launch.cjs` records ONE rung (`cabin ready`) for two different worlds: the engine
+  // releasing its unclaimed native Farmhand slot, or the Mod building a cabin on a free pad
+  // (`CHAIN_LOG_PATTERNS`). The declaration first named the released-slot sentence for the OOBE step, which
+  // reads a run on a built-cabin world - `frontend--r23` measured that sentence's sibling - as a step that
+  // never happened. One rung, one fact, both chains.
+  const seats = CHAIN_STEPS.filter((entry) => entry.id === "oobe-cabin-seat" || entry.id === "daily-cabin-seat");
+  assert.equal(seats.length, 2, "both chains have a seat step, and both are held here");
+  for (const entry of seats)
+    assert.equal(
+      entry.fact,
+      "cabin ready",
+      `${entry.id} must name the rung the driver records: a branch sentence reports the other branch's seat as unmeasured`,
+    );
+});
