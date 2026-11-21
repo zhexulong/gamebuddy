@@ -234,6 +234,21 @@ async function waitForState(page, predicate, budgetMs) {
 }
 
 /**
+ * The same wait, bound to one page, in the shape a module that does not own the page receives it.
+ *
+ * `capture/installation-registration.cjs` asks its caller for `waitForState(predicate, budgetMs)`
+ * (`:149`) and does not take a page, so the page-first function above cannot be handed to it: called
+ * that way its `page` is the predicate and its first `page.evaluate` throws `page.evaluate is not a
+ * function`. Measured 2026-11-21 on driver X's own run (`D:\gb-lanes\livenow10-x`): every driver that
+ * comes up through `activateAndLaunch` on an unregistered run root died there, and it stayed invisible
+ * while driver W ran first, because W registers the installation with its own bound waiter and the
+ * branch is then never entered.
+ */
+function stateWaiter(page) {
+  return (predicate, budgetMs) => waitForState(page, predicate, budgetMs);
+}
+
+/**
  * The Stop press, waited on the two facts the product publishes for it and on nothing else.
  *
  * WHAT SETTLES IT: the attachment's phase reports the stopped shape (`attachmentActionsStopped` - the
@@ -336,7 +351,7 @@ async function activateAndLaunch({ page, say, record, guardian, problems, budget
       say,
       record,
       problems,
-      waitForState,
+      waitForState: stateWaiter(page),
       budgets: {
         discoveryMs: budget.discoveryMs ?? BUDGET.discoveryMs,
         registrationMs: budget.registrationMs ?? BUDGET.registrationMs,
@@ -781,6 +796,7 @@ module.exports = {
   readCabinFact,
   postGameRoute,
   waitForState,
+  stateWaiter,
   waitForStop,
   pressStop,
   waitForControl,

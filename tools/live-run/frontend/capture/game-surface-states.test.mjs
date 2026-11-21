@@ -47,7 +47,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { activateAndLaunch, pressStop, runBoundary, waitForState, waitForStop } from "./game-surface-states.cjs";
+import {
+  activateAndLaunch,
+  pressStop,
+  runBoundary,
+  stateWaiter,
+  waitForState,
+  waitForStop,
+} from "./game-surface-states.cjs";
+import { registerInstallation } from "./installation-registration.cjs";
 
 /**
  * A run whose world this process claims: the launch state every driver reads, the staged `WorldCreation`
@@ -443,4 +451,107 @@ test("the game boundary is the run's Host child, and a launch state without one 
     assert.equal(fallback.sinceWhat, "driver_start", `childStartTime=${JSON.stringify(childStartTime)}`);
     assert.equal(fallback.sinceMs, 777);
   }
+});
+
+/**
+ * A page a lifecycle driver meets on an UNREGISTERED run root: the panel has settled with one candidate, its
+ * confirm is enabled, and pressing it is what makes the Host report `prerequisites: met`.
+ *
+ * `evaluate` dispatches on the argument, exactly like the product's two reads: `waitForPanelSettled` passes the
+ * panel selector and gets the panel's `data-state`; the state and panel reads pass nothing and are dispatched by
+ * their in-page function's own name.
+ */
+function installerPage() {
+  const pressed = [];
+  let current = {
+    ok: true,
+    prerequisites: "none",
+    instanceStatus: "none",
+    instanceGeneration: 0,
+    attachmentStatus: "none",
+    attachmentGeneration: 0,
+  };
+  return {
+    pressed,
+    state: () => ({ ...current }),
+    async evaluate(pageFunction, argument) {
+      if (argument !== undefined) return { panel: true, state: "candidates" };
+      if (pageFunction.name === "readGameState") return { ...current };
+      if (pageFunction.name === "readGameFacts")
+        return { surfacePresent: true, state: null, facts: {}, controls: NO_CONTROLS };
+      if (pageFunction.name === "readInstallationPanel")
+        return {
+          present: true,
+          surfacePresent: true,
+          dataState: "candidates",
+          statusText: "found 1 candidate",
+          candidates: [{ text: "Stardew Valley", confirm: { disabled: false } }],
+        };
+      throw new Error(`unexpected_evaluate:${String(pageFunction.name)}`);
+    },
+    async waitForTimeout() {},
+    locator(selector) {
+      return {
+        first: () => ({
+          click: async () => {
+            pressed.push(selector);
+            if (selector.includes("installation-candidate")) current = { ...current, prerequisites: "met" };
+          },
+        }),
+      };
+    },
+  };
+}
+
+const INSTALLER_BUDGETS = Object.freeze({ discoveryMs: 400, registrationMs: 400 });
+
+test("the waiter an installer is handed is bound to the page, and the page-first spelling is the shape that died", async () => {
+  // Measured 2026-11-21 on driver X's own run (`D:\gb-lanes\livenow10-x`, pin 6723191d):
+  //   DRIVER X FAILED: TypeError: page.evaluate is not a function
+  // The driver comes up through `activateAndLaunch`, which handed `installation-registration.cjs` the
+  // page-first `waitForState(page, predicate, budgetMs)` while that module calls `waitForState(predicate,
+  // budgetMs)` (`:149`), so its `page` was the predicate. It stayed invisible while driver W ran first in the
+  // same run, because W registers the installation with its own bound waiter and the branch is never entered.
+  const page = installerPage();
+  const steps = [];
+  const reading = await activateAndLaunch({
+    page,
+    say: () => {},
+    record: (step, value) => steps.push({ step, value }),
+    guardian: NOTHING_BOUND,
+    problems: new Map(),
+    budget: FAST,
+  });
+  assert.equal(
+    steps.find((entry) => entry.step === "registration")?.value.settled,
+    true,
+    "the registration press settled on the state it produced",
+  );
+  assert.deepEqual(page.pressed, [".game-installation-panel .installation-candidate button"]);
+  assert.equal(
+    reading.reason,
+    "game_lifecycle_not_activated",
+    "the driver walked past the registration into the lifecycle, which is where this run root stands",
+  );
+
+  // The same module, the same page, and the waiter that kills it: this is the reading above, reproduced
+  // without a browser, so a call site that reaches for the page-first spelling fails here instead of in a run.
+  await assert.rejects(
+    registerInstallation({
+      page: installerPage(),
+      say: () => {},
+      record: () => {},
+      problems: new Map(),
+      waitForState,
+      budgets: INSTALLER_BUDGETS,
+      state: { ok: true, prerequisites: "none" },
+    }),
+    /page\.evaluate is not a function/u,
+    "a page-first waiter is not the shape an installer may be handed",
+  );
+  // And the bound one is: the same contract, polled on the page the driver owns.
+  const bound = stateWaiter(installerPage());
+  assert.equal(typeof bound, "function");
+  const settled = await bound((state) => state.prerequisites === "met", 400);
+  assert.equal(settled.settled, false, "a fresh run root has not been confirmed yet, and the bound waiter says so");
 });
