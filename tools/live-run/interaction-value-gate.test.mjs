@@ -168,8 +168,14 @@ test("three bare step reports and no remark about the player fail clauses 4 and 
   );
   const remark = clauseFor(report, "player_or_day_rate");
   assert.equal(remark.state, "fail");
-  assert.equal(remark.observed.remarks, 0);
-  assert.equal(remark.reason, "fewer_remarks_than_one_per_five_minutes");
+  assert.deepEqual(
+    { spoken: remark.observed.spoken, counted: remark.observed.counted, dropped: remark.observed.dropped },
+    { spoken: 3, counted: 0, dropped: 3 },
+    "a run whose every bubble is a step report counts nothing, and the three it dropped are accounted for",
+  );
+  assert.deepEqual(remark.observed.droppedByRegister, { step_report: 3, obstacle: 0, choice: 0, other: 0 });
+  assert.equal(remark.observed.droppedReason, "neither_speaks_to_the_player_nor_locates_the_day");
+  assert.equal(remark.reason, "fewer_player_or_day_remarks_than_one_per_five_minutes");
   assert.equal(remark.observed.rateWindowMinutes, 29, "the denominator is the run's own window, not the speech span");
   assert.equal(report.measurements.register.counts.step_report, 3);
   assert.equal(report.measurements.spokenLines.count, 3);
@@ -587,6 +593,158 @@ test("a second person or a day reference makes a line player_or_day, and neither
   // A day word inside a clause that is itself a finished action does not turn a chore into a remark about the day.
   assert.equal(classifySpokenLine("擦黑前我把草清了，石头还堆在那儿").register, "other");
   assert.equal(classifySpokenLine("擦黑前我把草清了，石头还堆在那儿").basis, null);
+  assert.equal(classifySpokenLine("擦黑前我把草清了，石头还堆在那儿").playerOrDay, null);
+});
+
+// One line can answer two questions at once, and before this rule only one answer survived: the register's winner.
+// MEASURED `round88` (2026-11-21): the clause counted 3 of the run's 34 spoken lines, because six remarks about the
+// night or the afternoon had been claimed by the obstacle and choice rules first, and two of them named a light the
+// vocabulary did not hold (`天黑` was left out while the register WAS the population, on the grounds that it is an
+// obstacle word).
+test("a line that is both a setback and a remark about the night answers both clauses", () => {
+  const nightfall = "这身子卡在原地看着不动，等着缓过来。天都黑透了，我得赶紧回农场。";
+  assert.equal(classifySpokenLine(nightfall).register, "obstacle", "it is still a setback for the clause that asks");
+  assert.deepEqual(
+    classifySpokenLine(nightfall).playerOrDay,
+    { basis: "day_only", matched: "黑透" },
+    "and it is still a remark about the hour for the clause that asks that",
+  );
+  for (const text of [
+    "天都黑下来了，这条回农场的路真够长。",
+    "西南角落还剩一丛草，前面压着石头够不着，先不管它。天擦黑了，我收工回屋。",
+    "这身体就这么僵在河边，天倒是彻底黑透了。我再晾它一会儿。",
+  ]) {
+    assert.equal(classifySpokenLine(text).playerOrDay?.basis, "day_only", `${text} names the state of the light`);
+  }
+
+  // A decision handed over is still a choice, and the afternoon it names is still a remark about the day.
+  const choice = "两棵花椰菜苗浇透了，壶里还剩三十八格水。下午还剩一大截，我上河边再甩两竿，还是留在农场清那片杂草？";
+  assert.equal(classifySpokenLine(choice).register, "choice");
+  assert.equal(classifySpokenLine(choice).playerOrDay?.basis, "day_only");
+
+  // The address outranks the day for the SUB-count, which exists to say whether she talked to the player at all.
+  assert.equal(classifySpokenLine("十点了。你要是摸黑回来，屋里有个活人").playerOrDay?.basis, "addressed_to_player");
+});
+
+// `round88`'s own lines, verbatim and in order, with the minute each one was spoken: the run's own bundle
+// (`.live-runs/game-ladder/2026-11-21T17-48-27-810Z-multiday_routine`) recorded 34 assistant text parts over 16 turns,
+// 11 of which reached the player as bubbles, and the gate published `3 remarks in 24.38 min` - `failed`. The three the
+// old rule found are real remarks; the six it missed are too, and this is the whole population they were measured from.
+const ROUND88_SPEECH = [
+  [0.68, "门口三棵花椰菜都熟了，我先收了，再把剩下两包种子点进去。"],
+  [0.84, "三棵花椰菜都进包了，剩下的种子我正往地里点。"],
+  [0.975, "收到，钓条鱼回来是吧。我先去北边那片水塘蹲着甩两竿。"],
+  [1.102, "水边那丛草挡着站脚的地方，我先拿镰刀刮了再下竿。"],
+  [1.645, "这片塘边水线和站脚的地方对不上，我往南边那片水塘去试试。"],
+  [2.108, "南边这塘水面够宽，站脚的地方也齐，我到边上就下竿。"],
+  [2.225, "北边那塘边站不住脚，我绕过来换南边这片水面，这就到岸边了。"],
+  [2.365, "这塘四周全是挡死的地块，站不到水边。我上后山那片湖去，那儿岸边踏实。"],
+  [2.499, "北边那个出口正中间压着一丛草，我先刮掉再往山上走。"],
+  [3.005, "山口正堵着一丛大灌木，推不动。我从隧道那边绕上去。"],
+  [3.185, "隧道那头也堵死了。算了，我回农场把南塘哪几格能站人摸清，别再瞎撞。"],
+  [3.402, "农场这两片水面全都下不去竿，我往南边森林那条河去碰碰。"],
+  [4.536, "两条小嘴鲈鱼进包了，这条任务算盘上了。再甩两竿就回农场，别光顾着钓忘了浇那两棵苗。"],
+  [4.901, "三条鲈鱼够了，我收竿回农场，顺路把那两棵苗浇上。"],
+  [5.567, "鱼竿收了，三条鲈鱼搁包里。我到门口那两棵苗边上了，先把水浇上。"],
+  [6.023, "两棵花椰菜苗浇透了，壶里还剩三十八格水。下午还剩一大截，我上河边再甩两竿，还是留在农场清那片杂草？"],
+  [8.033, "包里那两颗混合种子点下去了，一颗防风草一颗土豆，水也浇了。"],
+  [9.547, "西南角落还剩一丛草，前面压着石头够不着，先不管它。天擦黑了，我收工回屋。"],
+  [11.485, "睡到第六天清早了，出货箱结进五百三十五块。我出门先把那几棵苗浇上。"],
+  [11.797, "熔炉要二十块铜加二十五块石头，我包里铜才五块，得先出去敲一批。我先出门把苗浇了。"],
+  [12.117, "农场这几块石头我挨个敲了，能出几块铜算几块，凑够二十就做熔炉。"],
+  [12.73, "农场石头全敲完，铜一块没多，倒敲出五颗钻石。铜还得去矿洞里找，我上后山看看路通不通。"],
+  [13.13, "山口那丛大灌木把整条道堵死了。我从南边公交站绕镇子那边上去，看能不能通到矿洞口。"],
+  [13.3, "山口、隧道、公交站三条路全堵死了。矿洞今天去不成，我先回农场，砍树攒点木头，宝箱也是个好帮手。"],
+  [13.882, "树都倒了，地上木材撒了一地，我先捡干净。"],
+  [15.485, "熔炉那二十块铜实在凑不出来，我先做了个宝箱档房子南边，石头全塞进去了，顺手。你镇上那边办得怎么样了？"],
+  [16.706, "两棵苗都浇透了。手上这点体力也懒得再干重活，我歇一会儿。"],
+  [19.598, "竿甩下去了，水面有动静，我盯着浮标等咬钩。"],
+  [20.652, "浮标瞪了半天没鱼咬，收竿了。天擦黑，我回农场。"],
+  [20.761, "天都黑下来了，这条回农场的路真够长。"],
+  [22.315, "这身子卡在原地看着不动，等着缓过来。天都黑透了，我得赶紧回农场。"],
+  [22.418, "我这儿还杵在原地不动，怎么催都不挪。等它缓过劲我再往回走。"],
+  [23.565, "这身子就这么僵在河边，天倒是彻底黑透了。我再晾它一会儿。"],
+  [24.552, "我这人卡在河边死活不动，催几遍都跟钉住一样。天都黑透了，再这么耗下去，真怕捱过一点半被哈维抬回去扣钱。"],
+];
+
+/** The nine of `round88`'s lines that speak of the player or the day, verbatim: the population, not a ratio. */
+const ROUND88_COUNTED = [
+  "两棵花椰菜苗浇透了，壶里还剩三十八格水。下午还剩一大截，我上河边再甩两竿，还是留在农场清那片杂草？",
+  "西南角落还剩一丛草，前面压着石头够不着，先不管它。天擦黑了，我收工回屋。",
+  "睡到第六天清早了，出货箱结进五百三十五块。我出门先把那几棵苗浇上。",
+  "熔炉那二十块铜实在凑不出来，我先做了个宝箱档房子南边，石头全塞进去了，顺手。你镇上那边办得怎么样了？",
+  "浮标瞪了半天没鱼咬，收竿了。天擦黑，我回农场。",
+  "天都黑下来了，这条回农场的路真够长。",
+  "这身子卡在原地看着不动，等着缓过来。天都黑透了，我得赶紧回农场。",
+  "这身子就这么僵在河边，天倒是彻底黑透了。我再晾它一会儿。",
+  "我这人卡在河边死活不动，催几遍都跟钉住一样。天都黑透了，再这么耗下去，真怕捱过一点半被哈维抬回去扣钱。",
+];
+
+test("round88's own 34 lines: 9 speak of the player or the day, and the two populations are printed side by side", (t) => {
+  const runDir = writeRun(t, {
+    timeline: [lifecycle(0), milestone(0, "1200"), milestone(24, "1410"), receipt(21, "succeeded", "fish_caught")],
+    session: [
+      header(0),
+      playerLine("你去钓条鱼回来吧", 0.9),
+      ...ROUND88_SPEECH.map(([minutes, text]) => assistant(text, minutes)),
+      toolResult(24.6),
+    ],
+  });
+
+  const report = assessInteractionValue({ runDir });
+  const clause = clauseFor(report, "player_or_day_rate");
+  const population = report.measurements.ratePopulation;
+
+  assert.equal(report.measurements.spokenLines.count, 34, "the run said 34 lines, and every one is in the population");
+  assert.deepEqual(
+    {
+      spoken: population.spoken,
+      counted: population.counted,
+      dropped: population.dropped,
+      droppedByRegister: population.droppedByRegister,
+      addressedToPlayer: population.addressedToPlayer,
+      dayOnly: population.dayOnly,
+    },
+    {
+      spoken: 34,
+      counted: 9,
+      dropped: 25,
+      droppedByRegister: { step_report: 0, obstacle: 4, choice: 0, other: 21 },
+      addressedToPlayer: 1,
+      dayOnly: 8,
+    },
+    "3 of 34 was the old rule's answer to a different question; the nine here are the population it was asking about",
+  );
+  assert.deepEqual(
+    report.measurements.lines.filter((line) => line.playerOrDay !== null).map((line) => line.text),
+    ROUND88_COUNTED,
+    "the counted population, line by line, so the next reader can argue with the nine instead of a ratio",
+  );
+
+  assert.equal(
+    clause.state,
+    "pass",
+    "9 remarks in 24 minutes is 1.86 per five minutes, and the old reading called it 0.62",
+  );
+  assert.equal(clause.reason, null);
+  assert.equal(clause.observed.perFiveMinutes, 1.88);
+  assert.equal(clause.observed.rateWindowMinutes, 24);
+  assert.deepEqual(
+    clause.evidence.map((entry) => entry.text),
+    ROUND88_COUNTED.slice(0, 5),
+    "the clause quotes the population it counted, not only the three the register had claimed",
+  );
+
+  const table = formatInteractionValueTable(report);
+  assert.match(
+    table,
+    /player_or_day_rate +pass +9 of 34 spoken line\(s\) about the player or the day in 24 min \(need 1 per 5\) · dropped 25 \{obstacle: 4, other: 21\}/u,
+    "the two populations are printed side by side, with what each dropped line was",
+  );
+  assert.match(
+    table,
+    /remarks 9 of 34 spoken line\(s\) about the player or the day \| 1 addressed to the player \| 8 day only/u,
+  );
 });
 
 // The measurement that failed the 2026-11-05 multiday run - `1 remarks in 14.64 min` - was this classifier's, not the
@@ -609,12 +767,17 @@ test("a run that talks to the player at ordinary moments clears the rate clause 
   const clause = clauseFor(report, "player_or_day_rate");
 
   assert.equal(clause.state, "pass");
-  assert.equal(clause.observed.remarks, 5);
+  assert.equal(clause.observed.counted, 5);
   assert.equal(clause.observed.rateWindowMinutes, 25, "the denominator is still the run's window, unchanged");
   assert.equal(clause.observed.perFiveMinutes, 1);
   assert.deepEqual(
-    report.measurements.register.player_or_day,
-    { addressed_to_player: 4, day_only: 1 },
+    {
+      counted: report.measurements.ratePopulation.counted,
+      addressedToPlayer: report.measurements.ratePopulation.addressedToPlayer,
+      dayOnly: report.measurements.ratePopulation.dayOnly,
+      dropped: report.measurements.ratePopulation.dropped,
+    },
+    { counted: 5, addressedToPlayer: 4, dayOnly: 1, dropped: 0 },
     "the sub-count separates a companion that talks to you from one that narrates the clock",
   );
   assert.deepEqual(
@@ -626,7 +789,7 @@ test("a run that talks to the player at ordinary moments clears the rate clause 
   // The same run under the rule this replaces: zero remarks, and the clause it failed.
   const retiredRemarks = spoken.filter((text) => RETIRED_PLAYER_OR_DAY.test(text)).length;
   assert.equal(retiredRemarks, 0, "the retired phrase bag recognised none of the five lines");
-  assert.equal(retiredRemarks, clause.observed.remarks - 5, "every remark counted here is one it missed");
+  assert.equal(retiredRemarks, clause.observed.counted - 5, "every remark counted here is one it missed");
   assert.ok(
     retiredRemarks * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES < clause.observed.rateWindowMinutes,
     "so the retired rule failed this clause on this run (0 * 5 < 25) while the structural rule passes it (5 * 5 >= 25)",

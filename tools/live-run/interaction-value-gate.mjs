@@ -51,15 +51,37 @@
  *   <li><b>player_or_day</b> - an unprompted remark about the PLAYER or the day, not about the task. Two structural
  *   asks, either one enough: the line <b>addresses the player</b> (a 你/您 that is not the plural 你们 or the greeting
  *   你好/您早), or it <b>locates the day</b> - a named part of it (清早/中午/傍晚/半夜), a clock reading with its own
- *   suffix (十点了/六点半), the state of the light (天亮/擦黑/天色/入夜), or bedtime itself (晚安/早点睡). A day word
- *   only counts in a clause
- *   that is not itself a finished action, so "擦黑前我把草清了" stays the chore it is. This rule used to be a list of
+ *   suffix (十点了/六点半), the state of the light (天亮/擦黑/黑了/黑透), or bedtime itself (晚安/早点睡). A day word
+ *   only counts in a clause that is not itself a finished action, so "擦黑前我把草清了" stays the chore it is. This rule
+ *   used to be a list of
  *   care collocations with the player (你累/你先歇/晚安/早点睡), and the 2026-11-05 multiday run - ten lines to the
  *   player, not one of them a collocation - was measured as a single remark. The lesson is the same one the rule above
  *   already encodes: second person is proof a line is not a report, so it is proof it is speaking to someone.</li>
  *   <li><b>other</b> - the residual: a line that neither reports, nor names a setback, nor hands over a decision, nor
  *   speaks to the player. It is a line the classifier does not recognise, never a line that is fine.</li>
  * </ol>
+ *
+ * <h2>The register is a partition; the player-or-day tie is not</h2>
+ *
+ * <p>
+ * The register above is a partition - every line lands in exactly one of its five members - because clauses 3 and 4 read
+ * the lines: an obstacle line is not a step report, and a step report is not an obstacle. Clause 1 asks a different
+ * question of the same lines: did she say anything about the person or the day, or only about the task? One line can
+ * answer both - "这身子卡在原地…天都黑透了" is a setback AND a remark about the night - and while the tie was read off the
+ * register, whichever rule won first hid the other reading. MEASURED `round88` (2026-11-21): 34 spoken lines inside 11
+ * bubbles over 24.4 wall-minutes, and the clause counted **3** and failed the run at 0.62 remarks per five minutes. The
+ * same 34 lines hold **9** remarks about the player or the day - 1 addressed to the player, 8 naming the hour - because
+ * 6 of them were invisible: two were claimed by the obstacle and choice rules first (a setback that also said 擦黑, a
+ * question that also said 下午), and four named a light the vocabulary did not hold (黑下来了/黑透了, said four times
+ * after sunset).
+ * </p>
+ *
+ * <p>
+ * So `playerOrDay` is recorded on EVERY line, computed from the two structural asks alone, and the register keeps its
+ * first-rule-wins order for the clauses that read the partition. The day vocabulary gained 黑了/黑透 with this change:
+ * `天黑` was left out while the register was the population, on the grounds that it is an obstacle word - which stopped
+ * being a reason the moment one line could be both.
+ * </p>
  *
  * <h2>Clauses: `not_exercised` is not a pass</h2>
  *
@@ -68,6 +90,15 @@
  * `verdict: "passed"`. `not_exercised` carries the fact that stopped it (no player input was found, the world never
  * refused anything) so a reader can tell an untriggered clause from a satisfied one; the verdict is `failed` for any
  * run whose gate did not pass, and `not_established` only when the session could not be bound to the run at all.
+ * </p>
+ *
+ * <p>
+ * Clause 1 publishes three numbers, not one: `spoken` (every line she said in the bound session), `counted` (those
+ * speaking of the player or the day) and `dropped` (the rest, grouped by the register that claimed them, with the one
+ * reason they share). A run whose every line is a step report therefore counts zero and fails for that reason, and 9 of
+ * 34 lines cannot be read as if all 34 had been judged. `spoken`, not "delivered": the session record is what this
+ * module holds, and `round88` presented 29 of its 34 parts - whether a line reached the player is the delivery
+ * account's fact, not this file's.
  * </p>
  *
  * <p>
@@ -130,12 +161,11 @@ const PLAN = /先|然后|接着|再|换个|绕|去拿|回头|一会儿|待会|�
 /**
  * A word that locates the day rather than the task: a named part of it, a clock reading, or the state of the light.
  *
- * The clock form requires its own suffix (`了`/`半`/`钟`/`整`), so "a bit faster" (快一点) is not a time of day. `天黑`
- * is deliberately absent: it is an obstacle word, checked before this rule, and a second spelling of one fact is how the
- * two drift apart.
+ * The clock form requires its own suffix (`了`/`半`/`钟`/`整`), so "a bit faster" (快一点) is not a time of day. The light
+ * is spelled many ways because the companion does: `round88` said 擦黑 once and 黑了/黑下来/黑透 four times after sunset.
  */
 const DAY_REFERENCE =
-  /清早|早上|早晨|上午|中午|下午|傍晚|夜里|半夜|深夜|凌晨|今晚|昨儿晚|昨晚|明早|天亮|擦黑|天色|入夜|晚安|早点(?:睡|歇|休息)|(?:十|十一|十二|[一二三四五六七八九两])点(?:了|半|钟|整)/u;
+  /清早|早上|早晨|上午|中午|下午|傍晚|夜里|半夜|深夜|凌晨|今晚|昨儿晚|昨晚|明早|天亮|擦黑|天色|入夜|天黑|黑了|黑下来|黑透|晚安|早点(?:睡|歇|休息)|(?:十|十一|十二|[一二三四五六七八九两])点(?:了|半|钟|整)/u;
 
 /** The clause boundary every rule in this file splits on. */
 const CLAUSE_SEPARATOR = /[，,、。；;！!？?\n]+/u;
@@ -171,34 +201,56 @@ const STOP_TOKENS = new Set([
   "东西",
 ]);
 
-/** The register tally, empty: the counts, and the two kinds of `player_or_day` remark kept apart. */
+/** The register tally, empty: which of the five kinds of line she spoke, and nothing else. */
 function emptyRegister() {
-  return {
-    counts: { step_report: 0, obstacle: 0, choice: 0, player_or_day: 0, other: 0 },
-    player_or_day: { addressed_to_player: 0, day_only: 0 },
-  };
+  return { counts: { step_report: 0, obstacle: 0, choice: 0, player_or_day: 0, other: 0 } };
+}
+
+/** Which of the five kinds of line she spoke. The player-or-day population is counted apart, by `ratePopulation`. */
+function tallyRegisters(lines) {
+  const register = emptyRegister();
+  for (const line of lines) register.counts[line.register] += 1;
+  return register;
 }
 
 /**
- * Every spoken line counted by register, and the `player_or_day` remarks split by which structural ask found them.
+ * The rate clause's population: every line she said, which of them speak of the player or the day, and what the rest
+ * were.
  *
- * The split is not gated: it is what tells a reader whether the run talked to the player or merely narrated the clock.
+ * A dropped line has one reason - it neither addressed the player nor located the day - and the register that claimed it
+ * is published beside that count, so a reader can see whether the clause dropped four setbacks or twenty-one chore
+ * reports instead of being told a ratio.
  */
-function tallyRegisters(lines) {
-  const register = emptyRegister();
+function ratePopulation(lines) {
+  const droppedByRegister = { step_report: 0, obstacle: 0, choice: 0, other: 0 };
+  let counted = 0;
+  let addressedToPlayer = 0;
+  let dayOnly = 0;
   for (const line of lines) {
-    register.counts[line.register] += 1;
-    if (line.basis === "addressed_to_player") register.player_or_day.addressed_to_player += 1;
-    if (line.basis === "day_only") register.player_or_day.day_only += 1;
+    if (line.playerOrDay === null) {
+      droppedByRegister[line.register] += 1;
+      continue;
+    }
+    counted += 1;
+    if (line.playerOrDay.basis === "addressed_to_player") addressedToPlayer += 1;
+    else dayOnly += 1;
   }
-  return register;
+  return {
+    spoken: lines.length,
+    counted,
+    dropped: lines.length - counted,
+    droppedByRegister,
+    droppedReason: "neither_speaks_to_the_player_nor_locates_the_day",
+    addressedToPlayer,
+    dayOnly,
+  };
 }
 
 const isTime = (value) => typeof value === "number" && Number.isFinite(value);
 
 /** The clauses, in the order the gate reports them. */
 const CLAUSE_REQUIREMENTS = Object.freeze([
-  { id: "player_or_day_rate", requirement: ">= 1 player_or_day remark per 5 wall-minutes" },
+  { id: "player_or_day_rate", requirement: ">= 1 remark about the player or the day per 5 wall-minutes" },
   { id: "player_agency", requirement: ">= 1 player input with an observable consequence" },
   { id: "obstacle_with_plan", requirement: ">= 1 obstacle narrated WITH a next plan (quoted pair)" },
   { id: "no_step_reports", requirement: "0 step_report lines" },
@@ -351,19 +403,34 @@ export function classifySpokenLine(text) {
   const line = String(text ?? "")
     .replace(SELF_TAG, "")
     .trim();
-  if (line.length === 0) return { register: "other", matched: null, basis: null };
+  if (line.length === 0) return { register: "other", matched: null, basis: null, playerOrDay: null };
+  // Read before the register is decided, because the two questions are not exclusive: a line can be a setback and a
+  // remark about the night, and clause 1 asks the second question of every line.
+  const playerOrDay = playerOrDayTie(line);
   if (isStepReport(line))
-    return { register: "step_report", matched: "every_clause_is_a_completed_action", basis: null };
+    return { register: "step_report", matched: "every_clause_is_a_completed_action", basis: null, playerOrDay };
   const obstacle = OBSTACLE.exec(line);
-  if (obstacle !== null) return { register: "obstacle", matched: obstacle[0], basis: null };
+  if (obstacle !== null) return { register: "obstacle", matched: obstacle[0], basis: null, playerOrDay };
   // Before the player-or-day rule: a decision handed over is a choice even when it is also addressed to the player.
   const choice = CHOICE.exec(line);
-  if (choice !== null) return { register: "choice", matched: choice[0], basis: null };
+  if (choice !== null) return { register: "choice", matched: choice[0], basis: null, playerOrDay };
+  if (playerOrDay !== null)
+    return { register: "player_or_day", matched: playerOrDay.matched, basis: playerOrDay.basis, playerOrDay };
+  return { register: "other", matched: null, basis: null, playerOrDay: null };
+}
+
+/**
+ * Which of the two structural asks finds the player or the day in this line, whichever register later claims it.
+ *
+ * The address is checked first so a line that does both ("十点了，你要是摸黑回来") is recorded as the address: the
+ * sub-count exists to say whether the run talked to the player at all.
+ */
+function playerOrDayTie(line) {
   const address = playerAddress(line);
-  if (address !== null) return { register: "player_or_day", matched: address, basis: "addressed_to_player" };
+  if (address !== null) return { basis: "addressed_to_player", matched: address };
   const day = dayReference(line);
-  if (day !== null) return { register: "player_or_day", matched: day, basis: "day_only" };
-  return { register: "other", matched: null, basis: null };
+  if (day !== null) return { basis: "day_only", matched: day };
+  return null;
 }
 
 function clausesOf(line) {
@@ -475,8 +542,8 @@ function collectSpokenLines(messages) {
   for (const message of messages) {
     if (message.role !== "assistant") continue;
     for (const text of textParts(message.content)) {
-      const { register, matched, basis } = classifySpokenLine(text);
-      lines.push({ atMs: message.atMs, text, register, matched, basis });
+      const { register, matched, basis, playerOrDay } = classifySpokenLine(text);
+      lines.push({ atMs: message.atMs, text, register, matched, basis, playerOrDay });
     }
   }
   return lines.sort((left, right) => (left.atMs ?? 0) - (right.atMs ?? 0));
@@ -778,10 +845,22 @@ function assessClauses({
 }) {
   const indexesWhere = (register) =>
     lines.map((line, index) => (line.register === register ? index : -1)).filter((index) => index >= 0);
-  const playerOrDayIndexes = indexesWhere("player_or_day");
+  const population = ratePopulation(lines);
+  const countedIndexes = lines
+    .map((line, index) => (line.playerOrDay === null ? -1 : index))
+    .filter((index) => index >= 0);
   const stepReportIndexes = indexesWhere("step_report");
   const obstacleIndexes = indexesWhere("obstacle");
   const clauses = [];
+  const rateObserved = {
+    spoken: population.spoken,
+    counted: population.counted,
+    dropped: population.dropped,
+    droppedByRegister: population.droppedByRegister,
+    droppedReason: population.droppedReason,
+    addressedToPlayer: population.addressedToPlayer,
+    dayOnly: population.dayOnly,
+  };
 
   // Clause 1: a companion that never says anything about the player or the day is narrating a task, not accompanying.
   if (lines.length === 0) {
@@ -789,26 +868,26 @@ function assessClauses({
       clause(
         "player_or_day_rate",
         "fail",
-        { remarks: 0, rateWindowMinutes: 0, perFiveMinutes: 0 },
+        { ...rateObserved, rateWindowMinutes: 0, perFiveMinutes: 0 },
         [],
         "no_spoken_lines",
       ),
     );
   } else if (rateWindowMinutes > 0) {
-    const perFiveMinutes = (playerOrDayIndexes.length / rateWindowMinutes) * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES;
-    const pass = playerOrDayIndexes.length * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES >= rateWindowMinutes;
+    const perFiveMinutes = (population.counted / rateWindowMinutes) * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES;
+    const pass = population.counted * PLAYER_OR_DAY_REMARK_PER_WALL_MINUTES >= rateWindowMinutes;
     clauses.push(
       clause(
         "player_or_day_rate",
         pass ? "pass" : "fail",
         {
-          remarks: playerOrDayIndexes.length,
+          ...rateObserved,
           rateWindowMinutes: Number(rateWindowMinutes.toFixed(2)),
           perFiveMinutes: Number(perFiveMinutes.toFixed(2)),
           speechSpanMinutes: Number(speechSpanMinutes.toFixed(2)),
         },
-        quoteLines(lines, playerOrDayIndexes),
-        pass ? null : "fewer_remarks_than_one_per_five_minutes",
+        quoteLines(lines, countedIndexes),
+        pass ? null : "fewer_player_or_day_remarks_than_one_per_five_minutes",
       ),
     );
   } else {
@@ -816,8 +895,8 @@ function assessClauses({
       clause(
         "player_or_day_rate",
         "not_exercised",
-        { remarks: playerOrDayIndexes.length, rateWindowMinutes: null, perFiveMinutes: null },
-        quoteLines(lines, playerOrDayIndexes),
+        { ...rateObserved, rateWindowMinutes: null, perFiveMinutes: null },
+        quoteLines(lines, countedIndexes),
         "wall_window_unmeasured",
       ),
     );
@@ -965,6 +1044,9 @@ export function assessInteractionValue(input = {}) {
       lastAtMs: null,
     },
     register: emptyRegister(),
+    // What clause 1 counted and what it left out: every spoken line, the ones about the player or the day, and the rest
+    // grouped by the register that claimed them.
+    ratePopulation: ratePopulation([]),
     playerAgency: { inputs: [], withConsequence: 0, noConsequence: 0 },
     longestSilence: { longest: null, measuredBetweenLines: false, headMs: null, tailMs: null },
     // Why this file and no other: the window the population was filtered by, how many were seen, how many the name
@@ -1049,6 +1131,7 @@ export function assessInteractionValue(input = {}) {
     lastAtMs: timed.length === 0 ? null : timed[timed.length - 1].atMs,
   };
   measurements.register = register;
+  measurements.ratePopulation = ratePopulation(lines);
   measurements.longestSilence = measureSilence({
     lines,
     runStartMs: runWindow.startMs,
@@ -1101,6 +1184,20 @@ export function assessInteractionValue(input = {}) {
   });
 }
 
+/** `{other: 21, obstacle: 4}` - the registers a clause's dropped lines belonged to, empties omitted. */
+function registerCounts(counts) {
+  const named = Object.entries(counts ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([register, count]) => `${register}: ${count}`);
+  return named.length === 0 ? "none" : named.join(", ");
+}
+
+/** The dropped half of the rate clause's accounting, or nothing when it counted every line. */
+function droppedText(dropped, droppedByRegister) {
+  if (dropped === 0) return "";
+  return ` · dropped ${dropped} {${registerCounts(droppedByRegister)}}`;
+}
+
 /** `1830` -> `30.5 game-hours`; a reader should not have to divide by sixty. */
 function gameHours(minutes) {
   return `${(minutes / 60).toFixed(1)} game-h`;
@@ -1108,9 +1205,11 @@ function gameHours(minutes) {
 
 function measuredFor(entry) {
   if (entry.id === "player_or_day_rate") {
+    const population = `${entry.observed.counted ?? 0} of ${entry.observed.spoken ?? 0} spoken line(s) about the player or the day`;
+    const dropped = droppedText(entry.observed.dropped ?? 0, entry.observed.droppedByRegister);
     if (entry.observed.rateWindowMinutes === null || entry.observed.rateWindowMinutes === undefined)
-      return `${entry.observed.remarks ?? 0} remarks, wall window unmeasured (need 1 per 5 min)`;
-    return `${entry.observed.remarks ?? 0} remarks in ${entry.observed.rateWindowMinutes} min (need 1 per 5)`;
+      return `${population}${dropped}, wall window unmeasured (need 1 per 5 min)`;
+    return `${population} in ${entry.observed.rateWindowMinutes} min (need 1 per 5)${dropped}`;
   }
   if (entry.id === "player_agency")
     return `${entry.observed.withConsequence ?? 0} of ${entry.observed.inputs ?? 0} inputs changed something`;
@@ -1160,6 +1259,8 @@ export function formatInteractionValueTable(report) {
       : `${(silence.wallMs / 60_000).toFixed(1)} min${
           silence.gameMinutes === null ? "" : ` / ${gameHours(silence.gameMinutes)}`
         }, ${silence.world === null ? "world activity unmeasured" : `${silence.world.total} fact(s) during it`}`;
+  // `register` is the KIND of each line - one member per line, so the five add up to the lines above - and it is not
+  // the rate population: a setback that also names the hour is classified `obstacle` here and counted as a remark below.
   rows.push(
     `lines ${spoken.count} | wall ${spoken.wallMinutes} min | ${game} | longest silence ${silentText} | register ${Object.entries(
       report.measurements.register.counts,
@@ -1167,12 +1268,16 @@ export function formatInteractionValueTable(report) {
       .map(([register, count]) => `${register}=${count}`)
       .join(" ")}`,
   );
-  // The rate clause counts both kinds; a reader deciding whether the companion accompanied anyone needs them apart.
-  const remarks = report.measurements.register.player_or_day;
+  // The rate clause's three numbers; a reader deciding whether the companion accompanied anyone needs both populations,
+  // not the counted one alone.
+  const population = report.measurements.ratePopulation;
   rows.push(
-    `remarks ${remarks.addressed_to_player + remarks.day_only} player_or_day | ${
-      remarks.addressed_to_player
-    } addressed to the player | ${remarks.day_only} day only`,
+    `remarks ${population.counted} of ${population.spoken} spoken line(s) about the player or the day | ${
+      population.addressedToPlayer
+    } addressed to the player | ${population.dayOnly} day only${droppedText(
+      population.dropped,
+      population.droppedByRegister,
+    )}`,
   );
   return rows.join("\n");
 }
