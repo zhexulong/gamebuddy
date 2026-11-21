@@ -26,7 +26,10 @@ import {
   CHAIN_NAMES,
   CHAIN_STEPS,
   describeChainAlignment,
-  GAP_PREFIX,
+  ELSEWHERE_OWNERS,
+  ELSEWHERE_PREFIX,
+  driverForm,
+  elsewhereSteps,
   measuredDrivers,
   namedGaps,
   STEP_KINDS,
@@ -78,14 +81,14 @@ test("the alignment counts are the vocabulary's own, chain by chain", () => {
   const lines = describeChainAlignment();
   assert.equal(
     lines[0],
-    `CHAIN-ALIGNMENT examined ${String(CHAIN_STEPS.length)} declaration(s): ${String(reading.measured)} measured by a driver, ${String(reading.gaps)} named gap(s)`,
+    `CHAIN-ALIGNMENT examined ${String(CHAIN_STEPS.length)} declaration(s): ${String(reading.measured)} measured by a driver, ${String(reading.gaps)} named gap(s), ${String(reading.elsewhere)} owned elsewhere`,
   );
   for (const chain of CHAIN_NAMES) {
     const steps = stepsOfChain(chain);
-    const gaps = steps.filter((entry) => entry.driver.startsWith("gap:")).length;
+    const where = (form) => steps.filter((entry) => driverForm(entry) === form).length;
     assert.ok(
       lines.includes(
-        `CHAIN-ALIGNMENT ${chain}: ${String(steps.length)} declaration(s), ${String(steps.length - gaps)} measured, ${String(gaps)} gap(s)`,
+        `CHAIN-ALIGNMENT ${chain}: ${String(steps.length)} declaration(s), ${String(where("measured"))} measured, ${String(where("gap"))} gap(s), ${String(where("elsewhere"))} elsewhere`,
       ),
       `${chain}'s count line is missing from the alignment block`,
     );
@@ -97,6 +100,71 @@ test("the alignment counts are the vocabulary's own, chain by chain", () => {
       .filter((gap) => gap.length === 0),
     [],
     "a gap step names no reason",
+  );
+});
+
+test("every declaration sits in exactly one of the three forms, and each population is printed", () => {
+  // THE PRINTING IS THE GATE. `elsewhere:` exists so a fact another lane owns is not called a gap and not
+  // called unmeasured - and a bucket that only ever grows is where a real gap goes to hide. So both buckets
+  // print their members, the three counts have to add up to the vocabulary, and every owner is a known lane.
+  const byForm = { measured: [], gap: [], elsewhere: [], unknown: [] };
+  for (const entry of CHAIN_STEPS) byForm[driverForm(entry)].push(entry.id);
+  assert.equal(
+    byForm.measured.length + byForm.gap.length + byForm.elsewhere.length + byForm.unknown.length,
+    CHAIN_STEPS.length,
+    `the three forms have to account for every declaration: measured ${JSON.stringify(byForm.measured)}, gap ${JSON.stringify(byForm.gap)}, elsewhere ${JSON.stringify(byForm.elsewhere)}, unknown ${JSON.stringify(byForm.unknown)}`,
+  );
+  assert.deepEqual(byForm.unknown, [], "a driver value that is neither a roster driver, gap: nor elsewhere:");
+  assert.ok(
+    byForm.elsewhere.length > 0,
+    "no step is owned elsewhere, so the third form has no member and nothing holds it",
+  );
+  const printed = describeChainAlignment().find((line) => line.startsWith("CHAIN-ALIGNMENT owned elsewhere:"));
+  assert.ok(printed !== undefined, "the alignment block has to print the elsewhere population, not only its size");
+  for (const member of byForm.elsewhere)
+    assert.ok(printed.includes(member), `${member} is missing from the printed population`);
+  for (const owned of elsewhereSteps()) {
+    assert.ok(
+      ELSEWHERE_OWNERS.includes(owned.owner),
+      `${owned.id} is owned by ${JSON.stringify(owned.owner)}, which is not one of ${ELSEWHERE_OWNERS.join(", ")}`,
+    );
+    const entry = CHAIN_STEPS.find((candidate) => candidate.id === owned.id);
+    assert.ok(
+      typeof entry.reason === "string" && entry.reason.trim().length > 0,
+      `${owned.id} steps out of this kit without a reason, so the next reader cannot tell a boundary from an oversight`,
+    );
+  }
+});
+
+test("the audit refuses an owner it does not know, a missing reason, and a driver value in no form at all", () => {
+  // Injected violations rather than a manual red run: the bucket has to stay guarded by the suite.
+  const play = CHAIN_STEPS.find((entry) => entry.id === "daily-play");
+  const stranger = audit({
+    entries: CHAIN_STEPS.map((entry) =>
+      entry.id === "daily-play" ? Object.freeze({ ...entry, driver: `${ELSEWHERE_PREFIX}some-lane` }) : entry,
+    ),
+  });
+  assert.ok(
+    stranger.problems.some(
+      (problem) => problem.code === "unknown_elsewhere_owner" && problem.detail.includes("some-lane"),
+    ),
+    `an owner outside the closed list must be refused by name:\n${describe(stranger.problems)}`,
+  );
+  const silent = audit({
+    entries: CHAIN_STEPS.map((entry) => (entry.id === "daily-play" ? Object.freeze({ ...entry, reason: "" }) : entry)),
+  });
+  assert.ok(
+    silent.problems.some((problem) => problem.code === "elsewhere_without_reason" && problem.detail.includes(play.id)),
+    `stepping out without a reason must be refused by name:\n${describe(silent.problems)}`,
+  );
+  const formless = audit({
+    entries: CHAIN_STEPS.map((entry) =>
+      entry.id === "daily-play" ? Object.freeze({ ...entry, driver: "  " }) : entry,
+    ),
+  });
+  assert.ok(
+    formless.problems.some((problem) => problem.code === "unknown_driver_form" && problem.detail.includes(play.id)),
+    `a driver value in none of the three forms must be refused by name:\n${describe(formless.problems)}`,
   );
 });
 
@@ -202,60 +270,32 @@ test("a cabin-seat step names the rung the driver records, not one of the two br
     );
 });
 
-test("daily-play names the account member the turn reader reads, and says it has no driver", () => {
+test("daily-play names the account member the turn reader reads, and names the lane that owns it", () => {
   // TWO FAILURES THIS HOLDS APART. A fact spelled by hand is a second spelling of the producer's vocabulary -
   // the step would keep reading as declared after `capture/turn-account.cjs` stopped printing or parsing that
-  // member. And a `driver:` here would claim a reading no driver in this kit can produce: every capture driver
-  // types into a browser, and the only producer of a `player_input` turn needs a keystroke in the game window.
+  // member. And this step must not be declared as something this kit produces: the words enter through the
+  // engine's own chat box, and the lane that speaks through that admission is the game lane.
   const play = CHAIN_STEPS.filter((entry) => entry.id === "daily-play");
   assert.equal(play.length, 1, "the daily chain has exactly one step for the player speaking to her");
   const [entry] = play;
+  assert.equal(
+    entry.driver,
+    `${ELSEWHERE_PREFIX}game-lane`,
+    `${entry.id} names \`${entry.driver}\`: sending a message inside the game is not the frontend's job, and a \`gap:\` here would read as work this kit owes`,
+  );
   assert.ok(
-    entry.driver.startsWith(GAP_PREFIX),
-    `${entry.id} names the driver "${entry.driver}": no driver in this kit puts keystrokes into the player host's window, so a driver here claims a reading nobody produces`,
+    !elsewhereSteps().some((owned) => owned.id === "daily-play-in-engine-chat") &&
+      CHAIN_STEPS.every((candidate) => candidate.id !== "daily-play-in-engine-chat"),
+    "the engine seam is part of the same step, not a second one: one rung, one owner, one fact",
+  );
+  assert.match(
+    entry.owner,
+    /run-stardew-native-local-agent-ab-live\.mjs/u,
+    `${entry.id}'s owner has to name the lane that speaks through the admission (the game lane's A/B run), not a module the frontend drives`,
   );
   assert.equal(
     entry.fact,
     `${turnAccount.TURN_ACCOUNT_FACT} ${turnAccount.PLAYER_INPUT}`,
     `${entry.id}'s fact must be the account member \`capture/turn-account.cjs\` reads (${turnAccount.TURN_ACCOUNT_FACT} + ${turnAccount.PLAYER_INPUT}), not a sentence about her trace`,
-  );
-});
-
-test("the player speaking to her has two rungs, and each names its own missing thing", () => {
-  // The interaction is declared twice because its two halves fail independently: the ADMISSION (the Host
-  // producing a `player_input` turn at all) and the ENGINE SEAM (a keystroke in the game's own chat box).
-  // Collapsing them into one `gap:` reason is how the difference between "nothing listens on either route this
-  // stage can speak to" and "OS input injection was removed on purpose" disappears from the map - and a reader
-  // who has only the second sentence goes looking for a driver to write instead of a boundary to reopen.
-  const [admission, engineChat] = ["daily-play", "daily-play-in-engine-chat"].map((id) =>
-    CHAIN_STEPS.filter((entry) => entry.id === id),
-  );
-  assert.equal(admission.length, 1, "rung 1: the words admitted while attached is one step");
-  assert.equal(engineChat.length, 1, "rung 2: the words typed through the engine's own chat box is its own step");
-  const [rung1] = admission;
-  const [rung2] = engineChat;
-  assert.ok(
-    rung1.driver.startsWith(GAP_PREFIX) && rung2.driver.startsWith(GAP_PREFIX),
-    "both rungs are gaps: no driver in this kit produces either reading",
-  );
-  assert.notEqual(
-    rung1.driver,
-    rung2.driver,
-    "one reason cannot name both: rung 1 has no route this stage can drive, rung 2 has an OS-input boundary in the way",
-  );
-  assert.equal(
-    rung2.driver,
-    `${GAP_PREFIX}no_os_input_injection`,
-    "rung 2's missing capability is the one `tools/README.md` removed by name: window focus and OS input injection",
-  );
-  assert.match(
-    rung2.fact,
-    /textBoxEnter/u,
-    `${rung2.id}'s fact has to name the engine seam it would be read from (\`ChatBox.textBoxEnter\`), not her trace`,
-  );
-  assert.match(
-    rung1.owner,
-    /acceptPlayerInput/u,
-    `${rung1.id}'s owner is the admission: the seam that mints the \`player_input\` turn and refuses it by name`,
   );
 });

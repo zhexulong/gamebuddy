@@ -18,23 +18,26 @@
 // whose fact no driver reads yet. The suffix says which reading is missing, and the document's open
 // items list owns the work.
 //
-// TWO KINDS, and a reader has to tell them apart or all of them read as missing product. Four of the
-// gaps are READING gaps: `owner.json`, the session document, the recovery journal and her client's trace
-// are written by any ordinary run and a driver only has to open a file that is already there. TWO are
-// INTERACTION gaps, and they are the TWO RUNGS of one interaction - the player saying something to her:
+// THREE FORMS OF DRIVER, and a reader has to tell them apart or all of them read as missing product.
 //
-//   `daily-play`                 the words ADMITTED while attached, and her account counting the turn it
-//                                 opened. The admission exists twice in the product and neither copy is
-//                                 reachable from this stage: the engine's chat box feeds it (rung 2) and
-//                                 `companion-control-server.ts` declares a `player_input` frame, but no entry
-//                                 starts that server and its launch credentials are minted into the child's
-//                                 environment only (`host/scripts/production-control-launch.mjs`).
-//   `daily-play-in-engine-chat`  the words TYPED through the engine's own ChatBox. The Mod's postfix is in
-//                                 place; what is missing is OS input injection into the game window, which
-//                                 `tools/README.md` removed on purpose.
+// MEASURED - the value is a roster driver that opens a world, prints the fact, and is held by
+// `chain-steps.test.mjs` against `phases/drivers.mjs` and the capture source itself.
 //
-// Collapsing the two into one `gap:` is how the first draft of this table lost the difference between
-// "nothing listens" and "nothing may press the key". `chain-steps.test.mjs` holds them apart by name.
+// `gap:<reason>` - the READING is missing: four of them are `owner.json`, the session document, the
+// recovery journal and her client's trace, written by any ordinary run and opened by nobody.
+//
+// `elsewhere:<owner>` - the FACT is not this kit's to produce at all. One step is declared this way:
+// `daily-play` (the player says something to her in the world). It belongs to the GAME LANE, because the
+// words enter through the engine's own chat box and press a key in a native window is not something a
+// kit that drives a browser can ever do: `ModEntry.cs:243,499,522` (the `ChatBox.textBoxEnter` postfix)
+// -> `HostService.acceptIntegrationFact` -> `acceptPlayerInput`, and the game lane already speaks through
+// that same admission (`tools/live-run/core/player-input-admission.mjs` via `tools.acceptPlayerText`,
+// used at `run-stardew-native-local-agent-ab-live.mjs:2164-2169`). `tools/README.md` § "Removed UI/XInput
+// automation" records why this kit does not type: window focus and OS input injection were removed on
+// purpose, because they conflict with the formal non-UI AI-Farmhand boundary.
+//
+// An `elsewhere:` step carries an `owner` from `ELSEWHERE_OWNERS` and a one-line `reason`, and
+// `chain-steps.test.mjs` prints the population of each form so a defect cannot be parked in the new one.
 //
 // Her turn account used to be a fifth reading gap and is not one any more: the Host prints
 // `GAME_TURN_ACCOUNT` on the product entry's stderr, `phases/launch.mjs` keeps those bytes in a file, and
@@ -56,6 +59,20 @@ export const STEP_KINDS = Object.freeze(["step", "exit", "branch"]);
  * driver opens it - which is a different sentence from "the product does not do this".
  */
 export const GAP_PREFIX = "gap:";
+
+/**
+ * The prefix that turns a step's `driver` into "a surface another lane owns", and the lanes that may own one.
+ *
+ * `elsewhere:game-lane` says this kit will never produce the fact, because the fact needs a keystroke in a
+ * native window and this kit drives a browser. The owner is a closed list on purpose: a free-text owner is
+ * the shape that turns a real gap into somebody else's problem with nobody's name on it.
+ */
+export const ELSEWHERE_PREFIX = "elsewhere:";
+
+export const ELSEWHERE_OWNERS = Object.freeze([
+  /** The two-player live-run lane: `tools/live-run/game/**` + `tools/live-run/core/player-input-admission.mjs`. */
+  "game-lane",
+]);
 
 const step = (entry) => Object.freeze({ kind: "step", ...entry });
 
@@ -288,44 +305,27 @@ export const CHAIN_STEPS = Object.freeze([
   step({
     id: "daily-play",
     chain: "daily",
-    title: "the player says something to her while attached, and the account counts the turn it opened",
-    // RUNG 1: THE ADMISSION. `HostService.acceptIntegrationFact` is where a `player_input` fact becomes
-    // `acceptPlayerInput` (`host-service.ts:985-1029`), then `pump.enqueuePlayerInput`, then the
-    // `player_input` opener in `GAME_TURN_ACCOUNT` - the same pump and the same session the world's facts
-    // open turns in. That admission has TWO producers in tree and neither is reachable from this stage:
-    //   - the Mod's native chat ingress (`ModEntry.cs` postfix on `ChatBox.textBoxEnter`), which needs the
-    //     player to type in the game window - declared as rung 2 below;
-    //   - `host/src/companion-control-server.ts:299-330`, whose `player_input` frame answers the disposition
-    //     it actually got - but no entry starts that server (`startCompanionControlServer` has no call site
-    //     outside its own test, and `semantic-main-config.private.test.ts:27-28` forbids `main.ts` naming it),
-    //     and its `launchToken` is minted into the child's own environment by
-    //     `host/scripts/production-control-launch.mjs:41-44` after deleting any inherited copy (`:25-26`), with
-    //     the only publisher behind a D0 test-only IPC handoff (`:65-73`).
-    // So this rung's gap is not "no driver types into the game window" - that is rung 2's gap. Here nothing
-    // can ADMIT the words from either side this stage can speak to.
-    driver: "gap:no_player_input_route_the_frontend_stage_can_drive",
+    title: "the player says something to her in the world, and her account counts the turn it opened",
+    // OWNED ELSEWHERE, and not as a complaint. The player's way in is the ENGINE'S OWN CHAT BOX: the engine
+    // opens `ChatBox` on `options.chatButton` (T by default, `Game1.UpdateChatBox`, no multiplayer gate), the
+    // Mod observes only the submit seam (`ChatBox.textBoxEnter` postfix, `ModEntry.cs:243,499,522`), and
+    // `HostService.acceptIntegrationFact` admits it into `acceptPlayerInput` -> the pump's `player_input`
+    // opener. The GAME LANE is the surface that speaks through that admission already
+    // (`tools/live-run/core/player-input-admission.mjs` via `tools.acceptPlayerText`, used at
+    // `run-stardew-native-local-agent-ab-live.mjs:2164-2169`), and that lane is where this belongs: sending a
+    // message inside the game is not the frontend's job. This kit drives a browser and never sees a keystroke.
+    //
+    // The boundary that would otherwise look like an oversight is deliberate: `tools/README.md` § "Removed
+    // UI/XInput automation" records that `drive-stardew-ui.ps1` and `check-xinput.ps1` were removed because
+    // window focus and OS input injection conflict with the formal non-UI AI-Farmhand boundary. Nothing here
+    // should be built to type into the game window.
+    driver: `${ELSEWHERE_PREFIX}game-lane`,
     // The account member, not the trace: `GAME_TURN_ACCOUNT` already counts who opened each turn, and
     // `capture/turn-account.cjs` reads it. `chain-steps.test.mjs` holds this string against that reader.
     fact: "GAME_TURN_ACCOUNT player_input",
+    reason: "the words enter through the engine's own chat box, which the game lane owns",
     owner:
-      "host/src/host-service.ts acceptIntegrationFact -> acceptPlayerInput (the admission) + integrations/stardew/ModEntry.cs (its live producer, rung 2)",
-  }),
-  step({
-    id: "daily-play-in-engine-chat",
-    chain: "daily",
-    title: "the words are typed through the game's own chat box",
-    // RUNG 2: THE ENGINE'S OWN KEY. The engine opens `ChatBox` on `options.chatButton` (T by default,
-    // `Game1.UpdateChatBox`, no multiplayer gate), and the Mod observes only the submit seam
-    // (`ModEntry.cs:243,499,522` -> `PublishNativeChat(PlayerControlProtocol.PlayerInput, text, null)`), so
-    // the whole route below that point is product and this step adds no product work. What is missing is
-    // the keystroke: `tools/README.md` §"Removed UI/XInput automation" records that `drive-stardew-ui.ps1`
-    // and `check-xinput.ps1` were removed because window focus and OS input injection conflict with the
-    // formal non-UI AI-Farmhand boundary. That is a boundary decision, not a harness oversight, which is why
-    // this gap is named after the capability rather than after a driver.
-    driver: "gap:no_os_input_injection",
-    fact: "the engine's own ChatBox submit (`ChatBox.textBoxEnter`) arriving as a player_input fact",
-    owner:
-      "tools/README.md §Removed UI/XInput automation (the boundary that removed window focus and OS input injection) + integrations/stardew/ModEntry.cs:243,499,522 (the postfix that would carry the line)",
+      "the game lane: tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs (tools.acceptPlayerText) over tools/live-run/core/player-input-admission.mjs; the route itself is integrations/stardew/ModEntry.cs:243,499,522 -> host/src/host-service.ts acceptIntegrationFact -> acceptPlayerInput",
   }),
   Object.freeze({
     id: "daily-stop",
@@ -370,18 +370,40 @@ export function stepsOfChain(chain) {
   return Object.freeze(CHAIN_STEPS.filter((entry) => entry.chain === chain));
 }
 
+/**
+ * Which of the three forms a declaration's `driver` is in: `measured`, `gap`, `elsewhere`, or `unknown`.
+ *
+ * One spelling of the rule, used by the audit, the counts and the tests: a second copy of "what counts as a
+ * driver" is how a step ends up in two buckets or in none.
+ */
+export function driverForm(entry) {
+  const driver = String(entry?.driver ?? "");
+  if (driver.startsWith(GAP_PREFIX)) return "gap";
+  if (driver.startsWith(ELSEWHERE_PREFIX)) return "elsewhere";
+  return driver.trim().length === 0 ? "unknown" : "measured";
+}
+
 /** Every step whose driver is a named gap, as `{ id, gap }`. */
 export function namedGaps() {
   return Object.freeze(
-    CHAIN_STEPS.filter((entry) => entry.driver.startsWith(GAP_PREFIX)).map((entry) =>
+    CHAIN_STEPS.filter((entry) => driverForm(entry) === "gap").map((entry) =>
       Object.freeze({ id: entry.id, gap: entry.driver.slice(GAP_PREFIX.length) }),
+    ),
+  );
+}
+
+/** Every step owned by another lane, as `{ id, owner }`. */
+export function elsewhereSteps() {
+  return Object.freeze(
+    CHAIN_STEPS.filter((entry) => driverForm(entry) === "elsewhere").map((entry) =>
+      Object.freeze({ id: entry.id, owner: entry.driver.slice(ELSEWHERE_PREFIX.length) }),
     ),
   );
 }
 
 /** The driver keys this vocabulary names, sorted, so a caller can print or join them. */
 export function measuredDrivers() {
-  const keys = CHAIN_STEPS.filter((entry) => !entry.driver.startsWith(GAP_PREFIX)).map((entry) => entry.driver);
+  const keys = CHAIN_STEPS.filter((entry) => driverForm(entry) === "measured").map((entry) => entry.driver);
   return Object.freeze([...new Set(keys)].sort());
 }
 
@@ -394,18 +416,25 @@ export function measuredDrivers() {
  */
 export function describeChainAlignment(entries = CHAIN_STEPS) {
   const all = Array.isArray(entries) ? entries : [];
-  const gaps = all.filter((entry) => String(entry.driver).startsWith(GAP_PREFIX));
-  const measured = all.length - gaps.length;
+  const bucket = (form) => all.filter((entry) => driverForm(entry) === form);
+  const gaps = bucket("gap");
+  const elsewhere = bucket("elsewhere");
+  const measured = bucket("measured");
   const byKind = (kind) => all.filter((entry) => entry.kind === kind).length;
   const lines = [
-    `CHAIN-ALIGNMENT examined ${String(all.length)} declaration(s): ${String(measured)} measured by a driver, ${String(gaps.length)} named gap(s)`,
+    `CHAIN-ALIGNMENT examined ${String(all.length)} declaration(s): ${String(measured.length)} measured by a driver, ${String(gaps.length)} named gap(s), ${String(elsewhere.length)} owned elsewhere`,
     `CHAIN-ALIGNMENT kinds: ${STEP_KINDS.map((kind) => `${String(byKind(kind))} ${kind}`).join(", ")}`,
+    // The POPULATION of the third bucket, not only its size: `elsewhere:` exists so a fact another lane owns is
+    // not called a gap, and a bucket that only ever grew would be the place a real gap went to hide.
+    `CHAIN-ALIGNMENT owned elsewhere: ${
+      elsewhere.length === 0 ? "none" : elsewhere.map((entry) => `${String(entry.driver)} -> ${entry.id}`).join(", ")
+    }`,
   ];
   for (const chain of CHAIN_NAMES) {
     const steps = all.filter((entry) => entry.chain === chain);
-    const chainGaps = steps.filter((entry) => String(entry.driver).startsWith(GAP_PREFIX)).length;
+    const where = (form) => steps.filter((entry) => driverForm(entry) === form).length;
     lines.push(
-      `CHAIN-ALIGNMENT ${chain}: ${String(steps.length)} declaration(s), ${String(steps.length - chainGaps)} measured, ${String(chainGaps)} gap(s)`,
+      `CHAIN-ALIGNMENT ${chain}: ${String(steps.length)} declaration(s), ${String(where("measured"))} measured, ${String(where("gap"))} gap(s), ${String(where("elsewhere"))} elsewhere`,
     );
   }
   for (const entry of all)
@@ -429,6 +458,36 @@ export function describeChainAlignment(entries = CHAIN_STEPS) {
  * Every problem names the member that broke: a gate that says "expected true, got false" costs the
  * next reader an afternoon.
  */
+/**
+ * The three forms of driver, enforced one declaration at a time.
+ *
+ * Without this, `elsewhere:` becomes the bucket a defect is parked in: a step whose fact this kit could not
+ * produce would be declared "owned elsewhere" and never read again. Every problem names the member and what
+ * would have to change, because a gate that only says "refused" costs the next reader an afternoon.
+ */
+function driverFormProblems(entry) {
+  const problems = [];
+  const form = driverForm(entry);
+  if (form === "unknown")
+    problems.push({
+      code: "unknown_driver_form",
+      detail: `${entry.id} declares driver ${JSON.stringify(entry.driver)}: a step is a roster driver, a gap:<reason>, or an elsewhere:<owner>`,
+    });
+  if (form !== "elsewhere") return problems;
+  const owner = String(entry.driver).slice(ELSEWHERE_PREFIX.length);
+  if (!ELSEWHERE_OWNERS.includes(owner))
+    problems.push({
+      code: "unknown_elsewhere_owner",
+      detail: `${entry.id} is owned by ${JSON.stringify(owner)}, which is not one of ${ELSEWHERE_OWNERS.join(", ")}: name the lane that can produce the fact`,
+    });
+  if (typeof entry.reason !== "string" || entry.reason.trim().length === 0)
+    problems.push({
+      code: "elsewhere_without_reason",
+      detail: `${entry.id} is owned elsewhere and says no reason: stepping out owes one line saying what the owner does`,
+    });
+  return problems;
+}
+
 export function auditChainAlignment({ entries, drivers, readSource }) {
   const steps = Array.isArray(entries) ? entries : [];
   const roster = Array.isArray(drivers) ? drivers : [];
@@ -444,6 +503,7 @@ export function auditChainAlignment({ entries, drivers, readSource }) {
       problems.push({ code: "unknown_kind", detail: `${entry.id} declares kind ${JSON.stringify(entry.kind)}` });
     if (String(entry.driver).startsWith(GAP_PREFIX) && entry.driver.length === GAP_PREFIX.length)
       problems.push({ code: "empty_gap_reason", detail: `${entry.id} names an empty gap` });
+    problems.push(...driverFormProblems(entry));
   }
 
   const population = roster.filter((driver) => driver.requiresGame === true && readSource(driver.file) !== null);
@@ -454,7 +514,7 @@ export function auditChainAlignment({ entries, drivers, readSource }) {
       detail: `none of ${String(roster.length)} roster driver(s) declares requiresGame and can be read, so no driver in this kit opens a world to measure a chain over`,
     });
 
-  const named = new Set(steps.filter((entry) => !String(entry.driver).startsWith(GAP_PREFIX)).map((e) => e.driver));
+  const named = new Set(steps.filter((entry) => driverForm(entry) === "measured").map((e) => e.driver));
   for (const driver of population)
     if (!named.has(driver.key))
       problems.push({
@@ -470,7 +530,7 @@ export function auditChainAlignment({ entries, drivers, readSource }) {
   };
 
   for (const entry of steps) {
-    if (String(entry.driver).startsWith(GAP_PREFIX)) continue;
+    if (driverForm(entry) !== "measured") continue;
     const driver = roster.find((candidate) => candidate.key === entry.driver);
     if (driver === undefined) {
       problems.push({
@@ -495,11 +555,12 @@ export function auditChainAlignment({ entries, drivers, readSource }) {
       });
   }
 
-  const gaps = steps.filter((entry) => String(entry.driver).startsWith(GAP_PREFIX));
+  const gaps = steps.filter((entry) => driverForm(entry) === "gap");
   return Object.freeze({
     examined: steps.length,
-    measured: steps.length - gaps.length,
+    measured: steps.filter((entry) => driverForm(entry) === "measured").length,
     gaps: gaps.length,
+    elsewhere: steps.filter((entry) => driverForm(entry) === "elsewhere").length,
     population: Object.freeze(population.map((driver) => driver.key)),
     problems: Object.freeze(problems),
   });
