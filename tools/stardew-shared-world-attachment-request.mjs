@@ -53,7 +53,7 @@ while (Date.now() < deadline) {
     lastError = error instanceof Error ? error.message : String(error);
     if (requestId !== undefined && /stardew_attachment_rejected_/.test(lastError)) throw error;
     if (
-      !/stardew_session_(expired|host_not_ready|awaiting_save)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(
+      !/stardew_session_(expired|host_not_ready)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(
         lastError,
       )
     )

@@ -39,13 +39,11 @@ while (Date.now() < deadline) {
     break;
   } catch (error) {
     lastError = error instanceof Error ? error.message : String(error);
-    // `awaiting_save` is consumed inside waitForResponse() as a bounded
-    // intermediate state. Once waitForManifest() throws a signed
-    // `stardew_attachment_rejected_*`, it is terminal regardless of its reason
-    // code; never reinterpret a rejected response as save lifecycle progress.
+    // Once waitForManifest() throws a signed `stardew_attachment_rejected_*`, it is terminal regardless of
+    // its reason code; never reinterpret a rejected response as progress.
     if (requestId !== undefined && /stardew_attachment_rejected_/.test(lastError)) throw error;
     if (
-      !/stardew_session_(expired|host_not_ready|awaiting_save)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(
+      !/stardew_session_(expired|host_not_ready)|ENOENT|invalid_stardew_session|cabin_missing|target_cabin_not_unique|stardew_attachment_timeout/.test(
         lastError,
       )
     )
