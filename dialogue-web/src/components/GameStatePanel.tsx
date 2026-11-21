@@ -668,6 +668,23 @@ export function GameStatePanel({
                 {gameOperationFailureSentence(session.disconnect.failure, labels.gameDisconnectFailed)}
               </p>
             )}
+            {/* What an admitted stop is doing, and what a settled one did NOT do.
+
+                The Host answers `game/stop` only once its STOP has settled, and that stop ends the
+                companion's authority rather than the world (an ordinary stop never terminates the
+                player's game; the explicit endgame does). Until these lines existed a press changed
+                only a fact row and a control's disabled state, so a stop that was in flight - or one
+                that had finished and left the farm standing - read as a control that did nothing. */}
+            {session.stop.active && (
+              <p className="game-status" data-tone="progress" role="status">
+                {labels.gameStopInProgress}
+              </p>
+            )}
+            {session.controls.phase === "attached_stopped" && (
+              <p className="game-status" data-tone="info" role="status">
+                {labels.gameStopActionsStopped}
+              </p>
+            )}
             {/* The one terminal operation, deliberately set apart from the
                 session's routine stop/disconnect row: it reads as its own block
                 with a confirm step (design/28 §5.2; design 102). Unavailable

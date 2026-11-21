@@ -84,6 +84,10 @@ const en = {
   gameInstallationRequired:
     "Companion play needs a Stardew Valley installation first. Choose your game folder in Game installation on this page, and this step offers companion play once it is registered.",
   gameStop: "Stop game",
+  gameStopInProgress:
+    "Stopping her game actions. She finishes the step she is in before it takes effect, and the world keeps running; End game is what ends it.",
+  gameStopActionsStopped:
+    "Her game actions are stopped and the world is still running. End game is what ends the world.",
   gameStopFailed: "The game stop result is uncertain. What this page shows is the last state it read from the game.",
   gameDisconnect: "Disconnect game",
   gameDisconnectFailed:
@@ -1132,7 +1136,8 @@ const en = {
   cardImportConfirming: "Creating…",
   cardImportCreated: "Imported companion created.",
   cardImportError: "The card could not be imported. Paste a valid character card and try again.",
-  cardImportLongHint: "This description is long ({{chars}} characters), so it takes more of her attention on every reply.",
+  cardImportLongHint:
+    "This description is long ({{chars}} characters), so it takes more of her attention on every reply.",
   cardImportHistoryTitle: "Import history",
   cardImportHistoryHint: "Every confirmed import and what it kept or dropped, by class.",
   cardImportHistoryEmpty: "No confirmed imports yet.",
@@ -1640,6 +1645,9 @@ const zh: Messages = {
   gameInstallationRequired:
     "伙伴陪玩需要先有一个《星露谷物语》安装。请在本页的「游戏安装」里选好游戏目录；登记完成后，这一步就会出现伙伴陪玩的按钮。",
   gameStop: "停止游戏",
+  gameStopInProgress:
+    "正在停止她的游戏行动。她会先把手上这一步做完，停止才会生效；游戏世界会继续运行，要结束它请用「结束游戏」。",
+  gameStopActionsStopped: "她的游戏行动已经停止，游戏世界仍在运行。要结束这个世界，请用「结束游戏」。",
   gameStopFailed: "游戏停止结果尚不确定；这里显示的是最近一次从游戏读到的状态。",
   gameDisconnect: "断开游戏连接",
   gameDisconnectFailed:
@@ -2354,8 +2362,7 @@ const zh: Messages = {
   chatRetentionTrash: "删除",
   chatRetentionFailed: "无法更改聊天生命周期。",
   cardImportTitle: "导入角色卡",
-  cardImportHint:
-    "把角色卡的文本粘贴到这里。创建之前，你可以先看清她带来了哪些内容。",
+  cardImportHint: "把角色卡的文本粘贴到这里。创建之前，你可以先看清她带来了哪些内容。",
   cardImportStage: "审查卡片",
   cardImportStaging: "审查中…",
   cardImportFieldsTitle: "将包含的内容",
@@ -2433,8 +2440,7 @@ const zh: Messages = {
   voiceAccepted: "已接受",
   voiceRevoked: "已撤销",
   voiceUndecided: "未决定",
-  gameStateUnavailable:
-    "这个配置下 GameBuddy 读不到你的游戏。请刷新页面；如果还是空着，去「游戏安装」看看。",
+  gameStateUnavailable: "这个配置下 GameBuddy 读不到你的游戏。请刷新页面；如果还是空着，去「游戏安装」看看。",
   gameGroupConnection: "连接",
   gameGroupNextStep: "下一步",
   gameGroupSession: "这次游戏",
@@ -2531,8 +2537,7 @@ const zh: Messages = {
   gameInstallationSelectionUnavailable: "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
-  gameInstallationError:
-    "搜索游戏位置时中断了。请再搜一次；如果还是停在这里，可以直接自己选文件夹。",
+  gameInstallationError: "搜索游戏位置时中断了。请再搜一次；如果还是停在这里，可以直接自己选文件夹。",
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
   gameModLoaderInstallRequired:
