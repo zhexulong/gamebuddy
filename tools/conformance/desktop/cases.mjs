@@ -31,7 +31,6 @@ import {
   FACTS,
   FRAME_CAP_BYTES,
   GUARDIAN_ATTEMPT_RECORD,
-  GUARDIAN_LAUNCH_UNAVAILABLE,
   GUARDIAN_PIPE_PREFIX,
   GUARDIAN_SESSION_SCHEMA,
   PRESENTATION_PIPE_PREFIX,
@@ -110,6 +109,24 @@ function boundedCodes(reading) {
   return reading.stderr.map(namedCode).filter((token) => token !== null);
 }
 
+/**
+ * A probe that only a naming launch can be asked, printed as the question it was or was not asked:
+ * `null` means the launch never named a code, so no instant existed to ask at.
+ */
+function asked(value, describe) {
+  return value === null ? "not asked: the launch named no code and exited by itself" : describe(value);
+}
+
+/**
+ * How many facts of one name the peer wrote before the first fact of another: the transcript is in
+ * the order the peer lived it, so this is how a case tells "before" from "after" without a clock.
+ */
+function countBefore(reading, name, before) {
+  const index = reading.facts.findIndex((entry) => entry.fact === before);
+  const upTo = index === -1 ? reading.facts : reading.facts.slice(0, index);
+  return upTo.filter((entry) => entry.fact === name).length;
+}
+
 /** The reading every case takes first: whether the thing it is about appeared at all. */
 function observable(subject, present, detail) {
   return {
@@ -139,18 +156,20 @@ function settled(reading, scenario, label = "the") {
 const cases = [
   {
     id: "frame-cap",
-    title: "a Host frame over the 16384-byte cap is refused by name, and the launch keeps serving",
+    title: "a Host frame over the 16384-byte cap costs the frame, not the session or the launch",
     async run({ world }) {
-      // The two halves of "alive and serving" are asked of the channels the Desktop publishes, at
-      // the instant it names the refusal, and neither of them is the peer that owns the refused
-      // frame - so neither answer can be produced by that peer's own exit.
-      const probes = {};
+      // The two halves of "alive" and "serving" are asked of the channels the Desktop publishes at
+      // the instant it names a refusal - and only then: a launch that survives names nothing and
+      // exits by itself, so there is no such instant and no question to ask at it. The presence of
+      // the answers is therefore part of the reading, never a precondition of it.
+      const probes = { launcherRunning: null, primaryIntents: null, sessionPipe: null, bootstrapId: null };
       const scenario = scenarioBase(world, "frame-cap", {
         behaviour: BEHAVIOURS.oversizedHello,
         // The size of the frame that ended a real launch on 2026-11-21.
         oversizedBytes: 26_393,
-        // A failed launch shows the player a window and waits for the click, so the harness reads
-        // the one bounded code and keeps the process alive only long enough to ask it two questions.
+        // A launch that failed shows the player a window and waits for the click, so the harness
+        // reads the one bounded code and keeps the process alive only long enough to ask it two
+        // questions. A launch that survives names nothing and exits by itself.
         stopAfterBoundedCodeMs: 400,
         async onBoundedCode({ pid }) {
           probes.launcherRunning = isRunning(pid);
@@ -161,75 +180,91 @@ const cases = [
         },
       });
       const reading = await launchDesktop(world, scenario);
-      const codes = boundedCodes(reading);
       const peerStarted = factsNamed(reading, FACTS.hostStarted);
       const oversized = factsNamed(reading, FACTS.oversizedHelloWritten);
+      const closed = factsNamed(reading, FACTS.oversizedConnectionClosed);
+      const held = factsNamed(reading, FACTS.oversizedConnectionHeld);
       const accepted = factsNamed(reading, FACTS.helloAccepted);
       const refused = factsNamed(reading, FACTS.helloRefused);
       const acknowledged = factsNamed(reading, FACTS.acknowledgmentWritten);
       const reconnected = factsNamed(reading, FACTS.reconnectAttempted);
       const peerFinished = factsNamed(reading, FACTS.hostExiting);
+      // The transcript is in the peer's own order, so "accepted before the peer reconnected" and
+      // "accepted after it" are two different readings of the same session vocabulary.
+      const acceptedBeforeReconnect = countBefore(reading, FACTS.helloAccepted, FACTS.reconnectAttempted);
+      const acknowledgedBeforeReconnect = countBefore(reading, FACTS.acknowledgmentWritten, FACTS.reconnectAttempted);
+      // A peer that never reached the end of its own script and is gone was ended by the launcher
+      // during the refusal: its connection ended with it, and that is a reading of the same fact as
+      // seeing the close. Which of the two it was is printed, never assumed.
+      const peerEndedWithoutFinishing = peerFinished.length === 0 && !reading.hostStillAliveAfterRead;
       return {
         assertions: [
           settled(reading, scenario),
           observable("host-peer", peerStarted.length === 1, `host_started=${peerStarted.length}`),
           {
-            name: "refused-by-name",
-            ok: codes.length === 1 && namedCode(codes[0]).split(":")[0] === GUARDIAN_LAUNCH_UNAVAILABLE,
-            detail: `stderr=${JSON.stringify(reading.stderr)} ${exitReading(reading)}`,
-          },
-          {
-            name: "frame-not-truncated-and-nothing-accepted",
-            ok: oversized.length === 1 && accepted.length === 0 && acknowledged.length === 0,
-            detail: `oversized=${oversized.length} accepted=${accepted.length} acknowledged=${acknowledged.length}`,
-          },
-          {
-            // The reading's own validity: the peer asked for a second session and was never told
-            // no, so "no session was accepted" cannot mean the peer simply gave up.
-            name: "the-second-session-was-cut-off-not-declined",
+            // The refusal belongs to the FRAME: the launcher ends the connection it arrived on and
+            // accepts nothing from it - and it never half-reads the bytes into a parsed frame.
+            name: "the-oversized-frame-was-refused-not-truncated",
             ok:
-              reconnected.length === 1 &&
-              refused.length === 0 &&
-              peerFinished.length === 0 &&
-              !reading.hostStillAliveAfterRead,
+              oversized.length === 1 &&
+              acceptedBeforeReconnect === 0 &&
+              acknowledgedBeforeReconnect === 0 &&
+              (closed.length === 1 || peerEndedWithoutFinishing),
             detail:
-              `reconnectAttempted=${reconnected.length} refused=${JSON.stringify(refused)} peerReachedItsOwnEnd=${peerFinished.length} ` +
-              `peerAliveAtRead=${reading.hostStillAliveAfterRead}`,
+              `oversized=${oversized.length} closedByLauncher=${closed.length} heldOpen=${held.length} ` +
+              `acceptedBeforeReconnect=${acceptedBeforeReconnect} acknowledgedBeforeReconnect=${acknowledgedBeforeReconnect} ` +
+              `peerReachedItsOwnEnd=${peerFinished.length} peerAliveAtRead=${reading.hostStillAliveAfterRead}`,
           },
           {
-            name: "the-desktop-is-still-a-process",
-            ok: probes.launcherRunning === true,
-            detail: `launcherRunning=${String(probes.launcherRunning)} primaryIntents=${JSON.stringify(probes.primaryIntents)}`,
+            // The contract: one oversized frame costs one frame. The same child's next hello gets a
+            // session, and the launch that session admits is served readiness.
+            name: "a-fresh-hello-gets-a-session",
+            ok: reconnected.length === 1 && accepted.length - acceptedBeforeReconnect >= 1,
+            detail: `reconnectAttempted=${reconnected.length} acceptedAfterReconnect=${accepted.length - acceptedBeforeReconnect} refused=${JSON.stringify(refused)}`,
           },
           {
-            name: "launch-survives-the-refusal",
-            ok: accepted.length > 0,
-            detail: `helloAccepted=${accepted.length} reconnectAttempted=${reconnected.length} refused=${JSON.stringify(refused)} sessionPipe=${String(probes.sessionPipe)}`,
+            name: "the-launch-admitted-through-it-is-served",
+            ok: acknowledgedBeforeReconnect === 0 && acknowledged.length >= 1,
+            detail: `acknowledged=${acknowledged.length} peerReachedItsOwnEnd=${peerFinished.length}`,
+          },
+          {
+            name: "the-desktop-is-alive-at-the-refusal",
+            // The refusal must not be a process that died: when the launcher names a code, it is
+            // still there to be asked. A launch that never named one answers this with `null`,
+            // which is the other honest reading rather than a pass.
+            ok: probes.launcherRunning === null || probes.launcherRunning === true,
+            detail: asked(probes.launcherRunning, (running) => `launcherRunning=${String(running)}`),
           },
         ],
         readings: [
-          { name: "the-refusal-line", detail: JSON.stringify(reading.stderr) },
+          { name: "what-the-launch-wrote", detail: `${JSON.stringify(reading.stderr)} ${exitReading(reading)}` },
           {
-            name: "session-pipe-after-the-refusal",
-            detail: `reachable=${String(probes.sessionPipe)} bootstrapId=${String(probes.bootstrapId)}`,
+            name: "session-pipe-at-the-refusal",
+            detail: asked(
+              probes.sessionPipe,
+              (reachable) => `reachable=${String(reachable)} bootstrapId=${String(probes.bootstrapId)}`,
+            ),
           },
-          { name: "primary-intent-channel-after-the-refusal", detail: JSON.stringify(probes.primaryIntents) },
+          {
+            name: "primary-intent-channel-at-the-refusal",
+            detail: asked(probes.primaryIntents, (delivered) => JSON.stringify(delivered)),
+          },
         ],
-        defects:
-          accepted.length === 0
-            ? [
-                {
-                  id: "desktop_frame_cap_ends_the_launch",
-                  detail:
-                    `one ${scenario.oversizedBytes}-byte frame (cap ${FRAME_CAP_BYTES}) ends the whole launch: it is refused by name and then has no session left to serve, ` +
-                    `so a Host whose session frame grew past the cap has no way back - the peer that owns the frame can never re-authenticate ` +
-                    `(measured at the instant the code appeared: launcherRunning=${String(probes.launcherRunning)} sessionPipe=${String(probes.sessionPipe)} primaryIntentsAbsent=${probes.primaryIntents?.pipePresent === false})`,
-                },
-              ]
-            : [],
+        knownDefect:
+          accepted.length > 0 && acknowledged.length > 0
+            ? null
+            : {
+                id: "desktop_frame_cap_ends_the_launch",
+                explains: ["a-fresh-hello-gets-a-session", "the-launch-admitted-through-it-is-served"],
+                detail:
+                  `one ${scenario.oversizedBytes}-byte frame (cap ${FRAME_CAP_BYTES}) is refused and then takes the launch with it: the peer that owns the frame never ` +
+                  `gets its next hello served (acceptedAfterReconnect=${accepted.length - acceptedBeforeReconnect}, acknowledged=${acknowledged.length}), ` +
+                  `so a Host whose session frame grew past the cap has no way back ` +
+                  `(measured at the instant the code appeared: launcherRunning=${String(probes.launcherRunning)} sessionPipe=${String(probes.sessionPipe)} primaryIntentsAbsent=${probes.primaryIntents?.pipePresent === false})`,
+              },
         notes: [
-          "the same peer reconnects after the oversized frame and speaks the hello a healthy Host speaks; the launcher's answer to that second session is the whole reading",
-          "the refusal carries the launch stage's code and no reason after it: an operator reading that one line cannot tell a frame over the cap from any other bootstrap that never authenticated",
+          "the peer never destroys the connection the oversized frame arrived on, so a close it sees is the launcher's refusal rather than its own",
+          "after that close the same child speaks the hello a healthy Host speaks, publishes the readiness a healthy Host publishes, and leaves: all three are the reading",
         ],
       };
     },

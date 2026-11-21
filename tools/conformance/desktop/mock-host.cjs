@@ -183,13 +183,23 @@ async function main() {
       // A real Host frame longer than the launcher's cap, with no terminating LF anywhere in it.
       // This peer truncates nothing: it writes the whole frame and lets the launcher answer.
       const socket = await connectPipe(brokerName, scenario.bounds.connectMs);
+      // Whether the launcher ends this connection is the refusal's own fact, and it is read from
+      // this side: the peer never destroys the socket before the answer, so a close here is the
+      // launcher's.
+      const refused = new Promise((resolveRefused) => {
+        socket.once("close", () => resolveRefused(true));
+        socket.once("error", () => resolveRefused(true));
+        setTimeout(() => resolveRefused(false), scenario.bounds.settleMs + 3_000);
+      });
       socket.write(`{"schema":"${scenario.schemas.guardianSession}","padding":"${"x".repeat(scenario.oversizedBytes - 64)}`);
       record({ fact: facts.oversizedHelloWritten, bytes: scenario.oversizedBytes, terminated: false });
-      await new Promise((resolve) => setTimeout(resolve, scenario.bounds.settleMs));
-      socket.destroy();
-      // The same child now speaks the hello a healthy Host speaks. A launch that ended on one
-      // oversized frame cannot answer it, and that is the reading this case is for.
-      await reauthenticateOnFreshConnection();
+      const closedByLauncher = await refused;
+      record({ fact: closedByLauncher ? facts.oversizedConnectionClosed : facts.oversizedConnectionHeld });
+      if (!closedByLauncher) socket.destroy();
+      // The same child now speaks the hello a healthy Host speaks, on a fresh connection. An
+      // oversized frame costs the frame, not the session: this hello is entitled to a session, and
+      // the launch it authenticates is entitled to be served.
+      if (await reauthenticateOnFreshConnection()) await publishReadiness();
       break;
     }
     case "eof-then-reauthenticate":

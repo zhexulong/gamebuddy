@@ -74,6 +74,8 @@ export const FACTS = Object.freeze({
   helloAccepted: "hello_accepted",
   helloRefused: "hello_refused",
   oversizedHelloWritten: "oversized_hello_written",
+  oversizedConnectionClosed: "oversized_connection_closed",
+  oversizedConnectionHeld: "oversized_connection_held",
   acknowledgmentWritten: "acknowledgment_written",
   handoffRefused: "handoff_refused",
   commandWritten: "command_written",

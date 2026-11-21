@@ -16,10 +16,16 @@
  * admission is what validates the result, so a media layout that drifts from the product's
  * contract fails here by name instead of passing quietly.
  *
- * THREE VERDICTS, NOT TWO, and the third is named rather than folded into a pass: a case whose
- * subject the product does not offer is `skipped`, printed with the code that says why, counted
- * separately, and never allowed to make this run green. A run that measured nothing at all is a
- * refusal (exit 2), because a suite with no population agrees with itself.
+ * FOUR VERDICTS, AND THE LAST THREE ARE NAMED RATHER THAN FOLDED INTO A PASS. A case red only on the
+ * assertions a recorded product defect explains is `known-defect`, printed with that defect's id; a
+ * case red on anything else is `failed`, so a new regression cannot hide inside an old one; a case
+ * whose subject the product does not offer at all is `skipped`, printed with the code that says why.
+ * None of the three makes this run green, and a run that measured nothing is a refusal (exit 2),
+ * because a suite with no population agrees with itself.
+ *
+ * ONE RUN AT A TIME. The launcher reads its program root from one registration key on this account,
+ * so two runs cannot be honest at once: the second is refused by name
+ * (`conformance_run_in_progress:<pid>`) before it creates or deletes anything.
  *
  * USAGE
  *   node tools/conformance/desktop/run.mjs                  # every case
@@ -30,8 +36,9 @@
  *
  * EXIT STATUS
  *   0  every case passed
- *   1  a case failed, was skipped, or a process this suite started survived it - the finding names which
- *   2  nothing was measured: a prerequisite is absent, named, and the suite refuses to pass
+ *   1  a case failed, was red on a recorded defect, was skipped, or a process this suite started
+ *      survived it - the finding names which
+ *   2  nothing was measured: a prerequisite is absent or another run holds the machine, both named
  *
  * ENVIRONMENT
  *   GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT        a published generation to install (CI's door)
@@ -42,7 +49,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { cases } from "./cases.mjs";
-import { Blocked, isRunning, killExactProcess, prepareWorld, startedProcessLedger } from "./world.mjs";
+import { acquireRunLock, Blocked, isRunning, killExactProcess, prepareWorld, startedProcessLedger } from "./world.mjs";
 
 const TEMP_ROOT = process.env.GAMEBUDDY_DESKTOP_CONFORMANCE_TEMP ?? "D:\\gamebuddy-conformance";
 
@@ -77,6 +84,24 @@ async function main(argv) {
   process.stdout.write(`suite: ${selected.length} · ${suiteList(selected)}\n`);
   if (options.list) return 0;
 
+  // One run at a time on this machine, taken BEFORE anything is created or deleted: the launcher
+  // reads its program root from one registration key, so a second run would either refuse on that
+  // key halfway through or delete the first run's world under it. The second run is refused by
+  // name instead, with the pid that holds the machine.
+  let releaseLock = null;
+  try {
+    releaseLock = acquireRunLock(TEMP_ROOT);
+  } catch (error) {
+    if (error instanceof Blocked) {
+      process.stdout.write(`desktop_conformance_blocked: ${error.code}: ${error.detail}\n`);
+      process.stdout.write(
+        "desktop conformance: cases 0 · passed 0 · failed 0 · known-defect 0 · skipped 0 - nothing was measured, which is never a pass\n",
+      );
+      return 2;
+    }
+    throw error;
+  }
+
   mkdirSync(TEMP_ROOT, { recursive: true });
   rmSync(join(TEMP_ROOT, "world"), { recursive: true, force: true });
   let world = null;
@@ -86,8 +111,9 @@ async function main(argv) {
     if (error instanceof Blocked) {
       process.stdout.write(`desktop_conformance_blocked: ${error.code}: ${error.detail}\n`);
       process.stdout.write(
-        "desktop conformance: cases 0 · passed 0 · failed 0 · skipped 0 - nothing was measured, which is never a pass\n",
+        "desktop conformance: cases 0 · passed 0 · failed 0 · known-defect 0 · skipped 0 - nothing was measured, which is never a pass\n",
       );
+      releaseLock();
       return 2;
     }
     throw error;
@@ -112,6 +138,7 @@ async function main(argv) {
           assertions: produced.assertions,
           readings: produced.readings ?? [],
           defects: produced.defects ?? [],
+          knownDefect: produced.knownDefect ?? null,
           skipped: produced.skipped ?? null,
           notes: produced.notes ?? [],
         };
@@ -124,6 +151,7 @@ async function main(argv) {
           assertions: [{ name: "case-ran", ok: false, detail: String(error?.stack ?? error) }],
           readings: [],
           defects: [],
+          knownDefect: null,
           skipped: null,
           notes: [],
         };
@@ -149,14 +177,19 @@ async function main(argv) {
     );
     if (!options.keep && world !== null) world.dispose();
     else if (world !== null) process.stdout.write(`world kept at ${world.layout.programRoot}\n`);
+    releaseLock();
   }
 
   const passed = results.filter((result) => verdict(result) === "passed").length;
   const failed = results.filter((result) => verdict(result) === "failed").length;
+  const knownDefects = results.filter((result) => verdict(result) === "known-defect");
   const skippedResults = results.filter((result) => verdict(result) === "skipped");
   process.stdout.write(
-    `desktop conformance: cases ${results.length} · passed ${passed} · failed ${failed} · skipped ${skippedResults.length}\n`,
+    `desktop conformance: cases ${results.length} · passed ${passed} · failed ${failed} · known-defect ${knownDefects.length} · skipped ${skippedResults.length}\n`,
   );
+  for (const result of knownDefects) {
+    process.stdout.write(`known-defect ${result.id}: ${result.knownDefect.id}: ${result.knownDefect.detail}\n`);
+  }
   for (const result of skippedResults) {
     process.stdout.write(`skipped ${result.id}: ${result.skipped.code}: ${result.skipped.detail}\n`);
   }
@@ -165,12 +198,20 @@ async function main(argv) {
     process.stdout.write("desktop_conformance_no_population: nothing was measured, which is never a pass\n");
     return 2;
   }
-  return failed === 0 && skippedResults.length === 0 && survived === 0 ? 0 : 1;
+  return failed === 0 && knownDefects.length === 0 && skippedResults.length === 0 && survived === 0 ? 0 : 1;
 }
 
+/**
+ * The verdict, and a known defect is its own: a case red ONLY on the assertions the named defect
+ * explains is counted as that defect; a case red on anything else is a failure, so a new regression
+ * cannot hide inside a recorded one.
+ */
 function verdict(outcome) {
   if (outcome.skipped !== null) return "skipped";
-  return outcome.assertions.every((assertion) => assertion.ok) ? "passed" : "failed";
+  const failing = outcome.assertions.filter((assertion) => !assertion.ok).map((assertion) => assertion.name);
+  if (failing.length === 0) return "passed";
+  const explains = outcome.knownDefect?.explains ?? [];
+  return failing.every((name) => explains.includes(name)) ? "known-defect" : "failed";
 }
 
 function describe(outcome) {
@@ -181,6 +222,8 @@ function describe(outcome) {
   for (const reading of outcome.readings) lines.push(`  reading ${reading.name}: ${reading.detail}`);
   for (const defect of outcome.defects) lines.push(`  defect ${defect.id}: ${defect.detail}`);
   for (const note of outcome.notes) lines.push(`  note: ${note}`);
+  if (outcome.knownDefect !== null)
+    lines.push(`  known-defect ${outcome.knownDefect.id}: ${outcome.knownDefect.detail}`);
   if (outcome.skipped !== null) lines.push(`  skipped ${outcome.skipped.code}: ${outcome.skipped.detail}`);
   return lines.join("\n");
 }

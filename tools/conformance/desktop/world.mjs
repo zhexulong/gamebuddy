@@ -446,6 +446,76 @@ export async function deliverEveryPrimaryIntent() {
 }
 
 /**
+ * The one name an exclusive run is recorded under. Two runs cannot share a machine: the launcher
+ * reads its program root from ONE registration key (`HKCU\Software\GameBuddy\Registration\v1`),
+ * which is the product's own fixed name and not something a harness may suffix - so the run that
+ * already holds it is the only one that may start, and the second one is refused BY NAME.
+ */
+const RUN_LOCK_FILE = "run.lock";
+
+/**
+ * Take the machine for one conformance run, or refuse with the pid that holds it.
+ *
+ * A run that was killed leaves its record behind, so the record is read as a pid AND the instant
+ * that pid started: a process that started after the lock was written is somebody else wearing the
+ * same number, and the lock it found is stale.
+ */
+export function acquireRunLock(tempRoot) {
+  mkdirSync(tempRoot, { recursive: true });
+  const path = join(tempRoot, RUN_LOCK_FILE);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const takenAtUnixMs = Date.now();
+    try {
+      writeFileSync(path, `${JSON.stringify({ pid: process.pid, takenAtUnixMs })}\n`, { flag: "wx" });
+      return () => {
+        try {
+          rmSync(path, { force: true });
+        } catch {
+          // A lock already removed is the state this release wanted.
+        }
+      };
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const holder = readRunLock(path);
+      if (holder === null) {
+        throw new Blocked(
+          "conformance_run_in_progress",
+          `${path} exists and could not be read: it is a lock, not a permission`,
+        );
+      }
+      if (holderIsLive(holder)) {
+        throw new Blocked(
+          `conformance_run_in_progress:${holder.pid}`,
+          `${path}: one run at a time, because the launcher reads its program root from the one registration key this account has`,
+        );
+      }
+      // The record names a pid that is gone, or one that started after the record was written: a
+      // run that was killed, whose lock is not a run.
+      rmSync(path, { force: true });
+    }
+  }
+  throw new Blocked("conformance_run_in_progress", `could not take ${path}`);
+}
+
+function readRunLock(path) {
+  try {
+    const holder = JSON.parse(readFileSync(path, "utf8"));
+    return typeof holder?.pid === "number" && typeof holder?.takenAtUnixMs === "number" ? holder : null;
+  } catch {
+    // An unreadable lock is a lock: it is refused by the same name rather than assumed free.
+    return null;
+  }
+}
+
+/** Whether the process a lock names is still the one it named when it wrote the lock. */
+function holderIsLive(holder) {
+  if (!isRunning(holder.pid)) return false;
+  const identity = processIdentityOrNull(holder.pid, 1);
+  // A pid whose process started after the lock was written belongs to somebody else.
+  return identity === null || identity.startedAtUnixMs <= holder.takenAtUnixMs + 2_000;
+}
+
+/**
  * Prepare the installed world: refuse to stand on an existing installation, install the media,
  * write the registration, and take the per-user layout for the run.
  */
