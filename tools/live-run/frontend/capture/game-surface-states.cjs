@@ -553,14 +553,27 @@ async function startStateDriver({ driver, scenario, reportFile }) {
   // The game's own process, created after this driver started. Both filters are needed: the installation
   // folder is shared with the player's own game, and the start time separates this run's launch from their
   // session.
-  const pids = gamePids({ gameDir, sinceMs: started });
-  record("game pids", pids);
+  /*
+   * The boundary is the RUN's Host child, not this driver's own start.
+   *
+   * A driver that runs behind another's launch finds the instance already up, and
+   * `settleInFlightInstance` reports it `ready` - the game is the one THIS RUN launched. Measuring against
+   * this driver's start then finds none of it: `frontend--r24` answered `game_process_not_found` with 371
+   * processes examined while the run's own attached game was alive, because driver W had launched it six
+   * minutes earlier and its stop had not settled. The installation folder still separates the player's own
+   * session from ours, and the run's Host child (`launch.json` `childStartTime`) is later than anything the
+   * run did not create, so the target stays a process this run launched and never one found by image name.
+   */
+  const launchChildStartMs = Date.parse(readLaunchState().state?.childStartTime ?? "");
+  const sinceMs = Number.isFinite(launchChildStartMs) ? Math.min(started, launchChildStartMs) : started;
+  const pids = gamePids({ gameDir, sinceMs });
+  record("game pids", { sinceMs, sinceWhat: Number.isFinite(launchChildStartMs) ? "run_host_child" : "driver_start", pids });
   const target = pids.client[0] ?? pids.loader[0] ?? null;
   if (target === null)
     return await notMeasured(
       browser,
       NOT_MEASURED_REASONS.noGamePid,
-      `no process under ${gameDir} was created by this run (${String(pids.examined ?? "unreadable")} processes examined)`,
+      `no process under ${gameDir} was created by this run (${String(pids.examined ?? "unreadable")} processes examined; the population is processes started at or after ${new Date(sinceMs).toISOString()})`,
     );
 
   return { say, flush, facts, record, notMeasured, browser, page, problems, gameDir, target };
