@@ -126,10 +126,14 @@ const MOD_EXPORT_RESOLUTION = Object.freeze({
 const REGISTER_PRODUCER = "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs";
 const PROJECTION_PRODUCER = "integrations/stardew/action-development/src/action-source-projection-producer.mjs";
 
-/** The deployment principal's key set: one contract, one generator, two language outputs. */
+/** The vocabulary contracts: one generator, one output per language, per fact. */
+const VOCABULARY_GENERATOR = "tools/generate-vocabulary.mjs";
 const DEPLOYMENT_PRINCIPAL_CONTRACT = "contracts/deployment-principal.v1.json";
-const DEPLOYMENT_PRINCIPAL_GENERATOR = "tools/generate-deployment-principal.mjs";
-const DEPLOYMENT_PRINCIPAL_KEY_INPUTS = Object.freeze([DEPLOYMENT_PRINCIPAL_CONTRACT, DEPLOYMENT_PRINCIPAL_GENERATOR]);
+const DEPLOYMENT_PRINCIPAL_KEY_INPUTS = Object.freeze([DEPLOYMENT_PRINCIPAL_CONTRACT, VOCABULARY_GENERATOR]);
+const OBSERVE_SCENE_TRUNCATION_CONTRACT = "contracts/observe-scene-truncation-reasons.v1.json";
+const OBSERVE_SCENE_TRUNCATION_INPUTS = Object.freeze([OBSERVE_SCENE_TRUNCATION_CONTRACT, VOCABULARY_GENERATOR]);
+const CHAT_TURN_TERMINAL_CONTRACT = "contracts/chat-turn-terminal-states.v1.json";
+const CHAT_TURN_TERMINAL_INPUTS = Object.freeze([CHAT_TURN_TERMINAL_CONTRACT, VOCABULARY_GENERATOR]);
 const SNAPSHOT_SAMPLE_PROJECT =
   "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj";
 const SNAPSHOT_SAMPLE_TEST =
@@ -165,25 +169,69 @@ const SURFACE_INPUTS = Object.freeze([
 export const ARTEFACT_PRODUCERS = Object.freeze([
   {
     artefact: "host/src/deployment-principal.generated.ts",
-    producer: `node ${DEPLOYMENT_PRINCIPAL_GENERATOR} --target ts`,
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${DEPLOYMENT_PRINCIPAL_CONTRACT} --target ts`,
     run: {
       kind: "stdout",
       command: process.execPath,
-      args: [DEPLOYMENT_PRINCIPAL_GENERATOR, "--target", "ts"],
+      args: [VOCABULARY_GENERATOR, "--contract", DEPLOYMENT_PRINCIPAL_CONTRACT, "--target", "ts"],
     },
     requires: { commands: [], paths: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS] },
     inputs: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS],
   },
   {
     artefact: "tools/deployment-principal.generated.mjs",
-    producer: `node ${DEPLOYMENT_PRINCIPAL_GENERATOR} --target mjs`,
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${DEPLOYMENT_PRINCIPAL_CONTRACT} --target mjs`,
     run: {
       kind: "stdout",
       command: process.execPath,
-      args: [DEPLOYMENT_PRINCIPAL_GENERATOR, "--target", "mjs"],
+      args: [VOCABULARY_GENERATOR, "--contract", DEPLOYMENT_PRINCIPAL_CONTRACT, "--target", "mjs"],
     },
     requires: { commands: [], paths: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS] },
     inputs: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS],
+  },
+  {
+    artefact: "host/src/observe-scene-truncation-reasons.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${OBSERVE_SCENE_TRUNCATION_CONTRACT} --target ts`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", OBSERVE_SCENE_TRUNCATION_CONTRACT, "--target", "ts"],
+    },
+    requires: { commands: [], paths: [...OBSERVE_SCENE_TRUNCATION_INPUTS] },
+    inputs: [...OBSERVE_SCENE_TRUNCATION_INPUTS],
+  },
+  {
+    artefact: "tools/observe-scene-truncation-reasons.generated.mjs",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${OBSERVE_SCENE_TRUNCATION_CONTRACT} --target mjs`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", OBSERVE_SCENE_TRUNCATION_CONTRACT, "--target", "mjs"],
+    },
+    requires: { commands: [], paths: [...OBSERVE_SCENE_TRUNCATION_INPUTS] },
+    inputs: [...OBSERVE_SCENE_TRUNCATION_INPUTS],
+  },
+  {
+    artefact: "dialogue-web/src/chat-turn-terminal-states.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CHAT_TURN_TERMINAL_CONTRACT} --target ts`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CHAT_TURN_TERMINAL_CONTRACT, "--target", "ts"],
+    },
+    requires: { commands: [], paths: [...CHAT_TURN_TERMINAL_INPUTS] },
+    inputs: [...CHAT_TURN_TERMINAL_INPUTS],
+  },
+  {
+    artefact: "tools/chat-turn-terminal-states.generated.mjs",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CHAT_TURN_TERMINAL_CONTRACT} --target mjs`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CHAT_TURN_TERMINAL_CONTRACT, "--target", "mjs"],
+    },
+    requires: { commands: [], paths: [...CHAT_TURN_TERMINAL_INPUTS] },
+    inputs: [...CHAT_TURN_TERMINAL_INPUTS],
   },
   {
     artefact: SURFACE,

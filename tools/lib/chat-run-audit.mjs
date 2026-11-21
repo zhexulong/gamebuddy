@@ -43,6 +43,7 @@
  * through the exit code.
  */
 import { randomUUID } from "node:crypto";
+import { TERMINAL_TURN_STATES } from "../chat-turn-terminal-states.generated.mjs";
 export const CHAT_RUN_AUDIT_SCHEMA = "chat_run_audit/v1";
 const CHAT_RUN_AUDIT_REPORT_SCHEMA = "chat_run_audit_report/v1";
 
@@ -169,7 +170,6 @@ const MAX_META_VALUE_LENGTH = 160;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SURFACE_CHAT_ONLY = "chat-only";
-const TERMINAL_STATES = Object.freeze(["completed", "cancelled", "failed"]);
 const PROVIDER_OBSERVABILITY_VALUES = Object.freeze(["observed", "unobserved"]);
 /** `probe.distance` domain (probe design §5.2): the memory distance a probe measures. */
 export const CHAT_RUN_AUDIT_PROBE_DISTANCES = Object.freeze(["turn", "fold", "session"]);
@@ -511,12 +511,12 @@ function validateEvent(event, index, errors) {
   // borrow another kind's obligation.
   if (event.kind === "lifecycle" && event.code === "turn.terminal") {
     const state = event.meta?.state;
-    if (typeof state !== "string" || !TERMINAL_STATES.includes(state)) {
+    if (typeof state !== "string" || !TERMINAL_TURN_STATES.includes(state)) {
       pushError(
         errors,
         `${path}.meta.state`,
         "turn_terminal_state_invalid",
-        `turn.terminal must carry meta.state of ${TERMINAL_STATES.join(", ")}`,
+        `turn.terminal must carry meta.state of ${TERMINAL_TURN_STATES.join(", ")}`,
       );
     }
   }

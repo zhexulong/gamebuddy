@@ -6,7 +6,7 @@ import type { BrowserTurnV1 } from "../reference-pipeline-api";
 import type { AppBarProps } from "./AppBar";
 import type { ViewState } from "./composed-reference-game-view";
 import { turnFailureText } from "./turn-failure-text";
-import { TERMINAL_TURN_STATES } from "./use-composed-bootstrap";
+import { isTerminalTurnState } from "./use-composed-bootstrap";
 
 /**
  * The facts the composed shell reads out of its committed view, as functions.
@@ -164,5 +164,5 @@ export function appBarGameStatus(
 export function liveTurn(view: ViewState): BrowserTurnV1 | null {
   if (view.kind !== "ready") return null;
   const turn = view.session.snapshot.chat?.turn ?? null;
-  return turn !== null && !TERMINAL_TURN_STATES.has(turn.state) ? turn : null;
+  return turn !== null && !isTerminalTurnState(turn.state) ? turn : null;
 }

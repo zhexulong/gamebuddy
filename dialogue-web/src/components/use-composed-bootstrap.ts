@@ -1,5 +1,6 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
 import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import { type ChatTurnTerminalState, TERMINAL_TURN_STATES } from "../chat-turn-terminal-states.generated";
 import {
   composedBootstrapProblemView as bootstrapProblemView,
   composedProblemView as problemView,
@@ -55,10 +56,18 @@ const POLL_FIRST_MS = 250;
 const POLL_INTERVAL_MS = 1_000;
 const POLL_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000] as const;
 const MAX_POLL_ATTEMPTS = Math.ceil(HOST_TURN_ADMISSION_CEILING_MS / POLL_INTERVAL_MS) + 10;
-export const TERMINAL_TURN_STATES = new Set(["completed", "cancelled", "failed"]);
+
+/**
+ * Whether a turn state has settled. The three come from
+ * `contracts/chat-turn-terminal-states.v1.json`, so this client and the live-run
+ * audits cannot disagree about which states end a turn.
+ */
+export function isTerminalTurnState(state: BrowserTurnV1["state"]): state is ChatTurnTerminalState {
+  return TERMINAL_TURN_STATES.some((terminal) => terminal === state);
+}
 
 export function terminalTurn(turn: BrowserTurnV1 | null): boolean {
-  return turn !== null && TERMINAL_TURN_STATES.has(turn.state);
+  return turn !== null && isTerminalTurnState(turn.state);
 }
 
 /**

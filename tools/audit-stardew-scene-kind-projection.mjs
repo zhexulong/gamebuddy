@@ -42,6 +42,7 @@ export const gateDeclaration = {
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { OBSERVE_SCENE_TRUNCATION_REASONS as TRUNCATION_REASONS } from "./observe-scene-truncation-reasons.generated.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -362,12 +363,13 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
       detail: "outbound path does not go through SceneGroundKindWire.ToWireValue",
     });
 
-  // truncatedReason is a closed three-value set wherever it is declared.
-  const REASONS = ["maximum_affordances", "payload_limit", "ground_limit"];
+  // truncatedReason is a closed three-value set wherever it is declared, and the set this audit
+  // holds it to is the generated one (`contracts/observe-scene-truncation-reasons.v1.json`), not
+  // a copy: the copy was the fourth spelling of the fact and could not report its own drift.
   const csharpReasons = new Set(
     [...projection.matchAll(/"(maximum_affordances|payload_limit|ground_limit)"/g)].map((m) => m[1]),
   );
-  for (const reason of REASONS) {
+  for (const reason of TRUNCATION_REASONS) {
     if (!csharpReasons.has(reason))
       findings.push({ kind: "ground", hop: "truncatedReason", detail: `C# does not accept ${reason}` });
   }
@@ -395,9 +397,6 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
       hop: "host protocol ground declaration",
       detail: "ObserveSceneGround.dominantKind does not reference SceneGroundKind",
     });
-  const hostReason = host.match(/truncatedReason:\s*([^;]+);/);
-  const hostReasons = new Set(hostReason ? [...hostReason[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]) : []);
-
   const schemaGroundSet = new Set(schema?.$defs?.observeSceneGround?.properties?.dominantKind?.enum ?? []);
   const schemaReasons = new Set(
     (schema?.$defs?.observeSceneResult?.properties?.truncatedReason?.anyOf ?? []).flatMap(
@@ -413,14 +412,14 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
     const narrowed = branch?.then?.properties?.truncatedReason;
     if (narrowed === undefined || narrowed.type === "null") continue;
     for (const reason of narrowed.enum ?? []) {
-      if (!REASONS.includes(reason))
+      if (!TRUNCATION_REASONS.includes(reason))
         findings.push({
           kind: "ground",
           hop: `envelope schema allOf[${index}]`,
           detail: `branch admits ${reason}, which the producer never emits`,
         });
     }
-    for (const reason of REASONS) {
+    for (const reason of TRUNCATION_REASONS) {
       if (!(narrowed.enum ?? []).includes(reason))
         findings.push({
           kind: "ground",
@@ -448,13 +447,16 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
     }
   }
 
-  if (!hostReasons.has("ground_limit"))
+  // `truncatedReason` is not spelled here at all any more: the wire set is generated from its
+  // contract, so this layer has to NAME the generated type. An inline union would be a second
+  // spelling of the same three values beside the host's own accepted set.
+  if (!/truncatedReason:\s*ObserveSceneTruncationReason\s*\|\s*null/.test(host))
     findings.push({
       kind: "ground",
       hop: "host protocol truncatedReason",
-      detail: "host union does not accept ground_limit",
+      detail: "host result does not reference the generated ObserveSceneTruncationReason",
     });
-  for (const reason of REASONS) {
+  for (const reason of TRUNCATION_REASONS) {
     if (!schemaReasons.has(reason))
       findings.push({
         kind: "ground",
@@ -467,11 +469,14 @@ function auditGroundProjection({ contracts, projection, bridge, host, schema, ro
   // validate `observe_scene` results they receive. Two of them listed only the
   // first two reasons, so a valid mixed-ground observation was rejected by the
   // runner even though every wire layer accepted it. A runner may reference the
-  // reasons, but must not enumerate a subset that omits a producer value.
+  // reasons, but must not enumerate a subset that omits a producer value - and a
+  // runner that imports the generated set cannot omit one, which is the reason the
+  // two harnesses that used to enumerate them are silent here now.
   for (const [name, source] of runners ?? runnerSources(root)) {
-    const referenced = REASONS.filter((reason) => source.includes(`"${reason}"`));
+    if (source.includes("observe-scene-truncation-reasons.generated.mjs")) continue;
+    const referenced = TRUNCATION_REASONS.filter((reason) => source.includes(`"${reason}"`));
     if (referenced.length === 0) continue;
-    for (const reason of REASONS) {
+    for (const reason of TRUNCATION_REASONS) {
       if (!referenced.includes(reason))
         findings.push({
           kind: "ground",

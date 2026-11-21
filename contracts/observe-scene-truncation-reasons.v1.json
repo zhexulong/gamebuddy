@@ -1,0 +1,11 @@
+{
+  "schema": "gamebuddy-observe-scene-truncation-reasons/v1",
+  "purpose": "Why an `observe_scene` result was truncated: the closed wire set `truncatedReason` carries.",
+  "symbol": "OBSERVE_SCENE_TRUNCATION_REASONS",
+  "type": "ObserveSceneTruncationReason",
+  "members": ["maximum_affordances", "payload_limit", "ground_limit"],
+  "outputs": {
+    "ts": "host/src/observe-scene-truncation-reasons.generated.ts",
+    "mjs": "tools/observe-scene-truncation-reasons.generated.mjs"
+  }
+}

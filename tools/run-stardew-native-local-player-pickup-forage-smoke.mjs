@@ -18,6 +18,7 @@ import {
   waitForTerminal,
 } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { validateNativeLocalFixtureConfig } from "./lib/native-local-runner-primitives.mjs";
+import { OBSERVE_SCENE_TRUNCATION_REASONS } from "./observe-scene-truncation-reasons.generated.mjs";
 
 /** Load the emitted Host client from the local dist-test artifact. */
 async function loadDistTestClient(entry) {
@@ -36,11 +37,9 @@ const REQUIRED_CAPABILITIES = [
 
 /**
  * Every truncation reason an `observe_scene` result may carry when `partial` is
- * true. Keep this in step with `OBSERVE_SCENE_TRUNCATION_REASONS` in
- * `host/src/protocol.ts` and the Mod's own producer; a runner that lists only
- * some of them rejects valid observations.
+ * true, generated from `contracts/observe-scene-truncation-reasons.v1.json` so a
+ * runner cannot list only some of them and reject a valid observation.
  */
-const PARTIAL_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
 
 /** Execute the pickup-forage contract against an already-connected bridge session. */
 export async function runPickupForageSmoke(
@@ -328,7 +327,7 @@ function chooseOnlyFreshForageTarget(snapshot) {
 async function chooseExactSceneForageTarget(client, snapshot, target) {
   if (typeof client?.observeScene !== "function") throw new Error("observe_scene_unavailable");
   const scene = await client.observeScene({});
-  const validPartial = scene?.partial === true && PARTIAL_TRUNCATION_REASONS.has(scene.truncatedReason);
+  const validPartial = scene?.partial === true && OBSERVE_SCENE_TRUNCATION_REASONS.includes(scene.truncatedReason);
   if (
     !scene ||
     typeof scene.observationId !== "string" ||

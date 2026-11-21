@@ -7,7 +7,7 @@
  * (`chat-audit-contract.mjs`).
  */
 import { open } from "node:fs/promises";
-
+import { TERMINAL_TURN_STATES } from "../../chat-turn-terminal-states.generated.mjs";
 import {
   AUDIT_ARTIFACT_KEYS,
   AUDIT_CATEGORY_KEYS,
@@ -20,7 +20,6 @@ import {
   AUDIT_PROVIDER_OBSERVABILITY,
   AUDIT_SCHEMA,
   AUDIT_SURFACE,
-  AUDIT_TERMINAL_STATES,
   AUDIT_VOCABULARY,
   CODE_PATTERN,
   CONTENT_GUARD,
@@ -117,7 +116,7 @@ export function validateAuditEvent(event) {
   // These MUST stay in step with the audit kernel's own obligations
   // (`tools/lib/chat-run-audit.mjs`): a trace this validator accepts but the
   // kernel rejects would be written to disk and then analysed as nothing.
-  if (event.code === "turn.terminal" && !AUDIT_TERMINAL_STATES.includes(event.meta.state))
+  if (event.code === "turn.terminal" && !TERMINAL_TURN_STATES.includes(event.meta.state))
     return Object.freeze({ ok: false, reasonCode: "event_turn_terminal_state_invalid" });
   if (event.code === "run.finished" && !AUDIT_PROVIDER_OBSERVABILITY.includes(event.meta.providerObservability))
     return Object.freeze({ ok: false, reasonCode: "event_provider_observability_missing" });

@@ -62,7 +62,7 @@ import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-
+import { TERMINAL_TURN_STATES } from "../../chat-turn-terminal-states.generated.mjs";
 import { launchDesktopCompositionGateChild } from "../../desktop-composition-launch.mjs";
 // A thrown error's own text is never a reason code. `classifyFailure` decides the closed class and keeps the
 // message in `errorMessage` beside the class, stack and first frame - the ONE spelling the tree already uses
@@ -228,8 +228,6 @@ const CONVERSATION_PROMPTS = (process.env.GAMEBUDDY_CHAT_PROMPTS ?? "")
   .split("|")
   .map((prompt) => prompt.trim())
   .filter((prompt) => prompt.length > 0);
-
-const TERMINAL_TURN_STATES = Object.freeze(new Set(["completed", "cancelled", "failed"]));
 
 export function parseArguments(argv) {
   if (argv.length === 0) return Object.freeze({ reportPath: undefined });
@@ -575,7 +573,7 @@ export async function openEventStream({ origin, client, recorder, cursor = undef
           }
           if (frame.eventType === "turn.state_changed") {
             const state = frame.payload.payload?.state;
-            if (TERMINAL_TURN_STATES.has(state)) settleTerminal(state);
+            if (TERMINAL_TURN_STATES.includes(state)) settleTerminal(state);
           }
         }
       }
@@ -616,14 +614,14 @@ async function awaitTerminal({ origin, client, recorder, stream, projectionBefor
     const read = await readStateSnapshot({ origin, client, recorder });
     if (read.ok) {
       projection = read.projection;
-      if (TERMINAL_TURN_STATES.has(projection.turnState)) break;
+      if (TERMINAL_TURN_STATES.includes(projection.turnState)) break;
     }
     if (attempt + 1 < POST_SUBMIT_STATE_POLLS) await delay(POST_SUBMIT_STATE_POLL_MS);
   }
   // No successful post-submit read at all: nothing authoritative was observed, so
   // no terminal can be claimed. The caller counts this turn as unsettled.
   if (projection === undefined) return Object.freeze({ terminal: false, projection: undefined });
-  if (!TERMINAL_TURN_STATES.has(projection.turnState)) {
+  if (!TERMINAL_TURN_STATES.includes(projection.turnState)) {
     // A non-terminal read for THIS turn is also not a terminal. Do not fall back
     // to any earlier snapshot.
     return Object.freeze({ terminal: false, projection });
@@ -1020,7 +1018,7 @@ async function collectRun({ root, recorder, nonceSha256, environment, attachChil
         for (let attempt = 0; attempt < CANCEL_ARM_POLLS; attempt += 1) {
           const poll = await readStateSnapshot({ origin, client, recorder });
           if (!poll.ok) break;
-          if (TERMINAL_TURN_STATES.has(poll.projection.turnState)) break;
+          if (TERMINAL_TURN_STATES.includes(poll.projection.turnState)) break;
           if (poll.projection.canCancel) {
             armed = poll.projection;
             break;

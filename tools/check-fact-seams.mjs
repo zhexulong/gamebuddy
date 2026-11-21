@@ -167,9 +167,41 @@ export const SEAMS = Object.freeze([
     derives: {
       kind: "generated",
       file: "contracts/deployment-principal.v1.json",
-      generator: "tools/generate-deployment-principal.mjs",
+      generator: "tools/generate-vocabulary.mjs",
     },
     owner: "the deployment identity lane",
+  },
+  // ─── The same shape, for the two vocabularies a compile-time consumer on each side reads ───
+  //
+  // Neither pair can import the other's module: the Host package and the plain ESM tools tree are separate, and the
+  // browser bundle cannot reach `tools/` at all. The contract JSON is the fact, both ends are its outputs of the one
+  // vocabulary generator, and the reproducibility gate re-runs each producer.
+  {
+    fact: "observe-scene truncation reasons",
+    authority: {
+      file: "host/src/observe-scene-truncation-reasons.generated.ts",
+      name: "OBSERVE_SCENE_TRUNCATION_REASONS",
+    },
+    readers: [
+      { file: "tools/observe-scene-truncation-reasons.generated.mjs", name: "OBSERVE_SCENE_TRUNCATION_REASONS" },
+    ],
+    derives: {
+      kind: "generated",
+      file: "contracts/observe-scene-truncation-reasons.v1.json",
+      generator: "tools/generate-vocabulary.mjs",
+    },
+    owner: "the stardew harness lane",
+  },
+  {
+    fact: "chat turn terminal states",
+    authority: { file: "dialogue-web/src/chat-turn-terminal-states.generated.ts", name: "TERMINAL_TURN_STATES" },
+    readers: [{ file: "tools/chat-turn-terminal-states.generated.mjs", name: "TERMINAL_TURN_STATES" }],
+    derives: {
+      kind: "generated",
+      file: "contracts/chat-turn-terminal-states.v1.json",
+      generator: "tools/generate-vocabulary.mjs",
+    },
+    owner: "the chat live-run lane",
   },
   {
     fact: "provider failure classes",
@@ -488,18 +520,6 @@ export const DEBT = Object.freeze([
     },
   ),
   mirrorDebt(
-    "observe-scene truncation reasons",
-    "host/src/protocol.ts:OBSERVE_SCENE_TRUNCATION_REASONS",
-    [
-      "tools/run-stardew-native-local-player-navigation-mutation-smoke.mjs:PARTIAL_TRUNCATION_REASONS",
-      "tools/run-stardew-native-local-player-pickup-forage-smoke.mjs:PARTIAL_TRUNCATION_REASONS",
-    ],
-    {
-      reason: "the smoke harnesses assert which truncation reasons count as partial from a list of their own",
-      owner: "the stardew harness lane",
-    },
-  ),
-  mirrorDebt(
     "the Mod's four facing directions",
     "host/src/stardew-humanlike-action-projection.test.ts:MOD_DIRECTION_ENUM_4",
     ["tools/lib/failure-dump.mjs:FACING_NAMES"],
@@ -511,19 +531,6 @@ export const DEBT = Object.freeze([
         "its direction names (a protocol change, another lane's work). A codegen here would mint a third spelling of a " +
         "fact no file on this side owns, and the Host-side 'authority' is a *.test.ts, which is never a producer",
       owner: "the failure-dump lane, after the Mod publishes its direction names",
-    },
-  ),
-  mirrorDebt(
-    "chat turn terminal states",
-    "dialogue-web/src/components/use-composed-bootstrap.ts:TERMINAL_TURN_STATES",
-    [
-      "tools/lib/chat-run-audit.mjs:TERMINAL_STATES",
-      "tools/live-run/chat/chat-audit-contract.mjs:AUDIT_TERMINAL_STATES",
-      "tools/live-run/chat/run-chat-live-audit.mjs:TERMINAL_TURN_STATES",
-    ],
-    {
-      reason: "the live-run audit reads a Chat turn's terminal states from its own copies of the client's three",
-      owner: "the chat live-run lane",
     },
   ),
 ]);

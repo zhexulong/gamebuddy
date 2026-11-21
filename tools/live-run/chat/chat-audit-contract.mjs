@@ -109,8 +109,6 @@ export const SHA256_HEX = /^[a-f0-9]{64}$/;
 export const PI_SESSION_ID = /^[A-Za-z0-9_-]{1,256}$/;
 export const STARTUP_STDERR_CODE = /^[a-z][a-z0-9_.:-]{2,159}$/i;
 export const STARTUP_STDERR_REASON_PREFIX = "dialogue_start_stderr:";
-/** Terminal states a `turn.terminal` may carry; mirrors the audit kernel. */
-export const AUDIT_TERMINAL_STATES = Object.freeze(["completed", "cancelled", "failed"]);
 /** Observer self-report values a `run.finished` may carry; mirrors the kernel. */
 export const AUDIT_PROVIDER_OBSERVABILITY = Object.freeze(["observed", "unobserved"]);
 /** `probe.distance` domain; mirrors the audit kernel. */

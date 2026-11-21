@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 
 import { MAX_COMPANION_PRESENTATION_TEXT_CHARS } from "./companion-presentation-transport.js";
 import {
+  OBSERVE_SCENE_TRUNCATION_REASONS as OBSERVE_SCENE_TRUNCATION_REASON_VALUES,
+  type ObserveSceneTruncationReason,
+} from "./observe-scene-truncation-reasons.generated.js";
+import {
   hasExactKeys,
   hasExactKeysOrOptional,
   hasOnlyKeys,
@@ -1628,7 +1632,7 @@ export type ObserveSceneResult = Readonly<{
   affordances: readonly ObserveSceneAffordance[];
   summary: string;
   partial: boolean;
-  truncatedReason: "maximum_affordances" | "payload_limit" | "ground_limit" | null;
+  truncatedReason: ObserveSceneTruncationReason | null;
   /**
    * Ground underfoot, read from the map's Back-layer `Type` property. Present only
    * when the Mod scanned tiles; `null` means "not reported", not "no ground".
@@ -3107,7 +3111,7 @@ const OBSERVE_SCENE_KINDS = new Set([
   "artifact_spot",
 ]);
 const OBSERVE_SCENE_DIRECTIONS = new Set(["North", "South", "East", "West", "CurrentTile"]);
-const OBSERVE_SCENE_TRUNCATION_REASONS = new Set(["maximum_affordances", "payload_limit", "ground_limit"]);
+const OBSERVE_SCENE_TRUNCATION_REASON_SET = new Set<string>(OBSERVE_SCENE_TRUNCATION_REASON_VALUES);
 const SCENE_GROUND_KINDS = new Set(["grass", "dirt", "stone", "wood", "other"]);
 const MAXIMUM_SCENE_GROUND_EXCEPTIONS = 12;
 
@@ -3185,7 +3189,7 @@ function validateObserveSceneResult(value: Record<string, unknown>): string | nu
     !Array.isArray(value.affordances) ||
     value.affordances.length > 20 ||
     (value.partial
-      ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASONS.has(value.truncatedReason)
+      ? typeof value.truncatedReason !== "string" || !OBSERVE_SCENE_TRUNCATION_REASON_SET.has(value.truncatedReason)
       : value.truncatedReason !== null) ||
     !validateObserveSceneGround(value.ground)
   )
