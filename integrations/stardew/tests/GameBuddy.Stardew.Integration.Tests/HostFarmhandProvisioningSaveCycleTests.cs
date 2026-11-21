@@ -135,6 +135,27 @@ public sealed class HostFarmhandProvisioningSaveCycleTests : IDisposable
     }
 
     /// <summary>
+    /// TWO COMPANIONS, ONE SAVE. A second binding admitted before the first save is queued, not refused (the surface
+    /// has no `save_persistence_pending` answer any more), and the engine's one save cycle carries both.
+    /// </summary>
+    [Fact]
+    public void TwoBindingsOwedBeforeOneSave_AreWrittenByOneCycle()
+    {
+        var second = new HostFarmhandProvisioner.PendingSaveBinding(
+            new FarmhandAttachmentRequest { RequestId = "request_02", CompanionId = "companion_02", CabinId = "cabin_02" },
+            new FarmhandBinding { CompanionId = "companion_02", FarmhandId = 3003L, CabinId = "cabin_02", SaveId = "save_01", WorldId = "world_01" });
+        Expect(this.world.Provisioner, Owed(), second);
+
+        this.world.Invoke("OnSaving");
+
+        this.world.Data.WriteAttempts.Should().Be(1, "one save cycle writes everything it owes");
+        FarmhandBindingStore written = this.world.Data.Written!;
+        written.Bindings.Select(binding => binding.CompanionId).Should().BeEquivalentTo(new[] { CompanionId, "companion_02" });
+        written.ConsumedRequestIds.Should().BeEquivalentTo(new[] { RequestId, "request_02" });
+        Owed(this.world.Provisioner).Should().BeEmpty();
+    }
+
+    /// <summary>
     /// THE SAVE RUNS AND THE MOD'S WRITE THROWS. What is lost is the record, never the session: the Farmhand stays in
     /// the world the companion is playing in - the engine is mid-save, and an identity that was admitted is not a
     /// leftover of a creation attempt - and provisioning is quarantined rather than left half-written.
