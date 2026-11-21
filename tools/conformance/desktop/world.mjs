@@ -26,21 +26,11 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import {
-  appendFileSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { FACTS, SCENARIO_FILE } from "./wire.mjs";
+import { FACTS, GUARDIAN_ATTEMPT_RECORD, HOST_TEARDOWN_RECORD, SCENARIO_FILE } from "./wire.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../..");
@@ -63,7 +53,7 @@ function run(command, args, options = {}) {
 const REGISTRATION_KEY = "HKCU\\Software\\GameBuddy\\Registration\\v1";
 const REGISTRATION_SCHEMA = "gamebuddy-windows-root-registration/v1";
 
-export function registrationProgramRoot() {
+function registrationProgramRoot() {
   try {
     const output = run("reg.exe", ["query", REGISTRATION_KEY, "/v", "programRoot"]);
     const match = /programRoot\s+REG_SZ\s+(.+)/u.exec(output);
@@ -77,7 +67,7 @@ export function registrationProgramRoot() {
  * Where the launcher executable is taken from: a named one, or a Release publish into the
  * harness's own temp root. The product ships this configuration, so the suite publishes it.
  */
-export function resolveLauncherBinary({ tempRoot, explicit }) {
+function resolveLauncherBinary({ tempRoot, explicit }) {
   const named = explicit ?? process.env.GAMEBUDDY_DESKTOP_CONFORMANCE_BINARY ?? null;
   if (named !== null && named.length > 0) {
     if (!existsSync(named)) throw new Blocked("desktop_conformance_binary_absent", named);
@@ -120,7 +110,7 @@ function guardianPair() {
 }
 
 /** A published generation root, validated structurally the way the product's own fixture validates one. */
-export function publishedGenerationRoot() {
+function publishedGenerationRoot() {
   const named =
     process.env.GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT ??
     process.env.GAMEBUDDY_DESKTOP_CONFORMANCE_GENERATION_ROOT ??
@@ -169,7 +159,7 @@ const ADMISSION_FILES = [
  * here from `process.execPath`. Either way the two digests that name the bootstrap entry are
  * rewritten, because the entry is this suite's peer.
  */
-export function installGeneration({ programRoot, publishedRoot, scratch }) {
+function installGeneration({ programRoot, publishedRoot, scratch }) {
   mkdirSync(programRoot, { recursive: true });
   const generationId = `g-conformance-1-${randomBytes(16).toString("hex")}`;
   const generationRoot = join(programRoot, "generations", generationId);
@@ -306,7 +296,7 @@ export function processIdentity(pid) {
  * A process the harness starts is alive when it is spawned and gone a moment later, so the ledger
  * entry has to be read inside that window rather than assumed.
  */
-export function processIdentityOrNull(pid, attempts = 40) {
+function processIdentityOrNull(pid, attempts = 40) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return processIdentity(pid);
@@ -323,12 +313,28 @@ export function startStandinProcess() {
   return child;
 }
 
-export function killExactProcess(pid) {
-  try {
-    run("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
-  } catch {
-    // Already gone is the answer a kill is allowed to receive.
+/**
+ * End this exact process - the pid this suite started or read out of a transcript, never a name
+ * and never a pattern - and do not report until the pid is gone or a bounded wait has expired.
+ *
+ * A kill that returned is not a process that left: a child killed together with its parent can be
+ * reported as still running for a moment afterwards, so the answer this returns is a reading taken
+ * after the wait, not the exit status of the tool that asked.
+ */
+export function killExactProcess(pid, boundMs = 6_000) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      run("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+    } catch {
+      // Already gone is the answer a kill is allowed to receive.
+    }
+    const deadline = Date.now() + boundMs / 2;
+    while (Date.now() < deadline) {
+      if (!isRunning(pid)) return true;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
   }
+  return !isRunning(pid);
 }
 
 /** Whether this exact pid is still running. The pid is ours: the suite started it. */
@@ -428,7 +434,7 @@ export function startedProcessLedger() {
 }
 
 /** Where the launcher's own records live under a layout's operational root. */
-export function operationalPath(world, ...segments) {
+function operationalPath(world, ...segments) {
   return join(world.layout.operationalRoot, ...segments);
 }
 
@@ -520,12 +526,7 @@ export async function launchDesktop(world, scenario) {
   const transcript = readTranscript(scenario.transcript);
 
   const hostPid = transcript.find((entry) => entry.fact === FACTS.hostStarted)?.pid ?? null;
-  let hostAlive = hostPid === null ? false : isRunning(hostPid);
-  if (hostAlive) {
-    killExactProcess(hostPid);
-    await new Promise((resolveWait) => setTimeout(resolveWait, 500));
-    hostAlive = isRunning(hostPid);
-  }
+  const hostAlive = hostPid === null ? false : !killExactProcess(hostPid);
 
   return {
     pid,
@@ -566,7 +567,7 @@ export function factsNamed(reading, name) {
 
 /** The launcher's own teardown records: the two numbers a quit is allowed to spend. */
 export function teardownRecords(world) {
-  const directory = operationalPath(world, "host-exit");
+  const directory = operationalPath(world, HOST_TEARDOWN_RECORD.directory);
   if (!existsSync(directory)) return [];
   return readdirSync(directory)
     .filter((name) => name.startsWith("host-teardown-") && name.endsWith(".json"))
@@ -580,8 +581,8 @@ export function teardownRecords(world) {
 }
 
 /** The one attempt record the next launch recovers from, or `null` when there is none. */
-export function attemptRecordPath(world) {
-  return operationalPath(world, "guardian-attempt", "guardian-attempt.json");
+function attemptRecordPath(world) {
+  return operationalPath(world, GUARDIAN_ATTEMPT_RECORD.directory, GUARDIAN_ATTEMPT_RECORD.file);
 }
 
 export function writeAttemptRecord(world, record) {
@@ -600,9 +601,3 @@ export function readAttemptRecord(world) {
     return { unreadable: true };
   }
 }
-
-export function clearAttemptRecord(world) {
-  rmSync(attemptRecordPath(world), { force: true });
-}
-
-export { appendFileSync, statSync };

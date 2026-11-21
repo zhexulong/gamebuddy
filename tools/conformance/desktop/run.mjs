@@ -84,6 +84,7 @@ async function main(argv) {
   process.stdout.write(`layout: ${world.layout.operationalRoot}\n`);
 
   const results = [];
+  let survived = 0;
   try {
     for (const entry of selected) {
       const started = Date.now();
@@ -114,15 +115,18 @@ async function main(argv) {
     }
   } finally {
     // Every process this suite started, by pid AND by the instant it started: a pid alone is not a
-    // process, so the ledger is what the claim "nothing was left behind" is made about.
+    // process, so the ledger is what the claim "nothing was left behind" is made about. One that is
+    // still running here was left by the product or by a case, and it is stopped by its exact pid.
     const leftovers = [];
     for (const entry of startedProcessLedger()) {
       if (!isRunning(entry.pid)) continue;
-      killExactProcess(entry.pid);
-      leftovers.push(entry);
+      const ended = killExactProcess(entry.pid);
+      if (!ended) survived += 1;
+      leftovers.push({ ...entry, ended });
     }
+    const started = startedProcessLedger().length;
     process.stdout.write(
-      `processes: ${startedProcessLedger().length} started · ${startedProcessLedger().length - leftovers.length} confirmed gone${leftovers.length === 0 ? "" : ` · ${leftovers.length} still running and stopped here: ${JSON.stringify(leftovers)}`}\n`,
+      `processes: ${started} started · ${started - leftovers.length} confirmed gone${leftovers.length === 0 ? "" : ` · ${leftovers.length} still running, stopped here by pid: ${JSON.stringify(leftovers)}`}${survived === 0 ? "" : ` · ${survived} SURVIVED and must be cleaned by hand`}\n`,
     );
     if (!options.keep && world !== null) world.dispose();
     else if (world !== null) process.stdout.write(`world kept at ${world.layout.programRoot}\n`);
@@ -142,7 +146,7 @@ async function main(argv) {
     process.stdout.write("desktop_conformance_no_population: nothing was measured, which is never a pass\n");
     return 2;
   }
-  return failed === 0 && blocked === 0 ? 0 : 1;
+  return failed === 0 && blocked === 0 && survived === 0 ? 0 : 1;
 }
 
 function describe(outcome) {

@@ -46,13 +46,13 @@ import {
 } from "./world.mjs";
 
 /** The name no launcher may hand a child: this suite's own canary, set in the launcher's block. */
-export const CANARY_NAME = "GAMEBUDDY_CONFORMANCE_CANARY";
+const CANARY_NAME = "GAMEBUDDY_CONFORMANCE_CANARY";
 /** A name the launcher DOES declare, carrying the same secret: the control that the canary is absent by policy. */
-export const CARRIED_NAME = "HTTPS_PROXY";
+const CARRIED_NAME = "HTTPS_PROXY";
 
 const BOUNDED_CODE = /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)?$/u;
 /** One scenario, with the wire it speaks and the bounds the harness reads it under. */
-export function scenarioBase(world, caseId, overrides = {}) {
+function scenarioBase(world, caseId, overrides = {}) {
   return {
     behaviour: BEHAVIOURS.standard,
     transcript: join(world.scratch, `${caseId}.ndjson`),

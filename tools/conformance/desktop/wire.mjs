@@ -19,19 +19,16 @@
 export const GUARDIAN_SESSION_SCHEMA = "gamebuddy-desktop-guardian-session/v1";
 
 /** Schema of the one-shot acknowledgement the Host writes on its own standard output. */
-export const HOST_BOOTSTRAP_SCHEMA = "gamebuddy-desktop-host-bootstrap/v1";
-
-/** Schema of the informational frames the Host may write before that acknowledgement. */
-export const HOST_BOOTSTRAP_STATUS_SCHEMA = "gamebuddy-desktop-host-bootstrap-status/v1";
+const HOST_BOOTSTRAP_SCHEMA = "gamebuddy-desktop-host-bootstrap/v1";
 
 /** Schema of the one-shot presentation entry the Host publishes on its own pipe. */
-export const PRESENTATION_HANDOFF_SCHEMA = "gamebuddy-desktop-presentation-handoff/v1";
+const PRESENTATION_HANDOFF_SCHEMA = "gamebuddy-desktop-presentation-handoff/v1";
 
 /** Schema of the root layout the bootstrap frame carries. */
-export const ROOT_LAYOUT_SCHEMA = "gamebuddy-windows-root-layout/v1";
+const ROOT_LAYOUT_SCHEMA = "gamebuddy-windows-root-layout/v1";
 
 /** Schema of the bounded channel a second invocation delivers an intent on. */
-export const PRIMARY_INTENT_SCHEMA = "gamebuddy-desktop-primary-intent/v1";
+const PRIMARY_INTENT_SCHEMA = "gamebuddy-desktop-primary-intent/v1";
 
 /** The broker's one frame ceiling, in bytes, excluding the terminating LF. */
 export const FRAME_CAP_BYTES = 16_384;
@@ -63,7 +60,6 @@ export const HOST_TEARDOWN_RECORD = Object.freeze({
 });
 
 /** Where the harness leaves the scenario a case's mock Host reads, under the layout's operational root. */
-export const SCENARIO_DIRECTORY = "desktop-conformance";
 export const SCENARIO_FILE = "scenario.json";
 
 /**
