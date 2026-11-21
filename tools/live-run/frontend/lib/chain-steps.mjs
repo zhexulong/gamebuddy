@@ -424,11 +424,12 @@ export function measuredDrivers() {
 }
 
 /**
- * The alignment as one block of lines: the counts first, because "17 steps, 11 measured, 6 gaps" is
- * the sentence a reader needs before any row, then a line per declaration.
+ * The alignment as one block of lines: the counts first, because "30 declarations, 29 measured, 0 gaps,
+ * 1 owned elsewhere" is the sentence a reader needs before any row, then a line per declaration.
  *
- * The population is printed with the verdict. A table that reports "0 gaps" over an empty list is
- * the shape this kit has been burned by, so the counts always name what they counted.
+ * The population is printed with the verdict, for ALL THREE forms. A table that reports "0 gaps" over an
+ * empty list - or a bucket that emptied without a line saying so - is the shape this kit has been burned
+ * by, so every count travels with the members it counted.
  */
 export function describeChainAlignment(entries = CHAIN_STEPS) {
   const all = Array.isArray(entries) ? entries : [];
