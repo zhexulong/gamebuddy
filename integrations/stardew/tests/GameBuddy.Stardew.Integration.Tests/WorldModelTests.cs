@@ -288,7 +288,7 @@ public sealed class WorldModelTests
         {
             ActorDisposition disposition = WorldModel.Classify(facts);
             disposition.Kind.Should().Be(ActorDispositionKind.Event, $"{driver} must be the Event kind for this table to mean anything");
-            string evidence = WorldModel.DescribeBodyHold(disposition, facts, canMove: false);
+            string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false).Evidence;
             evidence.Should().Contain($"driver={driver}");
             evidence.Should().Contain($"event_up={(eventUp ? "true" : "false")}");
             WorldModel.HoldReasonCode(disposition.Kind).Should().Be(
@@ -325,7 +325,7 @@ public sealed class WorldModelTests
         ActorWorldFacts both = Facts(dayTransition: true, controlsFrozen: true);
 
         WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
-        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=day_transition");
+        WorldModel.DescribeHeldBody(WorldModel.Classify(both), both, canMove: false).Evidence.Should().Contain("driver=day_transition");
     }
 
     [Fact]
@@ -335,7 +335,7 @@ public sealed class WorldModelTests
         ActorWorldFacts both = Facts(eventUp: true, minigame: true);
 
         WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
-        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=cutscene");
+        WorldModel.DescribeHeldBody(WorldModel.Classify(both), both, canMove: false).Evidence.Should().Contain("driver=cutscene");
     }
 
     [Fact]
@@ -345,6 +345,6 @@ public sealed class WorldModelTests
         ActorWorldFacts both = Facts(controlsFrozen: true, warping: true);
 
         WorldModel.Classify(both).Kind.Should().Be(ActorDispositionKind.Event);
-        WorldModel.DescribeBodyHold(WorldModel.Classify(both), both, canMove: false).Should().Contain("driver=controls_frozen");
+        WorldModel.DescribeHeldBody(WorldModel.Classify(both), both, canMove: false).Evidence.Should().Contain("driver=controls_frozen");
     }
 }

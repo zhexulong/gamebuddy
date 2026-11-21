@@ -100,7 +100,7 @@ public sealed class RefusalWithNoAdmissibleActionGateTests
     [Fact]
     public void TheShapeRound83WasRefusedInNowNamesItsHolderAndEnds()
     {
-        string now = WorldModel.DescribeNavigationHold(default, canMove: false);
+        string now = WorldModel.DescribeHeldBody(default, canMove: false).Evidence;
         this.output.WriteLine($"before: {Round83Evidence}");
         this.output.WriteLine($"after:  destination=Farm;actionable=false;{now}");
 
@@ -152,7 +152,7 @@ public sealed class RefusalWithNoAdmissibleActionGateTests
                     $"the {shape} fixture has to be a {kind} hold, or this gate examines another kind under its name");
                 shapes.Add((
                     WorldModel.HoldReasonCode(kind),
-                    WorldModel.DescribeNavigationHold(facts, canMove: false, bodyPauseRemainingMs: bodyPauseRemainingMs)));
+                    WorldModel.DescribeHeldBody(facts, canMove: false, bodyPauseRemainingMs: bodyPauseRemainingMs).Evidence));
             }
         }
 

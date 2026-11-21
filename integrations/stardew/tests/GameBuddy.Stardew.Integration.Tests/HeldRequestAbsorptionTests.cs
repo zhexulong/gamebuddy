@@ -93,7 +93,7 @@ public sealed class HeldRequestAbsorptionTests
         // this very hold.
         ActorWorldFacts facts = WorldModel.ReadFacts(absorption.Actor);
         (string holdCode, string _) =
-            WorldModel.DescribeCurrentBodyHold(WorldModel.Classify(facts), facts, absorption.Actor.CanMove);
+            WorldModel.DescribeHeldBody(WorldModel.Classify(facts), facts, absorption.Actor.CanMove);
         reasonCode.Should().Be("transient_busy");
         reasonCode.Should().Be(holdCode);
         absorption.Executions.TryGetReceipt(absorption.Request.Payload.RequestId, out _)
@@ -364,7 +364,7 @@ public sealed class HeldRequestAbsorptionTests
     private static (string HoldCode, string HoldEvidence) ArrivalHold(Farmer actor)
     {
         ActorWorldFacts facts = WorldModel.ReadFacts(actor);
-        return WorldModel.DescribeCurrentBodyHold(WorldModel.Classify(facts), facts, actor.CanMove);
+        return WorldModel.DescribeHeldBody(WorldModel.Classify(facts), facts, actor.CanMove);
     }
 
     private sealed record Absorption(

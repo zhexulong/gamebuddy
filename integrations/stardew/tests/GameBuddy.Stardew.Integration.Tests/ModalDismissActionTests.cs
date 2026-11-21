@@ -129,7 +129,7 @@ public sealed class ModalDismissActionTests
         admission.Should().NotContain("closeDialogue", "the admission refuses the hold; it never evicts the box");
         admission.Should().NotContain("exitActiveMenu", "the admission refuses the hold; it never evicts the box");
         admission.Should().Contain(
-            "WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove)",
+            "WorldModel.DescribeCurrentHeldBody(boundActor)",
             "the refusal names the hold and carries the modal facts the remedy needs; an eviction here would delete that fact");
     }
 

@@ -1109,7 +1109,7 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
     /// The hold these fixtures publish for a body the game has not described further, in <see cref="WorldModel"/>'s own
     /// words rather than a second copy of them.
     /// </summary>
-    private static readonly string NotActionableHold = WorldModel.DescribeNavigationHold(default, canMove: false);
+    private static readonly string NotActionableHold = WorldModel.DescribeHeldBody(default, canMove: false).Evidence;
 
     private static NavigationWorldView View(bool live, bool actionable, string source, bool at, IReadOnlyList<NavigationTransitionLeg> legs)
         => new(live, actionable ? null : NotActionableHold, source, 0, 0, at, legs, BoundaryExcludesDestination: false, DestinationTemporarilyUnavailable: false, TransitionAmbiguousOrUnknown: false, UncorrelatedTransition: false);

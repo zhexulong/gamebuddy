@@ -447,13 +447,21 @@ internal static class WorldModel
     };
 
     /// <summary>
-    /// The evidence for a held body: what holds the actor, and the facts needed to choose a countermeasure.
+    /// The FACTS half of a held body's evidence: the numbers the countermeasure needs, with no holder and no step.
     /// Pure, so the whole decision table is testable without a game instance.
+    ///
+    /// <para>
+    /// NOT the sentence a refusal publishes. A refusal owes its reader WHO holds her and what ends it, and this block
+    /// cannot say that: MEASURED `round86`, a producer that published this block alone sent `move_to_tile` back
+    /// sixteen times on `transient_kind=movement_lock;retry_window_ms=2000` while the game clock stood still. The
+    /// sentence is <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> and it is
+    /// the only door out of this file.
+    /// </para>
     ///
     /// <paramref name="modalIsQuestion"/> decides dismiss-versus-answer and is supplied by the caller
     /// because it needs the live modal; when it is absent the evidence says so rather than guessing.
     /// </summary>
-    public static string DescribeBodyHold(
+    private static string DescribeBodyHold(
         in ActorDisposition disposition,
         in ActorWorldFacts facts,
         bool canMove,
@@ -469,107 +477,120 @@ internal static class WorldModel
             ActorDispositionKind.PassOut =>
                 $"stamina={facts.Stamina.ToString(System.Globalization.CultureInfo.InvariantCulture)}"
                 + $";time_of_day={facts.TimeOfDay};can_move={canMoveText}",
-            // `movement_lock` is the honest name for the one hold the facts cannot name further: the
-            // disposition says Transient but no eating/tool/freeze/animation/warp fact produced it, so something
-            // else native (a knockback, the `NetMutex`-deferred upgrade at ParrotUpgradePerch.cs:797) took CanMove away.
+            // A `Transient` with no kind is a HOLE in the facts, and it is named as a hole. This word was
+            // `movement_lock` until `round86`, and it READ like a native lock with a timer: sixteen refusals were obeyed
+            // on the 2 s window printed beside it while the game clock stood still for four minutes. No production path
+            // mints one any more - the two `CanMove` shapes name their holder in `DescribeHeldBody` - and
+            // `TransientRefusalNamesItsHolderTests` fails by name on this word if one comes back, rather than letting a
+            // bucket within a bucket read as a holder.
             ActorDispositionKind.Transient =>
-                $"transient_kind={disposition.TransientKind ?? "movement_lock"}"
+                $"transient_kind={disposition.TransientKind ?? UnnamedTransientKind}"
                 + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",
             _ => $"can_move={canMoveText}",
         };
     }
 
     /// <summary>
-    /// <see cref="DescribeBodyHold"/> with the modal probe filled from the LIVE modal, and the reason code
-    /// taken from the same closed set. Kept apart from the pure overload so the decision table stays a
-    /// table; the only thing this adds is reading the modal that is actually mounted.
-    /// </summary>
-    public static (string ReasonCode, string Evidence) DescribeCurrentBodyHold(
-        in ActorDisposition disposition,
-        in ActorWorldFacts facts,
-        bool canMove)
-    {
-        // Read from the LIVE modal whatever the disposition kind is: a cutscene outranks a mounted modal in
-        // `Classify`, so the box a cutscene is showing is only reachable from here. That answer-to-owed-versus-
-        // informational fact is what lets the evidence say which modal action applies, and guessing it would tell the
-        // Agent to dismiss a box that is waiting for an answer (or to answer one that asks nothing).
-        bool? isQuestion = null;
-        if (Game1.activeClickableMenu is DialogueBox dialogue)
-            isQuestion = dialogue.isQuestion;
-        return (HoldReasonCode(disposition.Kind), DescribeBodyHold(disposition, facts, canMove, isQuestion));
-    }
-
-    /// <summary>
-    /// The evidence a refusal carries when the actor cannot start a world action: WHAT holds her, from the same closed
-    /// set <see cref="DescribeCurrentBodyHold"/> names, and what would clear it.
+    /// A held body as the pair every refusal publishes: the CODE that says which KIND of hold it is, and the sentence
+    /// that says WHO holds her and what ends it.
     ///
     /// <para>
-    /// It exists because `destination_locked` carried `actionable=false` and nothing else, so a cutscene, an open menu,
-    /// a faint and a tool swing all read as the same word. Measured from a live run's settlement digests: a companion
-    /// that wanted to leave the farm for town was refused `destination_locked` and stayed on the farm for two in-game
-    /// days, because the only response its evidence left open was the same request again. The caller has already
-    /// decided that the actor cannot act - this says WHY, from the one owner of that vocabulary, so no gate invents a
-    /// second set of names for the same holds.
+    /// ONE OWNER, because there were two and they disagreed. The facts block above answered a body `Classify` calls
+    /// Idle while `CanMove` is false with `transient_kind=movement_lock;retry_window_ms=2000;can_move=false` - a name
+    /// that reads like a native lock on a timer, a window no timer honours, and no holder at all. MEASURED `round86`:
+    /// sixteen `move_to_tile` refusals read exactly that at day 7 16:40 and the game clock stood still for four minutes,
+    /// because the engine's own `shouldTimePass` is false while `!CanMove` (`Game1.cs:9307-9310`) - the lock owned the
+    /// clock, not just her next step.
     /// </para>
     ///
     /// <para>
-    /// The one hold the closed set cannot name is `CanMove` itself, and it has two shapes. MEASURED `round83`: two
-    /// `destination_locked` receipts read <c>held_by=unknown_holder:CanMove;can_move=false;admissible_actions=none;
-    /// next_step=observe_again</c> six seconds apart, and the game clock then stood at 1530 for seven minutes. The flag
-    /// was not a mystery: the engine's own clock asks it - `shouldTimePass` returns `player.forceTimePass` for exactly
-    /// `!CanMove &amp;&amp; !UsingTool` (Game1.cs:9307-9310) - so what the evidence called "unknown" was stopping the world.
-    /// And `observe_again` is the reading that had just answered: the run sat in `observe -&gt; destination_locked -&gt;
-    /// observe`.
+    /// The holder has two shapes and the facts tell them apart. A native countdown is RUNNING:
+    /// `Farmer.noMovementPause` writes `CanMove = false` at Farmer.cs:7588 and clears it at :7592, and `Classify`
+    /// cannot see it because it declares no hold of its own - so waiting is honest there and the sentence publishes
+    /// what is left of it. Nothing is running: that is a named dead end (<see cref="StalledHolderPrefix"/>), because
+    /// nothing in this Mod ends it, and the step it publishes ends the attempt instead of asking for the reading that
+    /// was just refused.
     /// </para>
     ///
     /// <para>
-    /// So both shapes are named and neither loops. A native countdown is RUNNING and releases her on its own
-    /// (<see cref="BodyPauseHolder" />) - the evidence says what is left of it and names the retry window that clears
-    /// it. Nothing is running, so nothing in this Mod can end it: that is a named dead end
-    /// (<see cref="StalledHolderPrefix" /><see cref="UnnamedHolderEngineFact" />) whose step ends the attempt instead of
-    /// asking for the same reading again.
+    /// The same answer the navigation refusal has carried since `f38294d9`; this is it reached from the movement
+    /// refusal and from admission, which used to synthesize a kindless `Transient` and lose the name.
     /// </para>
     /// </summary>
+    /// <param name="disposition">
+    /// The classification of <paramref name="facts"/>, taken rather than recomputed: a caller that has already asked
+    /// does not ask twice, and every shape this Mod can mint can be examined without a game.
+    /// </param>
     /// <param name="bodyPauseRemainingMs">
     /// What is left of <c>Farmer.noMovementPause</c>, read from the live farmer by
-    /// <see cref="DescribeCurrentNavigationHold"/>. It is a probe rather than an <see cref="ActorWorldFacts" /> member
+    /// <see cref="DescribeCurrentHeldBody"/>. It is a probe rather than an <see cref="ActorWorldFacts"/> member
     /// because that record is the closed set of holds the Mod can NAME, and this countdown raises none of them while it
     /// writes <c>CanMove = false</c>.
     /// </param>
-    public static string DescribeNavigationHold(
+    internal static (string ReasonCode, string Evidence) DescribeHeldBody(
+        in ActorDisposition disposition,
         in ActorWorldFacts facts,
         bool canMove,
         bool? modalIsQuestion = null,
         int bodyPauseRemainingMs = 0)
     {
-        ActorDisposition disposition = Classify(facts);
+        // THE CODE FOLLOWS THE HOLD, NOT THE ENUM. A named kind keeps its own code; the `CanMove` tail - a body that is
+        // held and cannot act while no named kind explains it - reports as the transient lock it is, which is the code
+        // `round86`'s refusals already carried. It is NOT `player_not_actionable`: that is the Idle shrug the naming
+        // wave removed, and the Idle entry of `HoldReasonCode` stays unreachable from a refusal. WHICH of the two
+        // shapes it is, is the evidence's job and not the code's.
+        string code = HoldReasonCode(
+            disposition.Kind != ActorDispositionKind.Idle ? disposition.Kind : ActorDispositionKind.Transient);
         bool boundedBodyPause = disposition.Kind == ActorDispositionKind.Idle && !canMove && bodyPauseRemainingMs > 0;
         string holder = disposition.Kind != ActorDispositionKind.Idle
             ? HoldReasonCode(disposition.Kind)
             : boundedBodyPause ? BodyPauseHolder : $"{StalledHolderPrefix}{UnnamedHolderEngineFact}";
         string countermeasure = boundedBodyPause
             ? $";body_pause_remaining_ms={bodyPauseRemainingMs};admissible_actions=none;next_step={WaitForRetryWindowStep}"
-            : NavigationCountermeasure(disposition.Kind);
-        return $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}{countermeasure}";
+            : HoldCountermeasure(disposition.Kind);
+        return (code, $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}{countermeasure}");
     }
 
     /// <summary>
-    /// <see cref="DescribeNavigationHold"/> with the two live probes filled: the mounted modal (for the same reason
-    /// <see cref="DescribeCurrentBodyHold"/> reads it - a cutscene's own dialogue box is only reachable through the live
-    /// menu, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an answer), and the
-    /// native body countdown that writes `CanMove = false` while declaring no hold of its own.
+    /// <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> for a caller that
+    /// holds the facts and nothing live.
     /// </summary>
-    public static string DescribeCurrentNavigationHold(Farmer? player)
+    internal static (string ReasonCode, string Evidence) DescribeHeldBody(
+        in ActorWorldFacts facts,
+        bool canMove,
+        bool? modalIsQuestion = null,
+        int bodyPauseRemainingMs = 0)
+        => DescribeHeldBody(Classify(facts), facts, canMove, modalIsQuestion, bodyPauseRemainingMs);
+
+    /// <summary>
+    /// The live held body, with the two probes only a live farmer answers: the mounted modal (a cutscene's own dialogue
+    /// box is reachable no other way, and guessing `is_question` would tell the caller to dismiss a box that is waiting
+    /// for an answer) and the native body countdown
+    /// <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> takes.
+    /// </summary>
+    internal static (string ReasonCode, string Evidence) DescribeCurrentHeldBody(Farmer? player)
     {
-        bool? isQuestion = null;
-        if (Game1.activeClickableMenu is DialogueBox dialogue)
-            isQuestion = dialogue.isQuestion;
-        return DescribeNavigationHold(
-            ReadFacts(player),
+        ActorWorldFacts facts = ReadFacts(player);
+        return DescribeHeldBody(
+            Classify(facts),
+            facts,
             player?.CanMove ?? false,
-            isQuestion,
+            LiveModalQuestion(),
             player?.noMovementPause ?? 0);
     }
+
+    /// <summary>
+    /// The live held body as the SENTENCE alone, for the navigation refusal, which carries its own code
+    /// (`destination_locked`) and never this pair's.
+    /// </summary>
+    internal static string DescribeCurrentNavigationHold(Farmer? player) => DescribeCurrentHeldBody(player).Evidence;
+
+    /// <summary>
+    /// The mounted modal's own question flag, read once. Two describers asked it and a third copy is how one of them
+    /// would come to say `unknown` about a box the other had read.
+    /// </summary>
+    private static bool? LiveModalQuestion() =>
+        Game1.activeClickableMenu is DialogueBox dialogue ? dialogue.isQuestion : null;
 
     /// <summary>
     /// The `<see cref="StalledHolderPrefix"/>` code and the engine field that reported the hold, for the one hold the
@@ -577,8 +598,15 @@ internal static class WorldModel
     /// animation or body pause that produced it. A named dead end, because nothing here can end it - the alternative
     /// (`unknown_holder`, then "observe again") read as a shrug and looped.
     /// </summary>
-    private const string StalledHolderPrefix = "stalled_with_no_holder:";
-    private const string UnnamedHolderEngineFact = "CanMove";
+    internal const string StalledHolderPrefix = "stalled_with_no_holder:";
+    internal const string UnnamedHolderEngineFact = "CanMove";
+
+    /// <summary>
+    /// The word for the other hole: a <see cref="ActorDispositionKind.Transient"/> the facts cannot name further. It
+    /// reads as a hole on purpose - the word it replaced, `movement_lock`, read as a native lock with a timer, and a
+    /// refusal that wore it was obeyed sixteen times in `round86` while the clock stood still.
+    /// </summary>
+    internal const string UnnamedTransientKind = "unnamed";
 
     /// <summary>
     /// The holder word for the one native countdown that takes the body without declaring a hold:
@@ -586,7 +614,7 @@ internal static class WorldModel
     /// three setters are the emote (Farmer.cs:2505), the pool entrance (GameLocation.cs:3819) and the emote selector
     /// (EmoteSelector.cs:228), which is why an `express_emote` can leave the body flagged with nothing else up.
     /// </summary>
-    private const string BodyPauseHolder = "body_pause:noMovementPause";
+    internal const string BodyPauseHolder = "body_pause:noMovementPause";
 
     /// <summary>What CLEARS a body hold, as the closed set of `next_step=` words the evidence publishes.</summary>
     internal const string WaitForRetryWindowStep = "wait_for_retry_window";
@@ -616,7 +644,7 @@ internal static class WorldModel
     /// twice; every other hold names either the modal-resolving family - whose working precondition IS an open modal -
     /// or `none` plus the one step that remains.
     /// </summary>
-    private static string NavigationCountermeasure(ActorDispositionKind kind) => kind switch
+    private static string HoldCountermeasure(ActorDispositionKind kind) => kind switch
     {
         ActorDispositionKind.Event => string.Empty,
         ActorDispositionKind.Modal
@@ -633,7 +661,7 @@ internal static class WorldModel
     ///
     /// The three facts are the engine's own: whether the box `answer_dialogue` needs is mounted (<see cref="HasDialogueBox"/>,
     /// the handlers' own `is DialogueBox` read), whether that box asks a question (`DialogueBox.isQuestion`, filled from
-    /// the live modal by <see cref="DescribeCurrentBodyHold"/>), and what that answer means for what is admissible.
+    /// the live modal by <see cref="DescribeCurrentHeldBody"/>), and what that answer means for what is admissible.
     /// `admissible_actions` is the catalog's event-acting family filtered by the question flag - `answer_dialogue` answers
     /// a question, `dismiss_modal` closes an informational box, and BOTH are named while the flag is unreadable - so the
     /// list cannot name an action the handler would refuse. `next_step` states the one option that is left when there is

@@ -509,9 +509,10 @@ internal sealed class ExecutionAdmission
             // WIA 4.?? : the refusal NAMES the hold and carries the facts a countermeasure needs. A single
             // `player_not_actionable` for a menu, a cutscene, a faint, an eating animation and a tool swing
             // told the Agent nothing it could act on, and the Agent's only visible option was to retry the
-            // same request.
-            (string holdCode, string holdEvidence) =
-                WorldModel.DescribeCurrentBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove);
+            // same request. `DescribeCurrentHeldBody` is the one owner of that sentence, and it names the HOLDER
+            // as well - the `CanMove` tail this gate refuses on (`ProjectAdmissionDisposition`) used to publish
+            // `can_move=false` and nothing else, which is the shrug `round83` removed from the navigation refusal.
+            (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentHeldBody(boundActor);
             // WHICH HOLDS ARE WAITED OUT IS CLASSIFIED ONCE (`ExecutionManager.HoldWait`), and the two kinds it
             // names are two different world facts. A Transient hold is an engine lock that releases inside
             // WorldModel.TransientRetryWindowMs - a tool swing, an eating pause, a warp fade - and it is right to park
@@ -557,7 +558,7 @@ internal sealed class ExecutionAdmission
                 executionId,
                 ExecutionState.Rejected,
                 ExecutionManager.EventHasNoDialogueBox,
-                WorldModel.DescribeBodyHold(admissionDisposition, admissionFacts, boundActor.CanMove)));
+                WorldModel.DescribeCurrentHeldBody(boundActor).Evidence));
 
         if (requestedDeadlineMs <= nowMs || requestedDeadlineMs > nowMs + maxDurationMs)
             return new AdmissionOutcome.Refused(this.commit.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "invalid_deadline",
@@ -764,7 +765,7 @@ internal sealed class ExecutionAdmission
             return this.Peek() is { } owner
                 ? (WaitingForBodyHold(owner.ReasonCode), owner.Evidence)
                 : null;
-        (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentBodyHold(disposition, facts, boundActor.CanMove);
+        (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentHeldBody(boundActor);
         return (holdCode, holdEvidence);
     }
 

@@ -958,14 +958,16 @@ internal sealed class StardewBodyController
         if (movementDisposition.Kind != ActorDispositionKind.Idle || !localPlayer.CanMove)
         {
             // A movement lock the facts cannot name further (a knockback, the `NetMutex`-deferred upgrade at
-            // ParrotUpgradePerch.cs:797) reads as Idle,
-            // so the `!CanMove` tail is what makes it a hold here - and it is reported as a transient, which
-            // is exactly how the body loop treats it.
-            ActorDisposition hold = movementDisposition.Kind == ActorDispositionKind.Idle
-                ? movementDisposition with { Kind = ActorDispositionKind.Transient }
-                : movementDisposition;
-            (string holdCode, string holdEvidence) =
-                WorldModel.DescribeCurrentBodyHold(hold, movementFacts, localPlayer.CanMove);
+            // ParrotUpgradePerch.cs:797) reads as Idle, so the `!CanMove` tail is what makes it a hold here. WHO holds
+            // her is not this method's answer: `WorldModel.DescribeCurrentHeldBody` names the native countdown that is
+            // running (`body_pause:noMovementPause`, with what is left of it) or, when nothing is running, the dead end
+            // by the one engine field that reported it - and the step that ends each.
+            //
+            // MEASURED `round86`: this branch answered `transient_kind=movement_lock;retry_window_ms=2000;can_move=false`
+            // sixteen times while the game clock stood still for four minutes at day 7 16:40, because a sentence that
+            // names no holder and publishes a 2 s window reads as "wait and it clears" - and the engine stops the clock
+            // while `!CanMove`, so the lock owned the world too.
+            (string holdCode, string holdEvidence) = WorldModel.DescribeCurrentHeldBody(localPlayer);
             reasonCode = holdCode;
             evidence = holdEvidence;
             return false;
@@ -1384,7 +1386,13 @@ internal sealed class StardewBodyController
             // or path-ended result remains authoritative.
             if (Vector2.DistanceSquared(currentTile, specification.TargetTile) > 1.01f)
             {
-                this.Fail("player_not_actionable", "movement lock became active");
+                // WHAT happened and WHO holds her, in one sentence. This answered the bare prose `movement lock became
+                // active`: no holder, no step, so the caller could only walk into the same lock again. The code stays
+                // `player_not_actionable` (`RefusalFacts` declares it for `move_to_tile` as this engine flag), and the
+                // holder comes from the one authority that names holds.
+                this.Fail(
+                    "player_not_actionable",
+                    $"tile={FormatTile(currentTile)};target={FormatTile(specification.TargetTile)};{WorldModel.DescribeCurrentNavigationHold(localPlayer)}");
                 return;
             }
         }

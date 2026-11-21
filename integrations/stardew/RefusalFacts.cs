@@ -83,7 +83,7 @@ internal static class RefusalFacts
         Row(MoveToTile, "target_out_of_reach", "the walk stopped beside the target, outside the native interaction radius"),
         Row(MoveToTile, "clear_step_blocked", "the first clearing step this walk needs is itself blocked"),
         Row(MoveToTile, "approach_out_of_reach", "the substituted standing tile is outside the native radius of the requested one"),
-        Row(MoveToTile, "player_not_actionable", "the engine's own CanMove flag is false and no named hold explains it"),
+        Row(MoveToTile, "player_not_actionable", "the engine's own CanMove flag went false mid-walk, and the evidence names who holds her and what ends it"),
         Forwarded(MoveToTile, "body_owned", "another execution owns the body when the request arrives", "ExecutionAdmission.cs", "Describe"),
 
         // ---- navigate_to_destination --------------------------------------------------------------------------
