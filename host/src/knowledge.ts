@@ -288,6 +288,16 @@ function knowledgeCatalog(
   };
 }
 
+const knowledgeParameters = Type.Object({
+  capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  topicId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  actionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  targetKind: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  location: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+  query: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+});
+const knowledgeCatalogParameters = Type.Object({});
+
 /**
  * Mount version-bound advisory rules without creating game authority.
  * The Agent supplies only a capability name; Host-owned version and live
@@ -301,19 +311,12 @@ export function createStardewKnowledgeTools(
     content: [{ type: "text" as const, text: JSON.stringify(details) }],
     details,
   });
-  const knowledge = defineTool({
+  const knowledge = defineTool<typeof knowledgeParameters, KnowledgeToolDetails>({
     name: "stardew_game_knowledge",
     label: "Stardew Gameplay Knowledge",
     description:
       "Read version-bound, context-aware Stardew guidance. Live Mod capability and snapshot facts remain authoritative.",
-    parameters: Type.Object({
-      capability: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      topicId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      actionId: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      targetKind: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      location: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-      query: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
-    }),
+    parameters: knowledgeParameters,
     execute: async (_toolCallId, params) => {
       const snapshot = integration.state.snapshot;
       const gameVersion = integration.gameVersion;
@@ -355,11 +358,11 @@ export function createStardewKnowledgeTools(
       });
     },
   });
-  const catalog = defineTool({
+  const catalog = defineTool<typeof knowledgeCatalogParameters, KnowledgeCatalogDetails>({
     name: "stardew_knowledge_catalog",
     label: "Stardew Knowledge Catalog",
     description: "List applicable knowledge topics and filters. It never exposes unavailable capability authority.",
-    parameters: Type.Object({}),
+    parameters: knowledgeCatalogParameters,
     execute: async () => {
       const details = knowledgeCatalog(
         integration.knowledge,
