@@ -128,8 +128,24 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         bool OpensNow,
         string? ClosedMessage);
 
-    internal static string ShopTargetId(string shopId, string ownerName) =>
-        $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName))).ToLowerInvariant()[..16]}";
+    /// <summary>
+    /// The selector a passive-festival stall tile carries, and the shop-id family that selector builds.
+    ///
+    /// <para>
+    /// `DesertFestival.performAction` (`case "DesertVendor"`, :741-757) reads the NPC standing ONE TILE ABOVE the
+    /// clicked tile and opens `"DesertFestival_" + character.Name` through the string overload, so for those stalls
+    /// the TILE names the shop and the occupant names the owner together. `Data/Shops` carries a `DesertFestival_`
+    /// entry for every villager, so an owner NAME alone cannot tell a stall from a villager who happens to be in the
+    /// room - which is the defect `round84` measured.
+    /// </para>
+    /// </summary>
+    private const string DesertVendorAction = "DesertVendor";
+
+    /// <summary>The shop-id family <see cref="DesertVendorAction"/> builds: `"DesertFestival_" + vendor.Name`.</summary>
+    private const string DesertVendorShopPrefix = "DesertFestival_";
+
+    internal static string ShopTargetId(string shopId, string ownerName, int counterX, int counterY) =>
+        $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName + "\u0000" + counterX + "," + counterY))).ToLowerInvariant()[..16]}";
 
     /// <summary>The owner half of a refusal's evidence: a counter no NPC runs is spelled <c>none</c>, the same way
     /// every optional value is spelled here, because an empty <c>owner=</c> is a field the Host cannot reparse.</summary>
@@ -282,12 +298,27 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// selectors' string overload, and <c>OpenShop</c> with <c>forceOpen</c>) both open with a <c>ClosedMessage</c> entry -
     /// the string overload ignores the field, and <c>forceOpen</c> skips such entries (<c>Utility.cs:4247-4250</c>).
     /// </para>
+    /// <para>
+    /// A ROOM THAT SELLS THROUGH STALLS DOES NOT SELL THROUGH NAMES. The Desert Festival declares a
+    /// <c>DesertVendor</c> tile per stall and a <c>Data/Shops</code> entry named after EVERY villager, so the owner-name
+    /// rule above reported a counter for each villager present, at that villager's standing tile, for a shop whose
+    /// counter is the stall. `round84`: two purchases were refused `item_not_sold_here` against `DesertFestival_Leah`
+    /// and `DesertFestival_Pierre` before the counter that actually sold the item was found. The stall family is
+    /// therefore read from the room's OWN tiles (see <see cref="DiscoverVendorStallTargets"/>), and the name rule
+    /// skips it: the identity of those counters is the stall - the tile whose click names both the shop and the vendor -
+    /// not an owner name several shops share.
+    /// </para>
     /// </summary>
     private static List<DiscoveredShopCounter> EnumerateShopCounters(GameLocation location)
     {
         List<DiscoveredShopCounter> counters = new();
+        bool roomSellsThroughVendorStalls = false;
+        counters.AddRange(DiscoverVendorStallTargets(location, out roomSellsThroughVendorStalls));
         foreach ((string shopId, ShopData shopData) in DataLoader.Shops(Game1.content))
         {
+            if (roomSellsThroughVendorStalls && shopId.StartsWith(DesertVendorShopPrefix, StringComparison.Ordinal))
+                continue;
+
             ShopOwnerData[] owners;
             try
             {
@@ -310,7 +341,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
                 ShopOwnerData? resolvedOwner = ResolveCurrentShopOwner(shopData, owner.Name);
                 counters.Add(new DiscoveredShopCounter(
-                    ShopTargetId(shopId, owner.Name),
+                    ShopTargetId(shopId, owner.Name, npc.TilePoint.X, npc.TilePoint.Y),
                     shopId,
                     shopData,
                     owner.Name,
@@ -422,6 +453,80 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     }
 
     /// <summary>
+    /// The passive-festival stalls this ROOM declares: one <c>DesertVendor</c> Action tile per stall, whose shop id is
+    /// <see cref="DesertVendorShopPrefix"/> + the name of the NPC standing one tile above it.
+    ///
+    /// <para>
+    /// THE STALL IS THE COUNTER, so the tile is what this returns and the shop id is what the tile BUILDS - the same
+    /// concatenation `DesertFestival.performAction` performs (:751). The identity has three candidates and this is why
+    /// it is this one: the shop id alone names a `Data/Shops` row that exists for every villager in the season, the
+    /// owner name alone is shared by the stall and the same villager's shop elsewhere, and only the tile says which
+    /// stall a body can stand at. A stall with no vendor behind it is not a counter (nothing would open), which is why
+    /// it yields nothing; a stall on a day the festival is shut is published CLOSED, so discovery withholds it with the
+    /// same exclusion every shut counter gets (`DesertFestival.performAction`:744 refuses it natively).
+    /// </para>
+    /// </summary>
+    /// <param name="roomDeclaresStalls">Whether this room has any <see cref="DesertVendorAction"/> tile at all - the fact
+    /// that says "this room sells through stalls", which is what stops the owner-name rule from inventing a counter per
+    /// villager name.</param>
+    private static List<DiscoveredShopCounter> DiscoverVendorStallTargets(GameLocation location, out bool roomDeclaresStalls)
+    {
+        roomDeclaresStalls = false;
+        List<DiscoveredShopCounter> counters = new();
+        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
+        if (buildings is null)
+            return counters;
+
+        Dictionary<string, ShopData> shops;
+        try
+        {
+            shops = DataLoader.Shops(Game1.content);
+        }
+        catch (Exception)
+        {
+            return counters;
+        }
+
+        bool festivalOpen = Utility.IsPassiveFestivalOpen("DesertFestival");
+        for (int y = 0; y < buildings.LayerHeight && counters.Count < MaxTileShopTargets; y++)
+        {
+            for (int x = 0; x < buildings.LayerWidth && counters.Count < MaxTileShopTargets; x++)
+            {
+                var tile = buildings.Tiles[x, y];
+                if (tile is null || !tile.Properties.TryGetValue("Action", out var actionValue))
+                    continue;
+                if (!string.Equals(
+                        ArgUtility.SplitBySpace(actionValue.ToString()).FirstOrDefault(),
+                        DesertVendorAction,
+                        StringComparison.Ordinal))
+                    continue;
+                roomDeclaresStalls = true;
+                // The engine's own occupant rule: the vendor is the character on the tile ABOVE the stall's action tile
+                // (`new Rectangle(tile_location.X, tile_location.Y - 1, 1, 1)`, DesertFestival.cs:748-751).
+                NPC? vendor = location.characters.FirstOrDefault(
+                    character => character is not null && character.TilePoint.X == x && character.TilePoint.Y == y - 1);
+                if (vendor is null)
+                    continue;
+                string shopId = DesertVendorShopPrefix + vendor.Name;
+                if (!shops.TryGetValue(shopId, out ShopData? shopData) || shopData is null)
+                    continue;
+                ShopOwnerData? resolvedOwner = ResolveCurrentShopOwner(shopData, vendor.Name);
+                counters.Add(new DiscoveredShopCounter(
+                    ShopTargetId(shopId, vendor.Name, x, y),
+                    shopId,
+                    shopData,
+                    vendor.Name,
+                    x,
+                    y,
+                    festivalOpen && OpensNow(resolvedOwner),
+                    festivalOpen ? resolvedOwner?.ClosedMessage : null));
+            }
+        }
+
+        return counters;
+    }
+
+    /// <summary>
     /// Shops opened by a Buildings-layer Action tile instead of by an NPC in the room. Their execution seam is exactly
     /// the one this action already dispatches (<c>Utility.TryOpenShopMenu</c>), but their owner entry is not a named NPC
     /// in the room, so the owner scan above can never see them.
@@ -464,7 +569,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
                 found++;
                 yield return new DiscoveredShopCounter(
-                    ShopTargetId(shopId, string.Empty),
+                    ShopTargetId(shopId, string.Empty, x, y),
                     shopId,
                     shopData,
                     string.Empty,
@@ -1294,12 +1399,14 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (offer is null)
         {
             (string soldHereBy, int countersRead) = CountersCarryingItem(counters, target, expectedItemId);
-            return this.RememberTerminal(
-                request.RequestId,
-                executionId,
-                ExecutionState.Rejected,
-                "item_not_sold_here",
-                ShopItemNotSoldEvidence(target.ShopId, target, expectedItemId, stock.Count, soldHereBy, countersRead));
+            string notSoldEvidence = ShopItemNotSoldEvidence(target.ShopId, target, expectedItemId, stock.Count, soldHereBy, countersRead);
+            // WHICH ABSENCE THIS IS, in the code and not only in the evidence (`round84`: two purchases were refused
+            // `item_not_sold_here` at counters whose neighbour DID carry the item, so the refusal named "nobody here
+            // sells it" about a room that sold it). `sold_here_by=` names the counter that does; the code says whether
+            // this counter's rows are the only answer or another counter in this room is the address.
+            if (soldHereBy.Length == 0)
+                return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "item_not_sold_here", notSoldEvidence);
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "item_sold_by_another_counter", notSoldEvidence);
         }
 
         // The price the menu charges, read from the SAME stock entry this purchase is made from. ShopMenu

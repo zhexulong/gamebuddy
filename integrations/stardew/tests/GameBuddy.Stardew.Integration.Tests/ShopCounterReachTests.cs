@@ -176,7 +176,8 @@ public sealed class ShopCounterReachTests
         {
             // The four the trade can answer with.
             ["shop_closed_today"] = "the counter is here and shut today: discovery's own reason, with the game's closed text",
-            ["item_not_sold_here"] = "THIS counter's own stock rows do not carry the item (counter=/stock=), and sold_here_by= names any counter in this room whose rows do - not that no shop in the game sells it, which is a fact only the top shop table would answer",
+            ["item_not_sold_here"] = "NO counter in this room carries the item: stock= is this counter's row count and sold_here_by=none says the scan found nothing that does - not that no shop in the game sells it, which is a fact only the top shop table would answer",
+            ["item_sold_by_another_counter"] = "THIS counter's rows do not carry the item and another counter in this room does: sold_here_by= names it, so the caller has an address instead of a dismissal",
             ["out_of_stock"] = "the counter offers it and has none left",
             ["insufficient_money"] = "the purse is short: price=/currency=/available=/held=/short=, the comparison and its gap",
             ["shop_counter_out_of_reach"] = "a TILE counter the actor cannot act on from here, or no eligible owner can run this counter from this room",
@@ -280,7 +281,7 @@ public sealed class ShopCounterReachTests
         int y,
         bool opensNow = true,
         string? closedMessage = null) =>
-        new(ExecutionManager.ShopTargetId(shopId, ownerName), shopId, new ShopData(), ownerName, x, y, opensNow, closedMessage);
+        new(ExecutionManager.ShopTargetId(shopId, ownerName, x, y), shopId, new ShopData(), ownerName, x, y, opensNow, closedMessage);
 
     /// <summary>The world's shop table as far as this file needs it: which ids `Data/Shops` keys. The real table is the
     /// game's; a set of keys is all the identity question asks of it.</summary>

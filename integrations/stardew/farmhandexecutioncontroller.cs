@@ -3315,10 +3315,30 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
-        bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal);
-        if (!isLocalPlayer || !destinationMatches)
+        if (!isLocalPlayer)
         {
-            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_warp_postcondition_mismatch", "phase=awaiting_warp;postcondition_mismatch=true;never_retry=true");
+            // THE ARRIVAL PREDICATE DISAGREED: the event that fired is not this actor's arrival, so nothing about the
+            // destination was compared at all. One code used to say this and "arrived somewhere else" together
+            // (`round84`), and a reader could not tell a follower's warp from a wrong map.
+            this.SettleNavigationTerminal(
+                navigation,
+                ExecutionState.Uncertain,
+                "navigation_warp_not_local_player",
+                $"phase=awaiting_warp;expected_local_player=true;arrived_local_player=false;arrival={newLocation ?? "none"}:{newTileX},{newTileY};never_retry=true");
+            return;
+        }
+        bool destinationMatches = string.Equals(navigation.Leg.TargetLocation, newLocation, StringComparison.Ordinal);
+        if (!destinationMatches)
+        {
+            // THE MAP DISAGREED. The destination TILE is stated beside it so a reader can see the side that did not:
+            // a warp may legitimately adjust the landing tile (`Game1.warpFarmer` clamps `BusStop`, routes a farm's
+            // entry tiles and applies `nextFarmerWarpOffset*`), and that offset is tolerated on the right map - see
+            // `WarpLandingTileOffset_OnTargetMap_ContinuesNotMismatch`. A different map is never an adjustment.
+            this.SettleNavigationTerminal(
+                navigation,
+                ExecutionState.Uncertain,
+                "navigation_warp_arrived_on_another_map",
+                $"phase=awaiting_warp;expected_map={navigation.Leg.TargetLocation};arrived_map={newLocation ?? "none"};destination_tile={navigation.Leg.TargetX},{navigation.Leg.TargetY};arrived_tile={newTileX},{newTileY};never_retry=true");
             return;
         }
         if (!string.Equals(navigation.ExpectedSourceLocation, oldLocation, StringComparison.Ordinal))

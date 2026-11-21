@@ -54,8 +54,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// `ModalDismissActionTests`: `dismiss_without_modal_answers`), and each one failed a node the caller had to read and
     /// spend a turn on - for a request whose intent already held. The compiler-inserted node is the same dispatch (no
     /// node identity reaches a handler), which is why ONE treatment covers both: nothing in this path refuses on a
-    /// missing modal, and `modal=none` states what was (not) done. `answer_dialogue` keeps `no_modal_present`, because a
-    /// caller that asked to ANSWER a question needs to know no question was there.
+    /// missing modal, and `modal=none` states what was (not) done. `answer_dialogue` keeps `no_modal_present` for a
+    /// missing modal - a caller that asked to ANSWER a question needs to know no question was there - and answers
+    /// `modal_not_answerable` when a modal IS up and is not one she answers (`round84`: a `ShippingMenu` was up and the
+    /// refusal said `no_modal_present` about it).
     ///
     /// THE ABSENCE CARRIES ITS WARRANT, in the shape the settlement seam already has (`TileTargetSettledBy`): "the modal
     /// is not there" is the state the request asked for only when something says so, and the engine's own field is that
@@ -269,9 +271,22 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         if (this.AdmitExecution(request.RequestId, executionId, request.DeadlineMs, nowMs, AdmissionActionabilityProfile.Modal) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
 
-        if (Game1.activeClickableMenu is not DialogueBox dialogue)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present",
-                $"menu={(Game1.activeClickableMenu?.GetType().Name ?? "none")}");
+        IClickableMenu? mounted = Game1.activeClickableMenu;
+        if (mounted is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "no_modal_present", "menu=none");
+        // A MODAL THAT IS NOT A DIALOGUE IS NOT AN ABSENT ONE. Measured `round84`: a `ShippingMenu` was mounted and this
+        // action answered `no_modal_present` with `menu=ShippingMenu` beside it - a refusal whose code contradicted its
+        // own evidence, about a menu the caller can see. The two facts are now named apart: nothing is up
+        // (`no_modal_present`, `menu=none`) and something is up that offers no answer this action can give
+        // (`modal_not_answerable`, the same code a `DialogueBox` with `question=false` already answers, because the fact
+        // is the same one - no response surface - and the modal's own type is what tells the two shapes apart).
+        if (mounted is not DialogueBox dialogue)
+            return this.RememberTerminal(
+                request.RequestId,
+                executionId,
+                ExecutionState.Rejected,
+                "modal_not_answerable",
+                $"modal_type={mounted.GetType().Name};dialogue=false;question=false");
 
         if (!dialogue.isQuestion)
             return this.RememberTerminal(
@@ -341,9 +356,17 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         Response answer = offeredResponses[offeredIndex];
         string responseKey = answer.responseKey;
 
-        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null || Game1.currentLocation is null)
-            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "player_not_actionable",
-                $"actor={(actor is null ? (guardReason ?? "none") : "bound")};location={(Game1.currentLocation?.NameOrUniqueName ?? "none")}");
+        // TWO GUARDS, TWO FACTS. `player_not_actionable` is the body-hold word (`WorldModel.HoldReasonCode`'s default
+        // for a body the engine's own `CanMove` flag stopped), and a request with no location to answer in is
+        // `world_not_ready` - the code `dismiss_modal` and `shop_purchase` already answer for that same condition.
+        // One word for both made the same code mean "held" and "there is no room" (measured `round84`'s review of the
+        // refusal vocabulary).
+        if (!this.TryGetBoundActor(out Farmer? actor, out string guardReason) || actor is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, guardReason,
+                $"actor={(actor is null ? "none" : "bound")};location={(Game1.currentLocation?.NameOrUniqueName ?? "none")}");
+        if (Game1.currentLocation is null)
+            return this.RememberTerminal(request.RequestId, executionId, ExecutionState.Rejected, "world_not_ready",
+                $"actor=bound;location=none");
 
         bool answered = false;
         try

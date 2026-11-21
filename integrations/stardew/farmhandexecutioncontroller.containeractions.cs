@@ -57,7 +57,7 @@ internal sealed partial class ExecutionManager
             gate: location =>
             {
                 if (!TryFindCarriedStack(expectedQualifiedItemId, out _, out _))
-                    return TileTargetGate.Refused(new TileTargetRefusal("item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none"));
+                    return TileTargetGate.Refused(CarriedItemRefusal(expectedQualifiedItemId));
                 StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
                 return resolved.Resolved
                     ? TileTargetGate.Resolved(resolved.X, resolved.Y)
@@ -68,7 +68,10 @@ internal sealed partial class ExecutionManager
     private LocalExecutionReceipt ExecuteChestStore(string executionId, string requestId, string chestId, string expectedQualifiedItemId)
     {
         if (!TryFindCarriedStack(expectedQualifiedItemId, out int slot, out Item? storedItem) || storedItem is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "item_not_owned_in_slot", $"item={expectedQualifiedItemId};carried=none");
+        {
+            TileTargetRefusal notCarried = CarriedItemRefusal(expectedQualifiedItemId);
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, notCarried.ReasonCode, notCarried.Evidence);
+        }
 
         GameLocation location = Game1.player.currentLocation;
         StorageContainerResolution resolved = ResolveStorageContainerById(location, chestId);
@@ -177,6 +180,40 @@ internal sealed partial class ExecutionManager
         {
             chest.GetMutex().ReleaseLock();
         }
+    }
+
+    /// <summary>
+    /// THE PACK SIDE, ASKED IN TWO ANSWERS, because `chest_store` names an ITEM and no slot.
+    ///
+    /// <para>
+    /// `item_not_owned` — the pack holds no stack of that item id at all. `carried=none` states the half that
+    /// was asked, and no slot appears because the request named none.
+    /// </para>
+    /// <para>
+    /// `item_slot_changed:&lt;slot&gt;` — the pack holds it, at the slot the receipt names, and something other
+    /// than the id spelling in hand matched it. `TryFindCarriedStack` compares `QualifiedItemId` verbatim, so a
+    /// request that spelled `390` for a stack the game records as `(O)390` found nothing and was answered
+    /// `item_not_owned_in_slot` — a code about a SLOT, for a request that never named one, about an item she was
+    /// holding (`round84`). The match here is the engine's own qualification
+    /// (`ItemRegistry.QualifyItemId`), and the honest answer is where the item is rather than that she owns none.
+    /// </para>
+    /// <para>
+    /// Both halves are one fact each, and neither is `item_not_owned_in_slot`: that code lives in the actions that
+    /// NAME a slot (`load_building_chest`, `item_tile`, `equip`), where "the slot holds nothing" is what refused.
+    /// </para>
+    /// </summary>
+    private static TileTargetRefusal CarriedItemRefusal(string expectedQualifiedItemId)
+    {
+        string wanted = ItemRegistry.QualifyItemId(expectedQualifiedItemId);
+        for (int index = 0; index < Game1.player.Items.Count; index++)
+        {
+            if (Game1.player.Items[index] is not Item candidate || candidate.Stack <= 0)
+                continue;
+            if (string.Equals(ItemRegistry.QualifyItemId(candidate.QualifiedItemId), wanted, StringComparison.Ordinal))
+                return new TileTargetRefusal($"item_slot_changed:{index}", $"item={expectedQualifiedItemId};carried={candidate.QualifiedItemId};slot={index}");
+        }
+
+        return new TileTargetRefusal("item_not_owned", $"item={expectedQualifiedItemId};carried=none");
     }
 
     /// <summary>

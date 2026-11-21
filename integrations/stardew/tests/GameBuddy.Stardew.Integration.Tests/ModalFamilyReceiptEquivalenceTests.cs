@@ -117,7 +117,10 @@ public sealed class ModalFamilyReceiptEquivalenceTests
         ["answer/blank_key"] = new Published("Rejected", "invalid_response_key", "key_length=0;blank=true;max_length=128", "<null>", "<null>", 1, false),
         ["answer/key_not_offered"] = new Published("Rejected", "response_key_not_offered", "modal_type=DialogueBox;question=true;response_key=是;offered_keys=Yes,No", "offered_keys=Yes,No", "<null>", 1, false),
         ["answer/sleep_prompt"] = new Published("Rejected", "native_sleep_prompt_owned_by_sleep", "modal_type=DialogueBox;question=true;response_key=Yes;question_key=Sleep;owning_action=sleep", "Answering Yes here ends the day. Dispatch `sleep` instead - it answers this prompt and crosses the night with a receipt.", "<null>", 1, false),
-        ["answer/actor_not_actionable"] = new Published("Rejected", "player_not_actionable", "actor=bound;location=none", "<null>", "<null>", 1, false),
+        // The guard that refused is the fact: an actor this request cannot bind answers with the scope's own code, and
+        // a request with no location to answer in is `world_not_ready` - the code `dismiss_modal` answers for the same
+        // condition. Neither is `player_not_actionable`, which is the body-hold word (`WorldModel.HoldReasonCode`).
+        ["answer/actor_not_actionable"] = new Published("Rejected", "world_not_ready", "actor=bound;location=none", "<null>", "<null>", 1, false),
         // NOT A REFACTOR ROW: `nothing_to_answer` replaces the pre-extraction `Rejected`/`modal_not_level_up`/`modal_type=none`
         // deliberately. Measured `round77` (timeline 278), the level-up menu had already been closed by an earlier
         // settlement and the node failed for it. "Nothing is asking" is the outcome, and the refusal keeps only the

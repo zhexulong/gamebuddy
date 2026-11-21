@@ -133,8 +133,11 @@ namespace GameBuddy.Stardew;
 //     `ItemGrabMenu` branch (Chest type), or collect found two or more stacks;
 //   * `building_chest_not_loadable` / `building_chest_not_collectable` — the wrong branch
 //     for this action (collecting from an Input chest, loading an Output chest);
-//   * `item_not_owned_in_slot` — the requested slot does not exist or holds no Object to load
-//     (the family's existing code);
+//   * `item_not_owned_in_slot` — the requested slot holds no Object to load. Kept here because
+//     THIS action names a slot: the slot is the fact, and the family's code spells it. The chest
+//     pair's `chest_store` names an ITEM and no slot, so it answers `item_not_owned` instead
+//     (see `farmhandexecutioncontroller.containeractions.cs`) — one code for both said "not in
+//     the slot" about a request that named none (`round84`);
 //   * `building_chest_out_of_range` — the actor never reached the interaction tile;
 //   * `building_chest_native_exception` — the native call threw;
 //   * `building_chest_empty` — collect found no stack to take;

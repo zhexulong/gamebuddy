@@ -220,7 +220,29 @@ public sealed class NavigationExecutionManagerTests
 
         var receipt = harness.Stored("req_warp");
         receipt.State.Should().Be(ExecutionState.Uncertain);
-        receipt.ReasonCode.Should().Be("navigation_warp_postcondition_mismatch");
+        receipt.ReasonCode.Should().Be(
+            "navigation_warp_arrived_on_another_map",
+            "the MAP was the side that disagreed, and the receipt names it rather than saying \"the postcondition failed\"");
+        harness.Manager.IsBodySettled.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// The arrival PREDICATE is a different side from the map: an event that is not this actor's arrival compared no
+    /// destination at all, so it cannot be reported as "arrived somewhere else" (`round84` shared one code for both).
+    /// </summary>
+    [Fact]
+    public void WarpEventForAnotherFarmer_NamesTheArrivalPredicate()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        harness.Manager.RequestNavigate("req_remote", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+
+        harness.CompleteWarp(SourceFarm, "Mine", 20, 20, isLocalPlayer: false);
+
+        var receipt = harness.Stored("req_remote");
+        receipt.State.Should().Be(ExecutionState.Uncertain);
+        receipt.ReasonCode.Should().Be("navigation_warp_not_local_player");
         harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
@@ -242,7 +264,7 @@ public sealed class NavigationExecutionManagerTests
         // on the target map the real arrival rule decides the terminal.
         var receipt = harness.Stored("req_landoff");
         receipt.State.Should().NotBe(ExecutionState.Uncertain);
-        receipt.ReasonCode.Should().NotBe("navigation_warp_postcondition_mismatch");
+        receipt.ReasonCode.Should().NotBe("navigation_warp_arrived_on_another_map");
         harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
@@ -1130,10 +1152,10 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
 
         internal void Emit(ExecutionState state, string reasonCode, string? evidence) => this.Manager.EmitNavigationApproachTransition(state, reasonCode, evidence);
         internal void EmitApproachSucceeded() => this.Emit(ExecutionState.Succeeded, "target_reached", "tile=9,10;target=10,10");
-        internal void CompleteWarp(string oldLocation, string newLocation, int newTileX, int newTileY)
+        internal void CompleteWarp(string oldLocation, string newLocation, int newTileX, int newTileY, bool isLocalPlayer = true)
         {
             this.Source.ObserveLocation(newLocation, string.Equals(newLocation, "Mine", StringComparison.Ordinal));
-            this.Manager.CompleteNavigationAfterWarp(true, oldLocation, newLocation, newTileX, newTileY);
+            this.Manager.CompleteNavigationAfterWarp(isLocalPlayer, oldLocation, newLocation, newTileX, newTileY);
         }
         internal LocalExecutionReceipt Stored(string requestId)
         {

@@ -62,7 +62,12 @@ public sealed class TargetOnAWallTests
         cases[0].Hint.Should().NotBeNull();
         cases[0].Hint!.Should().StartWith(StardewBodyController.TargetNotAddressableReasonCode);
 
-        cases[1].Code.Should().Be(StardewBodyController.TargetNotAddressableReasonCode);
+        // THE OTHER WAY A TARGET IS NOT A PLACE, and it is a different fact with a different remedy: the coordinate is
+        // not a cell of this map at all, so there is no neighbouring tile to walk to. `round84` answered three requests
+        // with one code for both, so this shape names its own (see `TargetOffMapReasonCode`).
+        cases[1].Code.Should().Be(StardewBodyController.TargetOffMapReasonCode, "the coordinate names no cell of this map");
+        cases[1].Code.Should().NotBe(
+            cases[0].Code, "a wall and an address on another map are two facts, and one code for both is what round84 could not read");
         Field(cases[1].Evidence!, "target_on_map").Should().Be("false", "and the receipt says which half of the question failed");
 
         // The boundary: free GROUND whose ring is walled by entities is a route question, not an addressability one. A
@@ -72,6 +77,7 @@ public sealed class TargetOnAWallTests
             StardewBodyController.NoNativePathReasonCode,
             "with a body-admitting tile the answer is about the route, and the flood gives it");
         cases[2].Code.Should().NotBe(StardewBodyController.TargetNotAddressableReasonCode);
+        cases[2].Code.Should().NotBe(StardewBodyController.TargetOffMapReasonCode);
 
         cases[3].Code.Should().Be("accepted", "ordinary ground is walked to, and no refusal is minted at all");
 
@@ -79,12 +85,12 @@ public sealed class TargetOnAWallTests
         findings.Should().BeEmpty(
             "shapes examined {0} · not a place {1} · answered by the route {2}: {3}",
             cases.Count,
-            cases.Count(entry => entry.Code == StardewBodyController.TargetNotAddressableReasonCode),
+            cases.Count(entry => NotPlaceAnswers.Contains(entry.Code)),
             cases.Count(entry => entry.Code == StardewBodyController.NoNativePathReasonCode),
             string.Join(" ", findings));
         this.output.WriteLine(
             $"shapes examined {cases.Count}"
-            + $" · not a place {cases.Count(entry => entry.Code == StardewBodyController.TargetNotAddressableReasonCode)}"
+            + $" · not a place {cases.Count(entry => NotPlaceAnswers.Contains(entry.Code))}"
             + $" · answered by the route {cases.Count(entry => entry.Code == StardewBodyController.NoNativePathReasonCode)}"
             + $" · walked {cases.Count(entry => entry.Code == "accepted")}");
     }
@@ -110,11 +116,11 @@ public sealed class TargetOnAWallTests
     }
 
     /// <summary>
-    /// One rule, over the worlds the drives produced: a target nothing can be AT or BESIDE is answered by
-    /// <see cref="StardewBodyController.TargetNotAddressableReasonCode"/>, and that code is never minted for a tile a body
-    /// could occupy. <c>TileIsAPlace</c> is the ENGINE's own reading, taken in the drive from
-    /// <c>isTileOnMap</c>/<c>isTilePassable</c> - the authority the product's predicate composes, so the two can
-    /// disagree here instead of agreeing by construction.
+    /// One rule, over the worlds the drives produced: a target nothing can be AT or BESIDE is answered by ONE of the two
+    /// addressability codes - a cell whose ground refuses a body, or a coordinate that is not a cell of this map - and
+    /// neither code is ever minted for a tile a body could occupy. <c>TileIsAPlace</c> is the ENGINE's own reading, taken
+    /// in the drive from <c>isTileOnMap</c>/<c>isTilePassable</c> - the authority the product's predicate composes, so the
+    /// two can disagree here instead of agreeing by construction.
     /// </summary>
     internal static IReadOnlyList<string> Judge(
         IReadOnlyList<(string Shape, string Code, string? Evidence, string? Hint, bool TileIsAPlace)> cases)
@@ -122,17 +128,27 @@ public sealed class TargetOnAWallTests
         var findings = new List<string>();
         foreach ((string shape, string code, string? evidence, string? hint, bool tileIsAPlace) in cases)
         {
-            bool answeredAsAPlace = code == StardewBodyController.TargetNotAddressableReasonCode;
-            if (answeredAsAPlace == tileIsAPlace)
+            bool answeredAsNotAPlace = NotPlaceAnswers.Contains(code);
+            if (answeredAsNotAPlace == tileIsAPlace)
                 findings.Add($"{Gate}:{shape}");
             else if (!tileIsAPlace && evidence is null)
                 findings.Add($"{Gate}:{shape}");
-            else if (answeredAsAPlace && hint is null)
+            else if (answeredAsNotAPlace && hint is null)
                 findings.Add($"{Gate}:{shape}");
         }
 
         return findings;
     }
+
+    /// <summary>
+    /// Every code that answers "that coordinate is not a place": the cell exists and its ground refuses a body, and the
+    /// coordinate is not a cell of this map. Two codes, because the remedies differ.
+    /// </summary>
+    private static readonly string[] NotPlaceAnswers =
+    {
+        StardewBodyController.TargetNotAddressableReasonCode,
+        StardewBodyController.TargetOffMapReasonCode,
+    };
 
     // -------------------------------------------------------------------------
     // The four worlds, each driven through the entry every walking action shares.

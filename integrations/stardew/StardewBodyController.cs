@@ -88,8 +88,31 @@ internal sealed class StardewBodyController
     /// lock - so it is not a route question, and calling it `no_native_path` told a live companion the road was closed
     /// about a cell that does not exist as ground (measured `round78`: four `move_to_tile` requests, every one
     /// `target_standable=false` with its four neighbours `buildings_tile:blocked`).
+    ///
+    /// <para>
+    /// THIS CODE IS THE CELL, NOT THE COORDINATE. Two different facts used to share it and both are addressability
+    /// answers, so the three `target_not_addressable` refusals of `round84` could not say which one they were: the
+    /// coordinate is not a tile of this map at all (<see cref="TargetOffMapReasonCode"/> - the number came from another
+    /// map, or from arithmetic on one), or the cell exists and no body can be at or beside it (this code - a wall, a
+    /// building footprint, an interior partition). The remedies differ: the first is answered by re-reading the map the
+    /// body is actually on, the second by walking to a published target instead of a guessed cell.
+    /// </para>
     /// </summary>
     internal const string TargetNotAddressableReasonCode = "target_not_addressable";
+
+    /// <summary>
+    /// The refusal for a coordinate that is not a tile of the map the body is standing on: the number names no cell
+    /// here, so no walk, no route and no approach can exist for it.
+    ///
+    /// <para>
+    /// Apart from <see cref="TargetNotAddressableReasonCode"/> because a wall is a fact about the GROUND and this is a
+    /// fact about the ADDRESS: `target_on_map=false` in the evidence is this code, and `target_on_map=true` with no
+    /// admissible ring is the other one. Measured `round84`: three `move_to_tile` refusals answered one code for both,
+    /// and the receipt could not tell "that is a wall" from "that number belongs to another map" - which is the one
+    /// thing the caller has to know, because only the first has a neighbouring tile to walk to.
+    /// </para>
+    /// </summary>
+    internal const string TargetOffMapReasonCode = "target_off_map";
 
     /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
     /// (freezePause, tool animation) keeps the execution running while inside it
@@ -976,12 +999,15 @@ internal sealed class StardewBodyController
         {
             if (!IsAddressableTile(localPlayer.currentLocation, specification.TargetTile))
             {
+                // WHICH HALF OF THE ADDRESSABILITY ANSWER FAILED, named: the coordinate is not a cell of this map, or
+                // the cell is and its ground admits no body. The evidence spelled `target_on_map=` for both and the code
+                // did not, so `round84`'s three refusals read as one fact (see TargetOffMapReasonCode).
                 bool onMap = localPlayer.currentLocation.isTileOnMap(specification.TargetTile);
-                reasonCode = TargetNotAddressableReasonCode;
+                reasonCode = onMap ? TargetNotAddressableReasonCode : TargetOffMapReasonCode;
                 evidence = $"from={(int)localPlayer.Tile.X},{(int)localPlayer.Tile.Y};to={(int)specification.TargetTile.X},{(int)specification.TargetTile.Y};location={localPlayer.currentLocation.NameOrUniqueName};native=not_attempted;target_on_map={(onMap ? "true" : "false")};target_passable={(onMap && localPlayer.currentLocation.isTilePassable(specification.TargetTile) ? "true" : "false")};approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)};blocked_by={blockedBy}";
                 this.reachabilityHint = JoinWithinHintBound(new[]
                 {
-                    TargetNotAddressableReasonCode,
+                    reasonCode,
                     $"target_on_map={(onMap ? "true" : "false")}",
                     $"approaches={DescribeTargetApproaches(localPlayer, localPlayer.currentLocation, specification.TargetTile)}",
                 });

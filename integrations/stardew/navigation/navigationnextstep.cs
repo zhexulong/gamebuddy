@@ -96,7 +96,8 @@ internal readonly record struct NavigationNextStep(NavigationExit Exit, string? 
         // before acting is the only safe step in both cases.
         "destination_access_indeterminate" => Action("observe_before_acting"),
         "native_transition_uncertain" => Action("observe_before_acting"),
-        "navigation_warp_postcondition_mismatch" => Action("observe_before_acting"),
+        "navigation_warp_not_local_player" => Action("observe_before_acting"),
+        "navigation_warp_arrived_on_another_map" => Action("observe_before_acting"),
         "navigation_warp_source_mismatch" => Action("observe_before_acting"),
         "navigation_commit_exception" => Action("observe_before_acting"),
         "navigation_deadline_expired_after_warp" => Action("observe_before_acting"),

@@ -69,7 +69,7 @@ public sealed class ShopAddressabilityTests
     {
         using var world = TargetFamilyWorld.Create();
         BridgeShopTarget published = new(
-            ExecutionManager.ShopTargetId("SeedShop", "Pierre"),
+            ExecutionManager.ShopTargetId("SeedShop", "Pierre", 4, 8),
             "SeedShop",
             "Pierre",
             world.Farm.NameOrUniqueName,
@@ -102,7 +102,7 @@ public sealed class ShopAddressabilityTests
     {
         using var world = TargetFamilyWorld.Create();
         BridgeShopTarget robin = new(
-            ExecutionManager.ShopTargetId("Carpenter", "Robin"),
+            ExecutionManager.ShopTargetId("Carpenter", "Robin", 9, 4),
             "Carpenter",
             "Robin",
             world.Farm.NameOrUniqueName,
@@ -147,7 +147,7 @@ public sealed class ShopAddressabilityTests
     {
         using var world = TargetFamilyWorld.Create();
         BridgeShopTarget first = new(
-            ExecutionManager.ShopTargetId("SeedShop", "Claude"),
+            ExecutionManager.ShopTargetId("SeedShop", "Claude", 2, 3),
             "SeedShop",
             "Claude",
             world.Farm.NameOrUniqueName,
@@ -157,7 +157,7 @@ public sealed class ShopAddressabilityTests
             4,
             Array.Empty<string>());
         BridgeShopTarget pierres = new(
-            ExecutionManager.ShopTargetId("SeedShop", "Pierre"),
+            ExecutionManager.ShopTargetId("SeedShop", "Pierre", 4, 8),
             "SeedShop",
             "Pierre",
             world.Farm.NameOrUniqueName,
@@ -186,7 +186,7 @@ public sealed class ShopAddressabilityTests
     {
         using var world = TargetFamilyWorld.Create();
         BridgeShopTarget published = new(
-            ExecutionManager.ShopTargetId("SeedShop", "Pierre"),
+            ExecutionManager.ShopTargetId("SeedShop", "Pierre", 4, 8),
             "SeedShop",
             "Pierre",
             world.Farm.NameOrUniqueName,

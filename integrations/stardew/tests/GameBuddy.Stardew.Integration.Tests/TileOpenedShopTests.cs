@@ -58,15 +58,24 @@ public sealed class TileOpenedShopTests
 
     /// <summary>
     /// A tile-opened shop's target must not collide with the NPC-owner target of the same
-    /// shop, or the opaque id would name two different counters at once.
+    /// shop, or the opaque id would name two different counters at once - and a counter is the STALL, so two
+    /// counters of one shop at two tiles are two ids.
     /// </summary>
     [Fact]
     public void TileShopTargetId_IsDistinctFromTheNpcOwnerTargetOfTheSameShop()
     {
-        ExecutionManager.ShopTargetId("SeedShop", string.Empty)
-            .Should().NotBe(ExecutionManager.ShopTargetId("SeedShop", "Pierre"));
-        ExecutionManager.ShopTargetId("Joja", string.Empty)
-            .Should().NotBe(ExecutionManager.ShopTargetId("Joja", "Morris"));
+        ExecutionManager.ShopTargetId("SeedShop", string.Empty, 12, 34)
+            .Should().NotBe(ExecutionManager.ShopTargetId("SeedShop", "Pierre", 12, 34));
+        ExecutionManager.ShopTargetId("Joja", string.Empty, 12, 34)
+            .Should().NotBe(ExecutionManager.ShopTargetId("Joja", "Morris", 12, 34));
+        ExecutionManager.ShopTargetId("DesertFestival_Pierre", "Pierre", 15, 40)
+            .Should().NotBe(
+                ExecutionManager.ShopTargetId("SeedShop", "Pierre", 15, 40),
+                "one owner name runs two shops, so the name alone cannot be the counter's identity");
+        ExecutionManager.ShopTargetId("Carpenter", "Robin", 9, 4)
+            .Should().NotBe(
+                ExecutionManager.ShopTargetId("Carpenter", "Robin", 9, 5),
+                "one shop at two tiles is two stalls, and a row must name one of them");
     }
 
     /// <summary>
@@ -82,7 +91,7 @@ public sealed class TileOpenedShopTests
         string text = File.ReadAllText(path!);
 
         text.Should().Contain("DiscoverTileShopTargets(location)");
-        text.Should().Contain("ShopTargetId(shopId, string.Empty)");
+        text.Should().Contain("ShopTargetId(shopId, string.Empty, x, y)");
         // Fixed selectors: the exact native string-overload call with a null owner.
         text.Should().Contain("Utility.TryOpenShopMenu(shopId: target.ShopId, ownerName: null!)");
         // The gate-free OpenShop form: the exact native location-overload call, so its own
