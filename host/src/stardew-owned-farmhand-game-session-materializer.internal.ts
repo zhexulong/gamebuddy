@@ -5,6 +5,7 @@ import { createHostGameRuntimeMaterializer } from "./continuity-semantic-game-ru
 import type { SemanticGameProductionAuthority } from "./continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
 import type { HostDeploymentManifest } from "./deployment-manifest.js";
 import type { StardewPrivateFarmhandBridgeConnection } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import { bindIntegrationIdentity } from "./integration-catalog.js";
 import type { FarmhandActionPolicyRequest } from "./protocol.js";
 import { LocalStardewBridgeClient } from "./local-stardew-bridge.js";
 import {
@@ -61,14 +62,18 @@ export function createStardewOwnedFarmhandGameSessionMaterializer(
         deadlineMs,
         STARDEW_INTEGRATION_LAUNCHER.module,
       );
+      // The launch identity is the Host's player/companion/continuity identity merged with the world the bridge
+      // reported, composed by the one function that owns that merge (`integration-catalog.ts`,
+      // `bindIntegrationIdentity`) rather than by a literal here.
+      //
+      // `continuityId` is what this seam used to drop, and the cost was the whole Game attach: the handle only mints
+      // its receipt recovery port for an identity that names a continuity, and `materializeEnter` binds that port to
+      // the recovery journal it opens. Without it the browser's Game session reached the runtime enter and was refused
+      // there (`invalid_stardew_recovery_binding_context`), thirteen milliseconds after the journal mounted, with
+      // nothing on the wire to say so - measured 2026-11-21, run r21 (`D:/gb-modcheck/frontend--r21`).
       const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
         bridge,
-        Object.freeze({
-          playerId: manifest.principal.playerId,
-          companionId: manifest.principal.companionId,
-          saveId: connection.scope.saveId,
-          worldId: connection.scope.worldId,
-        }),
+        bindIntegrationIdentity(manifest.principal, connection.scope),
         { module: STARDEW_INTEGRATION_LAUNCHER.module },
       );
       const binding = await createGameRuntimeBindingFromReceiptBackedLaunch(

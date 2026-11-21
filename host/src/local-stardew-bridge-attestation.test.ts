@@ -433,6 +433,55 @@ test("formal Farmhand bridge produces the existing receipt-backed Stardew launch
   });
 });
 
+test("a Farmhand launch identity that drops this manifest's continuity cannot mount the Game runtime", async () => {
+  // The seam this reproduces is `createStardewOwnedFarmhandGameSessionMaterializer`, which built its launch identity
+  // from the manifest's player and companion plus the world the bridge reported, and left out the manifest's
+  // `continuityId`. A handle only mints its receipt recovery port for an identity that names a continuity
+  // (`stardew-integration-launcher-body-program.internal.ts`, `receiptRecovery`), and the Game runtime enter binds that
+  // port to the recovery journal it opens (`continuity-semantic-game-runtime-binding.ts`,
+  // `createStardewRecoveryBindingContext`) - so the refusal landed inside `runEnter`, after the journal had mounted.
+  // Measured live 2026-11-21 (run r21, `D:/gb-modcheck/frontend--r21`): the browser Game session reached the enter for
+  // the first time and was refused there, thirteen milliseconds after the journal file appeared.
+  await withHelloAck("farmhand_client", generation, async (pipeName) => {
+    const client = await LocalStardewBridgeClient.connectFarmhand(
+      scope,
+      pipeName,
+      token,
+      generation,
+      Date.now() + 5_000,
+      testAdapter,
+    );
+    const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge(
+      client,
+      Object.freeze({
+        playerId: "player_attestation",
+        companionId: scope.companionId,
+        // Absent on purpose: exactly the identity the seam used to hand the bridge.
+        saveId: scope.saveId,
+        worldId: scope.worldId,
+      }),
+      { module: STARDEW_GAME_INTEGRATION_ADAPTER },
+    );
+    assert.equal(launch.receiptRecovery, undefined);
+    const binding = await receiptBackedBinding(launch);
+    try {
+      await assert.rejects(
+        binding.executeWithBinding((bindingToken) =>
+          withConsumedBindingExecution(bindingToken, (execution) =>
+            createHostGameRuntimeMaterializer().materializeEnter(
+              reserveGameRuntimeMaterialization(execution),
+              enterPermit(execution),
+            ),
+          ),
+        ),
+        /invalid_stardew_recovery_binding_context/,
+      );
+    } finally {
+      await binding.close();
+    }
+  });
+});
+
 test("S4c body-program admission expires with its factory callback and rejects forgery", async () => {
   await withHelloAck("farmhand_client", generation, async (pipeName) => {
     const client = await LocalStardewBridgeClient.connectFarmhand(

@@ -392,6 +392,24 @@ const BOUNDED_LIFECYCLE_CODE_PATTERN = /^stardew_[a-z0-9_]+$/;
 const MAX_LIFECYCLE_CAUSE_DEPTH = 6;
 
 /**
+ * The first bounded code a refusal names, walking its `cause` chain outward-in and, when the chain names none,
+ * falling back to the refusal's own message if that is bounded too.
+ *
+ * `isBounded` is the vocabulary the caller may project. The depth limit, the direction of the walk and the fallback
+ * are properties of the chain rather than of the words on it, so there is one walk and each caller supplies only the
+ * vocabulary - two walks would be two chances to disagree about which message is a code.
+ */
+function firstBoundedCode(error: unknown, isBounded: (message: string) => boolean): string | undefined {
+  let current: unknown = error instanceof Error ? error.cause : undefined;
+  for (let depth = 0; depth < MAX_LIFECYCLE_CAUSE_DEPTH; depth += 1) {
+    if (!(current instanceof Error)) break;
+    if (isBounded(current.message)) return current.message;
+    current = current.cause;
+  }
+  return error instanceof Error && isBounded(error.message) ? error.message : undefined;
+}
+
+/**
  * The bounded cause of a lifecycle refusal.
  *
  * The coordinator reports the *outer* fault as its exception message - a wrapper
@@ -407,13 +425,7 @@ const MAX_LIFECYCLE_CAUSE_DEPTH = 6;
  * yields `undefined` and is never projected.
  */
 function boundedLifecycleCause(error: unknown): string | undefined {
-  let current: unknown = error instanceof Error ? error.cause : undefined;
-  for (let depth = 0; depth < MAX_LIFECYCLE_CAUSE_DEPTH; depth += 1) {
-    if (!(current instanceof Error)) break;
-    if (BOUNDED_LIFECYCLE_CODE_PATTERN.test(current.message)) return current.message;
-    current = current.cause;
-  }
-  return error instanceof Error && BOUNDED_LIFECYCLE_CODE_PATTERN.test(error.message) ? error.message : undefined;
+  return firstBoundedCode(error, (message) => BOUNDED_LIFECYCLE_CODE_PATTERN.test(message));
 }
 
 /**
@@ -462,6 +474,15 @@ function distinguishableLifecycleProblemCode(error: unknown, wrapperCode: string
  * press's `stardew_manifest_handoff_uncertain` - i.e. only where the code alone does
  * not tell the faults apart. A refusal that already names its fault keeps exactly the
  * body it had.
+ *
+ * The vocabulary here is `BOUNDED_PRODUCER_CODE_PATTERN`, not the coordinator's own `stardew_*` shape, because the
+ * fault under these wrappers is no longer only the coordinator's: the cabin press's admitted manifest hands its
+ * connection to the Game runtime and the refusal then comes from `runEnter`, whose bounded codes are the facade's
+ * (`semantic_game_*`) and the runtime binding's (`invalid_stardew_recovery_binding_context`). Run r21
+ * (`D:/gb-modcheck/frontend--r21`) answered `cause: stardew_cabin_publication_uncertain` - the wrapper's own name,
+ * echoed back - while every one of those codes sat on the chain one link deeper than the coordinator pattern reaches.
+ * A `stardew_*` code is itself one of these (the producer pattern is the same shape with a wider first letter), so the
+ * projection kept every cause it had and gained the ones it was dropping.
  */
 function projectedLifecycleCause(error: unknown, code: string): string | undefined {
   if (
@@ -469,13 +490,13 @@ function projectedLifecycleCause(error: unknown, code: string): string | undefin
     code !== "state_unavailable" &&
     // The cabin press's own wrapper: it already stands for more than one fault by design (a cabin
     // publication that may or may not have happened, a join that ran out of its budget), and the
-    // composer behind it answers four different questions with four names. Run r19 was refused
-    // under this code with `cause: null` and its own evidence could not tell which had fired, so
-    // the bounded cause is projected here exactly as it is for the two generic codes above.
+    // composer and the Game runtime behind it answer their own questions with their own names. Run r19
+    // was refused under this code with `cause: null` and its own evidence could not tell which had
+    // fired; run r21 was refused with the wrapper's own name and the same problem one level down.
     code !== "stardew_manifest_handoff_uncertain"
   )
     return undefined;
-  return boundedLifecycleCause(error);
+  return firstBoundedCode(error, (message) => BOUNDED_PRODUCER_CODE_PATTERN.test(message));
 }
 
 function sendLifecycleProblem(response: ServerResponse, statusCode: number, error: unknown, code: string): void {

@@ -2125,6 +2125,128 @@ test("a cabin press refused by the manifest admission carries the stage that ref
   }
 });
 
+test("a cabin press refused inside the Game runtime enter names that refusal, not the wrapper again", async () => {
+  // Run r21 (`D:/gb-modcheck/frontend--r21`) answered `cause: stardew_cabin_publication_uncertain` - the coordinator
+  // wrapper's own name, echoed back - while the refusal underneath it had its own bounded code. The reason was a
+  // vocabulary, not a missing cause: the projection walked `stardew_*` only, and the Game runtime enter it now reaches
+  // names its refusals `semantic_game_*` and `invalid_stardew_*`. Every case below is one of those codes, and each must
+  // reach the wire while an unbounded message still may not.
+  const cases = [
+    // The code the enter path actually throws for a Farmhand launch whose identity carries no continuity (measured
+    // in-process against the real materializer: see `local-stardew-bridge-attestation.test.ts`).
+    [new Error("invalid_stardew_recovery_binding_context"), "invalid_stardew_recovery_binding_context"],
+    // Facade codes reach the wire the same way, and the walk still stops at the first bounded one on the chain.
+    [new Error("semantic_game_connected_ingress_unavailable"), "semantic_game_connected_ingress_unavailable"],
+    [
+      new Error("semantic_game_enter_failure_not_recovered", {
+        cause: new Error("semantic_game_pi_session_unavailable"),
+      }),
+      "semantic_game_enter_failure_not_recovered",
+    ],
+  ] as const;
+  for (const [thrown, expectedCause] of cases) {
+    const handler = createComposedReferenceGameBrowserRequestHandler({
+      profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+      bootstrapToken,
+      async readChat(context) {
+        return stateForChat(context);
+      },
+      async readGame(context) {
+        return stateForGame(context);
+      },
+      stardewCabins: {
+        async read() {
+          return Object.freeze({ apiVersion: 1 as const, choices: [] });
+        },
+        async confirm() {
+          throw new Error("stardew_cabin_publication_uncertain", { cause: thrown });
+        },
+      },
+    });
+    const server = await start(handler);
+    try {
+      const initial = await bootstrap(server.origin);
+      const root = (await initial.json()) as { chat: { csrfToken: string } };
+      const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+      const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins/confirm`, {
+        method: "POST",
+        headers: {
+          origin: server.origin,
+          cookie,
+          "content-type": "application/json",
+          "x-csrf-token": root.chat.csrfToken,
+        },
+        body: JSON.stringify({
+          apiVersion: 1,
+          idempotencyKey: "A".repeat(22),
+          choiceHandle: "A".repeat(43),
+          confirmed: true,
+        }),
+      });
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), {
+        code: "stardew_manifest_handoff_uncertain",
+        cause: expectedCause,
+      });
+    } finally {
+      await server.close();
+    }
+  }
+
+  // The widening is a vocabulary, not a hole: an OS message, a path and a human sentence still never cross, and the
+  // body such a chain produces is exactly the one it produced before.
+  const unbounded = "ENOENT: no such file or directory, open 'E:\\Steam\\Stardew Valley\\manifest.json'";
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+    stardewCabins: {
+      async read() {
+        return Object.freeze({ apiVersion: 1 as const, choices: [] });
+      },
+      async confirm() {
+        throw new Error("stardew_cabin_publication_uncertain", { cause: new Error(unbounded) });
+      },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins/confirm`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "A".repeat(22),
+        choiceHandle: "A".repeat(43),
+        confirmed: true,
+      }),
+    });
+    assert.equal(response.status, 409);
+    const text = await response.text();
+    assert.deepEqual(JSON.parse(text), {
+      code: "stardew_manifest_handoff_uncertain",
+      cause: "stardew_cabin_publication_uncertain",
+    });
+    assert.equal(text.includes("ENOENT"), false);
+    assert.equal(text.includes("Steam"), false);
+  } finally {
+    await server.close();
+  }
+});
+
 test("the cabin READ keeps the missing-cabin cause, which the confirm route already did", async () => {
   // `stardew_player_host_cabin_unavailable` is not a fault: it is the fact that this host world has no cabin the
   // companion may use, and its cure is the guidance the product already gives - have Robin build one. The read

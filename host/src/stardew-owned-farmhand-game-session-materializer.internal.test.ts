@@ -47,6 +47,12 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
     /LocalStardewBridgeClient\.connectFarmhand\(\s*connection\.scope,\s*connection\.pipeName,\s*connection\.token,\s*connection\.launchGeneration,\s*deadlineMs\s*,?\s*STARDEW_INTEGRATION_LAUNCHER\.module\s*,?\s*\)/,
   );
   assert.match(source, /createStardewIntegrationLaunchHandleFromAuthenticatedBridge\(/);
+  // The launch identity is the manifest's own principal merged with the world the bridge reported, composed by the
+  // module that owns that merge. A hand-built literal here is what dropped `continuityId` once already: the handle then
+  // minted no receipt recovery port, and the Game runtime enter refused thirteen milliseconds after the recovery
+  // journal mounted (run r21, `D:/gb-modcheck/frontend--r21`).
+  assert.match(source, /bindIntegrationIdentity\(manifest\.principal, connection\.scope\)/);
+  assert.doesNotMatch(source, /playerId: manifest\.principal\.playerId/);
   assert.match(source, /createGameRuntimeBindingFromReceiptBackedLaunch\(/);
   assert.match(source, /constructKnownUnmountedGameSemanticFacade\(/);
   assert.match(source, /createHostGameRuntimeMaterializer\(\)/);
@@ -57,7 +63,12 @@ test("owned Farmhand materializer preserves authenticated receipt-backed constru
     "const launch = await createStardewIntegrationLaunchHandleFromAuthenticatedBridge",
   );
   const bindingIndex = source.indexOf("const binding = await createGameRuntimeBindingFromReceiptBackedLaunch");
-  const facadeIndex = source.indexOf("return constructKnownUnmountedGameSemanticFacade(");
+  // The construction step the seam must reach LAST. This assertion read `return constructKnownUnmountedGameSemanticFacade(`
+  // and the call is now spread into the frozen facade record, so the gate had stopped holding at HEAD and could not
+  // have caught the step moving; it names the construction itself instead of the keyword before it.
+  const facadeIndex = source.indexOf(
+    "constructKnownUnmountedGameSemanticFacade(binding, game, createHostGameRuntimeMaterializer())",
+  );
   assert.ok(connectIndex >= 0);
   assert.ok(launchIndex >= 0);
   assert.ok(bindingIndex >= 0);
