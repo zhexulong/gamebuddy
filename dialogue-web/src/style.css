@@ -67,10 +67,11 @@
   --motion-duration-normal: 220ms;
 
   /* Layer 2: Semantic Tokens - the four-layer dark background system. */
-  --surface-canvas: #0c0b0b;
-  --surface-panel: #161414;
-  --surface-card: #201d1d;
-  --surface-elevated: #282525;
+  --surface-canvas: #131518;
+  --surface-panel: #1a1c1f;
+  --surface-card: #202226;
+  --surface-elevated: #26282d;
+  --surface-accent: #3f2b2f;
 
   /* The pre-existing darker funnel, remapped onto the new lows. Panels that
      used `--surface-raised` (a card's resting colour) now read `--surface-card`;
@@ -79,12 +80,12 @@
   --palette-gray-950: var(--surface-canvas);
   --palette-gray-900: var(--surface-panel);
   --palette-gray-800: var(--surface-card);
-  --palette-gray-700: #383331;
-  --palette-gray-600: #655b55;
-  --palette-gray-500: #7d736a;
-  --palette-gray-400: #90877e;
-  --palette-gray-200: #c8c0b6;
-  --palette-gray-100: #f5f0e8;
+  --palette-gray-700: #35383e;
+  --palette-gray-600: #54585f;
+  --palette-gray-500: #767a82;
+  --palette-gray-400: #969aa0;
+  --palette-gray-200: #c4c7cd;
+  --palette-gray-100: #f1f2f5;
 
   /* The warm brand and status families the semantic tokens below are built
      from - the same shape as the grey palette above: one place a colour is
@@ -95,12 +96,12 @@
      used). The plate is deeper than it looks like it needs to be because the
      accent is drawn *on* it as ink: at #3a2226 the 11 px `当前` badge and the
      status tag's own label read 4.48:1, under the 4.5:1 floor. */
-  --palette-burgundy-dark: #2f1d22;
-  --palette-burgundy-base: #c8787d;
-  --palette-burgundy-border: rgba(200, 120, 125, 0.35);
-  --palette-crimson-base: #d96565;
-  --palette-gold-base: #d6a85b;
-  --palette-teal-base: #4fae9a;
+  --palette-burgundy-dark: var(--surface-accent);
+  --palette-burgundy-base: #d78d92;
+  --palette-burgundy-border: rgba(215, 141, 146, 0.35);
+  --palette-crimson-base: #e38383;
+  --palette-gold-base: #dcae64;
+  --palette-teal-base: #52b5a2;
 
   --surface-raised: var(--surface-card);
   --surface-hover: var(--surface-elevated);
@@ -109,10 +110,11 @@
   --text-secondary: var(--palette-gray-200);
   --text-disabled: var(--palette-gray-400);
 
-  --border-subtle: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.15);
+  --border-subtle: rgba(214, 224, 240, 0.1);
+  --border-strong: rgba(214, 224, 240, 0.18);
   /* The translucent glass hairline that names the accent of every card. */
-  --border-glass: rgba(200, 120, 125, 0.16);
+  --border-glass: rgba(215, 141, 146, 0.16);
+  --border-control: #7c8089;
 
   --accent: var(--palette-burgundy-base);
   /* The accent as a *filled control surface*. `--accent` is the accent as ink -
@@ -129,7 +131,7 @@
      while `--text-primary` goes dark. Without it, a filled button's ink would
      follow the body ink and vanish into the fill. */
   --on-accent: var(--palette-gray-100);
-  --selection: #533137;
+  --selection: var(--surface-accent);
   --focus-ring: var(--palette-gold-base);
   --success: var(--palette-teal-base);
   --warning: var(--palette-gold-base);
@@ -217,33 +219,34 @@
    light theme's token table and holds every pair to the same AA floor as the
    dark set. */
 :root[data-theme="light"] {
-  --surface-canvas: #e9e2d6;
-  --surface-panel: #f6f1e9;
-  --surface-card: #fdfaf4;
-  --surface-elevated: #f0e9dd;
+  --surface-canvas: #e1e3e6;
+  --surface-panel: #f1f2f4;
+  --surface-card: #fafafc;
+  --surface-elevated: #e8eaee;
+  --surface-accent: #f5dee1;
 
-  --palette-gray-700: #e6dccc;
-  --palette-gray-600: #a89b8a;
-  --palette-gray-500: #7d7266;
-  --palette-gray-400: #665d54;
-  --palette-gray-200: #453d37;
-  --palette-gray-100: #1a1613;
+  --palette-gray-700: #dbdee4;
+  --palette-gray-600: #b6bbc2;
+  --palette-gray-500: #767a82;
+  --palette-gray-400: #5f636a;
+  --palette-gray-200: #474a51;
+  --palette-gray-100: #1c1e22;
 
-  --palette-burgundy-dark: #f7e3e3;
-  --palette-burgundy-base: #9d3441;
-  --palette-burgundy-border: rgba(157, 52, 65, 0.35);
-  --palette-crimson-base: #b02a2a;
-  --palette-gold-base: #7a5713;
-  --palette-teal-base: #14655a;
+  --palette-burgundy-dark: var(--surface-accent);
+  --palette-burgundy-base: #95303f;
+  --palette-burgundy-border: rgba(149, 48, 63, 0.35);
+  --palette-crimson-base: #a32424;
+  --palette-gold-base: #6f4d10;
+  --palette-teal-base: #0f5f54;
 
-  --border-subtle: rgba(26, 22, 19, 0.12);
-  --border-strong: rgba(26, 22, 19, 0.22);
-  --border-glass: rgba(157, 52, 65, 0.18);
+  --border-subtle: rgba(18, 21, 27, 0.12);
+  --border-strong: rgba(18, 21, 27, 0.22);
+  --border-glass: rgba(149, 48, 63, 0.18);
+  --border-control: #787d85;
 
   --accent-solid: #9c4e55;
   --accent-solid-hover: #8a4349;
-  --on-accent: #fdf8f2;
-  --selection: #f6ded9;
+  --on-accent: #fbf7f2;
 
   /* The dark plate is unaffordable here: see the token's own comment at the dark
      root. 6% is set by the worst of the three notices, the danger tone on its own
