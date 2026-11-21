@@ -130,7 +130,27 @@ async function main() {
      * this run's measurement, which is the exact shape the done-marker already prevents for execution.
      */
     await rm(join(paths.outRoot, driver.out), { force: true });
-    const code = await runDriver(driver, { port, cdpPort, run, paths, log });
+    let code;
+    try {
+      code = await runDriver(driver, { port, cdpPort, run, paths, log });
+    } finally {
+      /*
+       * THE GAME APPEARS INSIDE A DRIVER, so the boundary AFTER it is where this run can still see the game it
+       * caused alive - and a driver that failed is exactly when it must. Measured 2026-11-21 twice
+       * (`frontend--r26pads`, `cabinseat-r26`): driver w asked the Host to launch a game, the driver failed,
+       * and the run's own cleanup printed `RUN-GAME-CLEANUP: no game this run started` because only the
+       * PRE-driver boundary recorded - a sentence about a run that had just opened a game. Recording here (in a
+       * `finally`, so a driver that throws is covered too) is what lets the teardown end the game by exact pid
+       * and lets the run's reading say which of "ended by this run" and "never started" actually happened.
+       */
+      const after = recordRunGame({ paths, stageRoot: paths.stageRoot });
+      if (after.added.length > 0)
+        log(
+          `  GAME RECORDED AFTER ${driver.key} ${after.added.map((row) => `${row.pid}(${row.role})`).join(" ")} - the driver started it, so its cleanup ends it`,
+        );
+      else if (after.kind === "unverifiable")
+        log(`  GAME NOT RECORDED AFTER ${driver.key}: the process table did not answer this boundary`);
+    }
     const elapsed = Math.round((Date.now() - started) / 1000);
     log(`  exit=${code} elapsed=${elapsed}s`);
     if (code !== 0) {

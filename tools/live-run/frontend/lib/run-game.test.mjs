@@ -205,3 +205,32 @@ test("a registered pid with no role of the game's is not part of the game popula
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+/*
+ * The capture phase records the game on BOTH sides of a driver.
+ *
+ * A game is caused INSIDE a driver (driver w asks the Host to launch one), so a phase that only records
+ * before the driver records nothing in a run whose single driver is the one that opened the game - and then
+ * the run's own cleanup says "no game this run started" about a run that just opened one. Measured twice on
+ * 2026-11-21 (`frontend--r26pads`, `cabinseat-r26`), both on the failing path, which is the path where the
+ * sentence matters most.
+ *
+ * The population is the capture phase's own source, so this holds for any driver added later.
+ */
+test("the capture phase records the game after a driver as well as before it", () => {
+  const source = readFileSync(join(import.meta.dirname, "..", "phases", "capture.mjs"), "utf8");
+  const before = source.indexOf("const game = recordRunGame(");
+  const driver = source.indexOf("code = await runDriver(driver");
+  const after = source.indexOf("const after = recordRunGame(");
+  assert.ok(before >= 0, "the capture phase still records the game at a driver boundary");
+  assert.ok(driver >= 0, "the capture phase still runs the driver through runDriver");
+  assert.ok(
+    after > driver,
+    "capture.mjs records the game only before the driver: a run whose only driver launched a game cannot say it started one",
+  );
+  assert.match(
+    source.slice(driver, after + "const after = recordRunGame(".length),
+    /finally[\s\S]*recordRunGame/u,
+    "the after-driver record must sit in a finally, so a driver that throws is still recorded",
+  );
+});
