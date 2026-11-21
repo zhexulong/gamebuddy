@@ -11,11 +11,12 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { RUN_PROGRESS_FILE, openRunProgress } from "./run-progress.mjs";
 import {
+  armedRunDirectories,
   auditRunClosures,
   closeRunClosure,
   endingOf,
@@ -269,4 +270,45 @@ test("the record survives a child that never writes: the survivor's own open lin
   assert.equal(lines.length, 1);
   assert.equal(lines[0].event, "run_opened");
   assert.equal(lines[0].pid, process.pid, "the only opener is the process that was still alive to write the ending");
+});
+
+/**
+ * A RUN DIRECTORY IS BOUND BY THE INSTANT ITS RECEIPT STATES, and by nothing else in its path or its neighbourhood.
+ *
+ * A published bundle names no directory, and the one fact it shares with the run it came from is the instant that run
+ * started - so `armedRunDirectories` is what `round-verdict` asks which run directory a copy belongs to. The name of a
+ * run directory is a SECOND SPELLING of that instant, so this fixture deliberately makes the two disagree: a directory
+ * named for one moment whose receipt states another must answer with the RECEIPT's. A directory with no receipt, or with
+ * a receipt that states no instant, is left out - a name is not an instant to bind with.
+ */
+test("a run directory answers with the instant its receipt states, never with the one its name spells", (t) => {
+  const area = tempDir();
+  t.after(() => area.remove());
+  const root = join(area.dir, "game-ladder");
+  const named = join(root, "2026-11-17T19-09-31-413Z-multiday_routine");
+  mkdirSync(named, { recursive: true });
+  writeFileSync(
+    join(named, RUN_LAUNCH_FILE),
+    `${JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", kind: "game-ladder", startedAtMs: NOW + 60_000, pid: 1 })}\n`,
+  );
+  // Armed by nobody: the shape 89 of this loop's 348 run directories have, which still hold a bundle.
+  const noReceipt = join(root, "2026-11-17T19-20-00-000Z-multiday_routine");
+  mkdirSync(noReceipt, { recursive: true });
+  writeFileSync(join(noReceipt, "result.json"), "{}\n");
+  // Armed, but with no instant to bind by.
+  const noInstant = join(root, "2026-11-17T19-30-00-000Z-multiday_routine");
+  mkdirSync(noInstant, { recursive: true });
+  writeFileSync(
+    join(noInstant, RUN_LAUNCH_FILE),
+    `${JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", kind: "game-ladder", pid: 2 })}\n`,
+  );
+  writeFileSync(join(root, "not-a-run.txt"), "x");
+
+  assert.deepEqual(
+    armedRunDirectories({ root }).map((entry) => ({ run: basename(entry.dir), startedAtMs: entry.startedAtMs })),
+    [{ run: "2026-11-17T19-09-31-413Z-multiday_routine", startedAtMs: NOW + 60_000 }],
+    "the field is the authority, and a directory that states no instant cannot be bound by one",
+  );
+  assert.deepEqual(armedRunDirectories({ root: join(root, "absent") }), [], "a root that does not exist holds no run");
+  assert.deepEqual(armedRunDirectories({}), [], "a caller that names no root is asked for nothing");
 });

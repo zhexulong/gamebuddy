@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -422,8 +422,14 @@ test("a published bundle file is read as the run's record, and the block names t
       wallLine(directoryBlock).replace(`<- ${join(runDir, "result.json")} `, ""),
       "the published copy and the run directory must price the same wall from the same bytes",
     );
-    // AND WHERE THE COPY CANNOT ANSWER, IT SAYS WHICH INPUT WAS ABSENT: no `run-trace.json` sits beside it, so the body's
-    // window is never placed - refused with the word and the input, never a residual of zero and never green.
+    // AND WHERE THE COPY CANNOT ANSWER, IT SAYS WHY IT COULD NOT: this fixture's copy sits in a folder that holds no run
+    // directory either, so nothing it carries names the run it came from - the instant it published matched none - and it
+    // names both the instant and the tree it searched rather than reading whichever run happened to be there.
+    assert.match(
+      fromFile.stdout,
+      /no directory under .* was armed within 60000 ms of its startedAtMs \d+, so which run it came from is not decidable here/u,
+      `the copy must name what it could not bind to:\n${fromFile.stdout}`,
+    );
     assert.match(fileBlock, /^turn_gap\s+not_measured \(this run has no run-trace\.json\)/mu, fileBlock);
     assert.match(fileBlock, /a_residual_is_either_named_or_bounded:not_measured:explained_buckets/u, fileBlock);
     assert.equal(fromFile.status, 2, `a bucket the copy cannot answer is a refused reading:\n${fileBlock}`);
@@ -518,3 +524,187 @@ test(
     assert.match(output, /inserted_node_failed:auto_walk_02:move_to_tile:pending/u, output);
   },
 );
+
+/**
+ * A PUBLISHED BUNDLE IS BOUND TO ITS RUN BY THE INSTANT BOTH FILES PUBLISH, and that is what makes its other readings readable.
+ *
+ * `tools/_multiday_routine-round85.result.json` carries the run's clock and nothing else of it: the `run-trace.json` the
+ * turn gap is measured from, the `timeline.jsonl` the night receipts and the world's own day facts are counted in, and the
+ * runner log the executions are keyed on all stayed in the run directory. Measured 2026-11-21 on `round85`, pointing at
+ * the copy answered `not_measured` for `work`, `sleep_receipts`, `night_endings`, `day_started_facts`, `crossed_by` and
+ * `turn_gap`, beside a source line naming a folder that never held them.
+ *
+ * The binding is the instant the launcher wrote into both files - the phase clock the runner's bundle carries as
+ * `startedAtMs`, and the receipt `openRunClosure` wrote into the run directory. The 1,824 ms between them on `round85` is
+ * the launcher's own arming gap, which is why the match is a window rather than an equality. Nothing here is re-derived
+ * from a log's first line, and the log is the one artifact bound by that instant instead of by proximity: its first line
+ * is what the reader compares against, never what it takes the instant from.
+ */
+function publishRun({ root, secondRunAtMs = null }) {
+  const ladder = join(root, ".live-runs", "game-ladder");
+  const runDir = writeRun({ root: ladder, withSession: false });
+  writeFileSync(
+    join(runDir, "launch.json"),
+    JSON.stringify({
+      schema: "gamebuddy-live-run-launch/v1",
+      kind: "game-ladder",
+      label: "multiday_routine",
+      startedAtMs: START + 1_824,
+      pid: 13_860,
+    }),
+  );
+  // One night her own sleep ended, and the world opening the day it crossed into: the two witnesses that only the
+  // timeline carries, in the shapes the Mod mints.
+  writeFileSync(
+    join(runDir, "timeline.jsonl"),
+    `${[
+      { type: "execution_receipt", requestId: "r1", reasonCode: "day_advanced" },
+      { worldFactKind: "day_started", eventId: "day_started_day_3" },
+    ]
+      .map((row) => JSON.stringify(row))
+      .join("\n")}\n`,
+  );
+  if (secondRunAtMs !== null) {
+    const second = join(ladder, "second");
+    mkdirSync(second, { recursive: true });
+    writeFileSync(
+      join(second, "launch.json"),
+      JSON.stringify({ schema: "gamebuddy-live-run-launch/v1", startedAtMs: secondRunAtMs }),
+    );
+  }
+  const published = join(root, "published", "round99.result.json");
+  mkdirSync(dirname(published), { recursive: true });
+  copyFileSync(join(runDir, "result.json"), published);
+  const logs = join(root, "logs");
+  mkdirSync(logs, { recursive: true });
+  const fact = (atMs, executionId, actionId, nodeId) =>
+    `BRIDGE_FACT ${JSON.stringify({
+      type: "execution_receipt",
+      atMs,
+      executionId,
+      worldFactPayload: { actionId, state: "succeeded", origin: { programId: "plan_a", nodeId } },
+    })}`;
+  writeFileSync(
+    join(logs, "_fixture-live-runner.log"),
+    `${[fact(START + 500, "e1", "water_crop", "n1"), fact(START + 1_500, "e2", "till_soil", "n2")].join("\n")}\n`,
+  );
+  return { runDir, published, logs };
+}
+
+function bindProcess(root, target, logs) {
+  return spawnSync(process.execPath, [VERDICT, target, "--log-dir", logs], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, APPDATA: join(root, "appdata") },
+    maxBuffer: 32 * 1024 * 1024,
+  });
+}
+
+test("a published bundle is bound to the run it started, and the readings the copy could not take become readable", () => {
+  const root = mkdtempSync(join(tmpdir(), "round-verdict-standstill-bound-"));
+  try {
+    const { runDir, published, logs } = publishRun({ root });
+    const fromFile = bindProcess(root, published, logs);
+    const fromDirectory = bindProcess(root, runDir, logs);
+    const output = `${fromFile.stdout}${fromFile.stderr}`;
+    const block = standstillBlock(output);
+    // THE BINDING, named on the header with the distance it matched on: the run directory it read is the one this
+    // bundle's own instant names, not whichever run was nearest to hand.
+    assert.ok(
+      output.includes(`run   ${runDir}`),
+      `the verdict must read the run directory the bundle names:\n${output.split("\n").slice(0, 3).join("\n")}`,
+    );
+    assert.match(
+      output,
+      new RegExp(
+        `bundle .* \\(pointed at directly: its startedAtMs ${START} is 1824 ms from the launch receipt that armed run,`,
+        "u",
+      ),
+      output,
+    );
+    // TURN GAP FROM `run-trace.json`, and the same number from either path: one record, two readers.
+    assert.match(block, /^turn_gap\s+27\.0s = 27\.0% · queue_wait 20\.0s = 20\.0%/mu, block);
+    assert.doesNotMatch(block, /^turn_gap\s+not_measured/mu, block);
+    const turnGapLine = (text) => /^turn_gap .*$/mu.exec(standstillBlock(text))?.[0];
+    assert.equal(
+      turnGapLine(`${fromFile.stdout}${fromFile.stderr}`),
+      turnGapLine(`${fromDirectory.stdout}${fromDirectory.stderr}`),
+      "the copy and the run directory must price the same turn gap from the same trace",
+    );
+    // THE NIGHT LEDGER FROM `timeline.jsonl`: four readings that were `not_measured` on the copy, and the two that are
+    // genuinely zero are ZERO - the file was read, so `0` is a fact about this run rather than an absence.
+    assert.match(output, /^nights\s+crossings 1 by the run's own evidence/mu, output);
+    assert.match(output, /\(witness sleep_receipts\+night_endings\+day_started_facts\)/u, output);
+    assert.match(output, /^ {4}sleep_receipts\s+1 {2}<- timeline\.jsonl execution receipts/mu, output);
+    assert.match(output, /^ {4}night_endings\s+0 {2}<- timeline\.jsonl world facts/mu, output);
+    assert.match(output, /^ {4}day_started_facts\s+1 {2}<- timeline\.jsonl world facts/mu, output);
+    assert.match(output, /^ {4}crossed_by\s+sleep 1, pass_out 0, other 0/mu, output);
+    // AND `work` FROM THE RUNNER LOG: its first line carries an instant inside the launcher's window of the bundle's
+    // `startedAtMs`, which is what picks it out of the folder - the instant is the bundle's, never the log's.
+    assert.match(
+      output,
+      /^work\s+2 executions keyed on the executionId each receipt carries, out of 2 receipt lines - 2 action families/mu,
+      output,
+    );
+    assert.match(output, /<- _fixture-live-runner\.log:/u, output);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * THE HALF THAT KEEPS THE BINDING HONEST: two runs armed inside the same window are REFUSED, not chosen between.
+ *
+ * The fallback this forbids is "the only run in the folder" - a rule that reads a neighbour's artifacts and calls them
+ * this bundle's the moment a second copy lands beside it. So a second run directory armed 1 s later must leave every
+ * reading `not_measured`, name both candidates, and refuse the verdict rather than price a run it cannot identify.
+ */
+test("two runs armed inside the launcher's window are refused by name rather than resolved to one of them", () => {
+  const root = mkdtempSync(join(tmpdir(), "round-verdict-standstill-ambiguous-"));
+  try {
+    const { published, logs } = publishRun({ root, secondRunAtMs: START + 1_000 });
+    const result = bindProcess(root, published, logs);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(
+      output,
+      /ambiguous: second, run were all armed within 60000 ms of its startedAtMs \d+, so which run it came from is not decidable here/u,
+      output,
+    );
+    assert.match(standstillBlock(output), /^turn_gap\s+not_measured \(this run has no run-trace\.json\)/mu, output);
+    assert.match(standstillBlock(output), /^standstill\s+wall 100\.0s/mu, output);
+    assert.equal(result.status, 2, `an unidentifiable run is a refused reading:\n${output}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * AND THE RUN THAT NEVER WROTE A LAUNCH RECEIPT STILL BINDS ITS LOG, through the instant its BUNDLE carries.
+ *
+ * This is the shape the old message described and could not answer: the binding read the launch receipt alone, so a run
+ * directory holding `result.json` and no `launch.json` printed `nothing binds this run to a log` while its bundle had
+ * carried `startedAtMs` all along. Measured 2026-11-21 over the loop's own ladder: 89 of 348 run directories hold a bundle
+ * and no launch receipt, and every receipt that does exist carries the field.
+ *
+ * The log's own first line is what the reader COMPARES against, never what it takes the instant from - a log's first
+ * `atMs` is the earliest execution it happened to record, which is later than the run's start by however long the run
+ * took to dispatch anything.
+ */
+test("a run that wrote no launch receipt binds its log through the instant its bundle carries", () => {
+  const root = mkdtempSync(join(tmpdir(), "round-verdict-standstill-no-receipt-"));
+  try {
+    const { runDir, logs } = publishRun({ root });
+    rmSync(join(runDir, "launch.json"));
+    const result = bindProcess(root, runDir, logs);
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(
+      output,
+      /^work\s+2 executions keyed on the executionId each receipt carries, out of 2 receipt lines/mu,
+      output,
+    );
+    assert.doesNotMatch(output, /nothing binds this run to a log/u, output);
+    assert.match(output, /^ {4}intra_program\s+0\.1s/mu, output);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

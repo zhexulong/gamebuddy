@@ -22,6 +22,7 @@ import {
   actionExecutions,
   actionStates,
   describeRunnerLog,
+  LAUNCH_MATCH_MS,
   locateRunnerLog,
   programmeNodes,
   readRunnerLog,
@@ -32,7 +33,7 @@ import { census, format, formatCensus, reading } from "../lib/reading.mjs";
 import { createReadingLedger } from "../lib/reading-source.mjs";
 import { readSessionEntries, toolResultPayload } from "../lib/session-jsonl.mjs";
 import { standstillLines, summarizeStandstill } from "../lib/standstill-partition.mjs";
-import { readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
+import { armedRunDirectories, readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
 
 const LADDER = ".live-runs/game-ladder";
 
@@ -51,6 +52,65 @@ function newestRun() {
     .map((name) => ({ path: join(root, name), mtime: statSync(join(root, name)).mtimeMs }))
     .sort((left, right) => right.mtime - left.mtime);
   return runs[0]?.path ?? null;
+}
+
+/**
+ * THE RUN DIRECTORY A PUBLISHED BUNDLE BELONGS TO, found by the one instant both files publish.
+ *
+ * <p>
+ * `tools/_multiday_routine-round85.result.json` is the run's own `result.json` copied out when the round closed. The copy
+ * carries the run's clock (`startedAtMs`/`endedAtMs`) but names no directory, and everything the verdict prices it
+ * against - `run-trace.json` (turn gap, queue wait, the body's head and tail), `timeline.jsonl` (the night receipts and
+ * the world's own day facts), `live-runner.log` (the executions) and the bound session - stayed with the run. So a reader
+ * pointing at the copy was told `not_measured` on every one of those, from a path that had never held them.
+ * </p>
+ * <p>
+ * THE BINDING IS THE INSTANT THE RUN STARTED, published by the launcher into both files: the phase clock it hands to the
+ * runner becomes the bundle's `startedAtMs`, and the receipt `openRunClosure` writes into the run directory carries the
+ * same launch. It is NOT re-derived from any log's own first line (a second spelling of the same instant) and NOT
+ * resolved to "the only run in the folder": a bundle that cannot name its own run says so, and two runs inside the
+ * launcher's own arming window are refused rather than chosen between.
+ * </p>
+ */
+function runDirectoryOfBundle(bundlePath, result) {
+  const beside = dirname(bundlePath);
+  if (readRunLaunch({ dir: beside }) !== null)
+    return { dir: beside, how: "the launch receipt that armed it sits beside it", why: null };
+  const startedAtMs = Number.isFinite(result?.startedAtMs) ? result.startedAtMs : null;
+  if (startedAtMs === null)
+    return {
+      dir: beside,
+      how: null,
+      why: `the bundle carries no startedAtMs, so nothing in it names the run it came from; its other artifacts are looked for beside it, in ${beside}`,
+    };
+  const matching = armedRunDirectories({ root: resolve(LADDER) }).filter(
+    (entry) => Math.abs(entry.startedAtMs - startedAtMs) <= LAUNCH_MATCH_MS,
+  );
+  if (matching.length === 1)
+    return {
+      dir: matching[0].dir,
+      how: `its startedAtMs ${String(startedAtMs)} is ${String(
+        Math.abs(matching[0].startedAtMs - startedAtMs),
+      )} ms from the launch receipt that armed ${basename(matching[0].dir)}, so the run's other artifacts are read there`,
+      why: null,
+    };
+  if (matching.length === 0)
+    return {
+      dir: beside,
+      how: null,
+      why: `no directory under ${resolve(LADDER)} was armed within ${String(
+        LAUNCH_MATCH_MS,
+      )} ms of its startedAtMs ${String(startedAtMs)}, so which run it came from is not decidable here; its other artifacts are looked for beside it, in ${beside}`,
+    };
+  return {
+    dir: beside,
+    how: null,
+    why: `ambiguous: ${matching
+      .map((entry) => basename(entry.dir))
+      .join(", ")} were all armed within ${String(LAUNCH_MATCH_MS)} ms of its startedAtMs ${String(
+      startedAtMs,
+    )}, so which run it came from is not decidable here; its other artifacts are looked for beside it, in ${beside}`,
+  };
 }
 
 /** The session file the harness bound to this run, from its own `toolTiming.record`. */
@@ -1405,11 +1465,14 @@ if (targeted === null || !existsSync(targeted)) {
 // `not_measured` beside a source line naming `<bundle>/result.json` - measured 2026-11-21, `round85` read as `wall
 // not_measured` from the copy and as `wall 1,941.1s` from its directory, with `startedAtMs`/`endedAtMs` at the copy's own
 // top level the whole time. The bundle a reader points at IS the record this verdict reads; the run's other artifacts are
-// looked for beside it, and the header names both paths so no reading is ambiguous.
+// read from the run directory the bundle's own start instant names (`runDirectoryOfBundle`), and the header names both
+// paths so no reading is ambiguous.
 const pointedAtABundle = statSync(targeted).isFile();
-const runDir = pointedAtABundle ? dirname(targeted) : targeted;
+const publishedBundle = pointedAtABundle ? JSON.parse(readFileSync(targeted, "utf8")) : null;
+const bundleBinding = pointedAtABundle ? runDirectoryOfBundle(targeted, publishedBundle) : null;
+const runDir = pointedAtABundle ? bundleBinding.dir : targeted;
 const resultPath = pointedAtABundle ? targeted : join(runDir, "result.json");
-const result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : {};
+const result = publishedBundle ?? (existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : {});
 const smapiPath = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
 const modLogPath = join(runDir, "mod-log.txt");
 // `--session` exists because a hand-stopped run never copies its runtime root into the run directory: the session is
@@ -1468,12 +1531,23 @@ record("0 run ended", runEnded.verdict, runEnded.detail, runEnded.source);
 // THE RUN'S OTHER RECORD, read here because a run directory with a launch receipt and no bundle is a run that has not
 // finished - and that is exactly when its work has to be readable: a run that goes narrow looks like a run that is
 // working. The log is bound to this run by its own first instant, never by being the newest file in the tree.
+//
+// THE INSTANT IS THE RUN'S OWN `startedAtMs`, read from the bundle when the bundle published one. It used to be read only
+// from the launch receipt, so a published copy - which the launcher gives the same instant and which travels without its
+// receipt - answered `nothing binds this run to a log`. The receipt stays the source for a run that published no bundle
+// at all (a run stopped by hand, the case `workLines` exists for); it is not a second opinion about the instant, and the
+// log's own first line is never read back as one.
 const readings = createReadingLedger({ requireReadings: false });
+const runStartedAtMs = Number.isFinite(result.startedAtMs)
+  ? result.startedAtMs
+  : Number.isFinite(runLaunch?.startedAtMs)
+    ? runLaunch.startedAtMs
+    : null;
 const locatedLog = locateRunnerLog({
   runDir,
   logPath: explicitLog,
   logDir: logDirOption,
-  startedAtMs: Number.isFinite(runLaunch?.startedAtMs) ? runLaunch.startedAtMs : null,
+  startedAtMs: runStartedAtMs,
 });
 const runnerLog = locatedLog.path === null ? null : readRunnerLog(locatedLog.path);
 
@@ -1734,7 +1808,9 @@ const width = Math.max(...rows.map((row) => row.name.length));
 process.stdout.write(`run   ${runDir}\n`);
 if (pointedAtABundle)
   process.stdout.write(
-    `bundle ${resultPath} (pointed at directly: the run's other artifacts are looked for beside it, in ${runDir})\n`,
+    bundleBinding.how === null
+      ? `bundle ${resultPath} (pointed at directly: ${bundleBinding.why})\n`
+      : `bundle ${resultPath} (pointed at directly: ${bundleBinding.how})\n`,
   );
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
 for (const row of rows)

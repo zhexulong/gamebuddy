@@ -87,6 +87,44 @@ export function readRunClosure({ dir } = {}) {
 }
 
 /**
+ * Every run directory directly under `root`, with the start instant its own launch receipt states.
+ *
+ * <p>
+ * A run directory is NAMED for the instant its launcher armed it, and its `launch.json` carries that same instant as a
+ * field. This reads the FIELD and never the name: the name is a second spelling of one fact, and a directory that was
+ * copied or renamed keeps a receipt that still says when the run started.
+ * </p>
+ * <p>
+ * WHY A READER NEEDS IT. A round's `result.json` is copied out of its run directory when the round closes
+ * (`tools/_multiday_routine-round85.result.json`), and that copy names no directory - while the `run-trace.json`,
+ * `timeline.jsonl`, `mod-log.txt` and bound session it was measured against stay where the run wrote them. The one fact
+ * the copy and the run directory BOTH publish is the instant the run started, so that instant is what binds a bundle back
+ * to the run that produced it. Measured 2026-11-21 (`round85`): the bundle carries 1795244466889 and its run directory was
+ * armed 1 824 ms later, at 1795244468713.
+ * </p>
+ */
+export function armedRunDirectories({ root } = {}) {
+  if (typeof root !== "string" || root.length === 0) return [];
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const found = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(root, entry.name);
+    const launch = readRunLaunch({ dir });
+    // A directory whose receipt states no instant cannot be bound by one, and is left out rather than guessed at from
+    // its name: the receipts that predate the field are runs a reader may still name by hand.
+    if (!Number.isFinite(launch?.startedAtMs)) continue;
+    found.push({ dir, startedAtMs: launch.startedAtMs });
+  }
+  return found.sort((left, right) => left.startedAtMs - right.startedAtMs);
+}
+
+/**
  * Why the run ended, in one spelling, from the facts the surviving process actually watched.
  *
  * DERIVED, never passed in: a caller that could write `state: "closed"` beside `exitCode: 1` would be able to publish an
