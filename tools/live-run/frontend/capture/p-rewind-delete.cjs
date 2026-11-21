@@ -24,7 +24,7 @@
 // and exited 0 - a green that measured nothing, which is the shape this driver exists to prevent. So the
 // census below OPENS each row's overflow, asserts it opened, reads the three entries out of the panel and
 // closes it again, and each press opens the overflow of the row it is about to press.
-const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn , observe, observationStart } = require("./common.cjs");
+const { connect, reporter, PAGE_HELPERS, activateSurface, shot, readDurableTranscript, canStartTurn, observe, observationStart, conversationShown } = require("./common.cjs");
 const { continuityLine } = require("./capability.cjs");
 
 const CREDENTIAL_PRESENT = process.env.GB_SHOTS_CREDENTIAL_PRESENT === "1";
@@ -171,7 +171,66 @@ const composerState = () => ({
   players: document.querySelectorAll(".message-list > li.message.player").length,
 });
 
+/**
+ * Wait until the shell is SHOWING the conversation and its composer is mounted, then until the send
+ * control is pressable with the draft this driver typed.
+ *
+ * `activateSurface` presses the bar entry and returns; a conversation that is mounted but parked
+ * (`.surface-slot-parked`) still answers every `page.evaluate` read of its rows and of its textarea, so
+ * a driver that only READS can be wrong about which surface the player is on. Playwright cannot be
+ * wrong about it: a parked `.composer-button.send-button` is invisible, and `click()` then waits its
+ * own 30 s and fails with `TimeoutError: locator.click: Timeout 30000ms exceeded` - a message that says
+ * nothing about which surface the shell was on or whether a turn was in flight (measured r17).
+ *
+ * The two phases are separate because the control really is disabled while the draft is empty
+ * (`Composer.tsx`: `disabled={sendRefused(...) || !value.trim()}`), so "pressable" before typing is a
+ * question nobody asked. The state that blocks the press is carried into the failure by name.
+ */
+async function waitForComposer(page, timeoutMs = 20000) {
+  const started = Date.now();
+  let last = null;
+  for (;;) {
+    const shown = await page.evaluate(conversationShown);
+    last = await page.evaluate(() => {
+      const send = document.querySelector(".composer-button.send-button");
+      const area = document.querySelector(".composer-textarea");
+      return {
+        send: send === null ? "absent" : send.disabled ? "disabled" : "pressable",
+        stop: document.querySelector(".composer-button.stop-button, .composer-button.composer-busy") !== null,
+        textarea: area !== null,
+      };
+    });
+    const composer = { ...last, shown };
+    if (composer.shown && composer.textarea && composer.send !== "absent")
+      return { ready: true, waitedMs: Date.now() - started, state: composer };
+    if (Date.now() - started > timeoutMs) return { ready: false, waitedMs: Date.now() - started, state: composer };
+    await page.waitForTimeout(250);
+  }
+}
+
+/** The draft is in the textarea, so the send control leaves `disabled`; this is that moment. */
+async function waitForSendEnabled(page, timeoutMs = 10000) {
+  const started = Date.now();
+  let state = null;
+  for (;;) {
+    state = await page.evaluate(() => {
+      const send = document.querySelector(".composer-button.send-button");
+      const area = document.querySelector(".composer-textarea");
+      return { send: send === null ? "absent" : send.disabled ? "disabled" : "pressable", draft: area === null ? null : area.value.length };
+    });
+    if (state.send === "pressable") return { ready: true, waitedMs: Date.now() - started, state };
+    if (Date.now() - started > timeoutMs) return { ready: false, waitedMs: Date.now() - started, state };
+    await page.waitForTimeout(200);
+  }
+}
+
 async function sendAndSettle(page, text) {
+  const composer = await waitForComposer(page);
+  if (!composer.ready)
+    throw new Error(
+      `composer_not_on_screen: after ${String(composer.waitedMs)}ms the shell was not showing a mounted composer ` +
+        `(${JSON.stringify(composer.state)}); a parked conversation answers every read and cannot be typed into`,
+    );
   await page.evaluate((line) => {
     const area = document.querySelector(".composer-textarea");
     if (area === null) return;
@@ -179,8 +238,13 @@ async function sendAndSettle(page, text) {
     setter.call(area, line);
     area.dispatchEvent(new Event("input", { bubbles: true }));
   }, text);
-  await page.waitForTimeout(300);
-  await page.locator(".composer-button.send-button").click();
+  const enabled = await waitForSendEnabled(page);
+  if (!enabled.ready)
+    throw new Error(
+      `send_control_never_became_pressable: after ${String(enabled.waitedMs)}ms the send control still read ` +
+        `${JSON.stringify(enabled.state)} with the draft typed, so the composer refused the turn`,
+    );
+  await page.locator(".composer-button.send-button").click({ timeout: 15000 });
   const before = await page.evaluate(() => document.querySelectorAll(".message-list > li.message.companion:not([data-streaming])").length);
   for (let attempt = 0; attempt < 90; attempt += 1) {
     await page.waitForTimeout(2000);
