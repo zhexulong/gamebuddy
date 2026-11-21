@@ -710,3 +710,196 @@ function readOneArgument(action: PublishedPlanAction, argument: DeclaredArgument
   if (!namesTheAbsence && code !== "accepted")
     census.faults.push(`${subject}: a snapshot holding other targets answered ${code}`);
 }
+
+/**
+ * THE ROW A STEP NAMES IS ASKED ABOUT THE STEP, not only for its identity.
+ *
+ * <p>
+ * MEASURED, `round87b` (2026-11-21, `.live-runs/game-ladder/2026-11-21T13-38-15-600Z-multiday_routine`), two programs
+ * and 36 refusals, each of which the row her call named had already answered:
+ * </p>
+ * <ul>
+ *   <li>`plan_39_a511ebcdc7723dd5` then `plan_57_8a8ea0ac773aab77`, 4.4 s apart, wrote the same `for (let x = 62; x <=
+ *   79; x++) builder.till_soil({ x, y: 18, charge: 0 })` strip twice: 36 `till_soil` nodes, **36 refusals and not one
+ *   success** - 30 `soil_already_tilled`, 4 `soil_not_diggable:occupied:object`, 2 `soil_not_diggable:not_map_diggable`.
+ *   The row was tilled before either program ran, and `soilTiles` publishes exactly that fact as `hoeDirt`.</li>
+ *   <li>`plan_27_05189350af1f1b0d` bought `(O)472` at `shop_23ea23e168822731` (PetAdoption's counter, the one the
+ *   affordance list called "nearest") while `shopTargets` published nine counters with `stockItemIds`/`stockCount`, and
+ *   the answer was `item_sold_by_another_counter ... sold_here_by=shop_d1821b85749a947f@4,17`. The right counter was in
+ *   the snapshot the plan was composed from.</li>
+ * </ul>
+ * <p>
+ * THE NEGATIVES ARE AS LOUD AS THE POSITIVES, because both of these are refusals a plan can be wrong about: a
+ * `stockItemIds` the surface truncates at sixteen cannot refuse, a family the snapshot did not publish cannot refuse, a
+ * counter in another room is not an address to send her to, and soil the row calls bare is not refused.
+ * </p>
+ */
+
+/** One `shopTargets` row as the Mod publishes it, under the fields the `Snapshot` type declares. */
+function shopRow(fields: readonly string[], overrides: Json): Json {
+  return rowAt(fields, { location: "SeedShop", ownerInReach: true, ...overrides });
+}
+
+/** The measured pair: the counter she named sells pets, the one beside it sells seed. */
+const PET_COUNTER = Object.freeze({
+  targetId: "shop_23ea23e168822731",
+  shopId: "PetAdoption",
+  ownerName: "Marnie",
+  ownerTileX: 11,
+  ownerTileY: 20,
+  stockCount: 2,
+  stockItemIds: ["(O)600", "(O)601"],
+});
+const SEED_COUNTER = Object.freeze({
+  targetId: "shop_d1821b85749a947f",
+  shopId: "SeedShop",
+  ownerName: "Pierre",
+  ownerTileX: 4,
+  ownerTileY: 17,
+  stockCount: 58,
+  stockItemIds: ["(O)472", "(O)473"],
+});
+
+const PURCHASE_AT_THE_PET_COUNTER = `builder.shop_purchase({ expectedTargetId: "shop_23ea23e168822731", expectedQualifiedItemId: "(O)472", quantity: 34 });`;
+
+function shopSnapshot(...rows: readonly Json[]): Snapshot {
+  const fields = FAMILY_FIELDS.get("shopTargets");
+  assert.ok(fields !== undefined, "the Snapshot type publishes shopTargets");
+  return snapshotCarrying(
+    bareSnapshot("shop_purchase"),
+    "shopTargets",
+    rows.map((row) => shopRow(fields, row)),
+  );
+}
+
+function refusalOf(result: CompiledPlan): string {
+  return result.status === "compiled" ? "accepted" : result.reasonCode;
+}
+
+function refusalsOf(result: CompiledPlan): readonly Readonly<{ reasonCode: string }>[] {
+  return result.status === "refused" || result.status === "partial" ? result.rejected : [];
+}
+
+/** Every refusal the script produced, including the ones past the bounded list `rejected` spells out. */
+function refusalCountOf(result: CompiledPlan): number {
+  return result.status === "refused" || result.status === "partial" ? result.rejectedCount : 0;
+}
+
+test("a counter the item is not sold at is refused before the walk, naming the counter that sells it", () => {
+  const result = compile(PURCHASE_AT_THE_PET_COUNTER, shopSnapshot(PET_COUNTER, SEED_COUNTER));
+  assert.equal(
+    refusalOf(result),
+    "plan_script_item_sold_by_another_counter:(O)472:sold_here_by=shop_d1821b85749a947f@4,17",
+    "the refusal names the item and the counter in this room that carries it, in the vocabulary the body uses",
+  );
+  assert.deepEqual(nodesOf(result), [], "and no node is written, so the wrong counter is never walked to");
+});
+
+test("the counter that carries the item is accepted, and so is the same counter in another room", () => {
+  const atTheSeedCounter = compile(
+    `builder.shop_purchase({ expectedTargetId: "shop_d1821b85749a947f", expectedQualifiedItemId: "(O)472", quantity: 34 });`,
+    shopSnapshot(PET_COUNTER, SEED_COUNTER),
+  );
+  assert.equal(refusalOf(atTheSeedCounter), "accepted", "her own call, unchanged");
+  // A COUNTER THE ACTOR IS NOT STANDING IN IS NOT AN ADDRESS: the body's own code is `sold_here_by`, "another counter in
+  // this room", and naming a shop across the map would send her on a walk she did not ask for.
+  const elsewhere = shopSnapshot(PET_COUNTER, { ...SEED_COUNTER, location: "Farm" });
+  assert.equal(refusalOf(compile(PURCHASE_AT_THE_PET_COUNTER, elsewhere)), "accepted");
+});
+
+test("a stock list the surface truncated cannot refuse, because absence from sixteen of fifty-eight is not absence", () => {
+  // `stockItemIds` is capped at 16 per counter and `stockCount` carries the true number, so only a COMPLETE list can say
+  // "this counter does not sell it". SeedShop's own row in the measured run was 58 items deep.
+  const truncated = shopSnapshot(
+    { ...PET_COUNTER, stockCount: 58 },
+    { ...SEED_COUNTER, stockCount: 58, stockItemIds: ["(O)473"] },
+  );
+  assert.equal(
+    refusalOf(compile(PURCHASE_AT_THE_PET_COUNTER, truncated)),
+    "accepted",
+    "a counter whose published stock is a truncation is answered by the body, not refused here",
+  );
+});
+
+/** The measured strip: eighteen tiles on one row, every one of them already carrying hoe dirt. */
+function tilledStrip(): Snapshot {
+  const fields = FAMILY_FIELDS.get("soilTiles");
+  assert.ok(fields !== undefined, "the Snapshot type publishes soilTiles");
+  const rows: Json[] = [];
+  for (let x = 62; x <= 79; x += 1) rows.push(rowAt(fields, { x, y: 18, hoeDirt: true }));
+  return snapshotCarrying(bareSnapshot("till_soil"), "soilTiles", rows);
+}
+
+test("the tilled strip is refused at submit time, once per tile, instead of once per node in the body", () => {
+  const script: string[] = [];
+  for (let x = 62; x <= 79; x += 1) script.push(`builder.till_soil({ x: ${String(x)}, y: 18, charge: 0 });`);
+  const result = compile(script.join("\n"), tilledStrip());
+  assert.equal(result.status, "refused", JSON.stringify(result).slice(0, 400));
+  assert.deepEqual(nodesOf(result), [], "not one till node is written over soil the row calls worked");
+  const rejected = refusalsOf(result);
+  assert.equal(refusalCountOf(result), 18, "every one of the eighteen calls is refused, not only the first");
+  assert.deepEqual(
+    rejected.map((call) => call.reasonCode),
+    Array.from(
+      { length: rejected.length },
+      (_, index) => `plan_script_target_already_tilled:soilTiles:${String(62 + index)},18`,
+    ),
+    "each code names the family to re-read and the tile she named",
+  );
+});
+
+test("bare soil is not refused, and a row that answers only where the tile is still leaves the answer to the body", () => {
+  const fields = FAMILY_FIELDS.get("soilTiles");
+  assert.ok(fields !== undefined, "the Snapshot type publishes soilTiles");
+  const bare = snapshotCarrying(bareSnapshot("till_soil"), "soilTiles", [
+    rowAt(fields, { x: 79, y: 18, hoeDirt: false }),
+  ]);
+  const tilled = compile(`builder.till_soil({ x: 79, y: 18, charge: 0 });`, bare);
+  assert.equal(refusalOf(tilled), "accepted", "the row says the tile is bare, which is what tilling wants");
+  // A Mod older than `hoeDirt` publishes the tile and no answer: not measured is not "already tilled".
+  const unanswered = snapshotCarrying(bareSnapshot("till_soil"), "soilTiles", [{ x: 79, y: 18 }]);
+  assert.equal(refusalOf(compile(`builder.till_soil({ x: 79, y: 18, charge: 0 });`, unanswered)), "accepted");
+});
+
+test("soil an earlier step in the same program clears is not refused for being worked", () => {
+  const soilFields = FAMILY_FIELDS.get("soilTiles");
+  const clearFields = FAMILY_FIELDS.get("clearHoeDirtTargets");
+  assert.ok(soilFields !== undefined, "the Snapshot type publishes soilTiles");
+  assert.ok(clearFields !== undefined, "the Snapshot type publishes clearHoeDirtTargets");
+  const live = Object.assign(
+    snapshotCarrying(bareSnapshot("till_soil"), "soilTiles", [rowAt(soilFields, { x: 79, y: 18, hoeDirt: true })]),
+    { clearHoeDirtTargets: [rowAt(clearFields, { x: 79, y: 18, crop: false, ground: true })] },
+  ) as Snapshot;
+  const chained = compile(
+    [
+      `builder.clear_hoedirt({ x: 79, y: 18, slot: 12, expectedTargetId: "clear_hoedirt_0000000000000000" });`,
+      `builder.till_soil({ x: 79, y: 18, charge: 0 });`,
+    ].join("\n"),
+    live,
+  );
+  assert.equal(
+    chained.status,
+    "compiled",
+    "the row's hoeDirt is not the state this step finds: a step in this program takes it off first",
+  );
+});
+
+test("till_soil then plant_seed on one bare tile is still one plan when the row is published", () => {
+  const fields = FAMILY_FIELDS.get("soilTiles");
+  assert.ok(fields !== undefined, "the Snapshot type publishes soilTiles");
+  const live = snapshotCarrying(bareSnapshot("till_soil"), "soilTiles", [
+    rowAt(fields, { x: 79, y: 18, hoeDirt: false }),
+  ]);
+  const chained = compile(
+    [
+      `builder.till_soil({ x: 79, y: 18, charge: 0 });`,
+      `builder.plant_seed({ x: 79, y: 18, expectedQualifiedItemId: "(O)472" });`,
+    ].join("\n"),
+    live,
+  );
+  assert.equal(chained.status, "compiled", JSON.stringify(chained).slice(0, 600));
+  assert.deepEqual(
+    nodesOf(chained).map((node) => node.actionId),
+    ["till_soil", "plant_seed"],
+  );
+});

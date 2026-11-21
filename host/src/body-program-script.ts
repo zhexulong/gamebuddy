@@ -1269,7 +1269,7 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     " });\n" +
     "}\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
-    "  builder.water_crop({ x: crop.x, y: crop.y, " +
+    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId, " +
     planExampleCharge("water_crop") +
     " });\n" +
     "}\n" +
@@ -2701,6 +2701,145 @@ function planNamedPlace(canonical: Readonly<Record<string, PlanArgument>>): stri
   return named.length === 0 ? "no-target-named" : named;
 }
 
+/** One row of a snapshot family, as the family publishes it. */
+type PlanTargetRow = Readonly<Record<string, unknown>>;
+
+/**
+ * What the row a step NAMES says about that step, in the surface's own fields - or `null` when the row is silent.
+ *
+ * <p>
+ * THE FAMILY IS WHERE A STEP'S TARGETS COME FROM, AND A ROW ANSWERS MORE THAN ITS IDENTITY. `soilTiles` publishes
+ * `hoeDirt` - the engine's own `GetHoeDirtAtTile`, which is the fact `till_soil` refuses on - and `shopTargets`
+ * publishes `stockItemIds`/`stockCount`, what that counter actually sells. Measured `round87b` (2026-11-21,
+ * `.live-runs/game-ladder/2026-11-21T13-38-15-600Z-multiday_routine`): `plan_39_a511ebcdc7723dd5` then
+ * `plan_57_8a8ea0ac773aab77` wrote the same `for (let x = 62; x <= 79; x++) till_soil({ x, y: 18, charge: 0 })` strip
+ * 4.4 s apart over a row that was already tilled, and the 36 nodes answered 30 `soil_already_tilled`, 4
+ * `soil_not_diggable:occupied:object` and 2 `soil_not_diggable:not_map_diggable` with **no success at all**; and
+ * `plan_27_05189350af1f1b0d` bought seed at `PetAdoption`'s counter - the "nearest" one the affordance list named -
+ * while the snapshot held nine counters with their stock, answered `item_sold_by_another_counter ...
+ * sold_here_by=shop_d1821b85749a947f@4,17`. Every one of those facts was on the row her call named, which is what makes
+ * this the compiler's answer rather than the body's.
+ * </p>
+ * <p>
+ * ONLY A ROW THAT IS THERE CAN REFUSE, and only for a fact it POSITIVELY carries: never for a row the family does not
+ * hold, never for a family the snapshot did not publish, never for a field a row left out. The surface itself caps
+ * `stockItemIds` at sixteen lines while `stockCount` carries the true number, so a truncated list is a list that cannot
+ * refuse. A step the snapshot cannot answer is left exactly as it was - the body is the authority on the world, and this
+ * pass only stops a plan from ordering work the row it named has already answered.
+ * </p>
+ */
+type PlanTargetRowRule = (
+  named: PlanTargetRow,
+  rows: readonly PlanTargetRow[],
+  canonical: Readonly<Record<string, PlanArgument>>,
+  state: PlanScriptState,
+) => string | null;
+
+const PLAN_TARGET_ROW_RULES: Readonly<Record<string, PlanTargetRowRule>> = Object.freeze({
+  // `soilTiles` publishes every tile within the hoe's reach that is bare AND tillable, or already worked. THE FIELD IS NOT
+  // SPELLED HERE: `PLAN_ITERATION_CONDITIONS` is where the product states which row field says a tile still needs the
+  // work, and the plan recipe the companion reads renders its own loop guard from that entry
+  // (`if (soil.hoeDirt !== true) builder.till_soil({...})`). This refusal is that same guard, enforced instead of merely
+  // suggested - `round81` bought 25 `till_soil` nodes over a patch where every tile was already HoeDirt, and `round87b`
+  // bought 36 more.
+  soilTiles: (named, _rows, canonical, state) =>
+    planRowSaysTheWorkIsDone("soilTiles", named) && !planStepClearsTheHoeDirt(canonical, state)
+      ? `plan_script_target_already_tilled:soilTiles:${planNamedPlace(canonical)}`
+      : null,
+  shopTargets: (named, rows, canonical) => planCounterRefusal(named, rows, canonical),
+});
+
+/** Whether the family's own published loop guard excludes this row - the row field `PLAN_ITERATION_CONDITIONS` names. */
+function planRowSaysTheWorkIsDone(familyName: string, row: PlanTargetRow): boolean {
+  const condition = PLAN_ITERATION_CONDITIONS[familyName];
+  if (condition === undefined || !("rowField" in condition)) return false;
+  return row[condition.rowField] === true;
+}
+
+/**
+ * The counter she named sells something the item she means is not, and a counter in the same room sells it.
+ *
+ * <p>
+ * THE ADDRESS IS THE WHOLE ANSWER, in the vocabulary the body already uses for this refusal (`sold_here_by`), so the
+ * correction is one id and costs no walk. The Mod's own code is `item_sold_by_another_counter`, and "another counter"
+ * means one in the room the actor is standing in: a shop across the map is not an address a plan may send her to.
+ * </p>
+ * <p>
+ * `stockItemIds` IS CAPPED AT SIXTEEN by the surface and `stockCount` is the number the shop really stocks, so the two
+ * together are what says whether absence means anything: a complete list that does not name the item is the counter
+ * saying it does not sell it, and a truncated one says nothing at all.
+ * </p>
+ */
+function planCounterRefusal(
+  named: PlanTargetRow,
+  rows: readonly PlanTargetRow[],
+  canonical: Readonly<Record<string, PlanArgument>>,
+): string | null {
+  const item = canonical.expectedQualifiedItemId;
+  const itemId = item !== undefined && "canonicalValue" in item ? item.canonicalValue : undefined;
+  if (itemId === undefined) return null;
+  const stock = named.stockItemIds;
+  const stocked = named.stockCount;
+  if (!Array.isArray(stock) || typeof stocked !== "number" || stock.length !== stocked) return null;
+  if (stock.some((published) => published === itemId)) return null;
+  const elsewhere = rows.find(
+    (row) =>
+      row !== named &&
+      row.location === named.location &&
+      Array.isArray(row.stockItemIds) &&
+      row.stockItemIds.some((published) => published === itemId),
+  );
+  if (elsewhere === undefined) return null;
+  const counter = `${planRowValue(elsewhere.targetId) ?? "unknown_counter"}@${planRowValue(elsewhere.ownerTileX) ?? "?"},${planRowValue(elsewhere.ownerTileY) ?? "?"}`;
+  return `plan_script_item_sold_by_another_counter:${itemId}:sold_here_by=${counter}`;
+}
+
+/**
+ * Whether an earlier step in this program takes the hoe dirt off the tile this one names, so the row's `hoeDirt` is not
+ * the state the step will find (`clear_hoedirt` then `till_soil` on one tile is a plan the body runs, not a mistake).
+ */
+function planStepClearsTheHoeDirt(canonical: Readonly<Record<string, PlanArgument>>, state: PlanScriptState): boolean {
+  const tile = tileKeyOf(canonical);
+  if (tile === null) return false;
+  const producer = planProducerOnTile(state, tile);
+  if (producer === undefined) return false;
+  return state.nodes.find((node) => node.nodeId === producer)?.actionId === "clear_hoedirt";
+}
+
+/**
+ * The row a step names, out of its family: the tile it addresses, or - for an action whose only address is the opaque id
+ * the surface mints - the row carrying that id.
+ */
+function planNamedTargetRow(
+  canonical: Readonly<Record<string, PlanArgument>>,
+  rows: readonly PlanTargetRow[],
+): PlanTargetRow | undefined {
+  const tile = tileKeyOf(canonical);
+  if (tile !== null) return rows.find((row) => `${planRowValue(row.x)},${planRowValue(row.y)}` === tile);
+  const identity = canonical.expectedTargetId;
+  const named = identity !== undefined && "canonicalValue" in identity ? identity.canonicalValue : undefined;
+  if (named === undefined) return undefined;
+  return rows.find((row) => planRowValue(row.targetId) === named);
+}
+
+/** The refusal the row a step names raises about that step, or `null` when it raises none. */
+function planTargetRowRefusal(
+  action: PublishedPlanAction,
+  canonical: Readonly<Record<string, PlanArgument>>,
+  snapshot: Snapshot,
+  state: PlanScriptState,
+): string | null {
+  const familyName = action.targetFamily;
+  if (familyName === null) return null;
+  const rule = PLAN_TARGET_ROW_RULES[familyName];
+  if (rule === undefined) return null;
+  const family = planSnapshotRows(snapshot, familyName);
+  if (!family.measured) return null;
+  const named = planNamedTargetRow(canonical, family.rows);
+  if (named === undefined) return null;
+  return rule(named, family.rows, canonical, state);
+}
+
 function emitPlanNode(
   action: PublishedPlanAction,
   arguments_: unknown,
@@ -2807,6 +2946,10 @@ function emitPlanNode(
     [...declared.values()].filter((declaration) => !Object.hasOwn(canonical, declaration.name)),
     true,
   );
+  // AND WHAT THE ROW THIS STEP NAMES SAYS ABOUT IT, which is a fact about the step and not about her arguments: a
+  // missing argument is answered first, because no row can fix a call she did not finish writing.
+  const rowRefusal = planTargetRowRefusal(action, canonical, snapshot, state);
+  if (rowRefusal !== null) rejectPlanCall(rowRefusal, state, requirement);
   // A transition is written as the walk plus the door: the walk is the compiler's because the Mod refuses the door
   // on distance alone, and the node the author wrote still runs in the order the author wrote it.
   //
