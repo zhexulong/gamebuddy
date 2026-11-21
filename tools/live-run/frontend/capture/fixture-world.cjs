@@ -120,7 +120,7 @@ function saveSlots(root) {
  * `examined N` beside it and a first run - where there is nothing to move yet - cannot be mistaken for a
  * helper that failed to look.
  */
-function prepareOwnWorld({ declaredDataRoot, runRoot }) {
+function prepareOwnWorld({ declaredDataRoot, runRoot, policy = "own" }) {
   if (typeof runRoot !== "string" || runRoot.length === 0) return { kind: "refused", reason: "run_root_unknown" };
   const root = savesFolder();
   if (root === null) return { kind: "refused", reason: "appdata_absent" };
@@ -144,6 +144,28 @@ function prepareOwnWorld({ declaredDataRoot, runRoot }) {
     };
 
   const slots = saveSlots(root);
+  /*
+   * `policy: "existing"` is the ordinary second session: the run enters the world the product already has,
+   * standing on the operator's statement that it can host her (a Cabin unbound, or bound to this run's
+   * companion). Nothing is moved, and a world that does not exist is a refusal rather than a silent creation -
+   * a run that asked to measure a world an earlier run made must not create its own and call it the same thing.
+   */
+  if (policy === "existing") {
+    const existing = slots
+      .map(({ slot, directory }) => ({ slot, ...farmNameOf(directory) }))
+      .filter((entry) => entry.farmName === request.farmName);
+    if (existing.length === 0)
+      return {
+        kind: "refused",
+        reason: "no_existing_world",
+        detail: `this run was asked to enter the world the product already has ('${request.farmName}'), and no save of that name is in ${root}`,
+        farmName: request.farmName,
+        savesRoot: root,
+        examined: slots.length,
+      };
+    return { kind: "kept", farmName: request.farmName, savesRoot: root, examined: slots.length, kept: existing.map(({ slot, farmName }) => ({ slot, farmName })) };
+  }
+
   const moved = [];
   const kept = [];
   const unreadable = [];
@@ -220,6 +242,8 @@ function describeOwnWorld(reading) {
     return `FIXTURE WORLD NOT PREPARED: ${String(reading.reason)} — ${String(reading.detail ?? "")} (examined ${String(reading.examined ?? "nothing")} save folder(s) under ${String(reading.savesRoot ?? "no save root")})`;
   if (reading?.kind === "already_owned")
     return `the world this run creates was already claimed by an earlier driver in this run: '${String(reading.farmName)}' (moved ${String(moved.length)}: ${moved.join(", ") || "none"}; examined ${String(reading.examined ?? "?")})`;
+  if (reading?.kind === "kept")
+    return `this run enters the world the product already has: '${String(reading.farmName)}' in ${String(reading.savesRoot)} (${moved.join(", ") || "none"}; examined ${String(reading.examined)} save folder(s), nothing moved)`;
   return [
     `this run starts from its own world: '${String(reading.farmName)}'`,
     `${String(moved.length)} save(s) of that name moved into the run root (${moved.join(", ") || "none — nothing to move yet"})`,

@@ -179,6 +179,33 @@ test("a save whose identity cannot be read is left alone and reported", () => {
   assert.match(describeOwnWorld(reading), /nothing to move yet/u);
 });
 
+test("a run asked to enter the world the product already has moves nothing, and refuses when there is none", () => {
+  const world = machine();
+  world.declaredDataRoot = writeStagedRequest(world.runRoot);
+  const ours = writeSave(world.savesRoot, "GameBuddyFarm_454939749", { farmName: "GameBuddy Farm" });
+
+  const kept = prepare(world, { policy: "existing" });
+
+  assert.equal(kept.kind, "kept");
+  assert.deepEqual(
+    kept.kept.map((entry) => entry.slot),
+    ["GameBuddyFarm_454939749"],
+  );
+  assert.equal(existsSync(ours), true);
+  assert.equal(
+    existsSync(join(world.runRoot, "fixture-worlds", "prepared.json")),
+    false,
+    "entering a world claims nothing",
+  );
+
+  // The same request against a machine that holds no world of that name: a refusal, never a silent creation.
+  const empty = machine();
+  empty.declaredDataRoot = writeStagedRequest(empty.runRoot);
+  const refused = prepare(empty, { policy: "existing" });
+  assert.equal(refused.kind, "refused");
+  assert.equal(refused.reason, "no_existing_world");
+});
+
 test("a save that cannot be copied is a refusal, and the save stays where it was", () => {
   const world = machine();
   world.declaredDataRoot = writeStagedRequest(world.runRoot);

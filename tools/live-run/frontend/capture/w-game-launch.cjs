@@ -422,6 +422,23 @@ function readRunGameDir(launchStatePath) {
   }
 }
 
+/**
+ * The world policy this run was configured with (`--world=existing`), read from the run's own config.
+ *
+ * `own` is the default: the run creates the world it measures. `existing` enters the world the product
+ * already has, which is how a run measures a world an earlier run created (`capture/fixture-world.cjs`).
+ */
+function readRunWorldPolicy(launchStatePath) {
+  if (launchStatePath === null) return "own";
+  try {
+    return JSON.parse(readFileSync(path.join(path.dirname(launchStatePath), "run.json"), "utf8"))?.world === "existing"
+      ? "existing"
+      : "own";
+  } catch {
+    return "own";
+  }
+}
+
 /** The run's own launch state, handed to every capture driver by the phase (`GB_SHOTS_LAUNCH_STATE`). */
 function readLaunchState() {
   const launchStatePath = process.env.GB_SHOTS_LAUNCH_STATE;
@@ -1407,7 +1424,11 @@ async function hostAnswers(port) {
    * into this run root before the launch, and the world the game creates here is this run's own. Nothing is
    * deleted, and a save of any other name is not touched (`capture/fixture-world.cjs`).
    */
-  const fixtureWorld = prepareOwnWorld({ declaredDataRoot: launch.state?.declaredDataRoot, runRoot: launch.state?.runRoot });
+  const fixtureWorld = prepareOwnWorld({
+    declaredDataRoot: launch.state?.declaredDataRoot,
+    runRoot: launch.state?.runRoot,
+    policy: readRunWorldPolicy(launch.path),
+  });
   record("fixture world", fixtureWorld);
   say(describeOwnWorld(fixtureWorld));
   if (fixtureWorld.kind === "refused")

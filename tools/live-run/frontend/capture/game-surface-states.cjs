@@ -347,7 +347,11 @@ async function activateAndLaunch({ page, say, record, guardian, problems, budget
    * every cabin read. The saves of that name move into this run root; a save of any other name does not.
    */
   const runLaunch = readLaunchState();
-  const fixtureWorld = prepareOwnWorld({ declaredDataRoot: runLaunch.state?.declaredDataRoot, runRoot: runLaunch.state?.runRoot });
+  const fixtureWorld = prepareOwnWorld({
+    declaredDataRoot: runLaunch.state?.declaredDataRoot,
+    runRoot: runLaunch.state?.runRoot,
+    policy: runLaunch.run?.world === "existing" ? "existing" : "own",
+  });
   record("fixture world", fixtureWorld);
   say(describeOwnWorld(fixtureWorld));
   if (fixtureWorld.kind === "refused")

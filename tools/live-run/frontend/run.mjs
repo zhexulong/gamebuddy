@@ -168,7 +168,10 @@ function prepareRun(paths, values) {
     homeLocalAppData: process.env.LOCALAPPDATA ?? "C:\\Users\\long\\AppData\\Local",
     credentialPresent: typeof process.env.CPA_OAI_API_KEY === "string" && process.env.CPA_OAI_API_KEY.length > 0,
   };
-  saveRunConfig(paths, run);
+  // The world this run enters. `own` (the default) creates one, so a launch always measures a world with a
+  // seat; `existing` enters the world the product already has, which is the ordinary second session of a
+  // player's farm and the only way a run can measure a world an EARLIER run created.
+  world: values.world === "existing" ? "existing" : "own", saveRunConfig(paths, run);
   mkdirSync(paths.logsDir, { recursive: true });
   return run;
 }
