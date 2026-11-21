@@ -204,7 +204,7 @@ const checkStagedLineCeilings = (stagedTexts) => {
     sizes.set(path, record.text.split("\n").length);
   }
   if (sizes.size === 0) return;
-  const baseline = readJsonIfPresent("tools/scripts/file-complexity-baseline.json", { files: {} }).files ?? {};
+  const baseline = readJsonIfPresent("tools/scripts/file-complexity-baseline.json", { sizes: {} }).sizes ?? {};
   const scopedRecorded = Object.fromEntries(
     [...sizes.keys()].filter((file) => file in baseline).map((file) => [file, baseline[file]]),
   );
