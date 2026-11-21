@@ -179,6 +179,21 @@ export const PLAN_SNAPSHOT_READINGS: ReadonlyMap<string, string> = Object.freeze
 );
 
 /**
+ * The one argument and row field that name ONE ROW from outside: the opaque id the surface minted for it, and the row
+ * field it appears as.
+ *
+ * <p>
+ * ONE FACT, ONE SPELLING. `slot` is a reading too, but a pack index names no row; this pair does, and `planNamedTargetRow`
+ * is the row-finding that accepts it. The pair is exported because a second reader asks the same question about
+ * DECLARATIONS rather than values: `body-program-snapshot-readings.test.ts` crosses it with the arguments each action declares and the
+ * fields each family's rows publish, which is how an action that addresses a guarded family by nothing the row-finding
+ * accepts is named instead of silently skipped - `round87b`'s `shop_purchase`, whose only address was this id and whose
+ * row was never found because the selection that skips readings found nothing to select.
+ * </p>
+ */
+export const PLAN_ROW_IDENTITY = Object.freeze({ argument: "expectedTargetId", field: "targetId" } as const);
+
+/**
  * What a `slot` argument means when the SURFACE says nothing about it.
  *
  * Corrected 2026-10-29. This used to read "never a backpack index", which is false: all thirteen actions that take a
@@ -2749,6 +2764,21 @@ const PLAN_TARGET_ROW_RULES: Readonly<Record<string, PlanTargetRowRule>> = Objec
   shopTargets: (named, rows, canonical) => planCounterRefusal(named, rows, canonical),
 });
 
+/**
+ * The families whose rows this compiler asks a question about the step that names them - the population of
+ * `PLAN_TARGET_ROW_RULES`, derived from it rather than restated.
+ *
+ * <p>
+ * A GUARD IS ONLY A GUARD IF IT CAN BE OPENED, and opening one takes an argument the row-finding accepts: a rule keyed to
+ * a family no action's declarations can address is a refusal nobody can reach. That is what
+ * `body-program-snapshot-readings.test.ts` crosses this population with - the actions the SURFACE declares address these
+ * families, and the arguments each of them declares - so a family that gains a guard it cannot reach, and a guarded
+ * family no action addresses, are both red by name. `round87b` is the shape from the other side: a condition the product
+ * declared (`PLAN_ITERATION_CONDITIONS`) whose guard the compiler never rendered.
+ * </p>
+ */
+export const PLAN_GUARDED_FAMILIES: readonly string[] = Object.freeze(Object.keys(PLAN_TARGET_ROW_RULES).sort());
+
 /** Whether the family's own published loop guard excludes this row - the row field `PLAN_ITERATION_CONDITIONS` names. */
 function planRowSaysTheWorkIsDone(familyName: string, row: PlanTargetRow): boolean {
   const condition = PLAN_ITERATION_CONDITIONS[familyName];
@@ -2816,10 +2846,10 @@ function planNamedTargetRow(
 ): PlanTargetRow | undefined {
   const tile = tileKeyOf(canonical);
   if (tile !== null) return rows.find((row) => `${planRowValue(row.x)},${planRowValue(row.y)}` === tile);
-  const identity = canonical.expectedTargetId;
+  const identity = canonical[PLAN_ROW_IDENTITY.argument];
   const named = identity !== undefined && "canonicalValue" in identity ? identity.canonicalValue : undefined;
   if (named === undefined) return undefined;
-  return rows.find((row) => planRowValue(row.targetId) === named);
+  return rows.find((row) => planRowValue(row[PLAN_ROW_IDENTITY.field]) === named);
 }
 
 /** The refusal the row a step names raises about that step, or `null` when it raises none. */

@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   type CompiledPlan,
   compilePlanScript,
+  PLAN_GUARDED_FAMILIES,
+  PLAN_ITERATION_CONDITIONS,
+  type PlanIterationCondition,
+  PLAN_ROW_IDENTITY,
   PLAN_SNAPSHOT_READINGS,
   type PublishedPlanAction,
   planActionsFromRegistrations,
@@ -901,5 +905,303 @@ test("till_soil then plant_seed on one bare tile is still one plan when the row 
   assert.deepEqual(
     nodesOf(chained).map((node) => node.actionId),
     ["till_soil", "plant_seed"],
+  );
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// GATE `every_guarded_row_is_reached_by_the_action_that_addresses_it:<action>:<family>`
+// ---------------------------------------------------------------------------------------------------------------
+//
+// THE SHAPE, THREE TIMES THIS WEEK: a guard asks a question the action never declared a reading for, so the guard never
+// opens. It is one defect because the guard is worth nothing unless the step that triggers it can produce the thing the
+// guard reads - and whether it can is decided by DECLARATIONS: the family the surface says an action's targets come from,
+// the arguments that action declares, and the fields the family's rows publish. All three are outside this file (the
+// surface artifact and the `Snapshot` type), so the population is derived from them rather than written here.
+//
+//   - `round83`, `already_equipped` 61 times: the equip guard asked the compile-time snapshot whether the tool was in hand,
+//     while the hand had already been established by eight steps of the programme. One layer up from the rows, and fixed
+//     where that reading lives (`state.heldSlot`, seeded once and moved on by every equip step;
+//     `body-program-script.test.ts` "an equip step written for a tool the programme already has in hand is not written
+//     twice" is the other half).
+//   - `round87b`, 36 `till_soil` nodes and 36 refusals with no success: `PLAN_ITERATION_CONDITIONS.soilTiles` declares
+//     `rowField: "hoeDirt"` and the recipe prints `if (soil.hoeDirt !== true)`, and the compiler rendered no guard at all
+//     for it - so the declared condition was ASKED BY NOBODY (`coverage.unasked`).
+//   - `round87b`, `item_sold_by_another_counter`: `shop_purchase`'s only address is `expectedTargetId`, a READING, and the
+//     selection that skips readings found no row to select - so the counter's own stock was never asked. A reading-only
+//     action is not refused here; it owes a witness that the row its id names is the row that answers (below).
+//
+// WHAT THIS GATE IS NOT: a requirement that every action declare a reading. `till_soil` names its row by the tile it
+// already declares and owes nothing more, and adding an argument to an action to quiet a gate is the one thing a gate
+// must not teach.
+
+/** How a published action's own declarations reach the row of the family the surface says its targets come from. */
+type RowReach =
+  /** The tile: the pair of coordinates the action declares and the family's rows publish. */
+  | "tile"
+  /** The row-naming reading alone: the opaque id, which no intention can stand in for. */
+  | "reading"
+  /** Neither, so no guard over that family can ever open for a call this action writes. */
+  | "none";
+
+/** The two row fields a step's own coordinates name it by: the tile, in the vocabulary every receipt uses. */
+const ROW_TILE_FIELDS = Object.freeze(["x", "y"] as const);
+
+/**
+ * The row-naming reading reads the field the row is identified by - one fact, one spelling, asserted once.
+ *
+ * `PLAN_ROW_IDENTITY` says which argument and which field; `PLAN_SNAPSHOT_READINGS` says which arguments are readings at
+ * all. A pair that disagreed with that map would be a name the compiler copies and never binds.
+ */
+assert.equal(
+  PLAN_SNAPSHOT_READINGS.get(PLAN_ROW_IDENTITY.argument),
+  PLAN_ROW_IDENTITY.field,
+  "the row-naming argument is a reading of the field the row is identified by",
+);
+
+function rowReachOf(action: PublishedPlanAction, family: string): RowReach {
+  const published = FAMILY_FIELDS.get(family) ?? [];
+  const declared = new Set(action.arguments.map((argument) => argument.name));
+  if (ROW_TILE_FIELDS.every((field) => declared.has(field) && published.includes(field))) return "tile";
+  if (declared.has(PLAN_ROW_IDENTITY.argument) && published.includes(PLAN_ROW_IDENTITY.field)) return "reading";
+  return "none";
+}
+
+type GuardCoverage = Readonly<{
+  /** (guarded family, action the surface addresses it with) pairs - the population this gate examined. */
+  examined: number;
+  /** Pairs whose action names the row by its tile, the reach both row-finding paths accept. */
+  byTile: number;
+  /** Pairs whose only reach is the row-naming reading - `<action>:<family>`, and each owes a witness below. */
+  byReading: readonly string[];
+  /** Pairs whose action names the row by nothing it declares: the guard can never open for their calls. */
+  unreached: readonly string[];
+  /** Declared row conditions no guard asks: `<family>:<rowField>`. */
+  unasked: readonly string[];
+  /** Guarded families no published action addresses: a refusal nobody can reach. */
+  unaddressed: readonly string[];
+  /** Declared conditions that owe no guard, because the family itself publishes only the rows that need the work. */
+  notOwed: readonly string[];
+  /** The families examined, printed so "0 unreached" cannot be read without knowing what was looked at. */
+  families: readonly string[];
+}>;
+
+/**
+ * The crossing: what the compiler guards, what the product declares a guard for, and what the actions can reach.
+ *
+ * Both sides are derived. `guarded` is the compiler's own guard population (`PLAN_GUARDED_FAMILIES`, taken from the rules
+ * it really renders) and `conditions` is `PLAN_ITERATION_CONDITIONS` - so a family joins this gate by having a guard
+ * rendered or a condition declared, not by appearing in a list here. The actions come from the surface's `targetFamily`
+ * and their arguments from the surface's own declarations; the row fields come from the `Snapshot` type. Both tables are
+ * parameters so the red cases below can be driven with them taken away, which is the state the compiler was in.
+ */
+function planGuardCoverage(
+  actions: readonly PublishedPlanAction[],
+  guarded: readonly string[] = PLAN_GUARDED_FAMILIES,
+  conditions: Readonly<Record<string, PlanIterationCondition>> = PLAN_ITERATION_CONDITIONS,
+): GuardCoverage {
+  const asked = Object.entries(conditions).flatMap(([family, condition]) =>
+    "rowField" in condition ? [[family, condition.rowField] as const] : [],
+  );
+  const families = [...new Set([...guarded, ...asked.map(([family]) => family)])].sort();
+  const byReading: string[] = [];
+  const unreached: string[] = [];
+  let examined = 0;
+  let byTile = 0;
+  for (const family of families)
+    for (const action of actions.filter((candidate) => candidate.targetFamily === family)) {
+      examined += 1;
+      const reach = rowReachOf(action, family);
+      if (reach === "tile") byTile += 1;
+      else if (reach === "reading") byReading.push(`${action.actionId}:${family}`);
+      else
+        unreached.push(
+          `${action.actionId}:${family}:names-the-row-by-nothing-it-declares:declares:${action.arguments
+            .map((argument) => argument.name)
+            .join(",")}:the-row-is-named-by:${ROW_TILE_FIELDS.join(",")}-or-${PLAN_ROW_IDENTITY.argument}`,
+        );
+    }
+  return Object.freeze({
+    examined,
+    byTile,
+    byReading: Object.freeze(byReading.sort()),
+    unreached: Object.freeze(unreached.sort()),
+    unasked: Object.freeze(
+      asked.filter(([family]) => !guarded.includes(family)).map(([family, field]) => `${family}:${field}`),
+    ),
+    unaddressed: Object.freeze(
+      families.filter(
+        (family) => guarded.includes(family) && !actions.some((action) => action.targetFamily === family),
+      ),
+    ),
+    notOwed: Object.freeze(
+      Object.entries(conditions)
+        .filter(([, condition]) => !("rowField" in condition))
+        .map(([family]) => family)
+        .sort(),
+    ),
+    families: Object.freeze(families),
+  });
+}
+
+/**
+ * What a reading-only action owes: proof that the row its id names is the row that answers it.
+ *
+ * The two compiles are the whole assertion and neither is family-specific. WITH the row her id names, the call is refused
+ * for something that row says; WITHOUT that row - the family published, the id naming nothing - the same call is
+ * accepted, because no rule ran. That pair is what distinguishes "the reading named a row and the row was asked" from
+ * "the reading was skipped and the guard never opened", which is `round87b`'s counter exactly.
+ */
+type ReadingRowWitness = Readonly<{ with: () => CompiledPlan; without: () => CompiledPlan }>;
+
+const READING_ROW_WITNESS: Readonly<Record<string, ReadingRowWitness>> = Object.freeze({
+  "shop_purchase:shopTargets": Object.freeze({
+    with: () => compile(PURCHASE_AT_THE_PET_COUNTER, shopSnapshot(PET_COUNTER, SEED_COUNTER)),
+    without: () => compile(PURCHASE_AT_THE_PET_COUNTER, shopSnapshot(SEED_COUNTER)),
+  }),
+});
+
+/** An action the surface does not publish, built from one it does: the shape a new member arrives in. */
+function probeAction(actionId: string, targetFamily: string, argumentNames: readonly string[]): PublishedPlanAction {
+  const base = PLAN_ACTIONS.find((action) => action.actionId === "till_soil");
+  assert.ok(base !== undefined, "the surface publishes till_soil");
+  return {
+    ...base,
+    actionId,
+    targetFamily,
+    arguments: Object.freeze(
+      argumentNames.map((name) => ({
+        name,
+        type: PLAN_SNAPSHOT_READINGS.has(name) ? "string" : "integer",
+        required: true,
+      })),
+    ),
+  };
+}
+
+test("every_guarded_row_is_reached_by_the_action_that_addresses_it:<action>:<family>", () => {
+  const coverage = planGuardCoverage(PLAN_ACTIONS);
+  console.log(
+    "every_guarded_row_is_reached_by_the_action_that_addresses_it: guards examined " +
+      `${String(coverage.examined)} · ` +
+      `ask-a-declared-reading ${String(coverage.examined - coverage.unreached.length)} · ` +
+      `ask-an-undeclared-one ${String(coverage.unreached.length)} · by-tile ${String(coverage.byTile)} · ` +
+      `by-reading ${String(coverage.byReading.length)} (${coverage.families.join(", ")}) · ` +
+      `owes-no-guard ${coverage.notOwed.join(", ")}`,
+  );
+  // Refuse to pass on nothing: a gate whose population is empty agrees with every assertion below, and says so.
+  assert.ok(
+    coverage.examined > 0,
+    `blocked: no published action addresses a guarded family (${coverage.families.join(", ") || "none"}), so this gate examined nothing`,
+  );
+  assert.deepEqual(
+    coverage.unreached,
+    [],
+    "these actions address a family the compiler asks about the step, by no argument the row-finding accepts, so the guard can never open for them",
+  );
+  assert.deepEqual(
+    coverage.unasked,
+    [],
+    "the product declares a row condition for these families and the compiler renders no guard for it, which is `round87b`'s 36 tills",
+  );
+  assert.deepEqual(
+    coverage.unaddressed,
+    [],
+    "the compiler asks a question about these families and no published action addresses one, so the guard is a refusal nobody can reach",
+  );
+  // The third case's own half: a reading reaches a row only through the row-naming path, so every member owes the proof,
+  // and a witness outliving its member is red - the assertion expires with the action it was written for.
+  assert.deepEqual(
+    coverage.byReading.filter((member) => READING_ROW_WITNESS[member] === undefined),
+    [],
+    "a row-naming READING is not an intention, so an action whose only address is one owes proof that the row it names is the row that answers",
+  );
+  assert.deepEqual(
+    Object.keys(READING_ROW_WITNESS)
+      .filter((member) => !coverage.byReading.includes(member))
+      .sort(),
+    [],
+    "a witness for an action that no longer needs one is a proof of a shape that is gone",
+  );
+  for (const member of coverage.byReading) {
+    const witness = READING_ROW_WITNESS[member]!;
+    assert.equal(
+      refusalOf(witness.with()) === "accepted",
+      false,
+      `${member}: the row the reading names is asked about the step, so it can refuse it`,
+    );
+    assert.equal(
+      refusalOf(witness.without()),
+      "accepted",
+      `${member}: and with that row absent the same call is accepted, so the refusal came from the row the reading named`,
+    );
+  }
+});
+
+test("every_guarded_row_is_reached_by_the_action_that_addresses_it is red on the shape, and names it", () => {
+  // THE DECLARED CONDITION NOBODY ASKS: `fe435971`, the tree before the row guard existed. `soilTiles` declared
+  // `rowField: "hoeDirt"`, the recipe printed the guard, `till_soil` addressed the family - and no rule read the row, so
+  // the 36 tills of `round87b` were written over ground the snapshot said was worked. One entry, one field, one family.
+  assert.deepEqual(
+    planGuardCoverage(PLAN_ACTIONS, [], PLAN_ITERATION_CONDITIONS).unasked,
+    ["soilTiles:hoeDirt"],
+    "a declared row condition with no guard asking it is red by family and field, which is the tree before the fix",
+  );
+  // THE ACTION THAT NAMES ITS ROW BY NOTHING: two actions the surface does not publish, one per shape the gate names.
+  const probes = [
+    probeAction("probe_charge_only", "soilTiles", ["charge"]),
+    probeAction("probe_item_only", "shopTargets", ["expectedQualifiedItemId", "quantity"]),
+    probeAction("probe_tile", "soilTiles", ["x", "y"]),
+    probeAction("probe_reading_only", "shopTargets", ["expectedTargetId"]),
+  ];
+  const coverage = planGuardCoverage([...PLAN_ACTIONS, ...probes]);
+  const probeIds = new Set(probes.map((probe) => probe.actionId));
+  const ofProbes = (entries: readonly string[]): readonly string[] =>
+    entries.filter((entry) => probeIds.has(entry.slice(0, entry.indexOf(":"))));
+  assert.deepEqual(
+    ofProbes(coverage.unreached),
+    [
+      "probe_charge_only:soilTiles:names-the-row-by-nothing-it-declares:declares:charge:the-row-is-named-by:x,y-or-expectedTargetId",
+      "probe_item_only:shopTargets:names-the-row-by-nothing-it-declares:declares:expectedQualifiedItemId,quantity:the-row-is-named-by:x,y-or-expectedTargetId",
+    ],
+    "an action that addresses a guarded family by arguments none of which name a row is named with its family and what would fix it",
+  );
+  // The population grows by what was added to it, not to a number this file remembers: a guard family the compiler gains
+  // later, or a published action that starts addressing one, moves these counts without an edit here.
+  const shipped = planGuardCoverage(PLAN_ACTIONS);
+  assert.equal(
+    coverage.examined,
+    shipped.examined + probes.length,
+    "every probe addresses a family the compiler guards, so every probe is one more pair examined",
+  );
+  // THE TILE IS A DECLARED READING, NOT A GAP: `till_soil` by tile owes no `expectedTargetId`, which is the trap this
+  // gate must not fall into - adding an argument to an action to quiet a gate is a change to the surface, not a fix.
+  assert.equal(
+    coverage.byTile,
+    shipped.byTile + 1,
+    "the probe written as a tile joins the reach the shipped actions already have, and is not asked for more",
+  );
+  // THE READING-ONLY MEMBER WITH NO WITNESS: `shop_purchase` as it was while the row-finding skipped readings.
+  assert.deepEqual(
+    ofProbes(coverage.byReading),
+    ["probe_reading_only:shopTargets"],
+    "an action whose only address is the opaque id is a member of its own population, not a pass",
+  );
+  assert.ok(
+    coverage.byReading.includes("shop_purchase:shopTargets"),
+    "and the shipped reading-only action is in the same population, which is the half that owes a witness",
+  );
+  assert.deepEqual(
+    ofProbes(coverage.byReading).filter((member) => READING_ROW_WITNESS[member] === undefined),
+    ["probe_reading_only:shopTargets"],
+    "and a member without a witness is what the gate refuses by name",
+  );
+  // And an empty world is blocked rather than green: no action, no pair, nothing asserted - and the guards that are left
+  // with nobody to open them are named, not quietly skipped.
+  const nothing = planGuardCoverage([]);
+  assert.equal(nothing.examined, 0, "no published action addresses a guarded family");
+  assert.deepEqual(
+    nothing.unaddressed,
+    [...PLAN_GUARDED_FAMILIES],
+    "a guard no action can reach is red by family, which is why the gate refuses to pass on an empty population",
   );
 });
