@@ -1,4 +1,5 @@
 import { type ReactElement, useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { assertNever } from "../assert-never";
 import { type AppearanceChoice, isAppearanceChoice } from "../appearance";
 import { problemTextWithCode } from "../composed-problem-view";
@@ -1440,8 +1441,11 @@ export function VoiceSettingsPanel({
   onSelectPersona: (persona: string | null) => void;
 }>): ReactElement {
   return (
-    <section className="management-settings-section" aria-label={labels.voiceSettings} data-voice-settings>
-      <h2>{labels.voiceSettings}</h2>
+    <details className="management-settings-section" data-voice-settings>
+      <summary>
+        <ChevronRight className="settings-region-chevron" size={16} aria-hidden="true" />
+        <h2>{labels.voiceSettings}</h2>
+      </summary>
       <p>{labels.voiceDisclosure}</p>
       {voiceView.kind === "loading" && <p>{labels.loading}</p>}
       {voiceView.kind === "unavailable" && <p>{labels.voiceSettingsUnavailable}</p>}
@@ -1553,7 +1557,7 @@ export function VoiceSettingsPanel({
           </div>
         </>
       )}
-    </section>
+    </details>
   );
 }
 

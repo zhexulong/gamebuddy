@@ -4373,6 +4373,124 @@
     min-width: 0;
   }
 
+  /* THE SETTINGS SURFACE'S THREE TABS. The surface held every block a player can change on one page, and at
+   400x800 that page measured 3122 px: the last block sat 2306 px below the fold, and a player who wanted to
+   change the sampler temperature scrolled past the connection, the language and the appearance preferences to
+   reach it. The strip is what turns that column into three screens, one per kind of thing a player changes.
+
+   The selected tab is marked by `aria-selected` and by nothing else in the markup, so the sheet reads the
+   same attribute the assistive tree does - a separate `.is-active` class would be a second spelling of one
+   fact, and the one the player cannot hear.
+
+   The strip is 44 px because it is a row of touch targets, not because the layout had 44 px to spend: the
+   surface's primary control still has to be inside the first viewport at 400x800, and it is (measured after
+   this strip went in: top 335, bottom 379 against an 800 px window). */
+  .settings-tablist {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 4px;
+    width: 100%;
+    max-width: calc(var(--management-form-measure) * 2 + var(--space-3));
+    margin-inline: auto;
+  }
+
+  /* One ROW, always: three tabs that wrapped onto two rows cost 92 px of a 400 px phone's first screen,
+     and the row of targets below them fell 20 px past the fold because of it. A label too long for its
+     third of the row wraps INSIDE the 44 px target instead, so the strip stays one row, every tab stays
+     visible, and no label is shortened or cut. */
+  .settings-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: var(--touch-target-min);
+    padding: 4px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background-color: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  .settings-tab[aria-selected="true"] {
+    background-color: var(--surface-raised);
+    border-color: var(--border-strong);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .settings-tab:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  /* A panel that is not this tab's is not drawn. It is still mounted, and everything inside it keeps its
+     state: a tab is a view of the surface, never a mount of it. */
+  .settings-tabpanel[hidden] {
+    display: none;
+  }
+
+  /* A settings region that is also a disclosure: ONE 44 px row until it is asked for, then the column it was.
+
+   These are the blocks of the last tab that a player reaches for once - the voice consent, the whole-profile
+   backup - and as open columns they were a thousand pixels of a 1613 px page. The row keeps the measure and
+   the centring its siblings keep, because the `[data-*]` hook stays on this element and that is what
+   `tests/management-measure-holds-one-column.spec.ts` reads the measure from. */
+  details.management-settings-section {
+    display: block;
+    padding: 0 0 4px;
+  }
+
+  details.management-settings-section > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--touch-target-min);
+    cursor: pointer;
+    list-style: none;
+  }
+
+  /* The chevron is the row's open state: pointing right while the region is shut, down while it is open. */
+  details.management-settings-section > summary > .settings-region-chevron {
+    flex: 0 0 auto;
+    color: var(--text-disabled);
+  }
+
+  details.management-settings-section[open] > summary > .settings-region-chevron {
+    transform: rotate(90deg);
+  }
+
+  details.management-settings-section > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  details.management-settings-section > summary:hover {
+    color: var(--text-primary);
+  }
+
+  details.management-settings-section > summary:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  details.management-settings-section > summary h2,
+  details.management-settings-section > summary h3 {
+    margin: 0;
+  }
+
+  details.management-settings-section[open] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: 4px 0 16px;
+  }
+
   /* A surface's own notice is a block like the list and the cards under it: the
    Chats surface's refused rename painted a 1408 px strip at 1440x900 while the
    card the sentence was about measured 640 px, so the notice and the thing it

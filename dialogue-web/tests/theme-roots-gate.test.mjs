@@ -50,7 +50,7 @@
  *      written the defect yet is not an assertion.
  *   2. every k ∈ K_dark \ K_light is legal exactly when one of two properties holds:
  *
- * P1 appearance-neutral. The value carries a unit or a family no appearance can change: a time or an easing
+ *        P1 appearance-neutral. The value carries a unit or a family no appearance can change: a time or an easing
  *           (`150ms`, `0.2s`, `cubic-bezier(...)`, `steps(...)`, `ease`, `linear`), a length (`56px`, `0.1em`,
  *           `28rem`, `40ch`, `12cqi`), a bare ratio (`1.68`, the leading a paragraph is read at - a multiple of
  *           the font size, so it scales with whatever size an appearance paints), or a font-stack keyword

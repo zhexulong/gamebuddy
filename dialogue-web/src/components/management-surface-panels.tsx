@@ -33,10 +33,11 @@
  * `role="status"` banner); when it is absent the panel renders the outcome
  * itself, so the composed shell's surface reports it in place.
  */
-import { Archive, Download, Pencil, ScrollText, Sparkles, Trash2 } from "lucide-react";
+import { Archive, ChevronRight, Download, Pencil, ScrollText, Sparkles, Trash2 } from "lucide-react";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
+  type ReactNode,
   type RefObject,
   useEffect,
   useRef,
@@ -1390,12 +1391,11 @@ function GamePromptAdditionPanel({
   onRetry: () => void;
 }>): ReactElement {
   return (
-    <section
-      className="management-settings-section"
-      aria-label={labels.gamePromptAdditionTitle}
-      data-game-prompt-addition
-    >
-      <h2>{labels.gamePromptAdditionTitle}</h2>
+    <details className="management-settings-section" data-game-prompt-addition>
+      <summary>
+        <ChevronRight className="settings-region-chevron" size={16} aria-hidden="true" />
+        <h2>{labels.gamePromptAdditionTitle}</h2>
+      </summary>
       <p>{labels.gamePromptAdditionHint}</p>
       {view.kind === "loading" && <p>{labels.loading}</p>}
       {view.kind === "unavailable" && (
@@ -1441,7 +1441,7 @@ function GamePromptAdditionPanel({
           </div>
         </>
       )}
-    </section>
+    </details>
   );
 }
 
@@ -1474,12 +1474,11 @@ function SamplerTemperaturePanel({
 }>): ReactElement {
   const parsed = parseSamplingTemperature(draft);
   return (
-    <section
-      className="management-settings-section"
-      aria-label={labels.samplingTemperatureTitle}
-      data-sampler-temperature
-    >
-      <h2>{labels.samplingTemperatureTitle}</h2>
+    <details className="management-settings-section" data-sampler-temperature>
+      <summary>
+        <ChevronRight className="settings-region-chevron" size={16} aria-hidden="true" />
+        <h2>{labels.samplingTemperatureTitle}</h2>
+      </summary>
       <p>{labels.samplingTemperatureHint}</p>
       {view.kind === "loading" && <p>{labels.loading}</p>}
       {view.kind === "unavailable" && (
@@ -1532,7 +1531,7 @@ function SamplerTemperaturePanel({
           </div>
         </>
       )}
-    </section>
+    </details>
   );
 }
 
@@ -1602,8 +1601,11 @@ function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineA
     })();
   };
   return (
-    <section className="management-settings-section" aria-label={labels.profileBackupTitle} data-profile-backup-section>
-      <h3>{labels.profileBackupTitle}</h3>
+    <details className="management-settings-section" data-profile-backup-section>
+      <summary>
+        <ChevronRight className="settings-region-chevron" size={16} aria-hidden="true" />
+        <h3>{labels.profileBackupTitle}</h3>
+      </summary>
       <p className="management-settings-hint">{labels.profileBackupHint}</p>
       <div className="composer-actions">
         <button
@@ -1621,32 +1623,64 @@ function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineA
           {notice.text}
         </p>
       )}
-    </section>
+    </details>
+  );
+}
+
+/** The three tabs the Settings surface is split into. */
+type SettingsTab = "connection" | "preferences" | "advanced";
+
+const tabId = (tab: SettingsTab): string => `settings-tab-${tab}`;
+const panelId = (tab: SettingsTab): string => `settings-panel-${tab}`;
+
+/**
+ * One tab's panel: mounted from the first frame, hidden while another tab holds the region.
+ *
+ * `hidden` and not a conditional render, because a tab is a VIEW of the surface and not a mount of it. A
+ * player who types half a key into the connection field and looks at their language preference has to
+ * come back to the key they typed; unmounting the other two panels on every switch would empty every
+ * `useState` inside them, which is the draft defect this product has fixed one field at a time before.
+ */
+function SettingsTabPanel({
+  id,
+  selected,
+  children,
+}: Readonly<{ id: SettingsTab; selected: boolean; children: ReactNode }>): ReactElement {
+  return (
+    <div className="settings-tabpanel" role="tabpanel" id={panelId(id)} aria-labelledby={tabId(id)} hidden={!selected}>
+      {children}
+    </div>
   );
 }
 
 /**
- * The Settings panel: the blocks the settings surface is made of, laid out in TWO TRACKS.
+ * The Settings panel: the blocks the settings surface is made of, in THREE TABS of two tracks each.
  *
- * THE TRACKS are the reason this panel owns the blocks' arrangement rather than only rendering them: a wide window is
- * spent on height here, not on canvas. The left track is the surface's identity column - how the companion looks, what
- * language she speaks, and the model connection with its two profiles - and the right track is everything a player tunes
- * around that: the game's supplementary instruction, the sampler temperature, the voice consent and devices, the
- * whole-profile backup and the preset readout. Which block sits in which track is a decision of this file's, so it is
- * written here beside the blocks; the width at which one track becomes two is not (`style.css`, `[data-settings-tracks]`:
- * the tracks repeat the form measure as often as the region holds it, with no breakpoint).
+ * THE TABS are the surface's information architecture: the surface held every block a player can change
+ * on one 3122 px page at 400x800, and the last of them sat 2306 px below the fold. The split follows the
+ * blocks rather than dividing them: `[\u8fde\u63a5\u4e0e\u6a21\u578b]` is the channel and the profiles it runs,
+ * `[\u5e38\u89c4\u504f\u597d]` is how the companion reads to this player, and `[\u9ad8\u7ea7\u4e0e\u8c03\u4f18]` is everything tuned
+ * around that. No block was left without a tab, and none was forced into one it does not belong to.
  *
- * The connection group is first because it is the one fact that decides whether a reply can happen at all: without it
- * every other setting describes a product that cannot answer. A player who arrived here from the conversation's own "no
- * model connection" sentence lands on the controls that fix it, above the language and appearance preferences that only
- * shape a conversation once one exists.
+ * THE TRACKS are why this panel still owns each tab's arrangement rather than only rendering its blocks: a
+ * wide window is spent on height here, not on canvas. Which block sits in which column is a decision of this
+ * file's, so it is written here beside the blocks; the width at which one column becomes two is not
+ * (`style.css`, `[data-settings-tracks]`: the tracks repeat the form measure as often as the region holds it,
+ * with no breakpoint).
  *
- * Voice sits at the END OF THE RIGHT TRACK, which is where it was before the second track existed in spirit: the first
- * settings screen keeps the one consent a conversation needs - the model connection - and the cloud-TTS consent is a
- * disclosure the player reads once, when they reach for voice. Its controls stay exactly where they were, with the
- * disclosure sentence they consent to and the device and persona selections they apply to; nothing was deleted and no
- * rule changed, so voice is gated by the same durable consent the moment it is used. It simply is not the third thing a
- * player reads on a screen about models, and it is the last block of the surface in reading order as it was before.
+ * The connection group is first because it is the one fact that decides whether a reply can happen at all:
+ * without it every other setting describes a product that cannot answer. A player who arrived here from the
+ * conversation's own "no model connection" sentence lands on the controls that fix it, and the strip opens
+ * on that tab for the same reason - a tab that moved the surface's primary action behind a click would say
+ * the opposite of what this surface is for. The language and appearance preferences beside it only shape a
+ * conversation once one exists, which is why they are a tab a player goes to rather than the one they land on.
+ *
+ * Voice is the last region of the last tab, which is where it was before the tabs existed: the cloud-TTS
+ * consent is a disclosure the player reads once, when they reach for voice, and it is not the third thing a
+ * player reads on a screen about models. Its controls stay exactly where they were, with the disclosure
+ * sentence they consent to and the device and persona selections they apply to; nothing was deleted and no
+ * rule changed, so voice is gated by the same durable consent the moment it is used. It is closed until it is
+ * asked for, like the backup and the preset readout beside it: those three are the tab's low-frequency half.
  *
  * The companion language and the voice preference live in ONE Host-owned record,
  * so they share one revision here (`settingsRevisionRef`): a panel-local counter
@@ -1658,10 +1692,11 @@ function ProfileBackupPanel({ api, labels }: Readonly<{ api: ManagementPipelineA
  * `uiLocale` and persists it, because that is the shell's display language
  * rather than a Host setting (see `onSelectUiLocale`).
  *
- * The preset assembly readout is not a peer surface's entry in the bar: it is the disclosure at the end of the right
- * track, and `presets.open` is the control that opens the read-only page. A player who wants to know how a preset
- * assembles a request comes through Settings, which is where the product's other read-only inspection surfaces are
- * reached from, and the bar keeps one control per place a player goes on purpose.
+ * The preset assembly readout is not a peer surface's entry in the bar: it is the disclosure at the end of
+ * the last tab's machine column, and `presets.open` is the control that opens the read-only page. A player
+ * who wants to know how a preset assembles a request comes through Settings, which is where the product's
+ * other read-only inspection surfaces are reached from, and the bar keeps one control per place a player goes
+ * on purpose.
  */
 export function SettingsSurfacePanel({
   api,
@@ -1716,6 +1751,15 @@ export function SettingsSurfacePanel({
    * save.
    */
   const [samplerDraft, setSamplerDraft] = useState("");
+  /**
+   * Which tab holds the region, and the strip's own buttons for the keyboard path.
+   *
+   * The connection tab is the one a fresh open lands on, for the reason the surface's header states: the
+   * channel is the one fact that decides whether a reply can happen, so the control that fixes a missing
+   * one is on the screen the player arrives at rather than one press away.
+   */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("connection");
+  const tabButtons = useRef<Partial<Record<SettingsTab, HTMLButtonElement | null>>>({});
   /*
    * The two fields the player types into, held by the shell rather than by this panel.
    *
@@ -2300,109 +2344,192 @@ export function SettingsSurfacePanel({
     })();
   };
 
+  /**
+   * The strip's three tabs, in the order it offers them, each with the words the catalogue holds for it.
+   *
+   * The middle tab is named by `connectionSettings`, which is what this surface has called the connection
+   * and the two model profiles all along; the two this split introduces are the only new words.
+   */
+  const tabs = [
+    { id: "connection" as const, label: labels.connectionSettings },
+    { id: "preferences" as const, label: labels.settingsTabPreferences },
+    { id: "advanced" as const, label: labels.settingsTabAdvanced },
+  ];
+
+  const selectTab = (next: SettingsTab): void => {
+    setSettingsTab(next);
+    tabButtons.current[next]?.focus();
+  };
+
+  /** Arrow/Home/End across the strip, which is the keyboard path a tablist owes beside Tab. */
+  const moveBetweenTabs = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    const index = tabs.findIndex((entry) => entry.id === settingsTab);
+    const last = tabs.length - 1;
+    const next =
+      event.key === "ArrowRight"
+        ? tabs[(index + 1) % tabs.length]
+        : event.key === "ArrowLeft"
+          ? tabs[(index + last) % tabs.length]
+          : event.key === "Home"
+            ? tabs[0]
+            : event.key === "End"
+              ? tabs[last]
+              : undefined;
+    if (next === undefined) return;
+    event.preventDefault();
+    selectTab(next.id);
+  };
+
+  const selectedTab = tabs.find((entry) => entry.id === settingsTab) ?? tabs[0];
+
+  /*
+   * The two regions whose read can fail, each one expression because the tab that holds it is not the
+   * order the reads resolve in: the connection and the two model profiles share a tab, and the language
+   * and appearance regions share another.
+   *
+   * A group the read did not answer keeps its place. It used to render nothing at all, so a transient
+   * failure and a build that does not serve the route looked exactly alike: "my connection is gone". The
+   * state already distinguishes the two (`unavailable` is the route, `error` is a failed re-read), and the
+   * fact a player can act on is the same in both: the read taken again, offered here rather than only in
+   * the Chat list's own retry.
+   */
+  const connectionRegion =
+    connectionView.kind === "ready" ? (
+      <ConnectionSettingsPanel
+        connectionView={connectionView}
+        modelRoute={modelRoute}
+        labels={labels}
+        onCreate={createConnection}
+        onTest={testConnection}
+        onActivate={(connectionId) =>
+          void mutateConnection(async (client, token, state) => ({
+            state: await client.activateConnection(connectionId, state.revision, token),
+            activated: true,
+          }))
+        }
+        onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
+          void mutateConnection(async (client, token, state) => ({
+            state: await client.selectConnectionModel(
+              connectionId,
+              { expectedRevision: state.revision, modelId, thinkingLevel },
+              token,
+            ),
+            activated: false,
+          }))
+        }
+        onRemove={(connectionId) =>
+          void mutateConnection(async (client, token, state) => ({
+            state: await client.removeConnection(connectionId, state.revision, token),
+            activated: false,
+          }))
+        }
+      />
+    ) : (
+      <section
+        className="management-settings-section"
+        aria-label={labels.connectionSettings}
+        data-settings-unread="connection"
+      >
+        <h2>{labels.connectionSettings}</h2>
+        <p>{connectionView.kind === "loading" ? labels.loading : labels.failure}</p>
+        {connectionView.kind === "loading" ? null : (
+          <ReadAgain labels={labels} marker="connection" onRetry={retrySettingsReads} />
+        )}
+      </section>
+    );
+
+  const modelProfilesRegion =
+    modelProfilesView.kind === "ready" ? (
+      <ModelProfilesPanel
+        view={modelProfilesView}
+        labels={labels}
+        drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
+        onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
+      />
+    ) : (
+      // The editors a read did not answer are not an absence of the feature: the heading stays, the group
+      // says what happened, and the read is offered again.
+      <section
+        className="management-settings-section"
+        aria-label={labels.modelProfilesTitle}
+        data-settings-unread="model-profiles"
+      >
+        <h2>{labels.modelProfilesTitle}</h2>
+        <p>{modelProfilesView.kind === "loading" ? labels.loading : labels.failure}</p>
+        {modelProfilesView.kind === "loading" ? null : (
+          <ReadAgain labels={labels} marker="model-profiles" onRetry={retrySettingsReads} />
+        )}
+      </section>
+    );
+
   return (
     <>
       <SurfaceNotice notice={inline} />
-      <div className="settings-tracks" data-settings-tracks>
-        {/* The surface's identity column: how the companion looks, what language she speaks, and the model connection
-            with the two profiles that configure it. */}
-        <div className="settings-track" data-settings-track="companion">
-          {connectionView.kind === "ready" ? (
-            <ConnectionSettingsPanel
-              connectionView={connectionView}
-              modelRoute={modelRoute}
-              labels={labels}
-              onCreate={createConnection}
-              onTest={testConnection}
-              onActivate={(connectionId) =>
-                void mutateConnection(async (client, token, state) => ({
-                  state: await client.activateConnection(connectionId, state.revision, token),
-                  activated: true,
-                }))
-              }
-              onSelectModel={(connectionId, modelId, thinkingLevel: TavernConnectionThinkingLevelV1) =>
-                void mutateConnection(async (client, token, state) => ({
-                  state: await client.selectConnectionModel(
-                    connectionId,
-                    { expectedRevision: state.revision, modelId, thinkingLevel },
-                    token,
-                  ),
-                  activated: false,
-                }))
-              }
-              onRemove={(connectionId) =>
-                void mutateConnection(async (client, token, state) => ({
-                  state: await client.removeConnection(connectionId, state.revision, token),
-                  activated: false,
-                }))
-              }
-            />
-          ) : (
-            /*
-             * The group keeps its place when its read did not answer.
-             *
-             * It used to render nothing at all, so a transient failure and a build that does not serve
-             * the route looked exactly alike: "my connection is gone". The state already distinguishes
-             * the two (`unavailable` is the route, `error` is a failed re-read), and the fact a player
-             * can act on is the same in both: the read taken again, offered here rather than only in
-             * the Chat list's own retry.
-             */
-            <section
-              className="management-settings-section"
-              aria-label={labels.connectionSettings}
-              data-settings-unread="connection"
-            >
-              <h2>{labels.connectionSettings}</h2>
-              <p>{connectionView.kind === "loading" ? labels.loading : labels.failure}</p>
-              {connectionView.kind === "loading" ? null : (
-                <ReadAgain labels={labels} marker="connection" onRetry={retrySettingsReads} />
-              )}
-            </section>
-          )}
-          <LanguageSettingsPanel
-            languageView={languageView}
-            uiLanguageView={uiLanguageView}
-            uiLocale={uiLocale}
-            labels={labels}
-            onSelectLanguage={mutateCompanionLanguage}
-            onSelectUiLanguage={mutateUiLocale}
-          />
-          <AppearanceSettingsPanel
-            appearanceView={appearanceView}
-            labels={labels}
-            onSelectAppearance={mutateAppearance}
-          />
-          {modelProfilesView.kind === "ready" ? (
-            <ModelProfilesPanel
-              view={modelProfilesView}
-              labels={labels}
-              drafts={{ chat: chatThinkingLevel, game: gameThinkingLevel }}
-              onSave={(surface, thinkingLevel) => mutateModelProfile(surface, thinkingLevel)}
-            />
-          ) : (
-            // The editors a read did not answer are not an absence of the feature: the heading stays,
-            // the group says what happened, and the read is offered again.
-            <section
-              className="management-settings-section"
-              aria-label={labels.modelProfilesTitle}
-              data-settings-unread="model-profiles"
-            >
-              <h2>{labels.modelProfilesTitle}</h2>
-              <p>{modelProfilesView.kind === "loading" ? labels.loading : labels.failure}</p>
-              {modelProfilesView.kind === "loading" ? null : (
-                <ReadAgain labels={labels} marker="model-profiles" onRetry={retrySettingsReads} />
-              )}
-            </section>
-          )}
+      <div className="settings-tablist" role="tablist" aria-label={labels.settingsPanel} onKeyDown={moveBetweenTabs}>
+        {tabs.map((entry) => (
+          <button
+            key={entry.id}
+            type="button"
+            role="tab"
+            className="settings-tab"
+            id={tabId(entry.id)}
+            aria-selected={settingsTab === entry.id}
+            aria-controls={panelId(entry.id)}
+            tabIndex={settingsTab === entry.id ? 0 : -1}
+            ref={(node) => {
+              tabButtons.current[entry.id] = node;
+            }}
+            onClick={() => selectTab(entry.id)}
+          >
+            {entry.label}
+          </button>
+        ))}
+      </div>
+      {/* Stated in words as well as in `aria-selected`: that attribute is announced while focus is on the
+          tab, and a pointer arrival, or a keyboard one whose focus is already inside a panel, still has to
+          hear which section is now on screen. */}
+      <p className="visually-hidden" aria-live="polite" data-settings-tab-status>
+        {selectedTab.label}
+      </p>
+      <SettingsTabPanel id="connection" selected={settingsTab === "connection"}>
+        <div className="settings-tracks" data-settings-tracks>
+          {/* The channel, and the models it runs: one fact decides whether a reply can happen at all, and
+              the two profiles beside it say what that reply is asked with. */}
+          <div className="settings-track" data-settings-track="channel">
+            {connectionRegion}
+          </div>
+          <div className="settings-track" data-settings-track="models">
+            {modelProfilesRegion}
+          </div>
         </div>
-        {/* The tuning column: what a player changes about how the model is asked - the game's supplementary
-            instruction, the sampler temperature - and then the surface's own blocks about this machine: the voice
-            consent and devices, the whole-profile backup, and the preset readout. */}
-        <div className="settings-track" data-settings-track="tuning">
-          {
-            // Rendered from the first frame, like every other settings group: the read is what
-            // decides whether there is a field to show, and a group that appeared only after its
-            // read landed would pop into a list the player was already reading.
+      </SettingsTabPanel>
+      <SettingsTabPanel id="preferences" selected={settingsTab === "preferences"}>
+        <div className="settings-tracks" data-settings-tracks>
+          {/* How the companion reads to this player, and how the product is drawn around her. */}
+          <div className="settings-track" data-settings-track="language">
+            <LanguageSettingsPanel
+              languageView={languageView}
+              uiLanguageView={uiLanguageView}
+              uiLocale={uiLocale}
+              labels={labels}
+              onSelectLanguage={mutateCompanionLanguage}
+              onSelectUiLanguage={mutateUiLocale}
+            />
+          </div>
+          <div className="settings-track" data-settings-track="appearance">
+            <AppearanceSettingsPanel
+              appearanceView={appearanceView}
+              labels={labels}
+              onSelectAppearance={mutateAppearance}
+            />
+          </div>
+        </div>
+      </SettingsTabPanel>
+      <SettingsTabPanel id="advanced" selected={settingsTab === "advanced"}>
+        <div className="settings-tracks" data-settings-tracks>
+          {/* What a player changes about how the model is asked: the game's supplementary instruction and the
+              sampler temperature, both open because both are read whenever a request is composed. */}
+          <div className="settings-track" data-settings-track="instructions">
             <GamePromptAdditionPanel
               view={promptAdditionView}
               draft={promptAddition.value}
@@ -2411,40 +2538,50 @@ export function SettingsSurfacePanel({
               onSave={savePromptAddition}
               onRetry={retrySettingsReads}
             />
-          }
-          <SamplerTemperaturePanel
-            view={samplerView}
-            draft={samplerDraft}
-            labels={labels}
-            onChange={setSamplerDraft}
-            onSave={saveSamplerTemperature}
-            onRetry={retrySettingsReads}
-          />
-          <VoiceSettingsPanel
-            voiceView={voiceView}
-            labels={labels}
-            onAccept={() => mutateVoice("accept")}
-            onRevoke={() => mutateVoice("revoke")}
-            onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
-            onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
-          />
-          <ProfileBackupPanel api={api} labels={labels} />
-          {/* The one disclosure on this surface, and the last block of its track: a `<details>` grows its own track
-              and cannot move the other one (`[data-settings-tracks]` aligns its tracks at their start). */}
-          <details className="custom-disclosure" data-settings-presets-disclosure>
-            <summary>
-              <ScrollText size={16} aria-hidden="true" />
-              {labels.presetsPanel}
-            </summary>
-            <p className="management-settings-hint">{labels.presetReadOnlyHint}</p>
-            <div className="composer-actions">
-              <button type="button" className="small-button" ref={presets.ref} onClick={presets.open}>
-                {labels.presetsOpen}
-              </button>
-            </div>
-          </details>
+            <SamplerTemperaturePanel
+              view={samplerView}
+              draft={samplerDraft}
+              labels={labels}
+              onChange={setSamplerDraft}
+              onSave={saveSamplerTemperature}
+              onRetry={retrySettingsReads}
+            />
+          </div>
+          {/*
+            The surface's own blocks about this machine, each one a collapsed row until it is asked for: a
+            voice consent read once, a backup pressed occasionally, a read-only preset readout. They are the
+            low-frequency half of this tab, and closing them is what puts what a player tunes often in front
+            of the rest instead of a thousand pixels below it. A closed row keeps its fields mounted, so a
+            half-typed instruction or a chosen device is still there when it is opened again.
+          */}
+          <div className="settings-track" data-settings-track="machine">
+            <VoiceSettingsPanel
+              voiceView={voiceView}
+              labels={labels}
+              onAccept={() => mutateVoice("accept")}
+              onRevoke={() => mutateVoice("revoke")}
+              onSelectDevice={(deviceId) => mutateVoice("setOutputDevice", deviceId)}
+              onSelectPersona={(persona) => mutateVoice("setPersona", persona)}
+            />
+            <ProfileBackupPanel api={api} labels={labels} />
+            {/* The one disclosure this surface already had, and the last block of its column: a `<details>`
+                grows its own column and cannot move the other one (`[data-settings-tracks]` aligns its
+                tracks at their start). */}
+            <details className="custom-disclosure" data-settings-presets-disclosure>
+              <summary>
+                <ScrollText size={16} aria-hidden="true" />
+                {labels.presetsPanel}
+              </summary>
+              <p className="management-settings-hint">{labels.presetReadOnlyHint}</p>
+              <div className="composer-actions">
+                <button type="button" className="small-button" ref={presets.ref} onClick={presets.open}>
+                  {labels.presetsOpen}
+                </button>
+              </div>
+            </details>
+          </div>
         </div>
-      </div>
+      </SettingsTabPanel>
     </>
   );
 }

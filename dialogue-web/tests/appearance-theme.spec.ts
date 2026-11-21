@@ -19,6 +19,7 @@
  *      stored choice coming back.
  */
 import { type Page, expect, test } from "./frontend-coverage";
+import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -184,6 +185,8 @@ test.describe("the appearance is the player's choice, and the system's until the
 
     await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
     const surface = page.getByTestId("settings-surface");
+    // The appearance is a PREFERENCE, which is the tab the split put it on: one press, then the control.
+    await openSettingsTab(page, SETTINGS_TAB.preferences);
     const control = surface.locator("#ui-appearance");
     await expect(control).toBeVisible();
     await expect(control, "the control shows the stored choice, not a local one").toHaveValue("system");
@@ -211,6 +214,7 @@ test.describe("the appearance is the player's choice, and the system's until the
 
     // Returning to `system` is a choice too, and it hands the page back to the OS answer.
     const surfaceAfterReload = page.getByTestId("settings-surface");
+    await openSettingsTab(page, SETTINGS_TAB.preferences);
     await expect(surfaceAfterReload.locator("#ui-appearance")).toHaveValue("light");
     await surfaceAfterReload.locator("#ui-appearance").selectOption("system");
     await expect

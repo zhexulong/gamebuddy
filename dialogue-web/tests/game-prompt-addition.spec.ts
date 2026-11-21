@@ -20,6 +20,8 @@
  * validator and this test cannot drift apart.
  */
 import { type Page, expect, test } from "./frontend-coverage";
+import { messages } from "../src/i18n";
+import { openSettingsRegion, openSettingsTab } from "./settings-tabs";
 import { MAX_GAME_PROMPT_ADDITION_CHARS } from "../src/management-pipeline-api";
 
 const token = "A".repeat(43);
@@ -159,6 +161,11 @@ async function openSettings(page: Page, options: Readonly<{ locale?: "en" | "zh-
     await page.addInitScript((value) => localStorage.setItem("gamebuddy.tavern.ui-locale", value), options.locale);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   await expect(page.getByTestId("settings-surface")).toBeVisible();
+  // The two presses the surface's split adds: this group lives on the third tab, and the tab's low-frequency
+  // regions arrive closed. The tab is named from the catalogue the mount is running in - the label is the
+  // product's words, not this file's.
+  await openSettingsTab(page, messages(options.locale ?? "en").settingsTabAdvanced);
+  await openSettingsRegion(page, "[data-game-prompt-addition]");
 }
 
 const group = (page: Page) => page.getByTestId("settings-surface").locator("[data-game-prompt-addition]");

@@ -1,4 +1,5 @@
 import { type Locator, type Page, expect, test } from "./frontend-coverage";
+import { openSettingsRegion, openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 import { messages } from "../src/i18n";
 
 /**
@@ -186,6 +187,9 @@ async function openSettings(page: Page): Promise<{
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   const surface = page.getByTestId("settings-surface");
   await expect(surface).toBeVisible();
+  // Two presses the split adds, and nothing else changed: the group is on the third tab and arrives closed.
+  await openSettingsTab(page, SETTINGS_TAB.advanced);
+  await openSettingsRegion(page, "[data-game-prompt-addition]");
   const panel = surface.locator("[data-game-prompt-addition]");
   return { panel, field: panel.locator("#game-prompt-addition"), save: panel.getByRole("button", { name: /save/iu }) };
 }

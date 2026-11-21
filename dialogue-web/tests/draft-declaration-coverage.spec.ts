@@ -6,6 +6,7 @@ import {
   WALKED_SURFACES,
   catalogue,
   enumerateControls,
+  forEachTab,
   openDisclosures,
   openSurface,
   prepareSurface,
@@ -191,10 +192,27 @@ async function mount(
   await prepareSurface(page, surface, region);
   // The declarations are read BEFORE they are consumed: a revealer replaces itself when pressed, so
   // the only moment its own identity is on screen is the moment the player arrives.
-  const revealers = await revealerKeys(region);
-  await revealEditors(region);
-  await openDisclosures(region);
-  return { region, onArrival: await textKeys(region), revealers };
+  const revealers = await forEachTabCollect(region, async () => {
+    const found = await revealerKeys(region);
+    await revealEditors(region);
+    await openDisclosures(region);
+    return found;
+  });
+  // The arrival population is the union over the surface's tabs, for the same reason the retention
+  // journey's is: the groups on the other tabs carry fields a player can type into, and an arrival
+  // population read off one tab would call their editors undeclared.
+  const onArrival: string[] = [];
+  for (const key of await textKeys(region)) if (!onArrival.includes(key)) onArrival.push(key);
+  return { region, onArrival, revealers };
+}
+
+/** Run `visit` on every tab, and return the union of what it found, first-seen order first. */
+async function forEachTabCollect(region: Locator, visit: () => Promise<readonly string[]>): Promise<string[]> {
+  const collected: string[] = [];
+  await forEachTab(region, async () => {
+    for (const key of await visit()) if (!collected.includes(key)) collected.push(key);
+  });
+  return collected;
 }
 
 /**

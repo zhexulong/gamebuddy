@@ -5,6 +5,7 @@ import {
   SURFACE_EXEMPTIONS,
   WALKED_SURFACES,
   enumerateControls,
+  forEachTab,
   openDisclosures,
   openSurface,
   prepareSurface,
@@ -126,44 +127,50 @@ type Filled = Readonly<{ control: DraftControl; value: string }>;
  */
 async function fillEverything(region: Locator): Promise<Filled[]> {
   const filled = new Map<string, Filled>();
-  for (;;) {
-    // The editors the product declares open first: their fields belong to the player, and a walk
-    // that never pressed the control that opens them would leave them outside the population. The
-    // disclosures open beside them, because a summary cannot declare itself a revealer.
-    await revealEditors(region);
-    await openDisclosures(region);
-    const fresh = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
-    if (fresh.length === 0) {
-      /*
-       * Nothing new - but "nothing new YET" is not the same fact. A surface renders its authored
-       * sections once its own read lands, so an enumeration that ran a frame early sees fewer
-       * controls and the walk would end believing it had covered the surface. One settled re-read
-       * is what tells the two apart, and it is the surface's own timing, not a list of fields.
-       */
-      await region.page().waitForTimeout(250);
-      // An editor whose own entry control renders with that read is opened here rather than missed:
-      // the declaration is on screen by the time the settle has passed, or the surface has none.
+  /* every tab, one at a time: a field on a tab this walk never pressed is outside the population, and the
+     switch between tabs is ALSO the draft question this file asks - the other tab's fields stay mounted
+     while a player types in this one, which is what makes filling them in two passes possible at all. */
+  await forEachTab(region, async () => {
+    for (;;) {
+      // The editors the product declares open first: their fields belong to the player, and a walk
+      // that never pressed the control that opens them would leave them outside the population. The
+      // disclosures open beside them, because a summary cannot declare itself a revealer.
       await revealEditors(region);
       await openDisclosures(region);
-      const settled = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
-      if (settled.length === 0) return [...filled.values()];
-      continue;
-    }
-    for (const control of fresh) {
-      // An excluded control is recorded (so the exclusion list can be checked against what really
-      // exists) but never typed into: `#ui-language` would change the interface's language out from
-      // under the walk, and the credential is a secret this gate does not keep.
-      if (CONTROL_EXEMPTIONS[control.key] !== undefined) {
-        filled.set(control.key, { control, value: "" });
+      const fresh = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
+      if (fresh.length === 0) {
+        /*
+         * Nothing new - but "nothing new YET" is not the same fact. A surface renders its authored
+         * sections once its own read lands, so an enumeration that ran a frame early sees fewer
+         * controls and the walk would end believing it had covered the surface. One settled re-read
+         * is what tells the two apart, and it is the surface's own timing, not a list of fields.
+         */
+        await region.page().waitForTimeout(250);
+        // An editor whose own entry control renders with that read is opened here rather than missed:
+        // the declaration is on screen by the time the settle has passed, or the surface has none.
+        await revealEditors(region);
+        await openDisclosures(region);
+        const settled = [...(await enumerateControls(region)).filter((control) => !filled.has(control.key))];
+        if (settled.length === 0) return;
         continue;
       }
-      // Answering an earlier control in this same batch can hide this one (the connection form's
-      // credential requirement removes the credential field), so presence is re-checked rather
-      // than assumed from the enumeration that found it.
-      if ((await region.locator(control.key).count()) !== 1) continue;
-      filled.set(control.key, { control, value: await typeInto(region, control, filled.size) });
+      for (const control of fresh) {
+        // An excluded control is recorded (so the exclusion list can be checked against what really
+        // exists) but never typed into: `#ui-language` would change the interface's language out from
+        // under the walk, and the credential is a secret this gate does not keep.
+        if (CONTROL_EXEMPTIONS[control.key] !== undefined) {
+          filled.set(control.key, { control, value: "" });
+          continue;
+        }
+        // Answering an earlier control in this same batch can hide this one (the connection form's
+        // credential requirement removes the credential field), so presence is re-checked rather
+        // than assumed from the enumeration that found it.
+        if ((await region.locator(control.key).count()) !== 1) continue;
+        filled.set(control.key, { control, value: await typeInto(region, control, filled.size) });
+      }
     }
-  }
+  });
+  return [...filled.values()];
 }
 
 test.describe("a draft survives the player leaving its surface and coming back", () => {

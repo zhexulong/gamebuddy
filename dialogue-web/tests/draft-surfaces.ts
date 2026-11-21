@@ -393,6 +393,39 @@ export async function openDisclosures(region: Locator): Promise<void> {
 }
 
 /**
+ * Run `visit` once per tab the surface renders, with that tab selected, and leave it on the tab it opened on.
+ *
+ * A tab is the THIRD way a region of this product hides a field, after a revealer and a disclosure, and it
+ * is the one an enumeration cannot see through: the groups on the other tabs are in the document and
+ * `checkVisibility()` is right to say a player cannot type into them. So the population either visits every
+ * tab or it is the population of one tab wearing the surface's name - the silent narrowing both draft
+ * gates exist to make impossible.
+ *
+ * A surface with no tablist is visited once, which is how the same walk covers a surface that has none.
+ */
+export async function forEachTab(region: Locator, visit: () => Promise<void>): Promise<void> {
+  const tabs = region.locator('[role="tab"]');
+  const count = await tabs.count();
+  if (count === 0) {
+    await visit();
+    return;
+  }
+  const opening = await tabs.evaluateAll((nodes) =>
+    nodes.findIndex((node) => node.getAttribute("aria-selected") === "true"),
+  );
+  for (let index = 0; index < count; index += 1) {
+    const tab = tabs.nth(index);
+    if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+    await visit();
+  }
+  if (opening >= 0) {
+    const back = tabs.nth(opening);
+    if ((await back.getAttribute("aria-selected")) !== "true") await back.click();
+  }
+}
+
+/**
  * Controls that genuinely must NOT keep a draft, each with the reason it must not.
  *
  * Asserted to be a subset of what the walks found, so an entry here that no longer names a real

@@ -19,6 +19,7 @@
  */
 import { type Page, expect, test } from "./frontend-coverage";
 import { messages } from "../src/i18n";
+import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 import { SMALL_LAPTOP } from "./viewport-policy";
 
 const token = "A".repeat(43);
@@ -382,45 +383,49 @@ async function settingsGroupOrder(page: Page): Promise<string[]> {
   });
 }
 
-/** Where one settings group starts, in page pixels, with the surface scrolled to its top. */
-async function settingsGroupTop(page: Page, selector: string): Promise<number> {
-  const box = await page.getByTestId("settings-surface").locator(selector).boundingBox();
-  if (box === null) throw new Error(`${selector} is not laid out`);
-  return box.y;
-}
-
 /** The first-screen budget, from the policy: the shortest laptop window these screens are held to. */
 const VIEWPORT = SMALL_LAPTOP;
 
 test.describe("B: the connection section is the first thing in Settings", () => {
-  test("the model connection comes before language and voice, inside the first screen", async ({ page }) => {
+  test("the model connection comes first, on the tab a player lands on, inside the first screen", async ({ page }) => {
     await page.setViewportSize(VIEWPORT);
     await stubProductRoutes(page, { activeConnection: false });
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await expect(page.getByTestId("settings-surface")).toBeVisible();
-    await expect(page.getByTestId("settings-surface").locator("[data-connection-settings]")).toBeVisible();
+    const surface = page.getByTestId("settings-surface");
+    await expect(surface).toBeVisible();
+    await expect(surface.locator("[data-connection-settings]")).toBeVisible();
 
-    // The order a player meets, measured: the connection group is first, and both
-    // the language and the voice group come after it. Before this change the
-    // connection group sat at 878 px - below the 720 px viewport, behind language
-    // and the whole voice section - and now starts at 56 px.
+    // The order a player meets, read off the document: the connection group is still the first of the
+    // four and voice is still the last. The surface is split into three tabs, but the tabs are three
+    // panels in that same order, so this decision is untouched by the split.
     const order = await settingsGroupOrder(page);
     expect(order[0]).toBe("connection");
     expect(order.indexOf("connection")).toBeLessThan(order.indexOf("language"));
     expect(order.indexOf("connection")).toBeLessThan(order.indexOf("voice"));
 
-    const connectionTop = await settingsGroupTop(page, "[data-connection-settings]");
-    const languageTop = await settingsGroupTop(page, "[data-language-settings]");
-    const voiceTop = await settingsGroupTop(page, "[data-voice-settings]");
-    expect(connectionTop).toBeLessThan(languageTop);
-    expect(connectionTop).toBeLessThan(voiceTop);
-    // Inside the first viewport, not merely before something else: the whole
-    // section a player must act on is on the screen they land on.
-    const connectionBox = await page.getByTestId("settings-surface").locator("[data-connection-settings]").boundingBox();
+    // WHERE the player meets it, which is the half the tabs could have broken: the strip opens on the
+    // connection tab, so the control that fixes a missing model is on the landing screen. The language
+    // and appearance preferences are now one press away instead of below it - that press is the whole
+    // cost of the split, and the next two lines say so rather than assuming it.
+    await expect(surface.getByRole("tab", { name: SETTINGS_TAB.connection, exact: true })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(surface.locator("[data-language-settings]"), "the language group is on another tab").toBeHidden();
+    // Inside the first viewport, not merely before something else: the whole section a player must
+    // act on is on the screen they land on.
+    const connectionBox = await surface.locator("[data-connection-settings]").boundingBox();
     expect(connectionBox!.y).toBeGreaterThanOrEqual(0);
     // Rounded, because `boundingBox()` is fractional: an element that ends exactly at the fold can measure a hair past it.
     expect(Math.round(connectionBox!.y + connectionBox!.height)).toBeLessThan(VIEWPORT.height);
+
+    // …and one press puts the language preference on that same screen, which is what a tab is for, so
+    // the split moved the group without burying it.
+    await openSettingsTab(page, SETTINGS_TAB.preferences);
+    await expect(surface.locator("[data-language-settings]")).toBeVisible();
+    const languageBox = await surface.locator("[data-language-settings]").boundingBox();
+    expect(Math.round(languageBox!.y + languageBox!.height)).toBeLessThan(VIEWPORT.height);
   });
 
   test("every control and data hook the connection group had is still there", async ({ page }) => {
@@ -439,7 +444,7 @@ test.describe("B: the connection section is the first thing in Settings", () => 
 });
 
 test.describe("C: the voice consent leaves the first settings screen", () => {
-  test("the consent is the last group, still there, and its controls are below the first viewport", async ({
+  test("the consent is the last group, still there, and it is off the screen a player lands on", async ({
     page,
   }) => {
     await page.setViewportSize(VIEWPORT);
@@ -447,20 +452,40 @@ test.describe("C: the voice consent leaves the first settings screen", () => {
     await page.goto(`/#profile=composed-reference-game&boot=${token}`);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     const surface = page.getByTestId("settings-surface");
-    await expect(surface.locator("[data-voice-settings]")).toBeAttached();
+    const voice = surface.locator("[data-voice-settings]");
+    await expect(voice).toBeAttached();
 
-    // The voice group is the last group the surface renders, so the disclosure and
-    // its consent are not among the first things a player reads. Measured at
-    // 1280x720: the group starts at 1529 px and its Accept/Revoke pair at 1673 px,
-    // where before this decision they stood at 405 px and 548 px - inside the
-    // first screen.
+    // The voice group is the last group the surface renders, so the disclosure and its consent are not
+    // among the first things a player reads. The tabs made that decision stronger rather than weaker:
+    // the group is on the third tab AND closed, so it is two presses from the landing screen where it
+    // used to be a scroll. Measured at 1280x720 before the tabs: the group started at 1529 px and its
+    // Accept/Revoke pair at 1673 px, where before that decision they stood at 405 px and 548 px.
     const order = await settingsGroupOrder(page);
     expect(order[order.length - 1]).toBe("voice");
+    await expect(voice, "the voice group is not on the tab the surface opens on").toBeHidden();
 
-    const consent = surface.locator("[data-voice-settings]").getByRole("button", { name: "Accept", exact: true });
+    // The two presses, named: the third tab, then the row that opens the group.
+    await openSettingsTab(page, SETTINGS_TAB.advanced);
+    await expect(voice).toBeVisible();
+    await expect(voice, "the voice group arrives closed, as the tuning tab's low-frequency half").not.toHaveAttribute(
+      "open",
+      /.*/u,
+    );
+    await voice.locator("summary").click();
+    await expect(voice).toHaveAttribute("open", /.*/u);
+
+    const consent = voice.getByRole("button", { name: "Accept", exact: true });
     await expect(consent).toHaveCount(1);
+    // The region put back at its top: the two presses above scrolled the row into view, and what this reading
+    // now says is the honest one for a surface with tabs - the consent is on the screen of the tab it belongs
+    // to, and the ONLY screen it is not on is the one a player lands on (asserted above, where the group is
+    // hidden). The old assertion measured a single 3122 px column's fold; there is no such column any more, so
+    // a claim about it would be a claim about a layout this product no longer has.
+    await surface.locator(".surface-content").evaluate((content) => {
+      content.scrollTop = 0;
+    });
     const consentBox = await consent.boundingBox();
-    expect(consentBox!.y).toBeGreaterThan(VIEWPORT.height);
+    expect(consentBox!.y, "the consent is inside the tab that holds it").toBeGreaterThanOrEqual(0);
   });
 
   test("accepting it still writes the one durable consent the runtime reads", async ({ page }) => {
@@ -499,6 +524,11 @@ test.describe("C: the voice consent leaves the first settings screen", () => {
     await page.getByRole("button", { name: "Settings", exact: true }).click();
 
     const voice = page.getByTestId("settings-surface").locator("[data-voice-settings]");
+    // The two presses the tabs and the collapsed row add, named here rather than folded into a helper:
+    // the third tab holds this group, and the row that opens it is what puts its controls in reach.
+    await openSettingsTab(page, SETTINGS_TAB.advanced);
+    await voice.locator("summary").click();
+    await expect(voice).toHaveAttribute("open", /.*/u);
     await expect(voice).toContainText("Cloud TTS consent");
     await expect(voice).toContainText("Not decided");
     await voice.getByRole("button", { name: "Accept", exact: true }).click();

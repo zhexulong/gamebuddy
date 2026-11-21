@@ -22,6 +22,7 @@
  *      cache, and this test states that by emptying it rather than by trusting it.
  */
 import { type Page, expect, test } from "./frontend-coverage";
+import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 
 const token = "A".repeat(43);
 const csrfToken = `${"C".repeat(42)}A`;
@@ -169,6 +170,8 @@ test("a chosen interface language outlives a relaunch, and the Host's record is 
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   await expect(page.getByTestId("settings-surface")).toBeVisible();
+  // The interface's language is a PREFERENCE, which is the tab the split put it on: one press, then the field.
+  await openSettingsTab(page, SETTINGS_TAB.preferences);
   const control = page.locator("#ui-language");
   await expect(control).toBeVisible();
 

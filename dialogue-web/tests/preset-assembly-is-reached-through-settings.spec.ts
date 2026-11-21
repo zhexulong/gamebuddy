@@ -1,4 +1,5 @@
 import { type Page, expect, test } from "./frontend-coverage";
+import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 import { draft, jsonOk, root, token } from "./composed-reference-game-fixtures";
 import { messages } from "../src/i18n";
 import { SETTINGS_PANEL } from "../src/composed-surface-route";
@@ -92,6 +93,9 @@ for (const cell of LAYOUT_PAIR) {
 
     // 2. The one path that remains.
     await openSettings(page);
+    // The disclosure is the last block of the third tab, so the readout is two presses from the landing
+    // screen - the bar entry it replaced was zero, which is why this journey says where it lives now.
+    await openSettingsTab(page, SETTINGS_TAB.advanced);
     const disclosure = page.locator("[data-settings-presets-disclosure]");
     await expect(disclosure, "Settings carries the preset readout's disclosure").toHaveCount(1);
     await expect(disclosure.locator("summary")).toHaveText(catalogue.presetsPanel);

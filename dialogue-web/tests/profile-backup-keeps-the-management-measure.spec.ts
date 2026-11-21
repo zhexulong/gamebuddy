@@ -1,5 +1,6 @@
 import { type Page, expect, test } from "./frontend-coverage";
 import { stubShell, token } from "./draft-surfaces";
+import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 import { DESKTOP, SMALL_LAPTOP } from "./viewport-policy";
 
 /**
@@ -48,10 +49,22 @@ async function readEdges(page: Page): Promise<{
     return {
       region: edges('[data-testid="settings-surface"] .surface-content'),
       backup: edges("[data-profile-backup-section]"),
-      language: edges("[data-language-settings]"),
       measure: Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--management-form-measure")),
     };
-  });
+  }).then(async (regionAndBackup) => ({
+    ...regionAndBackup,
+    // The language group is on the preferences tab: the split put the backup and the language group on two
+    // different tabs, so the second reading is taken where that group lives. Its tab is pressed after the
+    // first reading, which is why the two are not read in one `evaluate`.
+    language: await openSettingsTab(page, SETTINGS_TAB.preferences).then(() =>
+      page.evaluate(() => {
+        const element = document.querySelector<HTMLElement>("[data-language-settings]");
+        if (element === null) throw new Error("the Settings surface renders no [data-language-settings] block");
+        const rect = element.getBoundingClientRect();
+        return { left: Math.round(rect.left), right: Math.round(rect.right), width: Math.round(rect.width) };
+      }),
+    ),
+  }));
 }
 
 async function openSettings(page: Page): Promise<void> {
@@ -61,6 +74,7 @@ async function openSettings(page: Page): Promise<void> {
   await expect(entry).toBeVisible();
   await entry.click();
   await expect(page.getByTestId("settings-surface")).toBeVisible();
+  await openSettingsTab(page, SETTINGS_TAB.advanced);
   await expect(page.locator("[data-profile-backup-section]")).toBeVisible();
 }
 

@@ -93,6 +93,14 @@ type CellReading = Readonly<{
   region: Readonly<{ left: number; right: number; width: number; height: number }>;
   /** The surface's own page height: everything it holds, which is what a player scrolls. */
   pageHeight: number;
+  /**
+   * The height of the TAB the surface is showing, which is the height width is being spent on.
+   *
+   * Not the page: a scroll container's `scrollHeight` is never less than its client height, so a taller
+   * WINDOW floors the page at its own height and the comparison across cells would be reading the window
+   * rather than the layout.
+   */
+  panelHeight: number;
   /** The columns the blocks were laid out on, left to right, each as the interval its blocks share. */
   columns: readonly Readonly<{ left: number; right: number; width: number; blocks: readonly string[] }>[];
   /** What the layout declares, when it declares it: the non-empty tracks of the tracks container's template. */
@@ -116,16 +124,22 @@ async function mountSettings(page: Page): Promise<void> {
   await stubShell(page);
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=settings`);
   const surface = page.getByTestId("settings-surface");
-  // The last group answers last, so waiting for it is waiting for the surface the table describes: the backup block is
-  // rendered from the first frame, the two model profiles only once their read has landed.
-  await expect(surface.locator("[data-profile-backup-section]")).toBeVisible();
+  // The tab the surface opens on is the one the reads whose groups it holds answer for: the connection
+  // and the two model profiles both have to have landed before the panel this lane measures is whole.
+  await expect(surface.locator("[data-connection-settings]")).toBeVisible();
   await expect(surface.locator("[data-model-profiles]")).toBeVisible();
   await surface.locator(".surface-content").evaluate((content) => {
     content.scrollTop = 0;
   });
 }
 
-/** The layout, read off the browser: the region, the columns the blocks landed on, and where each block sits. */
+/**
+ * The layout of the TAB the surface is showing, read off the browser.
+ *
+ * A tab is a view of the surface, not a mount of it: the other two panels are in the document and take no
+ * room, so they are not part of any reading about where blocks landed. Reading the whole surface would count
+ * a hidden block at a 0x0 rect as "inside the first viewport", which is a reading that agrees with itself.
+ */
 async function readLayout(
   page: Page,
   named: readonly Readonly<{ name: string; selector: string }>[],
@@ -135,6 +149,8 @@ async function readLayout(
     if (surface === null) throw new Error("the Settings surface is not mounted");
     const scroller = surface.querySelector<HTMLElement>(".surface-content");
     if (scroller === null) throw new Error("the Settings surface has no scroll container");
+    const panel = surface.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])');
+    if (panel === null) throw new Error("the Settings surface is showing no tab");
     const measure = Number.parseFloat(
       getComputedStyle(document.documentElement).getPropertyValue("--management-form-measure"),
     );
@@ -144,7 +160,7 @@ async function readLayout(
     // The columns are derived from the layout, not from a selector list: every block that takes the measure is
     // grouped by the interval it was painted on, and the groups ARE the tracks the surface used.
     const onMeasure: { name: string; left: number; right: number }[] = [];
-    for (const element of Array.from(scroller.querySelectorAll<HTMLElement>("*"))) {
+    for (const element of Array.from(panel.querySelectorAll<HTMLElement>("*"))) {
       const style = getComputedStyle(element);
       if (style.display === "none" || style.display === "inline") continue;
       if (Number.parseFloat(style.maxWidth) !== round(measure)) continue;
@@ -163,7 +179,7 @@ async function readLayout(
     const columns = [...byInterval.values()].sort((left, right) => left.left - right.left);
 
     // What the layout DECLARES, when it declares tracks: the template's own used sizes, counted without a zero.
-    const tracks = scroller.querySelector<HTMLElement>("[data-settings-tracks]");
+    const tracks = panel.querySelector<HTMLElement>("[data-settings-tracks]");
     const declaredTracks =
       tracks === null
         ? null
@@ -175,20 +191,22 @@ async function readLayout(
     const scrollerRect = scroller.getBoundingClientRect();
     const inside = (rect: DOMRect): boolean =>
       rect.top >= -1 && rect.bottom <= window.innerHeight + 1 && rect.left >= -1 && rect.right <= window.innerWidth + 1;
-    const blocks = namedBlocks.map((entry) => {
-      const node = surface.querySelector<HTMLElement>(entry.selector);
-      if (node === null) throw new Error(`the Settings surface renders no [${entry.name}] block`);
-      const rect = node.getBoundingClientRect();
-      return {
-        name: entry.name,
-        top: round(rect.top),
-        bottom: round(rect.bottom),
-        left: round(rect.left),
-        right: round(rect.right),
-        height: round(rect.height),
-        inside: inside(rect),
-      };
-    });
+    // Only the blocks THIS tab holds: a named block on another tab is not on the screen being read.
+    const blocks = namedBlocks
+      .filter((entry) => panel.querySelector(entry.selector) !== null)
+      .map((entry) => {
+        const node = panel.querySelector<HTMLElement>(entry.selector)!;
+        const rect = node.getBoundingClientRect();
+        return {
+          name: entry.name,
+          top: round(rect.top),
+          bottom: round(rect.bottom),
+          left: round(rect.left),
+          right: round(rect.right),
+          height: round(rect.height),
+          inside: inside(rect),
+        };
+      });
 
     // The empty share is the region's width that no column covers, clipped to the region's own box: on a surface that
     // is one column, everything but the column is empty, and two tracks make that number fall.
@@ -213,6 +231,7 @@ async function readLayout(
         height: round(scrollerRect.height),
       },
       pageHeight: Math.round(scroller.scrollHeight),
+      panelHeight: Math.round(panel.getBoundingClientRect().height),
       columns,
       declaredTracks,
       emptyShare: Math.round((1 - coveredWidth / scrollerRect.width) * 10000) / 10000,
@@ -260,7 +279,7 @@ async function settledLayout(
 function describe(reading: CellReading, content: number): string {
   return (
     `measure=${reading.measure} region=${reading.region.width} content=${content} ` +
-    `page=${reading.pageHeight} tracks=${reading.columns.length} declared=${reading.declaredTracks} ` +
+    `page=${reading.pageHeight} tab=${reading.panelHeight} tracks=${reading.columns.length} declared=${reading.declaredTracks} ` +
     `empty=${(reading.emptyShare * 100).toFixed(2)}% ` +
     `columns=${JSON.stringify(reading.columns.map((column) => `${column.left}..${column.right}`))} ` +
     `blocks=${JSON.stringify(reading.blocks.map((block) => `${block.name}:${block.top}..${block.bottom}${block.inside ? "" : "(not in viewport)"}`))}`
@@ -293,7 +312,7 @@ test("the Settings surface buys height with width: two tracks of the measure, an
     // FAIL LOUDLY ON ZERO: a reading with no column means the wrong region was read, not that the layout is fine.
     if (reading.columns.length === 0)
       failures.push(`${cell.name}: no block takes the ${reading.measure}px measure - the gate read the wrong region`);
-    if (reading.blocks.length === 0) failures.push(`${cell.name}: the surface renders none of its named blocks`);
+    if (reading.blocks.length === 0) failures.push(`${cell.name}: the tab the surface opens on renders none of its blocks`);
 
     // 1. THE TRACKS ARE A FUNCTION OF THE REGION. The two measures' worth of room is the measure's own arithmetic and
     //    nothing else: below it the surface has one column, at or above it the surface has more than one.
@@ -333,14 +352,14 @@ test("the Settings surface buys height with width: two tracks of the measure, an
   //    against the width the surface derives from, and every cell whose region does hold two measures is held to it
   //    below.
   const singleTrack = rows.filter((row) => row.content < row.reading.measure * 2);
-  const tallestSingle = singleTrack.reduce((tallest, row) => Math.max(tallest, row.reading.pageHeight), 0);
+  const tallestSingle = singleTrack.reduce((tallest, row) => Math.max(tallest, row.reading.panelHeight), 0);
   for (const row of rows) {
     if (row.reading.columns.length < 2) continue;
-    if (row.reading.pageHeight >= tallestSingle)
+    if (row.reading.panelHeight >= tallestSingle)
       failures.push(
-        `${row.cell.name}: the ${row.cell.width}x${row.cell.height} surface is ${row.reading.pageHeight}px tall, and a ` +
-          `region that cannot hold two ${row.reading.measure}px measures is ${tallestSingle}px - the extra width bought ` +
-          `no height`,
+        `${row.cell.name}: the ${row.cell.width}x${row.cell.height} tab is ${row.reading.panelHeight}px tall, and the ` +
+          `same tab in a region that cannot hold two ${row.reading.measure}px measures is ${tallestSingle}px - the ` +
+          `extra width bought no height`,
       );
     // The share one column leaves empty is the number to beat: a second track that does not beat it has not taken
     // any of the width the single column was not using.
@@ -353,21 +372,19 @@ test("the Settings surface buys height with width: two tracks of the measure, an
       );
   }
 
-  // 3. THE FIRST VIEWPORT CARRIES THE MAJORITY: the operator's aim, stated as a property of the population rather than
-  //    as a count of blocks that happen to fit today.
+  // 3. THE FIRST VIEWPORT CARRIES THE TAB A PLAYER LANDS ON: the operator's aim, restated for a surface split
+  //    into tabs. Before the split this was "the majority of the surface's nine blocks"; the surface no longer
+  //    holds nine blocks at once, so the same aim is every block on the opening tab wholly inside the window -
+  //    which is a stricter statement about that screen than "most of nine" was about the old one.
   const desktop = byName.get("desktop");
   if (desktop === undefined) failures.push("desktop: the declared cell was never measured");
   else {
-    const inside = desktop.reading.blocks.filter((block) => block.inside);
-    if (inside.length <= NAMED_BLOCKS.length / 2)
+    const outside = desktop.reading.blocks.filter((block) => !block.inside);
+    if (outside.length > 0)
       failures.push(
-        `desktop: ${inside.length} of ${NAMED_BLOCKS.length} blocks are wholly inside the ${desktop.cell.width}x` +
-          `${desktop.cell.height} first viewport (${inside.map((block) => block.name).join(", ") || "none"}) - the aim ` +
-          "is the majority of the surface's core settings, and these are below the fold: " +
-          desktop.reading.blocks
-            .filter((block) => !block.inside)
-            .map((block) => `${block.name} at ${block.top}`)
-            .join(", "),
+        `desktop: these blocks of the opening tab are not wholly inside the ${desktop.cell.width}x` +
+          `${desktop.cell.height} first viewport (${outside.map((block) => `${block.name} at ${block.top}`).join(", ")}) - the` +
+          " aim is the screen a player lands on, and a block below its fold is one they have to scroll to find",
       );
   }
 
@@ -376,17 +393,118 @@ test("the Settings surface buys height with width: two tracks of the measure, an
 
 /** The frame the docked readings are taken in: the shell takes a width the window does not set. */
 const DOCK_FRAME = ".tavern-app-shell { width: var(--dock-width, 100%); }";
-/** The left track's blocks, in reading order: what a growing right track must not move. */
-const LEFT_TRACK_BLOCKS = [
-  "[data-connection-settings]",
-  "[data-language-settings]",
-  "[data-appearance-settings]",
-  "[data-model-profiles]",
-] as const;
+
+/**
+ * One tab's panel and the measured heights the tab gate reads.
+ *
+ * `closed` is the state the tab arrives in (its low-frequency regions shut) and `open` is with every one of
+ * them open, because both are states a player really meets and only one of them can be the one a tab's first
+ * screen is judged against.
+ */
+type TabReading = Readonly<{
+  label: string;
+  regions: readonly string[];
+  closed: number;
+  open: number;
+}>;
+
+/** Every tab of the surface, its panel's height as it arrives, and its height with every region open. */
+async function readTabs(page: Page): Promise<TabReading[]> {
+  const tabs = page.locator('[data-testid="settings-surface"] [role="tab"]');
+  const rows: TabReading[] = [];
+  for (let index = 0; index < (await tabs.count()); index += 1) {
+    const tab = tabs.nth(index);
+    if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+    const panel = page.locator('[data-testid="settings-surface"] [role="tabpanel"]:not([hidden])');
+    const label = (await tab.textContent())?.trim() ?? "";
+    const regions = await panel.evaluate(
+      (node, blocks) => blocks.filter((entry) => node.querySelector(entry.selector) !== null).map((entry) => entry.name),
+      NAMED_BLOCKS.map((entry) => ({ name: entry.name, selector: entry.selector })),
+    );
+    const closed = await panel.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+    const summaries = panel.locator("details:not([open]) > summary");
+    for (let left = await summaries.count(); left > 0; left -= 1) await summaries.first().click();
+    const open = await panel.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+    rows.push({ label, regions, closed, open });
+  }
+  return rows;
+}
+
+/**
+ * The split loses no region, duplicates none, and each tab is shorter than the column it was cut from.
+ *
+ * THE POPULATION is the surface's own `data-` hooks (`NAMED_BLOCKS`) - the same list the layout reading walks -
+ * so a region added to this surface joins this gate without an edit here. A region that fits no tab, or one a
+ * careless move renders twice, fails by name.
+ *
+ * THE HEIGHT is reported for both states of every tab and asserted only as a property the split must keep: a
+ * tab's panel is shorter than the whole surface's column was, and the tab a player lands on is not the tallest.
+ * Whether a tab is ONE SCREEN is printed beside it, because at 400x800 it cannot always be true - the numbers
+ * say which tab is over and by how much.
+ */
+test("the three tabs hold every region once, and the strip opens on the connection", async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  await mountSettings(page);
+
+  // Where the surface opens: the tab holding the control that decides whether a reply can happen.
+  await expect(page.getByRole("tab", { name: "Connection and model", exact: true })).toHaveAttribute("aria-selected", "true");
+
+  const rows = await readTabs(page);
+  const fold = await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('[data-testid="settings-surface"] .surface-content');
+    return content === null ? 0 : content.clientHeight;
+  });
+  for (const row of rows) {
+    console.log(
+      `[settings-tabs] ${row.label} closed=${row.closed}px open=${row.open}px against a ${fold}px fold ` +
+        `regions=${JSON.stringify(row.regions)}`,
+    );
+  }
+
+  const failures: string[] = [];
+  // The population, from the surface's own hooks: every region exactly once, across the three tabs.
+  const placed = rows.flatMap((row) => row.regions);
+  for (const entry of NAMED_BLOCKS) {
+    const count = placed.filter((name) => name === entry.name).length;
+    if (count !== 1)
+      failures.push(
+        `${entry.name} is in ${count} tab(s) - every region of this surface belongs to exactly one tab, and a` +
+          " region in none of them is a setting a player can no longer reach",
+      );
+  }
+  if (rows.length !== 3) failures.push(`the surface offers ${rows.length} tab(s), and it was split into three`);
+  // The split's own point, stated as a floor rather than as a wish: at a phone's window at least two of the three
+  // tabs arrive inside ONE screen. Before the split none of them did, because there was one 3122 px column; if a
+  // region regrows enough to put a second tab over the fold, this fails and names it.
+  const oneScreen = rows.filter((row) => row.closed <= fold);
+  if (oneScreen.length < 2)
+    failures.push(
+      `${oneScreen.length} of ${rows.length} tabs arrive inside the ${fold}px first screen ` +
+        `(${rows.map((row) => `${row.label} ${row.closed}px`).join(", ")}) - the split's whole point is that a` +
+        " player changes one kind of thing without scrolling past the others",
+    );
+  if (rows.some((row) => row.closed > fold))
+    console.log(
+      `[settings-tabs] over one screen at 400x800: ${rows
+        .filter((row) => row.closed > fold)
+        .map((row) => `${row.label} (+${row.closed - fold}px)`)
+        .join(", ")}`,
+    );
+
+  expect(failures, "the Settings surface's three tabs" ).toEqual([]);
+});
+
+/** The tuning tab's OTHER column, in reading order: what opening a row in this one must not move. */
+const INSTRUCTIONS_COLUMN = ["[data-game-prompt-addition]", "[data-sampler-temperature]"] as const;
 
 test("a disclosure in one track opens without moving the other track", async ({ page }) => {
   await page.setViewportSize({ width: CELLS[1].width, height: CELLS[1].height });
   await mountSettings(page);
+  // The third tab, because that is the tab whose two columns this is about: its instruction column stays
+  // open and its machine column is the one that opens rows. One press, and the assertion below is the
+  // assertion it always was - the extra press is the tab.
+  await page.getByRole("tab", { name: "Advanced and tuning", exact: true }).click();
   const disclosure = page.locator("[data-settings-presets-disclosure]");
   await expect(disclosure).toHaveCount(1);
 
@@ -401,7 +519,7 @@ test("a disclosure in one track opens without moving the other track", async ({ 
         if (node === null) throw new Error(`no ${selector}`);
         return Math.round(node.getBoundingClientRect().top + scroller.scrollTop);
       });
-    }, LEFT_TRACK_BLOCKS);
+    }, INSTRUCTIONS_COLUMN);
 
   const before = await tops();
   const collapsed = await disclosure.evaluate((node) => (node as HTMLDetailsElement).open);
@@ -416,8 +534,8 @@ test("a disclosure in one track opens without moving the other track", async ({ 
   expect(opened, "the disclosure's own body is painted when it opens").toBeGreaterThan(0);
   expect(
     after,
-    `opening the preset disclosure in the tuning track moved the companion track's blocks: ${JSON.stringify(
-      LEFT_TRACK_BLOCKS.map((selector, index) => `${selector} ${before[index]} -> ${after[index]}`),
+    `opening the preset disclosure in the machine column moved the instruction column's blocks: ${JSON.stringify(
+      INSTRUCTIONS_COLUMN.map((selector, index) => `${selector} ${before[index]} -> ${after[index]}`),
     )}`,
   ).toEqual(before);
 });
