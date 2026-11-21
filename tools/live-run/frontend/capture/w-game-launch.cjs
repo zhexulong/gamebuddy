@@ -1696,6 +1696,43 @@ async function hostAnswers(port) {
   }
   await shot(page, "91-game-ready.png");
 
+  /*
+   * ---- 4b. the attached session's first minute: her client's observations reach the Host and open her turn ----
+   *
+   * The step this driver measures is `daily-agent-awake`, and its fact is the Host's own account line. Two things
+   * about that line decide where the reading goes, both measured on 2026-11-22:
+   *
+   *   1. it is printed when the turn it opened SETTLES, not when it opens (`CompanionLoop.flush` awaits the
+   *      pump's delivery and only then calls `#reportTurnDecision`, `host/src/companion-loop.ts:321-386`);
+   *   2. her first turn after an attachment is an acting turn (a body program), not a reply - in
+   *      `D:\gb-lanes\agentawake` it was still running 180 s later, with 16 provider requests in the run's wire.
+   *
+   * So the account cannot be final while she is still working, and a session stopped within a second of the
+   * attachment has no turn at all to report (`D:\gb-lanes\agentawake4`: attach @173s, `stop settled in 0s`, 735
+   * bytes of entry stderr, no account line). This window is what gives the world the minute in which her client
+   * starts and its observations reach the Host; the STOP below settles whatever is still running, and step 7 reads
+   * the account afterwards. The loop leaves as soon as the account says something, so a run whose first turn
+   * settles inside the window pays only what that turn cost.
+   */
+  const attachBegan = Date.now();
+  let firstAccount = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  while (firstAccount.kind !== "awake" && Date.now() - attachBegan < BUDGET.attachedWindowMs) {
+    await sleep(1000);
+    firstAccount = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  }
+  record("the attached window", {
+    elapsedMs: Date.now() - attachBegan,
+    windowMs: BUDGET.attachedWindowMs,
+    kind: firstAccount.kind,
+    reason: firstAccount.reason,
+    bytes: firstAccount.reading === null ? null : firstAccount.reading.bytes,
+  });
+  say(
+    firstAccount.kind === "awake"
+      ? `the account was final ${String(Date.now() - attachBegan)}ms into the attached session: ${describeTurnAccount(firstAccount)}`
+      : `the attached session ran ${String(Date.now() - attachBegan)}ms with the account still ${String(firstAccount.reason)}; the STOP below settles whatever is running and step 7 reads it`,
+  );
+
   // ---- 5. one player line, in the game surface ----
   //
   // The gate is asked OF THE GAME SURFACE. A document-wide question answers `ok` off the Chat
