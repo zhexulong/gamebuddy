@@ -149,17 +149,19 @@ function projectGameFacts(views: GameBrowserViews): Readonly<{
   selectedWorld: GameFactPatchOf<"selectedWorld">;
 }> {
   const launchFailed = views.launchReadinessView.status === "failed";
-  // The game's own fate is the exit code the Guardian reported, not the launch attempt's
-  // terminality: an attempt the player ended by quitting the game is over too, but the game did
-  // not fail. `0` is the OS's normal-termination code, so it reads as the ending it is and keeps
-  // the `crashed` word for the code that really is a crash. With no reported exit there is no
-  // code to read, and a launch that failed for its own reasons keeps the word it always had.
-  const endedCleanly = launchFailed && views.launchReadinessView.playerHostExitCode === 0;
-  const instanceStatus: GameBrowserStateV1["game"]["instance"]["status"] = launchFailed
-    ? endedCleanly
-      ? "stopped"
-      : "crashed"
-    : projectInstanceStatus(views.lifecycleView.playerHost);
+  // The attempt's ending, as the ONE fact the readiness view publishes. A death is a failure of
+  // the game (crashed, or the OS's normal-termination 0 read as the ending it is); the player's
+  // own endgame is not a failure of anything - it is the ending they asked for - so it publishes
+  // `stopped` with no exit code and an outcome that says the operation succeeded.
+  const endedByEndgame = views.launchReadinessView.status === "ended";
+  const endedCleanly = endedByEndgame || (launchFailed && views.launchReadinessView.playerHostExitCode === 0);
+  const instanceStatus: GameBrowserStateV1["game"]["instance"]["status"] = endedByEndgame
+    ? "stopped"
+    : launchFailed
+      ? endedCleanly
+        ? "stopped"
+        : "crashed"
+      : projectInstanceStatus(views.lifecycleView.playerHost);
   return Object.freeze({
     instance: Object.freeze({
       fact: "instance" as const,
@@ -170,22 +172,27 @@ function projectGameFacts(views: GameBrowserViews): Readonly<{
           // the projection naming a game it has just said it could not see.
           gameTitle: instanceStatus === "none" || instanceStatus === "unread" ? null : "Stardew Valley",
           generation: views.launchReadinessView.generation,
-          // Published only when the Guardian actually reported an exit for this
-          // lifecycle's game: absent means "this Host observed no exit", which is a
-          // different claim from an exit code of 0 and must not be defaulted.
+          // Published only when the Guardian actually reported an exit for this lifecycle's
+          // game: absent means "this Host observed no exit", which is a different claim from an
+          // exit code of 0 and must not be defaulted. An endgame publishes none, because the
+          // ending it names is the player's own operation rather than a process that ended by
+          // itself.
           ...(views.launchReadinessView.playerHostExitCode === null
             ? {}
             : { playerHostExitCode: views.launchReadinessView.playerHostExitCode }),
         }),
         compatibility: Object.freeze(projectCompatibility(views.lifecycleView)),
-        // The coordinator's launch terminality is the only honest source of a
-        // failed Game outcome this provider can attest: it is set once the owned
-        // Player Host launch or attestation correlation failed and the owner was
-        // quarantined. The browser refreshes recover this fact from the root
-        // state instead of trusting volatile client memory. A game the player
-        // ended themselves is terminal the same way but is not a failed outcome,
-        // so it publishes `none` rather than borrowing the crash's word.
-        latestOutcome: launchFailed && !endedCleanly ? ("failed" as const) : ("none" as const),
+        // The coordinator's own account of how this attempt ended is the only honest source of a
+        // Game outcome this provider can attest: `failed` once the owned Player Host launch or
+        // attestation correlation failed and the owner was quarantined, and `succeeded` once the
+        // player's explicit endgame settled the attempt - the operation did what it said. A game
+        // the player ended themselves is terminal the same way but is not a failed outcome, so it
+        // never borrows the crash's word.
+        latestOutcome: endedByEndgame
+          ? ("succeeded" as const)
+          : launchFailed && !endedCleanly
+            ? ("failed" as const)
+            : ("none" as const),
       }),
     }),
     attachment: Object.freeze({

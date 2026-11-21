@@ -340,9 +340,29 @@ export type StardewPlayerHostRoleExitReader = Readonly<{
  * (`failed`) and the same instance word (`crashed`); only the code distinguishes "it
  * never started" from "it ended", and this is the one place the browser reads it.
  */
+/**
+ * How the attempt this lifecycle owns ended, once an ending is known.
+ *
+ * Two endings are knowledge and they are not the same story: the Guardian reporting the game
+ * process gone (a death, and the OS's own code for it) and the player's explicit endgame (the
+ * ending they chose). ONE value carries whichever came last, so "this attempt ended" has one
+ * spelling and the projection derives only the newest ending - a player who ends a game that
+ * had already crashed must not be told, on the screen, that their deliberate action crashed it.
+ * The observed exit itself is not lost: `playerHostExit` keeps the record this lifecycle's
+ * launch and cabin reads answer with, and the durable attempt record keeps the ending it took.
+ */
+type StardewAttemptEnding = Readonly<{ kind: "endgame" }> | Readonly<{ kind: "player_host_exit"; exitCode: number }>;
+
+/** One result of the last attempt: ended, still launcher-able, or nothing yet. */
 export type StardewGameSurfaceLaunchReadinessView = Readonly<{
   generation: number;
-  status: "none" | "ready" | "failed";
+  /**
+   * `ended` is the ending the player performed, and it is a distinct word from `failed`: a
+   * death is a failure of the game, an endgame is the ending the player asked for. A launch or
+   * an attestation whose outcome nobody knows stays `failed` with no code (`launch_quarantined`)
+   * and never becomes `ended`.
+   */
+  status: "none" | "ready" | "failed" | "ended";
   playerHostExitCode: number | null;
 }>;
 
@@ -1414,19 +1434,21 @@ function createCoordinator(
    */
   let playerHostExit: StardewPlayerHostExitRecord | null = null;
   /**
-   * The ending an attempt that has been SETTLED left behind, kept as the fact the Game
-   * surface publishes about its game until a new attempt takes the instance slot.
+   * The ending this lifecycle publishes when no new attempt has taken the instance slot.
    *
    * It is deliberately separate from `playerHostExit`. That one is the LIVE attempt's own
-   * ending and it is what the launch, the cabin read and the attestation answer with, so
-   * it must be empty again the moment the attempt is handed back - otherwise the next
-   * attempt would be refused by the last one's exit forever. This one is history: while
-   * no new attempt is staged the player's game really is still the one that ended, and the
-   * surface must keep saying so rather than claim a game it has not started. It is
-   * cleared at the one point a new attempt owns the instance slot (`staged`), which is
-   * also the point its generation is published.
+   * ending and it is what the launch, the cabin read and the attestation answer with, so it
+   * must be empty again the moment the attempt is handed back - otherwise the next attempt
+   * would be refused by the last one's exit forever. This one is what the surface publishes:
+   * while no new attempt is staged the player's game is the one that ended, and the surface
+   * must keep saying so rather than claim a game it has not started.
+   *
+   * BOTH ends an attempt can get write it - a settle after the Guardian's reported exit, and a
+   * successful explicit endgame - because it is the fact "this attempt ended", and the
+   * projection needs exactly one of those. It is cleared at the one point a new attempt owns
+   * the instance slot (`staged`), which is also the point its generation is published.
    */
-  let endedAttemptExit: StardewPlayerHostExitRecord | null = null;
+  let attemptEnding: StardewAttemptEnding | null = null;
   /**
    * Reads the Guardian's exit report and latches it. Returns the latched record, or
    * null while the transport whose process this is reported none.
@@ -1669,12 +1691,24 @@ function createCoordinator(
   });
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
     readLaunchReadinessView(): StardewGameSurfaceLaunchReadinessView {
-      // The game this surface is about: the live attempt's own ending while it has one,
-      // otherwise the ending the attempt that was handed back left behind. Both are the
-      // SAME exit code by construction - the settle only ever moves the record - so the
-      // player never reads a different game than the one that ended.
-      const exit = recordPlayerHostExit() ?? endedAttemptExit;
-      if (exit !== null) return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: exit.exitCode });
+      // The ending this surface publishes, from ONE fact: whichever ending the attempt got.
+      // The live attempt's own exit is the first sighting and latches into `attemptEnding` here,
+      // so a death is named the instant the Guardian reports it and an endgame that follows it
+      // supersedes it rather than being outranked by it.
+      const ending =
+        attemptEnding ??
+        (recordPlayerHostExit() === null
+          ? null
+          : Object.freeze({ kind: "player_host_exit" as const, exitCode: playerHostExit!.exitCode }));
+      if (ending !== null)
+        return ending.kind === "endgame"
+          ? // The player's own authenticated ending: no exit code belongs to it, and keeping the
+            // crash's code here would attach a crash story to a deliberate action (#506).
+            Object.freeze({ generation: 0, status: "ended", playerHostExitCode: null })
+          : Object.freeze({ generation: 0, status: "failed", playerHostExitCode: ending.exitCode });
+      // NOT an ending: a launch or an attestation whose outcome nobody knows. It is the one
+      // terminal that never becomes `ended` or `failed`-with-a-code, and no endgame can reach it,
+      // because an endgame requires the owner an unknown outcome never gives back.
       if (lifecycleState === "launch_quarantined")
         return Object.freeze({ generation: 0, status: "failed", playerHostExitCode: null });
       if (exactOwner !== undefined && lifecycleState === "staged") {
@@ -1831,7 +1865,7 @@ function createCoordinator(
       // A new attempt owns the instance slot from here - `reserveAndStageOwnedPlayerHost`
       // returned only after it reached `staged` - so the generation it publishes is its own
       // and the ending the last attempt left behind stops being this surface's game.
-      endedAttemptExit = null;
+      attemptEnding = null;
       publishGameFact("instance");
       return snapshot();
     } catch (error) {
@@ -2850,6 +2884,13 @@ function createCoordinator(
         await containedRuntimeTeardown.settle(owner);
         endgameSettled = true;
         actionAuthorityStatus = "unavailable";
+        // The ending the player performed is the LATER fact and it supersedes the exit it
+        // followed: from here the surface publishes an ending, not a crash, and publishes it
+        // now rather than waiting for the next state read to notice. The observed exit itself
+        // is kept in `playerHostExit`, which is the record the launch and cabin refusals still
+        // answer with, and the durable attempt record carries the containment this settle wrote.
+        attemptEnding = Object.freeze({ kind: "endgame" as const });
+        publishGameFact("instance");
         return Object.freeze({ apiVersion: 1 as const, status: "gameended" as const });
       })();
       gameEndgames.set(
@@ -3021,7 +3062,8 @@ function createCoordinator(
       exactOwner = undefined;
       ownerQuarantined = false;
       launchPromise = undefined;
-      if (playerHostExit !== null) endedAttemptExit = playerHostExit;
+      if (playerHostExit !== null)
+        attemptEnding = Object.freeze({ kind: "player_host_exit" as const, exitCode: playerHostExit.exitCode });
       playerHostExit = null;
       playerModCount = 0;
       aiClientProfileMaterialized = false;

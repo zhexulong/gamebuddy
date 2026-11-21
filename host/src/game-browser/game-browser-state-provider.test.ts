@@ -189,6 +189,28 @@ test("a normal exit reads as an ending and only a non-zero one reads as a crash"
   assert.deepEqual(instanceKeys.sort(), ["playerHostExitCode", "status"]);
 });
 
+test("an explicit endgame is the ending, and it publishes no crash and no exit code", async () => {
+  // The player pressed the product's own ending on a game that had already died. The death is a
+  // fact the Host recorded; the ending the surface publishes is the one the player performed
+  // (#506), so the instance reads `stopped` with no exit code and the outcome says the operation
+  // that ended it succeeded - never the crash's words.
+  const state = await createGameBrowserStateProvider(
+    profile(),
+    lifecycle(notStartedView()),
+    attachment(),
+    launchReadiness(Object.freeze({ generation: 0, status: "ended", playerHostExitCode: null })),
+  ).readState(context);
+
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true, "the projection stays valid");
+  assert.equal(state.game.instance.status, "stopped");
+  assert.equal(
+    Object.hasOwn(state.game.instance, "playerHostExitCode"),
+    false,
+    "an endgame has no exit code to publish",
+  );
+  assert.equal(state.game.latestOutcome, "succeeded");
+});
+
 test("read-only provider accepts a reader-only fresh lifecycle and projects only unchecked/none", async () => {
   const reader = lifecycle(notStartedView());
   assert.deepEqual(Object.keys(reader), ["readRoleLifecycleView"]);
