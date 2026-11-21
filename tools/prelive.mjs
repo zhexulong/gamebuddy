@@ -303,6 +303,13 @@ export const L0_GATES = Object.freeze([
   // `examined 6 · armed 3 · exempt 3` in 0.2 s; zero population is blocked, not green, and an exemption that matches no site
   // is `exemption_expired` rather than a permanent way through.
   "tools/check-armed-destructive-actions.mjs",
+  // One declaration for the Mod bundle: the project's own outputs (`<AssemblyName>`, each `<ProjectReference>`'s
+  // assembly, the `<None Update>` copies and the dependency file) cross-checked against
+  // `integrations/stardew/bundle.manifest.json`, which is what the Host deploys. Measured 2026-11-21: `declarations
+  // examined 4 · manifest entries 4 · built outputs examined 2 · findings 0`, 60 ms, no install, no build and no game -
+  // a renamed output that only this gate compares otherwise surfaces as a deployed Mod SMAPI will not load, at the end
+  // of a 150 s launch that names nothing.
+  "tools/check-stardew-bundle-manifest.mjs",
 ]);
 
 /**
