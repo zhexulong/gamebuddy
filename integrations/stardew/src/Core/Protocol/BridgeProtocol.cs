@@ -151,7 +151,7 @@ public static class BridgeProtocol
                 value.ExecutionBinding.NodeAttempt, value.ExecutionBinding.RequestId, value.ExecutionBinding.IdempotencyKey, value.ExecutionBinding.ExecutionId));
 
     private static BodyNodeAdmissionCanonicalValueWire ProjectAdmissionCanonical(BodyProgramCanonicalValue value) =>
-        new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.Boolean => "boolean", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.DestinationSelector => "destination_selector", _ => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue,
+        new(value.Kind switch { BodyProgramArgumentKind.Integer => "integer", BodyProgramArgumentKind.Boolean => "boolean", BodyProgramArgumentKind.String => "string", BodyProgramArgumentKind.DestinationSelector => "destination_selector", BodyProgramArgumentKind.DestinationArrival => throw new ArgumentOutOfRangeException(nameof(value)) }, value.CanonicalValue,
             value.Destination is null ? null : new(value.Destination.Kind, value.Destination.Label, value.Destination.Ref));
 
     public static bool TryDeserializeBodyNodeAdmissionChallenge(string json, out BridgeEnvelope<NodeAdmissionChallenge>? envelope, out string reasonCode) =>
@@ -1168,7 +1168,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         BodyProgramSubmitCode.Conflict => "conflict",
         BodyProgramSubmitCode.PersistenceFailure => "persistence_failure",
         BodyProgramSubmitCode.Quarantined => "quarantined",
-        _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown Body Program submit code."),
     };
 
     private static string ToWireValue(this BodyProgramQueryCode code) => code switch
@@ -1176,7 +1175,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         BodyProgramQueryCode.Found => "found",
         BodyProgramQueryCode.NotFound => "not_found",
         BodyProgramQueryCode.InvalidInput => "invalid_input",
-        _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown Body Program query code."),
     };
 
     private static bool IsBodyProgramSubmitCode(JsonElement value) => value.ValueKind == JsonValueKind.String && IsBodyProgramSubmitCode(value.GetString());
@@ -1195,7 +1193,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         BodyProgramState.Cancelled => "cancelled",
         BodyProgramState.RecoveryRequired => "recovery_required",
         BodyProgramState.Quarantined => "quarantined",
-        _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown Body Program state."),
     };
 
     private static string ToWireValue(this BodyProgramNodeState state) => state switch
@@ -1213,7 +1210,6 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         BodyProgramNodeState.SkippedDependency => "skipped_dependency",
         BodyProgramNodeState.SkippedProgramAbandoned => "skipped_program_abandoned",
         BodyProgramNodeState.Abandoned => "abandoned",
-        _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown Body Program node state."),
     };
 
     public static BridgeBodyProgramSubmitResult ProjectBodyProgramSubmitResult(BodyProgramSubmitResult result) =>

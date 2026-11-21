@@ -445,7 +445,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         ActorDispositionKind.Modal => LocalDispositionKind.Modal,
         ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
         ActorDispositionKind.Transient => LocalDispositionKind.Transient,
-        _ => LocalDispositionKind.Idle,
+        ActorDispositionKind.Idle => LocalDispositionKind.Idle,
     };
 
     internal const string BodyOwned = "body_owned";
