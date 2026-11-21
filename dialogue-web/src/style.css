@@ -1059,7 +1059,7 @@
     font-weight: 500;
     color: var(--text-secondary);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition:
@@ -1071,7 +1071,7 @@
   .regenerate-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .regenerate-btn:disabled {
@@ -1094,7 +1094,7 @@
     font-weight: 500;
     color: var(--text-secondary);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     cursor: pointer;
   }
@@ -1102,7 +1102,7 @@
   .act-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .act-btn:disabled {
@@ -1175,7 +1175,7 @@
   .swipe-remove-confirm-no {
     color: var(--text-secondary);
     background-color: transparent;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
   }
 
   /* The branch's answer is NOT painted with `--danger`: nothing is cut away, the conversation the player
@@ -1240,7 +1240,7 @@
     white-space: nowrap;
     color: var(--text-secondary);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     cursor: pointer;
   }
@@ -1251,7 +1251,7 @@
   .swipe-remove-btn:hover:not(:disabled) {
     color: var(--text-primary);
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .edit-btn:disabled,
@@ -1354,7 +1354,7 @@
   .edit-cancel-btn {
     color: var(--text-secondary);
     background-color: transparent;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
   }
 
   .edit-save-btn:hover:not(:disabled),
@@ -1566,7 +1566,7 @@
     align-items: flex-end;
     gap: 8px;
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-md);
     padding: 6px 8px 6px 12px;
     transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
@@ -2170,7 +2170,7 @@
   .form-select {
     width: 100%;
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     color: var(--text-primary);
     font-family: inherit;
@@ -2238,7 +2238,7 @@
     padding: 0 12px;
     border-radius: var(--radius-sm);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     color: var(--text-primary);
     font-family: inherit;
     font-size: 13px;
@@ -3201,7 +3201,7 @@
     font-weight: 500;
     color: var(--text-primary);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition:
@@ -3212,7 +3212,7 @@
 
   .game-action:hover:not(:disabled) {
     background-color: var(--palette-gray-700);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   /* The same disabled paint `.small-button:disabled` states, for the same reason: a game action that
@@ -3248,7 +3248,7 @@
     font-weight: 500;
     color: var(--text-primary);
     background-color: var(--surface-raised);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition:
@@ -3259,7 +3259,7 @@
 
   .game-secondary-action:hover:not(:disabled) {
     background-color: var(--palette-gray-700);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .game-secondary-action:disabled {
@@ -3363,7 +3363,7 @@
     font-size: 14px;
     color: var(--text-primary);
     background-color: var(--surface-panel);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     outline: none;
     transition: border-color var(--motion-duration-fast) var(--motion-ease-out);
@@ -3736,7 +3736,7 @@
   /* Composer: the band is panel, the field itself a raised card. */
   .composer-container {
     background-color: var(--surface-card);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   /* Forms: one input treatment on the card tone, gold focus, no layout shift on
@@ -3793,7 +3793,7 @@
   }
 
   .form-select:hover {
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   /* The composer's own field is deliberately not in this list: the control the
@@ -4018,7 +4018,7 @@
     font-family: inherit;
     font-size: 14px;
     color: var(--text-primary);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: var(--surface-card);
     outline: none;
@@ -4065,7 +4065,7 @@
     align-items: center;
     min-height: var(--touch-target-min);
     padding: 0 12px;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: var(--surface-card);
     color: var(--palette-gold-base);
@@ -4081,7 +4081,7 @@
 
   .surface-model-chip:hover:not(:disabled) {
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .surface-model-chip:disabled {
@@ -4095,7 +4095,7 @@
     align-items: center;
     min-height: var(--touch-target-min);
     padding: 0 12px;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: var(--surface-card);
     color: var(--palette-gold-base);
@@ -4111,7 +4111,7 @@
 
   .model-profile-chip:hover:not(:disabled) {
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .model-profile-chip:disabled {
@@ -4419,7 +4419,7 @@
     min-width: 0;
     min-height: var(--touch-target-min);
     padding: 4px 6px;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: transparent;
     color: var(--text-secondary);
@@ -4433,7 +4433,7 @@
 
   .settings-tab[aria-selected="true"] {
     background-color: var(--surface-raised);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
     color: var(--text-primary);
     font-weight: 600;
   }
@@ -5000,7 +5000,7 @@
     align-items: center;
     min-height: var(--touch-target-min);
     padding: 0 var(--space-3);
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: var(--surface-card);
     color: var(--text-secondary);
@@ -5016,7 +5016,7 @@
 
   .memory-filter-chip:hover:not([aria-pressed="true"]) {
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
     color: var(--text-primary);
   }
 
@@ -7730,7 +7730,7 @@
     min-width: var(--touch-target-min);
     min-height: var(--touch-target-min);
     padding: 0;
-    border: 1px solid var(--border-control));
+    border: 1px solid var(--border-control);
     border-radius: var(--radius-sm);
     background-color: var(--surface-raised);
     color: var(--text-secondary);
@@ -7741,7 +7741,7 @@
   .more-btn[aria-expanded="true"] {
     color: var(--text-primary);
     background-color: var(--surface-hover);
-    border-color: var(--border-control));
+    border-color: var(--border-control);
   }
 
   .more-btn:disabled {
