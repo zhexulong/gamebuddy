@@ -949,9 +949,10 @@ internal sealed class HostFarmhandProvisioner
     /// </summary>
     private bool WithdrawAdvertisementOrQuarantine()
     {
-        if (!this.RemoveAdvertisement())
+        bool withdrawn = this.RemoveAdvertisement();
+        if (!withdrawn)
             this.EnterQuarantine("publication_cleanup_failed");
-        return !this.quarantined;
+        return withdrawn;
     }
 
     private void RemovePublishedFiles()
