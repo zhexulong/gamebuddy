@@ -289,7 +289,11 @@ test("daily-play names the account member the turn reader reads, and names the l
   // member. And this step must not be declared as something this kit produces: the words enter through the
   // engine's own chat box, and the lane that speaks through that admission is the game lane.
   const play = CHAIN_STEPS.filter((entry) => entry.id === "daily-play");
-  assert.equal(play.length, 1, "the daily chain has exactly one step for the player speaking to her");
+  assert.deepEqual(
+    play.map((entry) => entry.id),
+    ["daily-play"],
+    "the daily chain has exactly one step for the player speaking to her, named here so a rename reads as the drift it is rather than as a count that still adds up",
+  );
   const [entry] = play;
   assert.equal(
     entry.driver,
