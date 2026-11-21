@@ -191,6 +191,16 @@ const BUDGET = Object.freeze({
    * How long the account may take to land after the STOP settled the turn it reports: this is a write's lag
    * behind a settlement the product has already acknowledged, not a turn's budget. See step 7.
    */
+  /**
+   * How long the attached session runs before the STOP, so her client's first observations reach the Host and her
+   * turn opens. The STOP settles that turn and step 7 reads the account; a run whose turn settles inside the
+   * window leaves sooner. See step 4b.
+   */
+  attachedWindowMs: 90_000,
+  /**
+   * How long the account may take to land after the STOP settled the turn it reports: this is a write's lag
+   * behind a settlement the product has already acknowledged, not a turn's budget. See step 7.
+   */
   accountGraceMs: 20_000,
   stopMs: 120_000,
 });
