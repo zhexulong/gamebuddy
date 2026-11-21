@@ -195,8 +195,46 @@ const WATERED = (x, y, location = "Farm") =>
     },
   });
 
-/** The fixtures above, by the action each one mints: the population the admission check below walks. */
-const TILE_FIXTURES = Object.freeze({ till_soil: TILLED, plant_seed: PLANTED, water_crop: WATERED });
+/**
+ * `round87b`'s OWN WIRE TEXT for a tile that already carried HoeDirt: the tile, its soil and the warrant, and no map.
+ *
+ * This is the shape that made a day of tilling read as none. The producer answered thirty of these on day 1
+ * (`soil_already_tilled`, `settled_by=engine_flag:hoedirt=present`), the Host admitted every one, and the criterion
+ * below could not place one on a map: `62,18` is a tile on the Farm and on the Mountain.
+ */
+const round87bSettlement = (x, y) =>
+  `target=${String(x)},${String(y)};before=HoeDirt;settled_by=engine_flag:hoedirt=present`;
+
+/**
+ * The same settlement with the `location` the producer now writes, in the field every other tile-bearing `till_soil`
+ * receipt carries.
+ *
+ * The keys are the SETTLEMENT's own - its contract names `location`, `target`, `before` and `settled_by` - so they are
+ * not derived here from `declaredEvidenceKeys("till_soil")`, whose list is the eighteen keys of the swing.
+ */
+const TILLED_ALREADY = (x, y, location = "Farm") =>
+  receipt("till_soil", {
+    reasonCode: "soil_already_tilled",
+    evidence: { detail: `location=${location};${round87bSettlement(x, y)}` },
+  });
+
+/** `round87b`'s settlement verbatim, kept as the shape a tile without a map is refused in. */
+const TILLED_ALREADY_WITHOUT_MAP = (x, y) =>
+  receipt("till_soil", { reasonCode: "soil_already_tilled", evidence: { detail: round87bSettlement(x, y) } });
+
+/**
+ * The fixtures above, as `[actionId, build]` pairs: the population the admission check below walks.
+ *
+ * `till_soil` appears twice because it has TWO terminals that carry a tile - the swing (`before=none;after=HoeDirt`)
+ * and the settlement (`before=HoeDirt;settled_by=...`). A population keyed by action would admit the swing while the
+ * other shape went unread, which is how thirty settled tiles reached a criterion that could not place them.
+ */
+const TILE_FIXTURES = Object.freeze([
+  ["till_soil", TILLED],
+  ["till_soil", TILLED_ALREADY],
+  ["plant_seed", PLANTED],
+  ["water_crop", WATERED],
+]);
 const CUT_WEEDS = receipt("cut_weeds", {
   reasonCode: "weeds_cut",
   evidence: {
@@ -222,7 +260,7 @@ test("every tile-bearing fixture is a receipt its own contract admits, and one k
   // "the receipts proved nothing" and the red would name the criterion rather than the fixture. `5a068fa9` is exactly
   // that incident - eight tests went red for four days with the contract's change four files away.
   const findings = [];
-  for (const [actionId, build] of Object.entries(TILE_FIXTURES)) {
+  for (const [actionId, build] of TILE_FIXTURES) {
     const admitted = purposeReceipts([build(12, 4)]);
     if (admitted.refused.length > 0)
       findings.push(
@@ -1185,6 +1223,98 @@ test("a patch day whose receipts carry no tile is our gap, not her failure", () 
 });
 
 /**
+ * `round87b`'s day 1, tile for tile: THIRTY `soil_already_tilled` receipts over these FIFTEEN tiles.
+ *
+ * The run dispatched each tile twice - the log holds `62,18 x2` through `79,18 x2`, all on `y=18` between x 62 and 79 -
+ * so the receipt count and the tile count are different numbers and the criterion reports the TILES. Quoted rather than
+ * read at test time: the run's log is a 7 MB artifact outside the tree, and a gate that cannot run without it is a gate
+ * nobody runs.
+ */
+const ROUND87B_SETTLED_TILES = Object.freeze([
+  [62, 18],
+  [63, 18],
+  [64, 18],
+  [65, 18],
+  [66, 18],
+  [67, 18],
+  [68, 18],
+  [70, 18],
+  [72, 18],
+  [73, 18],
+  [74, 18],
+  [75, 18],
+  [76, 18],
+  [77, 18],
+  [79, 18],
+]);
+
+/**
+ * `a_settled_tile_counts_as_tilled_only_with_the_map_it_is_on:plant_market_strip`.
+ *
+ * <p>
+ * THE DEFECT. Measured 2026-11-21 (`round87b`, day 1, `plant_market_strip`): the day's verdict was
+ * `0/36 tiles tilled and sown (sown 27, tilled 0)` for a day whose Mod answered THIRTY `soil_already_tilled`
+ * settlements, every one `state: succeeded` and every one admitted by the Host. The receipt named
+ * `target=62,18;before=HoeDirt;settled_by=engine_flag:hoedirt=present` - the state the request asked for, and no map -
+ * and `patchTileFacts` requires a `location` for EVERY tile family (a tile coordinate without a map is not a tile:
+ * `62,18` exists on the Farm and on the Mountain). So the producer was the odd one out, not the criterion: the swing's
+ * own receipt carries `location`, and this was the one `till_soil` shape that did not.
+ * </p>
+ * <p>
+ * THE FALSIFIER is the day itself: the same fifteen tiles, dispatched twice each in the wire text this defect was
+ * measured in, must read `tilled 0` again - and the reason is named, because the row now REFUSES a settlement that
+ * does not say where the tile is rather than letting a locationless coordinate be counted on a guessed map.
+ * </p>
+ */
+test("a settled tile counts as tilled only with the map it is on", () => {
+  const day = ROUND87B_SETTLED_TILES.flatMap(([x, y]) => [TILLED_ALREADY(x, y), TILLED_ALREADY(x, y), PLANTED(x, y)]);
+  assert.deepEqual(
+    day.filter((entry) => entry.reasonCode === "soil_already_tilled"),
+    ROUND87B_SETTLED_TILES.flatMap(([x, y]) => [TILLED_ALREADY(x, y), TILLED_ALREADY(x, y)]),
+    "`round87b` dispatched each of these fifteen tiles twice, so the fixture is the run only if its tilled receipts are exactly the doubled tiles",
+  );
+
+  const judged = judgeTaskPurpose("plant_market_strip", day);
+  assert.deepEqual(
+    judged.refusedReceipts,
+    [],
+    "the settled tile is a success the Host reads, so nothing here is refused",
+  );
+  assert.equal(
+    judged.patchTilledTiles,
+    ROUND87B_SETTLED_TILES.length,
+    "a settlement that names its tile is that tile tilled; the count reports TILES, so the two dispatches of one tile " +
+      "are one tilled tile and not two",
+  );
+  assert.equal(judged.patchSownTiles, ROUND87B_SETTLED_TILES.length);
+  assert.equal(
+    judged.patchTiles,
+    ROUND87B_SETTLED_TILES.length,
+    "a settled tile that was sown is both halves of the patch",
+  );
+
+  // THE FALSIFIER, on the exact wire text `round87b` published. Reverting either half - the producer's `location` or the
+  // contract's requirement for it - must take this count back to the `tilled 0` the day actually reported.
+  const withoutMap = ROUND87B_SETTLED_TILES.flatMap(([x, y]) => [
+    TILLED_ALREADY_WITHOUT_MAP(x, y),
+    TILLED_ALREADY_WITHOUT_MAP(x, y),
+    PLANTED(x, y),
+  ]);
+  assert.equal(
+    purposeReceipts(withoutMap).refused.length,
+    30,
+    "a settlement that names the tile and not the map it is on is not the settled tile, so the Host refuses it whole",
+  );
+  const blind = judgeTaskPurpose("plant_market_strip", withoutMap);
+  assert.equal(blind.patchTilledTiles, 0, "which is `round87b`'s own reading: `tilled 0` for a day that tilled");
+  assert.equal(
+    blind.state,
+    "unproven",
+    "and the day cannot be called finished either: the tiles that would decide it are in hand",
+  );
+});
+
+/**
  * `a_task_that_asks_for_n_tiles_reports_how_many_it_got:<task>`
  *
  * THE DEFECT. Measured 2026-11-20 (`round81`, `clear_and_plant_long_patch`, "three tiles wide, twenty long"): the
@@ -1657,8 +1787,7 @@ test("round77 day 2: a refusal of an action the criterion does not read is not `
     ["dismiss_modal"],
   );
   assert.deepEqual(
-    purposeReceipts([ROUND77_MOVE_ARRIVED_ADJACENT])
-      .refused.map((entry) => entry.actionId),
+    purposeReceipts([ROUND77_MOVE_ARRIVED_ADJACENT]).refused.map((entry) => entry.actionId),
     [],
     "an adjacent arrival is an arrival since 6b1a6f9f - if this reds, the contract narrowed and round77's fixture is a refusal again",
   );
