@@ -281,7 +281,10 @@ async function activateAndLaunch({ page, say, record, guardian, problems, budget
       record,
       problems,
       waitForState,
-      budgets: BUDGET,
+      budgets: {
+        discoveryMs: budget.discoveryMs ?? BUDGET.discoveryMs,
+        registrationMs: budget.registrationMs ?? BUDGET.registrationMs,
+      },
       state,
     });
     if (registration.kind === "not_measured")
