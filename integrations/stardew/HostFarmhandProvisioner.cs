@@ -258,6 +258,7 @@ internal sealed class HostFarmhandProvisioner
             return;
         }
 
+        FarmhandWorldIdentity identity = this.LiveWorldIdentity();
         var advertisement = new FarmhandSessionAdvertisement
         {
             SchemaVersion = FarmhandProvisioningProtocol.Version,
@@ -268,9 +269,9 @@ internal sealed class HostFarmhandProvisioner
             SmapiVersion = Constants.ApiVersion.ToString(),
             MultiplayerProtocol = Multiplayer.protocolVersion,
             Endpoint = endpoint,
-            SaveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            WorldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            HostPlayerId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            SaveId = identity.SaveId,
+            WorldId = identity.WorldId,
+            HostPlayerId = identity.WorldId,
             RuntimeRole = "player_host",
             LaunchGeneration = this.config.LaunchGeneration,
             PublishedAtUnixMs = now,
@@ -311,6 +312,7 @@ internal sealed class HostFarmhandProvisioner
 
     private IReadOnlyList<FarmhandCabinFact> ReadCabins(FarmhandBindingStore bindings)
     {
+        FarmhandWorldIdentity identity = this.LiveWorldIdentity();
         var cabins = new List<FarmhandCabinFact>();
         Utility.ForEachBuilding(building =>
         {
@@ -319,7 +321,7 @@ internal sealed class HostFarmhandProvisioner
 
             Farmer? owner = cabin.owner;
             string cabinId = cabin.NameOrUniqueName;
-            FarmhandBinding? binding = bindings.Bindings.FirstOrDefault(candidate => candidate.SaveId == Game1.uniqueIDForThisGame.ToString() && candidate.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString() && candidate.CabinId == cabinId);
+            FarmhandBinding? binding = bindings.Bindings.FirstOrDefault(candidate => candidate.SaveId == identity.SaveId && candidate.WorldId == identity.WorldId && candidate.CabinId == cabinId);
             bool busy = owner is not null && Game1.getOnlineFarmers().Any(farmer => farmer.UniqueMultiplayerID == owner.UniqueMultiplayerID);
             cabins.Add(new FarmhandCabinFact
             {
@@ -409,9 +411,12 @@ internal sealed class HostFarmhandProvisioner
     private FarmhandProvisioningResult HandleRequest(FarmhandAttachmentRequest? request, long now, out string? manifestPath)
     {
         manifestPath = null;
-        if (request is null || !this.IsValidRequest(request, now))
-            return new("rejected", "invalid_or_unauthorized_request");
-        if (this.ReadBindings().ConsumedRequestIds.Contains(request.RequestId, StringComparer.Ordinal))
+        FarmhandRequestInput input = new(request, now, this.sessionNonce, this.config.SessionToken, this.LiveWorldIdentity());
+        string refusal = FarmhandRequestRefusal.For(input);
+        if (refusal.Length > 0)
+            return new("rejected", refusal);
+        FarmhandAttachmentRequest admitted = input.Request!;
+        if (this.ReadBindings().ConsumedRequestIds.Contains(admitted.RequestId, StringComparer.Ordinal))
             return new("rejected", "request_replayed");
         string hostState = this.GetHostState();
         if (hostState != "ready")
@@ -421,17 +426,15 @@ internal sealed class HostFarmhandProvisioner
                 ? new("rejected", "publication_cleanup_failed")
                 : new("rejected", hostState);
         }
-        if (!this.config.AuthorizedCompanionIds.Contains(request.CompanionId, StringComparer.Ordinal))
+        if (!this.config.AuthorizedCompanionIds.Contains(admitted.CompanionId, StringComparer.Ordinal))
             return new("rejected", "companion_profile_not_authorized");
 
         FarmhandBindingStore bindings = this.ReadBindings();
-        string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        FarmhandBinding? existingBinding = bindings.Bindings.FirstOrDefault(binding => binding.CompanionId == request.CompanionId && binding.SaveId == saveId && binding.WorldId == worldId);
-        FarmhandBinding? cabinBinding = bindings.Bindings.FirstOrDefault(binding => binding.CabinId == request.CabinId && binding.SaveId == saveId && binding.WorldId == worldId);
-        if (cabinBinding is not null && cabinBinding.CompanionId != request.CompanionId)
+        FarmhandBinding? existingBinding = bindings.Bindings.FirstOrDefault(binding => binding.CompanionId == admitted.CompanionId && binding.SaveId == input.Live.SaveId && binding.WorldId == input.Live.WorldId);
+        FarmhandBinding? cabinBinding = bindings.Bindings.FirstOrDefault(binding => binding.CabinId == admitted.CabinId && binding.SaveId == input.Live.SaveId && binding.WorldId == input.Live.WorldId);
+        if (cabinBinding is not null && cabinBinding.CompanionId != admitted.CompanionId)
             return new("rejected", "cabin_bound_to_other_companion");
-        Cabin? cabin = this.FindCabin(request.CabinId);
+        Cabin? cabin = this.FindCabin(admitted.CabinId);
         if (cabin is null)
             return new("rejected", "cabin_missing");
 
@@ -440,13 +443,13 @@ internal sealed class HostFarmhandProvisioner
 
         if (existingBinding is not null)
         {
-            if (existingBinding.CabinId != request.CabinId || (request.ExpectedFarmhandId.Length > 0 && request.ExpectedFarmhandId != existingBinding.FarmhandId.ToString()))
+            if (existingBinding.CabinId != admitted.CabinId || (admitted.ExpectedFarmhandId.Length > 0 && admitted.ExpectedFarmhandId != existingBinding.FarmhandId.ToString()))
                 return new("rejected", "binding_conflict");
             if (Game1.GetPlayer(existingBinding.FarmhandId, onlyOnline: false) is null || cabin.OwnerId != existingBinding.FarmhandId)
                 return new("rejected", "bound_farmhand_missing");
         }
 
-        TargetFarmhand target = this.PrepareTargetFarmhand(cabin, request.ExpectedFarmhandId);
+        TargetFarmhand target = this.PrepareTargetFarmhand(cabin, admitted.ExpectedFarmhandId);
         if (target.RefusalReason.Length > 0)
             return new("rejected", target.RefusalReason);
         Farmer farmhand = target.Farmhand!;
@@ -479,27 +482,27 @@ internal sealed class HostFarmhandProvisioner
 
         FarmhandBinding binding = existingBinding ?? new FarmhandBinding
         {
-            CompanionId = request.CompanionId,
+            CompanionId = admitted.CompanionId,
             FarmhandId = farmhand.UniqueMultiplayerID,
-            CabinId = request.CabinId,
-            SaveId = saveId,
-            WorldId = worldId,
+            CabinId = admitted.CabinId,
+            SaveId = input.Live.SaveId,
+            WorldId = input.Live.WorldId,
             BoundAtUnixMs = now,
         };
         // ENTRY IS THE IN-MEMORY RECORD'S DECISION. Every fact the manifest carries has just been read from this
         // world - the Farmhand the Cabin owns, its id, its profile, this save's identity - and a client can be
         // admitted as it right now. Whether the save ON DISK holds the binding is answered at the engine's next
         // `Saving`, which is that save's business and not this answer's.
-        FarmhandProvisioningResult result = this.IssueManifest(request, now, binding, out manifestPath);
+        FarmhandProvisioningResult result = this.IssueManifest(admitted, now, binding, out manifestPath);
         if (result.State != "ready")
             return result;
         // The companion is entering on this Farmhand, so it is no longer the leftover of a creation attempt: no later
         // failure, and no return to title, may delete an identity a player is playing as.
         this.pendingCreatedCabin = null;
         this.pendingCreatedFarmhandId = null;
-        this.OwedToTheNextSave.Add(new PendingSaveBinding(request, existingBinding is null ? binding : null));
+        this.OwedToTheNextSave.Add(new PendingSaveBinding(admitted, existingBinding is null ? binding : null));
         this.monitor.Log(
-            $"GameBuddy admitted companion profile '{request.CompanionId}' on Farmhand {farmhand.UniqueMultiplayerID}; its binding is owed to the engine's next save cycle.",
+            $"GameBuddy admitted companion profile '{admitted.CompanionId}' on Farmhand {farmhand.UniqueMultiplayerID}; its binding is owed to the engine's next save cycle.",
             LogLevel.Info);
         return result;
     }
@@ -588,23 +591,15 @@ internal sealed class HostFarmhandProvisioner
         return new("uncertain", "manifest_publication_failed", farmhandId);
     }
 
-    private bool IsValidRequest(FarmhandAttachmentRequest request, long now)
-    {
-        return request.SchemaVersion == FarmhandProvisioningProtocol.Version
-            && request.IntegrationId == FarmhandProvisioningProtocol.IntegrationId
-            && request.SessionNonce == this.sessionNonce
-            && FarmhandProvisioningProtocol.IsValidOpaque(request.SaveId)
-            && FarmhandProvisioningProtocol.IsValidOpaque(request.WorldId)
-            && FarmhandProvisioningProtocol.IsValidOpaque(request.CompanionId)
-            && FarmhandProvisioningProtocol.IsValidOpaque(request.CabinId)
-            && FarmhandProvisioningProtocol.IsValidOpaque(request.RequestId)
-            && (request.ExpectedFarmhandId.Length == 0 || FarmhandProvisioningProtocol.TryParseNativeId(request.ExpectedFarmhandId, out _))
-            && request.ConfirmedAtUnixMs <= now
-            && now - request.ConfirmedAtUnixMs <= 5 * 60_000
-            && FarmhandProvisioningProtocol.HasValidSignature(request, request.Signature, this.config.SessionToken)
-            && request.SaveId == Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            && request.WorldId == Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-    }
+    /// <summary>
+    /// This world's identity as a request must name it, read once per use: the same two fields
+    /// <see cref="PublishAdvertisement"/> publishes and <see cref="ReadCabins"/> looks bindings up by, so the
+    /// advertisement an attachment request is built from and the identity that request is validated against cannot
+    /// be two different moments or two different spellings.
+    /// </summary>
+    private FarmhandWorldIdentity LiveWorldIdentity() => new(
+        Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture));
 
     /// <summary>
     /// What a Cabin's Farmhand resolved to: the identity this request binds, or the reason there is none.

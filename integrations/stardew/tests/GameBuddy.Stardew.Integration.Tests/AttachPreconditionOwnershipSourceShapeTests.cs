@@ -61,7 +61,6 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
     internal static readonly IReadOnlyDictionary<string, Declaration> Declared =
         new Dictionary<string, Declaration>(StringComparer.Ordinal)
         {
-            ["invalid_or_unauthorized_request"] = new(Owner.Host, "HasValidSignature"),
             ["request_replayed"] = new(Owner.Host, "ConsumedRequestIds"),
             ["protocol_mismatch"] = new(Owner.Engine, "protocolVersion"),
             ["host_not_ready"] = new(Owner.Ours, "CompanionSessionHosting"),
@@ -106,8 +105,19 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
             ["reasonCode"] = "RefusePreparedFarmhand",
         };
 
+    /// <summary>
+    /// The answers whose code is a declared table rather than a literal at the answer site. The site names the table
+    /// (`new("rejected", refusal)`), so the population is the table's own rows - which is where the one code that
+    /// used to stand for fourteen predicates is now written.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> TableDerivedAnswers =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["refusal"] = "FarmhandRequestRefusal",
+        };
+
     /// <summary>Every (state, code) answer the given provisioning source can give, derived from that source.</summary>
-    internal static IReadOnlyList<(string State, string Code)> AnswersIn(string source)
+    internal static IReadOnlyList<(string State, string Code)> AnswersIn(string source, string refusalTableSource = "")
     {
         var answers = new List<(string State, string Code)>();
         foreach (Match match in Regex.Matches(source, @"new\(""(?<state>[a-z_]+)"",\s*""(?<code>[a-z_]+)"""))
@@ -129,20 +139,68 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         foreach (string producer in DerivedAnswerProducers.Values)
             foreach (Match match in Regex.Matches(source, Regex.Escape(producer) + @"\([^;()]*?""(?<code>[a-z_]+)""\s*\)"))
                 answers.Add(("rejected", match.Groups["code"].Value));
+        // Two more populations arrive through a table instead of a literal. `request_replayed` is written at its
+        // own site above; the request refusals are read from the table that owns them (see `RefusalsIn`).
+        foreach (Match match in Regex.Matches(source, @"new\(""rejected"",\s*(?<name>[A-Za-z_][\w]*)\s*\)"))
+            if (TableDerivedAnswers.ContainsKey(match.Groups["name"].Value))
+                foreach (string code in RefusalsIn(refusalTableSource).Select(row => row.Code))
+                    answers.Add(("rejected", code));
         return answers.Distinct().OrderBy(answer => answer.Code, StringComparer.Ordinal).ToArray();
     }
+
+    /// <summary>
+    /// Every refusal the request-refusal table declares, in the order it applies them: each row's name constant
+    /// resolved to its code (the code string is written once, at the constant), the owner the row names, and the
+    /// mechanism it names. This is where the vocabulary of a refused request is read from, so the gate cannot
+    /// carry its own copy of it.
+    /// </summary>
+    internal static IReadOnlyList<(string Code, Owner Owner, string CreatedBy)> RefusalsIn(string source)
+    {
+        var constants = Regex
+            .Matches(source, @"internal const string (?<name>[A-Za-z_]\w*) = ""(?<code>[a-z_]+)"";")
+            .ToDictionary(
+                match => match.Groups["name"].Value,
+                match => match.Groups["code"].Value,
+                StringComparer.Ordinal);
+        var rows = new List<(string Code, Owner Owner, string CreatedBy)>();
+        foreach (
+            Match row in Regex.Matches(
+                source,
+                @"new Predicate\((?<name>[A-Za-z_]\w*), FarmhandRequestRefusalOwner\.(?<owner>Host|Engine), ""(?<mechanism>[^""]+)"""))
+        {
+            string name = row.Groups["name"].Value;
+            if (!constants.TryGetValue(name, out string? code))
+                throw new InvalidOperationException($"refusal_row_names_an_unknown_constant:{name}");
+            rows.Add((code, Enum.Parse<Owner>(row.Groups["owner"].Value), row.Groups["mechanism"].Value));
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// The declaration the refusal table makes for itself, row by row. The gate reads it from the table instead of
+    /// re-typing a row per predicate here - which is what it did while one code stood for all of them.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, Declaration> DeclaredRefusals(string tableSource) =>
+        RefusalsIn(tableSource).ToDictionary(row => row.Code, row => new Declaration(row.Owner, row.CreatedBy), StringComparer.Ordinal);
 
     /// <summary>The rule, over any provisioning source, so a planted source drives the same comparison.</summary>
     internal static IReadOnlyList<string> FindingsFor(
         string source,
         IReadOnlyDictionary<string, Declaration> declared,
-        Func<string, bool> symbolExists)
+        Func<string, bool> symbolExists,
+        string refusalTableSource = "")
     {
         var findings = new List<string>();
-        var answers = AnswersIn(source);
+        var answers = AnswersIn(source, refusalTableSource);
         foreach (Match match in Regex.Matches(source, @"new\(""rejected"",\s*(?<expr>[A-Za-z_][\w\.]*)\s*[,)]"))
         {
             string expression = match.Groups["expr"].Value;
+            if (TableDerivedAnswers.TryGetValue(expression, out string? table))
+            {
+                if (refusalTableSource.Length == 0)
+                    findings.Add($"unparsed_answer:{expression} is answered from {table}, whose rows this reading did not supply");
+                continue;
+            }
             if (!DerivedAnswerProducers.TryGetValue(expression, out string? producer))
                 findings.Add($"unparsed_answer:{expression} carries a code this gate cannot read, so its precondition is unchecked");
             else if (TryBodyOf(source, producer) is null)
@@ -312,15 +370,17 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
     [Fact]
     public void EveryAttachPrecondition_IsCreatedByANamedOwner()
     {
-        var findings = FindingsFor(
-            ReadRepositoryFile("integrations", "stardew", "HostFarmhandProvisioner.cs"),
-            Declared,
-            ProductionSymbols());
-        var answers = AnswersIn(ReadRepositoryFile("integrations", "stardew", "HostFarmhandProvisioner.cs"));
-        int ours = answers.Count(answer => Declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Ours);
-        int engine = answers.Count(answer => Declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Engine);
-        int host = answers.Count(answer => Declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Host);
-        int player = answers.Count(answer => Declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Player);
+        string provisioner = ReadRepositoryFile("integrations", "stardew", "HostFarmhandProvisioner.cs");
+        string refusalTable = ReadRepositoryFile("integrations", "stardew", "FarmhandRequestRefusal.cs");
+        var declared = new Dictionary<string, Declaration>(Declared, StringComparer.Ordinal);
+        foreach ((string code, Declaration declaration) in DeclaredRefusals(refusalTable))
+            declared[code] = declaration;
+        var findings = FindingsFor(provisioner, declared, ProductionSymbols(), refusalTable);
+        var answers = AnswersIn(provisioner, refusalTable);
+        int ours = answers.Count(answer => declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Ours);
+        int engine = answers.Count(answer => declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Engine);
+        int host = answers.Count(answer => declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Host);
+        int player = answers.Count(answer => declared.TryGetValue(answer.Code, out Declaration row) && row.Owner == Owner.Player);
         int unexplained = findings.Count(finding => finding.StartsWith("unexplained_precondition:", StringComparison.Ordinal));
 
         this.output.WriteLine(
@@ -328,6 +388,37 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
             $"player-only {player} · unexplained {unexplained}");
         // Fail on zero: a reader that parsed nothing agrees with itself.
         answers.Count.Should().BeGreaterThan(0, "the provisioning surface answers something");
+        findings.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// The refusal vocabulary is declared by the table that produces it: every name resolves to a predicate row, no
+    /// two predicates answer the same name, and the mechanism a row names exists in the Mod's own production sources.
+    /// A name nobody can reach and a precondition nothing creates are the same failure this file exists to name - and
+    /// they are exactly what one code standing for fourteen predicates hid.
+    /// </summary>
+    [Fact]
+    public void EveryRequestRefusal_NamesItsOwnPrecondition()
+    {
+        string table = ReadRepositoryFile("integrations", "stardew", "FarmhandRequestRefusal.cs");
+        var rows = RefusalsIn(table);
+        var findings = new List<string>();
+        int named = Regex.Matches(table, @"internal const string [A-Za-z_]\w* = ""[a-z_]+"";").Count;
+        if (named != rows.Count)
+            findings.Add($"refusal_without_a_row: {named} name(s) declared and {rows.Count} predicate row(s)");
+        foreach (var duplicated in rows.GroupBy(row => row.Code).Where(group => group.Count() > 1))
+            findings.Add($"refusal_reused:{duplicated.Key} is answered by {duplicated.Count()} predicates");
+        var symbols = ProductionSymbols();
+        foreach ((string code, Owner owner, string createdBy) in rows)
+        {
+            if (createdBy.Trim().Length == 0)
+                findings.Add($"refusal_without_a_mechanism:{code} names no mechanism");
+            else if (owner != Owner.Player && !symbols(createdBy))
+                findings.Add($"refusal_mechanism_missing:{code} claims {owner} creates it via '{createdBy}', and no production source declares that");
+        }
+        this.output.WriteLine($"request refusals examined {rows.Count}: {string.Join(", ", rows.Select(row => row.Code))}");
+        // Fail on zero: a reader that parsed nothing agrees with itself.
+        rows.Count.Should().BeGreaterThan(0, "the provisioning surface refuses something");
         findings.Should().BeEmpty();
     }
 
@@ -380,6 +471,11 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         planted.Should().Contain(finding => finding.StartsWith("unexplained_precondition:binding_persist_pending", StringComparison.Ordinal));
         planted.Should().Contain(finding => finding.StartsWith("unparsed_answer:laterReason", StringComparison.Ordinal));
         planted.Should().Contain(finding => finding.StartsWith("stale_declaration:", StringComparison.Ordinal));
+        // The shape this all came from: one code standing for every predicate of a request. With the mechanism it
+        // claims present in production, nothing declares that code any more, and the gate has to name it rather than
+        // let a composite refusal pass as an explained precondition.
+        var composite = FindingsFor(ProvisionerBefore, Declared, _ => true);
+        composite.Should().Contain(finding => finding.StartsWith("unexplained_precondition:invalid_or_unauthorized_request", StringComparison.Ordinal));
 
         // The shared refusal: its code is a parameter, so the population must read the values its call sites
         // write. A code that only ever travels through the helper is a precondition the gate still has to see,
