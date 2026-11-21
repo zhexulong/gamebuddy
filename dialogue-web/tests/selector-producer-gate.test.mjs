@@ -453,14 +453,6 @@ export const ABSENCE_LEDGER = Object.freeze([
       "the deleted advanced block's rules are still in the sheet (`.surface-advanced-settings`, its `h4` and hover rules), so the class is still the product's own vocabulary; the force beside the guard is the surface's own text, which must not carry the English word that block printed",
     assertedAt: "tests/player-visible-defects.spec.ts",
   }),
-  Object.freeze({
-    kind: "attr",
-    name: "aria-live",
-    wouldBeWrittenBy: "src/components/Timeline.tsx",
-    why:
-      "`aria-live` is ARIA's own vocabulary, so any element the streaming row renders may carry it; the probe counts the row's live regions across `[aria-live]`, `[role=status]`, `[role=alert]` and `[role=log]`, which is the whole vocabulary - the absence rests on that union and on no single spelling",
-    assertedAt: "tests/chat-surface-probe.tsx",
-  }),
 ]);
 
 function producersOf(kind, name, product, harness) {
