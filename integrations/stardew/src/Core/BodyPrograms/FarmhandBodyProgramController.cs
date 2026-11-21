@@ -328,7 +328,7 @@ public sealed class FarmhandBodyProgramController
     {
         while (true)
         {
-            // ONE NODE IN FLIGHT, ACROSS EVERY PROGRAMME. The body is one actor: a second admitted node - the first node
+            // ONE PROGRAMME AT A TIME, ACROSS EVERY OTHER. The body is one actor: a second admitted node - the first node
             // of a plan submitted while another plan is mid-action, or an independent branch of the same graph - collides
             // with the one already running and the collision is spent from BOTH sides. Measured `round73`: `plan_311`
             // still had nodes when `plan_327` was submitted, the two programmes' nodes fought for one farmhand, and a
@@ -339,7 +339,11 @@ public sealed class FarmhandBodyProgramController
             // a busy body is a node that will later be settled `deadline_expired` for a wait it never got to start -
             // a wait published as an outcome, one layer up. The gate therefore runs BEFORE the mint, exactly as the
             // modal start gate above it does, and for the same reason.
-            if (this.ProgramWithNodeInFlight() is { } occupying)
+            //
+            // ...AND IT ASKS ON BEHALF OF THIS PROGRAMME, which is the half `round85` cost 24 s: a programme with a node
+            // it could start on this pass holds the body against the queued ones, so its own nodes stay together instead
+            // of being separated by whatever was submitted after it. See `ProgramHoldingTheBody`.
+            if (this.ProgramHoldingTheBody(programId) is { } occupying)
             {
                 this.DiagnoseStartHeldBehindProgram(programId, occupying);
                 return;
@@ -485,10 +489,22 @@ public sealed class FarmhandBodyProgramController
     }
 
     /// <summary>
-    /// The programme that already has a node in flight - running its native effect, or awaiting an admission answer it can
-    /// still consume - or null when no node is in flight anywhere. Its own state is the answer to "may another node start":
-    /// the farmhand is one actor, so a second node would collide with this one rather than work beside it.
+    /// Whose programme holds the one embodied actor: the programme with a node IN FLIGHT, or the programme that is
+    /// ADVANCING - its journal holds a node this pump could start on this pass. Null means the body is free.
     ///
+    /// <para>
+    /// WHY A PROGRAMME THAT IS ADVANCING HOLDS ANYTHING AT ALL. `round85` measured `plan_453`'s own
+    /// `n16 refill_watering_can -> n17 water_crop` with a 24 172 ms gap between the two, and inside that gap two LATER
+    /// submissions, `plan_471` and `plan_475`, ran (`node_waiting; program=plan_453; held_by=body_program:plan_471`, then
+    /// `plan_475`). The gap is one pass wide and it is structural: a node settles in <see cref="AdvanceRunningNodes"/>,
+    /// which runs AFTER <see cref="StartEligibleNodes"/> for the same programme, so for the rest of that pass the programme
+    /// that just finished a node owns nothing - and the next programme in the journal's order took the body on its own
+    /// `StartEligibleNodes`. From then on the programme that was MID-PLAN sat behind a queue of later submissions:
+    /// intra-programme node switches went 161 ms to 350 ms, `water_crop` failed 17 times `crop_target_unavailable` against
+    /// a plot it had already prepared (`plan_453` and `plan_515` alike), and the run's overlap residual - 68 s of two
+    /// programmes' nodes claiming one actor's time - reddened `a_residual_is_either_named_or_bounded`. One node in flight
+    /// was never the same rule as one programme at a time, and only the second keeps a plan's nodes together.
+    /// </para>
     /// <para>
     /// AN ADMISSION PAST ITS OWN DEADLINE IS NOT IN FLIGHT. A node that outlived <see cref="BodyProgramJournalNode.DerivedDeadlineMs"/>
     /// cannot dispatch at all (<c>TryConsumeHostGrant</c> refuses there), so a body it "holds" is a body nobody can use.
@@ -497,17 +513,54 @@ public sealed class FarmhandBodyProgramController
     /// the node is still the only way to END it, and the pump keeps trying every pass; but whether it manages to is a
     /// question about the journal's writability, and it may not be answered with the body.
     /// </para>
+    /// <para>
+    /// WHAT MAY STILL TAKE THE BODY AWAY. This hold is over the programmes that are QUEUED beside this one; it is never a
+    /// lease on a programme's whole life, because the hold ends the moment the programme stops being in flight or
+    /// advancing:
+    ///   * THE HOST, transitively and on its own terms: a STOP settles the programme <c>Cancelled</c> and a rejection settles
+    ///     the node; a programme that is no longer <c>Active</c> holds nothing here. That is what makes the hold
+    ///     revocable - there is no token to revoke, only the journal state the Host already owns.
+    ///   * THE WORLD, directly: a programme whose next action the world holds is WAITING, not advancing, so it yields. A
+    ///     plan parked behind a dialogue box would otherwise starve every other plan for as long as the box stood open -
+    ///     the same starvation this gate exists to end, one layer up.
+    ///   * A NODE still waiting for its dependency is not advancing either: `TryNextNode` answers `NodeNotEligible`.
+    /// </para>
+    /// <para>
+    /// THE ORDER IS THE TIE-BREAK, and there has to be exactly one. The first <c>Active</c> programme in the journal's own
+    /// order that is in flight or advancing is the answer, and <paramref name="askingProgramId"/> proceeds only when it IS
+    /// that programme. The journal appends programmes in submission order, so this is FIFO. A symmetric "is any other
+    /// programme advancing?" answer would make two advancing programmes wait for each other for ever.
+    /// </para>
     /// </summary>
-    internal string? ProgramWithNodeInFlight()
+    internal string? ProgramHoldingTheBody(string? askingProgramId = null)
     {
         foreach (BodyProgramJournalProgram program in this.authority.Snapshot.Programs)
         {
             if (program.State != BodyProgramState.Active) continue;
-            if (program.Nodes.Any(node => node.State == BodyProgramNodeState.Running
-                || (node.State == BodyProgramNodeState.AwaitingHostAdmission && this.ExpiredAdmissionDeadline(node) is null)))
-                return program.Program.ProgramId;
+            string programId = program.Program.ProgramId;
+            if (!this.HasNodeInFlight(program) && !this.IsAdvancing(programId)) continue;
+            return string.Equals(programId, askingProgramId, StringComparison.Ordinal) ? null : programId;
         }
         return null;
+    }
+
+    /// <summary>Is one of this programme's nodes using, or about to use, the actor right now?</summary>
+    private bool HasNodeInFlight(BodyProgramJournalProgram program) => program.Nodes.Any(node =>
+        node.State == BodyProgramNodeState.Running
+        || (node.State == BodyProgramNodeState.AwaitingHostAdmission && this.ExpiredAdmissionDeadline(node) is null));
+
+    /// <summary>
+    /// Could this programme start a node on this pass? Two authorities answer, and both have to say yes: the journal's own
+    /// selection - the SAME <c>SelectStartCandidate</c> the mint runs, so this answer and the node the mint would take
+    /// cannot disagree - and the world, which holds an action it is not ready for.
+    /// </summary>
+    private bool IsAdvancing(string programId)
+    {
+        BodyProgramControllerResult<BodyProgramNextNode> next = this.authority.TryNextNode(programId);
+        if (!next.IsSuccess || next.Value is null) return false;
+        // The hold is asked per ACTION, which is the only way the question has an answer: a modal holds the body against
+        // everything except the handful of actions that exist to close it, and the world is the one that knows which.
+        return this.HoldOf?.Invoke(next.Value.ActionId) is null;
     }
 
     /// <summary>
@@ -526,7 +579,7 @@ public sealed class FarmhandBodyProgramController
     private void DiagnoseStartHeldBehindProgram(string programId, string occupying)
     {
         if (this.Diagnostics is null) return;
-        string detail = $"state=pending;program={programId};held_by=body_program:{occupying};next_step=wait_for_that_node_to_settle";
+        string detail = $"state=pending;program={programId};held_by=body_program:{occupying};next_step=wait_for_that_program_to_finish_or_yield";
         if (this.diagnosticsLastStartHold.TryGetValue(programId, out string? last) && last == detail) return;
         this.diagnosticsLastStartHold[programId] = detail;
         this.Diagnostics($"[GameBuddy-body-program] node_waiting;{detail}");
@@ -744,7 +797,7 @@ public sealed class FarmhandBodyProgramController
     /// authority answering about THE TUPLE - the attempt's own identity no longer matches what the journal holds, the class
     /// 2026-11-18 measured when a policy push landed between an admission and its deadline. Nothing about the node changed,
     /// so the pump keeps the challenge and presents it again; what it must not do is let that attempt hold the body, and
-    /// the single-flight gate reads the deadline rather than this answer (see <see cref="ProgramWithNodeInFlight"/>).
+    /// the single-flight gate reads the deadline rather than this answer (see <see cref="ProgramHoldingTheBody"/>).
     /// `admission_rejection_refused` is the journal refusing to RECORD anything, which no answer from this pump can repair.
     /// </para>
     /// </summary>

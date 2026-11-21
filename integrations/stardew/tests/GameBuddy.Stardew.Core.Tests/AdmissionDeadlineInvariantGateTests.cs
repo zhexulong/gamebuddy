@@ -268,7 +268,7 @@ public sealed class AdmissionDeadlineInvariantGateTests
         controller.Update();
         BodyProgramJournalNode waiting = authority.Status("subject").Snapshot!.Nodes.Single();
         waiting.State.Should().Be(BodyProgramNodeState.AwaitingHostAdmission);
-        controller.ProgramWithNodeInFlight().Should().Be(
+        controller.ProgramHoldingTheBody().Should().Be(
             "subject",
             "while the deadline stands this admission can still become a dispatch, so it does own the body");
 
@@ -287,7 +287,7 @@ public sealed class AdmissionDeadlineInvariantGateTests
         reported.Should().NotContain(
             line => line.Contains("admission_deadline_settled", StringComparison.Ordinal),
             "the settlement line is a statement about the journal, so it may only be printed once the journal took it");
-        controller.ProgramWithNodeInFlight().Should().BeNull(
+        controller.ProgramHoldingTheBody().Should().BeNull(
             "a_node_outlives_its_admission_deadline:{0}:an admission past its own deadline can never dispatch, so the body it was holding is a body nobody can use",
             waiting.NodeId);
     }
