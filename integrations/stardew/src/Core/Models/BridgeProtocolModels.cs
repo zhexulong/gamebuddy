@@ -1076,7 +1076,15 @@ public sealed record BridgeSnapshot(
     // clock, an open menu, a running event and the co-op minimum are separate and transient, so this answers "can the
     // day end here" and never "will `sleep` succeed now". Absent when no world is ready. Nullable and LAST for the same
     // reason as its siblings: the positional list is already closed by the parameters before them.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? SleepAdmitsHere = null,
+    // The actor's WALLET (`Farmer.Money`), which is what every price on this wire is denominated in. Absent only while
+    // no world is ready, exactly as the store projections beside it are - and absent means NOT MEASURED, so no consumer
+    // may read a missing wallet as "0 gold" or as "can afford it".
+    //
+    // Measured round87b (2026-11-21): `shop_purchase` was dispatched at 75g a unit with 35g in hand, and nothing in the
+    // snapshot could have answered whether 15 of them were affordable - the wallet was on no field at all. Published as
+    // a plain native read, no interpretation: what to buy, and whether to walk, stays the caller's decision.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Money = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,
@@ -1404,7 +1412,30 @@ public sealed record BridgeShopTarget(
     // Mod's serializer omits null values (WhenWritingNull), and a snapshot contract whose
     // field can be omitted is one the Host's exact-key check rejects — which is exactly how
     // the first live attempt failed. An empty list is a legal value and is still written.
-    IReadOnlyList<string> StockItemIds);
+    IReadOnlyList<string> StockItemIds,
+    // What the menu CHARGES for each of those ids, one row per published id, in the same order and under the same
+    // cap - which is why it is a second list of pairs rather than a number beside `StockItemIds`: a shop sells many
+    // items at many prices, and pairing a price list to an id list BY POSITION would be an identity keyed on list
+    // position. Same member name, meaning and reader as `BridgeSeedSupplyTarget.Price` (`ItemStockInformation.Price`
+    // after the shop's and the entry's own modifiers), so there is one price spelling on the wire.
+    //
+    // Why it is published at all: measured round87b (2026-11-21), `shop_purchase({expectedQualifiedItemId: "(O)378",
+    // quantity: 15})` was sent at 75g a unit with 35g in hand and refused `insufficient_money` by the GAME - the wallet
+    // and the unit price were on neither side of the wire, so no compiler could have refused it first.
+    IReadOnlyList<BridgeShopStockPrice> StockPrices);
+
+/// <summary>
+/// One <c>(item id, price)</c> pair of a counter's stock: the id exactly as <c>StockItemIds</c> publishes it and the
+/// number the menu charges for ONE unit of it.
+///
+/// <para>
+/// The pair is a row rather than two parallel lists because the id is the identity and the price is its fact: a reader
+/// must never be able to pair them by position. <c>Price</c> is <c>ItemStockInformation.Price</c> verbatim - the number
+/// <c>ShopMenu</c> multiplies by the quantity (<c>ShopMenu.cs:1337</c>) - so <c>Price * Quantity</c> is the arithmetic the
+/// game itself performs, and a consumer that compares it with the wallet is comparing what the game would charge.
+/// </para>
+/// </summary>
+public sealed record BridgeShopStockPrice(string QualifiedItemId, int Price);
 
 /// <summary>
 /// One (seed the actor holds) x (shop whose stock sells it) pair: the SUPPLY half of "can this day's patch be sown",

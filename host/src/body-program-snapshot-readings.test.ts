@@ -107,7 +107,23 @@ assert.ok(PLAN_ACTIONS.length > 50, `examined ${String(PLAN_ACTIONS.length)} pla
  * Derby from the type rather than a table here, because a table would answer "what did the family publish when this gate
  * was written" while the question is "what does it publish now": a field the Mod adds is picked up without an edit, and a
  * family renamed takes its rows with it.
+ *
+ * A NESTED OBJECT IS A FIELD'S VALUE, NOT A FIELD OF THE ROW. `chests.items` and `shopTargets.stockPrices` are rows of
+ * their own shape inside one row, and a reader that matched through the braces reported their members (`slot`, `stack`,
+ * `qualifiedItemId`, `price`) as fields the outer row publishes - so a fixture row built from this map carried a
+ * top-level `qualifiedItemId` that `shopTargets` does not have, and the row-selection it fed matched a phantom field.
  */
+function withoutNestedGroups(body: string): string {
+  let depth = 0;
+  let text = "";
+  for (const character of body) {
+    if (character === "{") depth += 1;
+    else if (character === "}") depth = Math.max(0, depth - 1);
+    else if (depth === 0) text += character;
+  }
+  return text;
+}
+
 function snapshotFamilyFields(): ReadonlyMap<string, readonly string[]> {
   const source = readFileSync(PROTOCOL_SOURCE, "utf8");
   const typeAt = source.indexOf("export type Snapshot = Readonly<{");
@@ -144,7 +160,7 @@ function snapshotFamilyFields(): ReadonlyMap<string, readonly string[]> {
       }
     }
     if (rowEnd < 0) continue;
-    const body = block.slice(match.index + match[0].length, rowEnd);
+    const body = withoutNestedGroups(block.slice(match.index + match[0].length, rowEnd));
     families.set(match[1]!, Object.freeze([...body.matchAll(/(?:^|[\s;,])(\w+)\??:/g)].map((field) => field[1]!)));
   }
   assert.ok(families.size > 50, `examined ${String(families.size)} snapshot families`);
@@ -822,6 +838,74 @@ test("a stock list the surface truncated cannot refuse, because absence from six
     refusalOf(compile(PURCHASE_AT_THE_PET_COUNTER, truncated)),
     "accepted",
     "a counter whose published stock is a truncation is answered by the body, not refused here",
+  );
+});
+
+/**
+ * The wallet and the unit price are BOTH on the wire now, so the purchase can be answered before the body moves.
+ *
+ * <p>
+ * MEASURED, `round87b` (2026-11-21): `shop_purchase({ expectedQualifiedItemId: "(O)378", quantity: 15 })` was sent at 75g
+ * a unit with 35g in hand, and the only answer the run got was the game's own refusal one walk and one menu later -
+ * `insufficient_money ... price=75; available=35; short=40`. Nothing on the snapshot could have answered it: the wallet
+ * was on no field at all, and `shopTargets` published what a counter sells without what it charges.
+ * </p>
+ * <p>
+ * THE TWO HALVES OF THE GUARD ARE NOT SYMMETRIC. It fires only when BOTH the wallet (`snapshot.money`) and the row's own
+ * price for the named item are measured, because a missing fact is `unmeasured` and unmeasured is not affordable - the
+ * absence-as-pass shape this repository deletes. The boundary is the other direction: a purchase that costs EXACTLY the
+ * wallet is one the game would take, so it stays in the plan.
+ * </p>
+ */
+
+/** The counter and the wallet the measured refusal was made against: 75g a unit, 35g in hand. */
+const COPPER_COUNTER = Object.freeze({
+  targetId: "shop_d1821b85749a947f",
+  shopId: "SeedShop",
+  ownerName: "Pierre",
+  ownerTileX: 4,
+  ownerTileY: 17,
+  stockCount: 1,
+  stockItemIds: ["(O)378"],
+  stockPrices: [{ qualifiedItemId: "(O)378", price: 75 }],
+});
+
+const BUY_FIFTEEN_COPPER = `builder.shop_purchase({ expectedTargetId: "shop_d1821b85749a947f", expectedQualifiedItemId: "(O)378", quantity: 15 });`;
+
+/** The rows plus the wallet the snapshot publishes beside them; `undefined` leaves the wallet unmeasured. */
+function shopSnapshotWithMoney(money: number | undefined, ...rows: readonly Json[]): Snapshot {
+  const base = shopSnapshot(...rows);
+  return money === undefined ? base : Object.assign({}, base, { money });
+}
+
+test("the round87b purchase is refused at submit time, naming the total and the wallet it exceeds", () => {
+  const result = compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(35, COPPER_COUNTER));
+  assert.equal(refusalOf(result), "plan_script_unaffordable_purchase:(O)378:75x15=1125>money:35");
+  assert.deepEqual(nodesOf(result), [], "and no node is written, so she does not walk to the counter to be refused");
+});
+
+test("a purchase that costs exactly the wallet is accepted, because the game would take it", () => {
+  assert.equal(refusalOf(compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(1125, COPPER_COUNTER))), "accepted");
+  assert.equal(refusalOf(compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(1126, COPPER_COUNTER))), "accepted");
+});
+
+test("an unmeasured wallet is not an affordable one, and neither is an unmeasured price", () => {
+  assert.equal(
+    refusalOf(compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(undefined, COPPER_COUNTER))),
+    "accepted",
+    "no wallet was published, so this compiler has nothing to compare and the body answers",
+  );
+  const unpriced = { ...COPPER_COUNTER, stockPrices: [{ qualifiedItemId: "(O)472", price: 20 }] };
+  assert.equal(
+    refusalOf(compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(35, unpriced))),
+    "accepted",
+    "the counter published prices, none of them for the item she named: an absent price is not a free one",
+  );
+  const { stockPrices: _stripped, ...olderCounter } = COPPER_COUNTER;
+  assert.equal(
+    refusalOf(compile(BUY_FIFTEEN_COPPER, shopSnapshotWithMoney(35, olderCounter))),
+    "accepted",
+    "a counter that publishes no prices at all is a counter this compiler cannot price",
   );
 });
 

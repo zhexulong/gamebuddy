@@ -365,10 +365,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// counter is opened by the engine from anywhere in the room (see <see cref="ShopCounterReachRefusal"/>), so no
     /// refusal may be derived from it there.
     /// </para>
+    /// <para>
+    /// <c>StockPrices</c> is read out of the SAME <c>ReadShopStock</c> pass and the SAME dictionary the seed-supply family
+    /// prices with, keyed by the ids <c>ReadShopStock</c> already selected - so every published id has a price, the two
+    /// lists cannot drift, and no price here is a second measurement of the number the seed family carries.
+    /// </para>
     /// </summary>
     private static BridgeShopTarget PublishShopCounter(DiscoveredShopCounter counter, GameLocation location, Farmer player)
     {
-        ReadShopStock(counter.ShopId, counter.ShopData, out int stockCount, out List<string> stockItemIds, out _);
+        ReadShopStock(
+            counter.ShopId,
+            counter.ShopData,
+            out int stockCount,
+            out List<string> stockItemIds,
+            out Dictionary<string, int> priceByQualifiedItemId);
+        List<BridgeShopStockPrice> stockPrices = new();
+        foreach (string qualifiedItemId in stockItemIds)
+        {
+            if (priceByQualifiedItemId.TryGetValue(qualifiedItemId, out int unitPrice))
+                stockPrices.Add(new BridgeShopStockPrice(qualifiedItemId, unitPrice));
+        }
         return new BridgeShopTarget(
             counter.TargetId,
             counter.ShopId,
@@ -378,7 +394,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             counter.CounterY,
             Utility.tileWithinRadiusOfPlayer(counter.CounterX, counter.CounterY, NativeInteractionRadius, player),
             stockCount,
-            stockItemIds);
+            stockItemIds,
+            stockPrices);
     }
 
     private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)

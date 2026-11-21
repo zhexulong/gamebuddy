@@ -1483,20 +1483,43 @@ export function isMineEntranceTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One row of a shop counter's stock, as `shopTargets.stockPrices` publishes it: the item id and what the menu charges
+ * for ONE unit of it.
+ *
+ * The pair is a row, not two parallel lists: the id is the identity and the price is its fact, and a reader that paired
+ * them by position would report a price for the wrong item the first time a row moved. `price` is
+ * `ItemStockInformation.Price` verbatim - the number `ShopMenu` multiplies by the quantity - so `price * quantity` is the
+ * arithmetic the game performs, which is what makes a comparison against `snapshot.money` a statement about the wallet
+ * rather than about the reader's guess.
+ */
+function isShopStockPriceFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["qualifiedItemId", "price"]) &&
+    isQualifiedItemId(value.qualifiedItemId) &&
+    isNonNegativeSafeInteger(value.price)
+  );
+}
+
 export function isShopTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "targetId",
-      "shopId",
-      "ownerName",
-      "location",
-      "ownerTileX",
-      "ownerTileY",
-      "ownerInReach",
-      "stockCount",
-      "stockItemIds",
-    ]) &&
+    hasExactKeysOrOptional(
+      value,
+      [
+        "targetId",
+        "shopId",
+        "ownerName",
+        "location",
+        "ownerTileX",
+        "ownerTileY",
+        "ownerInReach",
+        "stockCount",
+        "stockItemIds",
+      ],
+      ["stockPrices"],
+    ) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
     typeof value.shopId === "string" &&
@@ -1511,7 +1534,15 @@ export function isShopTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.stockCount) &&
     value.stockCount >= 0 &&
     isStringArray(value.stockItemIds) &&
-    (value.stockItemIds as readonly string[]).length <= 16
+    (value.stockItemIds as readonly string[]).length <= 16 &&
+    // Each price row is a pair, and the list covers ids the same list published: a price for an item the counter does
+    // not name is a number nobody can act on, and it is the shape a stale or forged row would take.
+    (value.stockPrices === undefined ||
+      (Array.isArray(value.stockPrices) &&
+        value.stockPrices.length <= 16 &&
+        value.stockPrices.every(
+          (row) => isShopStockPriceFact(row) && (value.stockItemIds as readonly string[]).includes(row.qualifiedItemId),
+        )))
   );
 }
 

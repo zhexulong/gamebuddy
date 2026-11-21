@@ -285,6 +285,16 @@ export type Snapshot = Readonly<{
   location: string;
   tile: Readonly<{ x: number; y: number }>;
   stamina: number;
+  /**
+   * The actor's wallet (`Farmer.Money`), the denomination every published price is stated in.
+   *
+   * Measured `round87b` (2026-11-21): `shop_purchase({expectedQualifiedItemId: "(O)378", quantity: 15})` was dispatched
+   * at 75g a unit with 35g in hand, and the only answer the run got was the game's own
+   * `insufficient_money ... price=75; available=35; short=40` refusal - there was no balance on the wire for any layer
+   * to compare a price with. Absent means NOT MEASURED (no world was ready), never zero and never "she can afford it":
+   * `compilePlanScript`'s affordability refusal only fires when this AND the counter's unit price are both published.
+   */
+  money?: number | null;
   health: number;
   actionable: boolean;
   /**
@@ -1083,6 +1093,17 @@ export type Snapshot = Readonly<{
     stockCount: number;
     /** What the shop can sell right now, so callers do not have to guess an id. */
     stockItemIds: readonly string[];
+    /**
+     * What the menu CHARGES for one unit of each id in `stockItemIds`, one row per published id under the same cap.
+     *
+     * One row per id rather than a parallel list of numbers, because a price paired to an id by list position is an
+     * identity keyed on position. `price` is the same member the supply family publishes for the same fact
+     * (`ItemStockInformation.Price`, after the shop's and the entry's own modifiers), so the wire has one price
+     * spelling: `price * quantity` is the arithmetic `ShopMenu` itself performs. Absent means the counter published no
+     * prices at all (not measured), never "free" - `compilePlanScript` refuses an unaffordable purchase only when a
+     * price for the named item and `snapshot.money` are both present.
+     */
+    stockPrices?: readonly Readonly<{ qualifiedItemId: string; price: number }>[];
   }>[];
   /**
    * Where the seeds this actor HOLDS are sold, what the menu charges, and whether the shop's own hours query says it is
@@ -2430,6 +2451,7 @@ export const SNAPSHOT_KEYS = [
   "location",
   "tile",
   "stamina",
+  "money",
   "exhausted",
   "actorDispositionKind",
   "actorDispositionDetail",
@@ -5131,6 +5153,10 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
   if (!isRecord(value.tile) || !isFiniteNumber(value.tile.x) || !isFiniteNumber(value.tile.y))
     return "invalid_snapshot:tile";
   if (!isFiniteNumber(value.stamina)) return "invalid_snapshot:stamina";
+  // The wallet the affordability refusal reads. A balance that is a string or a negative is a number nobody can
+  // subtract a price from, and `undefined` is the not-measured state the refusal must leave alone rather than refuse on.
+  if (value.money !== undefined && value.money !== null && !isNonNegativeSafeInteger(value.money))
+    return "invalid_snapshot:money";
   if (typeof value.exhausted !== "boolean") return "invalid_snapshot:exhausted";
   // The disposition is a CLOSED set, checked where the decision is made: a planner that switched on an
   // unknown kind would silently treat it as not-a-disposition. An earlier version of this check landed in
@@ -5281,6 +5307,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     isFiniteNumber(value.tile.x) &&
     isFiniteNumber(value.tile.y) &&
     isFiniteNumber(value.stamina) &&
+    // The wallet a price is compared with. Absent is the unmeasured state (`no world was ready`), so only a present
+    // value has to be a non-negative integer: a string here would be read as "she can afford it" by every `>` test.
+    (value.money === undefined || value.money === null || isNonNegativeSafeInteger(value.money)) &&
     typeof value.exhausted === "boolean" &&
     (value.actorDispositionKind === undefined || typeof value.actorDispositionKind === "string") &&
     // The disposition's detail and ownership answer, both of which the diagnostic already names: a modal

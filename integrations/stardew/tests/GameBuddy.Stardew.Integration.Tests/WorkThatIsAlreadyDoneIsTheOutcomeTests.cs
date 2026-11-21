@@ -120,7 +120,9 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
     /// <summary>
     /// THE FOUR TILES. `till_soil`'s postcondition is the engine's own soil read, so a tile that already carries `HoeDirt`
     /// is the state the request asked for - and the settlement says which state it found instead of reporting a failure
-    /// over a tile that agrees with the request.
+    /// over a tile that agrees with the request. It also says WHICH MAP, without which the coordinate is not a tile: this
+    /// shape was the only tile-bearing `till_soil` receipt that omitted `location`, and `round87b`'s thirty settled tiles
+    /// were read as a day that tilled none.
     /// </summary>
     [Fact]
     public void ASoilTileThatIsAlreadyTilledIsTheOutcome()
@@ -136,6 +138,9 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
 
         receipt.State.Should().Be(ExecutionState.Succeeded, "the Hoe has already been over this tile");
         receipt.ReasonCode.Should().Be("soil_already_tilled");
+        receipt.Evidence.Should().Contain(
+            "location=ProbeFarm",
+            "a tile without the map it is on is not a tile: `5,4` exists on the Farm and on the Mountain");
         receipt.Evidence.Should().Contain("target=5,4");
         receipt.Evidence.Should().Contain("before=HoeDirt", "the settlement names the state the tile was actually in");
         receipt.Evidence.Should().Contain(

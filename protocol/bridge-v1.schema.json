@@ -2649,6 +2649,11 @@
         "stamina": {
           "type": "number"
         },
+        "money": {
+          "description": "The actor's wallet (Farmer.Money), the denomination every published price is stated in. Absent means NOT MEASURED (no world was ready), never zero and never 'she can afford it'.",
+          "type": "integer",
+          "minimum": 0
+        },
         "actorDispositionKind": {
           "type": "string",
           "enum": [
@@ -8901,6 +8906,33 @@
             "maxLength": 256
           },
           "maxItems": 256
+        },
+        "stockPrices": {
+          "description": "What the menu CHARGES for one unit of each published stock id, one row per id under the same cap. The pair is a row rather than two parallel lists because the id is the identity and the price is its fact: a price paired to an id by list position reports a price for the wrong item the first time a row moves.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shopStockPrice"
+          },
+          "maxItems": 16
+        }
+      }
+    },
+    "shopStockPrice": {
+      "description": "One (item id, unit price) pair of a counter's stock: `price` is ItemStockInformation.Price verbatim, the number ShopMenu multiplies by the quantity, so `price * quantity` is the arithmetic the game performs.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualifiedItemId",
+        "price"
+      ],
+      "properties": {
+        "qualifiedItemId": {
+          "type": "string",
+          "pattern": "^\\([^()\\s]+\\)[^()\\s]+$"
+        },
+        "price": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     },

@@ -2742,12 +2742,18 @@ type PlanTargetRow = Readonly<Record<string, unknown>>;
  * refuse. A step the snapshot cannot answer is left exactly as it was - the body is the authority on the world, and this
  * pass only stops a plan from ordering work the row it named has already answered.
  * </p>
+ * <p>
+ * THE `snapshot` IS HANDED IN because one of these questions is about the WHOLE snapshot rather than about the row: what
+ * the wallet holds is published once per observation (`snapshot.money`), and the shop rule compares it with the row's own
+ * `stockPrices`. A rule that needs the world outside its row must say so here rather than reach for a module global.
+ * </p>
  */
 type PlanTargetRowRule = (
   named: PlanTargetRow,
   rows: readonly PlanTargetRow[],
   canonical: Readonly<Record<string, PlanArgument>>,
   state: PlanScriptState,
+  snapshot: Snapshot,
 ) => string | null;
 
 const PLAN_TARGET_ROW_RULES: Readonly<Record<string, PlanTargetRowRule>> = Object.freeze({
@@ -2761,7 +2767,8 @@ const PLAN_TARGET_ROW_RULES: Readonly<Record<string, PlanTargetRowRule>> = Objec
     planRowSaysTheWorkIsDone("soilTiles", named) && !planStepClearsTheHoeDirt(canonical, state)
       ? `plan_script_target_already_tilled:soilTiles:${planNamedPlace(canonical)}`
       : null,
-  shopTargets: (named, rows, canonical) => planCounterRefusal(named, rows, canonical),
+  shopTargets: (named, rows, canonical, _state, snapshot) =>
+    planCounterRefusal(named, rows, canonical) ?? planUnaffordablePurchaseRefusal(named, canonical, snapshot),
 });
 
 /**
@@ -2824,6 +2831,65 @@ function planCounterRefusal(
   return `plan_script_item_sold_by_another_counter:${itemId}:sold_here_by=${counter}`;
 }
 
+/** One argument's canonical text, when she wrote it as an intention - a reading is never an amount she chose. */
+function planIntentionText(canonical: Readonly<Record<string, PlanArgument>>, name: string): string | undefined {
+  const value = canonical[name];
+  return value !== undefined && "canonicalValue" in value ? value.canonicalValue : undefined;
+}
+
+/**
+ * The purchase costs more than the wallet holds, so the plan is refused before it is even dispatched.
+ *
+ * <p>
+ * THE ARITHMETIC IS THE GAME'S. `ShopMenu` charges `ItemStockInformation.Price * stockToBuy` (`ShopMenu.cs:1337`), and
+ * the price the counter publishes is already that `Price` - the number after the shop's and the entry's own modifiers - so
+ * `unitPrice * quantity` is the total the game would take, not an estimate of it. Measured `round87b` (2026-11-21):
+ * `plan_27` bought seed at the wrong counter and answered `item_sold_by_another_counter`, and a later
+ * `shop_purchase({ expectedQualifiedItemId: "(O)378", quantity: 15 })` was sent at 75g a unit with 35g in hand - the
+ * only answer that came back was the game's own `insufficient_money ... price=75; available=35; short=40`, one walk and
+ * one menu later. The wallet and the unit price are both on the snapshot now, so the plan can be answered before the
+ * body moves.
+ * </p>
+ * <p>
+ * IT ONLY FIRES WHEN BOTH FACTS ARE MEASURED, which is the half that must never be softened: no `snapshot.money` (no world
+ * was ready), no `stockPrices` on the row (the counter published no prices), no price for THIS item, or a `quantity` she
+ * did not write - every one of those is `unmeasured`, and unmeasured is not affordable. A missing price read as
+ * affordable is the absence-as-pass shape this repository deletes; the boundary is the other way - a purchase that costs
+ * EXACTLY the wallet is affordable and stays in the plan, because the game would take it.
+ * </p>
+ */
+function planUnaffordablePurchaseRefusal(
+  named: PlanTargetRow,
+  canonical: Readonly<Record<string, PlanArgument>>,
+  snapshot: Snapshot,
+): string | null {
+  const itemId = planIntentionText(canonical, "expectedQualifiedItemId");
+  const quantityText = planIntentionText(canonical, "quantity");
+  if (itemId === undefined || quantityText === undefined) return null;
+  if (!/^\d+$/u.test(quantityText)) return null;
+  const quantity = Number(quantityText);
+  if (!Number.isSafeInteger(quantity) || quantity <= 0) return null;
+  const prices = named.stockPrices;
+  if (!Array.isArray(prices)) return null;
+  const priced = prices.find(
+    (candidate) =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      (candidate as Readonly<Record<string, unknown>>).qualifiedItemId === itemId,
+  );
+  if (priced === undefined) return null;
+  const unitPrice = (priced as Readonly<Record<string, unknown>>).price;
+  if (typeof unitPrice !== "number" || !Number.isSafeInteger(unitPrice) || unitPrice < 0) return null;
+  const money = snapshot.money;
+  if (typeof money !== "number" || !Number.isSafeInteger(money) || money < 0) return null;
+  const total = unitPrice * quantity;
+  // A total past the safe-integer range is an amount this compiler cannot state exactly, so it states nothing rather than
+  // refusing on a rounded number.
+  if (!Number.isSafeInteger(total)) return null;
+  if (total <= money) return null;
+  return `plan_script_unaffordable_purchase:${itemId}:${String(unitPrice)}x${String(quantity)}=${String(total)}>money:${String(money)}`;
+}
+
 /**
  * Whether an earlier step in this program takes the hoe dirt off the tile this one names, so the row's `hoeDirt` is not
  * the state the step will find (`clear_hoedirt` then `till_soil` on one tile is a plan the body runs, not a mistake).
@@ -2867,7 +2933,7 @@ function planTargetRowRefusal(
   if (!family.measured) return null;
   const named = planNamedTargetRow(canonical, family.rows);
   if (named === undefined) return null;
-  return rule(named, family.rows, canonical, state);
+  return rule(named, family.rows, canonical, state, snapshot);
 }
 
 function emitPlanNode(

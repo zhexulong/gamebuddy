@@ -1324,7 +1324,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
             // it is one type test, and a line that needed the `sleep` capability to be advertised would be silent on
             // exactly the surface that most needs to say "go home first".
-            SleepAdmitsHere: SleepAndAdvanceDayLifecycle.HomeOf(player.currentLocation) is not null
+            SleepAdmitsHere: SleepAndAdvanceDayLifecycle.HomeOf(player.currentLocation) is not null,
+            // The wallet every price on this wire is denominated in, read where the other native player facts above are
+            // read. One field, one reader: nothing derives a balance from receipts or from the pack.
+            Money: player.Money
         );
         if (!exclusionFamilyAdvertised) return snapshot;
         return snapshot with

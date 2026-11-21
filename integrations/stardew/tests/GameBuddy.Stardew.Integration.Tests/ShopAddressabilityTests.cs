@@ -77,7 +77,8 @@ public sealed class ShopAddressabilityTests
             8,
             true,
             12,
-            new[] { ParsnipSeeds });
+            new[] { ParsnipSeeds },
+            new[] { new BridgeShopStockPrice(ParsnipSeeds, 20) });
 
         BridgeSeedSupplyTarget row = Row(world.Farm, new[] { published });
 
@@ -110,7 +111,8 @@ public sealed class ShopAddressabilityTests
             4,
             true,
             3,
-            Array.Empty<string>());
+            Array.Empty<string>(),
+            Array.Empty<BridgeShopStockPrice>());
 
         BridgeSeedSupplyTarget row = Row(world.Farm, new[] { robin });
 
@@ -155,7 +157,8 @@ public sealed class ShopAddressabilityTests
             3,
             true,
             4,
-            Array.Empty<string>());
+            Array.Empty<string>(),
+            Array.Empty<BridgeShopStockPrice>());
         BridgeShopTarget pierres = new(
             ExecutionManager.ShopTargetId("SeedShop", "Pierre", 4, 8),
             "SeedShop",
@@ -165,7 +168,8 @@ public sealed class ShopAddressabilityTests
             8,
             true,
             12,
-            new[] { ParsnipSeeds });
+            new[] { ParsnipSeeds },
+            new[] { new BridgeShopStockPrice(ParsnipSeeds, 20) });
 
         BridgeSeedSupplyTarget row = Row(world.Farm, new[] { first, pierres });
 
@@ -194,7 +198,8 @@ public sealed class ShopAddressabilityTests
             8,
             true,
             12,
-            new[] { ParsnipSeeds });
+            new[] { ParsnipSeeds },
+            new[] { new BridgeShopStockPrice(ParsnipSeeds, 20) });
 
         BridgeSeedSupplyTarget[] rows =
         {

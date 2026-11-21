@@ -253,6 +253,9 @@ public sealed class TillSoilRefusalNamingTests
 
         receipt.State.Should().Be(ExecutionState.Succeeded);
         receipt.ReasonCode.Should().Be("soil_already_tilled");
+        receipt.Evidence.Should().Contain(
+            "location=ProbeTillSoil",
+            "a tile without the map it is on is not a tile: `13,10` exists on the Farm and on the Mountain");
         receipt.Evidence.Should().Contain("target=13,10");
         receipt.Evidence.Should().Contain("before=HoeDirt", "the settlement names the state the tile was actually in");
         receipt.Evidence.Should().Contain(
