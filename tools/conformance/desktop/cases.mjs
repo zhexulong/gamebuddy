@@ -6,15 +6,23 @@
  * peer of that shape, reads it out of process facts only - the child's exit status, the one
  * bounded code on its standard error, frames on its named pipes, and the records it writes - and
  * carries a CONTROL whose expectation is the opposite, so a reading that cannot go red is visible
- * in the same run rather than trusted. Case 3 has no control because the initiator it needs does
- * not exist yet; it reports that as blocked instead of passing.
+ * in the same run rather than trusted.
+ *
+ * A CASE THAT CANNOT OBSERVE ITS SUBJECT FAILS. Each case takes its own presence reading first -
+ * a peer that started, a marker on disk in the shape the product reads, a channel that answers -
+ * and a missing subject is a named failure (`desktop_conformance_unobservable`), never a pass over
+ * an empty reading. Two cases start more than one launcher because their probes are each other's
+ * control, and one number is what a reading costs: a control that shares its subject's launch
+ * cannot show that the subject, and not the launch, decided the answer.
+ *
+ * A CASE WHOSE SUBJECT THE PRODUCT DOES NOT OFFER IS SKIPPED, AND NAMED. One case needs a quit a
+ * process can ask for, and the product has none: it is skipped with the measurement that shows why
+ * rather than failing on a stage the product never reaches.
  *
  * A DEFECT IS NAMED, NOT FIXED. Where the launcher does not meet a contract today the case fails
  * and names the defect; nothing here patches the product.
  */
-import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import net from "node:net";
 import { join } from "node:path";
 
 import {
@@ -27,23 +35,29 @@ import {
   GUARDIAN_PIPE_PREFIX,
   GUARDIAN_SESSION_SCHEMA,
   PRESENTATION_PIPE_PREFIX,
-  PRIMARY_INTENT_PIPE_PREFIX,
   PRIMARY_INTENTS,
-  primaryIntentFrame,
   refusedPresentationFrame,
   helloFrame,
 } from "./wire.mjs";
 import {
+  bootstrapIdIn,
+  deliverEveryPrimaryIntent,
   factsNamed,
+  guardianPipeName,
   isRunning,
   killExactProcess,
   launchDesktop,
+  pipeReachable,
   processIdentity,
   readAttemptRecord,
   startStandinProcess,
   teardownRecords,
+  transcriptFacts,
   writeAttemptRecord,
 } from "./world.mjs";
+
+/** The one bound every launcher start is read under: past it a launch is a hang, and a hang is a failure. */
+const LAUNCH_BOUND_MS = 20_000;
 
 /** The name no launcher may hand a child: this suite's own canary, set in the launcher's block. */
 const CANARY_NAME = "GAMEBUDDY_CONFORMANCE_CANARY";
@@ -74,8 +88,9 @@ function scenarioBase(world, caseId, overrides = {}) {
     environment: {},
     oversizedBytes: FRAME_CAP_BYTES + 10_009,
     hangMs: 120_000,
-    launchBoundMs: 45_000,
-    stopOnBoundedCodeMs: 0,
+    launchBoundMs: LAUNCH_BOUND_MS,
+    stopAfterBoundedCodeMs: 0,
+    onBoundedCode: null,
     ...overrides,
   };
 }
@@ -95,32 +110,73 @@ function boundedCodes(reading) {
   return reading.stderr.map(namedCode).filter((token) => token !== null);
 }
 
+/** The reading every case takes first: whether the thing it is about appeared at all. */
+function observable(subject, present, detail) {
+  return {
+    name: `${subject}-observed`,
+    ok: present,
+    detail: present ? detail : `desktop_conformance_unobservable: ${detail}`,
+  };
+}
+
+/** The exit status as a reading, or the fact that this harness - not the product - ended the process. */
+function exitReading(reading) {
+  if (reading.killed) return `no exit of its own: this harness ended it (status ${String(reading.exitCode)})`;
+  return reading.exited ? `exit=${String(reading.exitCode)}` : "still running at the read";
+}
+
+/** A launch that neither exited nor named a code inside the shared bound is a hang, and a hang fails. */
+function settled(reading, scenario, label = "the") {
+  return {
+    name: `${label}-launch-settled`,
+    ok: !reading.timedOut,
+    detail: reading.timedOut
+      ? `desktop_conformance_launch_hung: neither an exit nor a bounded code within ${scenario.launchBoundMs} ms`
+      : `${reading.stoppedAfterBoundedCode ? "named a bounded code" : "exited"} after ${reading.elapsedMs} ms`,
+  };
+}
+
 const cases = [
   {
     id: "frame-cap",
     title: "a Host frame over the 16384-byte cap is refused by name, and the launch keeps serving",
     async run({ world }) {
+      // The two halves of "alive and serving" are asked of the channels the Desktop publishes, at
+      // the instant it names the refusal, and neither of them is the peer that owns the refused
+      // frame - so neither answer can be produced by that peer's own exit.
+      const probes = {};
       const scenario = scenarioBase(world, "frame-cap", {
         behaviour: BEHAVIOURS.oversizedHello,
         // The size of the frame that ended a real launch on 2026-11-21.
         oversizedBytes: 26_393,
         // A failed launch shows the player a window and waits for the click, so the harness reads
-        // the one bounded code and stops the process itself instead of waiting for an exit.
-        stopOnBoundedCodeMs: 3_000,
-        launchBoundMs: 20_000,
+        // the one bounded code and keeps the process alive only long enough to ask it two questions.
+        stopAfterBoundedCodeMs: 400,
+        async onBoundedCode({ pid }) {
+          probes.launcherRunning = isRunning(pid);
+          probes.primaryIntents = await deliverEveryPrimaryIntent();
+          const bootstrapId = bootstrapIdIn(transcriptFacts(scenario.transcript));
+          probes.bootstrapId = bootstrapId;
+          probes.sessionPipe = bootstrapId === null ? null : await pipeReachable(guardianPipeName(bootstrapId));
+        },
       });
       const reading = await launchDesktop(world, scenario);
       const codes = boundedCodes(reading);
+      const peerStarted = factsNamed(reading, FACTS.hostStarted);
       const oversized = factsNamed(reading, FACTS.oversizedHelloWritten);
       const accepted = factsNamed(reading, FACTS.helloAccepted);
       const refused = factsNamed(reading, FACTS.helloRefused);
       const acknowledged = factsNamed(reading, FACTS.acknowledgmentWritten);
+      const reconnected = factsNamed(reading, FACTS.reconnectAttempted);
+      const peerFinished = factsNamed(reading, FACTS.hostExiting);
       return {
         assertions: [
+          settled(reading, scenario),
+          observable("host-peer", peerStarted.length === 1, `host_started=${peerStarted.length}`),
           {
             name: "refused-by-name",
             ok: codes.length === 1 && namedCode(codes[0]).split(":")[0] === GUARDIAN_LAUNCH_UNAVAILABLE,
-            detail: `stderr=${JSON.stringify(reading.stderr)} exit=${String(reading.exitCode)}`,
+            detail: `stderr=${JSON.stringify(reading.stderr)} ${exitReading(reading)}`,
           },
           {
             name: "frame-not-truncated-and-nothing-accepted",
@@ -128,10 +184,36 @@ const cases = [
             detail: `oversized=${oversized.length} accepted=${accepted.length} acknowledged=${acknowledged.length}`,
           },
           {
+            // The reading's own validity: the peer asked for a second session and was never told
+            // no, so "no session was accepted" cannot mean the peer simply gave up.
+            name: "the-second-session-was-cut-off-not-declined",
+            ok:
+              reconnected.length === 1 &&
+              refused.length === 0 &&
+              peerFinished.length === 0 &&
+              !reading.hostStillAliveAfterRead,
+            detail:
+              `reconnectAttempted=${reconnected.length} refused=${JSON.stringify(refused)} peerReachedItsOwnEnd=${peerFinished.length} ` +
+              `peerAliveAtRead=${reading.hostStillAliveAfterRead}`,
+          },
+          {
+            name: "the-desktop-is-still-a-process",
+            ok: probes.launcherRunning === true,
+            detail: `launcherRunning=${String(probes.launcherRunning)} primaryIntents=${JSON.stringify(probes.primaryIntents)}`,
+          },
+          {
             name: "launch-survives-the-refusal",
             ok: accepted.length > 0,
-            detail: `helloAccepted=${accepted.length} reconnectAttempted=${factsNamed(reading, FACTS.reconnectAttempted).length} refused=${JSON.stringify(refused)}`,
+            detail: `helloAccepted=${accepted.length} reconnectAttempted=${reconnected.length} refused=${JSON.stringify(refused)} sessionPipe=${String(probes.sessionPipe)}`,
           },
+        ],
+        readings: [
+          { name: "the-refusal-line", detail: JSON.stringify(reading.stderr) },
+          {
+            name: "session-pipe-after-the-refusal",
+            detail: `reachable=${String(probes.sessionPipe)} bootstrapId=${String(probes.bootstrapId)}`,
+          },
+          { name: "primary-intent-channel-after-the-refusal", detail: JSON.stringify(probes.primaryIntents) },
         ],
         defects:
           accepted.length === 0
@@ -140,12 +222,14 @@ const cases = [
                   id: "desktop_frame_cap_ends_the_launch",
                   detail:
                     `one ${scenario.oversizedBytes}-byte frame (cap ${FRAME_CAP_BYTES}) ends the whole launch: it is refused by name and then has no session left to serve, ` +
-                    `so a Host whose session frame grew past the cap has no way back - the peer that owns the frame can never re-authenticate`,
+                    `so a Host whose session frame grew past the cap has no way back - the peer that owns the frame can never re-authenticate ` +
+                    `(measured at the instant the code appeared: launcherRunning=${String(probes.launcherRunning)} sessionPipe=${String(probes.sessionPipe)} primaryIntentsAbsent=${probes.primaryIntents?.pipePresent === false})`,
                 },
               ]
             : [],
         notes: [
           "the same peer reconnects after the oversized frame and speaks the hello a healthy Host speaks; the launcher's answer to that second session is the whole reading",
+          "the refusal carries the launch stage's code and no reason after it: an operator reading that one line cannot tell a frame over the cap from any other bootstrap that never authenticated",
         ],
       };
     },
@@ -154,14 +238,15 @@ const cases = [
     id: "eof-ownership",
     title: "a control EOF ends the attempt, and only a broken frame reads as a broken peer",
     async run({ world }) {
-      const clean = await launchDesktop(
-        world,
-        scenarioBase(world, "eof-clean", { behaviour: BEHAVIOURS.eofThenReauthenticate }),
-      );
-      const broken = await launchDesktop(
-        world,
-        scenarioBase(world, "eof-broken", { behaviour: BEHAVIOURS.malformedThenReauthenticate }),
-      );
+      const cleanScenario = scenarioBase(world, "eof-clean", { behaviour: BEHAVIOURS.eofThenReauthenticate });
+      const clean = await launchDesktop(world, cleanScenario);
+      const brokenScenario = scenarioBase(world, "eof-broken", {
+        behaviour: BEHAVIOURS.malformedThenReauthenticate,
+        // A broken frame ends the broker, so the peer's next connection has nothing to reach and
+        // every retry fails at once: the bound is how long the retries are allowed to try.
+        bounds: { connectMs: 1_500, helloMs: 6_000, settleMs: 700 },
+      });
+      const broken = await launchDesktop(world, brokenScenario);
       const cleanAccepted = factsNamed(clean, FACTS.helloAccepted);
       const cleanClosed = factsNamed(clean, FACTS.controlClosed);
       const cleanReconnected = factsNamed(clean, FACTS.reconnected);
@@ -171,6 +256,13 @@ const cases = [
       const brokenRefused = factsNamed(broken, FACTS.helloRefused);
       return {
         assertions: [
+          settled(clean, cleanScenario, "clean"),
+          settled(broken, brokenScenario, "broken"),
+          observable(
+            "host-peer",
+            factsNamed(clean, FACTS.hostStarted).length === 1 && factsNamed(broken, FACTS.hostStarted).length === 1,
+            `clean=${factsNamed(clean, FACTS.hostStarted).length} broken=${factsNamed(broken, FACTS.hostStarted).length}`,
+          ),
           {
             name: "clean-control-eof-ends-only-the-attempt",
             ok:
@@ -205,40 +297,32 @@ const cases = [
       const scenario = scenarioBase(world, "drain-budget", {
         behaviour: BEHAVIOURS.hang,
         hangMs: 120_000,
-        launchBoundMs: 22_000,
+        // Longer than the quit the Host's own numbers would bound (3000 ms drain + 1000 ms
+        // step-hang, plus the launcher's margin) and short enough to cost the suite a few seconds:
+        // a launcher still running past it did not quit on anything a script could say.
+        launchBoundMs: 8_000,
       });
       const started = Date.now();
       const pending = launchDesktop(world, scenario);
       // The only channel a script has for asking a running launcher for anything. Wait until the
-      // Host has published readiness, then deliver every intent that channel has.
-      await new Promise((resolveWait) => setTimeout(resolveWait, 6_000));
-      const delivered = await deliverEveryPrimaryIntent();
+      // Host is serving, then deliver every intent that channel has.
+      const delivered = await waitForIntentChannel(6_000);
       const reading = await pending;
       const records = teardownRecords(world);
       const elapsed = Date.now() - started;
       return {
-        assertions: [
+        assertions: [observable("intent-channel", delivered.pipePresent, JSON.stringify(delivered))],
+        readings: [
+          { name: "host-declared", detail: JSON.stringify(scenario.acknowledgmentFrame) },
+          { name: "intents-the-channel-accepts", detail: JSON.stringify(PRIMARY_INTENTS) },
+          { name: "teardown-records", detail: `${records.length} written · ${JSON.stringify(records)}` },
           {
-            name: "an-intent-channel-a-script-can-address",
-            ok: delivered.pipePresent,
-            detail: JSON.stringify(delivered),
+            name: "the-two-numbers-a-quit-reports",
+            detail: "none: no teardown record carries elapsedMs and drainDeadlineMs",
           },
           {
-            name: "declared-drain-is-reported-not-spent",
-            ok: records.some(
-              (entry) =>
-                entry.record !== null &&
-                typeof entry.record.elapsedMs === "number" &&
-                typeof entry.record.drainDeadlineMs === "number",
-            ),
-            detail: `records=${JSON.stringify(records)} elapsedMs=${elapsed} declared={drainDeadlineMs:3000,stepHangDeadlineMs:1000}`,
-          },
-          {
-            name: "a-scheduled-initiator-exists",
-            ok: false,
-            detail:
-              `the channel carries ${JSON.stringify(PRIMARY_INTENTS)} and nothing else; after ${elapsed} ms with a Host that never reclaims, the launcher ` +
-              `${reading.killed ? "was still running (the harness stopped it)" : "had exited"} and wrote ${records.length} teardown record(s)`,
+            name: "launcher-at-the-bound",
+            detail: `${reading.timedOut ? "still running" : reading.exited ? "exited" : "stopped on a bounded code"} after ${elapsed} ms · killed-by-harness=${reading.killed}`,
           },
         ],
         defects: [
@@ -249,9 +333,12 @@ const cases = [
               "launcher to quit at all, so ADR-0012's declared drain and step-hang numbers are never spent and never observable",
           },
         ],
-        blocked: {
+        skipped: {
           code: "desktop_shutdown_has_no_scriptable_initiator",
-          detail: `after ${elapsed} ms the launcher neither quit nor reported a teardown for a Host that declared 3000/1000 ms and never reclaimed`,
+          detail:
+            `the only channel a process may address answers ${JSON.stringify(PRIMARY_INTENTS)} and nothing else, so with a Host that declared ` +
+            `${scenario.acknowledgmentFrame.drainDeadlineMs} ms drain + ${scenario.acknowledgmentFrame.stepHangDeadlineMs} ms step-hang and never reclaimed, ` +
+            `after ${elapsed} ms the launcher was still running and had written 0 teardown records`,
         },
         notes: [
           "the Host is told to hang for 120 s, so any quit inside the case's bound would still be a launcher-initiated one",
@@ -276,6 +363,8 @@ const cases = [
       const names = observed.length === 1 ? observed[0].names : [];
       return {
         assertions: [
+          settled(reading, scenario),
+          observable("child-environment", observed.length === 1, `environment-fact=${observed.length}`),
           {
             name: "ambient-canary-not-carried",
             ok: observed.length === 1 && carried[CANARY_NAME] === undefined,
@@ -315,38 +404,53 @@ const cases = [
 
       // (1) The record a launch that died left behind, naming a process that is gone.
       const gone = startStandinProcess();
-      await settle();
       const goneIdentity = processIdentity(gone.pid);
       killExactProcess(gone.pid);
-      await settle();
-      writeAttemptRecord(world, attemptRecordFor(goneIdentity, recordedAt));
-      const recovered = await launchDesktop(world, scenarioBase(world, "orphan-dead"));
+      const goneRecord = attemptRecordFor(goneIdentity, recordedAt);
+      writeAttemptRecord(world, goneRecord);
+      const readBack = readAttemptRecord(world);
+      const deadScenario = scenarioBase(world, "orphan-dead");
+      const recovered = await launchDesktop(world, deadScenario);
       const afterRecovery = readAttemptRecord(world);
 
       // (2) The record whose pid now belongs to another process: alive, not the recorded one.
       const foreign = startStandinProcess();
-      await settle();
       const foreignIdentity = processIdentity(foreign.pid);
       writeAttemptRecord(
         world,
         attemptRecordFor({ ...foreignIdentity, startedAtUnixMs: foreignIdentity.startedAtUnixMs - 60_000 }, recordedAt),
       );
-      const discriminated = await launchDesktop(world, scenarioBase(world, "orphan-foreign"));
+      const foreignScenario = scenarioBase(world, "orphan-foreign");
+      const discriminated = await launchDesktop(world, foreignScenario);
       const foreignAlive = isRunning(foreign.pid);
       const afterForeign = readAttemptRecord(world);
       killExactProcess(foreign.pid);
 
       // (3) The control: the record names its owner EXACTLY, and the launch is what ends that process.
       const exact = startStandinProcess();
-      await settle();
       const exactIdentity = processIdentity(exact.pid);
       writeAttemptRecord(world, attemptRecordFor(exactIdentity, recordedAt));
-      const reaped = await launchDesktop(world, scenarioBase(world, "orphan-exact"));
+      const exactScenario = scenarioBase(world, "orphan-exact");
+      const reaped = await launchDesktop(world, exactScenario);
       const exactAlive = isRunning(exact.pid);
       if (exactAlive) killExactProcess(exact.pid);
 
       return {
         assertions: [
+          settled(recovered, deadScenario, "dead-owner"),
+          settled(discriminated, foreignScenario, "foreign-owner"),
+          settled(reaped, exactScenario, "exact-owner"),
+          {
+            // The harness wrote a marker the product would have written, and read back the shape it
+            // wrote: a marker the product never saw would make every answer below meaningless.
+            name: "the-attempt-marker-observed",
+            ok:
+              readBack !== null &&
+              readBack.bootstrapId === goneRecord.bootstrapId &&
+              readBack.pid === goneRecord.pid &&
+              readBack.startedAtUnixMs === goneRecord.startedAtUnixMs,
+            detail: `written=${JSON.stringify(goneRecord)} readBack=${JSON.stringify(readBack)}`,
+          },
           {
             name: "a-gone-owner-is-reclaimed-not-bricked",
             ok: recovered.exitCode === 0 && afterRecovery === null,
@@ -376,8 +480,6 @@ const cases = [
   },
 ];
 
-const settle = () => new Promise((resolveWait) => setTimeout(resolveWait, 400));
-
 /** The exact record shape the launcher writes when an attempt arms and its settlement cannot prove the process gone. */
 function attemptRecordFor(identity, recordedAt) {
   return {
@@ -393,41 +495,15 @@ function attemptRecordFor(identity, recordedAt) {
   };
 }
 
-/** Deliver every intent the primary-instance channel has, each on its own connection. */
-async function deliverEveryPrimaryIntent() {
-  const name = `\\\\.\\pipe\\${PRIMARY_INTENT_PIPE_PREFIX}${windowsSessionId()}`;
-  const results = [];
-  for (const intent of PRIMARY_INTENTS) {
-    const delivered = await new Promise((resolveDelivery) => {
-      const socket = net.connect(name);
-      const timer = setTimeout(() => resolveDelivery(false), 3_000);
-      socket.once("connect", () => {
-        clearTimeout(timer);
-        socket.write(`${JSON.stringify(primaryIntentFrame(intent))}\n`);
-        socket.end();
-        resolveDelivery(true);
-      });
-      socket.once("error", () => {
-        clearTimeout(timer);
-        resolveDelivery(false);
-      });
-    });
-    results.push({ intent, delivered });
+/** Wait until the launcher answers the one channel a script may address, bounded. */
+async function waitForIntentChannel(boundMs) {
+  const deadline = Date.now() + boundMs;
+  let last = await deliverEveryPrimaryIntent();
+  while (!last.pipePresent && Date.now() < deadline) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+    last = await deliverEveryPrimaryIntent();
   }
-  return { pipePresent: results.some((entry) => entry.delivered), results };
-}
-
-/** The launcher names its channel from the Windows session it runs in, which is this one. */
-function windowsSessionId() {
-  const output = execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", "(Get-Process -Id $PID).SessionId"],
-    {
-      encoding: "utf8",
-      windowsHide: true,
-    },
-  );
-  return output.trim();
+  return last;
 }
 
 export { cases };

@@ -16,15 +16,21 @@
  * admission is what validates the result, so a media layout that drifts from the product's
  * contract fails here by name instead of passing quietly.
  *
+ * THREE VERDICTS, NOT TWO, and the third is named rather than folded into a pass: a case whose
+ * subject the product does not offer is `skipped`, printed with the code that says why, counted
+ * separately, and never allowed to make this run green. A run that measured nothing at all is a
+ * refusal (exit 2), because a suite with no population agrees with itself.
+ *
  * USAGE
  *   node tools/conformance/desktop/run.mjs                  # every case
  *   node tools/conformance/desktop/run.mjs --case frame-cap # one case, by id
  *   node tools/conformance/desktop/run.mjs --binary <exe>   # another launcher (the rewrite)
  *   node tools/conformance/desktop/run.mjs --keep           # leave the world for inspection
+ *   node tools/conformance/desktop/run.mjs --list           # the suite list, and nothing else
  *
  * EXIT STATUS
  *   0  every case passed
- *   1  a case failed or was blocked (the finding names which, and the defect or the blocker)
+ *   1  a case failed, was skipped, or a process this suite started survived it - the finding names which
  *   2  nothing was measured: a prerequisite is absent, named, and the suite refuses to pass
  *
  * ENVIRONMENT
@@ -41,15 +47,20 @@ import { Blocked, isRunning, killExactProcess, prepareWorld, startedProcessLedge
 const TEMP_ROOT = process.env.GAMEBUDDY_DESKTOP_CONFORMANCE_TEMP ?? "D:\\gamebuddy-conformance";
 
 function parseArguments(argv) {
-  const options = { caseIds: [], binary: null, keep: false };
+  const options = { caseIds: [], binary: null, keep: false, list: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--case") options.caseIds.push(argv[++index]);
     else if (argument === "--binary") options.binary = argv[++index];
     else if (argument === "--keep") options.keep = true;
+    else if (argument === "--list") options.list = true;
     else throw new Error(`desktop_conformance_unknown_argument:${argument}`);
   }
   return options;
+}
+
+function suiteList(selected) {
+  return selected.map((entry) => entry.id).join(", ");
 }
 
 async function main(argv) {
@@ -57,10 +68,14 @@ async function main(argv) {
   const selected = options.caseIds.length === 0 ? cases : cases.filter((entry) => options.caseIds.includes(entry.id));
   if (selected.length === 0) {
     process.stdout.write(
-      `desktop_conformance_no_cases_selected: ${JSON.stringify(options.caseIds)} of ${cases.map((entry) => entry.id).join(", ")}\n`,
+      `desktop_conformance_no_cases_selected: ${JSON.stringify(options.caseIds)} of ${suiteList(cases)}\n`,
     );
     return 2;
   }
+  // The population, printed before anything runs: a case that never reports still appears here,
+  // and a suite whose list is empty cannot be mistaken for one that measured nothing.
+  process.stdout.write(`suite: ${selected.length} · ${suiteList(selected)}\n`);
+  if (options.list) return 0;
 
   mkdirSync(TEMP_ROOT, { recursive: true });
   rmSync(join(TEMP_ROOT, "world"), { recursive: true, force: true });
@@ -71,7 +86,7 @@ async function main(argv) {
     if (error instanceof Blocked) {
       process.stdout.write(`desktop_conformance_blocked: ${error.code}: ${error.detail}\n`);
       process.stdout.write(
-        "examined 0 · a suite with no population agrees with itself, so this run measures nothing\n",
+        "desktop conformance: cases 0 · passed 0 · failed 0 · skipped 0 - nothing was measured, which is never a pass\n",
       );
       return 2;
     }
@@ -95,17 +110,21 @@ async function main(argv) {
           id: entry.id,
           title: entry.title,
           assertions: produced.assertions,
+          readings: produced.readings ?? [],
           defects: produced.defects ?? [],
-          blocked: produced.blocked ?? null,
+          skipped: produced.skipped ?? null,
           notes: produced.notes ?? [],
         };
       } catch (error) {
+        // A case that threw has no reading at all, and that is a failure with the throw in it - it
+        // is never a case that quietly did not run.
         outcome = {
           id: entry.id,
           title: entry.title,
           assertions: [{ name: "case-ran", ok: false, detail: String(error?.stack ?? error) }],
+          readings: [],
           defects: [],
-          blocked: null,
+          skipped: null,
           notes: [],
         };
       }
@@ -132,32 +151,37 @@ async function main(argv) {
     else if (world !== null) process.stdout.write(`world kept at ${world.layout.programRoot}\n`);
   }
 
-  const passed = results.filter(
-    (result) => result.blocked === null && result.assertions.every((assertion) => assertion.ok),
-  ).length;
-  const failed = results.filter(
-    (result) => result.blocked === null && result.assertions.some((assertion) => !assertion.ok),
-  ).length;
-  const blocked = results.filter((result) => result.blocked !== null).length;
+  const passed = results.filter((result) => verdict(result) === "passed").length;
+  const failed = results.filter((result) => verdict(result) === "failed").length;
+  const skippedResults = results.filter((result) => verdict(result) === "skipped");
   process.stdout.write(
-    `desktop conformance: examined ${results.length} · passed ${passed} · failed ${failed} · blocked ${blocked}\n`,
+    `desktop conformance: cases ${results.length} · passed ${passed} · failed ${failed} · skipped ${skippedResults.length}\n`,
   );
+  for (const result of skippedResults) {
+    process.stdout.write(`skipped ${result.id}: ${result.skipped.code}: ${result.skipped.detail}\n`);
+  }
+  if (survived > 0) process.stdout.write(`desktop_conformance_process_survived: ${survived}\n`);
   if (results.length === 0) {
     process.stdout.write("desktop_conformance_no_population: nothing was measured, which is never a pass\n");
     return 2;
   }
-  return failed === 0 && blocked === 0 && survived === 0 ? 0 : 1;
+  return failed === 0 && skippedResults.length === 0 && survived === 0 ? 0 : 1;
+}
+
+function verdict(outcome) {
+  if (outcome.skipped !== null) return "skipped";
+  return outcome.assertions.every((assertion) => assertion.ok) ? "passed" : "failed";
 }
 
 function describe(outcome) {
-  const verdict =
-    outcome.blocked !== null ? "blocked" : outcome.assertions.every((assertion) => assertion.ok) ? "passed" : "failed";
-  const lines = [`case ${outcome.id}: ${verdict} (${outcome.elapsedMs} ms) - ${outcome.title}`];
+  const lines = [`case ${outcome.id}: ${verdict(outcome)} (${outcome.elapsedMs} ms) - ${outcome.title}`];
   for (const assertion of outcome.assertions) {
     lines.push(`  assertion ${assertion.name}: ${assertion.ok ? "passed" : "FAILED"} - ${assertion.detail}`);
   }
+  for (const reading of outcome.readings) lines.push(`  reading ${reading.name}: ${reading.detail}`);
   for (const defect of outcome.defects) lines.push(`  defect ${defect.id}: ${defect.detail}`);
-  if (outcome.blocked !== null) lines.push(`  blocked ${outcome.blocked.code}: ${outcome.blocked.detail}`);
+  for (const note of outcome.notes) lines.push(`  note: ${note}`);
+  if (outcome.skipped !== null) lines.push(`  skipped ${outcome.skipped.code}: ${outcome.skipped.detail}`);
   return lines.join("\n");
 }
 

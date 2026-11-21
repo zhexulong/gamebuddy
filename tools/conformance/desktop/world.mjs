@@ -27,10 +27,20 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { FACTS, GUARDIAN_ATTEMPT_RECORD, HOST_TEARDOWN_RECORD, SCENARIO_FILE } from "./wire.mjs";
+import {
+  FACTS,
+  GUARDIAN_ATTEMPT_RECORD,
+  GUARDIAN_PIPE_PREFIX,
+  HOST_TEARDOWN_RECORD,
+  PRIMARY_INTENT_PIPE_PREFIX,
+  PRIMARY_INTENTS,
+  primaryIntentFrame,
+  SCENARIO_FILE,
+} from "./wire.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(HERE, "../../..");
@@ -359,6 +369,83 @@ export function isRunning(pid) {
 }
 
 /**
+ * Whether a named pipe answers a connection right now, bounded: the only reading of "is that channel
+ * still being served" available to a process that is not the peer the product admits.
+ */
+export async function pipeReachable(name, boundMs = 1_500) {
+  return await new Promise((resolveReading) => {
+    const socket = net.connect(name);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      resolveReading(false);
+    }, boundMs);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.end();
+      resolveReading(true);
+    });
+    socket.once("error", () => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolveReading(false);
+    });
+  });
+}
+
+/** The pipe the launcher serves this launch's authenticated Host session on. */
+export function guardianPipeName(bootstrapId) {
+  return `\\\\.\\pipe\\${GUARDIAN_PIPE_PREFIX}${bootstrapId}`;
+}
+
+/**
+ * The launcher names its primary-intent channel from the Windows session it runs in, which is this
+ * one - read once, because the answer cannot change while this process lives.
+ */
+let cachedSessionId = null;
+
+function windowsSessionId() {
+  if (cachedSessionId !== null) return cachedSessionId;
+  const output = run(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", "(Get-Process -Id $PID).SessionId"],
+    {
+      windowsHide: true,
+    },
+  );
+  cachedSessionId = output.trim();
+  return cachedSessionId;
+}
+
+/**
+ * Deliver every intent the primary-intent channel has, each on its own connection. This is the only
+ * channel a process may address on a running launcher, so the set it answers with is the whole of
+ * what a script can ask it for.
+ */
+export async function deliverEveryPrimaryIntent() {
+  const name = `\\\\.\\pipe\\${PRIMARY_INTENT_PIPE_PREFIX}${windowsSessionId()}`;
+  const results = [];
+  for (const intent of PRIMARY_INTENTS) {
+    const delivered = await new Promise((resolveDelivery) => {
+      const socket = net.connect(name);
+      const timer = setTimeout(() => resolveDelivery(false), 1_500);
+      socket.once("connect", () => {
+        clearTimeout(timer);
+        socket.write(`${JSON.stringify(primaryIntentFrame(intent))}\n`);
+        socket.end();
+        resolveDelivery(true);
+      });
+      socket.once("error", () => {
+        clearTimeout(timer);
+        socket.destroy();
+        resolveDelivery(false);
+      });
+    });
+    results.push({ intent, delivered });
+  }
+  return { pipePresent: results.some((entry) => entry.delivered), results };
+}
+
+/**
  * Prepare the installed world: refuse to stand on an existing installation, install the media,
  * write the registration, and take the per-user layout for the run.
  */
@@ -487,14 +574,16 @@ export async function launchDesktop(world, scenario) {
   // A launch that failed shows its player a window and waits for the click on that window's own
   // control - deliberately, for as long as it takes. A harness cannot click, so a case whose
   // launch ends by naming a bounded code is read from that code and stopped here: the window is
-  // what the launcher does next, not a second fact about the launch.
+  // what the launcher does next, not a second fact about the launch. `stopAfterBoundedCodeMs` is
+  // the window the case keeps the launcher alive in - it runs its own probes in it - before this
+  // harness stops a process nobody can click.
   const settled = await new Promise((resolveSettled) => {
     const bound = setTimeout(() => resolveSettled("bound"), scenario.launchBoundMs);
     child.once("exit", () => {
       clearTimeout(bound);
       resolveSettled("exit");
     });
-    if (scenario.stopOnBoundedCodeMs > 0) {
+    if (scenario.stopAfterBoundedCodeMs > 0) {
       const watch = setInterval(() => {
         if (exited) {
           clearInterval(watch);
@@ -502,19 +591,25 @@ export async function launchDesktop(world, scenario) {
         }
         if (!stderr.some((line) => /^[a-z][a-z0-9_]*(?::[a-z0-9_]+)?$/u.test(line.split(" ")[0]))) return;
         clearInterval(watch);
-        setTimeout(() => resolveSettled("bounded-code"), scenario.stopOnBoundedCodeMs);
+        resolveSettled("bounded-code");
       }, 100);
     }
   });
+  if (settled === "bounded-code") {
+    if (scenario.onBoundedCode) await scenario.onBoundedCode({ pid: child.pid, stderr });
+    await new Promise((resolveWait) => setTimeout(resolveWait, scenario.stopAfterBoundedCodeMs));
+  }
   const elapsedMs = Date.now() - startedAt;
   clearInterval(hostWatch);
   const pid = child.pid;
+  const timedOut = settled === "bound";
+  const stoppedAfterBoundedCode = settled === "bounded-code";
   let killed = false;
   if (settled !== "exit") {
     killExactProcess(pid);
     killed = true;
     await new Promise((resolveWaited) => {
-      const timer = setTimeout(resolveWaited, 10_000);
+      const timer = setTimeout(resolveWaited, 5_000);
       child.once("exit", () => {
         clearTimeout(timer);
         resolveWaited();
@@ -535,14 +630,30 @@ export async function launchDesktop(world, scenario) {
     elapsedMs,
     exited,
     killed,
+    timedOut,
+    stoppedAfterBoundedCode,
     exitCode,
     stderr,
     stdout,
+    transcriptPath: scenario.transcript,
     transcript,
     hostPid,
     hostStillAliveAfterRead: hostAlive,
     facts: transcript.filter((entry) => typeof entry.fact === "string"),
   };
+}
+
+/** The facts a peer wrote, read from its transcript by a case that needs them before the launch ends. */
+export function transcriptFacts(path) {
+  return readTranscript(path);
+}
+
+/** The bootstrap id a peer read out of the one frame the launcher writes, or `null` before it has. */
+export function bootstrapIdIn(facts) {
+  return (
+    facts.find((entry) => entry.fact === FACTS.bootstrapFrame && typeof entry.bootstrapId === "string")?.bootstrapId ??
+    null
+  );
 }
 
 /** The transcript a peer wrote, one JSON document per line, or nothing when there is no file yet. */
