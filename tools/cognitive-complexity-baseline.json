@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 56 cs member(s) over 30, 8 class(es) over 200, 21 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4739, largest ExecutionManager at 26939 lines / 904 members across 52 partial(s).",
-  "revision": "5e5e9246",
+  "revision": "6c45cccd",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -28,14 +28,14 @@
       "name": "BodyProgramJournalPersistence.ValidateNode(BodyProgramJournalProgram,VerifiedBodyProgramNode,BodyProgramJournalNode,BodyProgramPolicyIdentity,string?)",
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
       "line": 254,
-      "value": 59
+      "value": 63
     },
     {
       "id": "cs:BridgeProtocol.ExecutionArgumentProperties(string?)",
       "language": "cs",
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-      "line": 2296,
+      "line": 2297,
       "value": 63,
       "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
@@ -438,7 +438,7 @@
       "language": "cs",
       "name": "StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool,bool)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 2457,
+      "line": 2465,
       "value": 42
     },
     {
@@ -447,14 +447,14 @@
       "name": "StardewBodyController.TryStartCore(LocalMoveSpec,Farmer,int,string,string?)",
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 929,
-      "value": 60
+      "value": 58
     },
     {
       "id": "cs:StardewBodyController.Update(int)",
       "language": "cs",
       "name": "StardewBodyController.Update(int)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 1248,
+      "line": 1250,
       "value": 44
     },
     {
@@ -732,7 +732,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 5060,
+      "line": 5064,
       "value": 65,
       "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one."
     },
@@ -741,7 +741,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 6061,
+      "line": 6065,
       "value": 199
     },
     {
@@ -749,7 +749,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2585,
+      "line": 2589,
       "value": 69,
       "reason": "recorded at 11e7cc9b: 66 -> 69, in `51ccae18` (a policy change reaches a running world as a message, not a poll). Measured 66 at 83ae46f0, 69 at that commit and at every commit after it."
     },
@@ -1136,7 +1136,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
       "line": 16,
-      "value": 255
+      "value": 259
     },
     {
       "id": "cs:BridgeProtocol",
@@ -1144,7 +1144,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 546,
+      "value": 547,
       "reason": "550 -> 558 in `a3e6eb34`, the batch-node row table reaching the model: the two new overloads `IsProofShape(string?,string?,string?)` and `IsProofShape(JsonElement)` each test the proof shape against `BODY_PROGRAM_PROOF_NODE_STATES`, and `IsValidBodyProgramNodeStatus` gained the two `MayCarryProof` state guards plus `evidence`/`postconditionVerification` in its key list. Growth in branches, not a re-partition: the type is still one part and its 143 methods include the two new ones."
     },
     {
@@ -1153,7 +1153,7 @@
       "parts": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "value": 319,
+      "value": 320,
       "reason": "324 -> 329 over the same single part, and the arithmetic is in the members: `e2a6ae87` (a receipt states which programme its execution belongs to) added `OriginOf(string?)` = 5 and replaced the three-argument `TryProjectReceipt` (2) with one carrying a `BridgeExecutionOrigin` (2), so +5. Structure moved with it - 85 -> 86 methods - so this is a re-record of a changed shape, not a raised ceiling on an unchanged one."
     },
     {
@@ -1198,7 +1198,7 @@
       "parts": 1,
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 44,
-      "value": 455,
+      "value": 453,
       "reason": "420 -> 407 in `55e4a27e` (a tile's kind names the action that clears it): the tile-kind vocabulary moved out to `TileOccupantKind` and took 13 points and one method with it. Recorded lower, not higher - 91 -> 90 methods and 2642 -> 2617 lines are the same move."
     }
   ],
@@ -1210,8 +1210,8 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs",
       "line": 11,
-      "lines": 2014,
-      "methods": 120
+      "lines": 2055,
+      "methods": 121
     },
     {
       "id": "cs:BodyProgramControllerPumpTests",
@@ -1220,7 +1220,7 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramControllerPumpTests.cs",
       "line": 20,
-      "lines": 1656,
+      "lines": 1658,
       "methods": 52
     },
     {
@@ -1230,7 +1230,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
       "line": 16,
-      "lines": 844,
+      "lines": 857,
       "methods": 51
     },
     {
@@ -1240,7 +1240,7 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
       "line": 981,
-      "lines": 809,
+      "lines": 810,
       "methods": 55
     },
     {
@@ -1250,7 +1250,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2442,
+      "lines": 2443,
       "methods": 141,
       "reason": "lines 2421 -> 2455 and methods 141 -> 143 in `a3e6eb34` (+38/-4 in the file): the two `IsProofShape` overloads, one for the typed status row and one for a `JsonElement`, which is the wire row's other half."
     },
@@ -1272,7 +1272,7 @@
       "files": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "lines": 1763,
+      "lines": 1767,
       "methods": 82,
       "reason": "recorded at 11e7cc9b: methods 86 -> 82 and lines 1767 -> 1732, all of it in `04598eda` (the executor stops narrating its body). The four members that left are the body-trace channel, measured one by one: `TryCreateBodyTraceEvent`, `TryCreateSemanticEvent`, `IsBodyTraceCategory`, `IsNavigationTrace`. `parts` stays 1 and the type's value fell 329 -> 326 with them. `git log 04598eda..11e7cc9b -- integrations/stardew/BridgeSession.cs` is empty, so nothing has touched it since."
     },
@@ -1370,7 +1370,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "lines": 1240,
+      "lines": 1242,
       "methods": 61,
       "reason": "lines 1209 -> 1211 in `a3e6eb34` (+5/-3 in the file) at the same 61 methods and the same one part: `TryComplete`'s `provesEffect` stopped spelling the outcome set and asks `BodyProgramValidation.MayCarryProof`, the declaration the wire validator refuses a frame by, and the two lines that replaced it are its comment. A re-partition of one authority plus a comment, not a member."
     },
@@ -1403,7 +1403,7 @@
       "files": 1,
       "file": "integrations/stardew/StardewBodyController.cs",
       "line": 44,
-      "lines": 3017,
+      "lines": 3025,
       "methods": 97,
       "reason": "91 -> 90 methods and 2642 -> 2617 lines in `55e4a27e`, which moved the tile-kind vocabulary to `TileOccupantKind`. Re-recorded lower - the class shrank, so no growth needs a reason here."
     },
