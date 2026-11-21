@@ -14,6 +14,7 @@ internal sealed class WindowsRoleLauncher
     private const uint WaitObject0 = 0;
     private const uint WaitTimeout = 0x00000102;
     private const uint RoleAbortWaitMilliseconds = 30_000;
+    private const uint ExitWaitSliceMilliseconds = 250;
 
     internal static void ValidateAbi()
     {
@@ -86,6 +87,21 @@ internal sealed class WindowsRoleLauncher
         return GetExitCodeProcess(role.Process, out exitCode);
     }
 
+    /// <summary>
+    /// Blocks until the role's process has ended, in bounded slices.
+    ///
+    /// The role's own death watcher is the only caller, and it is why a role that ends
+    /// while the controller is silent is published at all: the wait is on the process,
+    /// never on a command. Slices rather than one infinite wait because the handle
+    /// belongs to the role and an explicit containment disposes it while this waiter is
+    /// still running - re-reading the handle each slice makes that a clean stop instead
+    /// of a wait on a closed handle.
+    /// </summary>
+    internal static void WaitForExit(LaunchedRole role)
+    {
+        while (!role.Process.IsInvalid && !role.Process.IsClosed && WaitForSingleObject(role.Process, ExitWaitSliceMilliseconds) == WaitTimeout) { }
+    }
+
     private static string BuildCommandLine(string executable, IReadOnlyList<string> arguments) =>
         string.Join(" ", new[] { QuoteForWindowsCrt(executable) }.Concat(arguments.Select(QuoteForWindowsCrt)));
 
@@ -139,9 +155,20 @@ internal sealed class WindowsRoleLauncher
     {
         internal SafeKernelHandle Process { get; }
         internal SafeKernelHandle Thread { get; }
+        private int exitReported;
+        private volatile bool endedByGuardian;
         internal LaunchedRole(SafeKernelHandle process, SafeKernelHandle thread) { Process = process; Thread = thread; }
+        /// <summary>
+        /// This role's ending is the Guardian's own act - an explicit containment or an
+        /// aborted launch - so its death watcher must report nothing (#506).
+        /// </summary>
+        internal void MarkEndedByGuardian() => endedByGuardian = true;
+        internal bool EndedByGuardian => endedByGuardian;
+        /// <summary>The one exit report a role may ever have.</summary>
+        internal bool TryClaimExitReport() => Interlocked.Exchange(ref exitReported, 1) == 0;
         internal void Abort()
         {
+            MarkEndedByGuardian();
             if (Process.IsInvalid) throw new InvalidOperationException("windows_bootstrap_guardian_role_abort_process_invalid");
             if (!TerminateProcess(Process, 1)) throw new Win32Exception(Marshal.GetLastWin32Error(), "windows_bootstrap_guardian_role_abort_terminate_failed");
             var wait = WaitForSingleObject(Process, RoleAbortWaitMilliseconds);

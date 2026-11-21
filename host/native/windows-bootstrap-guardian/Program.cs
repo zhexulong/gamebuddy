@@ -47,23 +47,11 @@ internal static class Program
             GuardianPrivateLaunchIngress.ArmBinding? armBinding = null;
             GuardianProtocol.Correlation? activeCorrelation = null;
             var launchedRoles = new HashSet<GuardianProtocol.Role>();
-            var reportedExits = new HashSet<GuardianProtocol.Role>();
+            var publicOutput = new PublicChannelWriter(output);
             while (true)
             {
                 var line = await publicFrames.Reader.ReadAsync().ConfigureAwait(false);
                 if (line is null) { closing.Cancel(); break; }
-                // A role that ended while we still held it for use is a death this
-                // controller did not cause, so it is published in front of this
-                // command's reply rather than instead of it. The publication
-                // boundary is the command read, not the death itself: a controller
-                // that sends nothing learns of the death when it next sends a
-                // command. A role we ended ourselves never reaches this line with a
-                // handle to report - contain_role terminates and releases the role
-                // in one step before answering, and the EOF drain of AI happens
-                // after this loop - which is what keeps an explicit endgame from
-                // being published as the game having died (#506).
-                await PublishRoleExitAsync(output, GuardianProtocol.Role.PlayerHost, player, reportedExits).ConfigureAwait(false);
-                await PublishRoleExitAsync(output, GuardianProtocol.Role.AiClient, ai, reportedExits).ConfigureAwait(false);
                 var command = GuardianProtocol.Parse(line);
                 if (command.Operation == "arm_attempt")
                 {
@@ -81,7 +69,7 @@ internal static class Program
                     catch { playerJob.Dispose(); playerJob = null; throw; }
                     activeCorrelation = command.Correlation;
                     armed = true;
-                    await WriteAsync(output, GuardianProtocol.Response("armed")).ConfigureAwait(false);
+                    await publicOutput.WriteAsync(GuardianProtocol.Response("armed")).ConfigureAwait(false);
                     continue;
                 }
                 if (!armed || closing.IsCancellationRequested || ingress is null || playerJob is null || aiJob is null || command.Operation is not ("launch_role" or "contain_role") || command.Correlation != activeCorrelation!.Value) return Fail();
@@ -116,7 +104,8 @@ internal static class Program
                             WindowsRoleLauncher.Resume(launched!);
                         })) throw new OperationCanceledException();
                         if (role == GuardianProtocol.Role.PlayerHost) player = launched; else ai = launched;
-                        await WriteAsync(output, GuardianProtocol.Response("role_active")).ConfigureAwait(false);
+                        _ = WatchRoleExitAsync(role, launched!, publicOutput);
+                        await publicOutput.WriteAsync(GuardianProtocol.Response("role_active")).ConfigureAwait(false);
                     }
                     catch { launched?.Abort(); throw; }
                 }
@@ -125,13 +114,17 @@ internal static class Program
                     var role = command.Role!.Value;
                     if (role == GuardianProtocol.Role.PlayerHost ? player is null : ai is null) return Fail();
                     var job = role == GuardianProtocol.Role.PlayerHost ? playerJob : aiJob;
+                    // The Guardian ends this role itself, so its ending is the endgame's
+                    // and never a death: the watcher must report nothing (#506).
+                    if (role == GuardianProtocol.Role.PlayerHost) player?.MarkEndedByGuardian(); else ai?.MarkEndedByGuardian();
                     job.TerminateAndDrain();
                     if (role == GuardianProtocol.Role.PlayerHost) { player?.Dispose(); player = null; } else { ai?.Dispose(); ai = null; }
-                    await WriteAsync(output, GuardianProtocol.Response("role_contained")).ConfigureAwait(false);
+                    await publicOutput.WriteAsync(GuardianProtocol.Response("role_contained")).ConfigureAwait(false);
                 }
             }
             // Ordinary controller EOF only drains AI authority. Player remains alive;
             // explicit contain_role is the deliberate endgame endpoint.
+            ai?.MarkEndedByGuardian();
             if (armed) aiJob?.TerminateAndDrain();
             await publicReader.ConfigureAwait(false);
             return 0;
@@ -142,6 +135,7 @@ internal static class Program
             ingress?.Dispose();
             // Never terminate Player during ordinary guardian cleanup. Its non-kill-on-
             // close job keeps the game world alive after the last guardian handle closes.
+            ai?.MarkEndedByGuardian();
             try { aiJob?.TerminateAndDrain(); } catch { }
             player?.Dispose(); ai?.Dispose();
             playerJob?.Dispose(); aiJob?.Dispose();
@@ -192,17 +186,63 @@ internal static class Program
     }
 
     /**
-     * Publishes a role's own exit, exactly once per role.
+     * Publishes a role's own ending the moment the OS reports it.
      *
-     * It runs on the command loop and only there, so the event and the reply that
-     * follows it are written by one thread and cannot interleave into half a line.
+     * The watcher exists because this channel is otherwise driven by the controller: the
+     * dead role it watched for was only reported in front of the NEXT command, and a
+     * controller that has finished its launch sends nothing - so the game could be gone
+     * while the product still described it as running (measured 2026-11-21,
+     * `.tmp/lane-deathpub.md`). It blocks on the role's own process handle instead, so the
+     * ending needs no command in front of it.
+     *
+     * It reports NOTHING for a role this Guardian ended itself - an explicit endgame's
+     * containment or an aborted launch - which is what keeps an endgame from being
+     * published as the game having died (#506), and it claims the one report a role may
+     * ever have, so a role that ended once is published once.
      */
-    private static async Task PublishRoleExitAsync(Stream output, GuardianProtocol.Role role, WindowsRoleLauncher.LaunchedRole? launched, HashSet<GuardianProtocol.Role> reported)
+    private static async Task WatchRoleExitAsync(GuardianProtocol.Role role, WindowsRoleLauncher.LaunchedRole launched, PublicChannelWriter output)
     {
-        if (launched is null || reported.Contains(role)) return;
-        if (!WindowsRoleLauncher.TryReadExitCode(launched, out var exitCode)) return;
-        reported.Add(role);
-        await WriteAsync(output, GuardianProtocol.RoleExit(role, exitCode)).ConfigureAwait(false);
+        try
+        {
+            await Task.Run(() => WindowsRoleLauncher.WaitForExit(launched)).ConfigureAwait(false);
+            if (launched.EndedByGuardian || !launched.TryClaimExitReport()) return;
+            if (!WindowsRoleLauncher.TryReadExitCode(launched, out var exitCode)) return;
+            await output.WriteAsync(GuardianProtocol.RoleExit(role, exitCode)).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The channel is gone or the role's handle was released under this waiter. A
+            // death that cannot be reported changes nothing this process still owns: the
+            // controller's own commands answer `guardian_session_closed` from here on.
+        }
+    }
+
+    /**
+     * The one writer of the Guardian's public channel.
+     *
+     * Two producers write here - the command loop answering what it was asked, and a
+     * death watcher reporting a process that ended on its own - and the channel's contract
+     * is one frame per line. The gate is what makes a frame whole: a reply interleaved
+     * into an event would fail the reader on both sides of this pipe.
+     */
+    private sealed class PublicChannelWriter
+    {
+        private readonly Stream output;
+        private readonly SemaphoreSlim gate = new(1, 1);
+
+        internal PublicChannelWriter(Stream output) => this.output = output;
+
+        internal async Task WriteAsync(string frame)
+        {
+            var bytes = Encoding.UTF8.GetBytes(frame);
+            await gate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                await output.WriteAsync(bytes).ConfigureAwait(false);
+                await output.FlushAsync().ConfigureAwait(false);
+            }
+            finally { gate.Release(); }
+        }
     }
 
     private static async Task ReadPublicFramesAsync(Stream stream, ChannelWriter<byte[]?> frames, CancellationTokenSource closing, ResidentGuardianStateGate stateGate)
@@ -234,6 +274,5 @@ internal static class Program
         throw GuardianProtocol.Invalid();
     }
 
-    private static async Task WriteAsync(Stream output, string response) { var bytes = Encoding.UTF8.GetBytes(response); await output.WriteAsync(bytes).ConfigureAwait(false); await output.FlushAsync().ConfigureAwait(false); }
     private static int Fail() { Console.Error.Write("windows_bootstrap_guardian_invalid_request\n"); return 1; }
 }

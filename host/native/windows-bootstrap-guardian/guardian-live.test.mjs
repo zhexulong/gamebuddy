@@ -567,22 +567,27 @@ test("naturally exited role contains without a drain timeout or false active sta
   } finally { await session.close(); await removeRoot(root); }
 });
 
-test("a role that ends on its own publishes its native exit before the reply to the next command", { ...winOnly, timeout: 30_000 }, async () => {
-  // The Guardian's public channel carries two kinds of frame, and this drives the
-  // producing half the Desktop reader was already written for. The exit is
-  // observed at the command boundary, so a controller that sends nothing after a
-  // death learns of it only on its next command - the assertion before `contain`
-  // is that cost, stated where a reader will meet it.
-  const root = await temporaryRoot("role-exit-published");
+test("a role that ends on its own publishes its native exit with no command in front of it", { ...winOnly, timeout: 30_000 }, async () => {
+  // The publication boundary is the death, not the next command. The controller this
+  // Guardian serves has finished its launch and is silent, so an exit that waited for a
+  // command in front of it would never be published at all - the game could be gone while
+  // the product still described it as running (measured: `.tmp/lane-deathpub.md` §3).
+  // Everything below is asserted with NOTHING written to the public channel, so only the
+  // watcher can have produced the frame.
+  const root = await temporaryRoot("role-exit-unprompted");
   const session = await startGuardianSession();
   try {
     const report = resolve(root, "exit.txt");
     await session.launch("player_host", ["--signal", report, "--exit-after-report"]);
     await waitForFile(report);
-    await delay(250);
-    assert.deepEqual(session.publicEvents, [], "a death was published with no command to publish it in front of");
-    await session.contain("player_host");
+    await waitForPublicEvents(session, 1, 5_000);
     assert.deepEqual(session.publicEvents, [{ operation: "role_exited", role: "player_host", exitCode: 0 }], JSON.stringify(session.diagnostics()));
+    // One death, one frame: the explicit containment that follows is the Guardian ending
+    // the role itself and must not be published as a second exit (#506), and the Guardian
+    // itself survives reporting it.
+    await session.contain("player_host");
+    assert.equal(session.publicEvents.length, 1, "the death was published exactly once");
+    assert.equal(await session.closesWithin(2_000), false, "the guardian left after reporting a death it did not cause");
   } finally { await session.close(); await removeRoot(root); }
 });
 
@@ -990,6 +995,15 @@ async function terminateAndWaitForFixtureExit(pid) {
     await delay(50);
   }
   throw new Error(`fixture player did not exit after cleanup: ${pid}`);
+}
+/** Waits until the Guardian has published `count` role events, or fails with its own diagnostics. */
+async function waitForPublicEvents(session, count, milliseconds) {
+  const deadline = Date.now() + milliseconds;
+  while (Date.now() < deadline) {
+    if (session.publicEvents.length >= count) return;
+    await delay(25);
+  }
+  throw new Error(`guardian published ${session.publicEvents.length} role event(s), expected ${count}: ${JSON.stringify(session.diagnostics())}`);
 }
 async function waitForFile(path) { for (let i = 0; i < 400; i++) { try { await access(path); return; } catch { await delay(25); } } throw new Error("fixture report missing"); }
 async function expectNoFile(path, milliseconds) { await delay(milliseconds); await assert.rejects(access(path)); }
