@@ -3,14 +3,9 @@ import { cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { readExperimentalStardewActionIds } from "./stardew-published-action-registry.mjs";
 import { COMPANION_LOCALE } from "./companion-locale.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.mjs";
 import { STARDEW_BRIDGE_PIPE_NAME, STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
 
-const BUNDLE_FILES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
 const LOCK_DIRECTORY = ".stardew-native-local-player-fixture.lock";
 const PUBLIC_ERROR_CODES = new Set([
   "invalid_fixture_backup_entry",
@@ -314,7 +309,7 @@ export async function verifyNativeLocalPlayerFixture(options) {
       throw new Error("native_local_fixture_config_invalid");
   }
   assertBridgeConfig(config);
-  for (const name of BUNDLE_FILES)
+  for (const name of MOD_BUNDLE_FILE_NAMES)
     if (!(await exists(join(context.modRoot, name)))) throw new Error(`native_local_fixture_bundle_missing:${name}`);
   return Object.freeze({
     state: "verified",
@@ -372,7 +367,7 @@ function resolveContext(options) {
 async function assertSafeContext(context) {
   for (const path of [context.root, context.modsPath, context.releaseDir, context.modRoot])
     await assertDirectoryNotLink(path);
-  for (const name of ["config.json", ...BUNDLE_FILES]) {
+  for (const name of ["config.json", ...MOD_BUNDLE_FILE_NAMES]) {
     const path = join(context.modRoot, name);
     if (await exists(path)) await assertNotLink(path);
   }
@@ -1325,7 +1320,7 @@ async function rollbackFailedPreparation(context, backup, backupName, backupCrea
 
 async function backupManagedFiles(context, backup) {
   const entries = [];
-  for (const name of ["config.json", ...BUNDLE_FILES]) {
+  for (const name of ["config.json", ...MOD_BUNDLE_FILE_NAMES]) {
     const source = join(context.modRoot, name);
     const existed = await exists(source);
     const backupFile = `${name}.backup`;
@@ -1650,7 +1645,7 @@ async function archiveBodyProgramJournal(scopePath, evidenceDir) {
 async function restoreManagedFiles(context, backup, removeBackup) {
   const manifest = await readJson(join(backup, "manifest.json"));
   if (manifest?.version !== 1 || !Array.isArray(manifest.entries)) throw new Error("invalid_fixture_backup_manifest");
-  const expectedNames = ["config.json", ...BUNDLE_FILES];
+  const expectedNames = ["config.json", ...MOD_BUNDLE_FILE_NAMES];
   if (manifest.entries.length !== expectedNames.length) throw new Error("invalid_fixture_backup_manifest");
   if (new Set(manifest.entries.map((entry) => entry?.name)).size !== expectedNames.length)
     throw new Error("invalid_fixture_backup_manifest");
@@ -1676,7 +1671,7 @@ async function restoreManagedFiles(context, backup, removeBackup) {
 }
 async function deployBundle(context) {
   await mkdir(context.modRoot, { recursive: true });
-  for (const name of BUNDLE_FILES) {
+  for (const name of MOD_BUNDLE_FILE_NAMES) {
     const source = join(context.releaseDir, name);
     if (!(await exists(source))) throw new Error(`release_bundle_missing:${source}`);
     const sourceBytes = await readFile(source);

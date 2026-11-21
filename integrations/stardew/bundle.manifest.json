@@ -1,0 +1,10 @@
+{
+  "schema": "gamebuddy-stardew-mod-bundle/v1",
+  "build": "integrations/stardew/GameBuddy.Stardew.csproj",
+  "files": [
+    "GameBuddy.Stardew.Core.dll",
+    "GameBuddy.Stardew.deps.json",
+    "GameBuddy.Stardew.dll",
+    "manifest.json"
+  ]
+}

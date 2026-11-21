@@ -23,6 +23,8 @@ import { PassThrough } from "node:stream";
 import type { ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+
+import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.test-support.js";
 import test from "node:test";
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import type { FarmhandActionPolicyRequest } from "./protocol.js";
@@ -90,12 +92,7 @@ export const installationChain: readonly WindowsPathObjectIdentity[] = Object.fr
     fileId: "00000000000000000000000000000004",
   }),
 ]);
-const packageEntries = [
-  "GameBuddy.Stardew.Core.dll",
-  "GameBuddy.Stardew.deps.json",
-  "GameBuddy.Stardew.dll",
-  "manifest.json",
-] as const;
+const packageEntries = MOD_BUNDLE_FILE_NAMES;
 const tavernProfile = composeTavernProfile({
   profileId: "gamebuddy.chat-core.reference-pipeline",
   releaseTier: "chat_core",

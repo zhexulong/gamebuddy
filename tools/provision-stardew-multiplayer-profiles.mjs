@@ -45,17 +45,12 @@ import { existsSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
+import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_RELEASE_DIR = join(REPOSITORY_ROOT, "integrations", "stardew", "bin", "Release", "net6.0");
 const PROFILE_NAMES = Object.freeze(["A-host", "A-ai-client"]);
 const MANIFEST_FILE_NAME = "stardew-farmhand-manifest.json";
-const BUNDLE_FILE_NAMES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
 const ARGUMENTS = Object.freeze({
   "--profile-root": "value",
   "--session-directory": "value",
@@ -237,7 +232,7 @@ export function assertProvisionedShape({ host, ai, checkOnly = false }) {
 }
 
 async function assertReleaseBundle(releaseDir) {
-  for (const fileName of BUNDLE_FILE_NAMES) {
+  for (const fileName of MOD_BUNDLE_FILE_NAMES) {
     const path = join(releaseDir, fileName);
     if (!existsSync(path)) throw new Error(`release_bundle_missing:${path}`);
   }
@@ -272,7 +267,7 @@ async function main(argv) {
     const modRoot = join(request.profileRoot, profile, "Mods", "GameBuddy");
     await writeJson(join(sidecarRoot, "config.json"), config);
     await writeJson(join(modRoot, "config.json"), config);
-    for (const fileName of BUNDLE_FILE_NAMES) await cp(join(request.releaseDir, fileName), join(modRoot, fileName));
+    for (const fileName of MOD_BUNDLE_FILE_NAMES) await cp(join(request.releaseDir, fileName), join(modRoot, fileName));
   }
 
   // Verify by READING BACK what was written, not by trusting the objects above.
@@ -282,7 +277,7 @@ async function main(argv) {
   };
   assertProvisionedShape({ host: written.hostSidecar, ai: written.aiSidecar });
   for (const profile of PROFILE_NAMES)
-    for (const fileName of [...BUNDLE_FILE_NAMES, "config.json"])
+    for (const fileName of [...MOD_BUNDLE_FILE_NAMES, "config.json"])
       if (!existsSync(join(request.profileRoot, profile, "Mods", "GameBuddy", fileName)))
         throw new Error(`mod_bundle_incomplete:${profile}/${fileName}`);
 

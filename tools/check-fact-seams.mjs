@@ -500,33 +500,17 @@ export const DEBT = Object.freeze([
     },
   ),
   mirrorDebt(
-    "the Mod's bundle file names",
-    "tools/lib/stardew-native-local-player-fixture.mjs:BUNDLE_FILES",
-    [
-      "host/src/stardew-game-install/deployment.test.ts:MOD_ENTRIES",
-      "host/src/stardew-production-lifecycle-coordinator.test-support.ts:packageEntries",
-      "host/src/stardew-recovery-integration.private.test.ts:packageEntries",
-      "tools/check-live-run-isolation.mjs:BUNDLE_FILES",
-      "tools/lib/stardew-fixture-profile.mjs:BUNDLE_FILE_NAMES",
-      "tools/lib/stardew-lane-scope.test.mjs:BUNDLE_FILES",
-      "tools/provision-stardew-multiplayer-profiles.mjs:BUNDLE_FILE_NAMES",
-      "tools/stardew-native-local-player-fixture.test.mjs:BUNDLE_FILES",
-      "tools/stardew-navigation-topology-preflight.mjs:BUNDLE_FILES",
-    ],
-    {
-      reason:
-        "the Mod's four bundle file names are the build's output (`integrations/stardew/GameBuddy.Stardew.csproj`), and ten declarations beside it restate them - a build that renames an output leaves every one of them wrong",
-      owner: "the Mod packaging lane",
-    },
-  ),
-  mirrorDebt(
     "the Mod's four facing directions",
     "host/src/stardew-humanlike-action-projection.test.ts:MOD_DIRECTION_ENUM_4",
     ["tools/lib/failure-dump.mjs:FACING_NAMES"],
     {
       reason:
-        "the authority is the Mod's C# direction enum; a Host test restates it and the failure dump restates it again to print a facing",
-      owner: "the failure-dump lane",
+        "BLOCKED, not queued: the authority is the Mod's C# `DirectionMap` (farmhandexecutioncontroller.movementactions.cs), " +
+        "and the wire publishes a facing as a NUMBER (`host/src/protocol.ts`: 0..3), so no artifact carries the names - " +
+        "the dump's copy and the Host test's copy are the only two spellings, and paying this needs the Mod to publish " +
+        "its direction names (a protocol change, another lane's work). A codegen here would mint a third spelling of a " +
+        "fact no file on this side owns, and the Host-side 'authority' is a *.test.ts, which is never a producer",
+      owner: "the failure-dump lane, after the Mod publishes its direction names",
     },
   ),
   mirrorDebt(

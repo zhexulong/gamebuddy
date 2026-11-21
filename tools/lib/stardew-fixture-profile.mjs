@@ -3,6 +3,7 @@ import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promi
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { announceStardewFixtureRoots, resolveStardewFixtureRoots } from "./stardew-fixture-roots.mjs";
 import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.mjs";
 
 // The same bounded BCP-47 shape the Host stores for the companion language
 // (settings/player-preference-store.ts): the shape is bounded, the language set is the
@@ -43,14 +44,9 @@ const CONFIG_TARGETS = Object.freeze([
 ]);
 // SMAPI scans the complete custom --mods-path tree. A profile sidecar may be
 // useful configuration input, but it must never retain a second manifest/DLL
-// beside the deployed Mods/GameBuddy bundle during a fixture run.
-const BUNDLE_FILE_NAMES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
-
+// beside the deployed Mods/GameBuddy bundle during a fixture run. Which files
+// make up that bundle is `bundle.manifest.json`'s fact (see `stardew-mod-bundle.mjs`),
+// not this module's: `BUNDLE_TARGETS` below is the profile's own list of copies.
 /**
  * Backup identity for one bundle file.
  *
@@ -69,7 +65,7 @@ function bundleTargetName(profile, kind, fileName) {
 
 const SIDECAR_BUNDLE_TARGETS = Object.freeze(
   PROFILE_NAMES.flatMap((profile) =>
-    BUNDLE_FILE_NAMES.map((fileName) => ({
+    MOD_BUNDLE_FILE_NAMES.map((fileName) => ({
       name: bundleTargetName(profile, "sidecar", fileName),
       profile,
       relativePath: ["GameBuddy", fileName],
@@ -78,7 +74,7 @@ const SIDECAR_BUNDLE_TARGETS = Object.freeze(
 );
 const MOD_BUNDLE_TARGETS = Object.freeze(
   PROFILE_NAMES.flatMap((profile) =>
-    BUNDLE_FILE_NAMES.map((fileName) => ({
+    MOD_BUNDLE_FILE_NAMES.map((fileName) => ({
       name: bundleTargetName(profile, "mod", fileName),
       profile,
       relativePath: ["Mods", STARDEW_MOD_FOLDER, fileName],
@@ -686,12 +682,10 @@ async function assertSidecarBundlesAbsent(context) {
 }
 
 async function deployModBundle(context, host, ai) {
-  const releaseDll = join(context.releaseDir, "GameBuddy.Stardew.dll");
-  const releaseManifest = join(context.releaseDir, "manifest.json");
-  const releaseCoreDll = join(context.releaseDir, "GameBuddy.Stardew.Core.dll");
-  const releaseDeps = join(context.releaseDir, "GameBuddy.Stardew.deps.json");
-  for (const file of [releaseDll, releaseCoreDll, releaseManifest, releaseDeps])
+  for (const fileName of MOD_BUNDLE_FILE_NAMES) {
+    const file = join(context.releaseDir, fileName);
     if (!(await exists(file))) throw new Error(`release_bundle_missing:${file}`);
+  }
   for (const profile of PROFILE_NAMES) {
     const sidecarRoot = join(context.profiles, profile, "GameBuddy");
     const modRoot = join(context.profiles, profile, "Mods", STARDEW_MOD_FOLDER);
@@ -700,11 +694,8 @@ async function deployModBundle(context, host, ai) {
     // The custom SMAPI mods root contains both paths. Remove only the managed
     // bundle files from the sidecar for this transaction; config.json
     // remains available as the transaction input and is restored separately.
-    await Promise.all(BUNDLE_FILE_NAMES.map((fileName) => rm(join(sidecarRoot, fileName), { force: true })));
-    await cp(releaseDll, join(modRoot, "GameBuddy.Stardew.dll"));
-    await cp(releaseCoreDll, join(modRoot, "GameBuddy.Stardew.Core.dll"));
-    await cp(releaseManifest, join(modRoot, "manifest.json"));
-    await cp(releaseDeps, join(modRoot, "GameBuddy.Stardew.deps.json"));
+    await Promise.all(MOD_BUNDLE_FILE_NAMES.map((fileName) => rm(join(sidecarRoot, fileName), { force: true })));
+    for (const fileName of MOD_BUNDLE_FILE_NAMES) await cp(join(context.releaseDir, fileName), join(modRoot, fileName));
   }
   await writeJson(context.hostMod, host);
   await writeJson(context.aiMod, ai);

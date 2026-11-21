@@ -70,6 +70,8 @@ import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { ChildProcess } from "node:child_process";
 
+import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.test-support.js";
+
 import { bindWindowsStaleLockReclaimer } from "./path-lock.js";
 import {
   publishStardewInstallationRegistration,
@@ -166,12 +168,7 @@ const installationChain: readonly WindowsPathObjectIdentity[] = Object.freeze([
     fileId: "00000000000000000000000000000004",
   }),
 ]);
-const packageEntries = [
-  "GameBuddy.Stardew.Core.dll",
-  "GameBuddy.Stardew.deps.json",
-  "GameBuddy.Stardew.dll",
-  "manifest.json",
-] as const;
+const packageEntries = MOD_BUNDLE_FILE_NAMES;
 const sessionSecret = "session-secret-integration-0123456";
 const tavernProfile = composeTavernProfile({
   profileId: "gamebuddy.chat-core.reference-pipeline",

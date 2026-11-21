@@ -23,6 +23,13 @@
     -->
     <ModFolderName>GameBuddy</ModFolderName>
     <BundleExtraAssemblies>ThirdParty</BundleExtraAssemblies>
+    <!--
+      The dependency file is part of the deployed bundle, and its name is derived from the assembly's. It is emitted by
+      default, but a default cannot be READ: `tools/check-stardew-bundle-manifest.mjs` derives every bundle entry from
+      this project's own declarations and compares them to `integrations/stardew/bundle.manifest.json`, so the file the
+      bundle ships has to be declared here rather than assumed from the SDK.
+    -->
+    <GenerateDependencyFile>true</GenerateDependencyFile>
   </PropertyGroup>
 
   <ItemGroup>

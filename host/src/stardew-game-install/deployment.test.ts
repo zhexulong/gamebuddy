@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { MOD_BUNDLE_FILE_NAMES } from "../stardew-mod-bundle.test-support.js";
+
 import {
   decideStardewCompanionModDeployment,
   deployStardewCompanionMod,
@@ -16,12 +18,7 @@ import {
 } from "./index.js";
 
 const UNIQUE_ID = "zhexulong.GameBuddy";
-const MOD_ENTRIES = Object.freeze([
-  "GameBuddy.Stardew.Core.dll",
-  "GameBuddy.Stardew.deps.json",
-  "GameBuddy.Stardew.dll",
-  "manifest.json",
-]);
+const MOD_ENTRIES = MOD_BUNDLE_FILE_NAMES;
 
 function decision(target: StardewCompanionModTargetState, version = "0.1.0") {
   return decideStardewCompanionModDeployment(target, Object.freeze({ uniqueId: UNIQUE_ID, version }));

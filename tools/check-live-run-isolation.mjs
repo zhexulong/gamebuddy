@@ -46,6 +46,7 @@ import { classifyPathEntry, listStardewProcessIds, removeSandboxTree } from "./l
 import { appendLaneOutput, laneDiagnosis, liveLaneVerdict } from "./lib/lane-diagnosis.mjs";
 import { STARDEW_MOD_FOLDER } from "./lib/stardew-mod-folder.mjs";
 import { laneSaveName, laneSmapiLogPath } from "./lib/stardew-lane-scope.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";
 
 const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
 const RELEASE_DIR = join(REPO, "integrations", "stardew", "bin", "Release", "net6.0");
@@ -56,12 +57,6 @@ const SOURCE_PROFILE = join(PROFILE_ROOT, "native-local-stable");
 const FIXTURE_ROOT = join(process.env.LOCALAPPDATA ?? "", "GameBuddy", "stardew-fixtures");
 const BINDING = join(FIXTURE_ROOT, "GameBuddyFixtureStable2.native-local-binding.json");
 const SAVE_SLOT = "GameBuddyFixtureStable2_451844707";
-const BUNDLE_FILES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
 /** Each lane's bridge pipe name, seeded into that lane's own config: the isolation unit for the transport. */
 const PIPE_A = "gamebuddy-isolation-lane-a";
 const PIPE_B = "gamebuddy-isolation-lane-b";
@@ -217,7 +212,7 @@ function fixtureChecks() {
     check("two_lanes_prepared", preparedA.state === "prepared" && preparedB.state === "prepared");
     check(
       "bundle_lands_in_the_lane_own_mods_dir",
-      BUNDLE_FILES.every((name) => existsSync(join(laneA.modRoot, name))),
+      MOD_BUNDLE_FILE_NAMES.every((name) => existsSync(join(laneA.modRoot, name))),
       laneA.modRoot,
     );
     check(
@@ -310,8 +305,8 @@ function fixtureChecks() {
     check("restore_removed_the_lock", !existsSync(join(laneA.root, LOCK_DIRECTORY)));
     check(
       "restore_removed_the_bundle_it_added",
-      BUNDLE_FILES.every((name) => !existsSync(join(laneA.modRoot, name))),
-      BUNDLE_FILES.filter((name) => existsSync(join(laneA.modRoot, name))).join(","),
+      MOD_BUNDLE_FILE_NAMES.every((name) => !existsSync(join(laneA.modRoot, name))),
+      MOD_BUNDLE_FILE_NAMES.filter((name) => existsSync(join(laneA.modRoot, name))).join(","),
     );
   } finally {
     for (const lane of [laneA, laneB]) removeSandboxTree(lane.root);

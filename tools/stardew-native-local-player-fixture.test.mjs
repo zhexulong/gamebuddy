@@ -15,6 +15,7 @@ import {
   validateNativeLocalPlayerFixturePreparation,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 import { STARDEW_MOD_FOLDER } from "./lib/stardew-mod-folder.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";
 import { REBUILD_COMMAND } from "./lib/live-run-artifact-freshness.mjs";
 import {
   PRELIVE_FAILURE_CODES,
@@ -30,12 +31,6 @@ import {
 } from "./lib/stardew-prelive-ladder.mjs";
 import { parseKnownFixtureScenarios } from "./prelive.mjs";
 
-const BUNDLE_FILES = [
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-];
 const saveName = "GameBuddyFixture_445094166";
 const binding = Object.freeze({
   version: 1,
@@ -233,7 +228,7 @@ async function createFixture(t, suffix) {
   };
   const originalConfigBytes = `${JSON.stringify(originalConfig, null, 2)}\n`;
   await writeFile(join(modRoot, "config.json"), originalConfigBytes);
-  for (const name of BUNDLE_FILES) {
+  for (const name of MOD_BUNDLE_FILE_NAMES) {
     await writeFile(join(releaseDir, name), `release-${name}`);
     await writeFile(join(modRoot, name), `original-${name}`);
   }
@@ -634,7 +629,7 @@ test("public entry points redact an existing backup path with a fixed code", asy
 
 test("validation redacts a missing safe-context path without raw details", async (t) => {
   const options = { ...(await createFixture(t, "validation-missing-context")), action: "equip_tool" };
-  for (const name of BUNDLE_FILES) await unlink(join(options.releaseDir, name));
+  for (const name of MOD_BUNDLE_FILE_NAMES) await unlink(join(options.releaseDir, name));
   await rmdir(options.releaseDir);
 
   await assert.rejects(validateNativeLocalPlayerFixturePreparation(options), (error) =>
@@ -646,7 +641,7 @@ test("restore redacts an unsafe safe-context path and preserves recovery artifac
   const options = { ...(await createFixture(t, "restore-unsafe-context")), action: "equip_tool" };
   const prepared = await prepareNativeLocalPlayerFixture(options);
   const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
-  for (const name of BUNDLE_FILES) await unlink(join(options.releaseDir, name));
+  for (const name of MOD_BUNDLE_FILE_NAMES) await unlink(join(options.releaseDir, name));
   await rmdir(options.releaseDir);
   await writeFile(options.releaseDir, "raw-unsafe-context-detail");
 
@@ -666,10 +661,13 @@ test("failed preparation redacts a deploy failure after successful rollback", as
   const options = { ...(await createFixture(t, "deploy-redaction")), action: "equip_tool" };
   const backup = join(options.root, options.backupName);
   const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
-  const missingReleaseFile = join(options.releaseDir, BUNDLE_FILES.at(-1));
+  const missingReleaseFile = join(options.releaseDir, MOD_BUNDLE_FILE_NAMES.at(-1));
   const originalManagedFiles = new Map(
     await Promise.all(
-      ["config.json", ...BUNDLE_FILES].map(async (name) => [name, await readFile(join(options.modRoot, name))]),
+      ["config.json", ...MOD_BUNDLE_FILE_NAMES].map(async (name) => [
+        name,
+        await readFile(join(options.modRoot, name)),
+      ]),
     ),
   );
   await unlink(missingReleaseFile);
@@ -698,11 +696,11 @@ test("failed preparation redacts restore failure while preserving recovery state
   const options = { ...(await createFixture(t, "recovery-redaction")), action: "equip_tool" };
   const backup = join(options.root, options.backupName);
   const lock = join(options.root, ".stardew-native-local-player-fixture.lock");
-  const finalReleaseFile = join(options.releaseDir, BUNDLE_FILES.at(-1));
+  const finalReleaseFile = join(options.releaseDir, MOD_BUNDLE_FILE_NAMES.at(-1));
 
   // Keep deployment active long enough for this offline test to corrupt the
   // completed backup and force a later deployment failure deterministically.
-  await writeFile(join(options.releaseDir, BUNDLE_FILES[0]), Buffer.alloc(16 * 1024 * 1024, 0x61));
+  await writeFile(join(options.releaseDir, MOD_BUNDLE_FILE_NAMES[0]), Buffer.alloc(16 * 1024 * 1024, 0x61));
   const induceFailures = (async () => {
     while (true) {
       try {

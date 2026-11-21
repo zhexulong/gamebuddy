@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ASSEMBLY_NAME,
-  BUNDLE_FILES,
+  MOD_BUNDLE_FILE_NAMES,
   BUNDLE_MANIFEST_ENTRY_DLL,
   BUNDLE_MANIFEST_UNIQUE_ID,
   NAVIGATION_SOURCES,
@@ -72,7 +72,7 @@ function makeFixture(options = {}) {
   mkdirSync(navSrc, { recursive: true });
   writeFileSync(join(game, ASSEMBLY_NAME), "fake");
   if (bundle) {
-    for (const name of BUNDLE_FILES) {
+    for (const name of MOD_BUNDLE_FILE_NAMES) {
       writeFileSync(
         join(release, name),
         name === "manifest.json" ? JSON.stringify({ UniqueID: manifestUnique, EntryDll: entryDll }) : "bundle-bytes",
@@ -146,7 +146,7 @@ function makeMultiFixture(options = {}) {
   mkdirSync(navSrc, { recursive: true });
   writeFileSync(join(game, ASSEMBLY_NAME), "fake");
   if (bundle) {
-    for (const name of BUNDLE_FILES) {
+    for (const name of MOD_BUNDLE_FILE_NAMES) {
       writeFileSync(
         join(release, name),
         name === "manifest.json" ? JSON.stringify({ UniqueID: manifestUnique, EntryDll: entryDll }) : "bundle-bytes",

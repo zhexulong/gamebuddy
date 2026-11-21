@@ -14,6 +14,7 @@ import {
   validateMultiSourceTransitionCharacterization,
 } from "./stardew-navigation-multisource-characterization-validator.mjs";
 import { productionMultiSourceReceiptLedger } from "./stardew-navigation-multisource-receipt-ledger.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";
 
 /**
  * Zero-dispatch static topology preflight for the Task 7 navigation gate.
@@ -26,12 +27,7 @@ import { productionMultiSourceReceiptLedger } from "./stardew-navigation-multiso
  */
 
 export const ASSEMBLY_NAME = "Stardew Valley.dll";
-export const BUNDLE_FILES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-]);
+export { MOD_BUNDLE_FILE_NAMES };
 export const BUNDLE_MANIFEST_UNIQUE_ID = "zhexulong.GameBuddy";
 export const BUNDLE_MANIFEST_ENTRY_DLL = "GameBuddy.Stardew.dll";
 export const M8_ANCHORS = Object.freeze([
@@ -130,7 +126,7 @@ export async function runTopologyPreflight(options = {}) {
     blockers.push({ check: "bundle", reason: "release_dir_required" });
     checks.bundle = { status: "blocked", reason: "release_dir_required" };
   } else {
-    for (const name of BUNDLE_FILES) {
+    for (const name of MOD_BUNDLE_FILE_NAMES) {
       let present = true;
       try {
         createHash("sha256")

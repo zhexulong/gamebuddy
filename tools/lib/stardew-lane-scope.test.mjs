@@ -8,15 +8,10 @@ import { fileURLToPath } from "node:url";
 
 import { gameStardewSaveRoot, laneSaveName, laneSmapiLogPath, resolveLaneSaveRoot } from "./stardew-lane-scope.mjs";
 import { STARDEW_MOD_FOLDER } from "./stardew-mod-folder.mjs";
+import { MOD_BUNDLE_FILE_NAMES } from "./stardew-mod-bundle.mjs";
 
 const repoRoot = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const bootstrapCli = join(repoRoot, "tools", "bootstrap-stardew-native-local-player-fixture.mjs");
-const BUNDLE_FILES = [
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
-  "manifest.json",
-  "GameBuddy.Stardew.deps.json",
-];
 
 /** Two lane roots that exist on disk, because the derivation is a function of a real absolute path. */
 function twoLaneRoots(t) {
@@ -94,7 +89,7 @@ test("the bootstrap CLI writes the derived per-lane save name into its own confi
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const releaseDir = join(base, "release");
   mkdirSync(releaseDir, { recursive: true });
-  for (const name of BUNDLE_FILES) writeFileSync(join(releaseDir, name), `stub ${name}\n`, "utf8");
+  for (const name of MOD_BUNDLE_FILE_NAMES) writeFileSync(join(releaseDir, name), `stub ${name}\n`, "utf8");
   const configured = (lane) => {
     const root = join(base, `gb-lane-${lane}`);
     const modsPath = join(root, "mods");
