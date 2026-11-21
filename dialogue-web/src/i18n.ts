@@ -1132,8 +1132,7 @@ const en = {
   cardImportConfirming: "Creating…",
   cardImportCreated: "Imported companion created.",
   cardImportError: "The card could not be imported. Paste a valid character card and try again.",
-  cardImportLongHint:
-    "This description is long ({{chars}} characters), so it takes more of her attention on every reply.",
+  cardImportLongHint: "This description is long ({{chars}} characters), so it takes more of her attention on every reply.",
   cardImportHistoryTitle: "Import history",
   cardImportHistoryHint: "Every confirmed import and what it kept or dropped, by class.",
   cardImportHistoryEmpty: "No confirmed imports yet.",
@@ -2355,7 +2354,8 @@ const zh: Messages = {
   chatRetentionTrash: "删除",
   chatRetentionFailed: "无法更改聊天生命周期。",
   cardImportTitle: "导入角色卡",
-  cardImportHint: "把角色卡的文本粘贴到这里。创建之前，你可以先看清她带来了哪些内容。",
+  cardImportHint:
+    "把角色卡的文本粘贴到这里。创建之前，你可以先看清她带来了哪些内容。",
   cardImportStage: "审查卡片",
   cardImportStaging: "审查中…",
   cardImportFieldsTitle: "将包含的内容",
@@ -2433,7 +2433,8 @@ const zh: Messages = {
   voiceAccepted: "已接受",
   voiceRevoked: "已撤销",
   voiceUndecided: "未决定",
-  gameStateUnavailable: "这个配置下 GameBuddy 读不到你的游戏。请刷新页面；如果还是空着，去「游戏安装」看看。",
+  gameStateUnavailable:
+    "这个配置下 GameBuddy 读不到你的游戏。请刷新页面；如果还是空着，去「游戏安装」看看。",
   gameGroupConnection: "连接",
   gameGroupNextStep: "下一步",
   gameGroupSession: "这次游戏",
@@ -2530,7 +2531,8 @@ const zh: Messages = {
   gameInstallationSelectionUnavailable: "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
-  gameInstallationError: "搜索游戏位置时中断了。请再搜一次；如果还是停在这里，可以直接自己选文件夹。",
+  gameInstallationError:
+    "搜索游戏位置时中断了。请再搜一次；如果还是停在这里，可以直接自己选文件夹。",
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
   gameModLoaderInstallRequired:

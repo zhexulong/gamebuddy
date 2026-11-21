@@ -67,7 +67,9 @@ const WIRE: unknown = JSON.parse(readFileSync(join(ROOT, "protocol/bridge-v1.sch
 /** The wire's closed `actorDispositionKind` set: the kind a reading can say the body is held by. */
 function wireDispositionKinds(): readonly string[] {
   const defs = (WIRE as { $defs?: Record<string, unknown> }).$defs ?? {};
-  const snapshot = defs.snapshot as { properties?: { actorDispositionKind?: { enum?: unknown } } } | undefined;
+  const snapshot = defs.snapshot as
+    | { properties?: { actorDispositionKind?: { enum?: unknown } } }
+    | undefined;
   const kinds = snapshot?.properties?.actorDispositionKind?.enum;
   if (!Array.isArray(kinds) || kinds.length === 0)
     throw new Error("the wire declares no `actorDispositionKind` union: this gate read nothing");
@@ -188,9 +190,7 @@ test("a_world_that_is_performing_holds_its_own_wake: a hold that cannot be shown
     // THE ZERO-BEHAVIOUR-CHANGE CLAIM, read from this run's own cases: every other disposition keeps the held-world turn,
     // and the turn states the block in the words the prompt has for it.
     if (outcome.kind !== "opened") {
-      findings.push(
-        `${label}: the held-world turn is unchanged for \`${kind}\`, and it opened nothing (${outcome.kind})`,
-      );
+      findings.push(`${label}: the held-world turn is unchanged for \`${kind}\`, and it opened nothing (${outcome.kind})`);
       continue;
     }
     opened.push(label);
@@ -241,11 +241,7 @@ test("a_world_that_is_performing_holds_its_own_wake: the performance ends, and t
   const free = heldBy("idle");
   pump.enqueueFact(free, FACT_PRODUCER.adapterIngress);
   const after = await pump.flush(turns);
-  assert.equal(
-    after.kind,
-    "opened",
-    `the world's own next reading opens the turn the performance held (${after.kind})`,
-  );
+  assert.equal(after.kind, "opened", `the world's own next reading opens the turn the performance held (${after.kind})`);
   assert.equal(turns.batches.length, 1, "exactly one wake: three boxes are one batch, not three turns");
   const text = turns.batches[0]?.text ?? "";
   assert.ok(text.includes("这里曾经是这个镇子的骄傲。"), "and that turn states what the boxes said");

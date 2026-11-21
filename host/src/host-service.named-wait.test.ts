@@ -301,6 +301,20 @@ const REASON_OF_WAIT: Readonly<Record<ClosedWithNothingWaitFor, TurnWithoutActio
   [CLOSED_WITH_NOTHING_WAIT_FOR.nextWorldFact]: TURN_WITHOUT_ACTION_REASON.nothingPending,
 });
 
+/**
+ * The pump's closed list of named waits, WRITTEN DOWN here instead of counted.
+ *
+ * `CLOSED_WITH_NOTHING_WAIT_FORS` is derived from the pump's own table, so `kinds.length === 3` compared that table to a
+ * number: a fourth wait, or a renamed one, would only have moved the number. These three words are what a run's artifact
+ * has to show, and the set comparison in the test below names the member that moved. The `satisfies` closes the other
+ * half of the same door - a rename in the pump's table fails to compile here, where a count could not see it at all.
+ */
+const NAMED_WAITS_WRITTEN_DOWN = [
+  "a_fresh_reading",
+  "a_free_body",
+  "the_world_s_next_fact",
+] as const satisfies readonly ClosedWithNothingWaitFor[];
+
 /** A reading that owes no turn: standing state, so the Host's flush reaches its idle decision and nothing else. */
 const IDLE_READING = readingAt(16, 2, { ...BODY_FREE, gameTime: "0745" });
 
@@ -348,7 +362,11 @@ function cutsceneBox(index: number): WorldFact {
 test("a_named_wait_is_what_the_idle_arm_reads: every named wait is read, and a performing world wakes nobody", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: BASE_MS });
   const kinds = CLOSED_WITH_NOTHING_WAIT_FORS;
-  assert.equal(kinds.length, 3, "the population is the pump's own closed list of named waits");
+  assert.deepEqual(
+    new Set(kinds),
+    new Set(NAMED_WAITS_WRITTEN_DOWN),
+    "the population is the pump's own closed list of named waits, member by member",
+  );
 
   const armed: ClosedWithNothingWaitFor[] = [];
   const idledInstead: ClosedWithNothingWaitFor[] = [];

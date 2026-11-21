@@ -173,6 +173,11 @@ test("a_receipt_that_parsed_to_nothing_says_why:<action>", () => {
  * trace, five entries at ~146 characters - and the reader's 512 turned BOTH of them into nothing. This test holds the
  * number that made it happen beside the verdict, so a later reader cannot raise 512 to 1,024 and call it fixed: the
  * field's length is not a fact about the field, and the receipt's own bound is what must answer.
+ *
+ * THE FIXTURE IS THE RUN, SO ITS SIZE IS NOT A POPULATION. `assert.equal(SHOP_PURCHASE_ROUND84.length, 2)` compared the
+ * array literal above to a number typed by the same hand: a purchase dropped from the fixture would have looped just as
+ * happily. What the run recorded is the purse moving 500 -> 400 -> 300, so that is what the test compares - read out of
+ * the receipts by the reader under test, so a missing purchase is a member the failure prints.
  */
 const SHOP_PURCHASE_ROUND84: readonly string[] = [
   "shop=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=5;purchased=5;unit_price=20;money_before=500;money_after=400;owned_before=0;owned_after=5;gained=5;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=5[click0:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=500->480|stock=2147483647->2147483647|held_after=(O)472||click1:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=480->460|stock=2147483647->2147483647|held_after=(O)472||click2:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=460->440|stock=2147483647->2147483647|held_after=(O)472||click3:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=440->420|stock=2147483647->2147483647|held_after=(O)472||click4:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=420->400|stock=2147483647->2147483647|held_after=(O)472];drops=5[drop0:slot=11|at=1856,984|held=(O)472->none||drop1:slot=11|at=1856,984|held=(O)472->none||drop2:slot=11|at=1856,984|held=(O)472->none||drop3:slot=11|at=1856,984|held=(O)472->none||drop4:slot=11|at=1856,984|held=(O)472->none]",
@@ -180,7 +185,14 @@ const SHOP_PURCHASE_ROUND84: readonly string[] = [
 ];
 
 test("round84: ten parsnip seeds, two purchases, both receipts prove the purchase", () => {
-  assert.equal(SHOP_PURCHASE_ROUND84.length, 2, "the run made two purchases and both were refused");
+  assert.deepEqual(
+    SHOP_PURCHASE_ROUND84.map((detail) => {
+      const { fields } = parseStardewEvidenceDetail(detail);
+      return fields === null ? "unreadable" : `${String(fields.money_before)}->${String(fields.money_after)}`;
+    }),
+    ["500->400", "400->300"],
+    "the run made two purchases: the purse moved 500 -> 400 -> 300, and each receipt is the one that moved it",
+  );
   for (const detail of SHOP_PURCHASE_ROUND84) {
     const clicks = detail.split(";").find((clause) => clause.startsWith("clicks=")) as string;
     const clicksLength = clicks.length - "clicks=".length;

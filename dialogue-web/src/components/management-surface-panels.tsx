@@ -1647,7 +1647,13 @@ function SettingsTabPanel({
   children,
 }: Readonly<{ id: SettingsTab; selected: boolean; children: ReactNode }>): ReactElement {
   return (
-    <div className="settings-tabpanel" role="tabpanel" id={panelId(id)} aria-labelledby={tabId(id)} hidden={!selected}>
+    <div
+      className="settings-tabpanel"
+      role="tabpanel"
+      id={panelId(id)}
+      aria-labelledby={tabId(id)}
+      hidden={!selected}
+    >
       {children}
     </div>
   );
