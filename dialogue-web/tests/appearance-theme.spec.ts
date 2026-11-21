@@ -18,6 +18,9 @@
  *      asking for the OTHER appearance: the only thing that can repaint the page light is the
  *      stored choice coming back.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type Page, expect, test } from "./frontend-coverage";
 import { openSettingsTab, SETTINGS_TAB } from "./settings-tabs";
 
@@ -26,8 +29,27 @@ const csrfToken = `${"C".repeat(42)}A`;
 const chatHandle = `${"B".repeat(42)}A`;
 const expiresAtMs = 1_900_000_000_000;
 
-/** The two appearances' page colour, as the browser reports it. */
-const CANVAS = { light: "rgb(233, 226, 214)", dark: "rgb(12, 11, 11)" } as const;
+/**
+ * The two appearances' page colour, read from the token roots that declare it.
+ *
+ * A literal pair here was a second spelling of the palette, and it did what a second copy does: `style.css` moved the
+ * light canvas and these assertions went on demanding the old one, in a browser test whose whole subject is which
+ * root won. The roots are the authority - they are what the browser computes from - so they are read rather than
+ * restated, and `painted` is the same colour as the browser reports it.
+ */
+function canvasOf(appearance: "dark" | "light"): Readonly<{ hex: string; painted: string }> {
+  const stylesheet = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "style.css"), "utf8");
+  const at = stylesheet.indexOf(`:root[data-theme="${appearance}"]`);
+  if (at < 0) throw new Error(`style.css carries no :root[data-theme="${appearance}"] token root`);
+  const open = stylesheet.indexOf("{", at);
+  const body = stylesheet.slice(open, stylesheet.indexOf("}", open));
+  const hex = /--surface-canvas:\s*(#[0-9a-f]{6})/iu.exec(body)?.[1];
+  if (hex === undefined) throw new Error(`the ${appearance} token root does not declare --surface-canvas`);
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+  return { hex, painted: `rgb(${channels.join(", ")})` };
+}
+
+const CANVAS = { dark: canvasOf("dark"), light: canvasOf("light") } as const;
 
 const composedChat = {
   apiVersion: 1,
@@ -160,8 +182,8 @@ test.describe("the appearance is the player's choice, and the system's until the
     const light = await readAppearance(page);
     console.log(`[appearance-system-light] ${JSON.stringify(light)}`);
     expect(light.attribute, "an unchosen record paints the light token root when the OS asks for it").toBe("light");
-    expect(light.shellBackground, "and the shell is painted the light canvas").toBe(CANVAS.light);
-    expect(light.canvasToken, "the token the shell reads is the light one").toBe("#e9e2d6");
+    expect(light.shellBackground, "and the shell is painted the light canvas").toBe(CANVAS.light.painted);
+    expect(light.canvasToken, "the token the shell reads is the light one").toBe(CANVAS.light.hex);
 
     // The same record, the other OS answer: nothing about the stored choice changed.
     await page.emulateMedia({ colorScheme: "dark" });
@@ -172,7 +194,7 @@ test.describe("the appearance is the player's choice, and the system's until the
       .toBe("dark");
     const dark = await readAppearance(page);
     console.log(`[appearance-system-dark] ${JSON.stringify(dark)}`);
-    expect(dark.shellBackground, "and the shell is painted the dark canvas").toBe(CANVAS.dark);
+    expect(dark.shellBackground, "and the shell is painted the dark canvas").toBe(CANVAS.dark.painted);
     expect(record.appearance, "following the system wrote nothing to the record").toBe("system");
     expect(record.revision, "and advanced no revision").toBe(0);
   });
@@ -201,7 +223,7 @@ test.describe("the appearance is the player's choice, and the system's until the
         message: "the validated read-back is what the page then paints",
       })
       .toBe("light");
-    expect((await readAppearance(page)).shellBackground, "the painted surface is the light one").toBe(CANVAS.light);
+    expect((await readAppearance(page)).shellBackground, "the painted surface is the light one").toBe(CANVAS.light.painted);
 
     // A reload starts from nothing but the cookie and the stored record.
     await page.reload();
@@ -210,7 +232,7 @@ test.describe("the appearance is the player's choice, and the system's until the
     console.log(`[appearance-reloaded] ${JSON.stringify(reloaded)}`);
     expect(reloaded.prefersLight, "the OS still asks for dark after the reload").toBe(false);
     expect(reloaded.attribute, "the stored choice outlives the reload and outranks the OS").toBe("light");
-    expect(reloaded.shellBackground, "and the reloaded page is painted light").toBe(CANVAS.light);
+    expect(reloaded.shellBackground, "and the reloaded page is painted light").toBe(CANVAS.light.painted);
 
     // Returning to `system` is a choice too, and it hands the page back to the OS answer.
     const surfaceAfterReload = page.getByTestId("settings-surface");

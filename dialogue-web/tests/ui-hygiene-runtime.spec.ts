@@ -659,7 +659,7 @@ test("gate 3 (control surface): no control paints itself with the browser's own 
  * The measured defect (commit `ca7db343`): the control carried
  * `chat-item-title chat-item-select`, and `chat-item-select` had no rule at all -
  * so Chromium painted its own near-white `ButtonFace` (rgb(240, 240, 240)) under
- * `--text-primary` (`#f5f0e8`), a ratio of 1.005:1. The surface read as an
+ * `--text-primary`, a ratio of 1.005:1. The surface read as an
  * invisible button. The control-surface gate above catches the *class* whose
  * background is foreign; this catches the *reading*, which a future class that
  * paints a themed-but-too-similar surface would pass.

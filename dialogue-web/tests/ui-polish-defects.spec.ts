@@ -6,12 +6,12 @@ import { expect, test, type Page } from "./frontend-coverage";
  * that produced it - and each preceded by the measurement that decides whether
  * the review's item is real on this tree.
  *
- *   1. The action beat was painted in `--text-disabled` (`--palette-gray-400`,
- *      #90877e) at weight 600 in CJK, so a companion's stage direction read as a
+ *   1. The action beat was painted in `--text-disabled` (`--palette-gray-400`)
+ *      at weight 600 in CJK, so a companion's stage direction read as a
  *      dead placeholder *and* was heavier than the dialogue beside it. Measured
- *      before: 4.74:1 on the companion card, 3.20:1 on the player's own bubble
- *      (under the 4.5:1 floor), zh weight 600 against the paragraph's 400.
- *      After: `--text-secondary`, 9.30:1 and 6.27:1, weight 400.
+ *      before: under the 4.5:1 floor on the player's own bubble, zh weight 600
+ *      against the paragraph's 400. After: `--text-secondary` on the same two
+ *      backgrounds, weight 400.
  *   2. `MarkdownMessage` rewrote full-width parentheses to ASCII as part of beat
  *      normalisation, which broke Chinese spacing without making Markdown read
  *      `（…）` as emphasis - the beat is authored `*…*`, so the paren rewrite was
@@ -434,10 +434,11 @@ test("defect 1: the CJK beat drops the faux italic without gaining weight", asyn
  * effective background the runtime contrast gate uses: `.message-author` (the
  * name over a companion's bubble), `.section-subtitle` (a surface's own section
  * heading) and `.surface-model-recommended > p` (the caption over the
- * suggestion chips) all computed `rgb(144, 135, 126)` = `--text-disabled`
- * (`#90877e`) at 12 px - 5.57:1 on the canvas (`#0c0b0b`), and 4.74:1 on the
- * card tone (`#201d1d`) the author line can also sit on. After: all three read
- * `--text-secondary` (`#c8c0b6`) at 10.92:1 on the canvas and 9.30:1 on the card.
+ * suggestion chips) all computed `--text-disabled` at 12 px - the product's
+ * lowest body-text pair, on the canvas and on the card tone the author line can
+ * also sit on. After: all three read `--text-secondary`, whose pairs are
+ * `text-secondary on surface-canvas` and `... on surface-card` in
+ * `tools/check-contrast-tokens.mjs`.
  *
  * The assertion is the identity the change is: the two captions' own computed
  * colour is the product's secondary tone, and never the disabled one. The section
@@ -697,12 +698,12 @@ test("defect 5: two recommended models with one id read as two different chips",
  * A disabled control is attenuated once, not twice.
  *
  * `.swipe-btn:disabled` carried the muted token *and* an `opacity`: the two
- * compound, and the product's own muted grey (`--text-disabled`, `#90877e`) at
- * 40% over the card tone (`#201d1d`) paints `rgb(77,71,68)` - measured 1.84:1,
- * so the arrow is not a dimmed control but an invisible one. The product's
- * established disabled state is the muted token alone: the composer's placeholder
- * and the Chats row's meta line both read `--text-disabled` at 4.74:1 on this
- * same card tone and neither carries an opacity.
+ * compound, and the muted grey at 40% over the card tone is effectively
+ * invisible, so the arrow is not a dimmed control but an absent one. The
+ * product's established disabled state is the muted token alone, which clears
+ * the floor (`text-disabled on surface-card`): the composer's placeholder and
+ * the Chats row's meta line both read it on this same card tone and neither
+ * carries an opacity.
  *
  * Measured on the mounted shell at 1440x900, on the opening bubble's own switcher
  * with its `Previous` arrow disabled by the Host's own `index <= 0` precondition:
@@ -1168,7 +1169,7 @@ test("creating a Chat lands in it, with its own opening already read", async ({ 
  * The failure this pins: after the first pass unified the two heading classes they
  * both read 12px/600/`--text-secondary`, which is *below* the body each one heads.
  * Measured at 400x800 from `99-game-400x800.png`: `下一步` (y≈490) sat above
- * `启动星露谷` (y≈513) at 13px/600/`#f5f0e8` - the group's own name was smaller and
+ * `启动星露谷` (y≈513) at 13px/600/`--text-primary` - the group's own name was smaller and
  * greyer than the step it introduced. The same held under the capability board's
  * lead sentence (13px/400/secondary), under `会话`'s fact values (13px/500/primary)
  * and above the cabin choice's name (14px).

@@ -2127,8 +2127,8 @@ test("one long preview takes two lines of its row, not the whole message", async
 
 /**
  * The row's own meta line carried the lowest body-text contrast in the product:
- * `--text-disabled` (`#90877e`) on the row's card (`--surface-raised`, `#201d1d`)
- * computes 4.74:1 at 12px/400, where the dialogue measures 14.75:1. The line is the
+ * `--text-disabled` on the row's card (`--surface-raised`) at 12px/400, where the
+ * dialogue's own pair is the highest. The line is the
  * row's secondary fact - the thread's durable time and the opening of its last
  * message - and the product's own 12px row metadata elsewhere (`.memory-item-meta`)
  * reads `--text-secondary`, so this line reads that tone too rather than a token
