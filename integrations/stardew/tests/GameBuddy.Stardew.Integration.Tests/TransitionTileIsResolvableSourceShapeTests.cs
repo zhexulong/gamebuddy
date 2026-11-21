@@ -2,7 +2,9 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using FluentAssertions;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using StardewValley;
 using Xunit;
@@ -30,10 +32,15 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
-/// The invariant: <b>which table holds a transition tile is an artefact of map authoring, not a fact a caller may
-/// be required to know.</b> Both actions therefore resolve through both tables; only the DISPATCH differs, because
-/// an edge warp has no click entry and running the Buildings-layer Action for one would execute whatever Action
-/// happened to sit there.
+/// The invariant: <b>no tile that leaves this location may be unusable because of which table holds it.</b>
+/// <c>enter_exit</c> therefore resolves through BOTH tables - the door table first, because a door has a native
+/// click entry whose gates must run, and the warp table as the fallback. <c>travel</c> resolves the warp table
+/// ALONE, and that asymmetry is the action surface's own declaration rather than an oversight:
+/// <c>FarmhandActionDefinitions.Transition</c> gives <c>enter_exit</c> <c>Approach = Adjacent</c> because it runs
+/// the native door action, and gives <c>travel</c> no approach because it resolves the warp and drives the
+/// transition from wherever the body stands. Widening <c>travel</c> to the door table would not widen it at all -
+/// <c>DispatchNativeDoor</c> is gated on <c>doorOwned</c>, so a door tile taken by <c>travel</c> would run
+/// <c>enter_exit</c>'s entry and the two actions would be one.
 /// </para>
 ///
 /// <para>
@@ -48,8 +55,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// The assertions below are read off the production source with comments stripped, so they fail by name when the
 /// two-table resolution is removed - the same shape as <c>DoorRangeIsTileSpaceTests</c> and
 /// <c>EnterExitDoorGateTests</c>. A behavioural test would need a live location with a real edge warp, which is what
-/// the live run is for; what can be settled here is that the resolution consults both tables and that the native
-/// dispatch stays gated on the door table alone.
+/// the live run is for; what can be settled here is that <c>enter_exit</c> consults both tables, that <c>travel</c>
+/// consults only its own, and that the native dispatch stays gated on the door table alone.
 /// </para>
 /// </summary>
 [Trait("kind", "source-shape")]
@@ -93,6 +100,59 @@ public sealed class TransitionTileIsResolvableSourceShapeTests
 
         transition.Should().Contain("if (!doorOwned)\n            Game1.player.warpFarmer(warp)",
             "the plain warp must run for an edge warp - the native entry never did, so nothing else would move the body");
+    }
+
+    /// <summary>
+    /// `travel` answers `warp_not_available` at a door tile, and that refusal is the map's answer.
+    ///
+    /// <para>
+    /// Measured 2026-11-21 (`round85`): `travel` at `Town(43,56)` answered `warp_not_available` with
+    /// <c>source=43,56;warps=19;you=44,57;nearest=43,56;distance=1;doors=43,56-&gt;SeedShop|44,56-&gt;SeedShop</c>,
+    /// and a programme twelve seconds later completed `enter_exit` on the SAME tile
+    /// (<c>entry=perform_action</c>, arriving <c>SeedShop:6,29</c>). The tile was a door: <c>location.warps</c>
+    /// never held it, so no warp was ever there to resolve. A refusal that names the door it found is the honest
+    /// answer to a request for a warp; inventing a warp would answer a question nobody asked.
+    /// </para>
+    /// <para>
+    /// What this pins is the OTHER direction, because the wrong fix is the tempting one: resolving the door table
+    /// for <c>travel</c> would suppress that refusal, and - with <c>DispatchNativeDoor</c> gated on
+    /// <c>doorOwned</c> - turn `travel` into `enter_exit`. The declaration the gate reads is the surface's own
+    /// <c>Approach</c>, so a change to either side fails here by name instead of drifting apart quietly.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TravelResolvesTheWarpTableOnlyAndSaysSoAtADoorTile()
+    {
+        FarmhandActionDescriptor travel = DescriptorOf("travel");
+        FarmhandActionDescriptor enterExit = DescriptorOf("enter_exit");
+        travel.Approach.Should().BeNull(
+            "travel resolves the warp and drives the transition from wherever the body stands, which is why a door "
+            + "tile - one location.warps never held - is refused `warp_not_available` rather than walked to");
+        enterExit.Approach.Should().Be(FarmhandActionApproachRequirement.Adjacent,
+            "enter_exit runs the native door action, which needs the actor beside the door");
+
+        string transition = EnclosingMethodBody(Read(MovementActions), "private LocalExecutionReceipt RequestLocalDoorTransition");
+        // Every door resolution in the transition method, and every one of them behind the `isDoor ?` gate: the
+        // population is the method's own calls, so a third one added tomorrow is examined without editing this test.
+        int doorResolutions = Regex.Matches(transition, @"ResolveDoorWarp\(").Count;
+        int gated = Regex.Matches(transition, @"isDoor\s*\?\s*ResolveDoorWarp\(").Count;
+        doorResolutions.Should().BeGreaterThan(0,
+            "the door table is what enter_exit resolves first, so a method with no door resolution measures nothing");
+        gated.Should().Be(doorResolutions,
+            $"{doorResolutions} door resolution(s) in RequestLocalDoorTransition and only {gated} behind `isDoor ?`: "
+            + "a door tile reached by travel must still answer `warp_not_available`, and resolving one there would "
+            + "both suppress that refusal and - with DispatchNativeDoor gated on doorOwned - collapse the two "
+            + "actions into one");
+    }
+
+    /// <summary>The action surface's own declaration for one action, read rather than restated.</summary>
+    private static FarmhandActionDescriptor DescriptorOf(string actionId)
+    {
+        FarmhandActionDescriptor? descriptor = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))
+            ?.Descriptor;
+        descriptor.Should().NotBeNull($"{actionId} must stay published, or every caller loses the only declaration it has");
+        return descriptor!;
     }
 
     /// <summary>

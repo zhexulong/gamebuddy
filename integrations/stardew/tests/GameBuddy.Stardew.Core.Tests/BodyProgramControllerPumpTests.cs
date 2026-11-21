@@ -1547,6 +1547,75 @@ public sealed class BodyProgramControllerPumpTests
         authority.TryAbandonProgram("missing", "gone").Code.Should().Be(BodyProgramControllerResultCode.NotFound);
     }
 
+    /// <summary>
+    /// AN ABANDONED PROGRAMME CLOSES THE WORK THAT NEVER STARTED.
+    ///
+    /// <para>
+    /// Measured 2026-11-21 (`round85`): `plan_180` tilled one tile, dispatched a second, and never got a settlement for
+    /// it. Eleven minutes past that dispatch's deadline the journal-open heal abandoned the programme
+    /// (<c>[GameBuddy-body-program-abandoned] program=plan_180_e75b3c2a5b1fc638;nodes=n03;dispatchAgeMs=659352;
+    /// reason=journal_open_stale_dispatch</c>), and the three tiles the plan had not reached - independent tiles, tied to
+    /// the second by <c>orderedAfter</c> and by nothing else - were closed as <c>skipped_dependency</c>.
+    /// </para>
+    /// <para>
+    /// An abandoned programme that leaves its never-attempted nodes <c>Pending</c> still HAS executable work, so it is
+    /// not terminal at all: the journal refuses the document and the poison that made the scope unwritable stays. The
+    /// word is not a claim about the plan - <c>SkippedDependency</c> is the one terminal this contract can express for
+    /// work that will never run, and it carries no attempt, no binding and no proof, so nothing downstream can read it as
+    /// a failure that happened. A behavioural case for the live shape rather than for the dispatch half alone, because
+    /// only the pair together makes the scope writable again.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnAbandonedProgrammeClosesTheNodesItNeverStarted()
+    {
+        var clock = new TimeBox { Value = 10 };
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        var controller = new FarmhandBodyProgramController(
+            authority,
+            new ImmediateAdmissionTransport(),
+            new DeadlineDrivenSteppingExecutor(new MachineNodeExecutor("opaque-machine-7"), clock, overrunMs: 1100));
+        authority.Submit(MachineProgramWithOrderedNeighbour()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        controller.Update();
+        controller.Update();
+        controller.Update();
+        controller.Update();
+
+        BodyProgramStatusSnapshot poisoned = authority.Status("ordered").Snapshot!;
+        poisoned.State.Should().Be(BodyProgramState.RecoveryRequired);
+        poisoned.Nodes.Single(node => node.NodeId == "load").State.Should().Be(
+            BodyProgramNodeState.RecoveryRequired, "the dispatch that never settled is the unknown the scope is waiting on");
+        poisoned.Nodes.Single(node => node.NodeId == "neighbour").State.Should().Be(
+            BodyProgramNodeState.Pending, "never attempted, and ordered after the unknown node only: this is the work the abandonment owes an answer to");
+
+        authority.TryAbandonProgram("ordered", "journal_open_stale_dispatch").Code.Should().Be(
+            BodyProgramControllerResultCode.Succeeded, $"refusal={authority.LastPersistenceRefusal}");
+
+        BodyProgramStatusSnapshot abandoned = authority.Status("ordered").Snapshot!;
+        abandoned.State.Should().Be(BodyProgramState.Failed);
+        BodyProgramJournalNode dispatched = abandoned.Nodes.Single(node => node.NodeId == "load");
+        dispatched.State.Should().Be(BodyProgramNodeState.Abandoned);
+        dispatched.NodeAttempt.Should().Be(1);
+        dispatched.ExecutionBinding.Should().NotBeNull("the dispatch is the fact this state exists to record");
+        dispatched.ReceiptId.Should().BeNull("no success may ever be claimed from an unknown dispatch");
+
+        BodyProgramJournalNode neverStarted = abandoned.Nodes.Single(node => node.NodeId == "neighbour");
+        neverStarted.State.Should().Be(BodyProgramNodeState.SkippedDependency, "round85 closed n04..n06 exactly this way");
+        neverStarted.NodeAttempt.Should().Be(0);
+        neverStarted.AdmissionAttempt.Should().Be(0);
+        neverStarted.ExecutionBinding.Should().BeNull();
+        neverStarted.ReceiptId.Should().BeNull();
+        neverStarted.Evidence.Should().BeNull();
+        neverStarted.PostconditionVerification.Should().BeNull();
+
+        // The exit is durable, and the scope is writable again: a restart must not resurrect the never-started work.
+        OpenBodyProgramJournalAuthority reopened = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
+        reopened.Status("ordered").Snapshot!.Nodes.Single(node => node.NodeId == "neighbour").State
+            .Should().Be(BodyProgramNodeState.SkippedDependency);
+        reopened.Submit(MachineProgram()).Code.Should().NotBe(BodyProgramSubmitCode.Quarantined);
+    }
+
     [Fact]
     public void ARecoveringNeighbourDoesNotStopRunningNodesOfAnotherProgramFromAdvancing()
     {
