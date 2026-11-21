@@ -44,6 +44,15 @@
  * `journal`, `服务`, `协议`, `绑定`, `能力` are all absent for that reason - a gate that forbade them would
  * forbid the interface's own words.
  *
+ * ONE THING THIS GATE DOES NOT CHECK, measured rather than assumed: whether every failure sentence names a
+ * step. A rule for it was written in the third pass and removed again, because the detector has to read
+ * prose: `gameSetupFailed` passed only because it contains "the last state it **read** from the game",
+ * and the twelve Chinese sentences beside it failed for the same non-reason. Fourteen of fifteen
+ * findings were that spelling, not a missing step. A gate whose boundary is a verb list agrees with
+ * itself; the honest answer is the two rules that CAN be held soundly - no wall before the account
+ * (`player-vocabulary.6`) and a step after a wall - plus a reader, which is what caught the rewrites
+ * that shipped in the same pass.
+ *
  * CHINESE IS SCANNED TOO, from a rendering table attached to the entries it renders (`权威` for
  * `authoritative`, `装配` for `assembly`, `投影` for `projection`, ...). A rendering is checked in both
  * directions: it must name a Latin entry that is itself witnessed, so a row cannot outlive its word.
@@ -79,7 +88,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { composedProblemView } from "../src/composed-problem-view.ts";
+import { composedProblemView, GAME_CAUSE_CLAUSES, humanizeProblemCause } from "../src/composed-problem-view.ts";
 import {
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
@@ -202,7 +211,7 @@ function sourceFiles(directory) {
   return out;
 }
 
-/** The catalogues of a text: `{ name, entries: [{ key, value, line }] }` for `en` and `zh`. */
+/** The catalogues of a text: `{ name, entries: [{ key, value, line }], gaps }` for `en` and `zh`. */
 export function catalogues(text, fileName = I18N) {
   const sourceFile = parse(fileName, text);
   const found = [];
@@ -212,15 +221,26 @@ export function catalogues(text, fileName = I18N) {
     const object = unwrap(node.initializer);
     if (object === undefined || !ts.isObjectLiteralExpression(object)) return;
     const entries = [];
+    // A property whose name the reader cannot resolve is not a silent skip: it is a gap, because a
+    // key written as a computed name is a string this gate would otherwise never see.
+    const gaps = [];
     for (const property of object.properties) {
-      if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue;
+      if (!ts.isPropertyAssignment(property)) {
+        gaps.push(`${at(property, sourceFile)} ${ts.SyntaxKind[property.kind]}`);
+        continue;
+      }
+      const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null;
+      if (name === null) {
+        gaps.push(`${at(property, sourceFile)} ${ts.SyntaxKind[property.name.kind]}`);
+        continue;
+      }
       entries.push({
-        key: property.name.text,
+        key: name,
         value: ts.isStringLiteral(property.initializer) ? property.initializer.text : null,
         line: at(property, sourceFile),
       });
     }
-    found.push({ name: node.name.text, entries });
+    found.push({ name: node.name.text, entries, gaps });
   });
   return found;
 }
@@ -336,7 +356,9 @@ const WALL = [
   /\bwill not help\b/giu,
   /\bimpossible\b/giu,
   /\bno way to\b/giu,
+  /\bstarting this page over will not change\b/giu,
   /没有任何控件/gu,
+  /刷新这一页也不会改变/gu,
   /无能为力/gu,
   /没有办法/gu,
   /无济于事/gu,
@@ -409,37 +431,68 @@ function cataloguePairs() {
   return pairs;
 }
 
-/** A catalogue entry a player can actually read: a source reads its key, and its value is a string. */
-function spoken(entries, read, locale, file) {
+/** A catalogue entry a player can actually read: a source reads its key, or names it for a dynamic read. */
+function spoken(entries, visible, locale, file) {
   return entries
-    .filter((entry) => read.has(entry.key) && entry.value !== null)
+    .filter((entry) => visible.has(entry.key) && entry.value !== null)
     .map((entry) => ({ ...entry, locale, file }));
 }
 
-/** Every catalogue pair, the keys a source reads, and the strings a player can therefore see. */
+/** A test file's own data is not a read path: a literal that happens to equal a key name proves nothing. */
+const TEST_FILE = /\.test\.(?:ts|tsx)$/u;
+
+/**
+ * Catalogue keys a source NAMES as a string literal instead of reading them.
+ *
+ * An indirection map hands a key name to a dynamic read the static scan cannot see:
+ * `CONNECTION_API_SHAPE_LABELS[shape]`, `GAME_SITUATION_WHERE_MESSAGE[where]`. Measured when this
+ * rule was written: 25 declared keys of 1 133 were reachable only this way - ten connection-shape
+ * names and fourteen `gameSituation*` - so every copy check in this file was reading fewer strings
+ * than a player can reach. That is the defect class this lane kept meeting: a gate that agrees with
+ * itself because it never looked.
+ */
+export function namedKeys(declared, directory = SRC) {
+  const keys = new Set();
+  for (const file of sourceFiles(directory)) {
+    if (TEST_FILE.test(file)) continue;
+    const sourceFile = parse(file);
+    walk(sourceFile, (node) => {
+      if (!ts.isStringLiteral(node) || !declared.has(node.text)) return;
+      const parent = node.parent;
+      if (parent !== undefined && ts.isPropertyAssignment(parent) && parent.initializer === node) keys.add(node.text);
+    });
+  }
+  return keys;
+}
+
+/** Every catalogue pair, the keys a source can reach, and the strings a player can therefore see. */
 function population() {
   const pairs = cataloguePairs();
   assert.ok(pairs.length >= 2, `only ${pairs.length} catalogue pair(s) under src; the derivation broke`);
   const read = readKeys();
+  const declared = new Set(pairs.flatMap((pair) => [...pair.en.entries, ...pair.zh.entries].map((entry) => entry.key)));
+  const named = namedKeys(declared);
+  const visible = new Set([...read, ...named]);
   const strings = pairs.flatMap((pair) => [
-    ...spoken(pair.en.entries, read, "en", pair.file),
-    ...spoken(pair.zh.entries, read, "zh", pair.file),
+    ...spoken(pair.en.entries, visible, "en", pair.file),
+    ...spoken(pair.zh.entries, visible, "zh", pair.file),
   ]);
-  return { pairs, read, strings };
+  return { pairs, read, named, strings };
 }
 
 test("player-vocabulary.1: the population is derived, and it is not empty", (t) => {
-  const { pairs, read, strings } = population();
+  const { pairs, read, named, strings } = population();
   const examined = strings.length;
   assert.ok(
     examined >= 1400,
-    `only ${examined} player-facing string(s) were derived from ${pairs.reduce((total, pair) => total + pair.en.entries.length, 0)} declared key(s) and ${read.size} read key(s); a population this small means the derivation broke, not that the copy is clean`,
+    `only ${examined} player-facing string(s) were derived from ${pairs.reduce((total, pair) => total + pair.en.entries.length, 0)} declared key(s), ${read.size} read key(s) and ${named.size} named-by-a-map key(s); a population this small means the derivation broke, not that the copy is clean`,
   );
   // Both catalogues hold the same keys (i18n.1); a player reads one of the two sentences, never both.
   const lexicon = INTERNAL_NOUNS.flatMap((noun) => [...noun.forms, ...(noun.zh ?? [])]);
   const carriers = new Set(strings.filter((entry) => internalsIn([entry], entry.locale).length > 0).map((entry) => entry.key)).size;
+  const visible = new Set([...read, ...named]);
   t.diagnostic(
-    `player-vocabulary.1: strings examined ${examined} (${pairs.map((pair) => `${pair.file} ${pair.en.entries.length} declared / ${spoken(pair.en.entries, read, "en", pair.file).length} read`).join("; ")}) · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
+    `player-vocabulary.1: strings examined ${examined} (${pairs.map((pair) => `${pair.file} ${pair.en.entries.length} declared / ${spoken(pair.en.entries, visible, "en", pair.file).length} visible`).join("; ")}) · ${named.size} key(s) reachable only through an indirection map · containing an internal noun ${carriers} · lexicon ${lexicon.length} word(s) over ${INTERNAL_NOUNS.length} noun(s)`,
   );
 });
 
@@ -607,12 +660,27 @@ test("player-vocabulary.7 (mutation): a planted wall and a planted identifier fa
   );
 });
 
+/** The Host's own source as text, for a question about what it DECLARES: only test files are out. */
+function hostModuleCache() {
+  const cache = new Map();
+  for (const file of sourceFiles(HOST_SRC)) {
+    if (/(?:\.test|test-support)(?:\.|$)/u.test(file.split(/[\\/]/u).pop())) continue;
+    const path = file.replace(/\\/gu, "/").slice(REPO.replace(/\\/gu, "/").length + 1);
+    cache.set(path, readFileSync(file, "utf8"));
+  }
+  return cache;
+}
+
 /**
  * Every `stardew_*` name this repository declares, as the thing a game refusal can carry on its
- * `cause`. The population is the Host's own source rather than a list: a code registered tomorrow is
- * driven through the view the day it is written.
+ * `cause`.
+ *
+ * `hostModuleCache` rather than `hostSourceCache`: the module that declares a coordinator cause is
+ * `stardew-production-lifecycle-coordinator.internal.ts`, and the lexicon's witness rule skips
+ * `.internal.` because a rule stated there is not a mechanism to defend - for a DECLARED NAME that
+ * exclusion is exactly backwards, and it hid four of the ten causes this gate holds.
  */
-function stardewCauses(cache = hostSourceCache()) {
+function stardewCauses(cache = hostModuleCache()) {
   const names = new Set();
   for (const [, text] of cache) for (const match of text.matchAll(/"stardew_[a-z0-9_]+"/gu)) names.add(match[0].slice(1, -1));
   return [...names].sort();
@@ -708,5 +776,192 @@ test("player-vocabulary.9 (mutation): the sentences that shipped with a code on 
   );
   t.diagnostic(
     "player-vocabulary.9: the three sentences that shipped a code are reported by the same scan the rendered view is held to; their replacements are not",
+  );
+});
+
+/**
+ * The objects under `src` big enough to hold a catalogue's worth of player text. Five string-valued
+ * keys is the floor: below it, a map is a table of one or two words and not a catalogue.
+ */
+const CATALOGUE_FLOOR = 5;
+
+/**
+ * Objects that hold player text and are NOT one of the catalogue pairs, each with the reason.
+ *
+ * Both kinds of entry here are honest about the same thing: the strings they hold are already in the
+ * population. A key map's values are catalogue key names, so `namedKeys` brings the text itself in;
+ * a code map's values are contract codes, which are not player text at all. An entry whose object is
+ * gone is a finding, so this list cannot outlive what it explains.
+ */
+export const NOT_A_CATALOGUE = [
+  {
+    binding: "ACTIVATION_REFUSALS",
+    why: "its values are contract problem codes, not player text",
+  },
+  {
+    binding: "GAME_SITUATION_WHERE_MESSAGE",
+    why: "its values are catalogue key names, so the sentences it points at are in the population",
+  },
+  {
+    binding: "CONNECTION_API_SHAPE_LABELS",
+    why: "its values are catalogue key names, so the sentences it points at are in the population",
+  },
+];
+
+/** Objects under `src` with at least `CATALOGUE_FLOOR` string-valued keys: catalogue-shaped, by count. */
+function catalogueShapes(directory = SRC) {
+  const shapes = [];
+  for (const file of sourceFiles(directory)) {
+    const sourceFile = parse(file);
+    const relative = file.replace(/\\/gu, "/").split("/dialogue-web/").pop();
+    walk(sourceFile, (node) => {
+      if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return;
+      const object = unwrap(node.initializer);
+      if (object === undefined || !ts.isObjectLiteralExpression(object)) return;
+      const stringKeys = object.properties.filter(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+          ts.isStringLiteral(property.initializer),
+      ).length;
+      if (stringKeys >= CATALOGUE_FLOOR)
+        shapes.push({ file: relative, binding: node.name.text, stringKeys, keys: object.properties.length });
+    });
+  }
+  return shapes;
+}
+
+test("player-vocabulary.10: every cause a player can be told about is a clause, and an unknown one says so", (t) => {
+  const causes = stardewCauses();
+  const mapped = Object.keys(GAME_CAUSE_CLAUSES);
+  assert.ok(causes.length >= 20, `only ${causes.length} stardew_* name(s) derived from the Host; the derivation broke`);
+  assert.ok(
+    mapped.length > 0,
+    "the clause map is empty: an empty map would make every cause fall back to 'we do not know', which is a lie for the ones we do know",
+  );
+  // The anchors are the owner's own example and the second role's launch: a map that lost them is a
+  // map that stopped carrying what it was built for.
+  for (const anchor of ["stardew_contained_player_host_launch_failed", "stardew_contained_ai_client_launch_failed"])
+    assert.ok(mapped.includes(anchor), `${anchor} is one of the causes this map exists for and it is not in it`);
+
+  const findings = [];
+  for (const cause of mapped) if (!causes.includes(cause)) findings.push(`${cause} is mapped and no Host module declares it; drop the entry`);
+  for (const locale of ["en", "zh-CN"]) {
+    const labels = messages(locale);
+    const clauses = mapped.map((cause) => ({ cause, clause: humanizeProblemCause(cause, labels) }));
+    for (const { cause, clause } of clauses) {
+      if (clause === labels.gameCauseUnknown) findings.push(`${locale} ${cause} fell back to the unknown clause, so the entry does nothing`);
+      for (const finding of identifiersIn([{ key: cause, value: clause, line: cause }], locale))
+        findings.push(`${locale} ${cause} clause prints "${finding.token}"`);
+    }
+    if (new Set(clauses.map(({ clause }) => clause)).size !== clauses.length)
+      findings.push(`${locale} two causes share one clause, so the sentence cannot tell them apart`);
+    // Every declared cause gets SOME answer - a clause or the honest fallback - never nothing.
+    for (const cause of causes) {
+      const clause = humanizeProblemCause(cause, labels);
+      if (typeof clause !== "string" || clause.length === 0) findings.push(`${locale} ${cause} produced no clause`);
+    }
+    // The fallback says we do not know, and it is not one of the answers to a cause we do know.
+    if (clauses.some(({ clause }) => clause === labels.gameCauseUnknown))
+      findings.push(`${locale} the fallback is also a mapped clause`);
+    if (humanizeProblemCause("a_cause_from_a_future_host", labels) !== labels.gameCauseUnknown)
+      findings.push(`${locale} an unknown cause does not read as the unknown clause`);
+    for (const finding of identifiersIn([{ key: "gameCauseUnknown", value: labels.gameCauseUnknown, line: "gameCauseUnknown" }], locale))
+      findings.push(`${locale} the fallback clause prints "${finding.token}"`);
+  }
+
+  t.diagnostic(
+    `player-vocabulary.10: ${mapped.length} cause(s) mapped to a clause, ${causes.length} stardew_* cause(s) derived from the Host, both catalogues; ${findings.length} finding(s)`,
+  );
+  for (const finding of findings) t.diagnostic(`player-vocabulary.10: ${finding}`);
+  assert.deepEqual(findings, [], "a cause a player can be told about is a clause, and an unknown one says we do not know");
+});
+
+test("player-vocabulary.11: the reader reads every string the catalogues hold, and names what it does not", (t) => {
+  const { pairs, read, named } = population();
+  const shapes = catalogueShapes();
+  const findings = [];
+
+  for (const pair of pairs) {
+    const shape = shapes.find((candidate) => candidate.binding === pair.en.name && candidate.file === pair.file);
+    if (shape === undefined) {
+      findings.push(`${pair.file} declares ${pair.en.name} and the shape scan did not see it at all`);
+      continue;
+    }
+    // The historical defect, held durably: parsing the second catalogue without unwrapping
+    // `Object.freeze` read ZERO of its strings, and nothing said so. A reader that reads fewer
+    // strings than the object holds is now a finding, whatever shape caused it.
+    if (shape.keys !== pair.en.entries.length || shape.keys !== pair.zh.entries.length)
+      findings.push(
+        `${pair.file} holds ${shape.keys} key(s) and the reader read ${pair.en.entries.length} of ${pair.en.name} / ${pair.zh.entries.length} of ${pair.zh.name}`,
+      );
+    for (const gap of [...pair.en.gaps, ...pair.zh.gaps]) findings.push(`${gap} is a property this reader cannot see`);
+    if (pair.en.entries.length !== pair.zh.entries.length)
+      findings.push(`${pair.file} reads ${pair.en.entries.length} ${pair.en.name} key(s) and ${pair.zh.entries.length} ${pair.zh.name} key(s)`);
+  }
+
+  // Every catalogue-shaped object is either a locale this gate reads, or named here with a reason.
+  const readBindings = new Set(pairs.flatMap((pair) => [pair.en.name, pair.zh.name]).map((name) => name));
+  for (const shape of shapes) {
+    if (readBindings.has(shape.binding) && pairs.some((pair) => pair.file === shape.file)) continue;
+    if (NOT_A_CATALOGUE.some((entry) => entry.binding === shape.binding)) continue;
+    findings.push(
+      `${shape.file} declares ${shape.binding} with ${shape.stringKeys} string-valued key(s) and no copy check reads it: make it a catalogue or name it in NOT_A_CATALOGUE with the reason`,
+    );
+  }
+  for (const entry of NOT_A_CATALOGUE)
+    if (!shapes.some((shape) => shape.binding === entry.binding))
+      findings.push(`${entry.binding} is named as not-a-catalogue and no object by that name is left; drop the entry`);
+
+  assert.ok(shapes.length >= 6, `only ${shapes.length} catalogue-shaped object(s) found under src; the scan broke`);
+  assert.ok(
+    named.size > 0,
+    "no key is reachable through an indirection map any more: either the maps are gone or the scan broke, and neither is a pass",
+  );
+  t.diagnostic(
+    `player-vocabulary.11: ${shapes.length} catalogue-shaped object(s), ${pairs.length} catalogue pair(s) read, ${read.size} statically read key(s), ${named.size} key(s) reachable only through an indirection map, ${NOT_A_CATALOGUE.length} named as not-a-catalogue; ${findings.length} finding(s)`,
+  );
+  for (const finding of findings) t.diagnostic(`player-vocabulary.11: ${finding}`);
+  assert.deepEqual(
+    findings,
+    [],
+    "a gate that reads fewer strings than the tree holds agrees with itself: every catalogue-shaped object is read, or named with the reason it is not",
+  );
+});
+
+test("player-vocabulary.12 (mutation): the shape that hid the second catalogue, replayed", (t) => {
+  // The second catalogue declares `const en: CharacterLabels = Object.freeze({ ... })`. The reader
+  // that shipped in the first pass unwrapped `as const`, `satisfies` and parentheses, and this file
+  // was therefore read as ZERO strings - 283 key(s) of player text outside every copy check, with
+  // nothing saying so. This test replays that reader on a planted catalogue so the shape cannot come
+  // back unnoticed.
+  const planted = [
+    "const en = Object.freeze({",
+    '  firstKey: "One.",',
+    '  secondKey: "Two.",',
+    '  thirdKey: "Three.",',
+    '  fourthKey: "Four.",',
+    '  fifthKey: "Five.",',
+    "});",
+  ].join("\n");
+
+  const readNow = catalogues(planted, "src/i18n.ts").find((catalogue) => catalogue.name === "en");
+  assert.equal(readNow.entries.length, 5, "the reader unwraps the freeze call and sees every key");
+
+  // The pre-fix reader: it looks for an object literal directly, so a call expression around it reads
+  // as nothing at all.
+  const readThen = (() => {
+    const sourceFile = parse("src/i18n.ts", planted);
+    let keys = 0;
+    walk(sourceFile, (node) => {
+      if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || node.name.text !== "en") return;
+      if (node.initializer !== undefined && ts.isObjectLiteralExpression(node.initializer))
+        keys += node.initializer.properties.length;
+    });
+    return keys;
+  })();
+  assert.equal(readThen, 0, "the reader that shipped saw none of the five, which is the defect this lane found");
+  t.diagnostic(
+    `player-vocabulary.12: the pre-fix reader read 0 of 5 planted keys through Object.freeze; the reader above reads all 5`,
   );
 });
