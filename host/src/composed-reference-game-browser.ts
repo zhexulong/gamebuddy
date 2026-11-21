@@ -458,12 +458,23 @@ function distinguishableLifecycleProblemCode(error: unknown, wrapperCode: string
 
 /**
  * The bounded cause a refusal may carry. It is projected only where the composed
- * code is itself the generic one - `game_unavailable` / `state_unavailable` - i.e.
- * only where the code alone does not tell the faults apart. A refusal that already
- * names its fault keeps exactly the body it had.
+ * code is itself generic - `game_unavailable` / `state_unavailable`, and the cabin
+ * press's `stardew_manifest_handoff_uncertain` - i.e. only where the code alone does
+ * not tell the faults apart. A refusal that already names its fault keeps exactly the
+ * body it had.
  */
 function projectedLifecycleCause(error: unknown, code: string): string | undefined {
-  if (code !== "game_unavailable" && code !== "state_unavailable") return undefined;
+  if (
+    code !== "game_unavailable" &&
+    code !== "state_unavailable" &&
+    // The cabin press's own wrapper: it already stands for more than one fault by design (a cabin
+    // publication that may or may not have happened, a join that ran out of its budget), and the
+    // composer behind it answers four different questions with four names. Run r19 was refused
+    // under this code with `cause: null` and its own evidence could not tell which had fired, so
+    // the bounded cause is projected here exactly as it is for the two generic codes above.
+    code !== "stardew_manifest_handoff_uncertain"
+  )
+    return undefined;
   return boundedLifecycleCause(error);
 }
 

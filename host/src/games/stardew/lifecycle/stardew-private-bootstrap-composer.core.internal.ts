@@ -2432,39 +2432,46 @@ function createManifestHandoffCoordinatorCore(
           requestId = await facts.flow.confirmAndRequest(facts.choice, { confirmed: true });
         } catch (error) {
           if (didManifestRequestPublicationPossiblyOccur(error)) {
-            facts.state = "uncertain";
-            throw new Error("stardew_manifest_handoff_publication_uncertain", { cause: error });
+            throw refuseManifestHandoffStage(facts, "request_publication", error);
           }
           facts.state = "terminal";
           throw redactManifestHandoffError(error);
         }
         facts.requestId = requestId;
         facts.state = "request_published";
+        const remainingMs = Math.min(60_000, Math.max(1, facts.expiresAtMs - readClock()));
+        let manifest: StardewJoinManifest;
         try {
-          const remainingMs = Math.min(60_000, Math.max(1, facts.expiresAtMs - readClock()));
-          const manifest = await facts.flow.waitForManifest(requestId, remainingMs);
-          assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
-          await assertPlayerHostGenerationCorrelation(ownerFacts, facts.verifiedAdvertisementGeneration);
-          facts.manifest = Object.freeze({ ...manifest });
-          facts.state = "admitted";
-          const admission = Object.freeze(Object.create(null)) as StardewManifestAdmission;
-          const admissionFacts: ManifestHandoffAdmissionFacts = {
-            compositionIdentity,
-            owner: facts.owner,
-            flow: facts.flow,
-            choice: facts.choice,
-            requestId,
-            manifest: facts.manifest,
-            admittedAtMs: readClock(),
-            expiresAtMs: facts.manifest.expiresAtUnixMs,
-            consumed: { value: false },
-          };
-          admissions.set(admission, admissionFacts);
-          return admission;
+          manifest = await facts.flow.waitForManifest(requestId, remainingMs);
         } catch (error) {
-          facts.state = "uncertain";
-          throw new Error("stardew_manifest_handoff_publication_uncertain", { cause: error });
+          throw refuseManifestHandoffStage(facts, "manifest_not_admitted", error);
         }
+        try {
+          assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
+        } catch (error) {
+          throw refuseManifestHandoffStage(facts, "owner_not_admissible", error);
+        }
+        try {
+          await assertPlayerHostGenerationCorrelation(ownerFacts, facts.verifiedAdvertisementGeneration);
+        } catch (error) {
+          throw refuseManifestHandoffStage(facts, "generation_changed", error);
+        }
+        facts.manifest = Object.freeze({ ...manifest });
+        facts.state = "admitted";
+        const admission = Object.freeze(Object.create(null)) as StardewManifestAdmission;
+        const admissionFacts: ManifestHandoffAdmissionFacts = {
+          compositionIdentity,
+          owner: facts.owner,
+          flow: facts.flow,
+          choice: facts.choice,
+          requestId,
+          manifest: facts.manifest,
+          admittedAtMs: readClock(),
+          expiresAtMs: facts.manifest.expiresAtUnixMs,
+          consumed: { value: false },
+        };
+        admissions.set(admission, admissionFacts);
+        return admission;
       } catch (error) {
         if (facts.state === "confirming") facts.state = "terminal";
         throw redactManifestHandoffError(error);
@@ -2582,6 +2589,50 @@ function assertManifestHandoffOwnerAdmissible(facts: OwnedPlayerHostBootstrapFac
     facts.privateMaterial.value === null
   )
     throw new Error("stardew_manifest_handoff_not_admissible");
+}
+
+type ManifestHandoffUncertainStage =
+  | "request_publication"
+  | "manifest_not_admitted"
+  | "owner_not_admissible"
+  | "generation_changed";
+
+/**
+ * The questions `confirmAndAdmit` can no longer answer once the attachment request is on disk, and
+ * the refusal each of them answers with.
+ *
+ * They shared one code (`stardew_manifest_handoff_publication_uncertain`) until run r19 was refused
+ * 106 ms after the player's press with `cause: null`, and its own evidence could not say which had
+ * fired: the manifest the Mod issued did not pass this side's validation, the owner stopped being
+ * admissible, or the Player Host generation the selection was verified against had moved. Every one
+ * of those is the same fact at the browser's boundary - the published request's fate is unknown, so
+ * the attempt stays and the key may not be replayed - and a different fact for whoever has to fix
+ * it. The browser's bounded code is unchanged; these are what its cause chain carries.
+ */
+const MANIFEST_HANDOFF_UNCERTAIN_REFUSAL: Readonly<Record<ManifestHandoffUncertainStage, string>> = Object.freeze({
+  request_publication: "stardew_manifest_handoff_publication_uncertain",
+  manifest_not_admitted: "stardew_manifest_handoff_manifest_not_admitted",
+  owner_not_admissible: "stardew_manifest_handoff_owner_not_admissible",
+  generation_changed: "stardew_manifest_handoff_generation_changed",
+});
+
+/** The refusal each uncertain stage answers with. One declaration, so no stage can be minted unseen. */
+export const STARDEW_MANIFEST_HANDOFF_UNCERTAIN_REFUSALS: readonly string[] = Object.freeze(
+  Object.values(MANIFEST_HANDOFF_UNCERTAIN_REFUSAL),
+);
+
+/** Whether a `confirmAndAdmit` refusal leaves a published request whose fate this side cannot know. */
+export function isManifestHandoffUncertainRefusal(error: unknown): boolean {
+  return error instanceof Error && STARDEW_MANIFEST_HANDOFF_UNCERTAIN_REFUSALS.includes(error.message);
+}
+
+function refuseManifestHandoffStage(
+  facts: ManifestHandoffSelectionFacts,
+  stage: ManifestHandoffUncertainStage,
+  cause: unknown,
+): Error {
+  facts.state = "uncertain";
+  return new Error(MANIFEST_HANDOFF_UNCERTAIN_REFUSAL[stage], { cause });
 }
 
 function didManifestRequestPublicationPossiblyOccur(error: unknown): boolean {

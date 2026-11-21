@@ -314,12 +314,27 @@ export class StardewAttachmentFlow {
       throw new Error("stardew_manifest_identity_mismatch");
     const cabinMatches = current.cabins.filter((cabin) => cabin.cabinId === manifest.cabinId);
     const boundCabin = cabinMatches.length === 1 ? cabinMatches[0] : undefined;
+    if (boundCabin === undefined) throw new Error("stardew_manifest_cabin_binding_mismatch");
     if (
-      boundCabin === undefined ||
       boundCabin.ownerFarmhandId !== manifest.farmhandId ||
       (boundCabin.boundCompanionId !== "" && boundCabin.boundCompanionId !== manifest.companionId)
-    )
-      throw new Error("stardew_manifest_cabin_binding_mismatch");
+    ) {
+      // THE BINDING THIS MANIFEST NAMES IS A FACT THE REQUEST ITSELF CREATED. The Mod draws the
+      // Farmhand and binds it to the Cabin inside the request it accepts, and it publishes the
+      // advertisement that carries that binding on its own one-second beat - it publishes at the
+      // top of a tick and processes a pending request in the same tick, never twice in one beat
+      // (HostFarmhandProvisioner.cs:143-150). An advertisement published at or before this
+      // manifest's own issuance therefore CANNOT hold the binding yet, and demanding it of that
+      // beat refused a live handoff 106 ms after the press (run r19, 2026-11-21) while the Mod's
+      // own answer said `manifest_issued`. That beat is a hand-off, not a disagreement: the caller
+      // waits for the next one. A beat published AFTER the issuance that still disagrees is the
+      // real thing this check exists for, and refuses here.
+      throw new Error(
+        current.publishedAtUnixMs <= manifest.issuedAtUnixMs
+          ? "stardew_manifest_binding_not_yet_published"
+          : "stardew_manifest_cabin_binding_mismatch",
+      );
+    }
     if (
       manifest.sessionNonce !== current.nonce ||
       manifest.saveId !== current.saveId ||
@@ -404,7 +419,12 @@ function isTransientManifestPublicationError(error: unknown): boolean {
   if (isFileNotFound(error) || error instanceof SyntaxError) return true;
   return (
     error instanceof Error &&
-    ["stardew_session_expired", "stardew_host_not_ready", "invalid_stardew_session"].includes(error.message)
+    [
+      "stardew_session_expired",
+      "stardew_host_not_ready",
+      "invalid_stardew_session",
+      "stardew_manifest_binding_not_yet_published",
+    ].includes(error.message)
   );
 }
 

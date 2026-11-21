@@ -67,6 +67,7 @@ import {
 import {
   didStardewOwnedPlayerHostStageCEnterControlledLaunch,
   finalizeRecoveredPlayerHostAiSettledRuntimeAttempt,
+  isManifestHandoffUncertainRefusal,
   openRecoverableStardewBootstrapOwner,
   readRecoverableStardewBootstrapOwnerRecoveryBinding,
   STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL,
@@ -2571,10 +2572,9 @@ function createCoordinator(
             uncertain.value = true;
             throw new Error("stardew_farmhand_join_deadline_exceeded", { cause: error });
           }
-          if (
-            manifestAdmitted ||
-            (error instanceof Error && error.message === "stardew_manifest_handoff_publication_uncertain")
-          ) {
+          // The composer names which of its post-publication questions refused; all of them mean the
+          // attachment request may be on disk, so the attempt cannot be re-armed for a second press.
+          if (manifestAdmitted || isManifestHandoffUncertainRefusal(error)) {
             uncertain.value = true;
             if (manifestAdmitted && !ownerQuarantined) {
               try {

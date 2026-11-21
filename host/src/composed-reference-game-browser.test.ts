@@ -125,14 +125,19 @@ const gameProfileWithDiscovery = composeGameProfile({
 const BOUNDED_COORDINATOR_CODE = /^stardew_[a-z0-9_]+$/;
 
 /**
- * A lifecycle refusal's exact body. A refusal whose composed code is itself the
- * generic `game_unavailable` / `state_unavailable` carries the bounded coordinator
- * code as `cause` (that is what keeps distinct faults distinct); a refusal whose
- * code already names its fault keeps exactly the body it had, and a message that is
- * not one of the coordinator's own bounded codes is never projected at all.
+ * A lifecycle refusal's exact body. A refusal whose composed code is itself generic - the
+ * `game_unavailable` / `state_unavailable` pair, and the cabin press's
+ * `stardew_manifest_handoff_uncertain`, which stands for a cabin publication, an expired join and
+ * the composer's own admission stages alike - carries the bounded coordinator code as `cause` (that
+ * is what keeps distinct faults distinct); a refusal whose code already names its fault keeps
+ * exactly the body it had, and a message that is not one of the coordinator's own bounded codes is
+ * never projected at all.
  */
 function lifecycleProblemBody(internalMessage: string, expectedCode: string) {
-  const generic = expectedCode === "game_unavailable" || expectedCode === "state_unavailable";
+  const generic =
+    expectedCode === "game_unavailable" ||
+    expectedCode === "state_unavailable" ||
+    expectedCode === "stardew_manifest_handoff_uncertain";
   return generic && BOUNDED_COORDINATOR_CODE.test(internalMessage)
     ? { code: expectedCode, cause: internalMessage }
     : { code: expectedCode };
@@ -2063,6 +2068,60 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
     } finally {
       await server.close();
     }
+  }
+});
+
+test("a cabin press refused by the manifest admission carries the stage that refused it", async () => {
+  // The coordinator wraps the composer's refusal; the composer names which of its post-publication
+  // questions answered no. Run r19 captured `cause: null` here, so its own artifacts could not say
+  // whether the Mod's manifest was rejected, the owner had moved, or the Player Host generation had.
+  const handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
+    bootstrapToken,
+    async readChat(context) {
+      return stateForChat(context);
+    },
+    async readGame(context) {
+      return stateForGame(context);
+    },
+    stardewCabins: {
+      async read() {
+        return Object.freeze({ apiVersion: 1 as const, choices: [] });
+      },
+      async confirm() {
+        throw new Error("stardew_cabin_publication_uncertain", {
+          cause: new Error("stardew_manifest_handoff_manifest_not_admitted"),
+        });
+      },
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/game/stardew/cabins/confirm`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
+      body: JSON.stringify({
+        apiVersion: 1,
+        idempotencyKey: "A".repeat(22),
+        choiceHandle: "A".repeat(43),
+        confirmed: true,
+      }),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      code: "stardew_manifest_handoff_uncertain",
+      cause: "stardew_manifest_handoff_manifest_not_admitted",
+    });
+  } finally {
+    await server.close();
   }
 });
 

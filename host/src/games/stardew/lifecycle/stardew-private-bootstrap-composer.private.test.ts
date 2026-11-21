@@ -4737,7 +4737,7 @@ test("manifest handoff binds literal confirmation and rejects replay or concurre
     fixture.token,
   );
   await writeFile(join(fixture.sessionDirectory, "stardew-attachment-response.json"), JSON.stringify(response));
-  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
+  await assert.rejects(first, /stardew_manifest_handoff_manifest_not_admitted/);
   await assert.rejects(
     () => fixture.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,
@@ -4983,7 +4983,7 @@ test("manifest handoff uses production response and manifest verification for mi
       ),
     ),
   );
-  await assert.rejects(mismatchPending, /stardew_manifest_handoff_publication_uncertain/);
+  await assert.rejects(mismatchPending, /stardew_manifest_handoff_manifest_not_admitted/);
   assert.equal(mismatchRequestId.length > 0, true);
 
   const tampered = await prepareManifestHandoffFixture();
@@ -5021,7 +5021,7 @@ test("manifest handoff uses production response and manifest verification for mi
       }),
     ),
   );
-  await assert.rejects(tamperedPending, /stardew_manifest_handoff_publication_uncertain/);
+  await assert.rejects(tamperedPending, /stardew_manifest_handoff_manifest_not_admitted/);
 });
 
 test("manifest handoff rejects a wrong player-host launch generation and quarantines before selection", async () => {
@@ -5048,6 +5048,95 @@ test("manifest handoff rejects a wrong player-host launch generation and quarant
   await assert.rejects(() => readFile(join(sessionDirectory, "stardew-attachment-request.json"), "utf8"), {
     code: "ENOENT",
   });
+});
+
+test("manifest handoff names which question refused it, instead of one code for all of them", async () => {
+  // A. The manifest the Mod published is not one this side can accept.
+  const manifestRefused = await prepareManifestHandoffFixture();
+  const manifestSelection = await manifestRefused.coordinator.select(manifestRefused.owner, "cabin-attachment-factory");
+  const manifestPending = manifestRefused.coordinator.confirmAndAdmit(manifestSelection, { confirmed: true });
+  const manifestRequestId = (await waitForPublishedAttachmentRequest(manifestRefused.sessionDirectory))
+    .requestId as string;
+  await writeFile(
+    join(manifestRefused.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId: manifestRequestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        manifestRefused.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(manifestRefused.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: manifestRefused.token,
+        requestId: manifestRequestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+        signatureOverride: "tampered-manifest-signature",
+      }),
+    ),
+  );
+  await assert.rejects(manifestPending, /stardew_manifest_handoff_manifest_not_admitted/);
+
+  // B. The owner stopped being admissible between the published request and its answer.
+  const ownerRefused = await prepareManifestHandoffFixture();
+  const ownerSelection = await ownerRefused.coordinator.select(ownerRefused.owner, "cabin-attachment-factory");
+  const ownerPending = ownerRefused.coordinator.confirmAndAdmit(ownerSelection, { confirmed: true });
+  const ownerRequestId = (await waitForPublishedAttachmentRequest(ownerRefused.sessionDirectory)).requestId as string;
+  await ownerTestView(ownerRefused.owner).quarantine();
+  await writeFile(
+    join(ownerRefused.sessionDirectory, "stardew-attachment-response.json"),
+    JSON.stringify(
+      signedAttachmentValue(
+        {
+          schemaVersion: 1,
+          requestId: ownerRequestId,
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 2_100,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        },
+        ownerRefused.token,
+      ),
+    ),
+  );
+  await writeFile(
+    join(ownerRefused.sessionDirectory, "stardew-farmhand-manifest.json"),
+    JSON.stringify(
+      manifestForAttachment({
+        token: ownerRefused.token,
+        requestId: ownerRequestId,
+        saveId: "save-attachment-factory",
+        worldId: "world-attachment-factory",
+        nonce: "nonce-attachment-factory",
+      }),
+    ),
+  );
+  await assert.rejects(ownerPending, /stardew_manifest_handoff_owner_not_admissible/);
+
+  // The family the lifecycle coordinator treats as "the published request's fate is unknown", taken
+  // from the one declaration that mints it: a stage added there without being recognised fails here.
+  for (const refusal of productionCore.STARDEW_MANIFEST_HANDOFF_UNCERTAIN_REFUSALS)
+    assert.equal(productionCore.isManifestHandoffUncertainRefusal(new Error(refusal)), true, refusal);
+  // The refusal that happens BEFORE the request is written is not in the family: nothing is unknown
+  // there, so the cabin press may be made again.
+  assert.equal(
+    productionCore.isManifestHandoffUncertainRefusal(new Error("stardew_manifest_handoff_not_admissible")),
+    false,
+  );
+  assert.equal(productionCore.isManifestHandoffUncertainRefusal(new Error("stardew_manifest_handoff_failed")), false);
 });
 
 test("manifest handoff concurrent replay and cross-composition failures preserve an unconsumed AI reservation", async () => {
@@ -5081,7 +5170,7 @@ test("manifest handoff concurrent replay and cross-composition failures preserve
       ),
     ),
   );
-  await assert.rejects(first, /stardew_manifest_handoff_publication_uncertain/);
+  await assert.rejects(first, /stardew_manifest_handoff_manifest_not_admitted/);
   await assert.rejects(
     () => left.coordinator.confirmAndAdmit(selection, { confirmed: true }),
     /invalid_stardew_manifest_handoff_selection/,

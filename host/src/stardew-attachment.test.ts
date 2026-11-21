@@ -254,6 +254,136 @@ test("Stardew attachment flow retries only a transient advertisement publication
   }
 });
 
+test("a first binding reaches the Host on the advertisement beat after the manifest, not before it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    // THE LIVE SHAPE OF A FIRST ATTACHMENT (run r19, 2026-11-21). A Cabin the press binds is empty,
+    // its Farmhand is drawn inside the request the Mod accepts, and the advertisement is
+    // republished on the Mod's own one-second beat. The beat the Host reads at the press therefore
+    // still reports the Cabin it published - no owner, no binding - and only the next beat carries
+    // what the manifest names. Waiting for that beat is the difference between a hand-off and a lie.
+    const beforeTheBinding = signed({
+      ...baseSession,
+      publishedAtUnixMs: 1_000,
+      cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "", boundCompanionId: "", isBusy: false }],
+    });
+    const carryingTheBinding = signed({
+      ...baseSession,
+      publishedAtUnixMs: 2_000,
+      cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
+    });
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(beforeTheBinding));
+    await writeFile(
+      join(directory, "stardew-attachment-response.json"),
+      JSON.stringify(
+        signed({
+          schemaVersion: 1,
+          requestId: "request_01",
+          state: "ready",
+          reasonCode: "manifest_issued",
+          updatedAtUnixMs: 1_500,
+          manifestPath: "stardew-farmhand-manifest.json",
+          signature: "",
+        }),
+      ),
+    );
+    await writeFile(
+      join(directory, "stardew-farmhand-manifest.json"),
+      JSON.stringify(
+        signed({
+          schemaVersion: 1,
+          requestId: "request_01",
+          integrationId: "stardew",
+          integrationVersion: "0.1.0",
+          gameVersion: "1.6.15",
+          gameBuildNumber: 24356,
+          smapiVersion: "4.5.2",
+          multiplayerProtocol: "1.6.15",
+          endpoint: "127.0.0.1:24642",
+          saveId: baseSession.saveId,
+          worldId: baseSession.worldId,
+          companionId: "companion_01",
+          farmhandId: "123456789",
+          cabinId: "cabin_01",
+          sessionNonce: baseSession.nonce,
+          issuedAtUnixMs: 1_500,
+          expiresAtUnixMs: 12_000,
+          signature: "",
+        }),
+      ),
+    );
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+    const pending = flow.waitForManifest("request_01", 2_000);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 120));
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(carryingTheBinding));
+    assert.equal((await pending).farmhandId, "123456789");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a binding the world never publishes after the manifest is refused, not waited out", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    // The same empty Cabin on the beat published AFTER the manifest: the world had its beat to
+    // publish the binding the manifest names and did not, which is the mismatch this check exists for.
+    await writeFile(
+      join(directory, "stardew-session.json"),
+      JSON.stringify(
+        signed({
+          ...baseSession,
+          publishedAtUnixMs: 2_000,
+          cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "", boundCompanionId: "", isBusy: false }],
+        }),
+      ),
+    );
+    await writeFile(
+      join(directory, "stardew-farmhand-manifest.json"),
+      JSON.stringify(
+        signed({
+          schemaVersion: 1,
+          requestId: "request_01",
+          integrationId: "stardew",
+          integrationVersion: "0.1.0",
+          gameVersion: "1.6.15",
+          gameBuildNumber: 24356,
+          smapiVersion: "4.5.2",
+          multiplayerProtocol: "1.6.15",
+          endpoint: "127.0.0.1:24642",
+          saveId: baseSession.saveId,
+          worldId: baseSession.worldId,
+          companionId: "companion_01",
+          farmhandId: "123456789",
+          cabinId: "cabin_01",
+          sessionNonce: baseSession.nonce,
+          issuedAtUnixMs: 1_500,
+          expiresAtUnixMs: 12_000,
+          signature: "",
+        }),
+      ),
+    );
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+    await assert.rejects(
+      () => flow.readIssuedManifest("stardew-farmhand-manifest.json", "request_01"),
+      /stardew_manifest_cabin_binding_mismatch/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("Stardew attachment flow accepts signed 64-bit negative native IDs in unrelated cabins", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
   try {
@@ -330,6 +460,9 @@ test("Stardew attachment flow rejects a tampered manifest before it can be consu
   try {
     const session = signed({
       ...baseSession,
+      // The beat that answers this manifest is published AFTER it: the world had its own
+      // one-second chance to report the Cabin's owner and reported someone else.
+      publishedAtUnixMs: 2_500,
       cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
     });
     await writeFile(join(directory, "stardew-session.json"), JSON.stringify(session));
@@ -426,6 +559,9 @@ test("Stardew attachment flow accepts the Host fixed manifest filename only afte
   try {
     const session = signed({
       ...baseSession,
+      // Published after this manifest's issuance, so the Cabin's owner below is the world's answer
+      // rather than a beat that predates the binding.
+      publishedAtUnixMs: 2_500,
       cabins: [{ cabinId: "cabin_01", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
     });
     await writeFile(join(directory, "stardew-session.json"), JSON.stringify(session));
