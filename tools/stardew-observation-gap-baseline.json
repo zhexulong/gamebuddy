@@ -153,6 +153,16 @@
       "reason": "`watered` publishes the same fact: a row is published only after `HoeDirt.needsWatering()` held, and `watered: false` states that half of it in the row itself, so the predicate's own name is the only thing missing"
     },
     {
+      "kind": "field",
+      "id": "break_container:probe:worldObjectTargets",
+      "reason": "`BridgeWorldObjectTarget` is an object row: `probe` is the row's own subject and `targetId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
+    },
+    {
+      "kind": "field",
+      "id": "remove_placed_item:target:worldObjectTargets",
+      "reason": "`BridgeWorldObjectTarget` is an object row: `target` is the row's own subject and `targetId` names it, so the handler's null test restates the row's existence rather than asking for a field the row could carry"
+    },
+    {
       "id": "put_item_in_fish_tank:localDepositedItem",
       "reason": "a local variable of the handler: the deposited Object is the argument the caller already named (`expectedQualifiedItemId`), and the durable fact is the tank's contents, re-read through the `placed_furniture` row",
       "kind": "mutation"

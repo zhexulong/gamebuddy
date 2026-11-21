@@ -483,13 +483,15 @@
           },
           "slot": {
             "type": "integer",
-            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+            "resolvedAtExecution": true
           },
           "expectedQualifiedItemId": {
             "type": "string"
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -1991,13 +1993,15 @@
           },
           "slot": {
             "type": "integer",
-            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there."
+            "description": "The item's backpack slot. Unlike a tool action's slot this need not be the held one - `snapshot.toolSlots` lists tools only, so an item's slot is never published there.",
+            "resolvedAtExecution": true
           },
           "expectedQualifiedItemId": {
             "type": "string"
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},

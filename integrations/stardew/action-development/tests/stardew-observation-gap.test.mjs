@@ -1602,19 +1602,22 @@ test("a handler whose reads cannot be extracted is counted unparsed, printed, an
   assert.match(lines.join(""), /H field coverage\s+read 0 members across 0 handlers; carried 0; absent 0 \(0 red, 0 baselined\); unparsed 2, no family 0, no schema row 0/u);
 });
 
-test("the field-level section on the real tree: every decision read is a row field, and the four left are baselined", () => {
+test("the field-level section on the real tree: every decision read is a row field, and the six left are baselined", () => {
   const report = observeActionGaps({});
 
-  // Printed separately from the verdicts because member extraction is heuristic: 21 reads across 10 handlers,
-  // 90 handlers whose target decision is delegated to a helper or a type outside the engine vocabulary (re-measured
-  // 2026-11-07: 84 was the count before the families the quadrant section now lists as `RefillWateringCanTargets` and
-  // `FixedInteractionPoints` joined the surface). The four absent members are unchanged, and they are the baselined
-  // ones: three `crop` reads on a family whose own subject IS the crop, and `needsWatering`, whose answer `watered`
-  // already publishes.
-  assert.deepEqual(report.fieldLevel.counts, { readMembers: 21, carried: 17, absent: 4, red: 0, baselined: 4 });
+  // Printed separately from the verdicts because member extraction is heuristic: 22 reads across 11 handlers, 91
+  // handlers whose target decision is delegated to a helper or a type outside the engine vocabulary. Re-measured after
+  // the reader learned to follow the methods a handler CALLS and to bind their signature parameters (`b75c7849` moved
+  // six tile predicates into shared helpers, which the `Execute*`-prefixed hop could not see): 21 -> 22 members,
+  // 10 -> 11 handlers, 90 -> 91 unparsed. `till_soil` left the measured set in the same pass - its tile answer is now
+  // `GetHoeDirtAtTile(...) is { } dirt` inside an expression-bodied helper, a non-null pattern this reader does not
+  // model - and `break_container`/`remove_placed_item` joined it, because the presence test they decide on is now read.
+  // The six absent members are the baselined ones: four `crop`-family reads on a row whose own subject IS the crop,
+  // `needsWatering`, whose answer `watered` already publishes, and the two object rows' own subjects.
+  assert.deepEqual(report.fieldLevel.counts, { readMembers: 22, carried: 16, absent: 6, red: 0, baselined: 6 });
   assert.equal(report.fieldLevel.handlers, report.postconditionMutations.handlers);
-  assert.equal(report.fieldLevel.handlersWithReads, 10);
-  assert.equal(report.fieldLevel.unparsed.length, 90);
+  assert.equal(report.fieldLevel.handlersWithReads, 11);
+  assert.equal(report.fieldLevel.unparsed.length, 91);
   assert.ok(report.fieldLevel.unparsed.every((entry) => entry.reason.length > 0));
   assert.ok(
     !report.fieldLevel.unparsed.some((entry) => report.fieldLevel.rows.some((row) => row.actionId === entry.actionId)),
@@ -1634,6 +1637,7 @@ test("the field-level section on the real tree: every decision read is a row fie
     report.fieldLevel.rows.map((row) => [row.actionId, row.members.map(({ member, field }) => [member, field])]),
   );
   assert.deepEqual(readings, {
+    break_container: [["probe", null]],
     clear_hoedirt: [["crop", "crop"]],
     cut_weeds: [["IsWeeds", "isWeeds"]],
     fertilize_tile: [["CanApplyFertilizer", "canApplyFertilizer"]],
@@ -1652,6 +1656,7 @@ test("the field-level section on the real tree: every decision read is a row fie
       ["canPlantThisSeedHere", "canPlantThisSeedHere"],
       ["crop", "crop"],
     ],
+    remove_placed_item: [["target", null]],
     scythe_crop: [
       ["GetHarvestMethod", "harvestMethod"],
       ["crop", null],
@@ -1659,7 +1664,6 @@ test("the field-level section on the real tree: every decision read is a row fie
       ["forageCrop", "forageCrop"],
       ["readyForHarvest", "readyForHarvest"],
     ],
-    till_soil: [["HoeDirt", "hoeDirt"]],
     water_crop: [
       ["crop", null],
       ["isWatered", "watered"],

@@ -165,8 +165,13 @@ export function parseDiscoveries(sources) {
   return discoveries;
 }
 
-/** The declared body of the method named `name`, or null when no declaration of it exists. */
-export function methodBody(sources, name) {
+/**
+ * The declared parameter list and body of the method named `name`, or null when no declaration of it exists.
+ *
+ * The parameters come with the body because an engine value can be bound BY A SIGNATURE: `out HoeDirt? dirt` is where
+ * C# puts it, and a reader that only looks inside the braces cannot see the value the braces decide from.
+ */
+export function methodDeclaration(sources, name) {
   const pattern = new RegExp(`\\b${name}\\s*(?:<[^<>]{0,80}>)?\\s*\\(`, "gu");
   for (const { source } of sources) {
     const code = codeOnly(source);
@@ -175,10 +180,15 @@ export function methodBody(sources, name) {
       const close = matchingBracket(code, open);
       if (close < 0) continue;
       const body = bodyAfterParameters(code, close);
-      if (body !== null) return body;
+      if (body !== null) return { parameters: code.slice(open + 1, close), body };
     }
   }
   return null;
+}
+
+/** The declared body of the method named `name`, or null when no declaration of it exists. */
+export function methodBody(sources, name) {
+  return methodDeclaration(sources, name)?.body ?? null;
 }
 
 /** The per-location collections a body reads, e.g. `location.objects`, `location?.furniture`. */

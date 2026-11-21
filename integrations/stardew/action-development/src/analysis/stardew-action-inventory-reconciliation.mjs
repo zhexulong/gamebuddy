@@ -62,6 +62,7 @@ import {
   collectionsRead,
   matchingBracket,
   methodBody,
+  methodDeclaration,
   parseDiscoveries,
   readModSources,
   REPOSITORY_ROOT,
@@ -1383,7 +1384,9 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
 export const OBSERVATION_BASELINE_SCHEMA = "gamebuddy-stardew-observation-gap-baseline/v1";
 export const OBSERVATION_BASELINE_PATH = "tools/stardew-observation-gap-baseline.json";
 const OBSERVATION_SURFACE_PATH = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
-const OBSERVATION_MODELS_PATH = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
+/** The Mod's own model DIRECTORY: `BridgeWorldObjectTarget` is declared beside `BridgeProtocolModels.cs`, and a reader
+ * that opened one file reported that family's row as undeclared rather than reading where its record lives. */
+const OBSERVATION_MODELS_PATH = "integrations/stardew/src/Core/Models";
 
 /**
  * The container genus a collection type names in its own name: `NetCollection`, `NetLongDictionary`,
@@ -2653,9 +2656,11 @@ const TARGET_ID_CALL = /\bBuild\w*TargetId\s*\([^()]*\)/gu;
 /** A call whose result is tested against null: the presence read of an engine type named by the call. */
 const PRESENCE_NULL_TEST = /\b([A-Za-z_]\w*)\s*\([^()]*\)\s*(?:is\s+(?:not\s+)?null|[!=]=\s*null)/gu;
 
-/** The deciding expressions of one body: what `if`, `while` and `switch` test, and what a `return` states. */
+/** The deciding expressions of one body: what `if`, `while` and `switch` test, what a `return` states, and the
+ * whole of an expression-bodied member - which has no `return` and no `if`, and is therefore all decision. */
 function decisionExpressions(body) {
   const expressions = [];
+  if (body.trimStart().startsWith("=>")) expressions.push(body.trimStart().slice(2));
   for (const match of body.matchAll(/\b(?:if|while|switch)\s*\(/gu)) {
     const open = body.indexOf("(", match.index + match[0].length - 1);
     const close = matchingBracket(body, open);
@@ -2681,6 +2686,59 @@ function membersReadThrough(selector, name) {
 const LOCATION_RECEIVER =
   /\b(?:location|farm|currentLocation|terrainFeatures|largeTerrainFeatures|objects)\b/u;
 
+/** An engine-typed parameter of a declaration: `out HoeDirt? dirt`, `Crop crop`, `ref Object? item`. */
+const ENGINE_PARAMETER = new RegExp(
+  `(?:[\\w.]+\\.)?(${ENGINE_TYPE_ALTERNATION})\\??\\s+([A-Za-z_]\\w*)\\s*$`,
+  "u",
+);
+
+/**
+ * The names of the methods a handler decides in: `Execute*` is the body that touches the world, `Describe*` the shared
+ * predicate a gate and its body ask, `Answer*` the Mod's three-way tile answer.
+ *
+ * It is a hop list of three names, and the residue of a hop list is stated rather than hidden: a handler that hands its
+ * decision to a helper named otherwise is measured as `unparsed` with a reason, and the summary prints that count beside
+ * the verdicts - `till_soil` is one today, because its tile question became `GetHoeDirtAtTile(...) is { } dirt`.
+ */
+const DECISION_METHOD = /^(?:Execute|Describe|Answer)[A-Z_]\w*$/u;
+
+/** The names the body calls, minus C# keywords, that are one of those methods. */
+function calledDecisionMethods(body) {
+  return new Set(
+    [...body.matchAll(/\b([A-Za-z_]\w*)\s*(?:<[^<>]{0,80}>)?\s*\(/gu)]
+      .map((match) => match[1])
+      .filter((name) => !CSHARP_KEYWORDS.has(name) && DECISION_METHOD.test(name)),
+  );
+}
+
+/** The engine-typed parameters of one declaration, in the order the signature declares them. */
+function engineParameters(parameters) {
+  const found = [];
+  for (const parameter of splitTopLevel(parameters)) {
+    const match = ENGINE_PARAMETER.exec(parameter.trim());
+    if (match !== null) found.push({ type: match[1], name: match[2] });
+  }
+  return found;
+}
+
+/** Whether the method assigns `name` from something the location produced, e.g. `dirt = soil;` or `crop = soil.crop;`. */
+function assignedFromLocation(body, name, bindings) {
+  for (const match of body.matchAll(new RegExp(`\\b${name}\\s*=\\s*([^;]+);`, "gu"))) {
+    const value = match[1];
+    const root = /([A-Za-z_]\w*)\s*[!?]?\s*\.?[^.;]*$/u.exec(value)?.[1];
+    if (LOCATION_RECEIVER.test(value) || (root !== undefined && bindings.has(root))) return true;
+  }
+  return false;
+}
+
+/**
+ * A bound value tested for presence, `if (crop is null)`: the member is the code's own name for the value.
+ *
+ * `dirt.crop is null` reaches the same member through the chain, so the two spellings agree on one id - which is the
+ * identity the baseline ratchet keys on.
+ */
+const BOUND_PRESENCE_TEST = /\b([A-Za-z_]\w*)\s+(?:is\s+(?:not\s+)?null|[!=]=\s*null)\b/gu;
+
 /**
  * The engine members one handler reads to decide, or `parsed: false` when its request body is missing.
  *
@@ -2689,48 +2747,76 @@ const LOCATION_RECEIVER =
  * counts only when the statement that produced it reads the LOCATION: a value taken out of the actor's pack
  * (`out Object? carried` from a pack search) is not the row's subject, and counting it would report a family for
  * a decision about something else.
+ *
+ * THE BODIES ARE THE METHODS THE HANDLER CALLS, not only the ones named `Execute*`. `b75c7849` moved six tile
+ * predicates out of `Execute*` into shared helpers so that the gate and the body ask one predicate, and a reader keyed
+ * on that one prefix went blind on all six while every read stayed where it was - a green section over a stopped
+ * measurement is the defect this whole report exists to refuse.
+ *
+ * Bindings are SCOPED TO THE DECLARATION that made them. Two helpers that each call their local `live` something
+ * different (`out Object? live` in one, a `TileTargetGate live` in another) are two facts, and a flat table read
+ * `live.Refusal` as a member of the weed.
  */
 export function handlerFieldReads(sources, request) {
-  const body = methodBody(sources, request);
-  if (body === null) return { parsed: false, bindings: new Map(), members: [] };
-  const bodies = [body];
-  for (const name of new Set([...body.matchAll(/\b(Execute\w+)\s*\(/gu)].map((match) => match[1]))) {
-    const inner = methodBody(sources, name);
-    if (inner !== null) bodies.push(inner);
+  const declaration = methodDeclaration(sources, request);
+  if (declaration === null) return { parsed: false, bindings: new Map(), members: [] };
+  const declarations = [declaration];
+  for (const name of calledDecisionMethods(declaration.body)) {
+    const followed = methodDeclaration(sources, name);
+    if (followed !== null) declarations.push(followed);
   }
   const bindings = new Map();
-  for (const text of bodies) {
-    // A pattern cast of a location-bound name is location-bound too (`feature is not HoeDirt dirt`), so the
-    // set is grown until it stops growing.
-    let grown = true;
-    while (grown) {
-      grown = false;
-      for (const pattern of ENGINE_BINDING_PATTERNS)
-        for (const match of text.matchAll(pattern)) {
-          const type = ENGINE_TARGET_TYPES.includes(match[1]) ? match[1] : match[2];
-          const name = ENGINE_TARGET_TYPES.includes(match[1]) ? match[2] : match[1];
-          if (bindings.has(name)) continue;
-          const boundary = Math.max(text.lastIndexOf(";", match.index), text.lastIndexOf("{", match.index), text.lastIndexOf("}", match.index));
-          const statement = text.slice(boundary + 1, match.index);
-          const root = /([A-Za-z_]\w*)\s*[!?]?\s*\.?[^.;]*$/u.exec(statement)?.[1];
-          if (!LOCATION_RECEIVER.test(statement) && !(root !== undefined && bindings.has(root))) continue;
-          bindings.set(name, type);
-          grown = true;
-        }
-    }
-  }
   const members = new Set();
-  for (const text of bodies)
-    for (const raw of decisionExpressions(text)) {
+  for (const followed of declarations) {
+    const bound = locationBoundBindings(followed.body);
+    // A parameter is bound the way an in-body declaration is: from what the method assigns it FROM. `dirt = soil;` and
+    // `crop = soil.crop;` are reads of the location, so the callee decides on the row's subject; `seed = heldSeed;` is a
+    // value taken out of the actor's pack, which the guard above keeps out of the row's subject wherever it is declared.
+    for (const parameter of engineParameters(followed.parameters))
+      if (!bound.has(parameter.name) && assignedFromLocation(followed.body, parameter.name, bound))
+        bound.set(parameter.name, parameter.type);
+    for (const [name, type] of bound) if (!bindings.has(name)) bindings.set(name, type);
+    for (const raw of decisionExpressions(followed.body)) {
       // Identity arguments name the row the caller must echo; they are not a decision about its state.
       const expression = raw.replace(TARGET_ID_CALL, "BuildTargetId");
-      for (const name of bindings.keys()) for (const member of membersReadThrough(expression, name)) members.add(member);
+      for (const name of bound.keys()) for (const member of membersReadThrough(expression, name)) members.add(member);
       for (const call of expression.matchAll(PRESENCE_NULL_TEST)) {
         const type = ENGINE_TARGET_TYPES.find((candidate) => call[1].includes(candidate));
         if (type !== undefined) members.add(type);
       }
+      for (const presence of expression.matchAll(BOUND_PRESENCE_TEST))
+        if (bound.has(presence[1])) members.add(presence[1]);
     }
+  }
   return { parsed: true, bindings, members: [...members].sort() };
+}
+
+/** The engine values one method body binds from the location: grown until the set stops growing. */
+function locationBoundBindings(text) {
+  const bindings = new Map();
+  // A pattern cast of a location-bound name is location-bound too (`feature is not HoeDirt dirt`), so the
+  // set is grown until it stops growing.
+  let grown = true;
+  while (grown) {
+    grown = false;
+    for (const pattern of ENGINE_BINDING_PATTERNS)
+      for (const match of text.matchAll(pattern)) {
+        const type = ENGINE_TARGET_TYPES.includes(match[1]) ? match[1] : match[2];
+        const name = ENGINE_TARGET_TYPES.includes(match[1]) ? match[2] : match[1];
+        if (bindings.has(name)) continue;
+        const boundary = Math.max(
+          text.lastIndexOf(";", match.index),
+          text.lastIndexOf("{", match.index),
+          text.lastIndexOf("}", match.index),
+        );
+        const statement = text.slice(boundary + 1, match.index);
+        const root = /([A-Za-z_]\w*)\s*[!?]?\s*\.?[^.;]*$/u.exec(statement)?.[1];
+        if (!LOCATION_RECEIVER.test(statement) && !(root !== undefined && bindings.has(root))) continue;
+        bindings.set(name, type);
+        grown = true;
+      }
+  }
+  return bindings;
 }
 
 /**
@@ -2933,6 +3019,16 @@ function findDecompiledSource(root, name) {
   return null;
 }
 
+/** Every published record declaration the Mod owns, read from its whole model directory. */
+function readObservationModels({ root = REPOSITORY_ROOT, directory = OBSERVATION_MODELS_PATH } = {}) {
+  const models = path.join(root, directory);
+  return readdirSync(models)
+    .filter((name) => name.endsWith(".cs"))
+    .sort()
+    .map((name) => readFileSync(path.join(models, name), "utf8"))
+    .join("\n");
+}
+
 /** The decompiled sources the six sections read, resolved through the shared fail-closed guard. */
 export function loadDecompiledSources({ sourceRoot } = {}) {
   const root = resolveStardewDecompileRoot({ repositoryRoot: REPOSITORY_ROOT, root: sourceRoot });
@@ -2956,7 +3052,7 @@ export function observeActionGaps({
   decompiled = loadDecompiledSources(),
   collectionTypes = loadEngineCollectionTypeNames(),
   surface = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SURFACE_PATH), "utf8")),
-  models = readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_MODELS_PATH), "utf8"),
+  models = readObservationModels(),
   schema = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_SCHEMA_PATH), "utf8")),
   baseline = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_BASELINE_PATH), "utf8")),
   targetField = TARGET_FIELD,
