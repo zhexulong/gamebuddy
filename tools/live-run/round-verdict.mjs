@@ -34,6 +34,12 @@ import { createReadingLedger } from "../lib/reading-source.mjs";
 import { readSessionEntries, toolResultPayload } from "../lib/session-jsonl.mjs";
 import { standstillLines, summarizeStandstill } from "../lib/standstill-partition.mjs";
 import { armedRunDirectories, readRunClosure, readRunLaunch } from "./core/run-closure.mjs";
+// A body that came back locked after an execution ended is a leak, and the verdict says so by name. The reading lives
+// beside this tool because its population is the Mod's own slot table and its own `ExecutionState` declaration.
+import { bodyHoldLeakLines, summarizeBodyHoldLeak } from "../lib/body-hold-leak.mjs";
+// The two self-record readings: what she said (the turn record against the run's own progress record) and what
+// `actionCadence.thinkMs` can answer. Their refutation lives beside this tool rather than inside it.
+import { selfRecordLines } from "./analysis/self-record.mjs";
 
 const LADDER = ".live-runs/game-ladder";
 
@@ -1108,6 +1114,11 @@ function accountingFailure(report) {
 
 function efficiencyLines(options) {
   const report = measureEfficiency(options);
+  return Object.freeze({ report, lines: Object.freeze(efficiencyReportLines(report)) });
+}
+
+/** The printed block for one measured efficiency report. */
+function efficiencyReportLines(report) {
   if (report.missing === "no_session")
     return [
       "efficiency          not_measured",
@@ -1788,6 +1799,9 @@ record(
 //
 // The whole point is that the floor is REFUTABLE from the session alone: it takes the work that settled, the widest plan
 // this run itself accepted, and the turn cost this run actually paid, and asks what the fewest turns would have been.
+//
+// The report travels with its lines: the self-record block below needs the model time this run measured, and a second
+// `measureEfficiency` call would parse the same session twice and could disagree with this one.
 const repoRoot = resolve(".");
 const efficiency = efficiencyLines({ sessionFile: boundSession, result, repoRoot });
 
@@ -1804,6 +1818,23 @@ const standstill = summarizeStandstill({
   runnerLogPath: locatedLog.path,
 });
 
+// 9. THE TWO READINGS THE RUN PUBLISHED ABOUT ITSELF, each against the artifact that witnesses it.
+//
+// Both were quoted from `result.json` without the file that could refute them. `thinkMs.sum` was read as model time
+// though it is a dispatch gap with the run's programs inside it, and `sessionTurns[].spokenLines` was trusted though the
+// run's own progress record counted nineteen more bubbles for the same turn. One reviewer-facing reading each, taken
+// from the two artifacts at once.
+const selfRecord = selfRecordLines({ runDir, result, efficiency: efficiency.report });
+
+// 10. THE BODY THAT CAME BACK LOCKED, and the execution that should have handed it back.
+//
+// Measured `round88`: one `fish_here` cast settled `fish_here_catch_window_deadline_expired` at 18:08:32.593Z and every
+// receipt after it reported `held_by=stalled_with_no_holder:CanMove` while the game clock stood still for five minutes.
+// The verdict read that run as a bridge story, because nothing compared an execution's END with the hold published after
+// it. The population is the Mod's own slot table and its own `ExecutionState`, so a new slot row or a new terminal state
+// joins the reading without an edit here.
+const bodyHold = summarizeBodyHoldLeak({ result, modLogText: modLogRead.text });
+
 const width = Math.max(...rows.map((row) => row.name.length));
 process.stdout.write(`run   ${runDir}\n`);
 if (pointedAtABundle)
@@ -1812,14 +1843,23 @@ if (pointedAtABundle)
       ? `bundle ${resultPath} (pointed at directly: ${bundleBinding.why})\n`
       : `bundle ${resultPath} (pointed at directly: ${bundleBinding.how})\n`,
   );
-process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
+process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n`);
+// THE FIRST SCREEN CARRIES THE WRITER. A reader who stops after two lines has to know that this run left a body locked
+// and, when the log names one, which frame took it - the block below is the derivation, not the finding.
+const bodyHeadline =
+  bodyHold.gate === "blocked"
+    ? `${bodyHold.codes.join(" · ")}  writer=${bodyHold.writer.site ?? bodyHold.writer.state}`
+    : `${bodyHold.gate === "unaskable" ? "not_measured" : bodyHold.gate} · examined ${String(bodyHold.examined)} · blocked ${String(bodyHold.leaks.length)} · writer=${bodyHold.writer.site ?? bodyHold.writer.state}`;
+process.stdout.write(`body  ${bodyHeadline}\n\n`);
 for (const row of rows)
   process.stdout.write(`${row.name.padEnd(width)}  ${row.verdict.padEnd(14)} ${row.detail}\n    <- ${row.source}\n`);
 const work = workLines({ runnerLog, result, readings, why: locatedLog.why });
 if (work.length > 0) process.stdout.write(`\n${work.join("\n")}\n`);
 process.stdout.write(`\n${crossingsLines(crossings).join("\n")}\n`);
-process.stdout.write(`\n${efficiency.join("\n")}\n`);
+process.stdout.write(`\n${efficiency.lines.join("\n")}\n`);
 process.stdout.write(`\n${standstillLines(standstill).join("\n")}\n`);
+process.stdout.write(`\n${selfRecord.lines.join("\n")}\n`);
+process.stdout.write(`\n${bodyHoldLeakLines(bodyHold).join("\n")}\n`);
 // THE SOURCE GATE: every reading above that came from the run's own records names which of the two it read. A reading
 // printed with no file behind it fails here by name, so a number in this verdict can always be re-derived.
 for (const line of readings.lines()) process.stdout.write(`${line}\n`);
@@ -1833,10 +1873,20 @@ if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
 // never green) and is not the same failure: a live run has no bundle yet, and failing it here would read as a defect in
 // the run. `round84` is why the tolerance exists - its 58.4 s of "unexplained" was 38.3 s of run head plus 24.6 s of run
 // tail with 4.5 s counted twice, so the old `unexplained >= 1` failed a run whose wall was fully accounted for.
-else if (readings.failed() || standstill.gate === "failed") process.exitCode = 1;
+else if (
+  readings.failed() ||
+  standstill.gate === "failed" ||
+  selfRecord.gate === "disagree" ||
+  bodyHold.gate === "blocked"
+)
+  process.exitCode = 1;
 // A residual NOBODY MEASURED is a refused reading, in the same code a blocked ending already uses: the partition prints
 // `not_measured:<the input that was absent>` and the verdict exits 2, so a run whose wall is known and whose buckets or
 // body window were not placed can be read as neither a pass nor a defect. `blocked` is the other case and stays exit 0: a
 // bundle carrying no clock at all cannot be asked the question, and nothing was refused - the block prints `not_measured`
 // on every reading it could not take either way.
-else if (standstill.gate === "not_measured") process.exitCode = 2;
+//
+// The body-hold gate joins that branch for the same reason and not the leak one: a stall the artifacts cannot attribute to
+// any ended execution is a reading this bundle could have made and did not (no receipt publishes slot occupancy), so it is
+// refused rather than failed. A LEAK is the other branch - it is a measured defect and fails the verdict.
+else if (standstill.gate === "not_measured" || bodyHold.gate === "not_measured") process.exitCode = 2;

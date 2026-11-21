@@ -11,6 +11,15 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
+import { ANIMATION_CLASS } from "../lib/action-pace.mjs";
+import {
+  readBodySlotActions,
+  readNonSucceededStates,
+  readProbeLines,
+  USING_TOOL_BOUND_MS,
+} from "../lib/body-hold-leak.mjs";
+import { readStardewActionIds } from "../lib/stardew-published-action-registry.mjs";
+
 const REPO = resolve(import.meta.dirname, "..", "..");
 const VERDICT = join(REPO, "tools", "live-run", "round-verdict.mjs");
 const START = Date.parse("2026-11-10T09:00:00.000Z");
@@ -130,7 +139,17 @@ function writeRun({
   record = RECORD,
   multiday = null,
   timeline = null,
+  // The run's own receipt stream and its Mod log: the two artifacts the body-hold gate reads. `null` is a bundle that
+  // published neither, which is the unaskable shape one test below is about.
+  bridgeFacts = null,
+  modLog = null,
   programOutcomes = null,
+  // What the run's own records say she said, and how many bubbles it committed: the pair the speech reading compares.
+  sessionTurns = null,
+  presentation = null,
+  actionCadence = null,
+  // The run's own progress record, written as the run happened: the witness each turn's lines are a reading of.
+  progress = null,
   ending = "closed",
   startedAtMs = null,
 }) {
@@ -164,10 +183,17 @@ function writeRun({
         toolTiming: { record },
         ...(multiday === null ? {} : { multiday }),
         ...(programOutcomes === null ? {} : { programOutcomes }),
+        ...(sessionTurns === null ? {} : { sessionTurns }),
+        ...(presentation === null ? {} : { presentation }),
+        ...(actionCadence === null ? {} : { actionCadence }),
+        ...(bridgeFacts === null ? {} : { bridgeFacts }),
       }),
     );
+  if (progress !== null)
+    writeFileSync(join(runDir, "run-progress.jsonl"), `${progress.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
   if (timeline !== null)
     writeFileSync(join(runDir, "timeline.jsonl"), `${timeline.map((row) => JSON.stringify(row)).join("\n")}\n`);
+  if (modLog !== null) writeFileSync(join(runDir, "mod-log.txt"), modLog);
   if (session !== null) {
     const path = join(runDir, ...SESSION_RELATIVE);
     mkdirSync(join(path, ".."), { recursive: true });
@@ -858,3 +884,383 @@ test("a finished run prints the bundle count and the log count side by side, nev
       );
     },
   ));
+
+// `round87b` (`.live-runs/game-ladder/2026-11-21T13-38-15-600Z-multiday_routine`): `sessionTurns[2].spokenLines` was `[]`
+// while `run-progress.jsonl` presented nineteen bubbles after that turn's `turn_started`. Two artifacts, one population,
+// two different values - and the reader trusted the turn record, which is the derived one.
+const ROUND87B_PROGRESS = Object.freeze([
+  { event: "turn_started", turn: 0, reason: "day_start" },
+  { event: "presented", index: 0 },
+  { event: "presented", index: 1 },
+  { event: "turn_started", turn: 1, reason: "day_start" },
+  { event: "presented", index: 2 },
+  { event: "turn_started", turn: 2, reason: "day_start" },
+  { event: "presented", index: 3 },
+  { event: "presented", index: 4 },
+]);
+
+test("the turn record's lines are compared with the run's own progress record, and the derived one is named", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      sessionTurns: [
+        { goalIndex: 0, day: 1, spokenLines: ["一", "二"] },
+        { goalIndex: 1, day: 2, spokenLines: ["三"] },
+        { goalIndex: 2, day: 3, spokenLines: [] },
+      ],
+      presentation: { pieceCount: 5 },
+      progress: [...ROUND87B_PROGRESS],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^speech {14}3 of 5 lines {2}DISAGREE {2}<- result\.json sessionTurns\[\]\.spokenLines/mu);
+      assert.match(
+        output,
+        /run-progress\.jsonl presented 5 · result\.json presentation\.pieceCount 5 -> the two agree, so the population is 5 and sessionTurns\[\]\.spokenLines is the reading that is short/u,
+      );
+      // The per-turn windows are the progress record's own: the day-3 turn comes out at 0 of 2, which is the defect.
+      assert.match(output, /turn 0 2 of 2 · turn 1 1 of 1 · turn 2 0 of 2/u);
+    },
+  ));
+
+test("the turn record that reads the same windows as the progress record agrees with it", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      // The shape the fixed runner publishes: each turn's lines run to the NEXT turn's start.
+      sessionTurns: [
+        { goalIndex: 0, day: 1, spokenLines: ["一", "二"] },
+        { goalIndex: 1, day: 2, spokenLines: ["三"] },
+        { goalIndex: 2, day: 3, spokenLines: ["四", "五"] },
+      ],
+      presentation: { pieceCount: 5 },
+      progress: [...ROUND87B_PROGRESS],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^speech {14}5 of 5 lines {2}AGREE {2}<- result\.json sessionTurns\[\]\.spokenLines/mu);
+      assert.doesNotMatch(output, /is the reading that is short/u);
+    },
+  ));
+
+test("the speech reading is not_measured, never a pass, when only one side of the comparison exists", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      sessionTurns: [{ goalIndex: 0, day: 1, spokenLines: ["一"] }],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^speech {14}not_measured$/mu);
+      assert.match(output, /this run directory does not hold both sides/u);
+    },
+  ));
+
+const ROUND87B_CADENCE = Object.freeze({
+  actions: 293,
+  measured: 293,
+  unmeasured: 0,
+  flat: 13,
+  program: 280,
+  execMs: Object.freeze({ median: 76, max: 50317, sum: 468501 }),
+  thinkMs: Object.freeze({ median: 50382, max: 645115, sum: 1345364 }),
+  idleMs: Object.freeze({ median: 50451, max: 645229, sum: 1346240 }),
+});
+
+test("a dispatch gap with program work inside it is printed as not_measured, never as the model's thinking", () =>
+  withFixture(
+    () => ({ withResult: true, session: null, actionCadence: ROUND87B_CADENCE }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^ {2}cadence {11}not_measured \(program_work_inside_the_gap:13_flat_of_293_actions\) · the flat channel measured 1345\.4s over 12 dispatch gap\(s\), longest 645\.1s/mu,
+      );
+      assert.match(output, /the number is the flat channel's, not the model's/u);
+    },
+  ));
+
+test("a bundle that predates the split is read by the same rule, from the counts it does publish", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      // No `thinkMsNotMeasured`/`dispatchGapMs`: the field a reviewer quoted straight out of an older run's result.json.
+      actionCadence: { ...ROUND87B_CADENCE, thinkMsNotMeasured: undefined, dispatchGapMs: undefined },
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /not_measured \(program_work_inside_the_gap:13_flat_of_293_actions\)/u);
+      assert.match(output, /over 12 dispatch gap\(s\), longest 645\.1s/u);
+    },
+  ));
+
+test("a run whose work all went through the flat clock keeps its thinkMs reading", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      actionCadence: {
+        actions: 12,
+        measured: 12,
+        unmeasured: 0,
+        flat: 12,
+        program: 0,
+        execMs: { median: 70, max: 300, sum: 900 },
+        thinkMs: { median: 4000, max: 9000, sum: 22000 },
+        idleMs: { median: 4100, max: 9100, sum: 23000 },
+        thinkMsNotMeasured: null,
+        dispatchGapMs: null,
+      },
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^ {2}cadence {11}22\.0s of dispatch gap over 11 gap\(s\) \(median 4\.0s, longest 9\.0s\)/mu,
+      );
+    },
+  ));
+
+// ---------------------------------------------------------------------------------------------------------------
+// A BODY THAT CAME BACK LOCKED AFTER AN EXECUTION ENDED.
+//
+// Every fixture below is the shape `round88` published on 2026-11-21 (`.live-runs/game-ladder/
+// 2026-11-21T17-48-27-810Z-multiday_routine`): one `fish_here` cast settled `fish_here_catch_window_deadline_expired`
+// at 18:08:32.593Z and the six `move_to_tile` refusals that followed - 18:08:38 to 18:12:48, as the game clock stood
+// still - said `held_by=stalled_with_no_holder:CanMove`. The run's verdict read it as a bridge story, so these tests
+// state the invariant that was missing: the code names the execution that ENDED, never the action that was refused
+// afterwards, and the first screen carries the writer even when no artifact names one.
+const ROUND88_ENDED_AT = Date.parse("2026-11-21T18:08:32.593Z");
+
+const modReceipt = ({ atMs, actionId, state, reasonCode, detail = "" }) => ({
+  type: "execution_receipt",
+  atMs,
+  reasonCode,
+  requestId: `request-${String(atMs)}`,
+  executionId: `execution-${String(atMs)}`,
+  evidence: { detail },
+  worldFactPayload: { actionId, state, reasonCode, evidence: { detail } },
+});
+
+// `round88`'s own refusal sentence, verbatim, for the six `move_to_tile` requests that followed the expired cast.
+const STALLED_HOLD_DETAIL =
+  "held_by=stalled_with_no_holder:CanMove;can_move=false;admissible_actions=none;next_step=report_the_stalled_body";
+const stalledReceipts = (count) =>
+  Array.from({ length: count }, (_, index) =>
+    modReceipt({
+      atMs: ROUND88_ENDED_AT + 6_000 + index * 62_000,
+      actionId: "move_to_tile",
+      state: "rejected",
+      reasonCode: "transient_busy",
+      detail: STALLED_HOLD_DETAIL,
+    }),
+  );
+// The expired cast's own receipt: no `held_by=` anywhere in it, which is what makes it an execution that owned the body.
+const expiredCast = (
+  detail = "location=Forest;target=water_360abce006039168;tile=46,25;phase=awaiting_catch_window;steps=1",
+) =>
+  modReceipt({
+    atMs: ROUND88_ENDED_AT,
+    actionId: "fish_here",
+    state: "expired",
+    reasonCode: "fish_here_catch_window_deadline_expired",
+    detail,
+  });
+
+const firstScreen = (output) => /^body {2}(.*)$/mu.exec(output)?.[1] ?? "";
+const bodyHoldBlock = (output) => output.slice(output.indexOf("body-hold-leak"));
+
+test("a slot-holding end followed by a stalled body blocks the verdict, and the code names the end", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      bridgeFacts: [expiredCast(), ...stalledReceipts(6)],
+      // `round88`'s own Mod log: the probe landed after that run, so the file was read and carried no `[body-hold]`
+      // line at all. A directory with no `mod-log.txt` is the other shape, and says `no_mod_log`.
+      modLog: "[GameBuddy] GameBuddy engine-loop probe installed on StardewValley.Game1.Update with CountFrame.\n",
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^body {2}implicit_body_hold_leak:fish_here:fish_here_catch_window_deadline_expired {2}writer=none_logged$/mu,
+        "the first screen carries the leak code and the writer, before the rows table",
+      );
+      assert.doesNotMatch(
+        output,
+        /implicit_body_hold_leak:move_to_tile/u,
+        "`move_to_tile` was refused because the body was already held - it is the victim, not the writer",
+      );
+      assert.match(bodyHoldBlock(output), /BLOCKED {2}implicit_body_hold_leak:fish_here/u);
+      assert.match(output, /stalled_with_no_holder:CanMove x6/u);
+      assert.match(output, /slot-holding actions 11 · of \d+ mounted · windows examined 1 · blocked 1/u);
+      assert.match(output, /writer {12}none_logged - mod-log\.txt carried no \[body-hold\] unattributed line/u);
+    },
+  ));
+
+test("a [body-hold] line in the Mod log is the writer the first screen names", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      bridgeFacts: [expiredCast(), ...stalledReceipts(2)],
+      modLog: [
+        "[GameBuddy] GameBuddy engine-loop probe installed on StardewValley.Game1.Update with CountFrame.",
+        "[GameBuddy] [body-hold] unattributed site=StardewValley.Farmer.set_CanMove;declared=native:StardewValley.Farmer.set_CanMove;open_ended=true;frames=set_CanMove<CanMoveSet<Update",
+        "[GameBuddy] [body-hold] declared holder=body_pause:emote;reason=native_body_timer;pause_ms=200;site_duration_ms=200",
+      ].join("\n"),
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^body {2}implicit_body_hold_leak:fish_here:fish_here_catch_window_deadline_expired {2}writer=StardewValley\.Farmer\.set_CanMove$/mu,
+      );
+      assert.match(
+        bodyHoldBlock(output),
+        /writer {12}StardewValley\.Farmer\.set_CanMove \(native:StardewValley\.Farmer\.set_CanMove; last of 1 \[body-hold\] unattributed line\(s\) in mod-log\.txt\)/u,
+      );
+    },
+  ));
+
+test("a tool still up at its own settlement is a leak past the tree's longest declared swing", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      // The shape `farmhandexecutioncontroller.fishingactions.cs` publishes when it settles beside the body:
+      // `can_move=…|using_tool=…`. A swing the tree declares lasts at most 480 ms, so a settle-time `using_tool=true`
+      // has outlived every one of them by construction.
+      bridgeFacts: [expiredCast("location=Forest;can_move=false|using_tool=true")],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^body {2}implicit_body_hold_leak:fish_here:fish_here_catch_window_deadline_expired/mu);
+      assert.match(output, /using_tool=true x1/u);
+      assert.match(output, /bound {13}480 ms <- tools\/lib\/action-pace\.mjs ANIMATION_CLASS\.toolSwing/u);
+    },
+  ));
+
+test("a run whose slot-holding ends left nothing locked is clear, and prints the population it examined", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      bridgeFacts: [
+        modReceipt({
+          atMs: ROUND88_ENDED_AT,
+          actionId: "navigate_to_destination",
+          state: "rejected",
+          reasonCode: "no_native_path",
+          detail: "from=37,48;to=40,0;location=Farm;native=not_attempted;probe=cardinal_flood",
+        }),
+        modReceipt({
+          atMs: ROUND88_ENDED_AT + 60_000,
+          actionId: "cut_weeds",
+          state: "rejected",
+          reasonCode: "no_reachable_approach:76:31",
+          detail: "target=76,31;actor=75,22;reach=1;approach=none",
+        }),
+      ],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^body {2}clear · examined 1 · blocked 0/mu);
+      assert.match(output, /windows examined 1 · blocked 0/u);
+      assert.doesNotMatch(output, /implicit_body_hold_leak/u);
+    },
+  ));
+
+test("a bundle that published no receipt stream says not_measured and names the field, and refuses nothing", () =>
+  withFixture(
+    () => ({ withResult: true, session: null }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(output, /^body {2}not_measured · examined 0 · blocked 0 · writer=no_mod_log$/mu);
+      assert.match(bodyHoldBlock(output), /NOT_MEASURED {2}not_measured \(result\.json carries no bridgeFacts\)/u);
+    },
+  ));
+
+test("a stall no ended execution can explain is refused (exit 2), never attributed to a guess", () =>
+  withFixture(
+    () => ({ withResult: true, session: null, bridgeFacts: stalledReceipts(2) }),
+    (runDir) => {
+      const result = verdictProcess(runDir);
+      const output = `${result.stdout}${result.stderr}`;
+      assert.equal(result.status, 2, `a stall nobody can be blamed for is a refused reading:\n${output}`);
+      assert.match(output, /^body {2}not_measured · examined 0 · blocked 0/mu);
+      assert.match(output, /unattributed {6}.*no non-Succeeded end of a slot-holding action at or before/u);
+    },
+  ));
+
+test("the population is the Mod's own slot table, and every row names an action or the spec that carries one", () => {
+  const slots = readBodySlotActions();
+  assert.deepEqual(
+    [...slots.actionIds, ...slots.specCarried],
+    [...slots.actionIds, ...slots.specCarried],
+    "the derived sets are printed whole",
+  );
+  assert.equal(
+    slots.actionIds.length + slots.specCarried.length,
+    slots.rows,
+    `every one of the ${String(slots.rows)} declared rows names one action, either as a literal or as the spec member it carries (${slots.specCarried.join(", ")}); a row that names neither would make this reading narrower than the Mod`,
+  );
+  assert.deepEqual(
+    slots.specCarried,
+    ["travel.Action", "approach.ActionId"],
+    "the two holds whose action id only the running spec has, named so a reader can see what the population excludes",
+  );
+  const mounted = readStardewActionIds();
+  const stale = slots.actionIds.filter((actionId) => !mounted.has(actionId));
+  assert.deepEqual(
+    stale,
+    [],
+    `a slot word the registration table no longer publishes makes the population stale: ${stale.join(",")}`,
+  );
+});
+
+test("the non-Succeeded population is the Mod's own enum minus its own non-terminal states and its two successes", () => {
+  const states = readNonSucceededStates();
+  const settled = [...states.wireWords].filter((word) => !states.unsettled.includes(word));
+  assert.deepEqual(
+    [...states.nonSucceeded, "succeeded", "partially_succeeded"].sort(),
+    settled.sort(),
+    "every settled state is either a success or a non-Succeeded end - a new terminal state may not fall between them",
+  );
+  // The four the invariant names are read through the enum, not spelled as wire strings here: a state the Mod stops
+  // declaring terminal fails by name rather than by a rewritten expectation.
+  for (const name of ["Expired", "Cancelled", "Rejected", "Uncertain"])
+    assert.ok(
+      states.wireWords.includes(name.toLowerCase()),
+      `${name} is a state the Mod declares, and its wire word is what a receipt publishes`,
+    );
+  assert.ok(
+    states.nonSucceeded.includes("expired") && states.nonSucceeded.includes("rejected"),
+    "expired and rejected are ends, so a run that published either is a window",
+  );
+});
+
+test("the [body-hold] lines are read as sites, and a log with none is an empty population rather than a pass", () => {
+  assert.deepEqual(readProbeLines(null), null, "no log at all is not the same fact as a log with no line");
+  assert.deepEqual(readProbeLines(""), []);
+  assert.deepEqual(
+    readProbeLines(
+      [
+        "[GameBuddy] [body-hold] declared holder=body_pause:emote;reason=native_body_timer;pause_ms=200",
+        "[GameBuddy] [body-hold] unattributed site=Foo.Bar;declared=native:Foo.Bar;open_ended=true;frames=a<b",
+      ].join("\n"),
+    ),
+    ["Foo.Bar"],
+    "only the unattributed line names a writer; the declared ones are the holds this Mod already knew",
+  );
+  assert.equal(
+    USING_TOOL_BOUND_MS,
+    Math.max(ANIMATION_CLASS.toolSwing, ANIMATION_CLASS.wateringCanSwing),
+    "the bound is the longest tool animation the tree declares, derived rather than restated",
+  );
+});
