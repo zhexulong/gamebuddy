@@ -39,21 +39,29 @@
 
    阶段三:现代酒馆暗色系令牌 (Modern Tavern Dark Tokens)
 
-   The four-layer background system the visual plan mandates, over the same
-   three-tier semantic structure design/26 §6.2 already establishes:
+   The five-layer background system, over the same three-tier semantic
+   structure design/26 §6.2 already establishes. The layers are named here and
+   their values are declared below, once:
 
-     Canvas   #0c0b0b - the page behind everything
-     Panel    #161414 - app bar, drawer body, composer band
-     Card     #201d1d - a card/row inside a panel
-     Elevated #282525 - hover, popovers, the raised layer above a card
+     Canvas   - the page behind everything
+     Panel    - app bar, drawer body, composer band
+     Card     - a card/row inside a panel
+     Elevated - hover, popovers, the raised layer above a card
+     Accent   - `--surface-accent`: the player's own bubble, a chosen chip
 
-   The warm brand accents (Stardew + GameBuddy identification) stay exactly as
-   the plan names them: Burgundy #c8787d, Gold #d6a85b. The funnel primitives
-   keep their names so established components (bubbles, dots, badges) keep
-   reading semantic tokens and simply follow the new lows. A fine translucent
-   hairline border (`--border-glass`) and a full-glass token finish the layer,
-   and the 4/8 px cadence + 44 px touch floor are written down here as the
-   tokens every new spacing rule consumes.
+   One neutral hue carries the first four layers at a chroma low enough to read
+   as grey, which is what stops a layer from tinting the one above it; the
+   accent sits on the opposite hue, so warmth belongs to the accent and to the
+   chosen state rather than to the page.
+
+   The warm brand accents (Stardew + GameBuddy identification) are the accent
+   family declared below - `--palette-burgundy-base` as ink, `--accent-solid` as
+   a filled control - and Gold is the focus ring and the warning tone. The
+   funnel primitives keep their names so established components (bubbles, dots,
+   badges) keep reading semantic tokens and simply follow the new lows. A fine
+   translucent hairline border (`--border-glass`) and a full-glass token finish
+   the layer, and the 4/8 px cadence + 44 px touch floor are written down here
+   as the tokens every new spacing rule consumes.
    ========================================================================== */
 
 /* Layer 1: Primitive Tokens */
@@ -66,7 +74,7 @@
   --motion-duration-fast: 150ms;
   --motion-duration-normal: 220ms;
 
-  /* Layer 2: Semantic Tokens - the four-layer dark background system. */
+  /* Layer 2: Semantic Tokens - the five-layer dark background system. */
   --surface-canvas: #131518;
   --surface-panel: #1a1c1f;
   --surface-card: #202226;
@@ -90,12 +98,12 @@
   /* The warm brand and status families the semantic tokens below are built
      from - the same shape as the grey palette above: one place a colour is
      written, and the semantic token aliases it instead of restating the
-     literal. Two members have no semantic alias: the dark burgundy a monogram
-     plate or a card gradient sits on, and the stronger glass edge a selected
-     card carries (the same accent at the alpha the selection ring already
-     used). The plate is deeper than it looks like it needs to be because the
-     accent is drawn *on* it as ink: at #3a2226 the 11 px `当前` badge and the
-     status tag's own label read 4.48:1, under the 4.5:1 floor. */
+     literal. One member has no semantic alias: the stronger glass edge a
+     selected card carries (the same accent at the alpha the selection ring
+     already used). The plate a monogram or the `当前` badge sits on is the accent
+     *layer*, `--surface-accent`, because the accent is also drawn on it as ink:
+     that pair (`accent on palette-burgundy-dark`) is what caps how light the
+     layer may be, and `tools/check-contrast-tokens.mjs` measures it. */
   --palette-burgundy-dark: var(--surface-accent);
   --palette-burgundy-base: #d78d92;
   --palette-burgundy-border: rgba(215, 141, 146, 0.35);
@@ -118,11 +126,12 @@
 
   --accent: var(--palette-burgundy-base);
   /* The accent as a *filled control surface*. `--accent` is the accent as ink -
-     a word, an icon, a dot - drawn on the dark backgrounds; the same colour as
-     a fill under light text is 2.88:1, so every control that fills with the
-     accent and paints light ink on it reads this deeper member instead. One
-     declaration, so the four buttons and the app-bar mark cannot drift apart,
-     and a hover stays inside the same pair. */
+     a word, an icon, a dot - drawn on the dark backgrounds; as a fill under
+     light text it does not clear the 4.5:1 floor, so every control that fills
+     with the accent and paints light ink on it reads this deeper member
+     instead. One declaration, so the four buttons and the app-bar mark cannot
+     drift apart, and a hover stays inside the same pair; the pair the gate
+     holds is `on-accent on accent-solid`. */
   --accent-solid: #9c4e55;
   --accent-solid-hover: #8a4349;
   /* The ink drawn ON a filled accent control. It is its own token because the
@@ -142,12 +151,13 @@
      a property of the canvas it sits on, not of the notice family, which is why
      this is a token each theme states rather than a number every rule repeats.
      On the near-black canvas a 12% tint of the ink is what makes a notice a
-     plate at all, and it costs the ink almost nothing: the warning tone reads
-     7.56:1 on its own 12% wash. The light canvas is mid-tone, so the same tint
-     pulls it toward the dark ink behind it, and all three notices sat under the
-     4.5:1 floor at 12%/14% - warning 4.34:1, danger 4.24:1, success 4.43:1, as
-     the axe cells in `tests/shell-accessibility-in-both-appearances-and-languages`
-     measure them. */
+     plate at all, and it costs the ink almost nothing. The light canvas is
+     mid-tone, so the same tint pulls it toward the dark ink behind it, and all
+     three notices sat under the 4.5:1 floor at 12%/14%, as the axe cells in
+     `tests/shell-accessibility-in-both-appearances-and-languages` measure them.
+     The wash's own readings are three pairs per appearance - `warning`,
+     `danger` and `success`, each on its own wash - and they move with the
+     palette, so they are measured rather than quoted. */
   --banner-wash: 12%;
 
   /* Layer 3: Component & Layout Tokens (kept, plus the cadence + floor). */
@@ -249,8 +259,8 @@
   --on-accent: #fbf7f2;
 
   /* The dark plate is unaffordable here: see the token's own comment at the dark
-     root. 6% is set by the worst of the three notices, the danger tone on its own
-     wash (`#b02a2a` on `#e6d7cc`), at 4.66:1. */
+     root. 6% is set by the worst of the three notices - the danger tone on its own
+     wash, the pair `danger` on a 6% wash over `surface-canvas`. */
   --banner-wash: 6%;
 }
 
@@ -861,11 +871,10 @@
     font-size: 12px;
     font-weight: 600;
     /* The author line names who spoke, so it is live text, not a control the
-       player cannot use. Measured in the mounted shell: it read
-       `--text-disabled` (`#90877e`) at 5.57:1 on the canvas (`#0c0b0b`) and
-       4.74:1 on the companion card (`#201d1d`) - the lowest body-text contrast
-       in the product - and that token is named for text the player cannot use.
-       `--text-secondary` measures 10.92:1 on the canvas and 9.30:1 on the card. */
+       player cannot use. As `--text-disabled` it was the lowest body-text pair
+       in the product, and that token is named for text the player cannot use;
+       the pair here is `text-secondary on surface-canvas`, which
+       `tools/check-contrast-tokens.mjs` holds at AA. */
     color: var(--text-secondary);
     overflow-wrap: anywhere;
   }
@@ -963,12 +972,12 @@
 
   .swipe-btn:disabled {
     /* One attenuation, not two. The disabled arrow used to carry
-       `--text-disabled` (`#90877e`) *and* `opacity: 0.4`, which compound: the
-       painted glyph is `#90877e` at 40% over the card tone (`#201d1d`) -
-       `rgb(77,71,68)`, measured 1.84:1, effectively invisible. The muted token
-       alone reads 4.74:1 there, which is the disabled state the rest of the
-       product ships (`.chat-item-meta` before its fix, the composer's own
-       placeholder). The state stays readable because that tone is what the
+       `--text-disabled` *and* `opacity: 0.4`, which compound: the muted tone at
+       40% over the card tone is effectively invisible. The token alone clears
+       the 4.5:1 floor (`text-disabled on surface-card` in
+       `tools/check-contrast-tokens.mjs`), which is the disabled state the rest
+       of the product ships (`.chat-item-meta` before its fix, the composer's
+       own placeholder). The state stays readable because that tone is what the
        other muted text in this strip (`.swipe-indicator`'s `--text-secondary`)
        sits beside, and because the button keeps `cursor: not-allowed`. */
     color: var(--text-disabled);
@@ -981,8 +990,9 @@
        one that looked like a button. The plate is gone, not added to the other
        state: the live arrow draws a box only under the pointer
        (`.swipe-btn:hover:not(:disabled)`), the unusable one draws none at all, and
-       the two differ by tone alone - 9.30:1 against 4.74:1 on the strip's card,
-       both clear of the 4.5:1 floor. The target is untouched: `min-width` and
+       the two differ by tone alone - `text-secondary` against
+       `text-disabled` on the strip's card, both clear of the 4.5:1 floor. The
+       target is untouched: `min-width` and
        `min-height` are `--touch-target-min` and `border-box` is global, so the
        strip's own box does not move. */
     cursor: not-allowed;
@@ -1915,11 +1925,11 @@
   .chat-item-meta {
     font-size: 12px;
     /* The row's own secondary fact - the thread's durable time and the opening of
-       its last message - and it read `--text-disabled` (`#90877e`): 4.74:1 on the
-       row's card (`--surface-raised`, `#201d1d`), the lowest body-text contrast in
-       the product (the dialogue measures 14.75:1), and a token named for text the
-       player cannot use. The 12px row metadata elsewhere in the product
-       (`.memory-item-meta`) reads this tone, which is 9.30:1 on the same card. */
+       its last message - and as `--text-disabled` it was the lowest body-text
+       pair in the product, a token named for text the player cannot use. The
+       12px row metadata elsewhere in the product (`.memory-item-meta`) reads
+       this tone, and `text-secondary on surface-card` is the pair the gate
+       holds. */
     color: var(--text-secondary);
   }
 
@@ -2001,8 +2011,8 @@
 
   /* A section's own heading ("Stardew cabin selection", "Game installation").
 
-   It read `--text-disabled` (`#90877e`, 5.57:1 on the canvas) - the token named
-   for text the player cannot use - and then `--text-secondary` at 12 px, which
+   It read `--text-disabled` - the token named for text the player cannot use -
+   and then `--text-secondary` at 12 px, which
    still put it *below* the body it heads: measured in the mounted shell at
    400x800, `下一步` was 12px/600/`#c8c0b6` over `启用伙伴陪玩` at
    13px/500/`#f5f0e8`, and over a cabin choice's name at 14 px - smaller than its
@@ -2242,8 +2252,8 @@
 
   /* A disabled small control states its plate, its frame and its ink, and attenuates with the ink
    alone. `opacity` used to do this in one line and could not: at 50% a filled variant kept its
-   accent plate (1.96:1 over the light canvas) while the enabled control beside it was flat (0.51),
-   so the button the player could not press was the loud one. One attenuation only, for the reason
+   accent plate instead of the quiet one, so the button the player could not press was the loud
+   one. One attenuation only, for the reason
    `.swipe-btn:disabled` records: a muted tone *and* an opacity compound into a label nobody reads.
    The order this holds is gated by `tests/disabled-controls-are-quieter.spec.ts`. */
   .small-button:disabled {
@@ -2400,12 +2410,11 @@
     line-height: var(--leading-relaxed);
     text-wrap: pretty;
     /* The sentence under a field says how to use it, so it is live text and not
-       a control the player cannot use. Measured in the mounted shell: it read
-       `--text-disabled` (`#90877e`) at 5.57:1 on this surface's canvas
-       (`#0c0b0b`) - and 4.74:1 on the card tone (`#201d1d`) wherever the group
-       sits on one - which is the pair `.message-author` and `.chat-item-meta`
-       were moved off for the same reason. `--text-secondary` reads 10.92:1 and
-       9.30:1 on those two backgrounds. */
+       a control the player cannot use. As `--text-disabled` it was the lowest
+       body-text pair in the product, which is the pair `.message-author` and
+       `.chat-item-meta` were moved off for the same reason; here it reads
+       `text-secondary` on the canvas and on the card, both held by
+       `tools/check-contrast-tokens.mjs`. */
     color: var(--text-secondary);
     overflow-wrap: anywhere;
   }
@@ -2554,9 +2563,9 @@
     font-size: 12px;
     /* The Settings surface's own copy of the suggestion caption. It is the same
        live text `.surface-model-recommended > span` carries on the Chat and Game
-       surfaces, and it read the same `--text-disabled` (`#90877e`) - the runtime
-       contrast gate sampled it at 4.74:1 on the card, the lowest body-text
-       contrast in the product. */
+       surfaces, and it read the same `--text-disabled` - the lowest body-text
+       pair in the product, which `tools/check-contrast-tokens.mjs` holds as
+       `text-disabled on surface-card`. */
     color: var(--text-secondary);
   }
 
@@ -2721,17 +2730,17 @@
     gap: 6px;
   }
 
-  /* The current-companion badge. Measured off the computed styles at 11px/600:
-     the accent rose `#c8787d` on the burgundy plate `#2f1d22` is 4.88:1, which
-     clears AA's 4.5 floor by 0.38 and leaves the one word that says WHICH companion
-     is in play the weakest text on its row. The ink is lifted toward the same
-     `--palette-gray-100` every other piece of light text on this surface uses, so the
-     chip keeps the brand rose it is recognised by (the scale has no lighter rose
-     member: `--palette-burgundy-base` is the lightest, and the only lighter warm
-     members are gold and cream, which would stop reading as the accent) and gains
-     the separation. `color-mix` is the token file's own idiom for exactly this (the
-     selected row's wash uses it), so no new colour literal is introduced. Measured
-     after: `#d39698` on `#2f1d22` = 6.51:1. */
+  /* The current-companion badge. At 11px/600, the accent rose on the burgundy
+     plate only just cleared AA's 4.5 floor, which left the one word that says
+     WHICH companion is in play the weakest text on its row. The ink is lifted
+     toward the same `--palette-gray-100` every other piece of light text on this
+     surface uses, so the chip keeps the brand rose it is recognised by (the
+     scale has no lighter rose member: `--palette-burgundy-base` is the lightest,
+     and the only lighter warm members are gold and cream, which would stop
+     reading as the accent) and gains the separation. `color-mix` is the token
+     file's own idiom for exactly this (the selected row's wash uses it), so no
+     new colour literal is introduced. The pair the gate measures is
+     `accent on palette-burgundy-dark`. */
   .companion-current-badge {
     font-style: normal;
     font-size: 11px;
@@ -3437,11 +3446,11 @@
 
   /* The scan's answer, the installation's own identity line and the wire chip
      beside it are all live text: the panel's `role="status"` sentence is the one
-     thing it is asserting, and the other two say what was found. Measured in the
-     mounted shell, `--text-disabled` (`#90877e`) read 5.20:1 on the panel
-     (`#161414`), 4.74:1 on the candidate card (`#201d1d`) - the product's lowest
-     body-text contrast - and 5.20:1 on the chip; `--text-secondary` reads
-     10.20:1 and 9.30:1 on the same backgrounds. */
+     thing it is asserting, and the other two say what was found. As
+     `--text-disabled` they were the lowest body-text pair in the product, on
+     the panel and on the candidate card alike; here they read `--text-secondary`
+     on both, which is `text-secondary on surface-panel` and
+     `text-secondary on surface-card` in `tools/check-contrast-tokens.mjs`. */
   .installation-source {
     padding: 1px 6px;
     font-size: 11px;
@@ -4045,8 +4054,9 @@
     font-size: 12px;
     /* The caption over the suggestion chips ("Suggested models") introduces
        controls the player can use, so it is live text. It read
-       `--text-disabled` (`#90877e`, 5.57:1 on the canvas); the product's own
-       secondary tone measures 10.92:1 there. */
+       `--text-disabled`, the token named for text the player cannot use; it
+       reads `--text-secondary` now, which is `text-secondary on surface-canvas`
+       in the gate. */
     color: var(--text-secondary);
   }
 
@@ -4519,7 +4529,7 @@
     color: var(--text-primary);
   }
 
-  /* Game facts keep the card tone under the four-layer ladder. */
+  /* Game facts keep the card tone under the layer ladder. */
   .composed-game-panel .game-facts {
     background-color: var(--surface-card);
     border-color: var(--border-glass);
@@ -4706,9 +4716,9 @@
    than as emphasised speech: a quieter ink, italic where the script has one, set
    a step smaller, on its own line rhythm.
 
-   THE INK is `--text-secondary` in both appearances - 9.30:1 on the companion
-   card, 6.27:1 on the player's own burgundy bubble, against the speech's 14.75:1
-   - and it is deliberately neither the dialogue's `--text-primary` nor the grey
+   THE INK is `--text-secondary` in both appearances - on the companion card,
+   and on the player's own bubble, one step under the speech's own ink - and it
+   is deliberately neither the dialogue's `--text-primary` nor the grey
    the product reserves for things the player cannot use. That reservation is not
    a taste: a stage direction wearing the placeholder's own ink read as a dead
    field, which is `dialogue-web/tests/ui-polish-defects.spec.ts`'s defect 1.
@@ -4720,18 +4730,16 @@
    be a second one, and both walls are worth stating because together they leave
    exactly one axis:
 
-     * the same beat is drawn on the player's own bubble, and the dark burgundy
-       plate under AA caps the quietest permitted ink at a 2.21:1 separation
-       from the speech (the speech sits at relative luminance 0.876, AA on
-       `#533137` demands 0.369, and the ratio between these two is the whole
-       budget). No colour choice, and no opacity, can be a second channel
-       there;
+     * the same beat is drawn on the player's own bubble (`--selection`, the
+       accent layer), and AA on that plate leaves almost no room between the
+       speech's ink and the quietest ink the floor permits - which is the whole
+       budget. No colour choice, and no opacity, can be a second channel there;
      * the light appearance is free of that constraint but bound by the other:
        the only rung below `--text-secondary` that stays above AA on the pale
        plate is the ink reserved for unavailable things, which the paragraph
-       above forbids. `--palette-gray-500` measures 3.66:1 there, under the
-       floor. So the light beat keeps `--text-secondary` too, and its separation
-       from the speech stays 1.69:1.
+       above forbids (`palette-gray-500` on that plate is under the floor).
+       So the light beat keeps `--text-secondary` too, and what separates it
+       from the speech is the tone step between them, not a second channel.
 
    With colour out, the beat takes the size step a stage direction takes in
    print: `0.9em`. It renders in every script and every appearance, it needs no
@@ -5552,7 +5560,7 @@
    from the token rather than restated as a literal, so a palette retune moves
    all three together. The wash's strength is `--banner-wash`, which each theme
    states, because a plate that reads on a near-black canvas swamps a mid-tone
-   one (the light theme measured 4.35:1 where 4.5:1 is required). The warning
+   one, where the light theme's notices fall under the 4.5:1 floor. The warning
    tone is the one the reviewer audit found
    missing entirely: the text beside a model conflict or an unselected connection
    was a bare `<p>`, i.e. ordinary prose.
@@ -6063,7 +6071,7 @@
   .game-group-secondary .game-fact dt {
     font-size: 11px;
     /* These are field labels - live text a player reads ("连接", "实例") - and they
-       read `--text-disabled` at 5.57:1, the same mistake the section headings had:
+       read `--text-disabled`, the same mistake the section headings had:
        the token is named for text the player cannot use. Same treatment as the
        headings in this initiative: 12 px, and the secondary tone rather than the
        disabled one. */
