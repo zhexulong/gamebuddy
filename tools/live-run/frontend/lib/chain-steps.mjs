@@ -16,7 +16,15 @@
 //
 // WHAT A `gap:` IS. Not "unimportant" and not "unmeasured by the product": a seam that exists and
 // whose fact no driver reads yet. The suffix says which reading is missing, and the document's open
-// items list owns the work. A gap is a statement about the KIT, never a claim about the product.
+// items list owns the work.
+//
+// TWO KINDS, and a reader has to tell them apart or all of them read as missing product. Five of the
+// gaps are READING gaps: `owner.json`, the session document, the recovery journal and her client's
+// trace are written by any ordinary run and a driver only has to open a file that is already there,
+// and her turn account is written to the product entry's stderr, which the launch phase already holds
+// and only counts. One is an INTERACTION gap (`no_driver_speaks_to_her_in_the_world`): nothing in the
+// world speaks to her, so there is no file to open until somebody speaks - the missing thing is the
+// interaction, and a reader for it would have to cause one first.
 //
 // One fact per step, and it is a literal that the named driver (or a capture module that driver
 // requires) really writes. Two spellings of one fact is how a table starts disagreeing with itself.
@@ -246,6 +254,20 @@ export const CHAIN_STEPS = Object.freeze([
     driver: "w-game-launch",
     fact: "attachment=attached",
     owner: "host/src/stardew-production-lifecycle-coordinator.internal.ts (attachment projection)",
+  }),
+  step({
+    id: "daily-agent-awake",
+    chain: "daily",
+    title: "her agent is awake while the world runs, opened by the world's own facts and not by the player",
+    // The Host, not a caller, owns her turns: `acceptHostMintedFact` enqueues the fact and starts the flush
+    // with nothing waiting on it, and `CompanionLoop.flush` answers one Pi turn per delivered batch and
+    // prints this line. So "she is working while the player plays" has an observable fact of its own, and it
+    // is a different fact from the player speaking to her (`daily-play`). No frontend driver reads it: the
+    // four world-opening drivers run on the player's window, and the line reaches the kit only as bytes on
+    // the product entry's stderr that `phases/launch.mjs` counts and never parses.
+    driver: "gap:no_driver_reads_the_host_turn_account",
+    fact: "GAME_TURN_ACCOUNT",
+    owner: "host/src/host-service.ts acceptHostMintedFact -> flushSoon; host/src/companion-loop.ts flush",
   }),
   step({
     id: "daily-play",
