@@ -304,19 +304,23 @@ test("5 s no bucket can charge is a residual past the tolerance, and the gate fa
 });
 
 // A DELIVERY RECORD WITH NO ADMISSION IN IT CANNOT NAME A HEAD OR A TAIL: the wall and the four buckets are readable, but
-// nothing placed the body's window, so the seconds head and tail would have named are unexplained and the verdict must fail
-// on them rather than call them bounded.
-test("a trace with no admission span cannot name the head and tail, and the seconds it cannot name still fail", () => {
+// nothing placed the body's window, so the residual is `not_measured` with the input that would have answered named beside
+// it. The verdict REFUSES it (exit 2) rather than calling it bounded or reporting it as a defect: a residue nobody could
+// measure is neither.
+test("a trace with no admission span reports the residual not_measured by name, and the verdict refuses it", () => {
   withFixture({ trace: traceEvents().filter((event) => event.name !== "admission") }, (runDir) => {
     const result = verdictProcess(runDir);
     const block = standstillBlock(`${result.stdout}${result.stderr}`);
     assert.match(block, /named not_measured · body 5900 · turn gap 27000 · queue wait 20000/u, block);
+    assert.match(block, /residual not_measured · tolerance not_measured/u, block);
     assert.match(
       block,
-      /a_residual_is_either_named_or_bounded:residual 47000 ms of the 100000 ms wall is in no bucket \(47\.0%\) and cannot be named at all: no admission span placed the body's window/u,
+      /a_residual_is_either_named_or_bounded:not_measured:admission_span - 47000 ms of the 100000 ms wall is in no bucket \(47\.0%\), and no admission span placed the body's window, so there is no run head and no run tail to name it with: the residual was never measured/u,
       block,
     );
-    assert.equal(result.status, 1, `an unnameable residue is not a bounded one, so this must exit 1:\n${block}`);
+    // Neither of the two words that would claim an outcome: not `within` (bounded) and not `failed` (a finding).
+    assert.doesNotMatch(block, /a_residual_is_either_named_or_bounded:(?:within|residual|failed) /u, block);
+    assert.equal(result.status, 2, `a residual nobody measured is a refused reading, so this must exit 2:\n${block}`);
   });
 });
 

@@ -1741,3 +1741,7 @@ if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
 // the run. `round84` is why the tolerance exists - its 58.4 s of "unexplained" was 38.3 s of run head plus 24.6 s of run
 // tail with 4.5 s counted twice, so the old `unexplained >= 1` failed a run whose wall was fully accounted for.
 else if (readings.failed() || standstill.gate === "failed") process.exitCode = 1;
+// A residual NOBODY MEASURED is a refused reading, in the same code a blocked ending already uses: the partition prints
+// `not_measured:<the input that was absent>` and the verdict exits 2, so a run whose body window was never placed can be
+// read as neither a pass nor a defect.
+else if (standstill.gate === "not_measured") process.exitCode = 2;

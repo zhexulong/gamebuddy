@@ -422,20 +422,52 @@ function measureIntentYield({ result, turns, traceEvents }) {
 }
 
 /**
- * Whether the residual is inside what the run's own timestamps can produce: `failed`, `within`, or `blocked`.
+ * The residual as a STATE - measured, or the name of the input nobody read - and never as a nullable number.
+ *
+ * <p>
+ * NAMED OR BOUNDED. The four middle buckets are charged on the same window the head and the tail leave, so what they
+ * miss is `windowMs - explainedMs`: negative when they charge more than the window holds (two programme windows
+ * overlapping, or a published body sum counting steps no programme holds), positive when the window holds seconds no
+ * bucket charges. Measured on `round84`: -4,486 ms of a 2,065,870 ms wall - 58,383 ms of "unexplained" was 38,265 ms
+ * of run head and 24,604 ms of run tail with 4,486 ms charged twice.
+ * </p>
+ * <p>
+ * A `null` used to travel from here to the verdict as though it were a value, and the verdict then inferred an outcome
+ * from it - the absence-as-pass shape `tools/check-live-run-verdict-guards.mjs` exists to catch, and the shape that
+ * reported this branch. The state names which input was absent, so the verdict reports that instead of inferring one.
+ * </p>
+ */
+function residualState({ explainedMs, placed }) {
+  if (explainedMs === null) return Object.freeze({ state: "not_measured", absent: "explained_buckets" });
+  if (placed === null) return Object.freeze({ state: "not_measured", absent: "admission_span" });
+  // THE TOLERANCE THIS RUN'S OWN TIMESTAMPS PRODUCE, not a number chosen here: a dispatch is written twice, as a
+  // `run-trace.json` admission and as the same node's `result.json` stamp, and the widest disagreement between any two of
+  // those pairs is the largest amount by which this run places one instant twice.
+  return Object.freeze({
+    state: "measured",
+    ms: placed.windowMs - explainedMs,
+    toleranceMs: placed.clockOffsetSpreadMs,
+  });
+}
+
+/**
+ * Whether the residual is inside what the run's own timestamps can produce: `failed`, `within`, `blocked`, or
+ * `not_measured`.
  *
  * <p>
  * A residual is SIGNED and both directions are wrong in their own way: negative means the middle buckets charge more
  * than the window between the first step and the last settlement holds, positive means that window holds seconds no
- * bucket charges. Either way it is judged against the same tolerance, and a run that could not be read - no wall, no
- * buckets, or no admission span to place the window with - is `blocked` rather than green or red, because a number
- * nobody measured is neither a pass nor a defect.
+ * bucket charges. Either way it is judged against the same tolerance, and a run whose residual was never measured is
+ * neither green nor red, because a number nobody measured is neither a pass nor a defect: `blocked` when the wall or a
+ * bucket above it could not be read, `not_measured` when no admission span placed the body's window.
  * </p>
  */
-function residualVerdict({ wallMs, explainedMs, residualMs, toleranceMs }) {
-  if (wallMs === null || explainedMs === null) return "blocked";
-  if (residualMs === null || toleranceMs === null) return "failed";
-  return Math.round(Math.abs(residualMs)) > Math.round(toleranceMs) ? "failed" : "within";
+function residualVerdict({ wallMs, residual }) {
+  if (wallMs === null) return "blocked";
+  if (residual.state === "not_measured") {
+    return residual.absent === "explained_buckets" ? "blocked" : "not_measured";
+  }
+  return Math.round(Math.abs(residual.ms)) > Math.round(residual.toleranceMs) ? "failed" : "within";
 }
 
 export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath }) {
@@ -472,17 +504,7 @@ export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath
       ? null
       : bodyMs + switches.turnGapMs + switches.queueMs + body.intraMs;
   const unexplainedMs = wallMs === null || explainedMs === null ? null : wallMs - explainedMs;
-  // NAMED OR BOUNDED. The four middle buckets are charged on the same window the head and the tail leave, so what they
-  // miss is `windowMs - explainedMs`: negative when they charge more than the window holds (two programme windows
-  // overlapping, or a published body sum counting steps no programme holds), positive when the window holds seconds no
-  // bucket charges. Measured on `round84`: -4,486 ms of a 2,065,870 ms wall - 58,383 ms of "unexplained" was 38,265 ms
-  // of run head and 24,604 ms of run tail with 4,486 ms charged twice, so the run the gate was failing was the run the
-  // gate should have passed.
-  const residualMs = explainedMs === null || placed === null ? null : placed.windowMs - explainedMs;
-  // THE TOLERANCE THIS RUN'S OWN TIMESTAMPS PRODUCE, not a number chosen here: a dispatch is written twice, as a
-  // `run-trace.json` admission and as the same node's `result.json` stamp, and the widest disagreement between any two of
-  // those pairs is the largest amount by which this run places one instant twice.
-  const toleranceMs = placed === null ? null : placed.clockOffsetSpreadMs;
+  const residual = residualState({ explainedMs, placed });
   const programmeLives =
     programmes === null ? [] : programmes.windows.map((window) => window.lastSettledMs - window.firstAtMs);
   return {
@@ -499,9 +521,8 @@ export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath
     placed,
     explainedMs,
     unexplainedMs,
-    residualMs,
-    toleranceMs,
-    gate: residualVerdict({ wallMs, explainedMs, residualMs, toleranceMs }),
+    residual,
+    gate: residualVerdict({ wallMs, residual }),
     autonomy: {
       programmeMedianMs: median(programmeLives),
       programmes: programmeLives.length,
@@ -589,7 +610,7 @@ export function standstillLines(report) {
     push(
       `${statusLabel("accounted")} not_measured (a bucket above could not be read, so no share of this wall can be priced)`,
     );
-  else if (report.residualMs === null)
+  else if (report.residual.state !== "measured")
     push(
       `${statusLabel("accounted")} body ${seconds(report.bodyMs)} + turn gap ${seconds(
         report.switches.turnGapMs,
@@ -609,14 +630,14 @@ export function standstillLines(report) {
         report.unexplainedMs,
       )} is named rather than assumed: run head ${seconds(report.placed.headMs)} before the first body step + run tail ${seconds(
         report.placed.tailMs,
-      )} after the last settlement, which leaves a residual of ${seconds(report.residualMs)} ${
-        Math.round(report.residualMs) === 0
+      )} after the last settlement, which leaves a residual of ${seconds(report.residual.ms)} ${
+        Math.round(report.residual.ms) === 0
           ? `- the middle buckets and the ${seconds(report.placed.windowMs)} window those two leave agree to the millisecond`
-          : report.residualMs < 0
-            ? `- the middle buckets charging ${seconds(-report.residualMs)} more than the ${seconds(
+          : report.residual.ms < 0
+            ? `- the middle buckets charging ${seconds(-report.residual.ms)} more than the ${seconds(
                 report.placed.windowMs,
               )} window those two leave`
-            : `- ${seconds(report.residualMs)} inside that ${seconds(
+            : `- ${seconds(report.residual.ms)} inside that ${seconds(
                 report.placed.windowMs,
               )} window that no bucket charges`
       } (blocked/modal is in no sum here: this run measured none, so whatever it held is in that residual)`,
@@ -716,6 +737,7 @@ export function standstillGateLines(report) {
   const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : "an unreported time");
   const ms = (value) => (value === null ? "not_measured" : String(Math.round(value)));
   const placed = report.placed;
+  const residual = report.residual;
   const toleranceWhy =
     placed === null
       ? "no admission span paired the two clocks, so this run states no skew of its own"
@@ -731,8 +753,8 @@ export function standstillGateLines(report) {
     `queue wait ${ms(report.switches === null ? null : report.switches.queueMs)}`,
     `intra-program ${ms(report.body === null ? null : report.body.intraMs)}`,
     `blocked/modal not_measured`,
-    `residual ${ms(report.residualMs)}`,
-    `tolerance ${ms(report.toleranceMs)} (${toleranceWhy})`,
+    `residual ${residual.state === "measured" ? ms(residual.ms) : "not_measured"}`,
+    `tolerance ${residual.state === "measured" ? ms(residual.toleranceMs) : "not_measured"} (${toleranceWhy})`,
   ];
   if (report.wallMs === null)
     return [
@@ -742,32 +764,32 @@ export function standstillGateLines(report) {
   if (report.gate === "blocked")
     return [
       line,
-      `  ${STANDSTILL_GATE}:blocked - ${report.explainedMs === null ? "a bucket above could not be read" : "the wall could not be read"}, so whether the residual is inside the tolerance is not_measured rather than green`,
+      `  ${STANDSTILL_GATE}:blocked - a bucket above could not be read, so whether the residual is inside the tolerance is not_measured rather than green`,
     ];
-  // A run whose body window was never placed cannot name its head or its tail at all, so the seconds that head and tail
-  // would have named are still unexplained and the gate fails on them rather than calling them bounded.
-  if (placed === null)
+  // A run whose body window was never placed cannot name its head or its tail at all, so the residual is never measured:
+  // it is reported as `not_measured` with the input that was absent, which is neither green nor a finding.
+  if (residual.state === "not_measured")
     return [
       line,
-      `  ${STANDSTILL_GATE}:residual ${ms(report.unexplainedMs)} ms of the ${ms(
+      `  ${STANDSTILL_GATE}:not_measured:${residual.absent} - ${ms(report.unexplainedMs)} ms of the ${ms(
         report.wallMs,
       )} ms wall is in no bucket (${
         report.wallMs === 0 ? "not_measured" : shareToATenth(report.unexplainedMs, report.wallMs)
-      }) and cannot be named at all: no admission span placed the body's window, so there is no run head and no run tail to name them with`,
+      }), and no admission span placed the body's window, so there is no run head and no run tail to name it with: the residual was never measured`,
     ];
   if (report.gate === "within")
     return [
       line,
-      `  ${STANDSTILL_GATE}:within ${ms(report.residualMs)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
-        report.wallMs === 0 ? "not_measured" : shareToATenth(report.residualMs, report.wallMs)
-      }) and inside the ${ms(report.toleranceMs)} ms this run's own timestamps can misplace an instant by, so it is alignment error and not a finding: run head ${seconds(
+      `  ${STANDSTILL_GATE}:within ${ms(residual.ms)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
+        report.wallMs === 0 ? "not_measured" : shareToATenth(residual.ms, report.wallMs)
+      }) and inside the ${ms(residual.toleranceMs)} ms this run's own timestamps can misplace an instant by, so it is alignment error and not a finding: run head ${seconds(
         placed.headMs,
       )} before the first body step and run tail ${seconds(
         placed.tailMs,
       )} after the last settlement are named, and the middle buckets ${
-        Math.round(report.residualMs) === 0
+        Math.round(residual.ms) === 0
           ? "fill their window exactly"
-          : report.residualMs < 0
+          : residual.ms < 0
             ? "charge more than their window holds"
             : "leave part of their window uncharged"
       }`,
@@ -779,8 +801,8 @@ export function standstillGateLines(report) {
   const tailSkew = placed.lastSkewMs;
   const atHead = Number.isFinite(headSkew) && (!Number.isFinite(tailSkew) || Math.abs(headSkew) >= Math.abs(tailSkew));
   let stretch;
-  if (report.residualMs < 0)
-    stretch = `no middle stretch is unnamed - the buckets charge ${seconds(-report.residualMs)} more than the ${seconds(
+  if (residual.ms < 0)
+    stretch = `no middle stretch is unnamed - the buckets charge ${seconds(-residual.ms)} more than the ${seconds(
       placed.windowMs,
     )} window between the first step at ${iso(placed.firstWallMs)} and the last settlement at ${iso(
       placed.lastWallMs,
@@ -801,8 +823,8 @@ export function standstillGateLines(report) {
     )} from ${iso(placed.lastWallMs - tailSkew)} to ${iso(placed.lastWallMs)}, where the two clocks disagree about the last settlement: the journal records the body drained at the left instant and the trace holds it working until the right`;
   return [
     line,
-    `  ${STANDSTILL_GATE}:residual ${ms(report.residualMs)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
-      report.wallMs === 0 ? "not_measured" : shareToATenth(report.residualMs, report.wallMs)
-    }), past the ${ms(report.toleranceMs)} ms tolerance this run's own timestamps allow - ${stretch}`,
+    `  ${STANDSTILL_GATE}:residual ${ms(residual.ms)} ms of the ${ms(report.wallMs)} ms wall is in no bucket (${
+      report.wallMs === 0 ? "not_measured" : shareToATenth(residual.ms, report.wallMs)
+    }), past the ${ms(residual.toleranceMs)} ms tolerance this run's own timestamps allow - ${stretch}`,
   ];
 }
