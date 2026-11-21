@@ -5324,7 +5324,7 @@ test("materialized AI Client rejects Bridge config replaced during installation 
 
   await assert.rejects(
     () => fixture.testCore.launchMaterializedAiClient(fixture.owner, installation),
-    /stardew_ai_client_bridge_config_changed/,
+    /stardew_ai_client_bridge_config_mismatch/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
@@ -5346,13 +5346,92 @@ test("materialized AI Client rejects replaced private Bridge config before consu
 
   await assert.rejects(
     () => fixture.testCore.launchMaterializedAiClient(fixture.owner, installation),
-    /stardew_ai_client_bridge_config_changed/,
+    /stardew_ai_client_bridge_config_mismatch/,
   );
   assert.deepEqual(fixture.harness.spawnCalls, []);
   assert.deepEqual(fixture.testCore.composition.aiClientProcessOwner.readStatus(), {
     kind: "ai_client_launch_pending",
   });
 });
+
+/**
+ * The Mod's own write must not refuse a binding that is intact.
+ *
+ * `PersistVerifiedFarmhandScope` -> `Helper.WriteConfig` replaces this document
+ * whole from the Mod's config class, so what a live AI client leaves behind is
+ * pretty-printed, carries the class's default members, and has dropped the one key
+ * only this Host knows (`ActionPolicyVersion`). r20's ai-client document is exactly
+ * that shape, written 4 s after the Host refused it as byte-different. The binding
+ * was the same attempt's all along.
+ */
+test("the Mod's whole-document rewrite of the AI client config keeps this attempt's binding", async () => {
+  const fixture = await prepareLaunchedAiClientFixture();
+  const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+  const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
+  await writeFile(configPath, JSON.stringify(modWrittenAiClientConfig(await readFile(configPath, "utf8")), null, 2));
+
+  let seen: { pipeName: string; companionId: string } | undefined;
+  await fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, (connection) => {
+    seen = { pipeName: connection.pipeName, companionId: connection.scope.companionId };
+    return Object.freeze({ close: () => undefined });
+  });
+  assert.deepEqual(seen, {
+    pipeName: JSON.parse(await readFile(configPath, "utf8")).PipeName,
+    companionId: fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).record.companionId,
+  });
+});
+
+test("an AI client config naming another pipe, token, player or companion is refused, not read past", async () => {
+  const replacements: readonly (readonly [string, string])[] = [
+    ["PipeName", "gamebuddy-stardew-someone-elses-pipe"],
+    ["BridgeToken", "someone-elses-token"],
+    ["SaveId", "another-save"],
+    ["WorldId", "another-world"],
+    ["PlayerId", "123456789012345678"],
+    ["CompanionId", "someone-elses-companion"],
+  ];
+  for (const [key, replacement] of replacements) {
+    const fixture = await prepareLaunchedAiClientFixture();
+    const transactionDirectory = fixture.testCore.bindOwnedPlayerHostPhaseAOwner(fixture.owner).transactionDirectory;
+    const configPath = join(transactionDirectory, "ai-client", "Mods", "GameBuddy", "config.json");
+    const document = modWrittenAiClientConfig(await readFile(configPath, "utf8"));
+    document[key] = replacement;
+    await writeFile(configPath, JSON.stringify(document));
+
+    let callbacks = 0;
+    await assert.rejects(
+      () =>
+        fixture.testCore.consumeOwnedFarmhandBridgeConnection(fixture.owner, () => {
+          callbacks += 1;
+          return Object.freeze({ close: () => undefined });
+        }),
+      /stardew_ai_client_bridge_config_mismatch/,
+    );
+    assert.equal(callbacks, 0, `${key} was accepted`);
+  }
+});
+
+/**
+ * The document the Mod's own `Helper.WriteConfig` leaves: the Host's values, every
+ * member of the Mod's config class, and no `ActionPolicyVersion` (the Mod's class
+ * does not carry it). Derived from the document the composer staged, so the two
+ * writers cannot drift here without this fixture changing.
+ */
+function modWrittenAiClientConfig(staged: string): Record<string, unknown> {
+  const { ActionPolicyVersion: _hostOnlyKey, ...authored } = JSON.parse(staged) as Record<string, unknown>;
+  return {
+    ...authored,
+    WindowMode: "visible",
+    NativeLocalPlayerFixture: null,
+    FarmhandProvisioningProbe: null,
+    SleepModalProbe: null,
+    SleepLifecycle: null,
+    HostFarmhandProvisioning: null,
+    HostAutomation: null,
+    WorldCreation: null,
+    ExperimentalActions: [],
+  };
+}
 
 test("materialized AI Client spawn and probe failures consume the exact AI launch authority", async () => {
   for (const mode of ["spawn", "probe"] as const) {
@@ -5518,7 +5597,7 @@ test("private Farmhand Bridge connection rejects wrong owner, tamper, and stoppe
         callbacks += 1;
         return Object.freeze({ close: () => undefined });
       }),
-    /stardew_ai_client_bridge_config_changed/,
+    /stardew_ai_client_bridge_config_mismatch/,
   );
   assert.equal(callbacks, 0);
 

@@ -2171,8 +2171,33 @@ export class FarmhandBridgeConnectionNotAvailableError extends Error {
   }
 }
 
+/**
+ * The bridge fields this Host alone owns in the AI client's `config.json`, and the
+ * only question its reread may ask: is this document the one THIS attempt authored
+ * for THIS companion?
+ *
+ * It cannot be a byte question. The document is co-owned: the Mod rewrites it whole
+ * through `Helper.WriteConfig` from its own config class (`PersistVerifiedFarmhandScope`
+ * when the client reaches the world, and `ModConfig.cs` states the same rule), which
+ * serializes every field the class has - the Mod's defaults, and none of the keys only
+ * this Host knows. So the bytes of a live document stop matching the composed ones as
+ * soon as the client boots, while the fields that name the attempt and the companion are
+ * the ones a replaced or swapped profile actually moves.
+ */
+type StardewPrivateAiClientBridgeConfigIdentity = Readonly<{
+  readonly pipeName: string;
+  readonly bridgeToken: string;
+  readonly saveId: string;
+  readonly worldId: string;
+  readonly playerId: string;
+  readonly companionId: string;
+  readonly manifestPath: string;
+  readonly sessionToken: string;
+  readonly integrationVersion: string;
+}>;
+
 type StardewPrivateBridgeMaterial = Readonly<{
-  readonly configJson: string;
+  readonly configIdentity: StardewPrivateAiClientBridgeConfigIdentity;
   readonly connection: Omit<StardewPrivateFarmhandBridgeConnection, "launchGeneration">;
 }>;
 
@@ -2876,9 +2901,9 @@ async function launchStagedPlayerHostContained(
 /**
  * Core-private composition-bound AI-client launch. The exact owner must have a
  * completely materialized C1 profile. Durable managed inventory is reread before
- * the admitted installation performs its final identity-chain reread. The exact
- * Bridge config is checked again after that asynchronous reread; only then may
- * the exact reserved AI launch be consumed.
+ * the admitted installation performs its final identity-chain reread. The bridge
+ * document's own identity is checked again after that asynchronous reread; only
+ * then may the exact reserved AI launch be consumed.
  */
 async function launchMaterializedAiClient(
   owner: StardewOwnedPlayerHostBootstrap,
@@ -2908,16 +2933,12 @@ async function launchMaterializedAiClient(
     throw new Error("stardew_ai_client_profile_inventory_invalid");
   await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
   const configPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY, MOD_DIRECTORY, MOD_CONFIG_FILE);
-  await verifySafePathBoundary(configPath, transactionDirectory);
-  if ((await readFile(configPath, "utf8")) !== bridgeMaterial.configJson)
-    throw new Error("stardew_ai_client_bridge_config_changed");
+  await assertAiClientBridgeConfigIdentity(configPath, transactionDirectory, bridgeMaterial.configIdentity);
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
 
   const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
   return consumeAdmittedStardewInstallation(installation, async (root, executable) => {
-    await verifySafePathBoundary(configPath, transactionDirectory);
-    if ((await readFile(configPath, "utf8")) !== bridgeMaterial.configJson)
-      throw new Error("stardew_ai_client_bridge_config_changed");
+    await assertAiClientBridgeConfigIdentity(configPath, transactionDirectory, bridgeMaterial.configIdentity);
     if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
     const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
       role: "ai_client",
@@ -2976,17 +2997,13 @@ async function launchMaterializedAiClientContained(
     throw new Error("stardew_ai_client_profile_inventory_invalid");
   await assertMaterializedC1Inventory(transactionDirectory, authorityRoot);
   const configPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY, MOD_DIRECTORY, MOD_CONFIG_FILE);
-  await verifySafePathBoundary(configPath, transactionDirectory);
-  if ((await readFile(configPath, "utf8")) !== bridgeMaterial.configJson)
-    throw new Error("stardew_ai_client_bridge_config_changed");
+  await assertAiClientBridgeConfigIdentity(configPath, transactionDirectory, bridgeMaterial.configIdentity);
   if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
 
   const modsPath = join(transactionDirectory, AI_CLIENT_PROFILE_ROOT, MODS_DIRECTORY);
   let claimAttempted = false;
   await consumeAdmittedStardewInstallation(installation, async (root, executable) => {
-    await verifySafePathBoundary(configPath, transactionDirectory);
-    if ((await readFile(configPath, "utf8")) !== bridgeMaterial.configJson)
-      throw new Error("stardew_ai_client_bridge_config_changed");
+    await assertAiClientBridgeConfigIdentity(configPath, transactionDirectory, bridgeMaterial.configIdentity);
     if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
     const recipe: StardewPrivateRoleLaunchRecipe = Object.freeze({
       role: "ai_client",
@@ -3071,9 +3088,7 @@ async function consumeOwnedFarmhandBridgeConnection<T extends Readonly<{ close()
       MOD_DIRECTORY,
       MOD_CONFIG_FILE,
     );
-    await verifySafePathBoundary(configPath, transactionDirectory);
-    if ((await readFile(configPath, "utf8")) !== bridgeMaterial.configJson)
-      throw new Error("stardew_ai_client_bridge_config_changed");
+    await assertAiClientBridgeConfigIdentity(configPath, transactionDirectory, bridgeMaterial.configIdentity);
     if (facts.expiresAtMs <= facts.readClock()) throw new Error("stardew_owned_player_host_bootstrap_owner_expired");
     if (facts.aiClientRegistration.launchGeneration !== current.aiClient.launchGeneration)
       throw new Error("stardew_ai_client_generation_mismatch");
@@ -3297,14 +3312,25 @@ async function stageAiClientProfile(
           playerSettings,
           await readStardewModPresentationLocale(runtimeRoot),
         );
+        const configIdentity: StardewPrivateAiClientBridgeConfigIdentity = Object.freeze({
+          pipeName,
+          bridgeToken,
+          saveId: admission.manifest.saveId,
+          worldId: admission.manifest.worldId,
+          playerId: admission.manifest.farmhandId,
+          companionId: admission.manifest.companionId,
+          manifestPath,
+          sessionToken: material.sessionToken,
+          integrationVersion: material.integrationVersion,
+        });
         const aiClientConfig = JSON.stringify({
           EnableLocalBridge: true,
-          PipeName: pipeName,
-          BridgeToken: bridgeToken,
-          SaveId: admission.manifest.saveId,
-          WorldId: admission.manifest.worldId,
-          PlayerId: admission.manifest.farmhandId,
-          CompanionId: admission.manifest.companionId,
+          PipeName: configIdentity.pipeName,
+          BridgeToken: configIdentity.bridgeToken,
+          SaveId: configIdentity.saveId,
+          WorldId: configIdentity.worldId,
+          PlayerId: configIdentity.playerId,
+          CompanionId: configIdentity.companionId,
           ActionPolicyVersion: 1,
           ...(actionPolicy.PresentationLocale === undefined
             ? {}
@@ -3314,9 +3340,9 @@ async function stageAiClientProfile(
           AdvanceDayMinimumOnlineFarmers: actionPolicy.AdvanceDayMinimumOnlineFarmers,
           FarmhandProvisioner: {
             Enable: true,
-            ManifestPath: manifestPath,
-            SessionToken: material.sessionToken,
-            IntegrationVersion: material.integrationVersion,
+            ManifestPath: configIdentity.manifestPath,
+            SessionToken: configIdentity.sessionToken,
+            IntegrationVersion: configIdentity.integrationVersion,
             TimeoutSeconds: 45,
           },
         });
@@ -3347,7 +3373,7 @@ async function stageAiClientProfile(
           throw new Error("stardew_ai_client_profile_materialization_expired");
         }
         return Object.freeze({
-          configJson: aiClientConfig,
+          configIdentity,
           connection: Object.freeze({
             scope: Object.freeze({
               integrationId: "stardew",
@@ -3376,6 +3402,63 @@ async function stageAiClientProfile(
       }
     },
     { containmentRoot: dirname(dirname(transactionDirectory)) },
+  );
+}
+
+/**
+ * Asserts that the AI client's bridge document is still the one this attempt
+ * authored, for this companion.
+ *
+ * The question is identity, not bytes. The Mod owns the document's serialization
+ * (`PersistVerifiedFarmhandScope` -> `Helper.WriteConfig`) and rewrites it whole from
+ * its own config class the moment its client reaches the world, which is exactly
+ * when this Host connects - so a byte comparison refuses a binding that is intact,
+ * and does it permanently, because those two documents can never agree again. What
+ * a replaced profile or a swapped document actually moves is the pipe it points at,
+ * the token that authenticates it, the save/world/farmhand/companion it claims, and
+ * the provisioning manifest it reads; those are the fields compared here.
+ *
+ * A document that is unreadable, or that carries a duplicate key, is refused rather
+ * than half-read: the reader decides that, so a live write can never be mistaken
+ * for a matching identity.
+ */
+async function assertAiClientBridgeConfigIdentity(
+  configPath: string,
+  transactionDirectory: string,
+  identity: StardewPrivateAiClientBridgeConfigIdentity,
+): Promise<void> {
+  await verifySafePathBoundary(configPath, transactionDirectory);
+  let document: unknown;
+  try {
+    document = await readStrictJsonFile(configPath);
+  } catch (error) {
+    // A missing document is not this refusal: the caller's own existence question
+    // owns that answer, exactly as it did before the document was read this way.
+    if (isNodeError(error) && error.code === "ENOENT") throw error;
+    throw new Error("stardew_ai_client_bridge_config_mismatch", { cause: error });
+  }
+  if (!isAiClientBridgeConfigDocument(document, identity)) throw new Error("stardew_ai_client_bridge_config_mismatch");
+}
+
+function isAiClientBridgeConfigDocument(
+  document: unknown,
+  identity: StardewPrivateAiClientBridgeConfigIdentity,
+): boolean {
+  if (!isRecord(document)) return false;
+  const provisioner = document.FarmhandProvisioner;
+  return (
+    document.EnableLocalBridge === true &&
+    document.PipeName === identity.pipeName &&
+    document.BridgeToken === identity.bridgeToken &&
+    document.SaveId === identity.saveId &&
+    document.WorldId === identity.worldId &&
+    document.PlayerId === identity.playerId &&
+    document.CompanionId === identity.companionId &&
+    isRecord(provisioner) &&
+    provisioner.Enable === true &&
+    provisioner.ManifestPath === identity.manifestPath &&
+    provisioner.SessionToken === identity.sessionToken &&
+    provisioner.IntegrationVersion === identity.integrationVersion
   );
 }
 
