@@ -51,6 +51,14 @@ internal sealed partial class ExecutionManager
         internal const string MachineNotPresent = "machine_not_present";
         internal const string NotAMachine = "not_a_machine";
         internal const string TargetIdChanged = "target_id_changed";
+
+        /// <summary>
+        /// The request sent NO target identity and named no item, so there was nothing an identity could be computed
+        /// from. Named apart from <see cref="TargetIdChanged"/> on purpose: "I could not compute one" and "the one you
+        /// named has changed" send a caller to two different corrections, and folding them into one code is the defect
+        /// the clause vocabulary exists to refuse.
+        /// </summary>
+        internal const string TargetIdUnresolved = "target_id_unresolved";
     }
 
     public LocalExecutionReceipt RequestLocalRefillWateringCan(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
@@ -462,6 +470,11 @@ internal sealed partial class ExecutionManager
     {
         liveSlot = -1;
         seed = null;
+        // NOTHING TO COMPUTE AN IDENTITY FROM, which is its own clause and not a changed one: no id was sent and no
+        // item was named, so this request names no target at all. It is asked before the pack half because the pack's
+        // answer (`seed_not_owned_in_pack`) is about an item somebody named.
+        if (string.IsNullOrWhiteSpace(expectedTargetId) && string.IsNullOrWhiteSpace(expectedQualifiedItemId))
+            return new TileTargetRefusal("seed_target_unavailable", $"target={targetX},{targetY};named_slot={namedSlot};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdUnresolved}");
         if (ResolveLiveSlot(Game1.player, expectedQualifiedItemId, IsPlantableSeed) is not { } held
             || held.Item is not StardewValley.Object heldSeed)
             return new TileTargetRefusal("seed_not_owned_in_pack", $"item={expectedQualifiedItemId};named_slot={namedSlot}");
@@ -478,6 +491,11 @@ internal sealed partial class ExecutionManager
             return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SoilHasCrop}");
         if (!dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false))
             return new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.SeedRejectedBySoil}");
+        // AN ID NOBODY SENT IS NOT AN ID THAT CHANGED. The identity is computed either way - that is what lets a plan
+        // leave it out for a tile its own earlier node creates (`FarmhandActionArgument.ResolvedAtExecution`) - and it is
+        // COMPARED only when the caller presented one, so `target_id_changed` keeps meaning exactly what it always meant.
+        if (string.IsNullOrWhiteSpace(expectedTargetId))
+            return null;
         return string.Equals(BuildSeedTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal)
             ? null
             : new TileTargetRefusal("seed_target_unavailable", $"{soil};{TileTargetRefusalClause.Field}{TileTargetRefusalClause.TargetIdChanged}");
@@ -496,7 +514,13 @@ internal sealed partial class ExecutionManager
 
         int beforeCount = Game1.player.Items.Sum(item => item?.QualifiedItemId == expectedQualifiedItemId ? item.Stack : 0);
         int previousSlot = Game1.player.CurrentToolIndex;
-        LocalSeedPlantingSpec specification = new(executionId, requestId, location.NameOrUniqueName, liveSlot, targetX, targetY, expectedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
+        // THE IDENTITY THIS PLANTING USED, resolved here when the caller left it out - the gate above accepted that
+        // absence precisely because this builder needs nothing the request does not already carry. The spec and the
+        // receipt name the resolved id, so `target=` never reads as an empty field.
+        string plantedTargetId = string.IsNullOrWhiteSpace(expectedTargetId)
+            ? BuildSeedTargetId(location, targetX, targetY, expectedQualifiedItemId)
+            : expectedTargetId;
+        LocalSeedPlantingSpec specification = new(executionId, requestId, location.NameOrUniqueName, liveSlot, targetX, targetY, plantedTargetId, expectedQualifiedItemId, this.revision, requestedDeadlineMs);
         bool placementHandled;
         try
         {
@@ -525,7 +549,7 @@ internal sealed partial class ExecutionManager
         // (`timeline.jsonl` 50/51, both carrying `slot=8;named_slot=8`), the day recorded `succeeded/seed_planted`, and
         // `plant_seed` never appeared in its `admittedActionIds`.
         return this.RememberTerminal(requestId, executionId, state, reasonCode,
-            $"location={specification.Location};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
+            $"location={specification.Location};target={plantedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};crop={plantedCropId ?? "none"};inventory_before={beforeCount};inventory_after={afterCount}");
     }
 
     /// <summary>The kind `Object.placementAction`'s seed branch plants: a stack in the engine's own seeds category.</summary>
@@ -591,8 +615,12 @@ internal sealed partial class ExecutionManager
         int liveSlot = held.Slot;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
+        // AN ID NOBODY SENT IS NOT AN ID THAT CHANGED - `plant_seed`'s rule, for the same reason: the identity below is
+        // a pure function of the tile and the item the request names, so an absent value is the body's own reading and
+        // only a PRESENTED one can disagree.
         if (!CanPlantWildTreeSeedAt(location, sapling.QualifiedItemId, targetX, targetY)
-            || !string.Equals(BuildTreeSaplingTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal))
+            || (!string.IsNullOrWhiteSpace(expectedTargetId)
+                && !string.Equals(BuildTreeSaplingTargetId(location, targetX, targetY, expectedQualifiedItemId), expectedTargetId, StringComparison.Ordinal)))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "sapling_target_unavailable", $"target={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot}");
         if (!IsTreeSaplingTargetInRange(Game1.player, targetX, targetY))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_out_of_reach", $"target={targetX},{targetY};reach=1;approach=did_not_arrive");
@@ -619,7 +647,7 @@ internal sealed partial class ExecutionManager
         ExecutionState state = placementHandled && treeCreated && inventoryDecremented ? ExecutionState.Succeeded : ExecutionState.Uncertain;
         string reasonCode = state == ExecutionState.Succeeded ? "sapling_planted" : "sapling_plant_postcondition_unavailable";
         string treeType = plantedFeature is StardewValley.TerrainFeatures.Tree pt ? pt.treeType.Value : "none";
-        string evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};tree_type={treeType};inventory_before={beforeCount};inventory_after={afterCount};native_placement={placementHandled.ToString().ToLowerInvariant()}";
+        string evidence = $"location={location.NameOrUniqueName};target={(string.IsNullOrWhiteSpace(expectedTargetId) ? BuildTreeSaplingTargetId(location, targetX, targetY, expectedQualifiedItemId) : expectedTargetId)};tile={targetX},{targetY};item={expectedQualifiedItemId};slot={liveSlot};named_slot={slot};tree_type={treeType};inventory_before={beforeCount};inventory_after={afterCount};native_placement={placementHandled.ToString().ToLowerInvariant()}";
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 

@@ -101,7 +101,7 @@ const REFUSAL_BATCH_MARK = 'builder.move_to_tile({ "x": 5, "y": 5 });';
  */
 function partialBatchOf(script) {
   const steps = stepsIn(script);
-  const reason = `plan_script_missing_argument:${steps[1]}.injected:integer[whole]:snapshot.tile.x`;
+  const reason = `plan_script_argument_not_canonical:${steps[1]}.injected:integer[whole]:snapshot.tile.x:got:string(plan_fixpoint_not_an_integer)`;
   return {
     status: "partial",
     scriptSource: script,
@@ -464,7 +464,7 @@ test("an answer that voids the batch is named by site, not reported as a clean r
   const judged = readPlanLegalFixpoint({
     compile: (script) =>
       script.includes(REFUSAL_BATCH_MARK)
-        ? { ok: false, reasonCode: "plan_script_missing_argument:injected", rejected: [] }
+        ? { ok: false, reasonCode: "plan_script_argument_not_canonical:injected", rejected: [] }
         : programOf(script),
     actions,
     bodyYieldingActionIds: ["talk_to_npc"],

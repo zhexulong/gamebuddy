@@ -1310,11 +1310,20 @@ internal static class BodyProgramVerifier
     {
         OrderedAfter = Array.AsReadOnly(node.OrderedAfter.OrderBy(id => id, StringComparer.Ordinal).ToArray()),
     }).ToArray()));
-    internal static bool ArgumentsMatch(IReadOnlyDictionary<string, BodyProgramCanonicalValue> values, BodyProgramActionDescriptor action) => values.Count == action.Arguments.Count && action.Arguments.All(argument => values.TryGetValue(argument.Name, out BodyProgramCanonicalValue? value) && BodyProgramValidation.IsValidCanonicalValue(value, argument.Kind));
+    internal static bool ArgumentsMatch(IReadOnlyDictionary<string, BodyProgramCanonicalValue> values, BodyProgramActionDescriptor action) =>
+        // AN ABSENT ARGUMENT IS LEGAL EXACTLY WHERE THE ACTION DECLARED IT RESOLVABLE. The count equality this replaces
+        // read every declared argument as mandatory, so a node that left out `plant_seed.expectedTargetId` - the one
+        // value a plan cannot copy out of a snapshot about a tile its own earlier node creates - was refused as an
+        // argument shape mistake. The declaration is per action AND per argument (`FarmhandActionArgument.ResolvedAtExecution`),
+        // so the next action cannot inherit an absence it has no way to answer for.
+        action.Arguments.All(argument => values.TryGetValue(argument.Name, out BodyProgramCanonicalValue? value)
+            ? BodyProgramValidation.IsValidCanonicalValue(value, argument.Kind)
+            : argument.ResolvedAtExecution)
+        && values.Keys.All(name => action.Arguments.Any(argument => argument.Name == name));
     internal static bool ResourceClaimsMatch(IReadOnlyDictionary<string, string> actual, BodyProgramActionDescriptor action, BridgeScope scope) => BodyProgramCanonical.StringMapsEqual(actual, DeriveClaims(action, scope));
     private static void ValidateArguments(ActionProgramCandidateNode node, BodyProgramActionDescriptor action, List<BodyProgramDiagnostic> diagnostics, string path)
     {
-        string[] missing = action.Arguments.Where(argument => !node.Arguments.ContainsKey(argument.Name)).Select(argument => argument.Name).ToArray();
+        string[] missing = action.Arguments.Where(argument => !argument.ResolvedAtExecution && !node.Arguments.ContainsKey(argument.Name)).Select(argument => argument.Name).ToArray();
         string[] unexpected = node.Arguments.Keys.Where(name => action.Arguments.All(argument => argument.Name != name)).OrderBy(name => name, StringComparer.Ordinal).ToArray();
         string[] wrongKind = action.Arguments
             .Where(argument => node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value) && !BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out _))
@@ -1330,7 +1339,7 @@ internal static class BodyProgramVerifier
             string.Join(",", action.Arguments.Select(argument => argument.Name)),
             string.Join(",", node.Arguments.Keys.OrderBy(name => name, StringComparer.Ordinal)) + (missing.Length == 0 ? "" : $";missing={string.Join(",", missing)}") + (wrongKind.Length == 0 ? "" : $";wrong_kind={string.Join(",", wrongKind)}")));
     }
-    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments(ActionProgramCandidateNode node, BodyProgramActionCatalog catalog) { BodyProgramActionCatalog _ = catalog; BodyProgramActionDescriptor action = catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(); Dictionary<string, BodyProgramCanonicalValue> result = new(StringComparer.Ordinal); foreach (BodyProgramArgumentDescriptor argument in action.Arguments) { if (!node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value) || !BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out BodyProgramCanonicalValue? canonical) || !result.TryAdd(argument.Name, canonical!)) throw new InvalidOperationException(); } return new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(result); }
+    private static IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments(ActionProgramCandidateNode node, BodyProgramActionCatalog catalog) { BodyProgramActionCatalog _ = catalog; BodyProgramActionDescriptor action = catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? found) ? found! : throw new InvalidOperationException(); Dictionary<string, BodyProgramCanonicalValue> result = new(StringComparer.Ordinal); foreach (BodyProgramArgumentDescriptor argument in action.Arguments) { if (!node.Arguments.TryGetValue(argument.Name, out BodyProgramRuntimeValue? value)) { if (argument.ResolvedAtExecution) continue; throw new InvalidOperationException(); } if (!BodyProgramValidation.TryDecodeRuntimeValue(value, argument.Kind, out BodyProgramCanonicalValue? canonical) || !result.TryAdd(argument.Name, canonical!)) throw new InvalidOperationException(); } return new ReadOnlyDictionary<string, BodyProgramCanonicalValue>(result); }
     private static void ValidateBindings(ActionProgramCandidateNode node, IReadOnlyDictionary<string, ActionProgramCandidateNode> nodes, BodyProgramActionCatalog catalog, List<BodyProgramDiagnostic> diagnostics) { if (!catalog.TryGetAction(node.ActionId, out BodyProgramActionDescriptor? consumerAction)) { diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); return; } foreach ((string argument, ActionProgramBinding binding) in node.Bindings) { BodyProgramArgumentDescriptor? consumerArgument = consumerAction!.Arguments.SingleOrDefault(item => item.Name == argument); if (binding is null || !nodes.TryGetValue(binding.ProducerNodeId, out ActionProgramCandidateNode? producer) || !node.DependsOn.Contains(binding.ProducerNodeId, StringComparer.Ordinal) || !catalog.TryGetAction(producer.ActionId, out BodyProgramActionDescriptor? producerAction) || consumerArgument is null || !producerAction!.OutputFacts.Any(fact => fact.Name == binding.FactName && fact.Kind == consumerArgument.Kind)) diagnostics.Add(Error(Named("invalid_binding", node.ActionId), node.NodeId, "/nodes")); } }
     /// <summary>
     /// Refuses a candidate whose nodes claim a shared resource without being ordered either way. The rule is

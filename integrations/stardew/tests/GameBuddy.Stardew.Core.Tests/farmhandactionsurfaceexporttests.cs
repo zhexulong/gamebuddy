@@ -33,7 +33,7 @@ public sealed class FarmhandActionSurfaceExportTests
             // surface could drop them and nothing here would notice.
             projection.ArgumentSchema.Should().Equal(descriptor.Arguments.ToDictionary(
                 argument => argument.Name,
-                argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description)));
+                argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description, argument.ResolvedAtExecution ? true : null)));
             projection.OutputFacts.Should().Equal(descriptor.OutputFacts);
             projection.ResourceTemplate.Claims.Should().Equal(descriptor.ResourceTemplate.Select(claim =>
                 new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())));

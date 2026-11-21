@@ -15,7 +15,7 @@ public sealed record BodyProgramPolicyIdentity(string Value, long CapabilityRevi
 #pragma warning disable CA1720 // Wire-level scalar-kind tokens intentionally name JSON scalar types.
 public enum BodyProgramArgumentKind { Integer = 1, String = 2, Boolean = 3, DestinationSelector = 4, DestinationArrival = 5 }
 #pragma warning restore CA1720
-public sealed record BodyProgramArgumentDescriptor(string Name, BodyProgramArgumentKind Kind);
+public sealed record BodyProgramArgumentDescriptor(string Name, BodyProgramArgumentKind Kind, bool ResolvedAtExecution = false);
 public sealed record BodyProgramFactDescriptor(string Name, BodyProgramArgumentKind Kind);
 /// <summary>
 /// What a <see cref="BodyProgramResourceTemplateClaim"/> materializes to. <see cref="ToolAnyUpgrade"/> and

@@ -131,7 +131,7 @@ public static class FarmhandBodyProgramCatalogProjection
                 message = $"Argument '{name}' has no authoritative Body Program input value contract.";
                 return false;
             }
-            arguments.Add(new(name, kind));
+            arguments.Add(new(name, kind, schema.ResolvedAtExecution == true));
         }
 
         List<BodyProgramFactDescriptor> facts = new();

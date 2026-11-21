@@ -95,7 +95,25 @@ public enum FarmhandTileSpace
 /// that a tile argument has not said - and <c>a_coordinate_argument_names_the_map_it_is_on</c> counts the second as a
 /// failure naming the action and the argument.
 /// </summary>
-public sealed record FarmhandActionArgument(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null, FarmhandTileSpace? TileSpace = null);
+public sealed record FarmhandActionArgument(
+    string Name,
+    string Type,
+    IReadOnlyList<string>? Enum = null,
+    string? Description = null,
+    FarmhandTileSpace? TileSpace = null,
+    /// <summary>
+    /// This argument's value may be ABSENT, and the body resolves it on the game thread from the arguments that are
+    /// present - the reading a plan can only copy out of a snapshot, and therefore cannot write at all about a target
+    /// its own earlier node creates (`till_soil` then `plant_seed` on that tile).
+    ///
+    /// <para>
+    /// DECLARED PER ACTION, never granted by a rule: only an action whose identity is a pure function of the arguments
+    /// it already requires can answer for a value nobody sent, and an action that cannot would fail in the body instead
+    /// of at the door. `plant_seed` and `plant_sapling` name it on `expectedTargetId` because their builder reads
+    /// `(location, tile, the item the request names)` - a value that does not need the caller at all.
+    /// </para>
+    /// </summary>
+    bool ResolvedAtExecution = false);
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
 /// handler requires the actor to OWN and takes as the current tool by selecting it, and whose value half is the
@@ -687,7 +705,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
         // the can's water, runtime state a planner cannot read from the surface). Its `charge` is till_soil's argument
         // for the same reason: one native use covers the engine's charged footprint, and `0` keeps the single tile.
-        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Finishes(Charged(SelfWalked(TileA(null, ToolResource("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"),("charge","integer"))), FarmhandChargedFootprintDeclaration.NonDestructive)), FarmhandActionLifecycle.Published, "cropTargets"), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(SlotItemTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "seedTargets"), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(SlotItemTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "fertilizerTargets"),
+        E("water_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Finishes(Charged(SelfWalked(TileA(null, ToolResource("watering_can", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"),("charge","integer"))), FarmhandChargedFootprintDeclaration.NonDestructive)), FarmhandActionLifecycle.Published, "cropTargets"), E("plant_seed", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(PlantedTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "seedTargets"), E("fertilize_tile", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(SlotItemTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "fertilizerTargets"),
         E("machine_inspect", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Leaves(SelfWalked(MachineInspect()), FarmhandChoreDeclaration.SubjectSurvivesTheWork), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_load", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Leaves(SelfWalked(MachineLoad()), FarmhandChoreDeclaration.SubjectSurvivesTheWork), FarmhandActionLifecycle.Published, "machineTargets"), E("machine_collect_output", "machines_processing", FarmhandActionHandlerGroup.MachinesAndAnimals, Leaves(SelfWalked(Target()), FarmhandChoreDeclaration.WorkIsNotARow), FarmhandActionLifecycle.Published, "machineTargets"),
         E("collect_animal_product", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Finishes(SelfWalked(SlotTarget(ItemSlotMeaning))), FarmhandActionLifecycle.Published, "animalProductTargets"), E("feed_animal", "animals_pets", FarmhandActionHandlerGroup.MachinesAndAnimals, Finishes(SelfWalked(SlotTarget(ItemSlotMeaning))), FarmhandActionLifecycle.Published, "feedTroughTargets"), E("use_item", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, Described(new[] { new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string") }), FarmhandActionLifecycle.Published, "foodTargets"),
         E("harvest_crop", "farming_crops", FarmhandActionHandlerGroup.Farming, Finishes(SelfWalked(TargetItem())), FarmhandActionLifecycle.Published, "harvestTargets"), E("place_wood_fence", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, Leaves(SelfWalked(SlotItemTarget("(O)322")), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "woodFenceTargets"), E("place_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, Leaves(SelfWalked(SlotItemTarget("(O)710")), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.Published, "crabPotTargets"), E("bait_crab_pot", "buildings_farm_management", FarmhandActionHandlerGroup.ResourceTools, Finishes(SelfWalked(SlotItemTarget("(O)685"))), FarmhandActionLifecycle.Published, "baitCrabPotTargets"),
@@ -836,7 +854,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         E("chest_store", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestStoreItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
         E("chest_retrieve", "inventory_items", FarmhandActionHandlerGroup.MachinesAndAnimals, SelfWalked(ContainerItemTarget(ChestRetrieveItemMeaning)), FarmhandActionLifecycle.LiveVerified, "chests"),
         E("chop_stump", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Finishes(Clears(SelfWalked(SlotTargetWith("axe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "axe", destructive: false, "tree_stump")), FarmhandActionLifecycle.LiveVerified, "treeStumpTargets"),
-        E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(SlotItemTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.LiveVerified, "treeSaplingTargets"),
+        E("plant_sapling", "farming_crops", FarmhandActionHandlerGroup.Farming, Leaves(SelfWalked(PlantedTarget()), FarmhandChoreDeclaration.RowPairsAStackWithATile), FarmhandActionLifecycle.LiveVerified, "treeSaplingTargets"),
         // Scythe actions: the handler selects the actor's own scythe before swinging, from the `tool:scythe` claim
         // below. A scythe has no upgrade ladder, so "any" is exact.
         E("cut_weeds", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, Finishes(Clears(SelfWalked(SlotTargetWith("scythe", FarmhandResourceTemplateValue.AnyUpgrade, AutoSelectedToolSlotMeaning)), "scythe", destructive: false, "weed")), FarmhandActionLifecycle.LiveVerified, "weedTargets"),
@@ -1658,6 +1676,33 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// </summary>
     private const string MachineLoadItemMeaning =
         "The item to load into the machine, copied from `loadInputQualifiedItemId` of the machineTargets row. The machine's own Data/Machines rows decide which inputs it accepts and how many it consumes; the row publishes the item that machine takes. An input its data does not accept is refused `machine_load_unsupported_input`, and that refusal names the inputs the machine does take.";
+
+    /// <summary>
+    /// The planting pair's argument list: `plant_seed` and `plant_sapling` take the same five names as the other
+    /// slot-item targets, and their `expectedTargetId` is the one argument the BODY can answer for itself
+    /// (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>).
+    ///
+    /// <para>
+    /// WHY THESE TWO AND NOT THE SHAPE: their identities are pure functions of arguments the request already carries -
+    /// `BuildSeedTargetId`/`BuildTreeSaplingTargetId` read `(location, x, y, expectedQualifiedItemId)` and nothing else -
+    /// so a plan whose own earlier node creates the target can leave the value out and the body resolves it on the game
+    /// thread. The SLOT is declared here for the same reason and on the same evidence: both bodies resolve it from the
+    /// item the request names (`ResolveLiveSlot`) and treat the caller's index as evidence only
+    /// (`farmhandexecutioncontroller.farmingconstructionactions.cs`, `slot=`/`named_slot=`), so an index nobody sent costs
+    /// the request nothing. `fertilize_tile` keeps the plain list on purpose: its target identity embeds the caller's
+    /// SLOT (`BuildFertilizerTargetId`), a backpack index that moves between the compile and the run, so there is no
+    /// value the body could resolve that the caller did not have to name; the pinned forms (`place_wood_fence`,
+    /// `place_crab_pot`, `bait_crab_pot`) embed a slot for the same reason.
+    /// </para>
+    /// </summary>
+    private static FarmhandActionDescriptor PlantedTarget() => Described(new[]
+    {
+        new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap),
+        new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap),
+        new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning, ResolvedAtExecution: true),
+        new FarmhandActionArgument("expectedQualifiedItemId", "string"),
+        new FarmhandActionArgument("expectedTargetId", "string", ResolvedAtExecution: true),
+    });
 
     private static FarmhandActionDescriptor SlotItemTarget(string? exactQualifiedItemId = null) => exactQualifiedItemId is null
             ? Described(new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("slot", "integer", null, ItemSlotMeaning), new FarmhandActionArgument("expectedQualifiedItemId", "string"), new FarmhandActionArgument("expectedTargetId", "string") })

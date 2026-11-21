@@ -92,7 +92,17 @@ public sealed record FarmhandActionArgumentSchema(
     /// the slot to equal `Farmer.CurrentToolIndex`. Sourced from `FarmhandActionArgument.Description`, so a change to the
     /// rule and a change to its words are the same edit.
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null,
+    /// <summary>
+    /// This argument's value may be absent from a Body Program node, because the BODY resolves it on the game thread
+    /// from the arguments that are present (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>). Published so
+    /// the reader that decides whether a node carries every declared argument reads the SAME declaration the body obeys
+    /// - a Host that guessed which arguments may be resolved would be a second authority over one fact.
+    ///
+    /// A `false` is omitted from the JSON (it is the absence of the claim), so an action that does not declare the
+    /// property publishes exactly the bytes it published before.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResolvedAtExecution = null);
 public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandActionResourceTemplateValueProjection> Claims);
 public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
 public sealed record FarmhandActionPostcondition(string Name);
@@ -157,7 +167,7 @@ public static class FarmhandActionSurfacePublication
             ?? throw new InvalidOperationException("Farmhand action registration requires a descriptor.");
         Dictionary<string, FarmhandActionArgumentSchema> argumentSchema = descriptor.Arguments.ToDictionary(
             argument => argument.Name,
-            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description),
+            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description, argument.ResolvedAtExecution ? true : null),
             StringComparer.Ordinal);
         if (argumentSchema.Count != descriptor.Arguments.Count)
             throw new InvalidOperationException("Farmhand action descriptor argument names must be unique.");

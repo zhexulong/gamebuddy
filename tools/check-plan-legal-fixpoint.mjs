@@ -321,6 +321,36 @@ function valueOf(argument) {
   }
 }
 
+/**
+ * The value this gate writes when it wants ONE CALL REFUSED: a value of the wrong type for the argument it sits in.
+ *
+ * THE OMISSION IS NOT A MISTAKE ANY MORE, which is why this is not the injection it used to be. The Mod's
+ * `FarmhandActionArgument.ResolvedAtExecution` declares the readings its own body computes on the game thread, this
+ * compiler reads that declaration as `required: false`, and a reading the body answers for may be left out - so an
+ * omission of `plant_seed.slot`, `plant_seed.expectedTargetId` or their `plant_sapling` twins compiles, and a gate that
+ * injected one of those measured "the batch ran" while believing it measured "the batch refused the call".
+ *
+ * A TYPE MISMATCH is refused by that same declaration, and by every arm of it: `integer` wants a safe integer, `string` a
+ * non-empty one (and a member of its enum where it declares one), `boolean` a boolean, and `destination_selector` an
+ * object carrying one of its arms. So the value below is refused wherever it is written, and no argument the surface can
+ * publish is exempt from it.
+ */
+function wrongTypeValueOf(argument) {
+  switch (argument.type) {
+    case "integer":
+      return "plan_fixpoint_not_an_integer";
+    case "string":
+      // A number where text is declared: the one value no `string` argument can canonicalise.
+      return 0;
+    case "boolean":
+      return "plan_fixpoint_not_a_boolean";
+    case "destination_selector":
+      return "plan_fixpoint_not_a_selector";
+    default:
+      return undefined;
+  }
+}
+
 /** One builder call for one published action, or the reason this gate could not write it. */
 function callFor(action) {
   const supplied = {};
@@ -720,8 +750,11 @@ function repairedByRemedy({ examine, actions, yieldingId, dependentId }) {
  * bets at 2.8 nodes per plan and paid a model round-trip between each. The rule that voided them was written to stop a
  * real forgery (`3d249ff1`: `ok: true` beside a refused call), so the fix is not "stop refusing" - it is that a refusal
  * costs the calls it NAMES. That is a property of every refusal site the compiler has, not of the one this lane thought
- * of, so the population is derived: every action the surface publishes and every argument it declares, because an omitted
- * argument is the per-call refusal this gate can inject for ANY action without a second table of mistakes.
+ * of, so the population is derived: every action the surface publishes and every argument it declares, because a value of
+ * the WRONG TYPE for that argument is the per-call refusal this gate can inject for ANY action without a second table of
+ * mistakes (`wrongTypeValueOf`). The OMISSION was that injection until `FarmhandActionArgument.ResolvedAtExecution`
+ * arrived: a reading the Mod resolves on the game thread is `required: false` here, so omitting it compiles, and three
+ * planting readings stopped being a mistake this gate could make.
  * </p>
  * <p>
  * WHAT IS ASSERTED, per site: the batch is `partial`, the two calls written correctly are BOTH nodes of the program, and
@@ -746,11 +779,12 @@ function readRefusedCallCost({ examine, actions }) {
   for (const action of actions) {
     for (const argument of action.arguments) {
       const site = `${action.actionId}.${argument.name}`;
+      // EVERY DECLARED ARGUMENT IS WRITTEN, and exactly one of them carries a value its own declaration refuses: a call
+      // that is wrong in one argument and right in all the others is the shape a per-call refusal has to answer.
       const supplied = {};
       let writable = true;
       for (const declared of action.arguments) {
-        if (declared.name === argument.name) continue;
-        const value = valueOf(declared);
+        const value = declared.name === argument.name ? wrongTypeValueOf(declared) : valueOf(declared);
         if (value === undefined) {
           writable = false;
           break;
@@ -759,8 +793,8 @@ function readRefusedCallCost({ examine, actions }) {
       }
       if (!writable) {
         unmeasured.push(
-          `plan_refused_call_unwritable:${site}:the declaration carries an argument type this gate cannot write, so the ` +
-            `cost of refusing this call was not measured`,
+          `plan_refused_call_unwritable:${site}:the declaration carries an argument type this gate can write neither a ` +
+            `legal value nor a wrong-typed one for, so the cost of refusing this call was not measured`,
         );
         continue;
       }

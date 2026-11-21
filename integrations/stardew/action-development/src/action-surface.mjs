@@ -400,11 +400,24 @@ function validateTypedMap(value, location, entriesAreObjects) {
       if (!isObject(entry) || isArray(entry) || prototypeOf(entry) !== Object.prototype) fail("invalid_action");
       const hasEnum = ownKeys(entry, "invalid_action").includes("enum");
       const hasDescription = ownKeys(entry, "invalid_action").includes("description");
+      // `resolvedAtExecution` is OPTIONAL too, and published only by an action that DECLARES it
+      // (`FarmhandActionArgument.ResolvedAtExecution`): the member says the body answers for a value the caller may
+      // leave out, so it is a claim about one argument of one action and never a property of a shared shape.
+      const hasResolved = ownKeys(entry, "invalid_action").includes("resolvedAtExecution");
       // `description` is OPTIONAL, so the exact-key set is the base set plus it only when present. Anything else is
       // still refused by name: an unrecognised key would be a field a consumer silently ignores.
       const base = hasEnum ? ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS : ARGUMENT_SCHEMA_ENTRY_KEYS;
-      exactKeys(entry, hasDescription ? [...base, "description"] : base, `${location}_entry`);
+      exactKeys(
+        entry,
+        [
+          ...base,
+          ...(hasDescription ? ["description"] : []),
+          ...(hasResolved ? ["resolvedAtExecution"] : []),
+        ],
+        `${location}_entry`,
+      );
       if (!ACTION_VALUE_TYPES.has(dataDescriptor(entry, "type").value)) fail("invalid_action");
+      if (hasResolved && dataDescriptor(entry, "resolvedAtExecution").value !== true) fail("invalid_action");
       if (hasDescription) {
         // The argument's MEANING, in the Mod's own words. Bounded like every other published string: an unbounded one
         // would let a future build spend the agent's context by accident, and empty is refused because a present-but-
