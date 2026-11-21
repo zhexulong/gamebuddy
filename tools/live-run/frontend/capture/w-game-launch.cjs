@@ -138,11 +138,8 @@ const {
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
 const { stepRecorder } = require("./game-surface-states.cjs");
-const {
-  INSTALLATION_CONTROL,
-  INSTALLATION_DISCOVERY_STATES,
-  INSTALLATION_PANEL_SELECTOR,
-} = require("./installation-panel.cjs");
+const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
+const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -221,29 +218,6 @@ const readGameState = async () => {
   }
 };
 
-/** The installation panel's own typed state (`StardewInstallationDiscovery.tsx`). */
-const readInstallationPanel = () => {
-  const surface = document.querySelector('[data-testid="game-surface"]');
-  const panel = surface === null ? null : surface.querySelector(".game-installation-panel");
-  if (panel === null) return { present: false, surfacePresent: surface !== null, candidates: [] };
-  const candidates = [...panel.querySelectorAll(".installation-candidate")].map((row) => {
-    const button = row.querySelector("button");
-    return {
-      text: (row.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
-      confirm:
-        button === null
-          ? null
-          : { name: (button.getAttribute("aria-label") ?? button.textContent ?? "").replace(/\s+/g, " ").trim(), disabled: button.disabled === true },
-    };
-  });
-  return {
-    present: true,
-    surfacePresent: true,
-    dataState: panel.getAttribute("data-state"),
-    statusText: (panel.querySelector(".installation-state")?.textContent ?? "").trim(),
-    candidates,
-  };
-};
 
 /** The Game surface's lifecycle controls as the player's own controls, with their published state. */
 const readLifecycleControls = () => {
@@ -531,7 +505,15 @@ function lastSmapiLine(budgetBytes = 16_384) {
  */
 const CHAIN_LOG_PATTERNS = Object.freeze([
   { rung: CHAIN_STEPS.saveLoaded, pattern: /Context: loaded save '([^']+)'/u },
-  { rung: CHAIN_STEPS.cabinBuilt, pattern: /gave the companion world a native Cabin.*cabins_now=(\d+)/u },
+  {
+    // Two sentences, one fact: the Mod's own answer for this world's Cabin. The first is a build on a free
+    // cabin pad; the second is a world whose own starting Cabin was already there, with the engine's own
+    // unclaimed native slot released so the companion can be provisioned into it (a fresh world always
+    // answers this way). Both leave a Cabin this companion may use, which is what the rung names.
+    rung: CHAIN_STEPS.cabinReady,
+    pattern:
+      /gave the companion world a native Cabin.*cabins_now=(\d+)|released the unclaimed native Farmhand slot .*provisioned into it/u,
+  },
 ]);
 
 /**
@@ -1333,9 +1315,9 @@ async function hostAnswers(port) {
           `the OS lists a running game: ${running.map((row) => `${row.name} pid ${String(row.pid)}`).join(", ")} (read with Get-Process -Name StardewModdingAPI,Stardew*)`,
         );
     }
-    /* 4. and 5. the game's own log: the save it loaded, and the cabin the Mod built. */
+    /* 4. and 5. the game's own log: the save it loaded, and the Cabin the Mod gave her. */
     const gameLog = gameLogChainFacts(launchBegan);
-    for (const rung of [CHAIN_STEPS.saveLoaded, CHAIN_STEPS.cabinBuilt]) {
+    for (const rung of [CHAIN_STEPS.saveLoaded, CHAIN_STEPS.cabinReady]) {
       const fact = gameLog.facts?.[rung] ?? null;
       if (fact === null || facts.chain.some((entry) => entry.name === rung)) continue;
       chainReached(rung, `the launched game's own log says so: ${JSON.stringify(fact.line)}`);
@@ -1353,111 +1335,19 @@ async function hostAnswers(port) {
   record("state before", state);
   if (state.ok !== true) return await notMeasured(browser, "game_state_unreadable", `the product's own state route answered HTTP ${String(state.status)}`);
 
-  // ---- 1. the installation registration ----
-  if (state.prerequisites !== "met") {
-    /*
-     * THE PANEL'S OWN RE-SCAN IS PART OF REGISTERING. A surface that meets the panel in a finished search
-     * with no offer - `cancelled`, `expired`, `no-candidates`, `error`, `source-unavailable` - shows no
-     * candidate and no scan of its own (`StardewInstallationDiscovery.tsx` only scans when it mounts with no
-     * seeded answer), so waiting the budget out printed `no_installation_discovered`, which claimed this
-     * machine has no Stardew Valley. Measured 2026-11-19: driver T drives the panel's 取消 to prove that
-     * control, the Game surface re-mounts into `cancelled`, and W spent 90 s over "搜索已取消。" - a machine
-     * with a registered-and-ready installation. The product publishes 重新查找 as the way out of every one of
-     * those states, so the driver presses it, bounded by the same budget, and says which state it left.
-     */
-    let panel = await page.evaluate(readInstallationPanel);
-    const panelBegan = Date.now();
-    const remaining = () => BUDGET.discoveryMs - (Date.now() - panelBegan);
-    const terminal = new Set(["no-candidates", "source-unavailable", "error", "cancelled", "expired"]);
-    let rescans = 0;
-    while (panel.present === true && remaining() > 0) {
-      /*
-       * THE PANEL'S OWN STATEMENT THAT IT HAS STOPPED WORKING, never a fixed tick.
-       *
-       * This loop used to continue on `!terminal.has(dataState)` with a blind 1000 ms sleep and stop at `panel
-       * .candidates.length > 0` - and a candidate row is drawn WHILE a scan is outstanding (`showsCandidates` is
-       * true for `retrying`, `confirming` and `cancelled`), so "a candidate exists" was never "the panel has
-       * settled". `frontend--r13` read the first candidate in `retrying`, found its 确认 disabled (`scannerDisabled`
-       * is `pending !== "none"`), reported `no_installation_discovered: the first candidate offered no enabled
-       * confirm control` with `confirm requests: 0`, and x/y/z named the missing registration behind it - on a
-       * machine that held a registered-and-ready installation.
-       */
-      const settledWait = await waitForPanelSettled(page, {
-        name: "installation",
-        panel: INSTALLATION_PANEL_SELECTOR,
-        settledStates: INSTALLATION_DISCOVERY_STATES.settled,
-        timeoutMs: Math.max(0, remaining()),
-      }).catch((error) => ({ failure: String(error?.message ?? error).slice(0, 600) }));
-      panel = await page.evaluate(readInstallationPanel);
-      if (settledWait.failure !== undefined)
-        return await notMeasured(
-          browser,
-          "installation_panel_never_settled",
-          `${settledWait.failure}; the panel reads data-state=${JSON.stringify(panel.dataState)} with ${String(panel.candidates.length)} candidate row(s) after ${String(rescans)} re-scan press(es)`,
-        );
-      say(
-        `the panel settled in data-state=${JSON.stringify(settledWait.state)} after ${String(settledWait.waitedMs)}ms (every state read while waiting: ${JSON.stringify(settledWait.observed)}), holding ${String(panel.candidates.length)} candidate row(s)`,
-      );
-      if (panel.candidates.length > 0) break;
-      if (!terminal.has(panel.dataState)) break;
-      const findAgain = page
-        .locator(INSTALLATION_PANEL_SELECTOR)
-        .getByRole("button", { name: new RegExp(`${INSTALLATION_CONTROL.findAgain.zh}|${INSTALLATION_CONTROL.findAgain.en}`, "u") })
-        .first();
-      if ((await findAgain.count()) === 0 || !(await findAgain.isEnabled().catch(() => false))) break;
-      rescans += 1;
-      say(`the panel sits in data-state=${JSON.stringify(panel.dataState)} (${JSON.stringify(panel.statusText)}); driving its own 重新查找, press ${rescans}`);
-      await findAgain.click();
-      panel = await page.evaluate(readInstallationPanel);
-    }
-    record("installation panel", panel);
-    if (panel.present !== true) return await notMeasured(browser, "no_installation_panel", "the Game surface painted no installation panel, so no registration control exists to drive");
-    if (panel.candidates.length === 0)
-      return await notMeasured(
-        browser,
-        "no_installation_discovered",
-        `the panel reached data-state=${JSON.stringify(panel.dataState)} with no candidate within ${String(BUDGET.discoveryMs)}ms after ${String(rescans)} re-scan press(es): ${JSON.stringify(panel.statusText)}`,
-      );
-    const first = panel.candidates[0];
-    if (first.confirm === null || first.confirm.disabled)
-      return await notMeasured(browser, "no_installation_discovered", `the first candidate offered no enabled confirm control: ${JSON.stringify(first)}`);
-    say(`confirming the first candidate: ${JSON.stringify(first.text)}`);
-    /*
-     * A press is not an admission. The page draws the confirm from `pending === "none"` and ignores a press
-     * while a scan is outstanding, so a press the page did not take leaves no request and no answer - the
-     * shape this driver met on 2026-11-19, where the facts carried no answer on the confirm route at all.
-     * The driver reads the panel back and presses once more while it still offers an enabled confirm, and
-     * records what the panel then says, so the next reader has the state instead of only "never met".
-     */
-    const pressConfirm = async () => {
-      await page.locator(".game-installation-panel .installation-candidate button").first().click();
-      return await waitForState((reading) => reading.ok === true && reading.prerequisites === "met", BUDGET.registrationMs);
-    };
-    let registration = await pressConfirm();
-    if (!registration.settled) {
-      const after = await page.evaluate(readInstallationPanel);
-      record("installation panel after the press", after);
-      const confirmable = after.present === true && after.candidates.length > 0 && after.candidates[0].confirm?.disabled === false;
-      say(
-        `the confirm produced no prerequisites=met within ${String(BUDGET.registrationMs)}ms; the panel now reads data-state=${JSON.stringify(after.dataState)}, confirm disabled=${String(after.candidates[0]?.confirm?.disabled ?? null)}`,
-      );
-      if (confirmable) registration = await pressConfirm();
-    }
-    record("registration", registration);
-    if (!registration.settled) {
-      const problem = problems.get("game/installation/discovery/confirm") ?? null;
-      if (problem !== null) return await refuse(browser, LAUNCH_STEPS.installation, { code: problem.code, cause: problem.cause, guardian });
-      const after = await page.evaluate(readInstallationPanel);
-      return await notMeasured(
-        browser,
-        "installation_registration_refused",
-        `the Host never published prerequisites: met within ${String(BUDGET.registrationMs)}ms per press (last prerequisites=${String(registration.state.prerequisites)}); the panel reads data-state=${JSON.stringify(after.dataState)}, status=${JSON.stringify(after.statusText)}, confirm=${JSON.stringify(after.candidates[0]?.confirm ?? null)}`,
-      );
-    }
-  } else {
-    say("the installation was already registered for this run root");
-    record("installation", { prerequisites: "met", detectedGame: state.detectedGame });
-  }
+  // ---- 1. the installation registration (`capture/installation-registration.cjs`) ----
+  const registration = await registerInstallation({
+    page,
+    say,
+    record,
+    problems,
+    waitForState,
+    budgets: { discoveryMs: BUDGET.discoveryMs, registrationMs: BUDGET.registrationMs },
+    state,
+  });
+  if (registration.kind === "not_measured") return await notMeasured(browser, registration.reason, registration.detail);
+  if (registration.kind === "refused")
+    return await refuse(browser, LAUNCH_STEPS.installation, { code: registration.code, cause: registration.cause, guardian });
 
   // ---- 2. the lifecycle activation ----
   state = await page.evaluate(readGameState);
@@ -1505,6 +1395,28 @@ async function hostAnswers(port) {
     say(`the lifecycle needs no activation: shape=${lifecycleShape} at ${describeGameState(state)} (generation ${String(state.instanceGeneration)})`);
   }
 
+  /*
+   * THE RUN'S OWN WORLD, CLAIMED BEFORE THE GAME IS ASKED TO ENTER ONE.
+   *
+   * The Player Host asks the Mod for one world name, and Stardew keeps that world in the machine's single
+   * save folder, so a run that enters whatever is already there enters the world its predecessors filled -
+   * and each run binds one more Cabin in it for good. `D:/gb-modcheck/frontend--r25` is that world at the end:
+   * seven Cabins, every one bound to an earlier run's companion, no free cabin pad left, and the panel
+   * answering 409 `stardew_player_host_cabin_missing` sixty times. A full farm is a truthful product answer;
+   * it is not a launch this kit can measure. So the saves carrying the name the PRODUCT staged are moved
+   * into this run root before the launch, and the world the game creates here is this run's own. Nothing is
+   * deleted, and a save of any other name is not touched (`capture/fixture-world.cjs`).
+   */
+  const fixtureWorld = prepareOwnWorld({ declaredDataRoot: launch.state?.declaredDataRoot, runRoot: launch.state?.runRoot });
+  record("fixture world", fixtureWorld);
+  say(describeOwnWorld(fixtureWorld));
+  if (fixtureWorld.kind === "refused")
+    return await notMeasured(
+      browser,
+      "fixture_world_not_prepared",
+      `this run could not claim a world of its own, so a launch it measured would be a launch into whatever world the previous run left behind: ${describeOwnWorld(fixtureWorld)}`,
+    );
+
   // ---- 3. the launch request. Everything above ran whatever the refusal below turns out to be. ----
   state = await page.evaluate(readGameState);
   const launchReady = await waitForControl("launch", BUDGET.controlMs);
@@ -1545,7 +1457,7 @@ async function hostAnswers(port) {
      * the instance word instead would wait out the whole budget on a state that cannot move for a
      * GameBuddy-launched host (`PRODUCT_GAPS` in `game-launch-verdict.mjs`).
      */
-    if (facts.chain.some((entry) => entry.name === CHAIN_STEPS.cabinBuilt)) break;
+    if (facts.chain.some((entry) => entry.name === CHAIN_STEPS.cabinReady)) break;
     const key = stateKey(launched);
     if (key !== unchangedKey) {
       unchangedKey = key;

@@ -14,6 +14,8 @@ const { randomBytes } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const { REPO_ROOT, reporter, connect, PAGE_HELPERS, activateSurface } = require("./common.cjs");
+const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
+const { registerInstallation } = require("./installation-registration.cjs");
 const {
   LAUNCH_PLATEAU_MS,
   LIFECYCLE_SHAPES,
@@ -33,6 +35,9 @@ const PLAYER_LINE = "你好，你在我旁边吗？";
 
 const BUDGET = Object.freeze({
   controlMs: 30_000,
+  /** The panel's own discovery scan, and the confirm press that registers its answer (`w-game-launch.cjs`). */
+  discoveryMs: 90_000,
+  registrationMs: 20_000,
   activationMs: 120_000,
   launchMs: 300_000,
   /** How long an instance that already exists gets to leave the state this driver found it in. */
@@ -269,12 +274,25 @@ async function activateAndLaunch({ page, say, record, guardian, problems, budget
     const reading = classifySilentLaunch({ guardian, detail: `the game state route answered ${String(state.status)}` });
     return { kind: reading.verdict === "failed" ? "failed" : "not_measured", reason: reading.reason, detail: reading.detail };
   }
-  if (state.prerequisites !== "met")
-    return {
-      kind: "not_measured",
-      reason: "game_installation_not_registered",
-      detail: `the run root holds no registered installation (prerequisites=${String(state.prerequisites)}); driver w-game-launch registers it, and this scenario starts after it`,
-    };
+  if (state.prerequisites !== "met") {
+    const registration = await registerInstallation({
+      page,
+      say,
+      record,
+      problems,
+      waitForState,
+      budgets: BUDGET,
+      state,
+    });
+    if (registration.kind === "not_measured")
+      return { kind: "not_measured", reason: registration.reason, detail: registration.detail };
+    if (registration.kind === "refused") {
+      const reading = classifyLaunchRefusal({ step: "installation", code: registration.code, cause: registration.cause, guardian });
+      return { kind: reading.verdict === "failed" ? "failed" : "not_measured", reason: reading.reason, detail: reading.detail };
+    }
+    // The registration is a mutation of this run root, so the state the rest of this function reads has moved.
+    state = await page.evaluate(readGameState);
+  }
 
   const shape = lifecycleShapeOf(state);
   if (shape === LIFECYCLE_SHAPES.unread)
@@ -317,6 +335,24 @@ async function activateAndLaunch({ page, say, record, guardian, problems, budget
   record("launch control", { settled: launchReady.settled, control: launchReady.facts.controls.launch });
   if (!launchReady.settled)
     return { kind: "not_measured", reason: "game_prerequisites_missing", detail: `no usable launch control within ${String(budget.controlMs)}ms at ${describeGameState(await page.evaluate(readGameState))}` };
+
+  /*
+   * THE RUN'S OWN WORLD, CLAIMED BEFORE THE GAME IS ASKED TO ENTER ONE (`capture/fixture-world.cjs`): the
+   * Player Host asks the Mod for one world name, Stardew keeps that world in the machine's single save
+   * folder, and every run that entered it left one more Cabin bound to its own companion in it - which is
+   * how `frontend--r25` met a farm with no free cabin pad and 409 `stardew_player_host_cabin_missing` on
+   * every cabin read. The saves of that name move into this run root; a save of any other name does not.
+   */
+  const runLaunch = readLaunchState();
+  const fixtureWorld = prepareOwnWorld({ declaredDataRoot: runLaunch.state?.declaredDataRoot, runRoot: runLaunch.state?.runRoot });
+  record("fixture world", fixtureWorld);
+  say(describeOwnWorld(fixtureWorld));
+  if (fixtureWorld.kind === "refused")
+    return {
+      kind: "not_measured",
+      reason: "fixture_world_not_prepared",
+      detail: `this run could not claim a world of its own, so a launch it measured would be a launch into whatever world the previous run left behind: ${describeOwnWorld(fixtureWorld)}`,
+    };
 
   const began = Date.now();
   await page.locator('[data-testid="game-launch"]').first().click();

@@ -22,11 +22,68 @@
  *                   `{ kind: 'not_measured', reason: 'game_lifecycle_not_activated' }` for a page whose state is
  *                   `instantiated` at instance=launching/attachment=none, and the assertion that fails names
  *                   `instance_status_never_running`. The quoted red/green readings are in `.tmp/lane-driverstate.md`.
+ * red-proof: inject  the world claim removed from in front of the launch press (the driver pressing
+ *                   `game-launch` without claiming its world): `✖ a lifecycle the product has not activated is
+ *                   still activated through its own control` fails, because the launch then enters whatever
+ *                   world the previous run left behind and the step that says so is gone.
  */
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { activateAndLaunch } from "./game-surface-states.cjs";
+
+/**
+ * A run whose world this process claims: the launch state every driver reads, the staged `WorldCreation`
+ * request the composer writes, and one save folder carrying the world name the product asked for.
+ *
+ * The launch is the moment a run decides which world it enters (`capture/fixture-world.cjs`), so the shape a
+ * driver sees here is the real one and the third test below can hold the claim against the press order.
+ */
+function runWorld() {
+  const root = mkdtempSync(join(tmpdir(), "game-surface-states-"));
+  const appData = join(root, "appdata");
+  const saves = join(appData, "StardewValley", "Saves", "GameBuddyFarm_451234657");
+  const mods = join(
+    root,
+    "run",
+    "GameBuddy",
+    "data",
+    "stardew-private-bootstrap",
+    "b1",
+    "player-host",
+    "Mods",
+    "GameBuddy",
+  );
+  const stateDirectory = join(root, "run", "state");
+  mkdirSync(saves, { recursive: true });
+  mkdirSync(mods, { recursive: true });
+  mkdirSync(stateDirectory, { recursive: true });
+  writeFileSync(join(saves, "SaveGameInfo"), "<Farmer><farmName>GameBuddy Farm</farmName></Farmer>", "utf8");
+  writeFileSync(join(saves, "GameBuddyFarm_451234657"), "<SaveGame />", "utf8");
+  writeFileSync(
+    join(mods, "config.json"),
+    JSON.stringify({ WorldCreation: { Enable: true, FarmName: "GameBuddy Farm" } }),
+    "utf8",
+  );
+  const launchState = join(stateDirectory, "launch.json");
+  writeFileSync(
+    launchState,
+    JSON.stringify({
+      kind: "mounted",
+      runRoot: join(root, "run"),
+      declaredDataRoot: join(root, "run", "GameBuddy", "data"),
+    }),
+    "utf8",
+  );
+  process.env.APPDATA = appData;
+  process.env.GB_SHOTS_LAUNCH_STATE = launchState;
+  return { root, appData, runRoot: join(root, "run"), launchState };
+}
+
+const RUN_WORLD = runWorld();
 
 /** A control the product has drawn: visible, pressable, and named the way the panel names it. */
 const DRAWN = (name) => Object.freeze({ disabled: false, visible: true, name });
@@ -63,6 +120,8 @@ function scriptedGamePage({ state, controls = NO_CONTROLS, onPress = () => ({}) 
       if (pageFunction.name === "readGameState") return { ...page.current };
       if (pageFunction.name === "readGameFacts")
         return { surfacePresent: true, state: null, facts: {}, controls: page.controls };
+      if (pageFunction.name === "readInstallationPanel")
+        return page.installationPanel ?? { present: false, surfacePresent: true, candidates: [] };
       throw new Error(`unexpected_evaluate:${String(pageFunction.name)}`);
     },
     locator(selector) {
@@ -135,6 +194,24 @@ test("an instance that is already up is used as it is: no activation, and no sec
   assert.deepEqual(page.pressed, [], "pressing launch here would ask the product for a second Player Host");
 });
 
+test("a run root with no registered installation registers it rather than refusing the scenario", async () => {
+  // The shape a lifecycle driver's OWN run meets: `frontend--r24` measured x, y and z as
+  // `game_process_not_found` because they ran behind driver W's launch, and a run that starts one of them
+  // alone has no registration at all - the refusal that made one-driver-per-run impossible. The press and
+  // its budgets live in `capture/installation-registration.cjs`; what this holds is that the state driver
+  // reaches it instead of naming a prerequisite nobody offered it.
+  const page = scriptedGamePage({ state: { ...INSTALLED, prerequisites: "none" } });
+  const { reading, steps } = await drive(page);
+  assert.equal(reading.kind, "not_measured");
+  assert.equal(reading.reason, "no_installation_panel", "the panel's own missing prerequisite, not a scenario refusal");
+  assert.equal(
+    steps.some((entry) => entry.step === "installation panel"),
+    true,
+    "the registration step ran and recorded what the panel said",
+  );
+  assert.deepEqual(page.pressed, [], "nothing is pressed when there is no control to press");
+});
+
 test("a lifecycle the product has not activated is still activated through its own control", async () => {
   // The shape the probe was written for: nothing running, no generation, and the activate control drawn.
   const page = scriptedGamePage({
@@ -150,13 +227,22 @@ test("a lifecycle the product has not activated is still activated through its o
             state: { ...INSTALLED, instanceStatus: "running", attachmentStatus: "attached", instanceGeneration: 1 },
           },
   });
-  const { reading } = await drive(page);
+  const { reading, steps } = await drive(page);
   assert.equal(reading.kind, "ready");
   assert.deepEqual(
     page.pressed,
     ["game-activate", "game-launch"],
     "the two staging presses, in the product's own order",
   );
+  // The launch press happens only after this run has claimed the world it is about to enter: a run that
+  // pressed first would enter the world its predecessors filled, which is the r25 refusal.
+  const claim = steps.find((entry) => entry.step === "fixture world");
+  assert.equal(claim?.value.kind, "moved");
+  assert.deepEqual(
+    claim.value.moved.map((entry) => entry.slot),
+    ["GameBuddyFarm_451234657"],
+  );
+  assert.equal(existsSync(join(RUN_WORLD.runRoot, "fixture-worlds", "GameBuddyFarm_451234657", "SaveGameInfo")), true);
 });
 
 test("a lifecycle with no generational activation and no control is still named as never activated", async () => {

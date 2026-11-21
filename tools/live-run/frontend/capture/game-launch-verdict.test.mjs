@@ -327,7 +327,7 @@ test("the chain prints every rung, the elapsed each took, and every rung it neve
     { name: CHAIN_STEPS.guardianArmed, atMs: 5_500, proof: "this run's own broker started the Guardian" },
     { name: CHAIN_STEPS.processStarted, atMs: 9_000, proof: "StardewModdingAPI pid 1856" },
     { name: CHAIN_STEPS.saveLoaded, atMs: 9_400, proof: "loaded save 'GameBuddyFarm_451234657'" },
-    { name: CHAIN_STEPS.cabinBuilt, atMs: 13_000, proof: "cabins_now=1" },
+    { name: CHAIN_STEPS.cabinReady, atMs: 13_000, proof: "cabins_now=1" },
     { name: CHAIN_STEPS.cabinReadAuto, atMs: 14_000, proof: "7 request(s), none pressed by this driver" },
     { name: CHAIN_STEPS.cabinConfirm, atMs: 74_000, proof: "the confirm route answered HTTP 409" },
   ];

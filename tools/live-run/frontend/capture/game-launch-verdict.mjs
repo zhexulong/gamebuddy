@@ -439,13 +439,20 @@ function describeGameLog(game) {
  * are different facts: the answer can be a refusal (a lapsed choice, an uncertain handoff) while the
  * game took the choice, and a reader who only saw "cabin confirm" could not tell the two apart. The
  * proof is the Mod's own stamp for that confirmation, so the rung carries the press-to-stamp latency.
+ *
+ * `cabin ready` is one rung with two proofs, because the world gives the companion a Cabin in two ways and
+ * both are the fact the next rung needs: the Mod BUILT one on a free cabin pad (`BuiltCabin`, a world that
+ * had cabins and no empty one), or the world's own starting Cabin was already there and the Mod released the
+ * unclaimed native slot inside it (`UnlockedUnclaimedCabin`, which is what a freshly created world answers).
+ * Calling the rung "cabin built" reported the second case as a missing rung - measured 2026-11-21, when the
+ * fixture started creating its own world per run.
  */
 export const CHAIN_STEPS = Object.freeze({
   launchAdmitted: "launch admitted",
   guardianArmed: "guardian armed",
   processStarted: "process started",
   saveLoaded: "save loaded",
-  cabinBuilt: "cabin built",
+  cabinReady: "cabin ready",
   cabinReadAuto: "cabin read(auto)",
   cabinReadPressed: "cabin read(pressed)",
   cabinConfirm: "cabin confirm",
@@ -458,7 +465,7 @@ export const CHAIN_RUNGS = Object.freeze([
   Object.freeze([CHAIN_STEPS.guardianArmed]),
   Object.freeze([CHAIN_STEPS.processStarted]),
   Object.freeze([CHAIN_STEPS.saveLoaded]),
-  Object.freeze([CHAIN_STEPS.cabinBuilt]),
+  Object.freeze([CHAIN_STEPS.cabinReady]),
   Object.freeze([CHAIN_STEPS.cabinReadAuto, CHAIN_STEPS.cabinReadPressed]),
   Object.freeze([CHAIN_STEPS.cabinConfirm]),
   Object.freeze([CHAIN_STEPS.cabinConfirmAccepted]),
