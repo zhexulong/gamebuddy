@@ -394,6 +394,8 @@ export function composeWorldState(
   if (environment !== "") parts.push(environment);
   const health = formatOwnHealth(world);
   if (health !== "") parts.push(health);
+  const money = formatOwnMoney(world);
+  if (money !== "") parts.push(money);
   const body = formatBodyState(world, true);
   if (body !== "") parts.push(body);
   const ripeCrops = formatRipeCrops(world, true);
@@ -809,6 +811,29 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
  * an unreadable reading is silence, never a healthy default.
  * </p>
  */
+/**
+ * Her own wallet, in the shape her health and stamina are written in.
+ *
+ * <p>
+ * WHY IT IS HERE (measured 2026-11-21, `round87b`). The wire published no money field at all, so every seed-shortage
+ * fact ended in `affordability_unknown` and nothing could compare a price with a balance: `round87b`'s `Day` 3 sent
+ * `shop_purchase({expectedQualifiedItemId: "(O)378", quantity: 15})` at 75g a unit with 35g in hand, and the refusal
+ * only arrived from the game (`insufficient_money ... price=75; available=35; short=40`). `protocol.ts` now publishes
+ * `money`, which a field renders or an exemption declares - and a published field no renderer reads is not a fact she
+ * has.
+ * </p>
+ *
+ * <p>
+ * ABSENT PRINTS NOTHING: an unread wallet is silence, never `0` and never "she can afford it", the same rule
+ * `formatOwnHealth` follows for hit points and `formatGameStamina` for stamina.
+ * </p>
+ */
+function formatOwnMoney(world: Snapshot): string {
+  const money = world.money;
+  if (typeof money !== "number" || !Number.isSafeInteger(money) || money < 0) return "";
+  return `金币: ${String(money)}`;
+}
+
 function formatOwnHealth(world: Snapshot): string {
   const health = world.health;
   if (typeof health !== "number" || !Number.isFinite(health)) return "";
