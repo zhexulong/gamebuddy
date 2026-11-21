@@ -654,11 +654,20 @@ function describeCabinOffers(offers) {
   return `${String(windows.length)} cabin read(s) in this run carried a live offer; the last ${String(quoted.length)}: ${quoted.join(" then ")}; every window was ${String(Math.min(...all))}..${String(Math.max(...all))}ms`;
 }
 
-/** One answer on the confirm route, as a reader needs it: the status and the game's own refusal code. */
+/**
+ * One answer on the confirm route, as a reader needs it: the status, the game's own refusal code, and the
+ * bounded cause the Host projected under it.
+ *
+ * The cause is the half that tells the faults apart - `stardew_manifest_handoff_uncertain` stands for a cabin
+ * publication that may or may not have happened, a join that ran out of its budget, and every refusal the
+ * composer behind them names - and the wire already carries which one (`projectedLifecycleCause`). Until this
+ * printed it, three lanes read the same 409 with no way to say which had fired.
+ */
 function describeConfirmAnswer(answer) {
   if (answer === null || answer === undefined) return "nothing";
   const code = typeof answer.code === "string" && answer.code.length > 0 ? ` ${answer.code}` : "";
-  return `HTTP ${String(answer.status)}${code}`;
+  const cause = typeof answer.cause === "string" && answer.cause.length > 0 ? ` (cause: ${answer.cause})` : "";
+  return `HTTP ${String(answer.status)}${code}${cause}`;
 }
 
 /** The tuple a launch wait is waiting to see move: a change in any of these is a step that happened. */

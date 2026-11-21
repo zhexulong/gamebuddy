@@ -32,7 +32,7 @@
     "tools/lib/harness-conformance.mjs": 1839,
     "tools/lib/stardew-native-local-player-fixture.mjs": 1742,
     "tools/live-run/frontend/capture/v-injection-claims.cjs": 999,
-    "tools/live-run/frontend/capture/w-game-launch.cjs": 1930,
+    "tools/live-run/frontend/capture/w-game-launch.cjs": 1939,
     "host/src/stardew-completion-contracts.ts": 5013,
     "gates/meta/check-prelive-gate-registry.mjs": 1703,
     "tools/live-run/round-verdict.mjs": 1780
