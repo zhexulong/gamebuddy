@@ -525,6 +525,23 @@ async function conclude({ browser, say, flush, driver, scenario, reading, facts,
   process.exit(reading.verdict === "failed" ? 1 : 0);
 }
 
+/*
+ * The moment from which a game process counts as part of THIS run's launch.
+ *
+ * The boundary is the run's own Host child (`launch.json` `childStartTime`), never only the driver's start: a
+ * driver that runs behind another's launch finds the instance already up, `settleInFlightInstance` reports it
+ * `ready` (it is the game this RUN launched), and a boundary of "after I started" then finds none of it -
+ * measured on `frontend--r24`, which answered `game_process_not_found` with 371 processes examined while the
+ * run's own attached game was alive. `sinceWhat` travels with the answer so a reader can tell which boundary
+ * was used; a launch state with no readable `childStartTime` keeps the driver's own start rather than inventing
+ * one.
+ */
+function runBoundary({ driverStartedMs, childStartTime }) {
+  const childStartMs = Date.parse(String(childStartTime ?? ""));
+  if (!Number.isFinite(childStartMs)) return Object.freeze({ sinceMs: driverStartedMs, sinceWhat: "driver_start" });
+  return Object.freeze({ sinceMs: Math.min(driverStartedMs, childStartMs), sinceWhat: "run_host_child" });
+}
+
 /**
  * The step recorder every driver in this family writes through: a step is a NAME and the value that proves it,
  * kept in `facts.steps` and printed as it happens. One spelling, because the report a reader opens after a run
@@ -607,10 +624,13 @@ async function startStateDriver({ driver, scenario, reportFile }) {
    * session from ours, and the run's Host child (`launch.json` `childStartTime`) is later than anything the
    * run did not create, so the target stays a process this run launched and never one found by image name.
    */
-  const launchChildStartMs = Date.parse(readLaunchState().state?.childStartTime ?? "");
-  const sinceMs = Number.isFinite(launchChildStartMs) ? Math.min(started, launchChildStartMs) : started;
-  const pids = gamePids({ gameDir, sinceMs });
-  record("game pids", { sinceMs, sinceWhat: Number.isFinite(launchChildStartMs) ? "run_host_child" : "driver_start", pids });
+  const launchState = readLaunchState();
+  const boundary = runBoundary({
+    driverStartedMs: started,
+    childStartTime: launchState.state?.childStartTime ?? null,
+  });
+  const pids = gamePids({ gameDir, sinceMs: boundary.sinceMs });
+  record("game pids", { sinceMs: boundary.sinceMs, sinceWhat: boundary.sinceWhat, pids });
   const target = pids.client[0] ?? pids.loader[0] ?? null;
   if (target === null)
     return await notMeasured(
@@ -694,6 +714,7 @@ function attachProblems(page) {
 
 module.exports = {
   PLAYER_LINE,
+  runBoundary,
   BUDGET,
   GAME_STATES_PREFIX,
   sleep,

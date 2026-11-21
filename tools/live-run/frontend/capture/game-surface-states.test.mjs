@@ -33,7 +33,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { activateAndLaunch } from "./game-surface-states.cjs";
+import { activateAndLaunch, runBoundary } from "./game-surface-states.cjs";
 
 /**
  * A run whose world this process claims: the launch state every driver reads, the staged `WorldCreation`
@@ -264,4 +264,43 @@ test("a Host that holds no reading of the game asks for the reread step, not the
   assert.equal(reading.reason, "game_state_not_read");
   assert.match(reading.detail, /instance=unread/u);
   assert.deepEqual(page.pressed, []);
+});
+
+/*
+ * `5ac1ab92`'s contract: a lifecycle driver's game is the one THIS RUN launched, not only the one this driver
+ * started.
+ *
+ * The red this replaces, measured 2026-11-21 on `frontend--r24`: driver x ran behind driver w's launch, the
+ * instance was already up (`settleInFlightInstance` reported it `ready`, correctly - it is this run's game), and
+ * the driver then looked for a process created after ITS OWN start, which by construction cannot exist:
+ *
+ *   GAME-STATES x: not_measured game_process_not_found
+ *     - no process under D:\Steam\steamapps\common\Stardew Valley was created by this run (371 processes examined)
+ *
+ * while the run's own attached game was alive. The boundary is the run's Host child, and the reading says which
+ * boundary it used.
+ */
+test("the game boundary is the run's Host child, and a launch state without one keeps the driver's start", () => {
+  const hostChild = runBoundary({
+    driverStartedMs: Date.parse("2026-11-21T12:00:00.000Z"),
+    childStartTime: "2026-11-21T11:52:00.000Z",
+  });
+  assert.equal(hostChild.sinceWhat, "run_host_child");
+  assert.equal(
+    hostChild.sinceMs,
+    Date.parse("2026-11-21T11:52:00.000Z"),
+    "the boundary must reach back to the Host child, so a game another driver launched is still this run's",
+  );
+  // A driver that started BEFORE the Host child: the earlier of the two wins, so nothing this run caused is lost.
+  const driverFirst = runBoundary({
+    driverStartedMs: Date.parse("2026-11-21T11:50:00.000Z"),
+    childStartTime: "2026-11-21T11:52:00.000Z",
+  });
+  assert.equal(driverFirst.sinceMs, Date.parse("2026-11-21T11:50:00.000Z"));
+  // No readable child start: the driver's own start, named as such rather than silently presented as the run's.
+  for (const childStartTime of [null, undefined, "", "not-a-time"]) {
+    const fallback = runBoundary({ driverStartedMs: 777, childStartTime });
+    assert.equal(fallback.sinceWhat, "driver_start", `childStartTime=${JSON.stringify(childStartTime)}`);
+    assert.equal(fallback.sinceMs, 777);
+  }
 });
