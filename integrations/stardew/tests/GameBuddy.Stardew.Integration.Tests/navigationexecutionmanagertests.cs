@@ -150,6 +150,49 @@ public sealed class NavigationExecutionManagerTests
         harness.Manager.IsBodySettled.Should().BeTrue();
     }
 
+    /// <summary>
+    /// A REFUSED SELECTOR NAMES THE FACT THAT REFUSED IT. Measured `round85` (`plan_323`): the receipt read
+    /// `destination_selector_stale` with `detail=destination` - the word the admission published whenever a ref
+    /// resolution carried no label - for a `dr1_` handle copied out of an observation six minutes earlier, so neither
+    /// the cause, the handle's age, nor the next step was in the artifact, and the same handle was planned again.
+    /// </summary>
+    [Fact]
+    public void StaleDestinationRef_NamesItsCauseItsAgeAndItsNextStep()
+    {
+        var references = new NavigationReferenceStore();
+        // Issued six minutes before the request: past the store's own five-minute lifetime, which is what `plan_323` did.
+        var issuedAt = new NavigationBindingContext("runtime_01", Scope, "generation_01", 1, DateTimeOffset.UtcNow.AddMinutes(-6));
+        string staleRef = references.IssueDestination(issuedAt, new NavigationDestinationBinding("stardew", "Mine", "generation_01", 1));
+        var harness = new ManagerHarness(NotAtFarm(), customRefStore: references);
+
+        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_stale", new NavigationDestinationSelector("ref", null, staleRef), Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("destination_selector_stale");
+        receipt.Evidence.Should()
+            .Contain("selector=ref;stale=expired;handle_age_ms=")
+            .And.Contain("handle_lifetime_ms=300000")
+            .And.Contain("next_step=observe_the_published_destinations");
+    }
+
+    /// <summary>
+    /// The three conditions the store tells apart must not arrive as one word: `round85`'s stale handle was an expiry,
+    /// and a destination set that moved is a different thing for the caller to do about it.
+    /// </summary>
+    [Fact]
+    public void AStaleRefFromAnotherDestinationGeneration_NamesTheGenerationNotTheClock()
+    {
+        var references = new NavigationReferenceStore();
+        var issuedAt = new NavigationBindingContext("runtime_01", Scope, "generation_old", 1, DateTimeOffset.UtcNow);
+        string staleRef = references.IssueDestination(issuedAt, new NavigationDestinationBinding("stardew", "Mine", "generation_old", 1));
+        var harness = new ManagerHarness(NotAtFarm(), customRefStore: references);
+
+        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_stale_generation", new NavigationDestinationSelector("ref", null, staleRef), Deadline());
+
+        receipt.ReasonCode.Should().Be("destination_selector_stale");
+        receipt.Evidence.Should().Contain("stale=source_generation_changed").And.NotContain("handle_age_ms");
+    }
+
     [Fact]
     public void NullRuntime_FailsClosedWithoutActiveExecution()
     {

@@ -83,13 +83,14 @@ public sealed class WorldMapProjectionTests
         west.Destination!.Kind.Should().Be("ref");
         west.Destination.Label.Should().BeNull();
         west.Destination.Ref.Should().MatchRegex("^dr1_[A-Za-z0-9_-]{22}$");
-        store.TryResolveDestination(west.Destination, Context, out NavigationDestinationBinding? binding, out string reason)
+        store.TryResolveDestination(west.Destination, Context, out NavigationDestinationBinding? binding, out string reason, out _)
             .Should().BeTrue(reason);
         binding.Should().Be(new NavigationDestinationBinding("stardew", "cabin_west", "generation_01", 1));
 
-        store.TryResolveDestination(west.Destination!, Context with { SourceGeneration = "generation_02" }, out _, out reason)
+        store.TryResolveDestination(west.Destination!, Context with { SourceGeneration = "generation_02" }, out _, out reason, out string? detail)
             .Should().BeFalse();
-        reason.Should().Be("destination_ref_stale");
+        reason.Should().Be("destination_ref_source_generation_changed");
+        detail.Should().Be("stale=source_generation_changed");
     }
 
     [Fact]

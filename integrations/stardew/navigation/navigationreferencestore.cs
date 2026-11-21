@@ -37,7 +37,7 @@ internal sealed class NavigationReferenceStore
     internal bool TryResolveNode(string nodeRef, NavigationBindingContext context, out NavigationNodeBinding? binding, out string reasonCode)
     {
         binding = null;
-        if (!TryResolve(nodeRef, "nr1_", context, out Entry? entry, out reasonCode)) return false;
+        if (!TryResolve(nodeRef, "nr1_", context, out Entry? entry, out reasonCode, out _)) return false;
         binding = new NavigationNodeBinding(entry!.ContentOwner, entry.CanonicalDestinationIdentity, entry.SourceGeneration, entry.ObservationSequence);
         return true;
     }
@@ -45,20 +45,26 @@ internal sealed class NavigationReferenceStore
     internal bool TryResolveCursor(string cursor, NavigationBindingContext context, out NavigationCursorBinding? binding, out string reasonCode)
     {
         binding = null;
-        if (!TryResolve(cursor, "wc1_", context, out Entry? entry, out reasonCode)) return false;
+        if (!TryResolve(cursor, "wc1_", context, out Entry? entry, out reasonCode, out _)) return false;
         binding = new NavigationCursorBinding(entry!.ContentOwner, entry.CanonicalDestinationIdentity, entry.SourceGeneration, entry.ObservationSequence, entry.FrontierSnapshot!);
         return true;
     }
 
-    internal bool TryResolveDestination(NavigationDestinationSelector selector, NavigationBindingContext context, out NavigationDestinationBinding? binding, out string reasonCode)
+    internal bool TryResolveDestination(
+        NavigationDestinationSelector selector,
+        NavigationBindingContext context,
+        out NavigationDestinationBinding? binding,
+        out string reasonCode,
+        out string? failureDetail)
     {
         binding = null;
         if (selector.Kind != "ref" || selector.Label is not null)
         {
             reasonCode = "destination_ref_invalid";
+            failureDetail = "selector=ref;handle=none";
             return false;
         }
-        if (!TryResolve(selector.Ref, "dr1_", context, out Entry? entry, out reasonCode))
+        if (!TryResolve(selector.Ref, "dr1_", context, out Entry? entry, out reasonCode, out failureDetail))
             return false;
         binding = new NavigationDestinationBinding(entry!.ContentOwner, entry.CanonicalDestinationIdentity, entry.SourceGeneration, entry.ObservationSequence);
         return true;
@@ -93,21 +99,62 @@ internal sealed class NavigationReferenceStore
             canonicalDestinationIdentity,
             sourceGeneration,
             observationSequence,
+            context.Now,
             context.Now.Add(HandleLifetime),
             frontierSnapshot));
         return handle;
     }
 
-    private bool TryResolve(string? handle, string expectedPrefix, NavigationBindingContext context, out Entry? entry, out string reasonCode)
+    /// <summary>
+    /// The handle's own answer: the binding, or the ONE condition that refused it.
+    ///
+    /// <para>
+    /// A DESTINATION HANDLE'S REFUSAL IS SPLIT INTO ONE CODE PER FACT. It used to be one `destination_ref_stale` for
+    /// four conditions - the five-minute lifetime passed, another runtime instance, another scope, another destination
+    /// generation - and the receipt above it said only `destination_selector_stale`, so `round85`'s `plan_323` could not
+    /// tell a handle it had outlived from a destination set that had moved. Node and cursor handles keep their single
+    /// code: no receipt publishes them.
+    /// </para>
+    /// </summary>
+    private bool TryResolve(
+        string? handle,
+        string expectedPrefix,
+        NavigationBindingContext context,
+        out Entry? entry,
+        out string reasonCode,
+        out string? failureDetail)
     {
         entry = null;
+        failureDetail = null;
         if (!IsWellFormedHandle(handle, expectedPrefix)) { reasonCode = InvalidReason(expectedPrefix); return false; }
-        if (this.closed) { reasonCode = StaleReason(expectedPrefix); return false; }
+        if (this.closed) { reasonCode = StaleReason(expectedPrefix, "store_closed"); failureDetail = "stale=store_closed"; return false; }
         if (!this.entries.TryGetValue(handle!, out Entry? found)) { reasonCode = InvalidReason(expectedPrefix); return false; }
         if (found.Prefix != expectedPrefix) { reasonCode = InvalidReason(expectedPrefix); return false; }
-        if (context.Now >= found.ExpiresAt || context.RuntimeInstanceId != found.RuntimeInstanceId || !Equals(context.Scope, found.Scope) || context.SourceGeneration != found.SourceGeneration)
+        if (context.Now >= found.ExpiresAt)
         {
-            reasonCode = StaleReason(expectedPrefix);
+            reasonCode = StaleReason(expectedPrefix, "expired");
+            // The two numbers the caller needs to see it for itself: how long ago the handle was issued, and the lifetime
+            // it outlived. Nothing here is a guess - both come out of the entry the lookup just found.
+            failureDetail =
+                $"stale=expired;handle_age_ms={(long)(context.Now - found.IssuedAt).TotalMilliseconds};handle_lifetime_ms={(long)HandleLifetime.TotalMilliseconds}";
+            return false;
+        }
+        if (context.RuntimeInstanceId != found.RuntimeInstanceId)
+        {
+            reasonCode = StaleReason(expectedPrefix, "runtime_instance_changed");
+            failureDetail = "stale=runtime_instance_changed";
+            return false;
+        }
+        if (!Equals(context.Scope, found.Scope))
+        {
+            reasonCode = StaleReason(expectedPrefix, "scope_changed");
+            failureDetail = "stale=scope_changed";
+            return false;
+        }
+        if (context.SourceGeneration != found.SourceGeneration)
+        {
+            reasonCode = StaleReason(expectedPrefix, "source_generation_changed");
+            failureDetail = "stale=source_generation_changed";
             return false;
         }
         entry = found;
@@ -116,7 +163,7 @@ internal sealed class NavigationReferenceStore
     }
 
     private static string InvalidReason(string prefix) => prefix == "wc1_" ? "world_map_cursor_invalid" : prefix == "nr1_" ? "world_map_node_invalid" : "destination_ref_invalid";
-    private static string StaleReason(string prefix) => prefix == "wc1_" ? "world_map_cursor_stale" : prefix == "nr1_" ? "world_map_node_stale" : "destination_ref_stale";
+    private static string StaleReason(string prefix, string cause) => prefix == "wc1_" ? "world_map_cursor_stale" : prefix == "nr1_" ? "world_map_node_stale" : $"destination_ref_{cause}";
 
     private sealed record Entry(
         string Prefix,
@@ -126,6 +173,7 @@ internal sealed class NavigationReferenceStore
         string CanonicalDestinationIdentity,
         string SourceGeneration,
         long ObservationSequence,
+        DateTimeOffset IssuedAt,
         DateTimeOffset ExpiresAt,
         string? FrontierSnapshot
     );

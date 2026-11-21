@@ -56,7 +56,8 @@ internal sealed class AcceptedNavigationExecution
         DerivedDestinationSet? set = runtime.SetProvider();
         if (set is null)
             return new NavigationAdmission(runtime, new NavigationDestinationResolution(
-                null, null, null, "destination_access_indeterminate"));
+                null, null, null, "destination_access_indeterminate")
+            { FailureDetail = "destination_set=unavailable" });
 
         NavigationBindingContext context = new(
             runtime.RuntimeInstanceId,
@@ -110,7 +111,8 @@ internal sealed class AcceptedNavigationExecution
     internal NavigationPlan PlanNextRouteLeg()
     {
         NavigationDestinationResolution resolution = this.acceptedResolution
-            ?? new NavigationDestinationResolution(null, null, null, "navigation_admission_required");
+            ?? new NavigationDestinationResolution(null, null, null, "navigation_admission_required")
+            { FailureDetail = "admission=none" };
         NavigationDestinationBinding? binding = resolution.Binding;
         if (binding is null)
             return PlanWithoutLiveWorld(resolution);
@@ -174,8 +176,8 @@ internal sealed class AcceptedNavigationExecution
     {
         if (selector.Kind == "ref")
         {
-            if (!references.TryResolveDestination(selector, context, out NavigationDestinationBinding? binding, out string reasonCode))
-                return new NavigationDestinationResolution(null, null, null, MapRefFailure(reasonCode));
+            if (!references.TryResolveDestination(selector, context, out NavigationDestinationBinding? binding, out string reasonCode, out string? failureDetail))
+                return new NavigationDestinationResolution(null, null, null, MapRefFailure(reasonCode)) { FailureDetail = failureDetail };
             string? label = set.SearchDestinations.FirstOrDefault(
                 destination => destination.CanonicalIdentity == binding!.CanonicalDestinationIdentity)?.CanonicalLabel;
             return new NavigationDestinationResolution(null, binding!, label, null);
@@ -189,7 +191,8 @@ internal sealed class AcceptedNavigationExecution
         // did not. Nothing is bound that the directory does not declare, and nothing fuzzy is bound at all.
         string normalized = DestinationSearchText.Normalize(selector.Label);
         if (normalized.Length == 0)
-            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid");
+            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid")
+            { FailureDetail = "label=blank" };
 
         // Label selectors must be provably unique in the current generation.
         NavigationDestination[] matches = set.SearchDestinations
@@ -198,9 +201,11 @@ internal sealed class AcceptedNavigationExecution
             .Select(group => group.First())
             .ToArray();
         if (matches.Length == 0)
-            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid");
+            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_invalid")
+            { FailureDetail = "matches=0" };
         if (matches.Length != 1)
-            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_ambiguous");
+            return new NavigationDestinationResolution(null, null, selector.Label, "destination_selector_ambiguous")
+            { FailureDetail = $"matches={matches.Length}" };
         NavigationDestination match = matches[0];
         return new NavigationDestinationResolution(
             null,
@@ -217,10 +222,18 @@ internal sealed class AcceptedNavigationExecution
         || (destination.ExplicitAliases ?? Array.Empty<string>())
             .Any(alias => string.Equals(DestinationSearchText.Normalize(alias), normalized, StringComparison.Ordinal));
 
-    private static string MapRefFailure(string reason) => reason switch
-    {
-        "destination_ref_stale" => "destination_selector_stale",
-        "destination_ref_invalid" => "destination_selector_invalid",
-        _ => "destination_selector_invalid",
-    };
+    /// <summary>
+    /// The public code a failed reference lookup is published under, and the ONE vocabulary the Host's remedies key on.
+    ///
+    /// <para>
+    /// The store splits a stale destination handle into one code per condition, because a reader has to be able to tell
+    /// an outlived handle from a destination set that moved. A RECEIPT cannot carry four codes: `destination_selector_stale`
+    /// is what the Host knows and what the caller's next step is keyed on, so every stale cause maps here and the cause
+    /// itself travels in <see cref="NavigationDestinationResolution.FailureDetail"/>.
+    /// </para>
+    /// </summary>
+    private static string MapRefFailure(string reason) =>
+        reason == "destination_ref_invalid" ? "destination_selector_invalid"
+        : reason.StartsWith("destination_ref_", StringComparison.Ordinal) ? "destination_selector_stale"
+        : "destination_selector_invalid";
 }

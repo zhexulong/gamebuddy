@@ -13,6 +13,8 @@ import {
   readExperimentalStardewActionIds,
 } from "./stardew-published-action-registry.mjs";
 import {
+  CARRIED_ITEM_ACTIONS,
+  CARRIED_ITEM_SPEND_ACTIONS,
   judgesAPublishedFact,
   judgeTaskPurpose,
   purposeReceipts,
@@ -929,6 +931,146 @@ test("mine_ladder_to_depth: the level's own exit ladder is a proven fact, so the
   const left = judgeTaskPurpose("mine_ladder_to_depth", [ENTERED_MINE, LEFT_BY_LADDER]);
   assert.equal(left.state, "achieved", "entering a level and then leaving by its own ladder is the purpose");
   assert.match(left.purpose ?? "", /worked deeper/);
+});
+
+/**
+ * THE DECLARATION GATE: `a_new_action_that_proves_a_pack_count_is_declared:<actionId>`.
+ *
+ * <p>
+ * `sweep_carried_things` stopped being a gap because its purpose is two receipts, and the USING half of it is the
+ * population `CARRIED_ITEM_USE_ACTIONS`. A list written inside that criterion would be the fourth hand-maintained table
+ * in this file and the first to drift silently: a new action that spends what she carries would simply be invisible to
+ * the day. So the population is derived from the two authorities that already answer it - the published execution
+ * surface (`action-surface.v1.json`) crossed with the Host's completion contract (`stardew-completion-contracts.ts`),
+ * which is where "this receipt can carry a pack count" is DECLARED - and every member has to have a row.
+ * </p>
+ * <p>
+ * red-proof: drop a row (`plant_seed`) and the gate fails naming it; declare an unpublished action and it fails naming
+ * that; declare an action outside the population as one that ADDS to the pack and it fails, because no artifact proves
+ * a direction for it (tools/lib/task-purpose.test.mjs)
+ * </p>
+ */
+test("a_new_action_that_proves_a_pack_count_is_declared", async (t) => {
+  const published = new Set(await readAllPublishedExecutionStardewActionIds());
+  const { contracts } = readHostCompletionContracts(readFileSync(HOST_COMPLETION_CONTRACT, "utf8"));
+  // The authority's own statement of "this action's receipt can say what the pack held": either the count of the item it
+  // acted on, or the pack-wide occupied-slot / unit counts two actions publish instead.
+  const provesAPackCount = [...published]
+    .filter((actionId) => {
+      const contract = contracts.get(actionId);
+      if (contract === undefined || contract.keys.length === 0) return false;
+      const keys = new Set(contract.keys);
+      if (keys.has("inventory_before") && keys.has("inventory_after")) return true;
+      return [...keys].some((key) => key.startsWith("inventory_slots") || key.startsWith("inventory_units"));
+    })
+    .sort();
+  const declared = Object.keys(CARRIED_ITEM_ACTIONS).sort();
+  const findings = [];
+  for (const actionId of provesAPackCount)
+    if (!(actionId in CARRIED_ITEM_ACTIONS))
+      findings.push(
+        `undeclared:${actionId} - its receipt can carry a pack count and no row in CARRIED_ITEM_ACTIONS says which way it moves`,
+      );
+  for (const actionId of declared) {
+    if (!published.has(actionId)) findings.push(`not_published:${actionId} - no run can dispatch it`);
+    const row = CARRIED_ITEM_ACTIONS[actionId];
+    if (typeof row.because !== "string" || row.because.trim().length < 20)
+      findings.push(`no_reason:${actionId} - a row has to say what the action does to the pack`);
+    if (typeof row.spends !== "boolean") findings.push(`no_direction:${actionId}`);
+    // A row outside the population claims a direction no artifact can check. Only `spends` is admissible there: an
+    // action whose evidence names a slot and no before/after pair can prove it SPENT what it named, never that it added.
+    if (!provesAPackCount.includes(actionId) && row.spends !== true)
+      findings.push(
+        `unprovable_direction:${actionId} - its contract publishes no pack count, so it cannot be declared as adding to the pack`,
+      );
+  }
+  const reading =
+    `proves a pack count ${String(provesAPackCount.length)} · declared ${String(declared.length)} · ` +
+    `spend ${String(CARRIED_ITEM_SPEND_ACTIONS.length)} · findings ${String(findings.length)}`;
+  t.diagnostic(reading);
+  t.diagnostic(`spends: ${CARRIED_ITEM_SPEND_ACTIONS.join(", ")}`);
+  // Zero is not green: a population the contract reader could not resolve would agree with itself.
+  assert.ok(
+    provesAPackCount.length > 0 && declared.length > 0,
+    `${reading} - nothing was measured, so this gate cannot fail`,
+  );
+  assert.deepEqual(findings, [], `${reading}\n${findings.join("\n")}`);
+});
+
+/**
+ * `round85`'s day 1, replayed through the criterion that now decides it.
+ *
+ * <p>
+ * THE DAY, VERBATIM: `sweep_carried_things`, whose receipts held `ship_item`, `plant_seed`, `till_soil`, `water_crop`,
+ * `harvest_crop`, `pickup_item`, `chest_retrieve` and `equip_tool`, and answered `unjudged` with
+ * `task_purpose_needs_an_unpublished_fact` - "nothing publishes what the backpack held before or after". The pack IS
+ * published (`inventoryItemFacts`), on the OBSERVATION, and this judge reads receipts. So the day was undecidable by
+ * construction, and the two receipts it already held are the two acts its prompt asks for: a carried seed went into the
+ * ground, and a carried item went into the shipping bin.
+ * </p>
+ * <p>
+ * WHAT THIS PINS: the day is JUDGED rather than excused, and it is judged by two receipts - one shipment is a day that
+ * sold something and used nothing, and two shipments are two sales, which is why the sale is not also in the using
+ * population (tools/lib/task-purpose.test.mjs)
+ * </p>
+ */
+const ROUND85_SHIPPED = (item, slot) =>
+  receipt("ship_item", {
+    reasonCode: "item_shipped",
+    evidence: {
+      detail: contractEvidence("ship_item", {
+        location: "Farm",
+        target: "shipping_bin_01",
+        bin: "56,15",
+        tile: "56,15",
+        item,
+        slot: String(slot),
+        stack: "1",
+        inventory_before: "1",
+        inventory_after: "0",
+        bin_before: "0",
+        bin_after: "1",
+        last_item_shipped_matched: "true",
+        native_menu_opened: "false",
+      }),
+    },
+  });
+
+test("sweep_carried_things: round85's own day 1 is judged, and one receipt is not the day", () => {
+  assert.equal(
+    judgesAPublishedFact("sweep_carried_things"),
+    true,
+    "the purpose is two receipts the product publishes, so this day is judged rather than excused",
+  );
+  assert.equal(
+    TASK_PURPOSE_CRITERIA.sweep_carried_things.missingFact,
+    undefined,
+    "and it must not also carry the gap sentence the pack's publication refuted",
+  );
+
+  // The day as it happened: a seed out of the pack, and an item into the bin.
+  const day = judgeTaskPurpose("sweep_carried_things", [PLANTED(69, 20), ROUND85_SHIPPED("(O)388", 12)]);
+  assert.equal(day.state, "achieved", "using something carried and selling something carried is the purpose");
+  assert.deepEqual(day.admittedActionIds, ["plant_seed", "ship_item"], "and it is those two receipts that say so");
+  assert.match(day.purpose ?? "", /used up, and something she was carrying was sold/);
+
+  // One act is not the day, whichever act it is.
+  assert.equal(
+    judgeTaskPurpose("sweep_carried_things", [ROUND85_SHIPPED("(O)388", 12)]).state,
+    "not_achieved",
+    "a day that only sold something used nothing up",
+  );
+  assert.equal(
+    judgeTaskPurpose("sweep_carried_things", [PLANTED(69, 20)]).state,
+    "not_achieved",
+    "a day that only used something up sold nothing",
+  );
+  // And the sale cannot answer the using half twice: two shipments are two sales.
+  assert.equal(
+    judgeTaskPurpose("sweep_carried_things", [ROUND85_SHIPPED("(O)388", 12), ROUND85_SHIPPED("(O)390", 13)]).state,
+    "not_achieved",
+    "two shipments are two sales, not a use and a sale",
+  );
 });
 
 test("a task with a named gap answers `unjudged` for every receipt set, however complete", () => {

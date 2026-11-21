@@ -187,7 +187,7 @@ public sealed class DestinationSpellingAgreementTests
             return null;
         if (result.Destination.Kind == "label")
             return set.SearchDestinations.First(destination => destination.CanonicalLabel == result.Destination.Label).CanonicalIdentity;
-        return references.TryResolveDestination(result.Destination, context, out NavigationDestinationBinding? binding, out _)
+        return references.TryResolveDestination(result.Destination, context, out NavigationDestinationBinding? binding, out _, out _)
             ? binding!.CanonicalDestinationIdentity
             : null;
     }

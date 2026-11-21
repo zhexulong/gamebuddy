@@ -47,11 +47,31 @@ public sealed class NavigationReferenceStoreTests
         string destinationRef = store.IssueDestination(context, new NavigationDestinationBinding("owner_01", "location_01", "generation_01", 7));
 
         NavigationDestinationSelector.TryCreate("ref", null, destinationRef, out NavigationDestinationSelector? selector).Should().BeTrue();
-        store.TryResolveDestination(selector!, context, out NavigationDestinationBinding? binding, out string reason).Should().BeTrue(reason);
+        store.TryResolveDestination(selector!, context, out NavigationDestinationBinding? binding, out string reason, out _).Should().BeTrue(reason);
         binding!.ContentOwner.Should().Be("owner_01");
         store.Close();
-        store.TryResolveDestination(selector!, context, out _, out reason).Should().BeFalse();
-        reason.Should().Be("destination_ref_stale");
+        store.TryResolveDestination(selector!, context, out _, out reason, out string? detail).Should().BeFalse();
+        reason.Should().Be("destination_ref_store_closed");
+        detail.Should().Be("stale=store_closed");
+    }
+
+    /// <summary>
+    /// The measured refusal: a handle reused past the store's own lifetime answers ONE cause, with the two numbers that
+    /// let a reader see it for itself. `round85`'s `plan_323` planned a six-minute-old handle and the receipt said only
+    /// `destination_selector_stale`, so nothing distinguished this from a destination set that had moved.
+    /// </summary>
+    [Fact]
+    public void DestinationRef_ReusedPastItsLifetime_NamesTheAgeAndTheLifetime()
+    {
+        var store = new NavigationReferenceStore();
+        NavigationBindingContext context = Context();
+        string destinationRef = store.IssueDestination(context, new NavigationDestinationBinding("owner_01", "location_01", "generation_01", 7));
+        NavigationDestinationSelector.TryCreate("ref", null, destinationRef, out NavigationDestinationSelector? selector).Should().BeTrue();
+
+        store.TryResolveDestination(selector!, context with { Now = Now.AddSeconds(372) }, out _, out string reason, out string? detail)
+            .Should().BeFalse();
+        reason.Should().Be("destination_ref_expired");
+        detail.Should().Be("stale=expired;handle_age_ms=372000;handle_lifetime_ms=300000");
     }
 
     private static NavigationBindingContext Context() => new("runtime_01", Scope, "generation_01", 7, Now);

@@ -9,7 +9,21 @@ internal sealed record NavigationDestinationResolution(
     NavigationDestinationBinding? Origin,
     NavigationDestinationBinding? Binding,
     string? DisplayLabel,
-    string? FailureReason);
+    string? FailureReason)
+{
+    /// <summary>
+    /// WHICH FACT refused the selector, beside the code that names the family it belongs to.
+    ///
+    /// <para>
+    /// MEASURED `round85` (`plan_323`): the receipt read `destination_selector_stale` with `detail=destination` - the one
+    /// word this refusal published when a ref resolution carried no label. The handle had been copied out of an
+    /// observation six minutes earlier, past the store's own five-minute lifetime, and the sentence named neither the
+    /// selector's kind, the cause, the handle's age, nor a next step - so the same handle was planned a third time. The
+    /// store already knew which of its four conditions had refused it; this is where that survives to the receipt.
+    /// </para>
+    /// </summary>
+    internal string? FailureDetail { get; init; }
+}
 
 /// <summary>One ordinary native transition leg that the coordinator may privately
 /// arm (approach) and commit (warp/door). It is never serialized to Host/Agent.</summary>

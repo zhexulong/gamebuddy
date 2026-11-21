@@ -67,7 +67,8 @@ internal static class NavigationOutcomeDecider
     {
         if (resolution.FailureReason is not null)
             return new NavigationOutcome(ExecutionState.Rejected, resolution.FailureReason,
-                $"destination={resolution.DisplayLabel ?? "unknown"};reason={resolution.FailureReason}");
+                $"destination={resolution.DisplayLabel ?? "unknown"};reason={resolution.FailureReason}"
+                + (resolution.FailureDetail is { Length: > 0 } detail ? $";{detail}" : string.Empty));
 
         string label = resolution.DisplayLabel ?? "destination";
         if (!view.HasLivePlayer)

@@ -1327,6 +1327,32 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
+    /// The evidence a refused destination selector publishes: which kind of selector the request named, the label when
+    /// the selector carried one, and the ONE fact that refused it (<see cref="NavigationDestinationResolution.FailureDetail"/>).
+    ///
+    /// <para>
+    /// MEASURED `round85` (`plan_323`): a `navigate_to_destination` admitted through a `dr1_` handle the companion had
+    /// copied from an observation six minutes earlier answered `destination_selector_stale` with `detail=destination` -
+    /// the word the admission used to publish whenever a ref resolution carried no label. A reader could not tell a
+    /// handle it had outlived (the store's lifetime is five minutes) from a destination set that had moved, and the same
+    /// stale handle was planned again. `NavigationNextStep.Describe` then appends the next step the code owes the
+    /// caller (`observe_the_published_destinations`), which is the re-resolve this refusal exists to ask for.
+    /// </para>
+    /// </summary>
+    private static string DescribeSelectorRefusal(
+        NavigationDestinationSelector selector,
+        NavigationDestinationResolution resolution)
+    {
+        List<string> fields = new();
+        if (resolution.DisplayLabel is { Length: > 0 } label)
+            fields.Add($"destination={label}");
+        fields.Add($"selector={selector.Kind}");
+        if (resolution.FailureDetail is { Length: > 0 } detail)
+            fields.Add(detail);
+        return string.Join(';', fields);
+    }
+
+    /// <summary>
     /// Requests the single Navigation execution. It creates exactly one receipt
     /// lineage through the coordinator lifecycle and performs the terminal CAS
     /// on this ledger. Local approach/native transition legs are coordinator-own
@@ -1375,7 +1401,9 @@ internal sealed partial class ExecutionManager
                     executionId,
                     ExecutionState.Rejected,
                     admission.Resolution.FailureReason ?? "destination_selector_invalid",
-                    admission.Resolution.DisplayLabel ?? "destination");
+                    NavigationNextStep.Describe(
+                        admission.Resolution.FailureReason ?? "destination_selector_invalid",
+                        DescribeSelectorRefusal(selector, admission.Resolution)));
             }
 
             coordinator = AcceptedNavigationExecution.ForAcceptedDestination(admission);

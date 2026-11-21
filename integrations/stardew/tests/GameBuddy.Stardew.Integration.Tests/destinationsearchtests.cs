@@ -75,15 +75,17 @@ public sealed class DestinationSearchTests
         result.Candidates.Should().NotBeNull().And.HaveCount(2);
         foreach (DestinationSearchCandidate candidate in result.Candidates!)
         {
-            store.TryResolveDestination(candidate.Selector, Context, out NavigationDestinationBinding? binding, out string reason)
+            store.TryResolveDestination(candidate.Selector, Context, out NavigationDestinationBinding? binding, out string reason, out string? detail)
                 .Should().BeTrue(reason);
             binding!.CanonicalDestinationIdentity.Should().BeOneOf("mine_west", "mine_east");
-            store.TryResolveDestination(candidate.Selector, Context with { Scope = new BridgeScope("stardew", "save_02", "world_01", "player_01", "companion_01") }, out _, out reason)
+            store.TryResolveDestination(candidate.Selector, Context with { Scope = new BridgeScope("stardew", "save_02", "world_01", "player_01", "companion_01") }, out _, out reason, out detail)
                 .Should().BeFalse();
-            reason.Should().Be("destination_ref_stale");
-            store.TryResolveDestination(candidate.Selector, Context with { SourceGeneration = "generation_02" }, out _, out reason)
+            reason.Should().Be("destination_ref_scope_changed");
+            detail.Should().Be("stale=scope_changed");
+            store.TryResolveDestination(candidate.Selector, Context with { SourceGeneration = "generation_02" }, out _, out reason, out detail)
                 .Should().BeFalse();
-            reason.Should().Be("destination_ref_stale");
+            reason.Should().Be("destination_ref_source_generation_changed");
+            detail.Should().Be("stale=source_generation_changed");
         }
     }
 

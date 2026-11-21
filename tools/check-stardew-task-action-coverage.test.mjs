@@ -29,6 +29,7 @@ import {
   SWEEP_DAILY_TASKS,
 } from "./lib/multiday-daily-tasks.mjs";
 import { readStardewActionFamilies } from "./lib/stardew-published-action-registry.mjs";
+import { judgesAPublishedFact, TASK_PURPOSE_CRITERIA } from "./lib/task-purpose.mjs";
 
 const INPUTS = readCoverageInputs();
 const FAMILY_OF = readStardewActionFamilies();
@@ -169,17 +170,39 @@ test("the sweep tasks follow the scenario tasks in the rotation", () => {
   assert.ok(SWEEP_DAILY_TASKS.length >= 2, "the sweep is meant to be more than one day's work");
 });
 
-test("every sweep task states a purpose it cannot decide from published facts", () => {
-  // A sweep task's purpose is "the group was worked", and no receipt names a group. Claiming otherwise would be the
-  // defect `task-purpose.mjs` exists to prevent, so the honest entry is a named gap - and the sentence has to name
-  // what is missing rather than merely decline to answer.
+test("every sweep task states a purpose, and that purpose is either decidable or names the fact that is missing", () => {
+  // A sweep task's purpose is usually "the group was worked", and no receipt names a group, so the honest entry is a
+  // named gap - and the sentence has to name what is missing rather than merely decline to answer. `sweep_carried_things`
+  // is the case that is a CRITERION instead: its purpose was never the group but the two acts its prompt names, which
+  // two receipts decide (`round85` answered `unjudged` for a day that had already shipped an item and sown a seed).
+  //
+  // BOTH HALVES COME FROM THE ONE TABLE, so the task's own sentence and the entry cannot disagree: a gap's sentence is
+  // the entry's own `missingFact`, and a judged day carries none. That is also what keeps the retired text retired - the
+  // "backpack before and after" sentence that `inventoryItemFacts` refuted cannot come back here unread.
+  const judged = [];
+  const gaps = [];
   for (const task of SWEEP_DAILY_TASKS) {
     assert.equal(typeof task.purpose, "string", `${task.id} states no purpose`);
     assert.ok(task.purpose.trim().length > 0, `${task.id} states an empty purpose`);
+    assert.ok(task.prompt.zh.trim().length > 0 && task.prompt.en.trim().length > 0, `${task.id} has no prompt`);
+    const entry = TASK_PURPOSE_CRITERIA[task.id];
+    assert.notEqual(entry, undefined, `${task.id} has no entry in the purpose table, so nothing says what it would be`);
+    assert.equal(entry.purpose, task.purpose, `${task.id}: the task and the criterion must say one thing, not two`);
+    if (judgesAPublishedFact(task.id)) {
+      judged.push(task.id);
+      assert.equal(task.missingFact, undefined, `${task.id} is judged from published facts and must not also name a gap`);
+      continue;
+    }
+    gaps.push(task.id);
     assert.ok(
       typeof task.missingFact === "string" && task.missingFact.trim().length > 40,
       `${task.id} must name the fact that is missing`,
     );
-    assert.ok(task.prompt.zh.trim().length > 0 && task.prompt.en.trim().length > 0, `${task.id} has no prompt`);
+    assert.equal(task.missingFact, entry.missingFact, `${task.id}: the gap has to travel with the task, not beside it`);
   }
+  assert.ok(SWEEP_DAILY_TASKS.length > 0, "the sweep is the population, so an empty one agrees with itself");
+  assert.ok(
+    judged.length + gaps.length === SWEEP_DAILY_TASKS.length,
+    "every sweep task is either judged or names its gap",
+  );
 });

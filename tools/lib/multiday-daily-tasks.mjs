@@ -217,9 +217,11 @@ const SWEEP_GROUPS = Object.freeze([
       zh: "把随身带着的东西理一遍，能用的用掉、该卖的卖掉。",
       en: "sort through what you are carrying - use what is worth using, sell what should be sold.",
     }),
-    purpose: "what was carried was sorted and put to use",
-    missingFact:
-      "the receipts report one action and one item each, and nothing publishes what the backpack held before or after, so 'what was carried was sorted' has no fact behind it - only the individual uses it led to.",
+    // NOT A GAP, and it never needed to be one. This day asked the pack's before and after, a fact `inventoryItemFacts`
+    // publishes on the OBSERVATION while `judgeTaskPurpose` reads RECEIPTS - so it was undecidable by construction while
+    // the product published everything it needed. The sentence below is the two acts its own prompt names, each one a
+    // receipt, and the criterion in `task-purpose.mjs` says the same thing once.
+    purpose: "something she was carrying was used up, and something she was carrying was sold",
   }),
 ]);
 

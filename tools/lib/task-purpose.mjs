@@ -157,6 +157,82 @@ const patch = (purpose, { width, height, tilledBy, croppedBy }) =>
 const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField });
 
 /**
+ * THE ACTIONS WHOSE OWN POSTCONDITION IS ABOUT WHAT SHE IS CARRYING, and the direction each one proves.
+ *
+ * <p>
+ * A purpose about her pack cannot be read FROM the pack. `inventoryItemFacts` publishes it - 36 rows of slot, item and
+ * stack - but on the OBSERVATION (`integrations/stardew/farmhandexecutioncontroller.targetdiscovery.cs`,
+ * `DiscoverInventoryItemFacts`), and this judge reads RECEIPTS. Measured `round85`: `sweep_carried_things` answered
+ * `unjudged` for a day that had already shipped an item and put a seed in the ground, because its criterion asked for a
+ * backpack before/after that no receipt carries - undecidable BY CONSTRUCTION rather than unproduced. What a receipt does
+ * prove is that a carried stack was spent to do something, and that is the act the day's own prompt asks for.
+ * </p>
+ * <p>
+ * ONE DECLARATION, NOT A LIST INSIDE THE CRITERION. `spends` is the direction the action's own completion rule proves:
+ * `true` when its receipt requires the count of the item it names to FALL (the seed that went into the ground, the post
+ * that left the pack, the geode that was opened), `false` when it requires that count to RISE (a forage picked up, a crop
+ * harvested). The gate `a_new_action_that_proves_a_pack_count_is_declared` derives its population from the published
+ * action surface crossed with the Host's completion contract - every action whose receipt can carry a pack count - and
+ * fails naming any such action with no row here.
+ * </p>
+ * <p>
+ * FIVE ROWS PUBLISH NO COUNT AT ALL, and no artifact could derive them: `use_item` eats a carried food, `open_geode`
+ * spends a carried geode, `use_warp_item` spends the warp item, and the two tailoring actions spend the material and the
+ * dye they name by slot. Their evidence names a slot and not a before/after pair, so they are declared with the reason -
+ * and the gate refuses a row outside its derived population that claims the pack went UP, because nothing would prove it.
+ * </p>
+ */
+export const CARRIED_ITEM_ACTIONS = Object.freeze({
+  // A pack count falls: the stack named by the receipt is spent to do the thing.
+  bait_crab_pot: Object.freeze({ spends: true, because: "the bait leaves the pack into the pot" }),
+  dye_clothing_with_item: Object.freeze({ spends: true, because: "the dye items the receipt names are spent on the garment" }),
+  fertilize_tile: Object.freeze({ spends: true, because: "the fertilizer stack leaves the pack onto the soil" }),
+  open_geode: Object.freeze({ spends: true, because: "the geode leaves the pack and the counter hands back what was inside" }),
+  place_crab_pot: Object.freeze({ spends: true, because: "the pot leaves the pack onto the water's edge" }),
+  place_owned_object: Object.freeze({ spends: true, because: "the stack leaves the pack onto the ground" }),
+  place_wood_fence: Object.freeze({ spends: true, because: "the fence leaves the pack onto the field" }),
+  plant_sapling: Object.freeze({ spends: true, because: "the sapling leaves the pack into the ground" }),
+  plant_seed: Object.freeze({ spends: true, because: "the seed stack leaves the pack into the soil" }),
+  redeem_prize_ticket: Object.freeze({ spends: true, because: "the prize ticket leaves the pack into the machine" }),
+  ship_item: Object.freeze({ spends: true, because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells" }),
+  tailor_clothing: Object.freeze({ spends: true, because: "the cloth the receipt names is spent on the garment" }),
+  use_item: Object.freeze({ spends: true, because: "the food the actor was carrying is eaten" }),
+  use_warp_item: Object.freeze({ spends: true, because: "the warp item is spent by arriving" }),
+  // A pack count rises: the receipt proves something entered the pack.
+  chest_retrieve: Object.freeze({ spends: false, because: "the chest hands the stack back into the pack" }),
+  claim_mail_attachment: Object.freeze({ spends: false, because: "the letter's contents arrive in the pack" }),
+  claim_museum_reward: Object.freeze({ spends: false, because: "the museum's reward arrives in the pack" }),
+  collect_animal_product: Object.freeze({ spends: false, because: "the product arrives in the pack" }),
+  collect_crab_pot_output: Object.freeze({ spends: false, because: "the pot's catch arrives in the pack" }),
+  cook_recipe: Object.freeze({ spends: false, because: "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule" }),
+  fish_here: Object.freeze({ spends: false, because: "the catch arrives in the pack" }),
+  harvest_crop: Object.freeze({ spends: false, because: "the harvest arrives in the pack" }),
+  move_placed_furniture: Object.freeze({ spends: false, because: "the piece is picked UP off the floor into the pack" }),
+  pan_ore: Object.freeze({ spends: false, because: "the ore arrives in the pack" }),
+  pickup_forage: Object.freeze({ spends: false, because: "the forage arrives in the pack" }),
+  pickup_item: Object.freeze({ spends: false, because: "the item arrives in the pack" }),
+  take_pedestal_item: Object.freeze({ spends: false, because: "the pedestal hands its piece into the pack" }),
+});
+
+/** The declared actions a receipt can prove spent what she was carrying, in one spelling derived from the table above. */
+export const CARRIED_ITEM_SPEND_ACTIONS = Object.freeze(
+  Object.entries(CARRIED_ITEM_ACTIONS)
+    .filter(([, row]) => row.spends === true)
+    .map(([actionId]) => actionId),
+);
+
+/**
+ * The USING half of the day, which is the same population one act short.
+ *
+ * `ship_item` is the sale the prompt names second, and it is a spend too - so it is its own step, and it cannot also
+ * answer the using step: two shipments are two sales, not "used something and sold something". Derived by subtraction
+ * rather than written again, so a sale that stops spending cannot drift from the criterion that names it twice.
+ */
+export const CARRIED_ITEM_USE_ACTIONS = Object.freeze(
+  CARRIED_ITEM_SPEND_ACTIONS.filter((actionId) => actionId !== "ship_item"),
+);
+
+/**
  * What each rotation task's purpose requires, keyed by the task ids in `multiday-daily-tasks.mjs`.
  *
  * Each criterion reads only postconditions the Mod already publishes and the Host already validates, and each one
@@ -404,11 +480,12 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
     },
   ),
   // The sweep tasks, each of whose purpose is "this group of the farm was worked". No receipt names a group - one
-  // receipt names one action and one target - so every one of them is a gap, and a criterion built from two of the
-  // group's actions would claim a purpose the group never had. The sentences live on the task definitions in
-  // `multiday-daily-tasks.mjs`, beside the grouping that decides them, rather than being written a second time here.
+  // receipt names one action and one target - so a sweep day is a GAP unless its purpose can be restated as facts the
+  // receipts do publish. `sweep_carried_things` is that case, and its criterion is declared below this spread: an
+  // explicit entry placed after it wins, which is why the two halves stay one declaration and the group's own sentence
+  // in `multiday-daily-tasks.mjs` is gone rather than kept as a second, false spelling.
   ...Object.fromEntries(
-    SWEEP_DAILY_TASKS.map((task) => [
+    SWEEP_DAILY_TASKS.filter((task) => typeof task.missingFact === "string").map((task) => [
       task.id,
       gap(task.purpose, task.missingFact, {
         reason: "prose",
@@ -422,6 +499,17 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
         ],
       }),
     ]),
+  ),
+  // THE SWEEP DAY THAT IS NOT A GAP, and it is not a gap because its purpose was never about a GROUP: it is about what
+  // she was carrying, and the two acts its prompt names - "能用的用掉、该卖的卖掉" - are each one receipt. It used to be a
+  // gap for asking the pack's before and after, a fact `inventoryItemFacts` publishes on the OBSERVATION while this judge
+  // reads receipts, so the day was undecidable by construction rather than unproduced (`round85` answered `unjudged` for a
+  // day that had already shipped an item and sown a seed). Unordered: using something and selling something have no order
+  // the world imposes, and the two steps still have to be two receipts.
+  sweep_carried_things: criterion(
+    "something she was carrying was used up, and something she was carrying was sold",
+    [anyOf(...CARRIED_ITEM_USE_ACTIONS), step("ship_item")],
+    { ordered: false },
   ),
 });
 
