@@ -139,12 +139,12 @@ import type {
   StardewPlayerHostRuntimeLaunchCollaborator,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import { readStardewOwnerRecoveryDriver } from "./composition/stardew/stardew-guardian-platform.js";
-import {
-  type StardewCompanionModOutcome,
-  type StardewFolderPickerCapability,
-  type StardewInstallationDiscoveryView,
-  type StardewLifecyclePlatform,
-  type StardewOwnerRecoveryRequest,
+import type {
+  StardewCompanionModOutcome,
+  StardewFolderPickerCapability,
+  StardewInstallationDiscoveryView,
+  StardewLifecyclePlatform,
+  StardewOwnerRecoveryRequest,
 } from "./games/stardew/lifecycle/stardew-lifecycle-platform-ports.js";
 
 export type StardewPrivateActivationSnapshot = Readonly<{
@@ -2742,7 +2742,22 @@ function createCoordinator(
         throw new Error("stardew_game_attachment_generation_conflict");
       if (farmhandGameRuntimeFacade === undefined || farmhandGameRuntimeLease === undefined || isClosing())
         throw new Error("stardew_game_runtime_unavailable");
-      const promise = teardownAttachment();
+      // A disconnect is the one ending that also says WHERE the session went. The shared teardown's terminal
+      // word is `none` - "this browser holds no attachment" - which is exactly what a session that was never
+      // connected publishes, so the surface could not tell "you let go" from "you never joined" and offered no
+      // step for either. `disconnected` is the contract's own member for it (`ConnectionStatus`), the word the
+      // cancelled reconnect publishes, and the fact this route is declared to leave behind
+      // (`design/handbook/live-run-chains.md`: `game/disconnect` -> `attachment=none`,
+      // `connectionStatus=disconnected`, `actionAuthority=unavailable`, the world still running).
+      // It is published HERE and not in the shared teardown, so an ordinary close and the endgame keep `none`;
+      // the attachment itself stays `none`/generation 0, which is the shape a successful disconnect owes.
+      const promise = teardownAttachment().then(() => {
+        // Only the frame where the teardown really landed: a concurrent operation that armed a new attachment
+        // in the meantime keeps its own word.
+        if (attachmentGeneration !== 0) return;
+        attachmentConnectionStatus = "disconnected";
+        publishGameFact("attachment");
+      });
       gameDisconnects.set(
         command.idempotencyKey,
         Object.freeze({

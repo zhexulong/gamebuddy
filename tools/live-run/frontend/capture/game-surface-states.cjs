@@ -111,7 +111,7 @@ const readGameState = async () => {
  */
 const readGameFacts = () => {
   const surface = document.querySelector('[data-testid="game-surface"]');
-  if (surface === null) return { surfacePresent: false, facts: {}, controls: {}, state: null };
+  if (surface === null) return { surfacePresent: false, facts: {}, controls: {}, sentences: {}, state: null };
   const facts = {};
   for (const fact of surface.querySelectorAll('[data-testid="game-state-panel"] .game-fact')) {
     const label = (fact.querySelector("dt")?.textContent ?? "").trim();
@@ -128,10 +128,23 @@ const readGameFacts = () => {
     };
   };
   const panel = surface.querySelector('[data-testid="game-state-panel"]');
+  // The panel's own status sentences, by the testid the panel gives each one. A driver that reads the state
+  // route knows what the Host published, not what the player was told: the two have disagreed before, and the
+  // sentence is what a player acts on.
+  const sentence = (testId) => {
+    const element = surface.querySelector(`[data-testid="${testId}"]`);
+    return element === null ? null : (element.textContent ?? "").replace(/\s+/g, " ").trim();
+  };
   return {
     surfacePresent: true,
     state: panel === null ? null : panel.getAttribute("data-game-state"),
     facts,
+    sentences: {
+      waitingForGame: sentence("game-waiting-for-game"),
+      disconnectedWorldRunning: sentence("game-disconnected-world-running"),
+      notRead: sentence("game-not-read"),
+      quarantined: sentence("game-launch-quarantined"),
+    },
     controls: {
       launch: control("game-launch"),
       activate: control("game-activate"),
@@ -141,6 +154,7 @@ const readGameFacts = () => {
       endgameConfirm: control("game-endgame-confirm-yes"),
       reopen: control("game-reopen"),
       resume: control("game-resume"),
+      reread: control("game-reread"),
     },
   };
 };

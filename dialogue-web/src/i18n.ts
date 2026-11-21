@@ -155,6 +155,13 @@ const en = {
     "Stardew Valley ended before your companion moved in. GameBuddy keeps that ending until it is started again, so it will not launch the game, and starting this page over will not change it. Quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again: once it is open again, the game starts normally.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
+  // The state where nothing is coming: the player disconnected, and the disconnect stops the companion rather
+  // than the world (policy 3023). So the sentence states the two facts the surface can prove - the farm they
+  // left is still running, and re-joining it is not something this build offers - and names the one step that is
+  // left, which is the read above it: quitting the game in the game window is what turns this state into the
+  // ending whose own sentence carries the way out.
+  gameDisconnectedWorldRunning:
+    "You disconnected from the game, and the farm you left is still running: disconnecting stops your companion, never your world. GameBuddy cannot join a game that is already running again here - play on in your own game window, or quit it there and read your game again, which then shows the ending and the step that starts another one.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
   // game - not the game's configuration and not a fault of the player's - and the sentence
   // names the step that answers it.
@@ -1681,6 +1688,8 @@ const zh: Messages = {
   gameEndedQuarantined:
     "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏，刷新这一页也不会改变这一点。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开：重新打开之后，游戏就能正常启动。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
+  gameDisconnectedWorldRunning:
+    "你已断开游戏连接，而你离开的那个农场仍在运行：断开的是你的伙伴，从来不是你的世界。这个版本里 GameBuddy 还不能重新接进一个已经在运行的游戏——你可以在自己的游戏窗口里继续玩，或者在那里退出游戏后，再在这里重新读取你的游戏，面板会显示那个结局和重新开始的步骤。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
   // 游戏页顶端那张“她现在怎么样”的卡片。每一句都对应投影里已经发布的事实：`attachment.status`

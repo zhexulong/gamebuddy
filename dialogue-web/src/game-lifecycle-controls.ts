@@ -145,6 +145,17 @@ export type GameSessionPhase =
   /** No attachment while a Player Host runs: the game owes this browser a session. */
   | "running_without_attachment"
   /**
+   * No attachment while a Player Host runs, and the player is the reason: this browser disconnected
+   * deliberately (`connectionStatus: "disconnected"`, the word `game/disconnect` publishes - it closes the
+   * semantic attachment and never the world).
+   *
+   * The distinction from `running_without_attachment` is the whole point. There, the panel waits for a game
+   * that has not handed over a farm yet, and "waiting for the game to hand this window your farm" is true.
+   * Here nothing is coming: the world is still running and this browser let go of it, so the waiting
+   * sentence is a promise nobody keeps, and the two states have two different steps.
+   */
+  | "disconnected_world_running"
+  /**
    * No attachment and the launch failed for good: the coordinator is in `launch_quarantined`
    * (`stardew-game-lifecycle-state.internal.ts`) and answers every further launch with
    * `stardew_player_host_launch_quarantined`, so no control on this page can carry the player out.
@@ -280,9 +291,18 @@ export type GameSessionControls = Readonly<{
   installationRequired: boolean;
   /**
    * Whether this state's step is the panel's own read of the game, in place of the
-   * getting-going guide. True exactly in `game_not_read`.
+   * getting-going guide. True in `game_not_read` and in `disconnected_world_running`, which
+   * are two different questions with one answer: the Host has no reading to act on (it never
+   * read the game), and the reading the player has is the one they took themselves (they
+   * disconnected and the world went on). The panel draws the sentences apart - the control
+   * and its handler are the same read.
    */
   rereadAvailable: boolean;
+  /**
+   * Whether the surface must state that the player disconnected from a world that is still
+   * running, with the step that is left. True exactly in `disconnected_world_running`.
+   */
+  disconnectedWorldRunning: boolean;
 }>;
 
 const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
@@ -339,7 +359,8 @@ export function deriveGameSessionControls(
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
       restartRequired: phase === "launch_failed" || phase === "game_ended",
-      rereadAvailable: phase === "game_not_read",
+      rereadAvailable: phase === "game_not_read" || phase === "disconnected_world_running",
+      disconnectedWorldRunning: phase === "disconnected_world_running",
     });
 
   if (!view.ready || view.game === null) return build("no_projection", {}, ["terminal"]);
@@ -412,7 +433,14 @@ export function deriveGameSessionControls(
   // there is no installation standing, staged attempt or expected generation for those
   // controls to act on. The step is the read the panel already owns.
   if (instance.status === "unread") return build("game_not_read", {}, ["reread_game"]);
-  if (instance.status !== "none") return build("running_without_attachment", {}, ["wait_for_game"]);
+  if (instance.status !== "none")
+    // A running game this browser let go says so in the one word the disconnect publishes, and then the
+    // step is not a wait: nothing is on its way. What this page can honestly do is read the game again -
+    // which is how a world the player has since quit in the game reaches `game_ended` and its own step -
+    // and say, in a sentence, that the world they left is still running.
+    return connectionStatus === "disconnected"
+      ? build("disconnected_world_running", {}, ["reread_game"])
+      : build("running_without_attachment", {}, ["wait_for_game"]);
   const lifecycle = deriveGameLifecycleControlAvailability(view);
   if (lifecycle.launchAvailable) return build("activated_not_launched", {}, ["launch"]);
   // Step 1 is still the activation step, and the reason it cannot be pressed yet is
@@ -430,6 +458,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
   "activated_not_launched",
   "launching",
   "running_without_attachment",
+  "disconnected_world_running",
   "launch_failed",
   "game_ended",
   "game_not_read",
@@ -515,6 +544,15 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       ),
       launching: input(game({ instance: { status: "launching", gameTitle: "Stardew Valley", generation: 1 } })),
       running_without_attachment: input(game({})),
+      // The state `game/disconnect` leaves behind, exactly as a live run read it: the world still
+      // running at generation 0, no attachment, `disconnected` as the reason, no action authority.
+      disconnected_world_running: input(
+        game({
+          instance: { status: "running", gameTitle: "Stardew Valley", generation: 0 },
+          connectionStatus: "disconnected",
+          actionAuthority: "unavailable",
+        }),
+      ),
       launch_failed: input(
         game({
           instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },

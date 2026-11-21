@@ -690,7 +690,7 @@ test("close drains manifest-admitted AI materialization before quarantine and pr
   }
 });
 
-test("Game disconnect joins same-generation STOP, closes only the semantic facade, and rereads none", async () => {
+test("Game disconnect joins same-generation STOP, closes only the semantic facade, and rereads a deliberate disconnect", async () => {
   const stopGate = deferredVoid();
   const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, { gameStopSettled: stopGate.promise });
   try {
@@ -741,10 +741,13 @@ test("Game disconnect joins same-generation STOP, closes only the semantic facad
     assert.deepEqual(fixture.playerKillCalls, []);
     stopGate.resolve();
     await Promise.all([stop, disconnect]);
+    // `none`/generation 0 is the attachment (memory #565: a successful disconnect publishes exactly that),
+    // and `disconnected` is WHY it is gone. Without the reason the projection read the same as a session that
+    // had never connected, and the surface said "never connected" over a farm that was still running.
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none",
       generation: 0,
-      connectionStatus: "none",
+      connectionStatus: "disconnected",
     });
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, []);
@@ -789,6 +792,14 @@ test("Game disconnect and outer close share one pending attachment teardown", as
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
     assert.deepEqual(fixture.aiKillCalls, [4101]);
     assert.deepEqual(fixture.playerKillCalls, []);
+    // The shared teardown keeps its own terminal word: the close is the last writer, and it has nothing to say
+    // about a reason (the Host is going away). The disconnect's word is asserted where the disconnect is the
+    // only operation, below and in `an ordinary close says nothing about the reason...`.
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "none",
+    });
   } finally {
     stopGate.resolve();
     await fixture.coordinator.close();
@@ -823,7 +834,7 @@ test("Game disconnect waits for a rejected STOP settlement before containing the
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none",
       generation: 0,
-      connectionStatus: "none",
+      connectionStatus: "disconnected",
     });
   } finally {
     rejectStop(new Error("cleanup-stop-settlement"));
@@ -905,11 +916,54 @@ test("failed Game disconnect retains generation and permits only a fresh-key ret
     assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentView(), {
       status: "none",
       generation: 0,
-      connectionStatus: "none",
+      connectionStatus: "disconnected",
     });
     assert.deepEqual(fixture.bridgeCloseCalls, ["bridge"]);
   } finally {
     await fixture.coordinator.close();
     await fixture.broker.close();
+  }
+});
+
+/**
+ * The word is the operation's, and the two endings must not collapse into one row.
+ *
+ * A session that was never connected and a session the player let go of publish the same attachment
+ * (`none`/generation 0), so the word beside it is the only thing that tells them apart - and the surface's
+ * phase, its sentence and its step all read that word. An ordinary close publishes the teardown's own `none`
+ * (nothing is left to say about a Host that is going away), while a deliberate disconnect names what happened.
+ */
+test("an ordinary close says nothing about the reason and a deliberate disconnect names it", async () => {
+  const closed = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    await confirmFirstCabin(closed);
+    assert.equal(closed.coordinator.attachmentReader.readAttachmentView().connectionStatus, "connected_idle");
+    await closed.coordinator.close();
+    assert.deepEqual(closed.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "none",
+    });
+  } finally {
+    await closed.coordinator.close().catch(() => undefined);
+    await closed.broker.close();
+  }
+
+  const disconnected = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    await confirmFirstCabin(disconnected);
+    await disconnected.coordinator.activationOwner.disconnectGame(disconnected.broker.issue("game_disconnect"), {
+      apiVersion: 1,
+      idempotencyKey: "disconnect-word-key-01",
+      expectedAttachmentGeneration: 1,
+    });
+    assert.deepEqual(disconnected.coordinator.attachmentReader.readAttachmentView(), {
+      status: "none",
+      generation: 0,
+      connectionStatus: "disconnected",
+    });
+  } finally {
+    await disconnected.coordinator.close().catch(() => undefined);
+    await disconnected.broker.close();
   }
 });

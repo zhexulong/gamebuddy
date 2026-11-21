@@ -393,14 +393,28 @@ export function GameStatePanel({
                 {labels.gameWaitingForGame}
               </p>
             )}
+            {/* The player disconnected and the world kept running. The waiting sentence above is a
+                promise nobody keeps here - nothing is on its way - so this state says what really
+                happened, that the farm is still running (a disconnect stops the companion, never the
+                world), and what is left: the panel's own read of the game, which is how a world the
+                player has since quit in the game reaches the ending's step. */}
+            {session.controls.disconnectedWorldRunning && (
+              <p className="game-status" data-tone="info" role="status" data-testid="game-disconnected-world-running">
+                {labels.gameDisconnectedWorldRunning}
+              </p>
+            )}
             {/* The Host has not read the player's game. Every control in the guide below acts
                 on a premise that read would establish, so the guide is held back and the
                 step that belongs to this state - the read itself - is the only one drawn. */}
-            {session.controls.rereadAvailable && (
+            {session.controls.phase === "game_not_read" && (
               <p className="game-status" data-tone="progress" role="status" data-testid="game-not-read">
                 {labels.gameNotRead}
               </p>
             )}
+            {/* The read this page owns, and the one step two states share: a game the Host has not read
+                (`game_not_read`) and a world this browser disconnected from while it kept running
+                (`disconnected_world_running`). One control, because it is one command; the sentence
+                above it is what the two states say differently. */}
             {session.controls.rereadAvailable && (
               <div className="game-actions">
                 <button

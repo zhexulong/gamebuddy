@@ -107,17 +107,27 @@ export function classifyDeath({ roleExit, hostFact, surface, turn }) {
  * NEVER the game world (`product policy 3023`). So the reading is inverted from the death case - a game that
  * died here is the failure, not the proof.
  *
+ * Four things a player is owed, and each one names its own absence:
+ *
  *   gameAliveAfter   the exact pid this run launched is still in the process table.
  *   after            `{ attachmentStatus, connectionStatus, actionAuthority }` from the product's own state read.
- *                     The authority must be `paused` (or `unavailable` with no attachment behind it), never
- *                     `active`: a silent `active` is the product resuming authority nobody granted.
- *   reopenOffered    the surface offers the fresh explicit instruction that restores authority (`game-reopen`,
- *                     `dialogue-web/src/game-lifecycle-controls.ts:337-342`). Reconnect is an operation, not a
- *                     state the surface drifts back into.
+ *                     The authority must not be `active`: a silent `active` is the product resuming authority
+ *                     nobody granted. The connection word must be `disconnected`, and that is the reading this
+ *                     scenario exists for twice over: `none` is the word a session that has NEVER connected
+ *                     publishes, so a deliberate disconnect published as `none` leaves the surface saying "not
+ *                     connected yet" over a farm that is still running (`host/src/game-browser-contract`
+ *                     declares `disconnected`, and the daily chain declares it for `game/disconnect`).
+ *   forward          `{ offered, name }` - the one step the surface draws in this state. Measured red on
+ *                     `livenow10`: every control was null, on a running world, which is the zero-forward-path
+ *                     defect class - a reachable, non-terminal state with nothing the player can do. `name` is
+ *                     what the player reads on the control, so a failure quotes it.
+ *   worldRunningStated  the panel's own sentence for this state, or `null`. The promise the disconnect makes is
+ *                     that the world survives it, so the surface has to SAY so: a panel that drops to "never
+ *                     connected" tells the player the opposite of what just happened.
  *   replayed         a companion row appeared after the disconnect with no player line to cause it - the old
  *                     task replayed instead of staying suspended.
  */
-export function classifyDisconnect({ gameAliveAfter, after, reopenOffered, replayed, disconnectedBy }) {
+export function classifyDisconnect({ gameAliveAfter, after, forward, worldRunningStated, replayed, disconnectedBy }) {
   if (gameAliveAfter !== true)
     return failed(
       "game_stopped_on_disconnect",
@@ -138,13 +148,23 @@ export function classifyDisconnect({ gameAliveAfter, after, reopenOffered, repla
       "replayed_after_disconnect",
       "a companion row appeared after the disconnect with no player line behind it: the old task resumed instead of staying suspended",
     );
-  if (reopenOffered !== true)
+  if (after?.connectionStatus !== "disconnected")
     return failed(
-      "no_reopen_offered",
-      "the surface offers no fresh explicit instruction (game-reopen) after the disconnect, so a player cannot restore authority without restarting GameBuddy",
+      "connection_word_erased",
+      `the state route publishes connectionStatus=${JSON.stringify(after?.connectionStatus ?? null)} after a deliberate disconnect: \`none\` is the word for a session that never connected, so the panel cannot tell "you let go" from "you never joined" (the contract declares \`disconnected\`, and the daily chain declares it for game/disconnect)`,
+    );
+  if (worldRunningStated !== true)
+    return failed(
+      "world_running_not_stated",
+      'the panel states no sentence for this state, so the player is left reading "not connected yet" over a farm that is still running: a disconnect stops AI authority and never the player\'s world, and the surface has to say so',
+    );
+  if (forward?.offered !== true)
+    return failed(
+      "no_forward_step_offered",
+      `the surface offers nothing to press after the disconnect while the world is still running (measured: ${JSON.stringify(forward ?? null)}): a reachable, non-terminal state with no forward action leaves the player stranded with a farm they can see and no control`,
     );
   return measured(
-    `the ${disconnectedBy ?? "surface"} disconnect left the game running and the surface at attachment=${String(after?.attachmentStatus)}/${String(after?.connectionStatus)} with actionAuthority=${String(after?.actionAuthority)}, and offered the explicit reopen`,
+    `the ${disconnectedBy ?? "surface"} disconnect left the game running and the surface at attachment=${String(after?.attachmentStatus)}/${String(after?.connectionStatus)} with actionAuthority=${String(after?.actionAuthority)}, said the world is still running, and offered ${JSON.stringify(forward?.name ?? null)} as the step`,
   );
 }
 

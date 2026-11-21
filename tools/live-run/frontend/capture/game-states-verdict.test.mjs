@@ -8,7 +8,10 @@
  *   "an ordinary disconnect that stopped the game is a failure, not a pass"
  *
  * Both are the mutations a "green" run would otherwise hide: a surface describing a different game than the one
- * that ended, and a disconnect read as success while the player's world was gone.
+ * that ended, and a disconnect read as success while the player's world was gone. The disconnect's second half -
+ * the word, the sentence and the step - is driven by the reading the live run really produced (`livenow10` §4.5:
+ * the world alive, the attachment gone, `connectionStatus: "none"`), so its red is real history rather than a
+ * shape invented here.
  */
 
 import assert from "node:assert/strict";
@@ -95,14 +98,18 @@ test("a succeeded outcome left over from an earlier turn is not read as this tur
   assert.equal(reading.verdict, "measured", "the transition is the claim, not the word");
 });
 
+/** The readings a healthy disconnect produces, which each case below breaks in exactly one place. */
+const healthyDisconnect = () => ({
+  gameAliveAfter: true,
+  after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "unavailable" },
+  forward: { offered: true, name: "再读一次我的游戏" },
+  worldRunningStated: true,
+  replayed: false,
+  disconnectedBy: "browser",
+});
+
 test("an ordinary disconnect that stopped the game is a failure, not a pass", () => {
-  const reading = classifyDisconnect({
-    gameAliveAfter: false,
-    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "unavailable" },
-    reopenOffered: true,
-    replayed: false,
-    disconnectedBy: "browser",
-  });
+  const reading = classifyDisconnect({ ...healthyDisconnect(), gameAliveAfter: false });
   assert.equal(reading.verdict, "failed");
   assert.equal(reading.reason, "game_stopped_on_disconnect");
   assert.match(reading.detail, /never the player's game world/u);
@@ -110,54 +117,61 @@ test("an ordinary disconnect that stopped the game is a failure, not a pass", ()
 
 test("a disconnect that leaves the authority active is authority nobody re-granted", () => {
   const reading = classifyDisconnect({
-    gameAliveAfter: true,
-    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "active" },
-    reopenOffered: true,
-    replayed: false,
+    ...healthyDisconnect(),
+    after: { ...healthyDisconnect().after, actionAuthority: "active" },
   });
   assert.equal(reading.reason, "authority_not_paused");
 });
 
 test("an attachment that survived the disconnect is the surface driving a world it let go", () => {
   const reading = classifyDisconnect({
-    gameAliveAfter: true,
+    ...healthyDisconnect(),
     after: { attachmentStatus: "attached", connectionStatus: "connected_idle", actionAuthority: "paused" },
-    reopenOffered: true,
-    replayed: false,
   });
   assert.equal(reading.reason, "attachment_survived_disconnect");
 });
 
 test("a companion row with no player line behind it is the old task replayed", () => {
-  const reading = classifyDisconnect({
-    gameAliveAfter: true,
-    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "paused" },
-    reopenOffered: true,
-    replayed: true,
-  });
+  const reading = classifyDisconnect({ ...healthyDisconnect(), replayed: true });
   assert.equal(reading.reason, "replayed_after_disconnect");
 });
 
-test("a healthy disconnect is measured, and its detail carries all three readings", () => {
+/**
+ * The reading the live run produced, verbatim (`livenow10` §4.5, `9e1c8e9e`): the world still running, the
+ * attachment gone, and the state route publishing `none` - the word for a session that never connected.
+ */
+test("a disconnect published as `none` is the never-connected word, and the player reads it as such", () => {
   const reading = classifyDisconnect({
-    gameAliveAfter: true,
-    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "paused" },
-    reopenOffered: true,
-    replayed: false,
+    ...healthyDisconnect(),
+    after: { attachmentStatus: "none", connectionStatus: "none", actionAuthority: "unavailable" },
   });
-  assert.equal(reading.verdict, "measured");
-  assert.match(reading.detail, /attachment=none\/disconnected/u);
-  assert.match(reading.detail, /actionAuthority=paused/u);
+  assert.equal(reading.verdict, "failed");
+  assert.equal(reading.reason, "connection_word_erased");
+  assert.match(reading.detail, /"none"/u, "the failure quotes the word the route really published");
+  assert.match(reading.detail, /never connected/u);
 });
 
-test("a disconnect with no explicit reopen offered is a failure, because reconnect is an operation", () => {
-  const reading = classifyDisconnect({
-    gameAliveAfter: true,
-    after: { attachmentStatus: "none", connectionStatus: "disconnected", actionAuthority: "paused" },
-    reopenOffered: false,
-    replayed: false,
-  });
-  assert.equal(reading.reason, "no_reopen_offered");
+test("a panel with no sentence for the running world does not state the promise a disconnect makes", () => {
+  const reading = classifyDisconnect({ ...healthyDisconnect(), worldRunningStated: false });
+  assert.equal(reading.verdict, "failed");
+  assert.equal(reading.reason, "world_running_not_stated");
+  assert.match(reading.detail, /still running/u);
+});
+
+test("a running world with nothing to press is the dead end this scenario exists for", () => {
+  // The measured state: every control on the panel null, world alive, authority off.
+  const reading = classifyDisconnect({ ...healthyDisconnect(), forward: { offered: false, name: null } });
+  assert.equal(reading.verdict, "failed");
+  assert.equal(reading.reason, "no_forward_step_offered");
+  assert.match(reading.detail, /nothing to press/u);
+});
+
+test("a healthy disconnect is measured, and its detail carries the readings", () => {
+  const reading = classifyDisconnect(healthyDisconnect());
+  assert.equal(reading.verdict, "measured");
+  assert.match(reading.detail, /attachment=none\/disconnected/u);
+  assert.match(reading.detail, /actionAuthority=unavailable/u);
+  assert.match(reading.detail, /再读一次我的游戏/u, "the step the surface offered is quoted, not assumed");
 });
 
 test("the endgame after an observed exit settles the world, and says whether the control was offered", () => {

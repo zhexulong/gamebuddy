@@ -1630,6 +1630,9 @@ const GAME_SITUATION_FACTS: Readonly<
   activated_not_launched: { where: "not_in_farm", condition: null, next: { action: "gameLaunch" } },
   launching: { where: "arriving", condition: null, next: { text: "gameSituationNextWaitGame" } },
   running_without_attachment: { where: "game_running", condition: null, next: { text: "gameSituationNextWaitGame" } },
+  // The player let go of a world that kept running: she is not in the farm, and the line really did drop
+  // (`connectionStatus: "disconnected"`), so the card names that instead of a wait nobody is on.
+  disconnected_world_running: { where: "game_running", condition: "dropped", next: { action: "gameReadAgain" } },
   launch_failed: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
   game_ended: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
   game_not_read: { where: "not_read", condition: null, next: { action: "gameReadAgain" } },

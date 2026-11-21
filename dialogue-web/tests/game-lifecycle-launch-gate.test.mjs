@@ -50,7 +50,7 @@ import {
   setupStagedNothing,
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
-import { instanceLabel } from "../src/game-presentation.ts";
+import { connectionLabel, instanceLabel } from "../src/game-presentation.ts";
 import { composedProblemView, gameOperationFailure } from "../src/composed-problem-view.ts";
 import { ComposedReferenceGameProblemError } from "../src/composed-reference-game-browser-api.ts";
 
@@ -90,8 +90,15 @@ const gameProfile = composeGameProfile({
 
 const NOT_ATTACHED = Object.freeze({ status: "none", generation: 0, connectionStatus: "none" });
 
-function attachmentReader() {
-  return Object.freeze({ readAttachmentView: () => NOT_ATTACHED });
+/**
+ * The Host's attachment slot, as the state provider reads it.
+ *
+ * The disconnect's own publication is the pair below one word apart from `NOT_ATTACHED`: the same
+ * `none`/generation 0 attachment, with `disconnected` as the reason. That one word is what the gate at the
+ * bottom of this file holds, through the real provider and the component's own derivation.
+ */
+function attachmentReader(view = NOT_ATTACHED) {
+  return Object.freeze({ readAttachmentView: () => Object.freeze(view) });
 }
 
 function launchReadinessReader(view) {
@@ -109,11 +116,11 @@ function installationReader(value) {
   return Object.freeze({ readInstallationView: async () => value });
 }
 
-function readState(lifecycleView, readiness, installation) {
+function readState(lifecycleView, readiness, installation, attachment) {
   return createGameBrowserStateProvider(
     gameProfile,
     lifecycleReader(lifecycleView),
-    attachmentReader(),
+    attachmentReader(attachment),
     launchReadinessReader(readiness),
     undefined,
     installation === undefined ? undefined : installationReader(installation),
@@ -1047,4 +1054,102 @@ test("a registration an earlier attempt holds reads as its own refusal, not as a
   assert.match(en.gameProblemRegistrationHeldDetail, /If Stardew Valley is still running, close it/u);
   assert.match(messages("zh-CN").gameProblemRegistrationHeldDetail, /如果《星露谷物语》还在运行/u);
   t.diagnostic(`registration-held: ${view.title} -> ${view.step.step}`);
+});
+
+/**
+ * A deliberate disconnect: its own word, its own sentence, its own step.
+ *
+ * Measured defect (`.tmp/lane-livenow10.md` §4.5, live run at `9e1c8e9e`): the product's own
+ * `game/disconnect` closed the semantic attachment and left the world running, and the projection then read
+ * `attachment=none`/`connectionStatus=none` - the pair a session that has never connected publishes - so the
+ * surface said "尚未连接游戏" over a farm that was still running and drew no control at all. A reachable,
+ * non-terminal state with no forward action, and no way for the player to tell "you let go" from "you never
+ * joined".
+ *
+ * The pair this test holds is one word apart, and both halves are required: the same `none`/generation 0
+ * attachment is `disconnected` after the player disconnects (the chain declaration's own fact, and the
+ * contract's member for it) and `none` when nothing was ever connected. Driving the REAL provider with each
+ * of the two attachment views is what keeps the Host's publication and the panel's derivation from drifting
+ * back to one word for both states.
+ */
+test("session-forward-path.7: a deliberate disconnect says so, and offers the step a running world leaves", async (t) => {
+  const runningView = Object.freeze({
+    schemaVersion: 1,
+    playerHost: Object.freeze({
+      state: "authenticated",
+      ownership: "player_external",
+      compatibility: "verified",
+      attachmentAllowed: true,
+    }),
+    aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+  });
+  const controlsOf = (game) =>
+    deriveGameSessionControls({ ready: true, game, resumeFailureSurface: false, resumeAttemptFailed: false });
+
+  // The player disconnected: the world is still up, and the reason the attachment is gone travels with it.
+  const disconnected = await readState(runningView, { status: "none", generation: 0 }, "registered", {
+    status: "none",
+    generation: 0,
+    connectionStatus: "disconnected",
+  });
+  assert.equal(disconnected.game.connectionStatus, "disconnected", "the Host publishes why, not just that");
+  assert.equal(disconnected.game.instance.status, "running", "and the world it says that about is still running");
+
+  // The same projection one word away: nobody has connected yet.
+  const never = await readState(runningView, { status: "none", generation: 0 }, "registered");
+
+  const afterDisconnect = controlsOf(disconnected);
+  const beforeAnyConnection = controlsOf(never);
+  assert.equal(afterDisconnect.phase, "disconnected_world_running");
+  assert.equal(beforeAnyConnection.phase, "running_without_attachment", "the two states keep two phases");
+  assert.notEqual(afterDisconnect.phase, beforeAnyConnection.phase);
+
+  // The step. Nothing is on its way after a disconnect, so the waiting sentence is not this state's, and
+  // the step is the read this page owns - which is how a world the player has since quit in the game reaches
+  // the ending whose sentence carries the way out.
+  assert.deepEqual([...afterDisconnect.forwardActions], ["reread_game"]);
+  assert.equal(afterDisconnect.rereadAvailable, true, "the panel's own read is the step");
+  assert.equal(afterDisconnect.disconnectedWorldRunning, true);
+  assert.equal(afterDisconnect.waitingForGame, false, "nothing is coming: a wait here would be a promise nobody keeps");
+  assert.deepEqual([...beforeAnyConnection.forwardActions], ["wait_for_game"]);
+  assert.equal(beforeAnyConnection.waitingForGame, true);
+  assert.equal(beforeAnyConnection.disconnectedWorldRunning, false);
+
+  // No control whose premise the coordinator does not hold: `stop`, `disconnect` and `endgame` all require a
+  // live attachment (the disconnect's own teardown leaves generation 0 and no facade, and `stopGame` refuses
+  // with `stardew_game_runtime_unavailable` there), `resume`/`reopen` require one over `connected_idle`, and
+  // the shell's create control acts only on a failed resume attempt. Offering any of them would be a press
+  // whose only answer is a refusal this surface can predict.
+  for (const name of [
+    "stopAvailable",
+    "disconnectAvailable",
+    "endgameAvailable",
+    "resumeAvailable",
+    "retryResumeAvailable",
+    "cancelResumeAvailable",
+    "createAvailable",
+    "reopenAvailable",
+    "restartRequired",
+  ])
+    assert.equal(afterDisconnect[name], false, `${name} is not offered after a disconnect`);
+
+  // The sentence states the product's promise and the step, in both catalogues, and the two words the panel
+  // can put in its connection row are two different sentences.
+  const en = messages("en");
+  const zh = messages("zh-CN");
+  assert.match(en.gameDisconnectedWorldRunning, /still running/u, "the sentence says the world is still running");
+  assert.match(en.gameDisconnectedWorldRunning, /stops your companion, never your world/u);
+  assert.match(zh.gameDisconnectedWorldRunning, /仍在运行/u);
+  assert.match(zh.gameDisconnectedWorldRunning, /断开的是你的伙伴/u);
+  for (const labels of [en, zh]) {
+    assert.notEqual(labels.gameConnectionDisconnected, labels.gameConnectionNone, "two states, two rows");
+    assert.match(labels.gameReadAgain, /\S/u, "the control the step names has a name of its own");
+  }
+  // The row the player reads is the label for the word the Host published, never a second derivation.
+  assert.equal(connectionLabel(en, disconnected.game.connectionStatus), en.gameConnectionDisconnected);
+  assert.equal(connectionLabel(en, never.game.connectionStatus), en.gameConnectionNone);
+  t.diagnostic(
+    `session-forward-path.7: ${beforeAnyConnection.phase}->${beforeAnyConnection.forwardActions.join("+")} | ` +
+      `${afterDisconnect.phase}->${afterDisconnect.forwardActions.join("+")}`,
+  );
 });
