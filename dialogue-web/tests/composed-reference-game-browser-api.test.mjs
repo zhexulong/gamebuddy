@@ -1357,11 +1357,15 @@ test("anything the client cannot classify says the fault is ours, and keeps the 
   assert.equal(view.detail.includes("invented_failure_code"), false, "a code is not a sentence a player can read");
   assert.equal(observedProblemCode(unknown), "invented_failure_code", "and the code is not lost: the record has it");
 
-  // A code with a named bounded cause is the same card: the cause is the record's, not the player's.
+  // A code with a named bounded cause is the same card plus the clause for that cause: the cause is
+  // the record's, and what a player reads is `humanizeProblemCause`'s answer for it - never the name.
   const caused = await refusal({ code: "game_unavailable", cause: "stardew_player_host_launch_failed" }, 409);
   const causedView = composedProblemView(caused, labels);
   assert.equal(causedView.title, labels.gameProblemUnavailableTitle);
-  assert.equal(causedView.detail, labels.gameProblemUnavailableDetail);
+  assert.equal(
+    causedView.detail,
+    labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", labels.gameCausePlayerHostLaunchFailed),
+  );
   assert.equal(causedView.detail.includes("stardew_player_host_launch_failed"), false, "the cause is not printed");
   assert.equal(causedView.detail.includes("game_unavailable"), false, "the code is not shown back at the player");
   assert.equal(observedProblemCause(caused), "stardew_player_host_launch_failed", "the record keeps which step failed");
@@ -1595,7 +1599,13 @@ test("a real composed refusal reaches the player as its own category, over real 
 
     const launchView = composedProblemView(wrappedFailure, en);
     assert.equal(launchView.title, en.gameProblemUnavailableTitle);
-    assert.equal(launchView.detail, en.gameProblemUnavailableDetail, "the card is the sentence a player can act on");
+    // This cause is one the clause map does not know, so the card says exactly that and still gives
+    // the step: the honest unknown, never a guess and never the name.
+    assert.equal(
+      launchView.detail,
+      en.gameProblemUnavailableCauseDetail.replace("{{cause}}", en.gameCauseUnknown),
+      "the card names which step it was, or says it cannot tell",
+    );
     assert.equal(launchView.detail.includes("stardew_private_launch_admission_failed"), false, "the cause is not printed");
     assert.equal(launchView.detail.includes("game_unavailable"), false, "the raw code never reaches the player");
     assert.equal(launchView.detail.includes(en.problemReconciliationFailedDetail), false);

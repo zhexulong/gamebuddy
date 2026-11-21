@@ -127,10 +127,14 @@ void test("the game's own refusals are read against the game's vocabulary first"
     "stardew_bridge_timeout",
     "the cause the Host published is kept for the record",
   );
+  // The card names the step as a clause, not as the name: this assertion used to require the plain
+  // sentence, because the name was the only thing that distinguished two causes and printing it was
+  // the only way to pass it on. The clause does that job now, so the sentence a player reads says
+  // WHICH step it was and still contains no code.
   assert.equal(
     declaredProblemSentence(caused, labels),
-    labels.gameProblemUnavailableDetail,
-    "and the card is one sentence",
+    labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", labels.gameCauseUnknown),
+    "a cause we do not know the meaning of reads as the honest 'we could not tell which step' clause",
   );
   assert.equal(
     declaredProblemSentence(caused, labels)?.includes("stardew_bridge_timeout"),

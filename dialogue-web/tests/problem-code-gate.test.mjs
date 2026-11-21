@@ -933,19 +933,19 @@ test("problem-code.10: every declared game code reaches the player as its own se
   // The one game sentence that carries producer vocabulary: `game_unavailable` is the wrapper the
   // Host answers with when a step of the game's lifecycle failed, and the bounded `stardew_*` cause it
   // registers is what names the step. This assertion used to require that name in the detail - "the
-  // bounded cause the Host registered is the only thing that names which step failed". The fact it
-  // protected was that the cause is not silently dropped: it is not - it stays on the error, and
-  // `observedProblemCause` reads it for the record. What it must no longer do is reach a player, who
-  // can neither read nor act on `stardew_private_launch_admission_failed`.
+  // bounded cause the Host registered is the only thing that names which step failed". The name still
+  // never reaches the player; what reaches them is the clause `humanizeProblemCause` picks for it, and
+  // an unknown cause reads as the honest "we could not tell which step" clause rather than a guess.
   const labels = messages("en");
   const cause = "stardew_private_launch_admission_failed";
   const caused = gameProblemFor("game_unavailable", 409, cause);
   const diagnosed = composedProblemView(caused, labels);
   t.diagnostic(`problem-code.10 diagnostic: ${diagnosed.title} / ${diagnosed.detail}`);
   assert.equal(observedProblemCause(caused), cause, "the bounded cause the Host registered is kept for the record");
-  assert.equal(diagnosed.detail, labels.gameProblemUnavailableDetail, "and the card is the sentence a player can act on");
   assert.equal(diagnosed.detail.includes(cause), false, "the cause is not printed at the player");
   assert.equal(diagnosed.detail.includes("game_unavailable"), false);
+  // This cause is not one the clause map knows, so the sentence says so instead of inventing one.
+  assert.ok(diagnosed.detail.includes(labels.gameCauseUnknown), "an unknown cause says we could not tell, not a guess");
 
   // The mutation half: a game code with no entry in the map falls through to the internal-error
   // sentence, which is the reading the assertion above fails on.

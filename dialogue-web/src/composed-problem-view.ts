@@ -672,18 +672,64 @@ function isDeclaredProblemCode(code: string): code is TavernProblemCode {
  * something went wrong without saying whether the command ran - a stop that may or may not have
  * stopped the game. The distinction is not decoration: the game panel's per-operation line says
  * "the result is uncertain", which is the truth for the second class and a false claim for the
- * first. `game_unavailable` is the one wrapper whose cause carries the meaning, and the cause is the
- * record's, not the player's: the bounded `stardew_*` name says which step failed and is read by
- * `observedProblemCause`, while the sentence a player reads is the one above it, with or without a
- * cause. `game_runtime_unavailable`, `game_endgame_settlement_unavailable` and `state_unavailable`
- * are unsettled because the Host names a failure whose effect on the command it cannot state.
+ * first. `game_unavailable` is the one wrapper whose cause carries the meaning: the bounded
+ * `stardew_*` name says which step failed and is read by `observedProblemCause`, and what a sentence
+ * is handed is not that name but the clause `humanizeProblemCause` picks for it - so the sentence
+ * can say which step it was without printing a token, and when we do not know, the clause says so.
+ * `game_runtime_unavailable`, `game_endgame_settlement_unavailable` and `state_unavailable` are
+ * unsettled because the Host names a failure whose effect on the command it cannot state.
  */
 type GameOutcome = "refused" | "unsettled";
 
 type GameProblemView = Readonly<{
   outcome: GameOutcome;
-  sentence: (labels: Messages) => ProblemViewState;
+  /**
+   * `reason` is already the player's clause, never a code: the callers pass
+   * `humanizedCause(error, labels)`, or `null` when the refusal named no cause at all.
+   */
+  sentence: (labels: Messages, reason: string | null) => ProblemViewState;
 }>;
+
+/**
+ * The bounded coordinator causes that say which step failed, as the clause a player reads instead of
+ * the name.
+ *
+ * The keys are the Host's own names, and `player-vocabulary.10` witnesses every one of them against
+ * `host/src`: an entry whose cause leaves the tree goes red instead of lingering as a sentence for a
+ * fault that can no longer happen. The values are catalogue keys' text, so the clause is translated
+ * like every other sentence (`i18n.1`/`i18n.2`), and none of them names a mechanism.
+ */
+export const GAME_CAUSE_CLAUSES: Readonly<Record<string, (labels: Messages) => string>> = Object.freeze({
+  stardew_contained_player_host_launch_failed: (labels) => labels.gameCauseContainedPlayerHostLaunchFailed,
+  stardew_contained_ai_client_launch_failed: (labels) => labels.gameCauseContainedAiClientLaunchFailed,
+  stardew_player_host_launch_failed: (labels) => labels.gameCausePlayerHostLaunchFailed,
+  stardew_player_host_launch_runtime_unavailable: (labels) => labels.gameCauseLaunchRuntimeUnavailable,
+  stardew_native_launch_plan_executable_invalid: (labels) => labels.gameCauseLaunchExecutableInvalid,
+  stardew_cabin_handoff_unavailable: (labels) => labels.gameCauseCabinHandoffUnavailable,
+  stardew_player_host_cabin_unavailable: (labels) => labels.gameCauseCabinUnavailable,
+  stardew_cabin_publication_uncertain: (labels) => labels.gameCauseCabinPublicationUncertain,
+  stardew_game_create_world_held_by_player_resume_required: (labels) => labels.gameCauseWorldHeldByPlayer,
+  stardew_game_create_slot_holder_not_proven_gone: (labels) => labels.gameCauseSlotHolderNotGone,
+});
+
+/**
+ * What a bounded cause means, in the words a player reads — or the honest admission that we do not
+ * know which step it was.
+ *
+ * The fallback matters more than the table: an unknown cause used to be printed as itself, and a
+ * guessed cause would be worse - it tells the player something false about their own game. So an
+ * unknown name gets `gameCauseUnknown`, and the sentence around it carries the next step.
+ */
+export function humanizeProblemCause(cause: string | null, labels: Messages): string {
+  const clause = cause === null ? undefined : GAME_CAUSE_CLAUSES[cause];
+  return clause === undefined ? labels.gameCauseUnknown : clause(labels);
+}
+
+/** The refusal's own bounded cause, already turned into the clause a sentence may carry. */
+function humanizedCause(error: unknown, labels: Messages): string | null {
+  const cause = observedProblemCause(error);
+  return cause === null ? null : humanizeProblemCause(cause, labels);
+}
 
 /** A game refusal whose words are one catalogue pair, with no cause to name. */
 function refused(sentenceOf: ProblemSentence): GameProblemView {
@@ -752,11 +798,20 @@ const gameStateUnavailable: ProblemSentence = (labels) =>
   sentence(labels.gameProblemStateUnavailableTitle, labels.gameProblemStateUnavailableDetail, RETRY_READ);
 /**
  * The Host's wrapper for a step of the game's own lifecycle that failed. The bounded `stardew_*`
- * cause it carries names the step for the record; a player cannot act on that name, so the sentence
- * is one sentence whether or not the Host sent one.
+ * cause it carries names the step for the record and says which clause the player reads; with no
+ * cause at all, the plain sentence is the whole truth, because there is nothing to name.
  */
-const gameUnavailable: ProblemSentence = (labels) =>
-  sentence(labels.gameProblemUnavailableTitle, labels.gameProblemUnavailableDetail, RETRY_READ);
+const gameUnavailable: GameProblemView = {
+  outcome: "unsettled",
+  sentence: (labels, reason) =>
+    sentence(
+      labels.gameProblemUnavailableTitle,
+      reason === null
+        ? labels.gameProblemUnavailableDetail
+        : labels.gameProblemUnavailableCauseDetail.replace("{{cause}}", reason),
+      RETRY_READ,
+    ),
+};
 /**
  * The game process itself ended. The Host states it (the Guardian reported the exit and the code
  * that came with it), so this is a fact, not a failure of a read: the retry that `state_unavailable`
@@ -824,7 +879,7 @@ const GAME_PROBLEM_VIEWS: Readonly<Record<GameProblemCode, GameProblemView>> = {
   idempotency_expired: refused(gameNotRepeated),
   idempotency_in_progress: refused(stillRunning),
 
-  game_unavailable: unsettled(gameUnavailable),
+  game_unavailable: gameUnavailable,
   game_prerequisites_missing: refused(gamePrerequisitesMissing),
   game_instance_not_found: refused(gameInstanceGone),
   game_attachment_conflict: refused(gameAttachmentMoved),
@@ -874,7 +929,8 @@ export type GameOperationFailure = Readonly<{ kind: "unsettled" }> | Readonly<{ 
 export function gameOperationFailure(error: unknown, labels: Messages): GameOperationFailure {
   if (error instanceof ComposedReferenceGameProblemError) {
     const view = gameProblemView(error.code);
-    if (view !== null && view.outcome === "refused") return { kind: "refused", sentence: view.sentence(labels).detail };
+    if (view !== null && view.outcome === "refused")
+      return { kind: "refused", sentence: view.sentence(labels, humanizedCause(error, labels)).detail };
   }
   return { kind: "unsettled" };
 }
@@ -947,12 +1003,12 @@ function namedProblemView(error: unknown, labels: Messages): ProblemViewState | 
   // is not on), so a game refusal is answered by the game map first.
   if (code !== null && error instanceof ComposedReferenceGameProblemError) {
     const view = gameProblemView(code);
-    if (view !== null) return view.sentence(labels);
+    if (view !== null) return view.sentence(labels, humanizedCause(error, labels));
   }
   if (code !== null && isDeclaredProblemCode(code)) return PROBLEM_SENTENCES[code](labels);
   if (code !== null) {
     const view = gameProblemView(code);
-    if (view !== null) return view.sentence(labels);
+    if (view !== null) return view.sentence(labels, humanizedCause(error, labels));
   }
   return null;
 }
