@@ -164,20 +164,28 @@ const readGameTranscript = () => {
  * `stardew_player_host_exited` is the code the Host answers with when the Guardian reported the game's exit
  * (`host/src/composed-reference-game-browser.ts:647-668`), and it is the only place the death reaches the
  * player as a named fact rather than as `state_unavailable`.
+ *
+ * ASKED FROM THE PAGE, because the route is the page's own origin: a `fetch("/api/…")` issued in the driver
+ * process has no base to resolve against and threw `TypeError: Failed to parse URL from
+ * /api/composed-reference-game/v1/game/stardew/cabins` on every run that reached it (measured 2026-11-21,
+ * `D:\gb-lanes\livenow10-wx`), so the reading had never been taken. The page also carries the session the
+ * route is served under, which the driver process does not.
  */
-const readCabinFact = async () => {
+const readCabinFact = async (page) => {
   try {
-    const response = await fetch("/api/composed-reference-game/v1/game/stardew/cabins", {
-      credentials: "same-origin",
-      headers: { accept: "application/json" },
+    return await page.evaluate(async () => {
+      const response = await fetch("/api/composed-reference-game/v1/game/stardew/cabins", {
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      });
+      let body = null;
+      try {
+        body = await response.json();
+      } catch {
+        body = null;
+      }
+      return { status: response.status, code: body?.code ?? null };
     });
-    let body = null;
-    try {
-      body = await response.json();
-    } catch {
-      body = null;
-    }
-    return { status: response.status, code: body?.code ?? null };
   } catch (error) {
     return { status: `unreachable:${String(error).slice(0, 160)}`, code: null };
   }
@@ -189,33 +197,39 @@ const readCabinFact = async () => {
  *
  * It is used only for an operation the surface does not offer as a control (the endgame after the panel has
  * stopped drawing it) - a control that exists is always pressed instead.
+ *
+ * The request is issued IN THE PAGE for the same reason `readCabinFact` is: the route is an origin-relative
+ * path, and the page is where the session that authorizes it lives. The key is minted here so the page
+ * receives a finished value instead of a second generator.
  */
-const postGameRoute = async (route, body) => {
-  const state = await readGameState();
+const postGameRoute = async (page, route, body) => {
+  const state = await page.evaluate(readGameState);
   if (state.ok !== true || typeof state.csrfToken !== "string")
     return { status: "state_unavailable", code: null, detail: `the state read answered ${String(state.status)}` };
+  const idempotencyKey = randomBytes(16).toString("base64url");
   try {
-    const response = await fetch(`/api/composed-reference-game/v1${route}`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        "x-csrf-token": state.csrfToken,
+    return await page.evaluate(
+      async ({ route, body, idempotencyKey, csrfToken }) => {
+        const response = await fetch(`/api/composed-reference-game/v1${route}`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            "x-csrf-token": csrfToken,
+          },
+          body: JSON.stringify({ apiVersion: 1, idempotencyKey, ...body }),
+        });
+        let answer = null;
+        try {
+          answer = await response.json();
+        } catch {
+          answer = null;
+        }
+        return { status: response.status, body: answer, code: answer?.code ?? null };
       },
-      body: JSON.stringify({
-        apiVersion: 1,
-        idempotencyKey: randomBytes(16).toString("base64url"),
-        ...body,
-      }),
-    });
-    let answer = null;
-    try {
-      answer = await response.json();
-    } catch {
-      answer = null;
-    }
-    return { status: response.status, body: answer, code: answer?.code ?? null };
+      { route, body, idempotencyKey, csrfToken: state.csrfToken },
+    );
   } catch (error) {
     return { status: `unreachable:${String(error).slice(0, 160)}`, code: null };
   }

@@ -49,7 +49,9 @@ import { test } from "node:test";
 
 import {
   activateAndLaunch,
+  postGameRoute,
   pressStop,
+  readCabinFact,
   runBoundary,
   stateWaiter,
   waitForState,
@@ -554,4 +556,44 @@ test("the waiter an installer is handed is bound to the page, and the page-first
   assert.equal(typeof bound, "function");
   const settled = await bound((state) => state.prerequisites === "met", 400);
   assert.equal(settled.settled, false, "a fresh run root has not been confirmed yet, and the bound waiter says so");
+});
+
+test("the cabin read and the authenticated post are the page's HTTP, never the driver process's", async () => {
+  // Measured 2026-11-21 on `D:\gb-lanes\livenow10-wx`: both helpers issued a fetch from the DRIVER process
+  // with an origin-relative path, so the death's second reading had never been taken at all -
+  //   {"status":"unreachable:TypeError: Failed to parse URL from /api/composed-reference-game/v1/game/stardew/cabins"}
+  // The route is the page's origin and carries the page's session, so the page is where it must be asked from.
+  const asked = [];
+  const page = {
+    async evaluate(pageFunction, argument) {
+      if (pageFunction.name === "readGameState")
+        return { ok: true, status: 200, csrfToken: "csrf-from-the-page", attachmentGeneration: 1 };
+      asked.push(argument);
+      if (argument === undefined) return { status: 409, code: "stardew_player_host_exited" };
+      return { status: 200, body: { status: "gameended" }, code: null };
+    },
+  };
+  const processFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("the driver process must not issue this request");
+  };
+  try {
+    assert.deepEqual(
+      await readCabinFact(page),
+      { status: 409, code: "stardew_player_host_exited" },
+      "the cabin read is the page's answer, and a request issued in the driver process would be unreachable",
+    );
+    const answer = await postGameRoute(page, "/game/endgame", {
+      expectedAttachmentGeneration: 1,
+      confirm: true,
+    });
+    assert.equal(answer.status, 200, "the endgame route answered what the page saw");
+    const posted = asked.at(-1);
+    assert.equal(posted.csrfToken, "csrf-from-the-page", "the token is the page's own state read, not a fresh one");
+    assert.equal(posted.route, "/game/endgame");
+    assert.equal(posted.body.confirm, true, "the operation's own body travels with the key");
+    assert.match(posted.idempotencyKey, /^[A-Za-z0-9_-]{22}$/u, "a 22-character canonical base64url key, minted here");
+  } finally {
+    globalThis.fetch = processFetch;
+  }
 });

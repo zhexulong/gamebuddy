@@ -79,7 +79,7 @@ const { classifyDeath, NOT_MEASURED_REASONS } = require("./game-states-verdict.m
   const exit = await S.waitForState(page, (reading) => reading.ok === true && reading.playerHostExitCode !== undefined, 90_000);
   record("role exit", { settled: exit.settled, elapsedMs: exit.elapsedMs, state: exit.state });
   // Reading 2: the Host's bounded code for a world that is gone.
-  const cabin = await S.readCabinFact();
+  const cabin = await S.readCabinFact(page);
   record("host fact", cabin);
   // Reading 3: the panel's own sentence.
   const afterPanel = await page.evaluate(S.readGameFacts);

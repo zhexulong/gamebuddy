@@ -60,7 +60,7 @@ const { classifyEndgame, NOT_MEASURED_REASONS } = require("./game-states-verdict
   const began = Date.now();
   let answer = null;
   if (attempted === "route") {
-    answer = await S.postGameRoute("/game/endgame", {
+    answer = await S.postGameRoute(page, "/game/endgame", {
       expectedAttachmentGeneration: Math.max(1, exit.state.attachmentGeneration ?? 1),
       confirm: true,
     });
