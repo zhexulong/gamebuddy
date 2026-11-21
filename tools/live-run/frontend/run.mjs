@@ -167,11 +167,12 @@ function prepareRun(paths, values) {
     cdpWaitMs: Math.max(0, Number(values["wait-for-cdp"] ?? process.env.GB_SHOTS_CDP_WAIT_MS ?? 0) * 1000),
     homeLocalAppData: process.env.LOCALAPPDATA ?? "C:\\Users\\long\\AppData\\Local",
     credentialPresent: typeof process.env.CPA_OAI_API_KEY === "string" && process.env.CPA_OAI_API_KEY.length > 0,
+    // The world this run enters. `own` (the default) creates one, so a launch always measures a world with a
+    // seat; `existing` enters the world the product already has, which is the ordinary second session of a
+    // player's farm and the only way a run can measure a world an EARLIER run created.
+    world: values.world === "existing" ? "existing" : "own",
   };
-  // The world this run enters. `own` (the default) creates one, so a launch always measures a world with a
-  // seat; `existing` enters the world the product already has, which is the ordinary second session of a
-  // player's farm and the only way a run can measure a world an EARLIER run created.
-  world: values.world === "existing" ? "existing" : "own", saveRunConfig(paths, run);
+  saveRunConfig(paths, run);
   mkdirSync(paths.logsDir, { recursive: true });
   return run;
 }
