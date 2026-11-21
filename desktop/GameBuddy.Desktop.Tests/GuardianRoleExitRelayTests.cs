@@ -1,88 +1,85 @@
+using System.Collections.Concurrent;
 using System.Text;
 
 namespace GameBuddy.Desktop.Tests;
 
 /// <summary>
-/// The public channel carries the Guardian's replies and, on the same channel,
-/// the role events it publishes when a role process ends on its own.
+/// The Guardian's public channel carries two kinds of frame: the reply to the command in
+/// flight, and a role that ended on its own, at whatever instant it ended.
 ///
-/// These drive the real reader the relay uses, over the real frame bytes. The
-/// property that matters is the one the product depended on and did not have: an
-/// event queued in front of a command's reply must not be consumed as that
-/// reply, because a mismatched reply fails the relay and closes the Guardian's
-/// control channel - which is how an unexpected player-role death made the
-/// product's own explicit containment unavailable.
+/// The property that was missing is the second one's timing: the channel used to be read
+/// only while a command was in flight, so a death that arrived with nothing in front of it
+/// waited for the next command - and the controller that has just launched a game sends no
+/// next command at all. The Host is that controller, so the game could be gone while the
+/// product still described it as running (`.tmp/lane-deathpub.md`).
+///
+/// These drive the real lease and the real reader over real pipe handles. The properties
+/// kept from the reader this replaced are the ones that still hold: an event queued in
+/// front of a reply must not be consumed as that reply (a mismatched reply fails the relay
+/// and closes the Guardian's control channel), every event is delivered exactly once, and a
+/// frame that is neither shape fails closed rather than being guessed at.
 /// </summary>
 public sealed class GuardianRoleExitRelayTests
 {
     private const string ContainmentReply = "{\"schemaVersion\":1,\"result\":\"role_contained\"}\n";
     private const string PlayerExit = "{\"operation\":\"role_exited\",\"role\":\"player_host\",\"exitCode\":3}\n";
+    private const string AiExit = "{\"operation\":\"role_exited\",\"role\":\"ai_client\",\"exitCode\":4294967295}\n";
     private const uint ProcessQueryLimitedInformation = 0x1000;
+
+    [Fact]
+    public async Task A_role_exit_reaches_the_relay_with_no_command_in_flight()
+    {
+        using var channel = new RelayChannel();
+        await channel.Write(PlayerExit);
+
+        var exit = await channel.WaitForExitAsync();
+        Assert.Equal("player_host", exit.Role);
+        Assert.Equal(3L, exit.ExitCode);
+    }
 
     [Fact]
     public async Task A_role_exit_queued_before_a_containment_reply_still_answers_the_containment()
     {
-        var result = await GuardianPublicResultReader.ReadAsync(Stream(PlayerExit + ContainmentReply), CancellationToken.None);
+        // #506: the death is a frame in front of the reply, never instead of it, so the
+        // product's own explicit containment still works for a session whose game ended.
+        using var channel = new RelayChannel();
+        var relay = channel.Lease.RelayResidentAsync(Containment("contain_role"), CancellationToken.None);
+        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(channel.ControlInput, CancellationToken.None));
+        await channel.Write(PlayerExit + ContainmentReply);
 
-        Assert.Equal("role_contained", result.Status);
-        Assert.NotNull(result.RoleExit);
-        Assert.Equal("player_host", result.RoleExit.Role);
-        Assert.Equal(3L, result.RoleExit.ExitCode);
+        Assert.Equal("role_contained", await relay.WaitAsync(TimeSpan.FromSeconds(10)));
+        var exit = await channel.WaitForExitAsync();
+        Assert.Equal("player_host", exit.Role);
+        Assert.Equal(3L, exit.ExitCode);
     }
 
     [Fact]
-    public async Task A_role_exit_that_arrives_before_a_containment_reply_does_not_break_the_containment_relay()
+    public async Task A_reply_with_no_role_exit_answers_its_command_and_relays_nothing()
     {
-        // The real relay over real pipe handles, with the test playing the
-        // Guardian's public channel. `contain_role` is the operation whose loss
-        // this defect caused: it is the product's explicit endgame containment.
-        Assert.True(WindowsNative.CreatePipe(out var controlRead, out var controlWrite, IntPtr.Zero, 0));
-        Assert.True(WindowsNative.CreatePipe(out var publicRead, out var publicWrite, IntPtr.Zero, 0));
-        Assert.True(WindowsNative.OpenProcess(ProcessQueryLimitedInformation, false, WindowsNative.GetCurrentProcessId(), out var self));
-        using var controlInput = new FileStream(controlRead, FileAccess.Read, bufferSize: 4096, isAsync: false);
-        using var publicOutput = new FileStream(publicWrite, FileAccess.Write, bufferSize: 4096, isAsync: false);
-        var lease = new GuardianSupervisorLease(new GuardianProcessResources(
-            self, controlWrite, publicRead, GuardianPrivateIngress.Create(null), "unused-for-this-relay", null));
-        var command = new GuardianRelayCommand(
-            "contain_role", "11111111-1111-1111-1111-111111111111", 1, "22222222-2222-2222-2222-222222222222",
-            "player_host", null, 0, 5_000);
+        using var channel = new RelayChannel();
+        var relay = channel.Lease.RelayResidentAsync(Containment("contain_role"), CancellationToken.None);
+        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(channel.ControlInput, CancellationToken.None));
+        await channel.Write(ContainmentReply);
 
-        var relay = lease.RelayResidentAsync(command, CancellationToken.None);
-        // The relay has written its command and is now waiting for its own reply.
-        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(controlInput, CancellationToken.None));
-        await publicOutput.WriteAsync(Encoding.UTF8.GetBytes(PlayerExit + ContainmentReply));
-        await publicOutput.FlushAsync();
-
-        var result = await relay.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal("role_contained", result.Status);
-        Assert.Equal("player_host", result.RoleExit!.Role);
-        Assert.Equal(3L, result.RoleExit.ExitCode);
+        Assert.Equal("role_contained", await relay.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.False(channel.ExitRelayedWithin(TimeSpan.FromMilliseconds(250)), "a reply published a role exit nobody sent");
     }
 
     [Fact]
-    public async Task A_reply_with_no_role_exit_reports_no_exit_and_keeps_its_own_status()
+    public async Task Both_role_exits_arrive_as_their_own_events()
     {
-        var result = await GuardianPublicResultReader.ReadAsync(Stream(ContainmentReply), CancellationToken.None);
+        using var channel = new RelayChannel();
+        await channel.Write(PlayerExit + AiExit);
 
-        Assert.Equal("role_contained", result.Status);
-        Assert.Null(result.RoleExit);
-    }
-
-    [Fact]
-    public async Task Both_role_exits_can_precede_one_reply_and_each_is_read_as_an_event()
-    {
-        var result = await GuardianPublicResultReader.ReadAsync(
-            Stream($"{PlayerExit}{"{\"operation\":\"role_exited\",\"role\":\"ai_client\",\"exitCode\":4294967295}\n"}{ContainmentReply}"),
-            CancellationToken.None);
-
-        Assert.Equal("role_contained", result.Status);
-        Assert.Equal("ai_client", result.RoleExit!.Role);
-        Assert.Equal(4294967295L, result.RoleExit.ExitCode);
+        Assert.Equal("player_host", (await channel.WaitForExitAsync()).Role);
+        var ai = await channel.WaitForExitAsync();
+        Assert.Equal("ai_client", ai.Role);
+        Assert.Equal(4294967295L, ai.ExitCode);
     }
 
     [Theory]
-    // A role event that is not the exact three-key shape is not an event: it is a
-    // frame this reader must refuse rather than guess at.
+    // A frame that is neither the reply nor the exact three-key role event is a frame this
+    // channel must refuse rather than guess at.
     [InlineData("{\"operation\":\"role_exited\",\"role\":\"player_host\"}\n")]
     [InlineData("{\"operation\":\"role_exited\",\"role\":\"player_host\",\"exitCode\":-1}\n")]
     [InlineData("{\"operation\":\"role_exited\",\"role\":\"player_host\",\"exitCode\":4294967296}\n")]
@@ -92,28 +89,109 @@ public sealed class GuardianRoleExitRelayTests
     [InlineData("{\"schemaVersion\":2,\"result\":\"role_contained\"}\n")]
     public async Task A_frame_that_is_neither_the_reply_nor_a_role_event_fails_closed(string frame)
     {
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
-            () => GuardianPublicResultReader.ReadAsync(Stream(frame + ContainmentReply), CancellationToken.None));
+        using var channel = new RelayChannel();
+        var relay = channel.Lease.RelayResidentAsync(Containment("contain_role"), CancellationToken.None);
+        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(channel.ControlInput, CancellationToken.None));
+        await channel.Write(frame + ContainmentReply);
+
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => relay);
+        Assert.False(channel.ExitRelayedWithin(TimeSpan.FromMilliseconds(250)));
     }
 
     [Fact]
     public async Task A_second_event_for_a_role_already_reported_fails_closed_instead_of_replacing_it()
     {
-        // A role is launched at most once per attempt, so a second event for the
-        // same role says the Guardian is repeating itself. Accepting it would let
-        // the last frame win: the relay would publish one exit code for a role
-        // that published another, and the product would report a native status
-        // the OS never gave it.
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
-            () => GuardianPublicResultReader.ReadAsync(Stream(PlayerExit + PlayerExit + ContainmentReply), CancellationToken.None));
+        // A role is launched at most once per attempt, so a second event for the same role
+        // says the Guardian is repeating itself. Accepting it would let the last frame win:
+        // the relay would publish one exit code for a role that published another, and the
+        // product would report a native status the OS never gave it.
+        using var channel = new RelayChannel();
+        var relay = channel.Lease.RelayResidentAsync(Containment("contain_role"), CancellationToken.None);
+        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(channel.ControlInput, CancellationToken.None));
+        await channel.Write(PlayerExit + PlayerExit + ContainmentReply);
+
+        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(() => relay);
+        Assert.Equal("player_host", (await channel.WaitForExitAsync()).Role);
+        Assert.False(channel.ExitRelayedWithin(TimeSpan.FromMilliseconds(250)), "the repeated event was relayed as a second exit");
     }
 
     [Fact]
-    public async Task A_stream_of_role_events_that_never_ends_in_a_reply_fails_closed()
+    public async Task Events_with_no_reply_never_answer_the_command_which_fails_at_its_own_deadline()
     {
-        await Assert.ThrowsAsync<GuardianLaunchUnavailableException>(
-            () => GuardianPublicResultReader.ReadAsync(Stream(PlayerExit + PlayerExit + PlayerExit), CancellationToken.None));
+        // The reader serves events whether or not a command is in flight, so an event stream
+        // with no reply is not the reader's failure any more - it is the command's own budget
+        // answering for a reply the native never wrote.
+        using var channel = new RelayChannel();
+        var relay = channel.Lease.RelayResidentAsync(Containment("contain_role", operationWaitBudgetMs: 750), CancellationToken.None);
+        Assert.Contains("\"operation\":\"contain_role\"", await GuardianSupervisorLease.ReadLineAsync(channel.ControlInput, CancellationToken.None));
+        await channel.Write(PlayerExit + AiExit);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => relay);
+        Assert.Equal("player_host", (await channel.WaitForExitAsync()).Role);
+        Assert.Equal("ai_client", (await channel.WaitForExitAsync()).Role);
     }
 
-    private static MemoryStream Stream(string frames) => new(Encoding.UTF8.GetBytes(frames));
+    private static GuardianRelayCommand Containment(string operation, long operationWaitBudgetMs = 5_000) =>
+        new(operation, "11111111-1111-1111-1111-111111111111", 1, "22222222-2222-2222-2222-222222222222",
+            "player_host", null, 0, operationWaitBudgetMs);
+
+    /// <summary>
+    /// One real lease over real pipe handles, with this test playing the Guardian's public
+    /// channel and the relay collecting what the lease delivers.
+    ///
+    /// The lease holds the current process handle as its "guardian" so nothing is spawned;
+    /// it is deliberately NOT disposed here, because its disposal ends that process.
+    /// </summary>
+    private sealed class RelayChannel : IDisposable
+    {
+        private readonly FileStream publicOutput;
+        private readonly ConcurrentQueue<GuardianRoleExit> exits = new();
+
+        internal RelayChannel()
+        {
+            Assert.True(WindowsNative.CreatePipe(out var controlRead, out var controlWrite, IntPtr.Zero, 0));
+            Assert.True(WindowsNative.CreatePipe(out var publicRead, out var publicWrite, IntPtr.Zero, 0));
+            Assert.True(WindowsNative.OpenProcess(ProcessQueryLimitedInformation, false, WindowsNative.GetCurrentProcessId(), out var self));
+            ControlInput = new FileStream(controlRead, FileAccess.Read, bufferSize: 4096, isAsync: false);
+            publicOutput = new FileStream(publicWrite, FileAccess.Write, bufferSize: 4096, isAsync: false);
+            Lease = new GuardianSupervisorLease(new GuardianProcessResources(
+                self, controlWrite, publicRead, GuardianPrivateIngress.Create(null), "unused-for-this-relay", null))
+            {
+                RoleExitRelay = (exit, _) => { exits.Enqueue(exit); return Task.CompletedTask; },
+            };
+        }
+
+        internal FileStream ControlInput { get; }
+        internal GuardianSupervisorLease Lease { get; }
+
+        internal async Task Write(string frames)
+        {
+            await publicOutput.WriteAsync(Encoding.UTF8.GetBytes(frames));
+            await publicOutput.FlushAsync();
+        }
+
+        internal bool ExitRelayedWithin(TimeSpan budget)
+        {
+            var deadline = DateTime.UtcNow + budget;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!exits.IsEmpty) return true;
+                Thread.Sleep(10);
+            }
+            return !exits.IsEmpty;
+        }
+
+        internal async Task<GuardianRoleExit> WaitForExitAsync()
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (DateTime.UtcNow < deadline)
+            {
+                if (exits.TryDequeue(out var exit)) return exit;
+                await Task.Delay(10);
+            }
+            throw new TimeoutException("no role exit was relayed");
+        }
+
+        public void Dispose() => publicOutput.Dispose();
+    }
 }

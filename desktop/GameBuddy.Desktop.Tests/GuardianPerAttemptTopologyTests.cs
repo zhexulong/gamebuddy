@@ -201,12 +201,12 @@ public sealed class GuardianPerAttemptTopologyTests(ITestOutputHelper output)
                     new GuardianRelayCommand("arm_attempt", identity.GuardianInstanceId, identity.GuardianEpoch, identity.AttemptId, null, identity.ArmBody(), 0, 30_000),
                     CancellationToken.None);
                 var arm = clock.Elapsed;
-                var attempt = new ArmedAttempt(label, supervisor, lease, processHandle, identity, pipeName, pid, result.Status, spawn, arm, output);
+                var attempt = new ArmedAttempt(label, supervisor, lease, processHandle, identity, pipeName, pid, result, spawn, arm, output);
                 lease = null;
                 processHandle = null;
                 output.WriteLine($"{label}: pid={pid} private-pipe={pipeName}");
                 output.WriteLine($"{label}: lease={identity.LeaseName} player-job={identity.PlayerJobName} ai-job={identity.AiJobName}");
-                output.WriteLine($"{label}: arm={result.Status} spawn={spawn.TotalMilliseconds:F1}ms arm-handshake={arm.TotalMilliseconds:F1}ms spawn-to-armed={(spawn + arm).TotalMilliseconds:F1}ms");
+                output.WriteLine($"{label}: arm={result} spawn={spawn.TotalMilliseconds:F1}ms arm-handshake={arm.TotalMilliseconds:F1}ms spawn-to-armed={(spawn + arm).TotalMilliseconds:F1}ms");
                 return attempt;
             }
             finally

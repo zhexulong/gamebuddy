@@ -38,6 +38,10 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     private Task? commandLoop;
     private CancellationTokenSource? sessionClosing;
     private readonly SemaphoreSlim attemptGate = new(1, 1);
+    // The one gate over the bytes this broker writes to the Host: acknowledgements come from the
+    // session loop and a role's own ending comes from the Guardian's reader, and the pipe's
+    // contract is one whole frame per write.
+    private readonly SemaphoreSlim hostWriteGate = new(1, 1);
 
     // The one attempt at a time this broker serves, and everything that belongs to it. The Guardian is
     // the resource: it is created when the attempt arms, settled when the attempt ends, and the slot is
@@ -259,12 +263,11 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             parsed.ThrowIfExpired(commandCancellation);
             AdvanceTransition(parsed);
             parsed.ThrowIfExpired(commandCancellation);
-            await WriteAcknowledgementAsync(parsed, result.Status, commandCancellation).ConfigureAwait(false);
-            // The acknowledgement goes first, because it is the answer the Host is
-            // waiting for; the role exit the native reported travels after it as the
-            // unsolicited frame it is. Nothing about the command that just finished
-            // depends on it, and the Host reads it without consuming its own waiter.
-            if (result.RoleExit is not null) await WriteRoleExitAsync(result.RoleExit, commandCancellation).ConfigureAwait(false);
+            // The acknowledgement is the answer to the command this session is relaying. A role
+            // that ended on its own is not: it reaches the Host from the Guardian's continuous
+            // reader (`GuardianSupervisorLease.RoleExitRelay`), whether or not a command was ever
+            // in front of it.
+            await WriteAcknowledgementAsync(parsed, result, commandCancellation).ConfigureAwait(false);
         }
     }
 
@@ -273,7 +276,7 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     /// control channel is closed so the native leaves (and so the in-flight relay unblocks), and the session
     /// ends normally: the caller's settlement is what proves the process gone.
     /// </summary>
-    private async Task AbandonSessionAsync(Task<GuardianRelayResult> relay)
+    private async Task AbandonSessionAsync(Task<string> relay)
     {
         sessionClosing?.Cancel();
         // Control EOF first: a relay waiting on the native can only finish once the native has left.
@@ -299,6 +302,10 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         {
             if (guardian is not null || startGuardian is null) throw new GuardianLaunchUnavailableException();
             var created = await startGuardian(cancellationToken).ConfigureAwait(false);
+            // Where a role that ends on its own is written. Set before any command is relayed,
+            // because the correlation this needs is this broker's and the session's, and a
+            // death that arrived with nowhere to go would fail closed rather than be dropped.
+            created.RoleExitRelay = WriteRoleExitAsync;
             guardian = created;
             guardianIdentity = new GuardianProcessIdentity(created.Pid, created.StartedAtUnixMs, created.ExecutablePath);
             attemptId = command.AttemptId;
@@ -569,8 +576,13 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
     {
         var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value) + "\n");
         if (bytes.Length > MaxWireBytes) throw new GuardianLaunchUnavailableException();
-        await server.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-        await server.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await hostWriteGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await server.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await server.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally { hostWriteGate.Release(); }
     }
 
     private static void VerifySameCurrentUserSid(WindowsNative.SafeProcessHandle child)

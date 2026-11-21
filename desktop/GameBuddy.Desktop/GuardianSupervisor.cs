@@ -212,6 +212,15 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     private uint containmentCeilingMs = ContainmentCeilingMs;
     private FileStream? publicInputStream;
     private FileStream? publicOutputStream;
+    // The one reader of this guardian's public channel, started when the lease is and owning
+    // the read side for the lease's whole life. A command writes its frame and awaits the
+    // reply this loop delivers; a role that ends while no command is in flight is delivered
+    // to <see cref="RoleExitRelay"/> the same way. Reading only while a command was in flight
+    // is what made a death nobody asked about invisible to the product that owned it
+    // (`.tmp/lane-deathpub.md`).
+    private readonly Task publicLoop;
+    private TaskCompletionSource<string>? pendingReply;
+    private volatile Exception? publicFailure;
 
     internal GuardianSupervisorLease(GuardianProcessResources resources)
     {
@@ -223,7 +232,18 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         ExecutablePath = resources.ExecutablePath;
         Pid = WindowsNative.GetProcessId(process);
         StartedAtUnixMs = ReadStartedAtUnixMs(process);
+        publicOutputStream = new FileStream(resources.PublicOutput, FileAccess.Read, bufferSize: 4096, isAsync: false);
+        publicLoop = Task.Run(ReadPublicChannelAsync, CancellationToken.None);
     }
+
+    /// <summary>
+    /// Where a role that ended on its own is delivered.
+    ///
+    /// The broker sets it before it relays any command, because the layer that owns the
+    /// Host-facing pipe is the one that can name this attempt's correlation. A channel that
+    /// produces an exit with nowhere to send it fails closed instead of dropping the fact.
+    /// </summary>
+    internal Func<GuardianRoleExit, CancellationToken, Task>? RoleExitRelay { get; set; }
 
     internal string ExecutablePath { get; }
 
@@ -247,7 +267,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
     /// </summary>
     internal void BindContainmentCeiling(uint waitMilliseconds) => containmentCeilingMs = Math.Min(waitMilliseconds, ContainmentCeilingMs);
 
-    internal async Task<GuardianRelayResult> RelayResidentAsync(GuardianRelayCommand command, CancellationToken cancellationToken)
+    internal async Task<string> RelayResidentAsync(GuardianRelayCommand command, CancellationToken cancellationToken)
     {
         var relayGateHeld = false;
         try
@@ -257,29 +277,41 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
             await relayGate.WaitAsync(commandCancellation).ConfigureAwait(false);
             relayGateHeld = true;
             if (closed) throw new GuardianLaunchUnavailableException();
-            command.ThrowIfExpired(commandCancellation);
-            await WritePublicCommandAsync(command, commandCancellation).ConfigureAwait(false);
-            if (command.Operation is "arm_attempt" or "launch_role")
+            if (publicFailure is not null) throw new GuardianLaunchUnavailableException(innerException: publicFailure);
+            // Installed BEFORE the command is written: the reader is already running and can
+            // deliver this command's reply the instant the native writes it.
+            var reply = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (Interlocked.CompareExchange(ref pendingReply, reply, null) is not null) throw new GuardianLaunchUnavailableException();
+            try
             {
                 command.ThrowIfExpired(commandCancellation);
-                var ingress = await privateIngress.ConnectAsync(commandCancellation).ConfigureAwait(false);
-                var privateFrame = command.Operation == "arm_attempt"
-                    ? privateIngress.InjectArmToken(command.PrivateFrame!)
-                    : command.PrivateFrame!;
+                await WritePublicCommandAsync(command, commandCancellation).ConfigureAwait(false);
+                if (command.Operation is "arm_attempt" or "launch_role")
+                {
+                    command.ThrowIfExpired(commandCancellation);
+                    var ingress = await privateIngress.ConnectAsync(commandCancellation).ConfigureAwait(false);
+                    var privateFrame = command.Operation == "arm_attempt"
+                        ? privateIngress.InjectArmToken(command.PrivateFrame!)
+                        : command.PrivateFrame!;
+                    command.ThrowIfExpired(commandCancellation);
+                    await ingress.WriteAsync(privateFrame, commandCancellation).ConfigureAwait(false);
+                    command.ThrowIfExpired(commandCancellation);
+                    await ingress.WriteAsync(new byte[] { (byte)'\n' }, commandCancellation).ConfigureAwait(false);
+                    command.ThrowIfExpired(commandCancellation);
+                    await ingress.FlushAsync(commandCancellation).ConfigureAwait(false);
+                    command.ThrowIfExpired(commandCancellation);
+                    if (await ReadLineAsync(ingress, commandCancellation).ConfigureAwait(false) != "accepted") throw new GuardianLaunchUnavailableException();
+                }
+                var expected = command.Operation switch { "arm_attempt" => "armed", "launch_role" => "role_active", "contain_role" => "role_contained", _ => throw new GuardianLaunchUnavailableException() };
                 command.ThrowIfExpired(commandCancellation);
-                await ingress.WriteAsync(privateFrame, commandCancellation).ConfigureAwait(false);
-                command.ThrowIfExpired(commandCancellation);
-                await ingress.WriteAsync(new byte[] { (byte)'\n' }, commandCancellation).ConfigureAwait(false);
-                command.ThrowIfExpired(commandCancellation);
-                await ingress.FlushAsync(commandCancellation).ConfigureAwait(false);
-                command.ThrowIfExpired(commandCancellation);
-                if (await ReadLineAsync(ingress, commandCancellation).ConfigureAwait(false) != "accepted") throw new GuardianLaunchUnavailableException();
+                // The reader owns the read side, so this awaits the frame it will deliver rather
+                // than reading one for itself: a role exit written by the native can arrive in
+                // the same read as the reply, and only one reader may take bytes off the channel.
+                var status = await reply.Task.WaitAsync(commandCancellation).ConfigureAwait(false);
+                if (status != expected) throw new GuardianLaunchUnavailableException();
+                return status;
             }
-            var expected = command.Operation switch { "arm_attempt" => "armed", "launch_role" => "role_active", "contain_role" => "role_contained", _ => throw new GuardianLaunchUnavailableException() };
-            command.ThrowIfExpired(commandCancellation);
-            var publicResult = await GuardianPublicResultReader.ReadAsync(PublicOutputStream(), commandCancellation).ConfigureAwait(false);
-            if (publicResult.Status != expected) throw new GuardianLaunchUnavailableException();
-            return new GuardianRelayResult(expected, publicResult.RoleExit);
+            finally { Interlocked.CompareExchange(ref pendingReply, null, reply); }
         }
         catch
         {
@@ -289,6 +321,50 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         finally
         {
             if (relayGateHeld) relayGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Reads the Guardian's public channel for this lease's whole life.
+    ///
+    /// It is the only reader of the channel, which is what lets a role that ended on its own
+    /// be delivered whenever it happened - including while no command is in flight, which is
+    /// every instant after a launch. A frame it cannot place ends the channel's usefulness
+    /// rather than being guessed at: the failure is held for the next command, and the
+    /// command already waiting is refused with it.
+    /// </summary>
+    private async Task ReadPublicChannelAsync()
+    {
+        var reported = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            var stream = publicOutputStream ?? throw new GuardianLaunchUnavailableException();
+            while (true)
+            {
+                var line = await ReadLineAsync(stream, CancellationToken.None).ConfigureAwait(false);
+                string status;
+                using (var document = JsonDocument.Parse(line))
+                {
+                    if (GuardianPublicFrame.IsRoleExit(document.RootElement, out var exit))
+                    {
+                        // A role is launched at most once per attempt, so a second event for one
+                        // role says the Guardian is repeating itself: taking it would let the last
+                        // frame win and publish an exit code the OS never gave that process.
+                        if (!reported.Add(exit.Role)) throw new GuardianLaunchUnavailableException();
+                        var relay = RoleExitRelay ?? throw new GuardianLaunchUnavailableException();
+                        await relay(exit, CancellationToken.None).ConfigureAwait(false);
+                        continue;
+                    }
+                    status = GuardianPublicFrame.ReadReply(document.RootElement);
+                }
+                var pending = Interlocked.Exchange(ref pendingReply, null) ?? throw new GuardianLaunchUnavailableException();
+                pending.TrySetResult(status);
+            }
+        }
+        catch (Exception error)
+        {
+            publicFailure = error;
+            Interlocked.Exchange(ref pendingReply, null)?.TrySetException(error);
         }
     }
 
@@ -368,6 +444,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
         }
         publicInputStream?.Dispose();
         publicOutputStream?.Dispose();
+        try { await publicLoop.ConfigureAwait(false); } catch { }
         privateIngress.Dispose();
         process.Dispose();
         relayGate.Dispose();
@@ -383,8 +460,7 @@ internal sealed class GuardianSupervisorLease : IAsyncDisposable
 
     private Stream PublicOutputStream()
     {
-        var output = publicOutput ?? throw new GuardianLaunchUnavailableException();
-        return publicOutputStream ??= new FileStream(output, FileAccess.Read, bufferSize: 4096, isAsync: false);
+        return publicOutputStream ?? throw new GuardianLaunchUnavailableException();
     }
 
     internal static async Task<string> ReadLineAsync(Stream stream, CancellationToken cancellationToken)
@@ -431,8 +507,6 @@ internal sealed class GuardianPrivateIngress : IDisposable
     public void Dispose() => stream?.Dispose();
 }
 
-internal sealed record GuardianRelayResult(string Status, GuardianRoleExit? RoleExit);
-
 /// <summary>
 /// A role process the Guardian saw end on its own, as the Guardian published it.
 ///
@@ -441,58 +515,23 @@ internal sealed record GuardianRelayResult(string Status, GuardianRoleExit? Role
 /// </summary>
 internal sealed record GuardianRoleExit(string Role, long ExitCode);
 
-/// <summary>One public-channel read: the Guardian's reply, plus any role event that preceded it.</summary>
-internal sealed record GuardianPublicResult(string Status, GuardianRoleExit? RoleExit);
-
 /// <summary>
-/// Reads the Guardian's public channel, which carries two kinds of frame.
+/// The two frame shapes the Guardian's public channel carries, kept apart in one place.
 ///
 /// A reply answers the command just written and is the exact two-key
-/// `{"schemaVersion":1,"result":"..."}` shape. A role event is unsolicited: it
-/// names a role that ended on its own and the native exit code, in the exact
-/// three-key `{"operation":"role_exited","role":"...","exitCode":N}` shape, and
-/// the Guardian may publish it at any moment — including while a command is
-/// waiting for its reply.
+/// `{"schemaVersion":1,"result":"..."}` shape. A role event is unsolicited: it names a role
+/// that ended on its own and the native exit code, in the exact three-key
+/// `{"operation":"role_exited","role":"...","exitCode":N}` shape.
 ///
-/// This reader is the one place that separates them, so a command's reply is
-/// still found and returned when an event is queued in front of it. Treating the
-/// event as the reply instead would fail the relay and close the Guardian's
-/// control channel, which is how an unexpected role death used to make the
-/// product's own explicit containment unavailable.
+/// Neither shape is ever consumed as the other. A reply read as an event would leave a
+/// command waiting until its deadline; an event read as the reply would fail the relay and
+/// close the Guardian's control channel, which is how an unexpected player-role death used
+/// to make the product's own explicit containment unavailable - and an event that waited for
+/// the next command is how a death the product never asked about went unpublished.
 /// </summary>
-internal static class GuardianPublicResultReader
+internal static class GuardianPublicFrame
 {
-    // One event per role, and a role is launched at most once per attempt, so a
-    // third event inside one read means the Guardian is repeating itself: fail
-    // closed instead of letting an unbounded stream consume the reply's deadline.
-    private const int MaxRoleEventsPerRead = 2;
-
-    internal static async Task<GuardianPublicResult> ReadAsync(Stream stream, CancellationToken cancellationToken)
-    {
-        GuardianRoleExit? roleExit = null;
-        var events = 0;
-        // One event per role: a role is launched at most once per attempt, so a
-        // second event for a role that already reported says the Guardian is
-        // repeating itself. Taking the last frame would publish an exit code the
-        // OS never gave that process.
-        var reported = new HashSet<string>(StringComparer.Ordinal);
-        while (true)
-        {
-            var line = await GuardianSupervisorLease.ReadLineAsync(stream, cancellationToken).ConfigureAwait(false);
-            using var document = JsonDocument.Parse(line);
-            var root = document.RootElement;
-            if (TryReadRoleExit(root, out var exit))
-            {
-                if (++events > MaxRoleEventsPerRead || !reported.Add(exit.Role)) throw new GuardianLaunchUnavailableException();
-                roleExit = exit;
-                continue;
-            }
-            if (root.ValueKind != JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "schemaVersion", "result" }, StringComparer.Ordinal) || root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("result").ValueKind != JsonValueKind.String) throw new GuardianLaunchUnavailableException();
-            return new GuardianPublicResult(root.GetProperty("result").GetString()!, roleExit);
-        }
-    }
-
-    private static bool TryReadRoleExit(JsonElement root, out GuardianRoleExit roleExit)
+    internal static bool IsRoleExit(JsonElement root, out GuardianRoleExit roleExit)
     {
         roleExit = null!;
         if (root.ValueKind != JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "operation", "role", "exitCode" }, StringComparer.Ordinal)) return false;
@@ -502,6 +541,13 @@ internal static class GuardianPublicResultReader
         if (!root.GetProperty("exitCode").TryGetInt64(out var exitCode) || exitCode < 0 || exitCode > uint.MaxValue) return false;
         roleExit = new GuardianRoleExit(role, exitCode);
         return true;
+    }
+
+    /// <summary>The command's own answer, or a refusal for every other frame.</summary>
+    internal static string ReadReply(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object || !root.EnumerateObject().Select(value => value.Name).SequenceEqual(new[] { "schemaVersion", "result" }, StringComparer.Ordinal) || root.GetProperty("schemaVersion").GetInt32() != 1 || root.GetProperty("result").ValueKind != JsonValueKind.String) throw new GuardianLaunchUnavailableException();
+        return root.GetProperty("result").GetString()!;
     }
 }
 internal sealed record GuardianRelayCommand(string Operation, string GuardianInstanceId, int GuardianEpoch, string AttemptId, string? Role, byte[]? PrivateFrame, long DeadlineUnixMs, long OperationWaitBudgetMs)

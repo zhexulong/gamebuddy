@@ -148,18 +148,27 @@ public sealed class GuardianBrokerTests
     {
         var source = File.ReadAllText(Source("GuardianSupervisor.cs"));
 
+        // The waiter for the command's own reply is installed BEFORE the command is written: the
+        // channel's reader is already running, so a reply can never arrive with nothing to deliver
+        // it to.
+        var pending = source.IndexOf("Interlocked.CompareExchange(ref pendingReply, reply, null)", StringComparison.Ordinal);
         var publicWrite = source.IndexOf("WritePublicCommandAsync(command, commandCancellation)", StringComparison.Ordinal);
         var privateConnect = source.IndexOf("privateIngress.ConnectAsync(commandCancellation)", StringComparison.Ordinal);
         var privateAccepted = source.IndexOf("!= \"accepted\"", StringComparison.Ordinal);
-        var nativeResult = source.IndexOf("GuardianPublicResultReader.ReadAsync(PublicOutputStream(), commandCancellation)", publicWrite, StringComparison.Ordinal);
-        Assert.True(publicWrite >= 0 && privateConnect > publicWrite && privateAccepted > privateConnect && nativeResult > privateAccepted);
-        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            await WritePublicCommandAsync", source, StringComparison.Ordinal);
-        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n                var ingress", source, StringComparison.Ordinal);
-        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n            var publicResult = await GuardianPublicResultReader.ReadAsync", source, StringComparison.Ordinal);
-        // The reply is the Guardian's own, and the role event it may publish in
-        // front of that reply travels with it instead of failing the relay.
-        Assert.Contains("if (publicResult.Status != expected) throw new GuardianLaunchUnavailableException();", source, StringComparison.Ordinal);
-        Assert.Contains("return new GuardianRelayResult(expected, publicResult.RoleExit);", source, StringComparison.Ordinal);
+        var nativeResult = source.IndexOf("await reply.Task.WaitAsync(commandCancellation)", StringComparison.Ordinal);
+        Assert.True(pending >= 0 && publicWrite > pending && privateConnect > publicWrite && privateAccepted > privateConnect && nativeResult > privateAccepted);
+        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n                await WritePublicCommandAsync", source, StringComparison.Ordinal);
+        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n                    var ingress", source, StringComparison.Ordinal);
+        Assert.Contains("command.ThrowIfExpired(commandCancellation);\n                // The reader owns the read side", source, StringComparison.Ordinal);
+        // The reply is the Guardian's own. A role event cannot be read as it - that is what the
+        // one classifier is for - and a reply that is not the answer to this command fails closed.
+        Assert.Contains("status = GuardianPublicFrame.ReadReply(document.RootElement);", source, StringComparison.Ordinal);
+        Assert.Contains("if (status != expected) throw new GuardianLaunchUnavailableException();", source, StringComparison.Ordinal);
+        Assert.Contains("if (GuardianPublicFrame.IsRoleExit(document.RootElement, out var exit))", source, StringComparison.Ordinal);
+        // Exactly ONE reader owns the channel's bytes, and the lease starts it when it is created:
+        // reading only while a command is in flight is what left a death nobody asked about unseen.
+        Assert.Equal(1, source.Split("ReadLineAsync(stream, CancellationToken.None)", StringSplitOptions.None).Length - 1);
+        Assert.Contains("publicLoop = Task.Run(ReadPublicChannelAsync, CancellationToken.None);", source, StringComparison.Ordinal);
         Assert.Contains("BindDeadline(cancellationToken)", source, StringComparison.Ordinal);
         Assert.Contains("await CloseControlAsync(CancellationToken.None)", source, StringComparison.Ordinal);
         Assert.Contains("CloseControlAndWaitForExitAsync", source, StringComparison.Ordinal);
