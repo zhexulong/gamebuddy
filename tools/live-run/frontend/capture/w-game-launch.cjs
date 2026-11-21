@@ -188,11 +188,10 @@ const BUDGET = Object.freeze({
   /** One real provider turn, the same budget driver F gives its reply. */
   replyMs: 240_000,
   /**
-   * How long the first WORLD-FACT turn is given to appear in the Host's account after the attachment landed.
-   * Her client is started by the attach and its observation traffic is what opens the first turn, so this is a
-   * start-up budget rather than a turn's cost, and the wait reports the elapsed time it actually took.
+   * How long the account may take to land after the STOP settled the turn it reports: this is a write's lag
+   * behind a settlement the product has already acknowledged, not a turn's budget. See step 7.
    */
-  awakeMs: 180_000,
+  accountGraceMs: 20_000,
   stopMs: 120_000,
 });
 
@@ -1691,37 +1690,6 @@ async function hostAnswers(port) {
   }
   await shot(page, "91-game-ready.png");
 
-  /*
-   * ---- 4b. her agent's own account: the world's facts open her turns with nobody speaking ----
-   *
-   * `daily-agent-awake`, and the one reading in this driver that is not the page's. The Host owns these turns:
-   * `acceptHostMintedFact` enqueues the fact and starts the flush with nothing awaiting it
-   * (`host/src/host-service.ts:976-982`), and `CompanionLoop.flush` prints `GAME_TURN_ACCOUNT` for every turn
-   * it opens (`host/src/companion-loop.ts:385`). Those bytes reach this process only as the product entry's
-   * stderr, which the launch phase keeps in `launch.state.entryStderrFile`; `capture/turn-account.cjs` reads
-   * the line and `agentAwakeOf` says whether a turn opened FOR A WORLD FACT. Nobody has spoken in this run at
-   * this point - the Game surface mounts no composer - so a turn that opened here was opened by the world.
-   */
-  const awakeBegan = Date.now();
-  let awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
-  while (awake.kind !== "awake" && Date.now() - awakeBegan < BUDGET.awakeMs) {
-    await sleep(1000);
-    awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
-  }
-  record("her agent awake", {
-    elapsedMs: Date.now() - awakeBegan,
-    budgetMs: BUDGET.awakeMs,
-    kind: awake.kind,
-    reason: awake.reason,
-    reading:
-      awake.reading === null
-        ? null
-        : { path: awake.reading.path, held: awake.reading.held, bytes: awake.reading.bytes, lines: awake.reading.lines.length },
-  });
-  say(`GAME-LAUNCH ${describeTurnAccount(awake)}`);
-  if (awake.kind === "unreadable") return await notMeasured(browser, awake.reason, awake.detail);
-  if (awake.kind !== "awake") return await failed(browser, awake.reason, awake.detail);
-
   // ---- 5. one player line, in the game surface ----
   //
   // The gate is asked OF THE GAME SURFACE. A document-wide question answers `ok` off the Chat
@@ -1822,6 +1790,48 @@ async function hostAnswers(port) {
       stopAnswer: () => answers.filter((answer) => answer.route === "game/stop").at(-1) ?? null,
     });
   else say(`no stop control was offered (${JSON.stringify(stopControl.stop)}); the run's own cleanup names what remained`);
+
+  /*
+   * ---- 7. her agent's own account: the world's facts opened her turns with nobody speaking ----
+   *
+   * `daily-agent-awake`, and the one reading in this driver that is not the page's. The Host owns these turns:
+   * `acceptHostMintedFact` enqueues the fact and starts the flush with nothing awaiting it
+   * (`host/src/host-service.ts:976-982`), and `CompanionLoop.flush` prints `GAME_TURN_ACCOUNT` for every turn
+   * it opens (`host/src/companion-loop.ts:385`). Those bytes reach this process only as the product entry's
+   * stderr, which the launch phase keeps in `launch.state.entryStderrFile`; `capture/turn-account.cjs` reads the
+   * line and `agentAwakeOf` says whether a turn opened FOR A WORLD FACT. Nobody has spoken in this run (the Game
+   * surface mounts no composer, so `facts.line` above is `none`), so a turn that opened was opened by the world.
+   *
+   * WHY IT IS READ AFTER THE STOP, and not when the attachment lands. The line is printed when the turn it
+   * opened SETTLES, not when it starts: `flush` awaits the pump's delivery and only then calls
+   * `#reportTurnDecision` (`host/src/companion-loop.ts:321-386`). Her first turn here is an acting turn, not a
+   * reply - measured 2026-11-22 in `D:\gb-lanes\agentawake`: 180 s after `attach`, with 16 provider requests for
+   * one still-running turn in the run's wire, the entry's stderr held 6635 bytes and no account line at all. A
+   * wait in front of that would have reported `turn_account_absent` about a turn that was busy working, which is
+   * the opposite of what the line says. The STOP is what settles it (`pressStop` waits on the product's own
+   * `attached_stopped` phase, project rules #3023/#565), so the account is final here - and the grace below only
+   * covers the write landing after the settlement it reports.
+   */
+  const awakeBegan = Date.now();
+  let awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  while (awake.kind !== "awake" && Date.now() - awakeBegan < BUDGET.accountGraceMs) {
+    await sleep(500);
+    awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  }
+  record("her agent awake", {
+    elapsedMs: Date.now() - awakeBegan,
+    graceMs: BUDGET.accountGraceMs,
+    kind: awake.kind,
+    reason: awake.reason,
+    playerLineSent: facts.line === "sent",
+    reading:
+      awake.reading === null
+        ? null
+        : { path: awake.reading.path, held: awake.reading.held, bytes: awake.reading.bytes, lines: awake.reading.lines.length },
+  });
+  say(`GAME-LAUNCH ${describeTurnAccount(awake)}`);
+  if (awake.kind === "unreadable") return await notMeasured(browser, awake.reason, awake.detail);
+  if (awake.kind !== "awake") return await failed(browser, awake.reason, awake.detail);
   return await conclude(browser, { verdict: VERDICTS.measured, code: "measured", exit: 0 });
 })().catch((error) => {
   console.log("DRIVER W FAILED:", String(error).slice(0, 900));
