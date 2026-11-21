@@ -49,6 +49,11 @@
  *   derives: "asserted-by"  a test file compares the two declarations, and the check that it does is that the test
  *                           NAMES both symbols. A test that restates the shape and asserts its own copy names no
  *                           authority, which is precisely how defect 1's test stayed green.
+ *   derives: "generated"   both declarations are OUTPUTS of one language-neutral contract (`contracts/*.v1.json`):
+ *                           the contract exists, its generator exists, and every output states the contract in its own
+ *                           generated header. Byte-for-byte reproducibility is not re-proved here - that is
+ *                           `tools/check-generated-artifact-reproducibility.mjs`'s reading, which re-runs the producer
+ *                           - and this gate pins the other half: that no third hand-written declaration joins the pair.
  *   debt                    the crossing is recorded and triaged, not resolved: it carries the reason it is not one
  *                           authority today and the owner who owes it. Debt is printed, never silent, and it EXPIRES -
  *                           a recorded crossing whose declarations have moved apart is `fact_seam_drift`, and one whose
@@ -106,7 +111,7 @@
  *   game contract with no producer at all until the copy beside it was deleted.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -154,6 +159,17 @@ export const SEAMS = Object.freeze([
       symbols: ["GameProblemCode", "GAME_PROBLEM_CODES"],
     },
     owner: "the composed game client lane",
+  },
+  {
+    fact: "deployment principal keys",
+    authority: { file: "host/src/deployment-principal.generated.ts", name: "DEPLOYMENT_PRINCIPAL_KEYS" },
+    readers: [{ file: "tools/deployment-principal.generated.mjs", name: "DEPLOYMENT_PRINCIPAL_KEYS" }],
+    derives: {
+      kind: "generated",
+      file: "contracts/deployment-principal.v1.json",
+      generator: "tools/generate-deployment-principal.mjs",
+    },
+    owner: "the deployment identity lane",
   },
   {
     fact: "provider failure classes",
@@ -459,16 +475,6 @@ export const DEBT = Object.freeze([
   // ─── The tavern contract's vocabularies ───
 
   // ─── The Host's own vocabularies, restated by the harnesses and the audits ───
-  mirrorDebt(
-    "manifest principal keys",
-    "host/src/deployment-manifest.ts:PRINCIPAL_KEYS",
-    ["tools/lib/game-operational-gate-preflight.mjs:IDENTITY_KEYS"],
-    {
-      reason:
-        "the preflight re-reads the manifest's own identity keys to decide whether an operational run may start, as a list of its own",
-      owner: "the operational gate lane",
-    },
-  ),
   mirrorDebt(
     "terminal execution states",
     "host/src/execution-correlation-ledger.ts:TERMINAL_EXECUTION_STATES",
@@ -1238,11 +1244,48 @@ function disagreements(authority, reader) {
   ];
 }
 
+/** How many leading lines a generated artifact has for saying what it was generated from. */
+const GENERATED_HEADER_LINES = 3;
+
+/** The header a generated artifact writes, or "" when the file cannot be read. */
+function generatedHeader(root, file) {
+  try {
+    return readRaw(root, file).split(/\r?\n/u).slice(0, GENERATED_HEADER_LINES).join("\n");
+  } catch {
+    return "";
+  }
+}
+
 /** Does the reader derive from the authority the record names? Decided by reading the tree, not by trusting the record. */
 function derivationHolds(root, record) {
   const { derives } = record;
   const reader = record.readers[0];
   const readerCode = readSource(root, reader.file);
+  if (derives.kind === "generated") {
+    for (const [what, path] of [
+      ["contract", derives.file],
+      ["generator", derives.generator],
+    ]) {
+      try {
+        statSync(join(root, path));
+      } catch {
+        return { holds: false, why: `the ${what} ${path} is gone` };
+      }
+    }
+    // Both ends are outputs of one contract, so each has to say so in its own header: an output that stopped naming
+    // its contract is a file someone started editing, and the pair is then two declarations again. The authority is
+    // one of the outputs - checking only the readers let a hand-edited authority pass as the one that owns the fact.
+    const basename = derives.file.split("/").at(-1);
+    const unclaimed = [record.authority, ...record.readers].filter(
+      (output) => !generatedHeader(root, output.file).includes(basename),
+    );
+    return unclaimed.length === 0
+      ? { holds: true }
+      : {
+          holds: false,
+          why: `${unclaimed.map((candidate) => candidate.file).join(", ")} no longer names ${derives.file} as what generated it`,
+        };
+  }
   if (derives.kind === "asserted-by") {
     let assertion;
     try {

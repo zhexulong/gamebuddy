@@ -125,6 +125,11 @@ const MOD_EXPORT_RESOLUTION = Object.freeze({
 });
 const REGISTER_PRODUCER = "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs";
 const PROJECTION_PRODUCER = "integrations/stardew/action-development/src/action-source-projection-producer.mjs";
+
+/** The deployment principal's key set: one contract, one generator, two language outputs. */
+const DEPLOYMENT_PRINCIPAL_CONTRACT = "contracts/deployment-principal.v1.json";
+const DEPLOYMENT_PRINCIPAL_GENERATOR = "tools/generate-deployment-principal.mjs";
+const DEPLOYMENT_PRINCIPAL_KEY_INPUTS = Object.freeze([DEPLOYMENT_PRINCIPAL_CONTRACT, DEPLOYMENT_PRINCIPAL_GENERATOR]);
 const SNAPSHOT_SAMPLE_PROJECT =
   "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj";
 const SNAPSHOT_SAMPLE_TEST =
@@ -158,6 +163,28 @@ const SURFACE_INPUTS = Object.freeze([
  * skipped whenever any of those sources moved.
  */
 export const ARTEFACT_PRODUCERS = Object.freeze([
+  {
+    artefact: "host/src/deployment-principal.generated.ts",
+    producer: `node ${DEPLOYMENT_PRINCIPAL_GENERATOR} --target ts`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [DEPLOYMENT_PRINCIPAL_GENERATOR, "--target", "ts"],
+    },
+    requires: { commands: [], paths: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS] },
+    inputs: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS],
+  },
+  {
+    artefact: "tools/deployment-principal.generated.mjs",
+    producer: `node ${DEPLOYMENT_PRINCIPAL_GENERATOR} --target mjs`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [DEPLOYMENT_PRINCIPAL_GENERATOR, "--target", "mjs"],
+    },
+    requires: { commands: [], paths: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS] },
+    inputs: [...DEPLOYMENT_PRINCIPAL_KEY_INPUTS],
+  },
   {
     artefact: SURFACE,
     producer: `dotnet ${MOD_EXPORT_DIRECTORY}/bin/<configuration>/<framework>/${MOD_EXPORT_ASSEMBLY}`,

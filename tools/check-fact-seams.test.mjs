@@ -374,6 +374,52 @@ test("mutation: one member added to a mirrored list is a drift, not a silent dif
   }
 });
 
+test("a generated pair resolves to its contract, and an edit at either end is named", () => {
+  const root = temporaryRoot("generated");
+  const contract = "contracts/deployment-principal.v1.json";
+  const generator = "tools/generate-deployment-principal.mjs";
+  const host = "host/src/deployment-principal.generated.ts";
+  const tools = "tools/deployment-principal.generated.mjs";
+  const copy = (file) => {
+    const path = join(root, file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, readFileSync(join(REPO, file)));
+    return path;
+  };
+  /** The findings about this one fact: a root this small leaves every other record's declaration behind. */
+  const about = (report) => findingsOf(report).filter((entry) => entry.includes("deployment principal keys"));
+  try {
+    for (const file of [contract, generator, host, tools]) copy(file);
+    assert.deepEqual(
+      about(evaluate(root)),
+      [],
+      "both outputs come from the contract and say so, so this fact is one authority",
+    );
+
+    // One output learns a key the contract never had: the outputs stop agreeing, and the member is named.
+    const drifted = join(root, tools);
+    writeFileSync(drifted, readFileSync(drifted, "utf8").replace('"playerId"', '"playerId", "seasonId"'));
+    const drift = about(evaluate(root));
+    assert.equal(drift.length, 1, drift.join(" | "));
+    assert.match(drift[0], /^fact_seam_drift:deployment principal keys/u);
+    assert.match(drift[0], /seasonId/u);
+
+    // The bytes agree again, but one output no longer says what generated it - the file someone started editing.
+    copy(tools);
+    const header = join(root, host);
+    writeFileSync(
+      header,
+      readFileSync(header, "utf8").replace(`Source of truth: ${contract}`, "Source of truth: (edited by hand)"),
+    );
+    const underived = about(evaluate(root));
+    assert.equal(underived.length, 1, underived.join(" | "));
+    assert.match(underived[0], /^fact_seam_underived:deployment principal keys/u);
+    assert.match(underived[0], /deployment-principal\.generated\.ts/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("zero population blocks rather than passing", () => {
   const root = temporaryRoot("empty");
   try {

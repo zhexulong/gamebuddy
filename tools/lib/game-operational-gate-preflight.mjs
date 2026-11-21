@@ -2,6 +2,8 @@
  * Pure configuration preflight for the future Game Operational Gate runner.
  * It intentionally performs no filesystem, SQLite, process, or bridge access.
  */
+import { DEPLOYMENT_PRINCIPAL_KEYS } from "../deployment-principal.generated.mjs";
+
 const OPAQUE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 // Absolute root prefix: `C:\\`/`C:/` or `/`.
@@ -11,7 +13,6 @@ const ABSOLUTE_PREFIX = /^(?:[A-Za-z]:[\\/]|\/)/;
 // `(?:[^\0<>:"|?*]+(?:[\\/][^\0<>:"|?*]+)*)?` form backtracked exponentially on
 // inputs such as `!/!` repeats with a forbidden tail char.
 const WITHOUT_FORBIDDEN = /^[^\0<>:"|?*]*$/;
-const IDENTITY_KEYS = Object.freeze(["playerId", "companionId", "continuityId"]);
 const SURFACE_SESSION_KEYS = Object.freeze(["chat", "game", "foreign"]);
 
 function isRecord(value) {
@@ -40,8 +41,9 @@ function validRoot(value) {
 
 /** Validates an exact Memory identity triple. */
 export function validateGameOperationalGateIdentity(config) {
-  if (!hasExactKeys(config, IDENTITY_KEYS)) return blocked("identity_shape_invalid");
-  for (const key of IDENTITY_KEYS) if (!validOpaqueIdentity(config[key])) return blocked(`identity_${key}_invalid`);
+  if (!hasExactKeys(config, DEPLOYMENT_PRINCIPAL_KEYS)) return blocked("identity_shape_invalid");
+  for (const key of DEPLOYMENT_PRINCIPAL_KEYS)
+    if (!validOpaqueIdentity(config[key])) return blocked(`identity_${key}_invalid`);
   return Object.freeze({ state: "READY", identity: Object.freeze({ ...config }) });
 }
 

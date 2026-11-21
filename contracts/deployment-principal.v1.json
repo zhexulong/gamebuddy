@@ -1,0 +1,4 @@
+{
+  "schema": "gamebuddy-deployment-principal-key-set/v1",
+  "keys": ["continuityId", "companionId", "playerId"]
+}

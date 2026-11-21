@@ -1,16 +1,14 @@
 import { realpath, stat } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
+import { DEPLOYMENT_PRINCIPAL_KEYS, type DeploymentPrincipalKey } from "./deployment-principal.generated.js";
 import { readStrictJsonFile } from "./strict-json-reader.js";
 
 export const DEPLOYMENT_MANIFEST_SCHEMA_VERSION = 2 as const;
 export const DEPLOYMENT_MANIFEST_TOPOLOGY = "independent_chat_and_game_surfaces" as const;
 
-export type DeploymentPrincipal = Readonly<{
-  continuityId: string;
-  companionId: string;
-  playerId: string;
-}>;
+/** One string per key of the principal key set - the set is generated, so the type cannot spell it again. */
+export type DeploymentPrincipal = Readonly<Record<DeploymentPrincipalKey, string>>;
 
 export type HostDeploymentManifest = Readonly<{
   schemaVersion: typeof DEPLOYMENT_MANIFEST_SCHEMA_VERSION;
@@ -30,7 +28,6 @@ const TOP_LEVEL_KEYS = [
   "bootstrapOperationId",
   "authorityGeneration",
 ] as const;
-const PRINCIPAL_KEYS = ["continuityId", "companionId", "playerId"] as const;
 
 /**
  * Loads the operator-provided, versioned deployment identity shared by future
@@ -54,7 +51,7 @@ export async function loadHostDeploymentManifest(manifestPath: string): Promise<
     !positiveSafeInteger(raw.authorityGeneration)
   )
     throw invalid();
-  const principal = exactDataObject(raw.principal, PRINCIPAL_KEYS);
+  const principal = exactDataObject(raw.principal, DEPLOYMENT_PRINCIPAL_KEYS);
   if (
     !principal ||
     !identifier(principal.continuityId) ||
