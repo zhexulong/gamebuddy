@@ -145,20 +145,28 @@ window.__shots = {
  * rewriting the transcript), and `replyHasNoModel(uiState.send)` is the standing
  * `[data-chat-no-model]` banner (the surface's `ChatModelRoute = none`). Send is refused for either,
  * which is `sendRefused`. The credential flag is a third, separate fact the drivers already check.
+ *
+ * `surface` scopes the question to one `[data-testid=...]` region. It is required whenever the driver
+ * acts on that region rather than on the mount's conversation: the Chat surface always mounts a
+ * composer of its own, so a document-wide question answers `ok` for a Game surface that renders no
+ * input at all, and the driver then reaches for a native setter with `null` (`Illegal invocation`,
+ * measured on `frontend--r23`). The Game surface is the lifecycle panel and carries no composer, so a
+ * scoped question is the one that can answer `no_composer_on_this_mount` for it.
  */
-async function canStartTurn(page) {
+async function canStartTurn(page, { surface = null } = {}) {
   return classifyComposer(
-    await page.evaluate(() => {
-      const field = document.querySelector("textarea.composer-textarea");
-      const banner = document.querySelector("[data-chat-no-model]");
-      const notice = document.querySelector(".reference-turn-notice");
+    await page.evaluate((surfaceTestId) => {
+      const root = surfaceTestId === null ? document : document.querySelector(`[data-testid="${surfaceTestId}"]`);
+      const field = root === null ? null : root.querySelector("textarea.composer-textarea");
+      const banner = root === null ? null : root.querySelector("[data-chat-no-model]");
+      const notice = root === null ? null : root.querySelector(".reference-turn-notice");
       return {
         fieldPresent: field !== null,
         submitRefused: field !== null && field.disabled,
         noModel: banner !== null,
         sentence: (banner?.textContent ?? notice?.textContent ?? "").trim() || null,
       };
-    }),
+    }, surface),
   );
 }
 

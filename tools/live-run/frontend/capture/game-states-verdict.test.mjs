@@ -198,3 +198,19 @@ test("not-measured lines are their own shape, never a failure and never a pass",
     /^GAME-STATES death: failed x - y$/u,
   );
 });
+
+test("a surface with no player input says no turn was in flight, instead of crediting a settled one", () => {
+  // `frontend--r23`: the Game surface mounts no composer, so nothing can be sent into it. The three product
+  // readings are still the scenario; the settle reading must not claim a turn that was never sent.
+  const reading = classifyDeath({
+    ...healthyDeath(),
+    turn: { inFlight: false, streamingCompanionRows: 0, outcomeBefore: "none", outcomeAfter: "none" },
+  });
+  assert.equal(reading.verdict, "measured");
+  assert.match(reading.detail, /no turn was in flight/u);
+  assert.doesNotMatch(
+    reading.detail,
+    /the turn in flight settled/u,
+    "a turn nobody sent cannot be reported as settled",
+  );
+});

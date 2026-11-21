@@ -730,7 +730,7 @@ async function hostAnswers(port) {
     } else {
       sayChain();
       say(
-        `${GAME_LAUNCH_PREFIX} w: measured launch=ready line=sent reply_chars=${[...(facts.reply ?? "")].length}; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`,
+        `${GAME_LAUNCH_PREFIX} w: measured launch=ready line=${String(facts.line ?? "none")} reply_chars=${[...(facts.reply ?? "")].length}; steps=${chainStepsLine(facts.chain)} records=${facts.steps.join(">")}`,
       );
     }
     say(`the game's own processes at the end: ${JSON.stringify(runningGameProcesses())}`);
@@ -1746,68 +1746,82 @@ async function hostAnswers(port) {
   await shot(page, "91-game-ready.png");
 
   // ---- 5. one player line, in the game surface ----
-  const turnGate = await canStartTurn(page);
+  //
+  // The gate is asked OF THE GAME SURFACE. A document-wide question answers `ok` off the Chat
+  // surface's composer even when this surface renders no input at all, and the fill then handed a
+  // native setter `null` (`Illegal invocation`, measured on `frontend--r23`).
+  const turnGate = await canStartTurn(page, { surface: "game-surface" });
   const transcriptBefore = await page.evaluate(readGameTranscript);
   record("composer", { turnGate, settledBefore: transcriptBefore.settled.length, surfacePresent: transcriptBefore.surfacePresent });
-  if (!turnGate.ok)
-    return await notMeasured(
-      browser,
-      "game_surface_cannot_start_turn",
-      `the launched game surface cannot start a turn (${turnGate.reason}); it says: ${turnGate.sentence ?? "(no sentence)"}`,
-    );
-  await page.evaluate((line) => {
-    const scope = document.querySelector('[data-testid="game-surface"]');
-    const area = scope.querySelector(".composer-textarea");
-    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-    setter.call(area, line);
-    area.dispatchEvent(new Event("input", { bubbles: true }));
-  }, PLAYER_LINE);
-  await page.waitForTimeout(250);
-  await page.locator('[data-testid="game-surface"] .composer-button.send-button').first().click();
-  say(`one player line sent in the game surface: ${JSON.stringify(PLAYER_LINE)}`);
-  const companionsBefore = transcriptBefore.settled.filter((row) => row.role === "companion").length;
-  const replyBegan = Date.now();
-  let after = await page.evaluate(readGameTranscript);
-  while (Date.now() - replyBegan < BUDGET.replyMs && after.settled.filter((row) => row.role === "companion").length <= companionsBefore) {
-    await sleep(1000);
-    after = await page.evaluate(readGameTranscript);
-  }
-  const elapsedReply = Date.now() - replyBegan;
-  record("reply", { elapsedMs: elapsedReply, notice: after.notice, settled: after.settled });
-  await shot(page, "92-game-reply.png");
-  const companions = after.settled.filter((row) => row.role === "companion");
-  const replyRow = companions.length === 0 ? null : companions[companions.length - 1];
-  if (replyRow === null || replyRow.text.trim().length === 0) {
-    const code = `companion_silent_after:${String(elapsedReply)}`;
-    facts.detail = `no companion row carried text within ${String(BUDGET.replyMs)}ms; the surface's own notice was ${JSON.stringify(after.notice)}`;
-    say(`FAILED: ${code}`);
-    return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
-  }
-  // The reply is from the game path because it arrived on the game surface while the Host held the
-  // attachment. Both facts are read here; neither is a screenshot.
-  const stateAfterReply = await page.evaluate(readGameState);
-  record("state after the reply", stateAfterReply);
-  facts.reply = replyRow.text;
-  say("=== ITEM: the companion's reply (VERBATIM) ===");
-  say(JSON.stringify(replyRow.text));
-  say(
-    `reply role=${replyRow.role} handle=${JSON.stringify(replyRow.handle)} chars=${[...replyRow.text].length} instance=${String(stateAfterReply.instanceStatus)} attachment=${String(stateAfterReply.attachmentStatus)}`,
-  );
-  if (stateAfterReply.instanceStatus !== "running" || stateAfterReply.attachmentStatus !== "attached") {
+  facts.line = turnGate.ok ? "sent" : "none";
+  if (!turnGate.ok) {
     /*
-     * The reply settles the question the whole chain was asking: the companion is in the farm and
-     * answered in the Game surface. What is missing is the projection's word, which this host can never
-     * publish - so the verdict names that gap instead of failing a launch that did everything.
+     * Nothing to type into. The Game surface is the lifecycle panel
+     * (`design/architecture/product-surfaces.md`: installation, launch, cabin handoff, stop/disconnect/
+     * endgame, her model settings), and a player's words reach her through the WORLD - the Mod reads the
+     * game's own chat box and her line is the speech bubble over her head (`ModEntry.cs`,
+     * `CompanionBubble.cs`) - so no browser route carries a player line here. The launch chain, which is
+     * this driver's subject, is measured to attach; the reply is reported as absent by name instead of
+     * typed into a field this surface does not render.
      */
-    if (instanceGap !== null) {
-      facts.detail = `the companion's reply settled on the game surface while the Host reported ${describeGameState(stateAfterReply)}; ${instanceGap.detail}`;
-      say(`BLOCKED BY PRODUCT: ${instanceGap.gap} - ${instanceGap.detail}`);
-      return await conclude(browser, { verdict: VERDICTS.blockedByProduct, code: instanceGap.gap, exit: 0 });
+    say(
+      `the game surface offers no player input (${String(turnGate.reason)}): the chain is measured to attach and the reply is not typed into a field this surface does not render`,
+    );
+  } else {
+    await page.evaluate((line) => {
+      const scope = document.querySelector('[data-testid="game-surface"]');
+      const area = scope.querySelector("textarea.composer-textarea");
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      setter.call(area, line);
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    }, PLAYER_LINE);
+    await page.waitForTimeout(250);
+    await page.locator('[data-testid="game-surface"] .composer-button.send-button').first().click();
+    say(`one player line sent in the game surface: ${JSON.stringify(PLAYER_LINE)}`);
+    const companionsBefore = transcriptBefore.settled.filter((row) => row.role === "companion").length;
+    const replyBegan = Date.now();
+    let after = await page.evaluate(readGameTranscript);
+    while (Date.now() - replyBegan < BUDGET.replyMs && after.settled.filter((row) => row.role === "companion").length <= companionsBefore) {
+      await sleep(1000);
+      after = await page.evaluate(readGameTranscript);
     }
-    const code = `game_never_reached_ready:${describeGameState(stateAfterReply)}`;
-    facts.detail = `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
-    say(`FAILED: ${code}`);
-    return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+    const elapsedReply = Date.now() - replyBegan;
+    record("reply", { elapsedMs: elapsedReply, notice: after.notice, settled: after.settled });
+    await shot(page, "92-game-reply.png");
+    const companions = after.settled.filter((row) => row.role === "companion");
+    const replyRow = companions.length === 0 ? null : companions[companions.length - 1];
+    if (replyRow === null || replyRow.text.trim().length === 0) {
+      const code = `companion_silent_after:${String(elapsedReply)}`;
+      facts.detail = `no companion row carried text within ${String(BUDGET.replyMs)}ms; the surface's own notice was ${JSON.stringify(after.notice)}`;
+      say(`FAILED: ${code}`);
+      return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+    }
+    // The reply is from the game path because it arrived on the game surface while the Host held the
+    // attachment. Both facts are read here; neither is a screenshot.
+    const stateAfterReply = await page.evaluate(readGameState);
+    record("state after the reply", stateAfterReply);
+    facts.reply = replyRow.text;
+    say("=== ITEM: the companion's reply (VERBATIM) ===");
+    say(JSON.stringify(replyRow.text));
+    say(
+      `reply role=${replyRow.role} handle=${JSON.stringify(replyRow.handle)} chars=${[...replyRow.text].length} instance=${String(stateAfterReply.instanceStatus)} attachment=${String(stateAfterReply.attachmentStatus)}`,
+    );
+    if (stateAfterReply.instanceStatus !== "running" || stateAfterReply.attachmentStatus !== "attached") {
+      /*
+       * The reply settles the question the whole chain was asking: the companion is in the farm and
+       * answered in the Game surface. What is missing is the projection's word, which this host can never
+       * publish - so the verdict names that gap instead of failing a launch that did everything.
+       */
+      if (instanceGap !== null) {
+        facts.detail = `the companion's reply settled on the game surface while the Host reported ${describeGameState(stateAfterReply)}; ${instanceGap.detail}`;
+        say(`BLOCKED BY PRODUCT: ${instanceGap.gap} - ${instanceGap.detail}`);
+        return await conclude(browser, { verdict: VERDICTS.blockedByProduct, code: instanceGap.gap, exit: 0 });
+      }
+      const code = `game_never_reached_ready:${describeGameState(stateAfterReply)}`;
+      facts.detail = `the reply settled while the Host reported ${describeGameState(stateAfterReply)}, so it is not a reply from an attached game`;
+      say(`FAILED: ${code}`);
+      return await conclude(browser, { verdict: VERDICTS.failed, code, exit: 1 });
+    }
   }
   await observe(page, say, "w", { sinceMs: observationFrom });
 

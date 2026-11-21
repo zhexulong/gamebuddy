@@ -46,11 +46,14 @@ const failed = (reason, detail) => Object.freeze({ verdict: "failed", reason, de
  *             language change cannot make this reading report a missing row; `launchingWord` is the state
  *             route's own `instance=launching`, the word that draws the relaunching sentence. A surface painting
  *             "starting" over a dead game is the exact defect this scenario exists for, so both are required.
- *   turn      `{ streamingCompanionRows, outcomeBefore, outcomeAfter }` - a turn in flight when the game died
- *             settled. Not streaming (a hung turn), and not a NEW `succeeded`: an outcome of `succeeded` published
- *             after the death, where there was none before it, is a claim nothing in that world could have earned.
- *             Comparing the two reads is what keeps a `succeeded` left over from an earlier turn from failing the
- *             scenario - it is the transition that is the claim, not the word.
+ *   turn      `{ inFlight, streamingCompanionRows, outcomeBefore, outcomeAfter }` - a turn in flight when the
+ *             game died settled. Not streaming (a hung turn), and not a NEW `succeeded`: an outcome of
+ *             `succeeded` published after the death, where there was none before it, is a claim nothing in that
+ *             world could have earned. Comparing the two reads is what keeps a `succeeded` left over from an
+ *             earlier turn from failing the scenario - it is the transition that is the claim, not the word.
+ *             `inFlight: false` is the Game surface that offers no player input (the Chat surface's composer is
+ *             not it, `frontend--r23`), and the verdict says which of the two it measured instead of reporting a
+ *             settled turn that was never sent.
  */
 export function classifyDeath({ roleExit, hostFact, surface, turn }) {
   if (roleExit?.read !== true || !Number.isInteger(roleExit?.exitCode))
@@ -89,7 +92,11 @@ export function classifyDeath({ roleExit, hostFact, surface, turn }) {
       `the game outcome moved to succeeded (was ${JSON.stringify(turn.outcomeBefore ?? null)}) after the game process ended: nothing in that world could have run`,
     );
   return measured(
-    `the game ended with code ${String(roleExit.exitCode)}: the state read published it, the cabin read refused with stardew_player_host_exited, the surface named the code, and the turn in flight settled without claiming success`,
+    `the game ended with code ${String(roleExit.exitCode)}: the state read published it, the cabin read refused with stardew_player_host_exited, the surface named the code, and ${
+      turn?.inFlight === false
+        ? "no turn was in flight (the game surface offers no player input), so neither a hung turn nor a claimed success was possible"
+        : "the turn in flight settled without claiming success"
+    }`,
   );
 }
 

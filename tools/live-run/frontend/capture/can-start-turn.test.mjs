@@ -17,7 +17,7 @@
 //   `✖ the gate reads the composer's two Host-owned refusals, and the send button's terms are exactly those plus an
 //   empty field`, naming that term as a refusal the driver cannot see, exit 1
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -64,9 +64,24 @@ test("a mount with no composer at all refuses the turn instead of claiming it ca
 });
 
 const COMPONENTS = join(REPO_ROOT, "dialogue-web", "src", "components");
+const CAPTURE = join(REPO_ROOT, "tools", "live-run", "frontend", "capture");
 
-/** The `disabled={…}` that follows `anchor`, split on `||`: what that control refuses on. */
-function disabledTerms(source, anchor) {
+/**
+ * The one shape this suite protects: a driver reaching into a named surface for its composer.
+ *
+ * The population is every `*.cjs` driver in `capture/`, scanned - not a list - because the defect this was
+ * written for was a driver that copied the shape with the wrong question attached: `frontend--r23` asked the
+ * document whether it could start a turn, the Chat surface's composer answered `ok` for a Game surface that
+ * mounts none, and the fill then handed `HTMLTextAreaElement.prototype.value`'s native setter `null`
+ * (`TypeError: Illegal invocation`) - after a chain that had already reached `attachment=attached`.
+ */
+const SCOPED_COMPOSER =
+  /const scope = document\.querySelector\('\[data-testid="([^"]+)"\]'\);\s*\n\s*const area = scope\.querySelector\("([^"]+)"\);/gu;
+
+/** The `disabled={…}` that follows `anchor`, split on `||`: what that control refuses on. */ function disabledTerms(
+  source,
+  anchor,
+) {
   const at = source.indexOf(anchor);
   assert.ok(at >= 0, `${anchor} is still in the product`);
   const expression = /disabled=\{([^}]+)\}/u.exec(source.slice(at));
@@ -139,4 +154,39 @@ test("the gate reads the composer's two Host-owned refusals, and the send button
     [...refused].sort(),
     `sendRefused refuses ${[...refused].join(", ")} but the driver reads ${readByDriver.join(", ")}; a refusal only one of them knows is a mount that looks sendable and does not send`,
   );
+});
+
+/**
+ * The gate a driver must ask before it types into a surface's composer.
+ *
+ * Two properties, both about the driver rather than the product: the element it reaches for is a `textarea`
+ * (the class alone matched nothing in a surface that mounts no composer, and the native setter's `null`
+ * receiver is what threw), and that surface's own gate answered first (`canStartTurn(page, { surface })`).
+ * The population is the capture directory, so a new driver that copies the shape is held by the same test.
+ */
+test("a driver that types into a surface's composer asks that surface's own gate first, and names a textarea", (t) => {
+  const population = readdirSync(CAPTURE)
+    .filter((name) => name.endsWith(".cjs"))
+    .map((name) => ({ name, source: readFileSync(join(CAPTURE, name), "utf8") }))
+    .filter(({ source }) => SCOPED_COMPOSER.test(source));
+  t.diagnostic(
+    `examined ${readdirSync(CAPTURE).length} capture files; ${population.length} type into a surface-scoped composer: ${population.map((entry) => entry.name).join(", ") || "(none)"}`,
+  );
+  assert.ok(
+    population.length > 0,
+    `${SCOPED_COMPOSER.source} matched no capture driver: the population is empty, so this test agrees with itself instead of reading the drivers`,
+  );
+  for (const { name, source } of population) {
+    for (const [, testId, selector] of source.matchAll(SCOPED_COMPOSER)) {
+      assert.match(
+        selector,
+        /^textarea/u,
+        `${name} queries "${selector}" inside [data-testid="${testId}"]; a class alone also matches a wrapper, and a non-textarea receiver is what the native setter throws on`,
+      );
+      assert.ok(
+        source.includes(`canStartTurn(page, { surface: "${testId}" })`),
+        `${name} types into [data-testid="${testId}"] without asking that surface's gate (canStartTurn(page, { surface: "${testId}" })): a document-wide question answers for the Chat surface's composer and reports a surface with no input as sendable`,
+      );
+    }
+  }
 });
