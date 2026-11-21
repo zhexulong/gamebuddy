@@ -23,6 +23,15 @@
 //                    the only path it carries to the run is the parent it was born under - and Windows
 //                    preserves the parent pid after that parent exits, which is exactly the orphaned shape.
 //
+// WHAT it acts on is not only what the dead invocation wrote down. The game is started INSIDE a capture driver
+// and recorded at the NEXT driver boundary (`recordRunGame`) or in `close()`, so a harness killed in between
+// leaves a live Mod loader and a live game client that `run-processes.jsonl` has never heard of - measured
+// 2026-11-21 (`.tmp/lane-cleanupguard.md`): driver aborted at `process started`, the next preflight examined 0
+// recorded identities while 348 processes stood in the table, and the game it had opened was still alive. So the
+// population is the registry UNION the game this stage caused, and the second half is discovered by identity
+// rather than by image name: the loader's command line carries THIS stage's mods root (a fact only this run
+// produces) and the client under it is that loader's child (`lib/run-game.mjs`).
+//
 // WHEN it acts matters as much as what it acts on. A stepwise run deliberately leaves its session running
 // for the next phase (`lib/config.mjs`'s header, `deliberatelyKept({stepwise:true})`), so a reaper that ran
 // unconditionally at every start would pull the mounted product out from under `node run.mjs capture`. The
@@ -32,8 +41,14 @@
 // fact that says "do not touch this stage; someone is using it".
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { killProcessTree, processRow, processTable, processesWithCommandLine } from "./process-table.mjs";
-import { GAME_LOADER_ROLE } from "./run-game.mjs";
+import {
+  killProcessTree,
+  processesWithCommandLine,
+  processesWithImageName,
+  processRow,
+  processTable,
+} from "./process-table.mjs";
+import { GAME_IMAGE_PATTERN, GAME_LOADER_ROLE, identifyRunGame } from "./run-game.mjs";
 import { registeredRunProcesses } from "./run-owner.mjs";
 
 /** The prefix of every summary line the reaper prints, so a run's terminal has one handle for it. */
@@ -145,6 +160,9 @@ const frozen = (reading) =>
     skipped: Object.freeze(reading.skipped ?? []),
   });
 
+/** The game's own images, as one query - the probe `identifyRunGame` uses when a caller hands it no fake. */
+const defaultGameProbe = () => processesWithImageName(GAME_IMAGE_PATTERN);
+
 /**
  * Take back what a hard-killed invocation of THIS stage left, and nothing else.
  *
@@ -158,20 +176,23 @@ export function reapRunOrphans({
   records = paths === undefined ? [] : registeredRunProcesses(paths),
   readTable = processTable,
   readStage = processesWithCommandLine,
+  readGame = defaultGameProbe,
   kill = killProcessTree,
   attempts = 8,
 } = {}) {
-  const examined = records.length;
-  if (previous === null) return frozen({ evidence: "no_orphaned_invocation", stageRoot, previous, examined });
+  const recordedCount = records.length;
+  if (previous === null)
+    return frozen({ evidence: "no_orphaned_invocation", stageRoot, previous, examined: recordedCount });
   const table = readTable();
-  if (table === null) return frozen({ evidence: "process_table_unavailable", stageRoot, previous, examined });
+  if (table === null)
+    return frozen({ evidence: "process_table_unavailable", stageRoot, previous, examined: recordedCount });
   const byPid = new Map(table.rows.map((row) => [row.pid, row]));
   if (invocationAlive(previous, byPid))
     return frozen({
       evidence: "previous_invocation_alive",
       stageRoot,
       previous,
-      examined,
+      examined: recordedCount,
       tableExamined: table.examined,
       skipped: [
         {
@@ -182,15 +203,29 @@ export function reapRunOrphans({
       ],
     });
 
+  /*
+   * The population: what the dead invocation recorded, plus the game it caused. The discovery is scoped to this
+   * stage's own mods root inside the Mod loader's command line, so a sibling run's world can never be claimed -
+   * and it is not an image-name sweep: the image says "a game", the command line says "this stage's game".
+   */
+  const caused = identifyRunGame({ stageRoot, recorded: records, readGame });
+  const population = [...records];
+  const knownPids = new Set(records.map((record) => record.pid));
+  for (const row of caused?.rows ?? []) {
+    if (knownPids.has(row.pid)) continue;
+    population.push({ pid: row.pid, role: row.role, startTime: row.startTime });
+  }
   const stagePids = new Set((readStage(resolve(stageRoot))?.rows ?? []).map((row) => row.pid));
-  const anchorPids = new Set(records.filter((record) => record.role === GAME_LOADER_ROLE).map((record) => record.pid));
+  const anchorPids = new Set(
+    population.filter((record) => record.role === GAME_LOADER_ROLE).map((record) => record.pid),
+  );
 
   const terminated = [];
   const alreadyGone = [];
   const couldNotTerminate = [];
   const identityMismatch = [];
   const skipped = [];
-  for (const record of leavesFirst(records, byPid)) {
+  for (const record of leavesFirst(population, byPid)) {
     const role = record.role ?? "unrecorded";
     if (record.pid === process.pid) {
       skipped.push({ pid: record.pid, role, reason: "this invocation's own process" });
@@ -239,7 +274,15 @@ export function reapRunOrphans({
     evidence: "reaped",
     stageRoot,
     previous,
-    examined,
+    examined: population.length,
+    recordedCount,
+    // The game half of the population, kept apart because it is the half a dead invocation may never have
+    // written down: `unverified` means the machine was not asked, which is not "this stage caused no game".
+    game: {
+      evidence: caused === null ? "unverified" : "measured",
+      examined: caused?.examined ?? null,
+      found: (caused?.rows ?? []).map((row) => ({ pid: row.pid, name: row.name, role: row.role })),
+    },
     tableExamined: table.examined,
     terminated: terminated.filter((entry) => !surviving.has(entry.pid)),
     alreadyGone,
@@ -273,8 +316,22 @@ export function describeReaper(reading) {
   for (const entry of reading.couldNotTerminate) lines.push(`reaper_could_not_terminate: ${entry.pid}`);
   for (const entry of reading.identityMismatch) lines.push(`reaper_identity_mismatch: ${entry.pid}`);
   for (const entry of reading.skipped) lines.push(`reaper_skipped: ${entry.pid}: ${entry.reason}`);
+  /*
+   * The game half is printed even when it found nothing, because "this stage caused no game" and "the game was
+   * never looked for" are the two answers a reader most needs to tell apart: the dead invocation's own record of
+   * the game is the half it could not write.
+   */
+  const game = reading.game ?? null;
+  if (game?.evidence === "unverified")
+    lines.push(
+      `${REAPER_PREFIX}: the game this stage caused was NOT looked for - the machine could not be asked for its processes, so only the ${String(reading.recordedCount)} recorded identities were examined`,
+    );
+  else if (game !== null)
+    lines.push(
+      `${REAPER_PREFIX}: the game this stage caused: ${game.found.length === 0 ? "none running" : listed(game.found)} (examined ${String(game.examined)} processes by image name; the loader's command line names this stage's mods root)`,
+    );
   const counts = [
-    `examined ${String(reading.examined)} recorded for ${String(reading.stageRoot)}`,
+    `examined ${String(reading.examined)} identities (${String(reading.recordedCount ?? reading.examined)} recorded) for ${String(reading.stageRoot)}`,
     reading.tableExamined === undefined ? null : `${String(reading.tableExamined)} processes in the table`,
     `terminated ${String(reading.terminated.length)}`,
     `already-gone ${String(reading.alreadyGone.length)}`,

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { runPaths } from "./config.mjs";
 import { processRow } from "./process-table.mjs";
+import { registerRunProcess } from "./run-owner.mjs";
 import {
   closeRunInvocation,
   describeReaper,
@@ -24,7 +25,6 @@ import {
   reapRunOrphans,
   writeReaperReading,
 } from "./run-reaper.mjs";
-import { registerRunProcess } from "./run-owner.mjs";
 
 const STAGE = "E:\\projects\\ai-game-companion\\.tmp\\reaper.stage";
 const OTHER_STAGE = "E:\\projects\\ai-game-companion\\.tmp\\other-lane.stage";
@@ -46,6 +46,12 @@ function world(rows) {
       examined: 361,
       // The probe compares ordinally and case-insensitively; so does this, so a resolved stage root is the match.
       rows: [...alive.values()].filter((row) => row.commandLine.toLowerCase().includes(text.toLowerCase())),
+    }),
+    // The game's own query: `-NameLike ^Stardew`, which the stand-ins answer to because they are named after
+    // the two images. Filtering here is the probe's job; the run-root filter is the module's own.
+    readGame: () => ({
+      examined: 361,
+      rows: [...alive.values()].filter((row) => /^Stardew/iu.test(row.name)),
     }),
     kill: (pid) => {
       kills.push(pid);
@@ -95,6 +101,7 @@ test("a hard-killed invocation's processes are taken back, and a pid the machine
     ],
     readTable: fake.readTable,
     readStage: fake.readStage,
+    readGame: fake.readGame,
     kill: fake.kill,
     attempts: 2,
   });
@@ -139,7 +146,7 @@ test("a hard-killed invocation's processes are taken back, and a pid the machine
   assert.match(lines.at(-2), /^REAPER: 400\(capture:w-game-launch\) recorded a pid whose start time/u);
   assert.match(
     lines.at(-1),
-    /^REAPER: examined 6 recorded for .*terminated 3, already-gone 1, could-not-terminate 0, identity-mismatch 1, skipped 1 \(the previous invocation, pid 900, never closed\)$/u,
+    /^REAPER: examined 6 identities \(6 recorded\) for .*terminated 3, already-gone 1, could-not-terminate 0, identity-mismatch 1, skipped 1 \(the previous invocation, pid 900, never closed\)$/u,
   );
 });
 
@@ -158,6 +165,7 @@ test("the game client is recognised after its loader has exited, by the parent i
     ],
     readTable: fake.readTable,
     readStage: fake.readStage,
+    readGame: fake.readGame,
     kill: fake.kill,
     attempts: 2,
   });
@@ -167,6 +175,78 @@ test("the game client is recognised after its loader has exited, by the parent i
     reading.alreadyGone.map((entry) => entry.pid),
     [200],
     "the loader is recorded as gone, not as a process this run killed",
+  );
+});
+
+test("the game a dead invocation never recorded is still taken back, because its loader names this stage", () => {
+  // Measured 2026-11-21 (`.tmp/lane-cleanupguard.md`): the game is started INSIDE a capture driver and recorded
+  // only at the next driver boundary, so a harness aborted in between leaves a live loader and client that
+  // `run-processes.jsonl` has never heard of. The registry held nothing, and the preflight examined 0 identities
+  // while 348 processes stood in the table - the game was not in the population it looked at.
+  const fake = world([
+    loader(200),
+    client(300, 200),
+    // A sibling stage's game: same image, same shape, another run's mods root. It is nobody's business here.
+    row(700, 1, "StardewModdingAPI.exe", `"D:\\Steam\\StardewModdingAPI.exe" --mods-path "${OTHER_STAGE}\\root\\Mods"`),
+  ]);
+  const reading = reapRunOrphans({
+    paths: { stageRoot: STAGE },
+    stageRoot: STAGE,
+    previous: invocation(),
+    records: [],
+    readTable: fake.readTable,
+    readStage: fake.readStage,
+    readGame: fake.readGame,
+    kill: fake.kill,
+    attempts: 2,
+  });
+
+  assert.deepEqual(fake.kills, [300, 200], "the client first, then the loader whose tree would have taken it");
+  assert.deepEqual(
+    reading.terminated.map((entry) => [entry.pid, entry.role, entry.identity]),
+    [
+      [300, "game-client", "child_of_recorded_game_loader:200"],
+      [200, "game-smapi", "stage_root_in_command_line"],
+    ],
+    describeReaper(reading).join("\n"),
+  );
+  assert.equal(reading.recordedCount, 0, "the dead invocation had written nothing down");
+  assert.equal(reading.examined, 2, "and the population is the game it caused, not the record it never wrote");
+  assert.ok(fake.alive.has(700), "a sibling stage's game is not claimed, even though its image is identical");
+  assert.deepEqual(reading.game, {
+    evidence: "measured",
+    examined: 361,
+    found: [
+      { pid: 200, name: "StardewModdingAPI.exe", role: "game-smapi" },
+      { pid: 300, name: "Stardew Valley.exe", role: "game-client" },
+    ],
+  });
+  const game = describeReaper(reading).find((line) => line.includes("the game this stage caused:"));
+  assert.match(game, /^REAPER: the game this stage caused: 200\(game-smapi\) 300\(game-client\)/u);
+});
+
+test("a machine that cannot answer the game's own query says so, instead of reading it as no game", () => {
+  // `identifyRunGame` returns `null` for a table that never answered, and that must not become "this stage caused
+  // no game": the reader would take the one answer it needs most (the game was never looked for) for the other.
+  const fake = world([launchDriver(100)]);
+  const reading = reapRunOrphans({
+    paths: { stageRoot: STAGE },
+    stageRoot: STAGE,
+    previous: invocation(),
+    records: [{ pid: 100, role: "launch-driver", startTime: null }],
+    readTable: fake.readTable,
+    readStage: fake.readStage,
+    readGame: () => null,
+    kill: fake.kill,
+    attempts: 2,
+  });
+  assert.deepEqual(reading.game, { evidence: "unverified", examined: null, found: [] });
+  const lines = describeReaper(reading);
+  assert.ok(
+    lines.includes(
+      `REAPER: the game this stage caused was NOT looked for - the machine could not be asked for its processes, so only the 1 recorded identities were examined`,
+    ),
+    lines.join("\n"),
   );
 });
 
@@ -182,6 +262,7 @@ test("a pid that outlived its process under a reused number does not block the r
     records: [{ pid: 100, role: "launch-driver", startTime: null }],
     readTable: fake.readTable,
     readStage: fake.readStage,
+    readGame: fake.readGame,
     kill: fake.kill,
     attempts: 2,
   });
@@ -204,6 +285,7 @@ test("no marker means the previous invocation closed, so a stepwise session is l
     ],
     readTable: fake.readTable,
     readStage: fake.readStage,
+    readGame: fake.readGame,
     kill: fake.kill,
   });
   assert.deepEqual(fake.kills, [], "a run that closed on purpose did not leave an orphan");
@@ -228,6 +310,7 @@ test("an earlier invocation that is still running is named and not reaped", () =
     ],
     readTable: fake.readTable,
     readStage: fake.readStage,
+    readGame: fake.readGame,
     kill: fake.kill,
   });
   assert.deepEqual(fake.kills, []);
@@ -236,7 +319,10 @@ test("an earlier invocation that is still running is named and not reaped", () =
     describeReaper(reading)[0],
     /^reaper_skipped: 900: an earlier invocation of this stage is still running/u,
   );
-  assert.match(describeReaper(reading).at(-1), /^REAPER: nothing was touched \(examined 2 recorded/u);
+  assert.match(
+    describeReaper(reading).at(-1),
+    /^REAPER: nothing was touched \(examined 2 identities \(2 recorded\) for /u,
+  );
 });
 
 test("a machine that cannot be asked is unverifiable, never a machine with nothing left", () => {
@@ -262,6 +348,7 @@ test("a terminated pid that is still there after the bound is a different answer
     records: [{ pid: 100, role: "launch-driver", startTime: null }],
     readTable: stubborn.readTable,
     readStage: stubborn.readStage,
+    readGame: stubborn.readGame,
     // A kill that reports success and does nothing: the assertion has to catch it from the table, not the report.
     kill: () => "killed",
     attempts: 2,
