@@ -23,8 +23,11 @@
 // MEASURED - the value is a roster driver that opens a world, prints the fact, and is held by
 // `chain-steps.test.mjs` against `phases/drivers.mjs` and the capture source itself.
 //
-// `gap:<reason>` - the READING is missing: four of them are `owner.json`, the session document, the
-// recovery journal and her client's trace, written by any ordinary run and opened by nobody.
+// `gap:<reason>` - the READING is missing: a seam exists, its fact is written by any ordinary run, and no
+// driver opens it. No step is declared this way today. The four that were - `owner.json`, the session document,
+// the recovery journal and her client's trace - are read by `w-game-launch` through `capture/run-records.cjs`,
+// one reader per fact, each with its own named absence. The form stays because the next seam will need it, and
+// `namedGaps()` prints its population so an empty bucket is visible as empty rather than assumed gone.
 //
 // `elsewhere:<owner>` - the FACT is not this kit's to produce at all. One step is declared this way:
 // `daily-play` (the player says something to her in the world). It belongs to the GAME LANE, because the
@@ -184,7 +187,11 @@ export const CHAIN_STEPS = Object.freeze([
     id: "oobe-manifest-admitted",
     chain: "oobe",
     title: "the Host admits the manifest and reserves her client",
-    driver: "gap:no_driver_opens_owner_json",
+    // MEASURED, and the reading is a join rather than an existence check: `capture/run-records.cjs`
+    // `ownerAdmissionOf` reads the reservation (`state=reserved` plus the `ai-client` half of `managedPaths`)
+    // and refuses it unless the companion it reserves is the one the manifest the attachment response names
+    // binds. A file that exists and names another run's companion is `owner_json_without_the_manifest_this_run_issued`.
+    driver: "w-game-launch",
     fact: "owner.json carries the ai-client managed paths",
     owner: "host/src/games/stardew/lifecycle/stardew-private-bootstrap-owner-records.private.ts",
   }),
@@ -192,7 +199,9 @@ export const CHAIN_STEPS = Object.freeze([
     id: "oobe-bridge-identity",
     chain: "oobe",
     title: "the request's identity is the live world's",
-    driver: "gap:no_driver_reads_the_session_document",
+    // MEASURED: `sessionIdentityOf`. The document's own joins are the reading - the host player IS the world's
+    // player, and the cabin bound to this run's companion carries the farmhand id.
+    driver: "w-game-launch",
     fact: "stardew-session.json saveId/worldId/nonce",
     owner: "host/src/stardew-attachment.ts confirmAndRequest",
   }),
@@ -200,7 +209,10 @@ export const CHAIN_STEPS = Object.freeze([
     id: "oobe-run-enter",
     chain: "oobe",
     title: "her runtime enters the world and binds continuity",
-    driver: "gap:no_driver_reads_the_recovery_journal",
+    // MEASURED: `recoveryJournalOf`. The journal's path IS the first identity (`stardew-recovery/<continuityId>/<saveId>/<worldId>`),
+    // so the reader addresses the file instead of scanning for one, and the header's `scope.continuityId` has
+    // to be the continuity this run declared - which is the fact the `continuityId` fix was about.
+    driver: "w-game-launch",
     fact: "stardew-logical-action-recovery-journal.jsonl header",
     owner: "host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts runEnter",
   }),
@@ -216,7 +228,11 @@ export const CHAIN_STEPS = Object.freeze([
     id: "oobe-client-in-world",
     chain: "oobe",
     title: "her own game client is in the world",
-    driver: "gap:no_driver_reads_the_ai_client_trace",
+    // MEASURED: `aiClientTraceOf`. Her trace is not in the run root - `ModTraceRecorder` writes it into SMAPI's
+    // own log directory - so it is selected by the frame only a process with a local bridge session dispatches
+    // (`hello`; only the AI-client profile is authored with `EnableLocalBridge: true`) inside the run's own
+    // window, and the pid this run recorded travels with the reading as corroboration.
+    driver: "w-game-launch",
     fact: "her client's own gamebuddy-trace, hello and companion_presentation_request",
     owner: "host/src/stardew-ai-client-process-owner.ts",
   }),
@@ -424,8 +440,12 @@ export function describeChainAlignment(entries = CHAIN_STEPS) {
   const lines = [
     `CHAIN-ALIGNMENT examined ${String(all.length)} declaration(s): ${String(measured.length)} measured by a driver, ${String(gaps.length)} named gap(s), ${String(elsewhere.length)} owned elsewhere`,
     `CHAIN-ALIGNMENT kinds: ${STEP_KINDS.map((kind) => `${String(byKind(kind))} ${kind}`).join(", ")}`,
-    // The POPULATION of the third bucket, not only its size: `elsewhere:` exists so a fact another lane owns is
-    // not called a gap, and a bucket that only ever grew would be the place a real gap went to hide.
+    // The POPULATION of each open bucket, not only its size: a bucket that only ever grew would be the place a
+    // real gap went to hide, and a bucket that emptied without anybody noticing is the other failure. Zero is
+    // printed as zero for the same reason.
+    `CHAIN-ALIGNMENT named gaps: ${
+      gaps.length === 0 ? "none" : gaps.map((entry) => `${String(entry.driver)} -> ${entry.id}`).join(", ")
+    }`,
     `CHAIN-ALIGNMENT owned elsewhere: ${
       elsewhere.length === 0 ? "none" : elsewhere.map((entry) => `${String(entry.driver)} -> ${entry.id}`).join(", ")
     }`,

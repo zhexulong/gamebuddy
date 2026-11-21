@@ -142,6 +142,7 @@ const {
 } = require("./game-launch-verdict.mjs");
 const { pressStop, stepRecorder } = require("./game-surface-states.cjs");
 const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
+const { describeRunRecords, readRunRecords } = require("./run-records.cjs");
 const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
 const { agentAwakeOf, describeTurnAccount, readTurnAccount } = require("./turn-account.cjs");
 
@@ -198,6 +199,12 @@ const BUDGET = Object.freeze({
    * behind a settlement the product has already acknowledged, not a turn's budget. See step 7.
    */
   accountGraceMs: 20_000,
+  /**
+   * How long her client's trace is given to flush the frames that just arrived: `ModTraceRecorder` rewrites the
+   * file from its own 2 s timer (`integrations/stardew/ModTraceRecorder.cs:23`), so a read at this instant can be
+   * one flush behind. See step 4c.
+   */
+  traceGraceMs: 10_000,
   stopMs: 120_000,
 });
 
@@ -1732,6 +1739,46 @@ async function hostAnswers(port) {
       ? `the account was final ${String(Date.now() - attachBegan)}ms into the attached session: ${describeTurnAccount(firstAccount)}`
       : `the attached session ran ${String(Date.now() - attachBegan)}ms with the account still ${String(firstAccount.reason)}; the STOP below settles whatever is running and step 7 reads it`,
   );
+
+  /*
+   * ---- 4c. the four records this run left about itself, opened ----
+   *
+   * Four OOBE steps were declared `gap:` because the file each one names was written by every ordinary run and
+   * opened by nobody (`capture/run-records.cjs` has the reading for each: `owner.json`, the session document,
+   * the recovery journal, her client's own trace). They are read HERE, once, because this is the only moment
+   * they all exist at the same time: the attachment has landed (so the Host has reserved her client and
+   * `runEnter` has opened its journal) and her client is in the world being flushed to its trace every two
+   * seconds. Earlier and three of the four are genuinely absent; later and the STOP has closed the process
+   * whose trace this is.
+   *
+   * A reading that is not there yet is waited for by the writer's own period, never assumed: the trace is
+   * flushed on a 2 s timer (`integrations/stardew/ModTraceRecorder.cs:23`), so a single read at this instant
+   * can be one flush behind the frame that just arrived. The wait is bounded (`BUDGET.traceGraceMs`) and the
+   * reading prints whether it was still waiting.
+   */
+  const recordsBegan = Date.now();
+  let runRecords = null;
+  for (;;) {
+    runRecords = readRunRecords({
+      declaredDataRoot: launch.state?.declaredDataRoot ?? null,
+      principal: launch.state?.principal ?? null,
+      stateDir: launch.path === null ? null : path.dirname(launch.path),
+      sinceMs: launchBegan,
+    });
+    if (runRecords.trace.reason === null) break;
+    if (Date.now() - recordsBegan >= BUDGET.traceGraceMs) break;
+    await sleep(1000);
+  }
+  record("the records this run left", {
+    elapsedMs: Date.now() - recordsBegan,
+    graceMs: BUDGET.traceGraceMs,
+    attempts: runRecords.attempts,
+    unread: [runRecords.owner, runRecords.session, runRecords.journal, runRecords.trace]
+      .filter((entry) => entry.reason !== null)
+      .map((entry) => entry.reason),
+  });
+  say("=== ITEM: the four records this run left about itself ===");
+  for (const line of describeRunRecords(runRecords)) say(line);
 
   // ---- 5. one player line, in the game surface ----
   //

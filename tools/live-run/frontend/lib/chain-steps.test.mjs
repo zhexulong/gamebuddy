@@ -123,6 +123,19 @@ test("every declaration sits in exactly one of the three forms, and each populat
   assert.ok(printed !== undefined, "the alignment block has to print the elsewhere population, not only its size");
   for (const member of byForm.elsewhere)
     assert.ok(printed.includes(member), `${member} is missing from the printed population`);
+  // The gap bucket prints its population too, and an EMPTY bucket prints `none`: four reading gaps were closed
+  // by `capture/run-records.cjs`, and a bucket that emptied silently would let the next real gap hide behind a
+  // count nobody re-read.
+  const printedGaps = describeChainAlignment().find((line) => line.startsWith("CHAIN-ALIGNMENT named gaps:"));
+  assert.ok(printedGaps !== undefined, "the alignment block has to print the gap population, not only its size");
+  for (const member of byForm.gap)
+    assert.ok(printedGaps.includes(member), `${member} is missing from the printed gap population`);
+  if (byForm.gap.length === 0)
+    assert.equal(
+      printedGaps,
+      "CHAIN-ALIGNMENT named gaps: none",
+      "an empty gap bucket has to read `none`, not an empty list",
+    );
   for (const owned of elsewhereSteps()) {
     assert.ok(
       ELSEWHERE_OWNERS.includes(owned.owner),
