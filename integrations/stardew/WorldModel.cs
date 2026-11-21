@@ -146,8 +146,10 @@ internal static class WorldModel
     /// while the contract says `pass_out` - so the projection would have closed the bridge with
     /// `invalid_snapshot:actorDispositionKind:passout` exactly when the actor faints.
     ///
-    /// An unmapped kind THROWS rather than defaulting: adding a variant without teaching this method about it
-    /// should fail loudly at the snapshot, not silently publish a label no consumer can interpret.
+    /// There is deliberately no catch-all arm. The compiler refuses the build when a kind is added without a
+    /// spelling here (`CS8509`, promoted by `TreatWarningsAsErrors`), and it names the member - the previous
+    /// `_ =&gt; throw` compiled and failed instead at the snapshot, on the game thread, the first time the new
+    /// disposition occurred.
     /// </summary>
     public static string KindForWire(ActorDispositionKind kind) => kind switch
     {
@@ -156,7 +158,6 @@ internal static class WorldModel
         ActorDispositionKind.Event => "event",
         ActorDispositionKind.PassOut => "pass_out",
         ActorDispositionKind.Transient => "transient",
-        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "no wire spelling for this disposition kind"),
     };
 
     internal static ActorDisposition Classify(in ActorWorldFacts facts)
@@ -443,7 +444,7 @@ internal static class WorldModel
         ActorDispositionKind.Event => "cutscene_active",
         ActorDispositionKind.PassOut => "actor_passed_out",
         ActorDispositionKind.Transient => "transient_busy",
-        _ => "player_not_actionable",
+        ActorDispositionKind.Idle => "player_not_actionable",
     };
 
     /// <summary>
@@ -486,7 +487,7 @@ internal static class WorldModel
             ActorDispositionKind.Transient =>
                 $"transient_kind={disposition.TransientKind ?? UnnamedTransientKind}"
                 + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",
-            _ => $"can_move={canMoveText}",
+            ActorDispositionKind.Idle => $"can_move={canMoveText}",
         };
     }
 
@@ -651,7 +652,7 @@ internal static class WorldModel
             => $";admissible_actions={string.Join(",", FarmhandActionCatalog.ModalResolvingActionIds.OrderBy(actionId => actionId, StringComparer.Ordinal))}",
         ActorDispositionKind.PassOut => $";admissible_actions=none;next_step={WaitForDayToAdvanceStep}",
         ActorDispositionKind.Transient => $";admissible_actions=none;next_step={WaitForRetryWindowStep}",
-        _ => $";admissible_actions=none;next_step={ReportTheStalledBodyStep}",
+        ActorDispositionKind.Idle => $";admissible_actions=none;next_step={ReportTheStalledBodyStep}",
     };
 
     /// <summary>
