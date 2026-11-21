@@ -24,6 +24,11 @@ import {
 } from "./harness-conformance.mjs";
 import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { preflightLiveRun } from "./live-run-preflight.mjs";
+import {
+  judgeSourceReadingDeclarations,
+  parseSourceReadingDeclaration,
+  readsOwnSource,
+} from "./source-reading-declarations.mjs";
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(toolsDir, "..");
@@ -603,4 +608,121 @@ test("a gate's report that examined nothing is blocked, and one that says why is
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The source-reading declaration: which gate reads this repository's own source, and whether it says why
+// ---------------------------------------------------------------------------------------------------
+
+// `red-proof: inject` markers for the new judgment are in the gate's own header
+// (`gates/meta/check-harness-conformance.mjs`); the falsifiers below are the mechanism on its own, per layer.
+//
+// red-proof: inject  a gate source that reads `src/**/*.ts` with `readFileSync` and writes no declaration ->
+//                    `source_reading_invariant_missing`, `source_reading_expiry_missing` and
+//                    `source_reading_undeclared` all name it
+// red-proof: inject  the same gate with both declaration lines -> no finding, and a baseline row for it is
+//                    `source_reading_row_stale` because the debt is paid
+// red-proof: inject  an expiry dated before today -> `source_reading_expiry_passed`, and a population of gates that read
+//                    nothing -> `source_reading_population_empty`
+test("a gate reads our own source when it imports a read call or the AST seam, and not when it only writes", () => {
+  assert.equal(readsOwnSource('import { readFileSync } from "node:fs";'), "node:fs:readFileSync");
+  assert.equal(
+    readsOwnSource('import { readFileSync as read } from "node:fs";\nread("a.ts");'),
+    "node:fs:readFileSync",
+  );
+  assert.equal(readsOwnSource('import * as files from "node:fs";\nfiles.readdirSync("host/src");'), "node:fs:files");
+  assert.equal(readsOwnSource('import fs from "node:fs";\nfs.readdirSync("host/src");'), "node:fs:fs");
+  assert.equal(
+    readsOwnSource('import { parseJavaScript } from "../lib/javascript-ast.mjs";'),
+    "the AST seam ../lib/javascript-ast.mjs",
+  );
+  // A baseline writer reads nothing, and a module that is not the file system is not a source read.
+  assert.equal(readsOwnSource('import { writeFileSync } from "node:fs";'), null);
+  assert.equal(readsOwnSource('import { execFileSync } from "node:child_process";'), null);
+});
+
+test("a declaration counts only as a comment line, so the same words in a string declare nothing", () => {
+  const declared =
+    "#!/usr/bin/env node\n" +
+    "// source-invariant: the engine settles the body before the next turn is read, and no type states that\n" +
+    "// source-expiry: when the Mod's tick ordering changes\n";
+  assert.deepEqual(parseSourceReadingDeclaration(declared), {
+    invariant: "the engine settles the body before the next turn is read, and no type states that",
+    expiry: "when the Mod's tick ordering changes",
+  });
+  assert.deepEqual(
+    parseSourceReadingDeclaration(
+      'const MESSAGE = "// source-invariant: a string is not a declaration of anything at all";\n',
+    ),
+    { invariant: null, expiry: null },
+  );
+});
+
+test("a source-reading gate that declares nothing is named, and one that declares the invariant and the expiry passes", () => {
+  const reads = 'import { readFileSync } from "node:fs";\nconst page = readFileSync("src/main.ts", "utf8");\n';
+  const undeclared = judgeSourceReadingDeclarations({ members: [{ path: "tools/check-probe.mjs", source: reads }] });
+  assert.deepEqual(
+    undeclared.findings.map((entry) => entry.code),
+    [
+      "source_reading_invariant_missing:tools/check-probe.mjs",
+      "source_reading_expiry_missing:tools/check-probe.mjs",
+      "source_reading_undeclared:tools/check-probe.mjs",
+    ],
+  );
+  assert.match(undeclared.findings[2].detail, /reads node:fs:readFileSync with no/u);
+  assert.deepEqual(undeclared.census, { examined: 1, reading: 1, declared: 0, recorded: 0, undeclared: 1 });
+
+  const declared =
+    reads +
+    "// source-invariant: the shell owns the page's command surface, which no type in either language can state\n" +
+    "// source-expiry: 2027-06-01, or when the shell is generated from the Host's own declaration\n";
+  const clean = judgeSourceReadingDeclarations({ members: [{ path: "tools/check-probe.mjs", source: declared }] });
+  assert.deepEqual(clean.findings, []);
+  assert.deepEqual(clean.declared, ["tools/check-probe.mjs"]);
+  assert.deepEqual(clean.census, { examined: 1, reading: 1, declared: 1, recorded: 0, undeclared: 0 });
+
+  // A row recorded for that gate is debt the tree has outgrown, and the ratchet refuses it by name.
+  const stale = judgeSourceReadingDeclarations({
+    members: [{ path: "tools/check-probe.mjs", source: declared }],
+    baseline: new Set(["tools/check-probe.mjs"]),
+  });
+  assert.deepEqual(
+    stale.findings.map((entry) => entry.code),
+    ["source_reading_row_stale:tools/check-probe.mjs"],
+  );
+  assert.match(stale.findings[0].detail, /declares the invariant now/u);
+
+  // A recorded gate with no declaration is debt: counted on the census line and owed, not named twice as a finding.
+  const recorded = judgeSourceReadingDeclarations({
+    members: [{ path: "tools/check-probe.mjs", source: reads }],
+    baseline: new Set(["tools/check-probe.mjs"]),
+  });
+  assert.deepEqual(recorded.findings, []);
+  assert.deepEqual(recorded.census, { examined: 1, reading: 1, declared: 0, recorded: 1, undeclared: 0 });
+  assert.deepEqual(recorded.owed, ["tools/check-probe.mjs"]);
+});
+
+test("an expiry that has passed is a review nobody did, and a population of gates that read nothing is named", () => {
+  const reads = 'import { readFileSync } from "node:fs";\nreadFileSync("src/main.ts", "utf8");\n';
+  const expired =
+    reads +
+    "// source-invariant: the shell owns the page's command surface, which no type in either language can state\n" +
+    "// source-expiry: 2020-01-01, reviewed each January\n";
+  const findings = judgeSourceReadingDeclarations({
+    members: [{ path: "tools/check-probe.mjs", source: expired }],
+    today: new Date("2026-11-22T00:00:00Z"),
+  });
+  assert.deepEqual(
+    findings.findings.map((entry) => entry.code),
+    ["source_reading_expiry_passed:tools/check-probe.mjs", "source_reading_undeclared:tools/check-probe.mjs"],
+  );
+
+  const empty = judgeSourceReadingDeclarations({
+    members: [{ path: "tools/check-writer.mjs", source: 'import { writeFileSync } from "node:fs";\n' }],
+  });
+  assert.deepEqual(
+    empty.findings.map((entry) => entry.code),
+    ["source_reading_population_empty"],
+  );
+  assert.equal(empty.census.reading, 0);
 });
