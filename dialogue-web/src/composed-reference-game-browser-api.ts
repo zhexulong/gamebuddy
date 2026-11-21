@@ -148,6 +148,8 @@ export const GAME_PROBLEM_CODES = [
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
 const ROOT_KEYS = ["apiVersion", "build", "chat", "game"] as const;
+/** The same root on a Host that could not read its Game half: the member is absent, not `null`. */
+const ROOT_KEYS_WITHOUT_GAME = ["apiVersion", "build", "chat"] as const;
 const ROOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_KEYS = [
   "prerequisites",
@@ -335,7 +337,15 @@ export type ComposedReferenceGameBrowserRootV1 = Readonly<{
     profileId: typeof COMPOSED_REFERENCE_GAME_PROFILE_ID;
   }>;
   chat: TavernStateSnapshotV1;
-  game: GameBrowserStateV1 | null;
+  /**
+   * The Game half: a projection, `null` for a Host whose profile mounts no Game at all, and ABSENT when this
+   * Host could not read the Game half it does mount.
+   *
+   * The member's presence is the distinction, and it is the only one: a surface that treats `null` and absence
+   * alike is right about what it can draw (neither is a projection) and wrong about why - the profile has no
+   * game to read in the first case and the game faulted in the second, which is the Game surface's own sentence.
+   */
+  game?: GameBrowserStateV1 | null;
 }>;
 
 export class ComposedReferenceGameProtocolError extends Error {
@@ -1196,9 +1206,10 @@ function validateGameState(value: unknown, csrfToken: string | undefined): GameB
  * silently ignored, and a foreign profile is never rendered as Game state.
  */
 export function validateComposedReferenceGameRoot(value: unknown): ComposedReferenceGameBrowserRootV1 {
+  const gamePresent = isRecord(value) && value.game !== undefined;
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ROOT_KEYS) ||
+    !hasExactKeys(value, gamePresent ? ROOT_KEYS : ROOT_KEYS_WITHOUT_GAME) ||
     value.apiVersion !== 1 ||
     !isRecord(value.build) ||
     !hasExactKeys(value.build, ROOT_BUILD_KEYS) ||
@@ -1217,7 +1228,8 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
   if (chat.build.profileId !== COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID) {
     throw new ComposedReferenceGameProtocolError("invalid_composed_chat_profile");
   }
-  if (value.game !== null) {
+  let game: GameBrowserStateV1 | null = null;
+  if (gamePresent && value.game !== null) {
     if (!isGameProjection(value.game)) {
       throw new ComposedReferenceGameProtocolError("invalid_composed_game");
     }
@@ -1227,6 +1239,7 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
     ) {
       throw new ComposedReferenceGameProtocolError("mismatched_composed_session");
     }
+    game = value.game;
   }
   return Object.freeze({
     apiVersion: value.apiVersion,
@@ -1235,7 +1248,10 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
       profileId: value.build.profileId,
     }),
     chat,
-    game: value.game,
+    // A Game half that could not be read is answered with no member at all, so the absence this client was
+    // handed survives the validation instead of being flattened into `null`: the two are different facts, and
+    // a shell that lost the difference here could not tell its Game surface why it has nothing to draw.
+    ...(gamePresent ? { game } : {}),
   });
 }
 

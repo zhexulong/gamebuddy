@@ -1223,7 +1223,7 @@ export function ComposedReferenceGameApp() {
   // The bar's second fact, from the game projection the Game surface is handed: the model's word
   // above says whether a reply can reach a model, and this one says whether the game is there.
   const gameStatus =
-    view.kind === "ready" && view.root.game !== null
+    view.kind === "ready" && view.root.game != null
       ? appBarGameStatus(view.root.game.game.connectionStatus, labels())
       : undefined;
 
@@ -1418,7 +1418,7 @@ export function ComposedReferenceGameApp() {
                 <GameSurface
                   selected={shownSurface === GAME_PANEL}
                   ready={view.kind === "ready"}
-                  game={view.root.game}
+                  game={view.root.game ?? null}
                   csrfToken={view.session.snapshot.csrfToken}
                   labels={labels()}
                   readView={() => viewRef.current}

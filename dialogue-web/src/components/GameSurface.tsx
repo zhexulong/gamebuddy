@@ -318,7 +318,7 @@ export function GameSurface({
    */
   const launchCanStillAnswer = (): boolean => {
     const current = readView();
-    if (current.kind !== "ready" || current.root.game === null) return false;
+    if (current.kind !== "ready" || current.root.game == null) return false;
     const { attachment, instance, latestOutcome } = current.root.game.game;
     return (
       attachment.status !== "attached" &&
@@ -430,7 +430,7 @@ export function GameSurface({
    */
   const applyGameFact = (patch: GameFactPatchV1): void => {
     const current = readViewRef.current();
-    if (current.kind !== "ready" || current.root.game === null) return;
+    if (current.kind !== "ready" || current.root.game == null) return;
     const projection = current.root.game;
     commitRef.current({
       ...current,
@@ -671,7 +671,8 @@ export function GameSurface({
     if (gameActivationActiveRef.current || current.kind !== "ready") return;
     // The click-time re-check is the same derivation the control is offered
     // from, so a control can never be offered in a state its own handler refuses.
-    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game }).activationAvailable) return;
+    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game ?? null }).activationAvailable)
+      return;
     gameActivationActiveRef.current = true;
     setGameActivationActive(true);
     setGameActivationFailure(null);
@@ -695,7 +696,7 @@ export function GameSurface({
       const staged =
         rereadSucceeded &&
         fresh.kind === "ready" &&
-        fresh.root.game !== null &&
+        fresh.root.game != null &&
         fresh.root.game.game.instance.generation >= 1;
       if (!staged) {
         if (error instanceof ComposedReferenceGameProblemError && error.code === "not_found")
@@ -712,7 +713,8 @@ export function GameSurface({
   const handleGameSetup = async (): Promise<void> => {
     const current = readView();
     if (gameSetupActiveRef.current || current.kind !== "ready") return;
-    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game }).setupAvailable) return;
+    if (!deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game ?? null }).setupAvailable)
+      return;
     const idempotencyKey = gameSetupKeyRef.current ?? newIdempotencyKey();
     gameSetupKeyRef.current = idempotencyKey;
     gameSetupActiveRef.current = true;
@@ -745,7 +747,7 @@ export function GameSurface({
         error instanceof ComposedReferenceGameProblemError &&
         error.code === "game_unavailable" &&
         rereadSucceeded &&
-        setupStagedNothing(latest.kind === "ready" ? latest.root.game : null)
+        setupStagedNothing(latest.kind === "ready" ? (latest.root.game ?? null) : null)
       )
         gameSetupKeyRef.current = undefined;
     } finally {
@@ -756,7 +758,7 @@ export function GameSurface({
 
   const handleGameStop = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     if (
       current.kind !== "ready" ||
       gameProjection === null ||
@@ -802,7 +804,7 @@ export function GameSurface({
   const handleGameLaunch = async (): Promise<void> => {
     const current = readView();
     if (current.kind !== "ready") return;
-    const controls = deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game });
+    const controls = deriveGameLifecycleControlAvailability({ ready: true, game: current.root.game ?? null });
     if (!controls.launchAvailable || controls.launchGeneration === null || !admitAttachment("launch")) return;
     const generation = controls.launchGeneration;
     const existingKey = gameLaunchKeysRef.current.get(generation);
@@ -833,7 +835,7 @@ export function GameSurface({
         error.code === "game_unavailable" &&
         rereadSucceeded &&
         fresh.kind === "ready" &&
-        fresh.root.game !== null &&
+        fresh.root.game != null &&
         (fresh.root.game.game.prerequisites.status !== "met" || fresh.root.game.game.instance.generation < 1)
       ) {
         gameLaunchKeysRef.current.delete(generation);
@@ -852,7 +854,7 @@ export function GameSurface({
 
   const handleDisconnect = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     if (
       current.kind !== "ready" ||
       gameProjection === null ||
@@ -908,7 +910,7 @@ export function GameSurface({
   const resumeAwaitAuthoritative = async (generation: number): Promise<"connected" | "superseded" | "unavailable"> => {
     const answer = await awaitGameProjection(() => {
       const fresh = readView();
-      if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded" as const;
+      if (fresh.kind !== "ready" || fresh.root.game == null) return "superseded" as const;
       const projection = fresh.root.game.game;
       if (projection.attachment.generation !== generation) return "superseded" as const;
       if (
@@ -923,7 +925,7 @@ export function GameSurface({
 
   const handleGameResume = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     if (
       gameResumeActiveRef.current ||
       current.kind !== "ready" ||
@@ -1028,7 +1030,7 @@ export function GameSurface({
   const reopenAwaitAuthoritative = async (generation: number): Promise<"active" | "superseded" | "unavailable"> => {
     const answer = await awaitGameProjection(() => {
       const fresh = readView();
-      if (fresh.kind !== "ready" || fresh.root.game === null) return "superseded" as const;
+      if (fresh.kind !== "ready" || fresh.root.game == null) return "superseded" as const;
       const projection = fresh.root.game.game;
       if (projection.attachment.generation !== generation) return "superseded" as const;
       if (projection.attachment.status === "attached" && projection.actionAuthority === "active")
@@ -1040,7 +1042,7 @@ export function GameSurface({
 
   const handleGameReopen = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     // ready-actions-paused is the exact precondition: connected_idle equals a
     // live observation surface, actionAuthority "paused" means only a new
     // explicit Game instruction may reopen action admission. Never approximate
@@ -1117,7 +1119,7 @@ export function GameSurface({
    */
   const handleGameResumeCancel = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     if (
       gameResumeCancelActiveRef.current ||
       current.kind !== "ready" ||
@@ -1189,7 +1191,7 @@ export function GameSurface({
   const createAwaitAuthoritative = async (): Promise<"converged" | "unavailable"> => {
     const answer = await awaitGameProjection(() => {
       const fresh = readView();
-      if (fresh.kind !== "ready" || fresh.root.game === null) return undefined;
+      if (fresh.kind !== "ready" || fresh.root.game == null) return undefined;
       const projection = fresh.root.game.game;
       if (
         projection.attachment.status === "attached" &&
@@ -1216,7 +1218,7 @@ export function GameSurface({
     if (
       gameCreateActiveRef.current ||
       current.kind !== "ready" ||
-      current.root.game === null ||
+      current.root.game == null ||
       (gameResumeFailure === null && !gameResumeUnavailable)
     )
       return;
@@ -1296,7 +1298,7 @@ export function GameSurface({
    */
   const handleGameEndgame = async (): Promise<void> => {
     const current = readView();
-    const gameProjection = current.kind === "ready" ? current.root.game : null;
+    const gameProjection = current.kind === "ready" ? (current.root.game ?? null) : null;
     if (
       gameEndgameActiveRef.current ||
       current.kind !== "ready" ||

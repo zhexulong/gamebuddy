@@ -158,7 +158,17 @@ export const ComposedReferenceGameBrowserRootV1Schema = strictObject({
     profileId: Type.String({ minLength: 1, maxLength: 128 }),
   }),
   chat: TavernStateSnapshotV1Schema,
-  game: Type.Union([GameBrowserStateV1Schema, Type.Null()]),
+  /**
+   * The Game half, and the two answers that are not one: `null` is a mount whose profile carries no Game at
+   * all - there was never a projection to read - and an ABSENT member is a mount that carries one and could not
+   * read it this time (`readGameHalf` in `composed-reference-game-browser.ts`). The reader tells them apart by
+   * the member's own presence, which is why this is `Type.Optional` rather than a second sentinel value: the two
+   * facts are different and a Game surface is owed the difference.
+   *
+   * Neither answer refuses the root. The Chat half beside it is complete, so the conversation, the settings and
+   * the memory keep working while the Game surface states the fault that is its own.
+   */
+  game: Type.Optional(Type.Union([GameBrowserStateV1Schema, Type.Null()])),
 });
 
 export type ComposedReferenceGameBrowserRootV1 = Static<typeof ComposedReferenceGameBrowserRootV1Schema>;

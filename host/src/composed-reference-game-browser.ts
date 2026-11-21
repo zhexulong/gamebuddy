@@ -1552,9 +1552,55 @@ export function createComposedReferenceGameBrowserRequestHandler(
       browserSessionExpiresAtMs: activeSession.expiresAtMs,
     });
 
+  /**
+   * The Game half of a root this Host holds a Game profile for, or `undefined` when it could not be produced.
+   *
+   * The two halves of a composed root are two producer seams - `options.readChat` and `options.readGame` - and
+   * that is the whole predicate this function rests on: a failure is the Game half's when the Game producer
+   * (or the check of what it answered) is what failed, and the Chat half's when the Chat producer is. Nothing
+   * here reads a message, a code or any other text the producer may have written; what it names stays the
+   * producer's, and `/game` still reports it (`readGameRoute` is the Game half's authority, not this root).
+   *
+   * `undefined` is therefore a third answer beside a projection and `null`: `null` is a mount whose profile
+   * carries no Game at all (`options.readGame === undefined`), and `undefined` is a Game profile whose
+   * projection this read did not get a valid answer out of. The root answers those two differently - see the
+   * `game` member of `ComposedReferenceGameBrowserRootV1Schema`.
+   */
+  const readGameHalf = async (
+    readGame: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["readGame"]>,
+    context: ComposedReferenceGameBrowserReadContext,
+  ): Promise<GameBrowserStateV1 | undefined> => {
+    let game: GameBrowserStateV1;
+    try {
+      game = await readGame(context);
+    } catch {
+      return undefined;
+    }
+
+    if (
+      options.profile.gameProfile === null ||
+      !GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(game) ||
+      game.build.profileId !== options.profile.gameProfile.profileId ||
+      game.csrfToken !== context.csrfToken ||
+      game.browserSession.expiresAtMs !== context.browserSessionExpiresAtMs
+    ) {
+      return undefined;
+    }
+
+    return game;
+  };
+
+  /**
+   * One read of the composed root: the Chat half, which this Host cannot answer the page without, and the Game
+   * half beside it, whose own failure costs the Game surface and nothing else.
+   *
+   * A Chat half that cannot be read is still the whole document's failure - the page has no conversation to
+   * draw and no honest way to draw one - while a Game half that cannot be read answers a root with no `game`
+   * member at all. That is what keeps the one-time bootstrap credential usable, and the conversation, the
+   * settings and the memory reachable, on a Host whose native game side is the broken one.
+   */
   const readComposedRoot = async (context: ComposedReferenceGameBrowserReadContext): Promise<unknown> => {
     let chat: TavernStateSnapshotV1;
-    let game: GameBrowserStateV1 | null = null;
     try {
       chat = await options.readChat(context);
     } catch (error) {
@@ -1570,25 +1616,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
       throw new ControlledStateError("chat_snapshot_mismatch");
     }
 
-    if (options.readGame !== undefined) {
-      try {
-        game = await options.readGame(context);
-      } catch (error) {
-        throw new ControlledStateError(boundedProducerCode(error) ?? "game_projection_failed");
-      }
-    }
-
-    if (game !== null) {
-      if (
-        options.profile.gameProfile === null ||
-        !GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(game) ||
-        game.build.profileId !== options.profile.gameProfile.profileId ||
-        game.csrfToken !== context.csrfToken ||
-        game.browserSession.expiresAtMs !== context.browserSessionExpiresAtMs
-      ) {
-        throw new ControlledStateError("game_snapshot_mismatch");
-      }
-    }
+    const game = options.readGame === undefined ? null : await readGameHalf(options.readGame, context);
 
     const composed = {
       apiVersion: 1,
@@ -1597,7 +1625,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         profileId: "gamebuddy.composed.reference-game",
       },
       chat,
-      game,
+      ...(game === undefined ? {} : { game }),
     };
 
     if (!ComposedReferenceGameBrowserValidatorsV1.ComposedReferenceGameBrowserRootV1Schema.Check(composed)) {
