@@ -234,6 +234,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
       "DEFAULT_COMPANION_PRESET (card.json) shifted to Route A co-op framing outside the game body (+320 chars in the rendered prompt; conductBlock.chars unchanged at 162), so systemChars moves from 2,687 to 3,007 and charShareOfSystemPrompt re-derives as 162 / 3,007 = 0.0539. envelopeChars (23,255 -> 23,576, +321 JSON-escaped chars) and envelopeBytes (32,572 -> 33,495, +923 UTF-8 bytes) follow the measured prompt delta against HEAD.",
     remeasured_2026_11_25_b:
       "Natural first-person gamer speech wording in DEFAULT_COMPANION_PRESET (card.json) removing stiff '按小人/我人物' phrasing while retaining Route A internal mindset (-9 chars in the rendered prompt; conductBlock.chars unchanged at 162), moving systemChars 3,007 -> 2,998 and charShareOfSystemPrompt to 162 / 2,998 = 0.0540. envelopeChars (23,576 -> 23,567, -9 JSON-escaped chars) and envelopeBytes (33,495 -> 33,462, -33 UTF-8 bytes) follow the measured prompt delta against HEAD.",
+    remeasured_2026_11_26:
+      "Post-round85 tuning in DEFAULT_COMPANION_PRESET (card.json): focus open-ended remarks on feelings/reactions instead of step checklists, reinforce first-person wording under cutscene pressure, and add free-time co-op preferences + 2 grounded shop-wait/idle examples (+309 chars in the rendered prompt; conductBlock.chars unchanged at 162), moving systemChars 2,998 -> 3,307 and charShareOfSystemPrompt to 162 / 3,307 = 0.0490. envelopeChars (23,567 -> 23,882, +315 JSON-escaped chars) and envelopeBytes (33,462 -> 34,335, +873 UTF-8 bytes) follow the measured prompt delta against HEAD.",
   }),
   floor: Object.freeze({
     // The plan-builder-only measurement: 14 tools. The surface a Game session is handed now carries 16, because the two
@@ -241,16 +243,16 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // `remeasured_2026_11_13`, which records that this column is an under-count of the surface rather than a second
     // reading of it.
     toolCount: 14,
-    // Re-derived from the product's builder by the test itself: 2,998 after natural first-person Route A wording (was 3,007 at
-    // `remeasured_2026_11_25`). The token column below is the 2026-11-05 MEASUREMENT.
-    systemChars: 2998,
+    // Re-derived from the product's builder by the test itself: 3,307 after post-round85 card tuning (was 2,998 at
+    // `remeasured_2026_11_25_b`). The token column below is the 2026-11-05 MEASUREMENT.
+    systemChars: 3307,
     systemTokens: 5119,
     toolsTokens: 3552,
-    // The recorded envelope plus this change's measured JSON-escaped delta (-9 characters vs remeasured_2026_11_25): the tool array
+    // The recorded envelope plus this change's measured JSON-escaped delta (+315 characters vs remeasured_2026_11_25_b): the tool array
     // and the empty message list are unchanged. Not re-measured - see `remeasured_2026_11_19_c`.
-    envelopeChars: 23567,
-    // Same change in UTF-8 JSON bytes: 33,495 - 33.
-    envelopeBytes: 33462,
+    envelopeChars: 23882,
+    // Same change in UTF-8 JSON bytes: 33,462 + 873.
+    envelopeBytes: 34335,
     envelopeTokens: 8787,
   }),
   conductBlock: Object.freeze({
@@ -258,8 +260,8 @@ export const GAME_SURFACE_PROMPT_FLOOR: PromptFloorReading = Object.freeze({
     // list; the name is kept because the pair-budget gate reads this column, and what it measures is stated here.
     chars: 162,
     tokens: 1227,
-    // The measured slice over the measured prompt: 162 / 2,998.
-    charShareOfSystemPrompt: 0.054,
+    // The measured slice over the measured prompt: 162 / 3,307.
+    charShareOfSystemPrompt: 0.049,
     tokenShareOfSystemPrompt: 0.24,
   }),
   denominator: Object.freeze([

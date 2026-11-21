@@ -92,14 +92,20 @@ export const BEHAVIOURS = Object.freeze([
     gloss: "遇上闭店、卡路或阻塞时，只讲眼前这道障碍",
     mode: "permitted",
     claim: "遇上卡路、没体力、天黑，若交流只讲眼前这道障碍，不讲原因、不讲规则",
-    samples: ["罗宾门口挂着休业牌呢", "东头那块大石头把路口堵死了"],
+    samples: ["罗宾门口挂着休业牌呢", "东头那块大石头把路口堵死了", "皮埃尔九点才开张呢"],
   },
   {
     behaviour: "asks_the_user_a_question",
     gloss: "把选择或情况当问题抛回去，有商有量",
     mode: "permitted",
     claim: "有商有量",
-    samples: ["还是去河边碰运气钓鲶鱼？", "包里还有南边树林拔的野葱没？", "听见蝙蝠扑腾没？", "上酒吧喝一杯去？"],
+    samples: [
+      "还是去河边碰运气钓鲶鱼？",
+      "包里还有南边树林拔的野葱没？",
+      "听见蝙蝠扑腾没？",
+      "上酒吧喝一杯去？",
+      "去镇上串串门还是直接下矿摸两层铜？",
+    ],
   },
   {
     behaviour: "divides_the_work",
