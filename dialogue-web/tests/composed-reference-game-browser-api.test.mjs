@@ -158,6 +158,30 @@ test("composed validator is closed and binds nested Chat and Game to one browser
   );
 });
 
+/**
+ * The two answers that are not a projection, and the member's own presence as the distinction.
+ *
+ * `game: null` is a Host whose profile mounts no Game at all; an ABSENT member is a Host that mounts one
+ * and could not read it (`readGameHalf` in `host/src/composed-reference-game-browser.ts`). A validator
+ * that accepted only one of them would take the whole page down for the other - the mirror is the one
+ * layer a degraded root has to survive.
+ */
+test("composed validator tells a Game half that could not be read from a profile that mounts none", () => {
+  const withoutGame = root();
+  delete withoutGame.game;
+  const unread = validateComposedReferenceGameRoot(withoutGame);
+  assert.equal(Object.hasOwn(unread, "game"), false, "the absence survives validation; it is not flattened into null");
+  assert.equal(unread.chat.chat.title, "Exact Chat");
+
+  const none = validateComposedReferenceGameRoot(root(null));
+  assert.equal(Object.hasOwn(none, "game"), true);
+  assert.equal(none.game, null);
+
+  // A root with neither answer is still a page this build cannot read: the member must be absent, not
+  // replaced by anything else, so an extra key is a refusal rather than a degraded mount.
+  assert.throws(() => validateComposedReferenceGameRoot({ ...withoutGame, gameProblem: "unread" }), ComposedReferenceGameProtocolError);
+});
+
 test("composed Game projection refuses the unmet prerequisite status and a missing-items list", () => {
   for (const prerequisites of [
     { status: "unmet", detectedGame: null },

@@ -3650,28 +3650,10 @@ test("a bootstrap whose root projection breaks names the projection, not just st
     await unboundedServer.close();
   }
 
-  const failingGame = createComposedReferenceGameBrowserRequestHandler({
-    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
-    bootstrapToken,
-    readChat: async (context) => stateForChat(context),
-    readGame: async () => {
-      throw new Error("stardew_player_host_launch_failed", {
-        cause: new Error("stardew_player_host_launch_runtime_unavailable"),
-      });
-    },
-  });
-  const gameServer = await start(failingGame);
-  try {
-    const response = await bootstrap(gameServer.origin);
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), {
-      code: "state_unavailable",
-      cause: "stardew_player_host_launch_runtime_unavailable",
-    });
-    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "stardew_player_host_launch_runtime_unavailable");
-  } finally {
-    await gameServer.close();
-  }
+  // The GAME half no longer reaches this header: a Game projection that breaks answers a root with no
+  // `game` member and a session that stays alive, so there is no refusal for a game fault to name
+  // (`composed-reference-game-browser.game-half.test.ts` holds that direction, both for a producer that
+  // throws and for one whose answer this Host cannot publish).
 });
 
 test("the composed root's two 409s carry the bounded producer code in the body, and no other refusal body gained a field", async () => {

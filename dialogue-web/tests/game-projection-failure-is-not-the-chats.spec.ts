@@ -4,47 +4,31 @@ import { chat, game, jsonOk, root as composedRoot, token } from "./composed-refe
 /**
  * A Game projection that cannot be read is not a conversation that cannot be read.
  *
- * The Host's shape is what makes the crossing possible: `readComposedRoot`
- * (`host/src/composed-reference-game-browser.ts`) composes the Chat half and then the Game half into
- * ONE document and throws `ControlledStateError("game_projection_failed")` when the Game half is the
- * one that failed - so both writers of that root (the `/bootstrap` that mints the session, and the
- * authenticated `/state`) answer `409 {code: "state_unavailable", cause: "game_projection_failed"}`
- * for a fault the conversation has no part in. The Chat half has a route of its own
- * (`GET /api/tavern/v1/state`: the same `TavernStateSnapshotV1` the root carries under `chat`, served
- * on the same broker session), and that is the route a Chat read takes when it means the Chat.
+ * The Host composes the Chat half and the Game half into ONE document (`readComposedRoot`,
+ * `host/src/composed-reference-game-browser.ts`), and the two halves are two producer seams: when the GAME
+ * one fails, the root answers the complete Chat half and NO `game` member at all, and the session it was
+ * read on stays alive; when the CHAT one fails there is no conversation to draw, and the root is refused
+ * as a whole. The Chat half also has a route of its own (`GET /api/tavern/v1/state`: the same
+ * `TavernStateSnapshotV1` the root carries under `chat`, on the same broker session), which is the route a
+ * Chat read takes when it means the Chat.
  *
- * Three reads, three different answers, measured here:
+ * Three readings, measured here:
  *
- *  - the MOUNT read is the whole window. `/bootstrap` refuses and retires the session it had just
- *    minted (`if (session === activeSession) session = undefined`), so there is no region to draw a
- *    card in AND no session for the Chat half's own route to answer on: the first journey holds both
- *    facts, and they are the reason this direction has no client-side fix at all.
- *  - the World Info binding (`readProductWorldInfo`) is a Chat read that used to take the aggregate
- *    to learn `chat.selection.generation` and `chat.chat.worldInfo`, so a Game fault emptied the
- *    managed World Info library - the library the conversation ATTACHES its items from - while the
- *    conversation itself stayed perfectly readable. It reads the Chat half's own route now, and the
- *    second journey is what fails when it goes back.
- *  - the reverse direction is the same shape: a Chat projection that cannot be read must not take
- *    the Game surface away. `chat-problem-keeps-the-game-mounted.spec.ts` holds its own shape of
- *    that; this file holds the one a Chat-side refusal of the AGGREGATE produces.
+ *  - the MOUNT read is no longer the whole window. `/bootstrap` keeps the session it minted, so the
+ *    conversation, the app bar, Settings and Memory stand while the Game surface states its own fault in
+ *    its own panel (`[data-game-state="null"]`, `gameStateUnavailable`). The first journey mounts that
+ *    root at 400x800 and 1440x900 and reads both the surfaces and the bar.
+ *  - the reverse direction is still fatal, and must stay so: a root whose CHAT half cannot be read is a
+ *    card and nothing else - there is no conversation to mount and no honest way to draw one - so the
+ *    same page refuses it as the whole window (`409 {code: "state_unavailable",
+ *    cause: "chat_projection_failed"}`). The second journey is that reading.
+ *  - the World Info binding (`readProductWorldInfo`) is a Chat read that used to take the aggregate to
+ *    learn `chat.selection.generation` and `chat.chat.worldInfo`, so a Game fault emptied the managed
+ *    World Info library. It reads the Chat half's own route now, and the third journey is what fails when
+ *    it goes back.
  *
- * The mount cannot be decoupled from this side of the wire, and the two ends of that are worth
- * naming together: `readComposedRoot` throws for the Game half
- * (`host/src/composed-reference-game-browser.ts:1577`), and `handleBootstrap` answers that throw by
- * retiring the session it had just minted (`:1703`, `if (session === activeSession) session =
- * undefined`) - so the refusal arrives with no session left for the Chat half's own route to answer
- * on. That pair, not a missing retry, is why the first journey measures `chatHalfReads` instead of
- * pressing a control: what a real fix needs is a `/bootstrap` that answers a root with no Game slice
- * and a session that survives it, plus a mount state that draws the shell with a degraded Game
- * panel. Neither is this client's to choose, so neither was built here.
- *
- * Two reds found while measuring, left where they belong and not fixed by this lane:
- *  - `world-book-entry-opens-without-cutting-the-line-above.spec.ts` item 30: its sensitivity probe
- *    assigns `scrollTop` on `.surface-content` and reads 0 - the container has no overflow at
- *    400x800 - and it fails identically against the pre-change source of the read this file pins.
- *  - `companion-activation.spec.ts:513` asserts `labels.unavailable`, which is `undefined`:
- *    `acc58ac4` renamed that key to `companionsUnreadable` in both catalogues, in the same commit
- *    that added the journey asserting it.
+ * `game: null` is a third answer and not this file's subject: it is a mount whose profile carries no Game
+ * at all, and the reader tells it from "could not be read" by the member's own presence.
  */
 
 const gameProjectionRefusal = {
@@ -85,14 +69,102 @@ async function stubCharactersSurface(page: Page): Promise<void> {
   );
 }
 
-test("a Game projection failure at mount is the whole window, and it retires the session the Chat half's route needs", async ({
+/**
+ * The root a Host answers when its GAME half could not be read: the complete Chat half and no `game` member
+ * at all (`readGameHalf` in `host/src/composed-reference-game-browser.ts` answers `undefined`, and the root
+ * is built without the member).
+ *
+ * Not `game: null`: that is the mount whose profile carries no Game at all, and the difference is the point -
+ * a client that flattened the absence into `null` could not tell "this build has no game" from "your game
+ * could not be read".
+ */
+const gameUnreadableRoot = { apiVersion: 1, build: composedRoot.build, chat };
+
+/** The two windows the shell has to stand in: a phone-width one and a desktop one. */
+const VIEWPORTS = [
+  { width: 400, height: 800 },
+  { width: 1440, height: 900 },
+] as const;
+
+/**
+ * One bar entry, pressed the way a player reaches it.
+ *
+ * At a narrow window the bar folds its trailing peers behind one `More` disclosure (`surface-chrome.spec.ts`
+ * pins the fold), so an entry that is not on screen is opened from it rather than clicked through the hash.
+ */
+async function pressBarEntry(page: Page, name: string): Promise<void> {
+  const entry = page.getByRole("button", { name, exact: true });
+  if ((await entry.count()) === 0) await page.getByRole("button", { name: "More", exact: true }).click();
+  await entry.click();
+}
+
+test("a Game half that cannot be read at mount leaves the conversation, the bar and the management surfaces standing", async ({
   page,
 }) => {
+  test.setTimeout(120_000);
+  let chatHalfReads = 0;
+  let aggregateReads = 0;
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(js(gameUnreadableRoot)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+    aggregateReads += 1;
+    return route.fulfill(js(gameUnreadableRoot));
+  });
+  await page.route("**/api/tavern/v1/state", (route) => {
+    chatHalfReads += 1;
+    return route.fulfill(js(chat));
+  });
+  // The Game half's own authority still refuses: what was degraded is the ROOT, not the game's own route.
+  await page.route("**/api/composed-reference-game/v1/game", (route) => route.fulfill(gameProjectionRefusal));
+
+  for (const viewport of VIEWPORTS) {
+    await test.step(`${viewport.width}x${viewport.height}`, async () => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+
+      // The window is the shell, not a card: a Game fault is the Game surface's.
+      await expect(page.locator(".problem-view"), "a Game fault is not the window's problem").toHaveCount(0);
+      const conversation = page.getByTestId("chat-surface");
+      await expect(conversation).toBeVisible();
+      await expect(conversation).toContainText("The game projection is read-only.");
+      await expect(page.getByTestId("chat-problem"), "the conversation is not in a problem state").toHaveCount(0);
+      // Usable, not merely painted: the composer is there and can take a line.
+      await expect(page.locator(".composer-textarea")).toBeEditable();
+      await expect(page.getByTestId("composer-send")).toBeVisible();
+
+      // The bar is intact: its leading pair is on screen at both widths, and the peers behind the fold
+      // are still there to reach.
+      await expect(page.getByRole("button", { name: "Chat", exact: true }), "the bar keeps the conversation").toBeVisible();
+      await expect(page.getByRole("button", { name: "Game", exact: true }), "the bar keeps the Game surface").toBeVisible();
+      // Settings and Memory are the services a Game fault used to take with it.
+      await pressBarEntry(page, "Settings");
+      await expect(page.getByTestId("settings-surface")).toBeVisible();
+      await pressBarEntry(page, "Memory");
+      await expect(page.getByTestId("memory-surface")).toBeVisible();
+
+      // ...and the Game surface is where the fault is stated, in its own panel.
+      await pressBarEntry(page, "Game");
+      const panel = page.getByTestId("game-state-panel");
+      await expect(panel).toBeVisible();
+      await expect(panel).toHaveAttribute("data-game-state", "null");
+      await expect(panel).toContainText("GameBuddy cannot read your game");
+      await expect(
+        page.locator(".problem-view"),
+        "the Game panel states the fault; it does not become the window",
+      ).toHaveCount(0);
+
+      console.log(
+        `MEASURE degraded-mount ${viewport.width}x${viewport.height}: problem-view=${await page.locator(".problem-view").count()} chat-surface=${await page.getByTestId("chat-surface").count()} chat-usable=${await page.locator(".composer-textarea").count()} game-panel-state=${await panel.getAttribute("data-game-state")} aggregateReads=${aggregateReads} chatHalfReads=${chatHalfReads}`,
+      );
+    });
+  }
+});
+
+test("a Chat half that cannot be read at mount is still the whole window", async ({ page }) => {
   test.setTimeout(90_000);
   let chatHalfReads = 0;
-  // The Host's own answer when the Game half is what failed, cause header included.
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(gameProjectionRefusal));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(gameProjectionRefusal));
+  // The Host's own answer when the CHAT half is what failed, cause header included.
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(chatProjectionRefusal));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(chatProjectionRefusal));
   // ...while the Chat half's own route would answer perfectly well, if anything could still ask it.
   await page.route("**/api/tavern/v1/state", (route) => {
     chatHalfReads += 1;
@@ -102,13 +174,13 @@ test("a Game projection failure at mount is the whole window, and it retires the
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
 
   const card = page.locator(".problem-view");
-  await expect(card, "the mount's own card is the page").toHaveCount(1);
+  await expect(card, "a conversation that could not be read is the page").toHaveCount(1);
   await expect(page.getByTestId("chat-surface")).toHaveCount(0);
   await expect(page.getByTestId("game-surface")).toHaveCount(0);
   // The one step a whole-window card can own: the read it came from, taken again.
   await expect(card.getByTestId("problem-retry-read")).toHaveCount(1);
-  // The fact the "decouple the shell" decision hangs on: the refusal retired the session, so the
-  // Chat half's own route is not merely unused here - it cannot be asked at all.
+  // The refusal retired the session, so the Chat half's own route cannot be asked either: the shell
+  // cannot honestly draw a conversation it could not read, and this is the direction that stays fatal.
   expect(chatHalfReads, "a refused bootstrap left no session to read the Chat half on").toBe(0);
 
   const reading = await page.evaluate(() => {
@@ -117,7 +189,7 @@ test("a Game projection failure at mount is the whole window, and it retires the
     const texts = [...root.querySelectorAll("h1, h2, p")].map((node) => node.textContent?.trim() ?? "");
     return `texts=${JSON.stringify(texts)}`;
   });
-  console.log(`MEASURE mount-game-fault: problem-view=1 chat-surface=0 game-surface=0 ${reading}`);
+  console.log(`MEASURE mount-chat-fault: problem-view=1 chat-surface=0 game-surface=0 ${reading}`);
 });
 
 test("a Game projection failure does not empty the world book the Chat owns", async ({ page }) => {
