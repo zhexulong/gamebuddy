@@ -731,6 +731,20 @@ function packCountsAge(provedRows: number, totalRows: number, ageTurns: number):
 const AFFORDABILITY_GAP = "（买种子的钱: 未观察）";
 
 /**
+ * Her wallet's balance as the wire published it, or `null` when it published no readable one.
+ *
+ * <p>
+ * THE ONE SPELLING OF "IS THE WALLET OBSERVED". Two lines ask it - the wallet line prints the figure, and the seed line
+ * prints its `未观察` gap only while there is no figure - so both read this, and what counts as a readable balance moves
+ * them together instead of leaving two spellings of one fact to disagree.
+ * </p>
+ */
+function readOwnMoney(world: Snapshot): number | null {
+  const money = world.money;
+  return typeof money === "number" && Number.isSafeInteger(money) && money >= 0 ? money : null;
+}
+
+/**
  * The seeds she can actually plant, and how many of each.
  *
  * <p>
@@ -761,17 +775,23 @@ const AFFORDABILITY_GAP = "（买种子的钱: 未观察）";
  * </p>
  *
  * <p>
- * AND THE MONEY QUESTION IS NAMED AS UNMEASURED, WHICH IS THE FACT AND NOT A SHRUG. The wire publishes no balance at all
- * (`protocol.ts` has no money field), so whether she can afford a seed is a question NOTHING here was asked. Measured
+ * AND THE MONEY QUESTION IS NAMED AS UNMEASURED ONLY WHILE IT IS, WHICH IS THE FACT AND NOT A SHRUG. Measured
  * 2026-11-18 (`round67`): she priced a seed at 80 g and concluded 「I have little money」 with nothing to read - the
- * absence of a number read as a number. Printing the gap is what stops the silence from being filled with a guess; a
- * figure would be ours, and publishing a balance is a wire decision rather than a line this module can compose.
+ * absence of a number read as a number - so the line that carries the count named the gap. It used to append it
+ * unconditionally, because the wire published no balance at all; `protocol.ts` publishes `money` now and `formatOwnMoney`
+ * prints it in the same paragraph, so the gap is DERIVED from that one reading (`readOwnMoney`): it is printed only when
+ * the wallet line printed nothing. Measured `round88`: `<world-state>` rendered 18 times and every one carried
+ * `金币: 500` beside `种子: 2 花椰菜种子（买种子的钱: 未观察）` - one fact in two spellings, contradicting itself inside
+ * one line. The seed line says what the wallet line cannot (which seeds), and nothing about what it can (what they cost).
  * </p>
  */
 function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRESHNESS): string {
   const rows = world.seedSupplyTargets;
   if (!Array.isArray(rows)) return "";
-  if (rows.length === 0) return `种子: 0（背包里没有种子）${AFFORDABILITY_GAP}`;
+  // DERIVED, NOT APPENDED: the gap claims the balance is unobserved, so it is printed only when the wallet line above
+  // printed nothing. With a readable `money` the seed line has nothing left to say about affordability.
+  const gap = readOwnMoney(world) === null ? AFFORDABILITY_GAP : "";
+  if (rows.length === 0) return `种子: 0（背包里没有种子）${gap}`;
   const seeds: string[] = [];
   const seen = new Set<string>();
   let provedSeeds = 0;
@@ -785,7 +805,7 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
     const count = proved ?? (Number.isFinite(row.heldCount) ? Number(row.heldCount) : null);
     seeds.push(count === null ? `${name}（数量未测）` : `${String(count)} ${name}${packCountSource(proved)}`);
   }
-  return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}${AFFORDABILITY_GAP}`;
+  return `种子: ${seeds.join("、")}${packCountsAge(provedSeeds, seeds.length, freshness.ageTurns)}${gap}`;
 }
 
 /**
@@ -825,13 +845,13 @@ function formatHeldSeeds(world: Snapshot, freshness: PackFreshness = NO_PACK_FRE
  *
  * <p>
  * ABSENT PRINTS NOTHING: an unread wallet is silence, never `0` and never "she can afford it", the same rule
- * `formatOwnHealth` follows for hit points and `formatGameStamina` for stamina.
+ * `formatOwnHealth` follows for hit points and `formatGameStamina` for stamina. It is also the reading the seed line's
+ * `未观察` gap is derived from (`readOwnMoney`), so the two lines cannot claim different things about one wallet.
  * </p>
  */
 function formatOwnMoney(world: Snapshot): string {
-  const money = world.money;
-  if (typeof money !== "number" || !Number.isSafeInteger(money) || money < 0) return "";
-  return `金币: ${String(money)}`;
+  const money = readOwnMoney(world);
+  return money === null ? "" : `金币: ${String(money)}`;
 }
 
 function formatOwnHealth(world: Snapshot): string {

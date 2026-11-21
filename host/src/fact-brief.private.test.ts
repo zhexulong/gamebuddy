@@ -1030,10 +1030,11 @@ test("seed_held: the seeds she can plant print their own count, once", () => {
  * THE MONEY QUESTION, NAMED AS UNMEASURED INSTEAD OF LEFT SILENT.
  *
  * <p>
- * The wire publishes no balance at all (`protocol.ts` has no money field), so "can she afford a seed" is a question
- * nothing here was asked. Measured 2026-11-18 (`round67`): she priced a seed at 80 g and concluded 「I have little
- * money」 with nothing to read - an absent number read as a number. The line that carries the seed COUNT is where the
- * gap belongs, because that is the line she reads when deciding whether to walk to town.
+ * The wire published no balance at all when this was written (`protocol.ts` had no money field), so "can she afford a
+ * seed" was a question nothing here was asked. Measured 2026-11-18 (`round67`): she priced a seed at 80 g and concluded
+ * 「I have little money」 with nothing to read - an absent number read as a number. The line that carries the seed COUNT
+ * is where the gap belongs, because that is the line she reads when deciding whether to walk to town. `money` exists
+ * now, so the gap is printed only while that reading is absent - the neighbouring test asserts the derivation.
  * </p>
  * <p>
  * The falsifier is the absent family: `seedSupplyTargets` missing means nobody measured seeds at all, so there is no
@@ -1060,6 +1061,45 @@ test("seed_affordability: the seed line names the money the observation does not
     !nothingMeasured.includes("买种子的钱"),
     `an unmeasured seed family must leave the block byte-identical:\n${nothingMeasured}`,
   );
+});
+
+/**
+ * THE GAP IS DERIVED FROM THE WALLET LINE, NOT APPENDED TO THE SEED LINE.
+ *
+ * <p>
+ * Measured `round88`: `<world-state>` rendered **18 times** and every one carried `金币: 500` (or `535`) beside
+ * `种子: 2 花椰菜种子（买种子的钱: 未观察）`. The clause is a claim that the money is UNOBSERVED, and the wallet line above
+ * it had just stated it - one fact in two spellings, contradicting each other inside the same paragraph.
+ * </p>
+ *
+ * <p>
+ * BOTH READINGS ARE THE ASSERTION, on the same snapshot: with a readable `money` the seed line says nothing about
+ * affordability, and without one the gap is there word for word. The unread half is the falsifier - a guard that
+ * dropped the clause whenever seeds printed would pass the measured half while turning a silence into a balance.
+ * </p>
+ */
+test("seed_affordability_derived: a measured wallet drops the gap, and an unread one keeps it verbatim", () => {
+  const seeds = [{ qualifiedItemId: "(O)190", displayName: "花椰菜种子", heldCount: 2 }];
+  const measured = seedText(seedWorld({ money: 500, seedSupplyTargets: seeds }));
+  assert.match(measured, /金币: 500/u, `the wallet line states the balance:\n${measured}`);
+  assert.match(measured, /种子: 2 花椰菜种子/u, `and the seed count beside it:\n${measured}`);
+  assert.doesNotMatch(
+    measured,
+    /买种子的钱/u,
+    `a balance that was read cannot be called unobserved on the next clause:\n${measured}`,
+  );
+
+  const unread = seedText(seedWorld({ seedSupplyTargets: seeds }));
+  assert.doesNotMatch(unread, /金币/u, `no readable balance means no wallet line:\n${unread}`);
+  assert.match(
+    unread,
+    /种子: 2 花椰菜种子（买种子的钱: 未观察）\n/u,
+    `and the gap is stated verbatim when it is true:\n${unread}`,
+  );
+
+  // The measured zero follows the same derivation: what one COSTS is the question, and it is answered above when it can be.
+  assert.doesNotMatch(seedText(seedWorld({ money: 500, seedSupplyTargets: [] })), /买种子的钱/u);
+  assert.match(seedText(seedWorld({ seedSupplyTargets: [] })), /买种子的钱: 未观察/u);
 });
 
 /**
