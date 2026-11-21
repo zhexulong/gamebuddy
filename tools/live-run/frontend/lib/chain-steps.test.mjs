@@ -11,8 +11,12 @@
 // the field that roster already owns for the drivers that open a world (`requiresGame`), so a driver
 // added tomorrow enters this gate by being declared as what it is, and an empty population is a
 // failure rather than a pass.
+//
+// red-proof: inject  a third chain carrying a seat step -> `seats.map(id)` reads `+ 'weekly-cabin-seat'`, so the seat population reds by name
+//   rather than by a count that a new member would leave satisfied.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -22,11 +26,15 @@ import {
   CHAIN_NAMES,
   CHAIN_STEPS,
   describeChainAlignment,
+  GAP_PREFIX,
   measuredDrivers,
   namedGaps,
   STEP_KINDS,
   stepsOfChain,
 } from "./chain-steps.mjs";
+
+const require = createRequire(import.meta.url);
+const turnAccount = require("../capture/turn-account.cjs");
 
 const CAPTURE = join(dirname(fileURLToPath(import.meta.url)), "..", "capture");
 
@@ -181,11 +189,34 @@ test("a cabin-seat step names the rung the driver records, not one of the two br
   // reads a run on a built-cabin world - `frontend--r23` measured that sentence's sibling - as a step that
   // never happened. One rung, one fact, both chains.
   const seats = CHAIN_STEPS.filter((entry) => entry.id === "oobe-cabin-seat" || entry.id === "daily-cabin-seat");
-  assert.equal(seats.length, 2, "both chains have a seat step, and both are held here");
+  assert.deepEqual(
+    seats.map((entry) => entry.id),
+    ["oobe-cabin-seat", "daily-cabin-seat"],
+    "both chains have a seat step, and both are held here",
+  );
   for (const entry of seats)
     assert.equal(
       entry.fact,
       "cabin ready",
       `${entry.id} must name the rung the driver records: a branch sentence reports the other branch's seat as unmeasured`,
     );
+});
+
+test("daily-play names the account member the turn reader reads, and says it has no driver", () => {
+  // TWO FAILURES THIS HOLDS APART. A fact spelled by hand is a second spelling of the producer's vocabulary -
+  // the step would keep reading as declared after `capture/turn-account.cjs` stopped printing or parsing that
+  // member. And a `driver:` here would claim a reading no driver in this kit can produce: every capture driver
+  // types into a browser, while the player's words reach her only through the game's own chat box.
+  const play = CHAIN_STEPS.filter((entry) => entry.id === "daily-play");
+  assert.equal(play.length, 1, "the daily chain has exactly one step for the player speaking to her");
+  const [entry] = play;
+  assert.ok(
+    entry.driver.startsWith(GAP_PREFIX),
+    `${entry.id} names the driver "${entry.driver}": no driver in this kit puts keystrokes into the player host's window, so a driver here claims a reading nobody produces`,
+  );
+  assert.equal(
+    entry.fact,
+    `${turnAccount.TURN_ACCOUNT_FACT} ${turnAccount.PLAYER_INPUT}`,
+    `${entry.id}'s fact must be the account member \`capture/turn-account.cjs\` reads (${turnAccount.TURN_ACCOUNT_FACT} + ${turnAccount.PLAYER_INPUT}), not a sentence about her trace`,
+  );
 });

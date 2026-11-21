@@ -34,6 +34,16 @@ const ACCOUNT_LINE_SHAPE =
 /** The one reason a turn opens that this step is about: a world fact, with no player input behind it. */
 const WORLD_FACT = "world_fact";
 
+/**
+ * The reason a turn opens because the person spoke, as the producer prints it.
+ *
+ * Named here as well as above because two chain steps read this one account for opposite questions:
+ * `daily-agent-awake` proves her turn came from the WORLD (`world_fact` at least once), and `daily-play`
+ * proves the player's own words reached her (`player_input` at least once). The declaration of the second
+ * derives its fact from this constant, so the step and the reader cannot drift into two spellings.
+ */
+const PLAYER_INPUT = "player_input";
+
 const OPENED = /turns opened (\d+) \{/u;
 const MEMBER = /^([a-z_]+): (\d+)(?: \{(.*)\})?$/u;
 
@@ -179,7 +189,7 @@ function agentAwakeOf(reading) {
   return {
     kind: "awake",
     reason: null,
-    detail: `${String(last.byReason[WORLD_FACT])} of ${String(last.opened)} opened turn(s) were opened by a world fact ${JSON.stringify(last.worldFactByProducer)}, with the player's own words accounting for ${String(last.byReason.player_input ?? 0)}`,
+    detail: `${String(last.byReason[WORLD_FACT])} of ${String(last.opened)} opened turn(s) were opened by a world fact ${JSON.stringify(last.worldFactByProducer)}, with the player's own words accounting for ${String(last.byReason[PLAYER_INPUT] ?? 0)}`,
     reading,
   };
 }
@@ -195,6 +205,7 @@ function describeTurnAccount(awake) {
 module.exports = {
   ACCOUNT_LINE_SHAPE,
   TURN_ACCOUNT_FACT,
+  PLAYER_INPUT,
   WORLD_FACT,
   agentAwakeOf,
   describeTurnAccount,

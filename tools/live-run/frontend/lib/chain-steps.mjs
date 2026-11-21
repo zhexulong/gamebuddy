@@ -21,11 +21,14 @@
 // TWO KINDS, and a reader has to tell them apart or all of them read as missing product. Four of the
 // gaps are READING gaps: `owner.json`, the session document, the recovery journal and her client's trace
 // are written by any ordinary run and a driver only has to open a file that is already there. One is an
-// INTERACTION gap (`no_driver_speaks_to_her_in_the_world`): nothing in the world speaks to her, so there is
-// no file to open until somebody speaks - the missing thing is the interaction, and a reader for it would
-// have to cause one first. Her turn account used to be a fifth reading gap and is not one any more: the
-// Host prints `GAME_TURN_ACCOUNT` on the product entry's stderr, `phases/launch.mjs` keeps those bytes in a
-// file, and `capture/turn-account.cjs` reads the line `w-game-launch` waits for (`daily-agent-awake`).
+// INTERACTION gap (`no_driver_types_into_the_game_window`): the player's words reach her only when somebody
+// types them into the game's own chat box, and every driver in this kit types into a browser. The product
+// side of that route is complete (`ModEntry.cs`'s Harmony postfix on `ChatBox.textBoxEnter`, then
+// `HostService.acceptIntegrationFact` -> `acceptPlayerInput` -> the pump's `player_input` opener), so the
+// missing thing is a driver that can put keystrokes into the player host's window. Her turn account used to
+// be a fifth reading gap and is not one any more: the Host prints `GAME_TURN_ACCOUNT` on the product
+// entry's stderr, `phases/launch.mjs` keeps those bytes in a file, and `capture/turn-account.cjs` reads the
+// line `w-game-launch` waits for (`daily-agent-awake`).
 //
 // One fact per step, and it is a literal that the named driver (or a capture module that driver
 // requires) really writes. Two spellings of one fact is how a table starts disagreeing with itself.
@@ -275,10 +278,26 @@ export const CHAIN_STEPS = Object.freeze([
   step({
     id: "daily-play",
     chain: "daily",
-    title: "she acts in the world, and the observation and presentation traffic runs",
-    driver: "gap:no_driver_speaks_to_her_in_the_world",
-    fact: "her client's observe_request and companion_presentation_request in its own trace",
-    owner: "integrations/stardew/ModEntry.cs (native chat ingress) + the capability surface",
+    title: "the player says something to her in the world, and the account counts the turn it opened",
+    // THE PLAYER'S WAY IN IS THE GAME'S OWN CHAT BOX. The engine opens it on its own key
+    // (`Game1.UpdateChatBox` -> `options.chatButton`, no multiplayer gate), and the Mod observes only the
+    // submit seam: a Harmony postfix on `ChatBox.textBoxEnter(string)` publishes the line as
+    // `PlayerControlProtocol.PlayerInput`, her client mints the bridge fact, and `HostService.acceptIntegrationFact`
+    // admits it into `acceptPlayerInput` - the pump's `player_input` opener, in the same session the world's
+    // facts open turns in. Nothing browser-side reaches it: the Chat surface's send is
+    // `/api/tavern/v1/messages` and its own session.
+    //
+    // Every driver in this kit types into a browser, so nobody types into the game window. Naming the missing
+    // capability rather than the missing reading is the point: there is no file to open until somebody
+    // speaks, and the capability that would speak is blocked by Windows refusing the foreground to a
+    // background process (`WindowModeManagement.cs:104-113`, measured twice with the session unlocked), and
+    // by the two game windows this run causes sharing one `GAMEBUDDY_WINDOW_MODE`.
+    driver: "gap:no_driver_types_into_the_game_window",
+    // The account member, not the trace: `GAME_TURN_ACCOUNT` already counts who opened each turn, and
+    // `capture/turn-account.cjs` reads it. `chain-steps.test.mjs` holds this string against that reader.
+    fact: "GAME_TURN_ACCOUNT player_input",
+    owner:
+      "integrations/stardew/ModEntry.cs native chat ingress (ChatBox.textBoxEnter postfix -> PublishNativeChat) + host/src/host-service.ts acceptIntegrationFact -> acceptPlayerInput",
   }),
   Object.freeze({
     id: "daily-stop",
