@@ -500,16 +500,6 @@ export const DEBT = Object.freeze([
     },
   ),
   mirrorDebt(
-    "provider failure classes (a test's own copy)",
-    "host/src/provider-failure-classification.ts:PROVIDER_FAILURE_CLASSES",
-    ["dialogue-web/src/components/turn-failure-text.test.ts:PROVIDER_FAILURES"],
-    {
-      reason:
-        "the two client mirrors are pinned to the classifier by `problem-code.13`, and this test restates the same five classes to drive its own cases - a third copy asserting the first two",
-      owner: "the problem-catalogue lane",
-    },
-  ),
-  mirrorDebt(
     "the Mod's bundle file names",
     "tools/lib/stardew-native-local-player-fixture.mjs:BUNDLE_FILES",
     [

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { messages } from "../i18n";
 import type { BrowserTurnV1 } from "../reference-pipeline-api";
+import { PROVIDER_FAILURES } from "../reference-pipeline-api";
 import { turnFailureText } from "./turn-failure-text";
 
 /**
@@ -13,20 +14,13 @@ import { turnFailureText } from "./turn-failure-text";
  * "try again", so these are the properties that keep the distinction - no browser,
  * no mocked catalogue, the real `messages(locale)` both catalogues ship.
  *
- * The code and cause populations are hand-written here because the mirror declares
- * them as private consts; `tests/problem-code-gate.test.mjs` holds that mirror to
- * EQUALITY with the Host's own declarations, which is where drift is caught.
+ * The code population is hand-written here because the mirror declares it as a private const; `tests/problem-code-gate.test.mjs`
+ * holds that mirror to EQUALITY with the Host's own declarations, which is where drift is caught. The five provider
+ * classes are READ from the mirror rather than restated: a third copy here would assert the first two.
  */
 
 const LOCALES = ["en", "zh-CN"] as const;
 const PROBLEM_CODES = ["interrupted", "no_visible_presentation", "runtime_unavailable", "storage_unavailable"] as const;
-const PROVIDER_FAILURES = [
-  "credential_rejected",
-  "model_not_served",
-  "rate_limited",
-  "context_overflow",
-  "endpoint_unreachable",
-] as const;
 
 void test("a failed turn with no code says only that it failed", () => {
   for (const locale of LOCALES) {

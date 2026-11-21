@@ -327,8 +327,11 @@ const TURN_PROBLEM_CODES = [
  * from). The bundle cannot import it, so `problem-code-gate.test.mjs` reads the Host's declaration
  * and holds this copy to EQUALITY: a class this list does not know turns a legal turn into
  * `TavernProtocolError`, and the surface then says nothing about a failure it was told about.
+ *
+ * Exported because a test that drives `turnFailureText` over these five causes had a copy of its own: a third
+ * declaration of one fact, asserting the first two.
  */
-const PROVIDER_FAILURES = [
+export const PROVIDER_FAILURES = [
   "credential_rejected",
   "model_not_served",
   "rate_limited",
