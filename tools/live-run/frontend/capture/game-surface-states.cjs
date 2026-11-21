@@ -550,9 +550,9 @@ async function startStateDriver({ driver, scenario, reportFile }) {
   if (launched.kind !== "ready")
     return await notMeasured(browser, launched.reason, launched.detail ?? "the launch did not reach ready", launched.gap ?? null);
 
-  // The game's own process, created after this driver started. Both filters are needed: the installation
-  // folder is shared with the player's own game, and the start time separates this run's launch from their
-  // session.
+  // The game's own process, created after this RUN started - both filters are needed and both are stated
+  // below. The installation folder is shared with the player's own game, and the start time is what
+  // separates this run's launch from their session.
   /*
    * The boundary is the RUN's Host child, not this driver's own start.
    *
