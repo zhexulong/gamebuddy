@@ -63,8 +63,6 @@ const WIDTHS = [
 
 /** The Settings surface's bar entry (`labels.settingsPanel`): the surface that carries the disclosure. */
 const SETTINGS_LABEL = "设置";
-/** The disclosure's one control (`labels.presetsOpen`), which is how the readout is opened. */
-const READOUT_CONTROL_LABEL = "查看预设装配";
 /** Settings' own block for the readout, and the readout's own way back to it. */
 const DISCLOSURE_SELECTOR = "[data-settings-presets-disclosure]";
 const BACK_SELECTOR = '[data-testid="presets-back"]';
@@ -190,13 +188,52 @@ const readHostReadout = async (route) => {
 };
 
 /**
+ * The disclosure's own control, found by what it is rather than by what it says.
+ *
+ * This used to be a hard-coded `getByRole("button", { name: "查看预设装配", exact: true })`, which is
+ * the product's copy spelled a second time here: a lane rewriting the catalogue to "查看预设" turned
+ * this driver red for a change that broke nothing (measured r17: `the_settings_disclosure_offers_no_
+ * readout_control`, while the product's own `preset-assembly-is-reached-through-settings.spec.ts`,
+ * which reads `catalogue.presetsOpen`, stayed green). A label is the product's fact; this driver's
+ * fact is that the disclosure LEADS SOMEWHERE.
+ *
+ * So the reading is the disclosure's own control count: exactly one enabled button, whichever words
+ * it carries, and the words are reported beside it for a reader. A second control turns this red on
+ * purpose - the driver would not know which one is the way in, and guessing is how a path gets a
+ * green for pressing an import button.
+ */
+async function readoutControl(disclosure) {
+  const buttons = disclosure.getByRole("button");
+  const found = await buttons.count();
+  if (found === 0)
+    throw new Error(
+      `the_settings_disclosure_offers_no_readout_control: ${DISCLOSURE_SELECTOR} carries no button at all, so the ` +
+        `disclosure says something can be read and offers nothing that reads it`,
+    );
+  const names = [];
+  for (let index = 0; index < found; index += 1) names.push((await buttons.nth(index).innerText()).trim());
+  if (found > 1)
+    throw new Error(
+      `the_settings_disclosure_offers_no_readout_control: ${DISCLOSURE_SELECTOR} carries ${String(found)} controls ` +
+        `(${JSON.stringify(names)}), and this driver cannot say which one opens the readout`,
+    );
+  const control = buttons.first();
+  if (await control.isDisabled())
+    throw new Error(
+      `the_settings_disclosure_readout_control_is_disabled: ${JSON.stringify(names[0])} is the disclosure's only ` +
+        `control and it cannot be pressed, so the readout is behind a control that does nothing`,
+    );
+  return { control, name: names[0] };
+}
+
+/**
  * Walk to the readout the way the product publishes the path, and say what each step found.
  *
  * Settings carries one disclosure for the readout and nothing else points at it, so every step here is
  * asserted: the Settings surface's own block is present, its fold really opened (a summary that missed
  * leaves the control behind a shut `<details>`, which is the same 30 s wait by another name), the one
- * control is there and enabled, and the readout mounted. A step that cannot be taken fails this driver
- * BY NAME instead of timing out on a selector the product no longer carries.
+ * control is there and pressable, and the readout mounted. A step that cannot be taken fails this
+ * driver BY NAME instead of timing out on a selector the product no longer carries.
  */
 async function openReadout(page) {
   const entered = await activateSurface(page, SETTINGS_LABEL);
@@ -212,20 +249,15 @@ async function openReadout(page) {
       `the_settings_disclosure_did_not_open: ${DISCLOSURE_SELECTOR} is still shut after pressing its summary, so ` +
         `its control is behind a fold - the readout is not reachable from this reading`,
     );
-  const control = disclosure.getByRole("button", { name: READOUT_CONTROL_LABEL, exact: true });
-  if ((await control.count()) === 0)
-    throw new Error(
-      `the_settings_disclosure_offers_no_readout_control: no button named ${JSON.stringify(READOUT_CONTROL_LABEL)} ` +
-        `inside ${DISCLOSURE_SELECTOR}, so the disclosure leads nowhere`,
-    );
+  const { control, name } = await readoutControl(disclosure);
   await control.click();
   const surface = page.locator('[data-testid="presets-surface"]');
   if ((await surface.count()) === 0)
     throw new Error(
-      `the_readout_did_not_mount: pressing ${JSON.stringify(READOUT_CONTROL_LABEL)} left no ` +
+      `the_readout_did_not_mount: pressing ${JSON.stringify(name)} left no ` +
         `[data-testid="presets-surface"] on the page`,
     );
-  return { entered, disclosureOpen: true, control: READOUT_CONTROL_LABEL, back: BACK_SELECTOR };
+  return { entered, disclosureOpen: true, control: name, back: BACK_SELECTOR };
 }
 
 /** The readout's own way out, pressed and read back: it returns to the surface that opened it. */
@@ -480,7 +512,8 @@ function documentSide(document, relativePath, tracked) {
     const walked = await openReadout(page);
     say(
       `the readout reached the way the product publishes it: ${JSON.stringify(SETTINGS_LABEL)} (bar entry reached it as ` +
-        `${walked.entered}) -> ${DISCLOSURE_SELECTOR} opened -> ${JSON.stringify(walked.control)}`,
+        `${walked.entered}) -> ${DISCLOSURE_SELECTOR} opened -> ${JSON.stringify(walked.control)} (the product's copy, ` +
+        `reported rather than spelled by this driver)`,
     );
     const settled = await waitForReadout(page, { name: `@${size.tag}` });
     say(`the panel's own settle: ${JSON.stringify(settled)}`);
