@@ -857,8 +857,7 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   town_market: "去一趟镇上买点东西，回来把信箱里的信取出来。",
   town_visit: "去一趟镇上，找个人说说话。",
   mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
-  clear_and_cultivate:
-    "林子东边太挤了，清出一片像样的空地（能摆下十来格庄稼），种子不够就去镇上买些回来，翻好土种上浇透水。",
+  clear_and_cultivate: "林子东边太挤了，清出一片像样的空地（能摆下十来格庄稼），种子不够就去镇上买些回来，翻好土种上浇透水。",
   home_and_hearth: "屋里太空了，收拾一下、摆点东西，让它像个家。",
   home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
@@ -867,10 +866,8 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
   // hers - and no instruction about how to plan it is appended, because the shape is the task.
   clear_and_plant_long_patch: "门前横着开一条长地，三格宽、二十格长，清出来种上。",
-  plant_market_strip:
-    "挑种回本快又合算的春菜，去镇上把种子买齐，在门前开一条两格宽、十八格长的菜畦，全翻好种上浇透水。",
-  buy_seeds_and_expand_plot:
-    "屋前新开一块至少二十格的菜地；手头种子不够就去镇上商店挑合算的春菜种子买足，翻好、种满并浇透水。",
+  plant_market_strip: "挑种回本快又合算的春菜，去镇上把种子买齐，在门前开一条两格宽、十八格长的菜畦，全翻好种上浇透水。",
+  buy_seeds_and_expand_plot: "屋前新开一块至少二十格的菜地；手头种子不够就去镇上商店挑合算的春菜种子买足，翻好、种满并浇透水。",
   // No number of fish and no destination: `waterTargets` is the world's own answer to "where is water I can fish",
   // and picking a spot here would be a second one.
   a_fish_from_the_water: "找片水，钓条鱼回来。",

@@ -57,7 +57,8 @@ import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
 import { bestWindow, largestFilledRectangle, windowHoldsAll } from "./tile-patch.mjs";
 
 /** A step of a criterion: one admitted postcondition, or `count` distinct receipts of it. */
-const step = (actionId, { count = 1 } = {}) => Object.freeze(count === 1 ? { actionId } : { actionId, count });
+const step = (actionId, { count = 1 } = {}) =>
+  Object.freeze(count === 1 ? { actionId } : { actionId, count });
 
 /** A step satisfied by any one of several actions - the same purpose reached by different native seams. */
 const anyOf = (...actionIds) => Object.freeze({ anyOf: Object.freeze(actionIds) });
@@ -185,25 +186,16 @@ const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField }
 export const CARRIED_ITEM_ACTIONS = Object.freeze({
   // A pack count falls: the stack named by the receipt is spent to do the thing.
   bait_crab_pot: Object.freeze({ spends: true, because: "the bait leaves the pack into the pot" }),
-  dye_clothing_with_item: Object.freeze({
-    spends: true,
-    because: "the dye items the receipt names are spent on the garment",
-  }),
+  dye_clothing_with_item: Object.freeze({ spends: true, because: "the dye items the receipt names are spent on the garment" }),
   fertilize_tile: Object.freeze({ spends: true, because: "the fertilizer stack leaves the pack onto the soil" }),
-  open_geode: Object.freeze({
-    spends: true,
-    because: "the geode leaves the pack and the counter hands back what was inside",
-  }),
+  open_geode: Object.freeze({ spends: true, because: "the geode leaves the pack and the counter hands back what was inside" }),
   place_crab_pot: Object.freeze({ spends: true, because: "the pot leaves the pack onto the water's edge" }),
   place_owned_object: Object.freeze({ spends: true, because: "the stack leaves the pack onto the ground" }),
   place_wood_fence: Object.freeze({ spends: true, because: "the fence leaves the pack onto the field" }),
   plant_sapling: Object.freeze({ spends: true, because: "the sapling leaves the pack into the ground" }),
   plant_seed: Object.freeze({ spends: true, because: "the seed stack leaves the pack into the soil" }),
   redeem_prize_ticket: Object.freeze({ spends: true, because: "the prize ticket leaves the pack into the machine" }),
-  ship_item: Object.freeze({
-    spends: true,
-    because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells",
-  }),
+  ship_item: Object.freeze({ spends: true, because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells" }),
   tailor_clothing: Object.freeze({ spends: true, because: "the cloth the receipt names is spent on the garment" }),
   use_item: Object.freeze({ spends: true, because: "the food the actor was carrying is eaten" }),
   use_warp_item: Object.freeze({ spends: true, because: "the warp item is spent by arriving" }),
@@ -213,17 +205,10 @@ export const CARRIED_ITEM_ACTIONS = Object.freeze({
   claim_museum_reward: Object.freeze({ spends: false, because: "the museum's reward arrives in the pack" }),
   collect_animal_product: Object.freeze({ spends: false, because: "the product arrives in the pack" }),
   collect_crab_pot_output: Object.freeze({ spends: false, because: "the pot's catch arrives in the pack" }),
-  cook_recipe: Object.freeze({
-    spends: false,
-    because:
-      "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule",
-  }),
+  cook_recipe: Object.freeze({ spends: false, because: "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule" }),
   fish_here: Object.freeze({ spends: false, because: "the catch arrives in the pack" }),
   harvest_crop: Object.freeze({ spends: false, because: "the harvest arrives in the pack" }),
-  move_placed_furniture: Object.freeze({
-    spends: false,
-    because: "the piece is picked UP off the floor into the pack",
-  }),
+  move_placed_furniture: Object.freeze({ spends: false, because: "the piece is picked UP off the floor into the pack" }),
   pan_ore: Object.freeze({ spends: false, because: "the ore arrives in the pack" }),
   pickup_forage: Object.freeze({ spends: false, because: "the forage arrives in the pack" }),
   pickup_item: Object.freeze({ spends: false, because: "the item arrives in the pack" }),

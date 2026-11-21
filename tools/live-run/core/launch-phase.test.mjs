@@ -25,9 +25,9 @@ test("a_handover_lands_a_readable_document_and_leaves_no_temporary", (t) => {
     records: [{ phase: "launcher_start", elapsedMs: 0, atMs: 1_000 }],
   });
   assert.deepEqual(readLaunchPhaseHandover(path), first, "the document the writer returned is the one the reader gets");
-  assert.equal(
-    readdirSync(directory).filter((name) => name.endsWith(".tmp")).length,
-    0,
+  assert.deepEqual(
+    readdirSync(directory),
+    ["phases.json"],
     "the temporary file is removed on the way out, whether the rename landed or the write fell back to the destination",
   );
 });
@@ -43,5 +43,5 @@ test("a_second_handover_replaces_the_first_whole", (t) => {
     records: [{ phase: "game_launched", elapsedMs: 5, atMs: 2_005 }],
   });
   assert.deepEqual(readLaunchPhaseHandover(path), second, "the reader sees the second document, not a merge of the two");
-  assert.equal(JSON.parse(readFileSync(path, "utf8")).records.length, 1, "one document, whole");
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).records, second.records, "one document, whole");
 });
