@@ -208,6 +208,7 @@
     "test:ci-coverage": "node --test gates/meta/check-ci-coverage.test.mjs",
     "test:ci-snapshot": "node --test tools/ci-snapshot.test.mjs",
     "test:compare-chat-live-runs": "node --test tools/compare-chat-live-runs.test.mjs",
+    "test:conformance:desktop": "node tools/conformance/desktop/run.mjs",
     "test:code-duplication": "node --test tools/check-code-duplication.test.mjs",
     "test:complexity-gate": "node --test tools/scripts/check-file-complexity-gate.test.mjs",
     "test:cognitive-complexity": "node --test tools/check-cognitive-complexity.test.mjs",

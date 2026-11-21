@@ -1,0 +1,160 @@
+#!/usr/bin/env node
+/**
+ * The language-neutral conformance suite for the installed Desktop launcher.
+ *
+ * WHAT IT PROVES. The launcher is a process that publishes a wire: a named pipe for the
+ * authenticated Host session, a named pipe for the one presentation entry, an inherited
+ * controller channel, a declared environment block, records under its operational root, and one
+ * bounded code on standard error. Every case here drives the REAL executable as a Host peer and
+ * asserts on those facts. Nothing reads the C# sources, imports a product type or sets a test
+ * hook, so "is the rewrite equivalent" is answered by pointing `--binary` at the rewrite.
+ *
+ * WHY THE MEDIA IS THE HARNESS'S. The generation the launcher admits is install media, not
+ * product behaviour: the suite installs it (or takes one a publisher already installed, through
+ * the same door the product's own desktop tests use), replaces the generation's bootstrap entry
+ * with its own Host peer, and rewrites the two digests that name that entry. The launcher's own
+ * admission is what validates the result, so a media layout that drifts from the product's
+ * contract fails here by name instead of passing quietly.
+ *
+ * USAGE
+ *   node tools/conformance/desktop/run.mjs                  # every case
+ *   node tools/conformance/desktop/run.mjs --case frame-cap # one case, by id
+ *   node tools/conformance/desktop/run.mjs --binary <exe>   # another launcher (the rewrite)
+ *   node tools/conformance/desktop/run.mjs --keep           # leave the world for inspection
+ *
+ * EXIT STATUS
+ *   0  every case passed
+ *   1  a case failed or was blocked (the finding names which, and the defect or the blocker)
+ *   2  nothing was measured: a prerequisite is absent, named, and the suite refuses to pass
+ *
+ * ENVIRONMENT
+ *   GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT        a published generation to install (CI's door)
+ *   GAMEBUDDY_DESKTOP_CONFORMANCE_BINARY          the launcher executable to drive
+ *   GAMEBUDDY_DESKTOP_CONFORMANCE_TEMP            where the publish and the world live
+ */
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+
+import { cases } from "./cases.mjs";
+import { Blocked, isRunning, killExactProcess, prepareWorld, startedProcessLedger } from "./world.mjs";
+
+const TEMP_ROOT = process.env.GAMEBUDDY_DESKTOP_CONFORMANCE_TEMP ?? "D:\\gamebuddy-conformance";
+
+function parseArguments(argv) {
+  const options = { caseIds: [], binary: null, keep: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === "--case") options.caseIds.push(argv[++index]);
+    else if (argument === "--binary") options.binary = argv[++index];
+    else if (argument === "--keep") options.keep = true;
+    else throw new Error(`desktop_conformance_unknown_argument:${argument}`);
+  }
+  return options;
+}
+
+async function main(argv) {
+  const options = parseArguments(argv);
+  const selected = options.caseIds.length === 0 ? cases : cases.filter((entry) => options.caseIds.includes(entry.id));
+  if (selected.length === 0) {
+    process.stdout.write(
+      `desktop_conformance_no_cases_selected: ${JSON.stringify(options.caseIds)} of ${cases.map((entry) => entry.id).join(", ")}\n`,
+    );
+    return 2;
+  }
+
+  mkdirSync(TEMP_ROOT, { recursive: true });
+  rmSync(join(TEMP_ROOT, "world"), { recursive: true, force: true });
+  let world = null;
+  try {
+    world = prepareWorld({ tempRoot: TEMP_ROOT, explicitBinary: options.binary });
+  } catch (error) {
+    if (error instanceof Blocked) {
+      process.stdout.write(`desktop_conformance_blocked: ${error.code}: ${error.detail}\n`);
+      process.stdout.write(
+        "examined 0 · a suite with no population agrees with itself, so this run measures nothing\n",
+      );
+      return 2;
+    }
+    throw error;
+  }
+
+  process.stdout.write(`launcher: ${world.binary}\n`);
+  process.stdout.write(`media: ${world.media}\n`);
+  process.stdout.write(`generation: ${world.generation.generationId}\n`);
+  process.stdout.write(`layout: ${world.layout.operationalRoot}\n`);
+
+  const results = [];
+  try {
+    for (const entry of selected) {
+      const started = Date.now();
+      let outcome;
+      try {
+        const produced = await entry.run({ world });
+        outcome = {
+          id: entry.id,
+          title: entry.title,
+          assertions: produced.assertions,
+          defects: produced.defects ?? [],
+          blocked: produced.blocked ?? null,
+          notes: produced.notes ?? [],
+        };
+      } catch (error) {
+        outcome = {
+          id: entry.id,
+          title: entry.title,
+          assertions: [{ name: "case-ran", ok: false, detail: String(error?.stack ?? error) }],
+          defects: [],
+          blocked: null,
+          notes: [],
+        };
+      }
+      outcome.elapsedMs = Date.now() - started;
+      results.push(outcome);
+      process.stdout.write(`${describe(outcome)}\n`);
+    }
+  } finally {
+    // Every process this suite started, by pid AND by the instant it started: a pid alone is not a
+    // process, so the ledger is what the claim "nothing was left behind" is made about.
+    const leftovers = [];
+    for (const entry of startedProcessLedger()) {
+      if (!isRunning(entry.pid)) continue;
+      killExactProcess(entry.pid);
+      leftovers.push(entry);
+    }
+    process.stdout.write(
+      `processes: ${startedProcessLedger().length} started · ${startedProcessLedger().length - leftovers.length} confirmed gone${leftovers.length === 0 ? "" : ` · ${leftovers.length} still running and stopped here: ${JSON.stringify(leftovers)}`}\n`,
+    );
+    if (!options.keep && world !== null) world.dispose();
+    else if (world !== null) process.stdout.write(`world kept at ${world.layout.programRoot}\n`);
+  }
+
+  const passed = results.filter(
+    (result) => result.blocked === null && result.assertions.every((assertion) => assertion.ok),
+  ).length;
+  const failed = results.filter(
+    (result) => result.blocked === null && result.assertions.some((assertion) => !assertion.ok),
+  ).length;
+  const blocked = results.filter((result) => result.blocked !== null).length;
+  process.stdout.write(
+    `desktop conformance: examined ${results.length} · passed ${passed} · failed ${failed} · blocked ${blocked}\n`,
+  );
+  if (results.length === 0) {
+    process.stdout.write("desktop_conformance_no_population: nothing was measured, which is never a pass\n");
+    return 2;
+  }
+  return failed === 0 && blocked === 0 ? 0 : 1;
+}
+
+function describe(outcome) {
+  const verdict =
+    outcome.blocked !== null ? "blocked" : outcome.assertions.every((assertion) => assertion.ok) ? "passed" : "failed";
+  const lines = [`case ${outcome.id}: ${verdict} (${outcome.elapsedMs} ms) - ${outcome.title}`];
+  for (const assertion of outcome.assertions) {
+    lines.push(`  assertion ${assertion.name}: ${assertion.ok ? "passed" : "FAILED"} - ${assertion.detail}`);
+  }
+  for (const defect of outcome.defects) lines.push(`  defect ${defect.id}: ${defect.detail}`);
+  if (outcome.blocked !== null) lines.push(`  blocked ${outcome.blocked.code}: ${outcome.blocked.detail}`);
+  return lines.join("\n");
+}
+
+process.exitCode = await main(process.argv.slice(2));

@@ -277,6 +277,16 @@ jobs:
         timeout-minutes: 45
         env:
           GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT: ${{ runner.temp }}/desktop-launcher-generation
+      # The launcher's language-neutral conformance suite: it drives the REAL installed executable
+      # against a mock Host over its real pipes and asserts on the wire alone, so a rewrite of the
+      # launcher is proven equivalent by pointing `--binary` at it. It takes the generation
+      # published two steps above through the same door the product's own desktop tests use, and
+      # it publishes the launcher itself (Release), which is why it runs here rather than in a job
+      # of its own.
+      - run: pnpm test:conformance:desktop
+        timeout-minutes: 20
+        env:
+          GAMEBUDDY_DESKTOP_TEST_GENERATION_ROOT: ${{ runner.temp }}/desktop-launcher-generation
 
   # Which gates run, and which do not, is DERIVED from package.json on every run by
   # `gates/meta/check-ci-coverage.mjs` - not written out here. Every `check:*` / `audit:*` / `lint*` /
