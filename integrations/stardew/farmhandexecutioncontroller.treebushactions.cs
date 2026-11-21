@@ -7,6 +7,12 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager
 {
+    /// <summary>
+    /// The catalogue's id for this action, spelled once: the request names it, the postcondition answers for it, and the
+    /// catalogue publishes it - three readers of one word.
+    /// </summary>
+    internal const string ShakeTreeActionId = "shake_tree";
+
     public LocalExecutionReceipt RequestLocalHarvestBush(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         return this.RequestLocalTileTarget(
@@ -176,7 +182,7 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalShakeTree(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
         return this.RequestLocalTileTarget(
-            "shake_tree", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
+            ShakeTreeActionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
             authorize: null,
             gate: location => TryGetShakeableTree(location, targetX, targetY, expectedTargetId, out _)
@@ -196,11 +202,15 @@ internal sealed partial class ExecutionManager
         if (!seedBefore || shakenBefore)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tree_not_shakeable_today", $"target={expectedTargetId};has_seed={seedBefore};shaken_today={shakenBefore}");
         tree.shake(new Vector2(targetX, targetY), doEvenIfStillShaking: false);
-        bool seedAfter = tree.hasSeed.Value;
-        bool shakenAfter = tree.wasShakenToday.Value;
-        bool succeeded = !seedAfter && shakenAfter;
-        string evidence = $"target={expectedTargetId};tile={targetX},{targetY};has_seed_before={seedBefore.ToString().ToLowerInvariant()};has_seed_after={seedAfter.ToString().ToLowerInvariant()};shaken_today={shakenAfter.ToString().ToLowerInvariant()}";
-        return this.SettlePostcondition(requestId, executionId, succeeded, "tree_shaken", "tree_shake_postcondition_unavailable", evidence);
+        TreeShakePostcondition postcondition = new(
+            HasSeedBefore: seedBefore,
+            HasSeedAfter: tree.hasSeed.Value,
+            ShakenTodayBefore: shakenBefore,
+            ShakenTodayAfter: tree.wasShakenToday.Value);
+        return this.SettlePostcondition(
+            requestId, executionId, postcondition.Shaken,
+            "tree_shaken", "tree_shake_postcondition_unavailable",
+            postcondition.Describe(expectedTargetId, targetX, targetY));
     }
 
     private static bool TryGetShakeableTree(GameLocation location, int x, int y, string expectedTargetId, out StardewValley.TerrainFeatures.Tree? tree)

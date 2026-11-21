@@ -90,6 +90,38 @@ public sealed class TargetRowBudgetTests
         }
     }
 
+    /// <summary>
+    /// A stack's window is a ceiling on what a caller may NAME, and one planting spends one item from that exact stack.
+    ///
+    /// <para>
+    /// MEASURED `round85`, and both numbers are the whole defect: `plan_254` ordered the sixteen rows a 15-seed stack
+    /// published and its `n16` refused `seed_not_owned_in_pack`; `plan_356` ordered fifteen rows off a ten-seed stack and
+    /// five refused. Six of the run's thirty-four planting nodes were rows the pack could not pay for.
+    /// </para>
+    /// </summary>
+    [Theory]
+    [InlineData(16, 15, 15)]
+    [InlineData(16, 10, 10)]
+    [InlineData(16, 1, 1)]
+    [InlineData(16, 16, 16)]
+    [InlineData(16, 64, 16)]
+    [InlineData(8, 36, 8)]
+    public void AStacksWindowIsNeverWiderThanTheStack(int rowLimit, int supply, int expected)
+    {
+        TargetRowBudget.RowsOneKeyCanSpend(rowLimit, supply).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ASupplyCannotRaiseThePlanCeilingOrPublishAZero()
+    {
+        // Two facts the supply is not allowed to move. A pack holding more than a plan can name still publishes a
+        // plan's worth, because rows past `PlanNodes` are targets no caller can echo; and an empty stack publishes
+        // nothing rather than the floor of one the WINDOW still guarantees every key.
+        TargetRowBudget.RowsOneKeyCanSpend(1000, 1000).Should().Be(TargetRowBudget.PlanNodes);
+        TargetRowBudget.RowsOneKeyCanSpend(36, 64).Should().Be(TargetRowBudget.PlanNodes);
+        TargetRowBudget.RowsOneKeyCanSpend(TargetRowBudget.PlanNodes, 0).Should().Be(0);
+    }
+
     [Fact]
     public void AnEmptyFamilyFallsBackToTheCeiling()
     {

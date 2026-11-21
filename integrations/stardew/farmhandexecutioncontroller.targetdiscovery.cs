@@ -615,6 +615,9 @@ internal sealed partial class ExecutionManager
         {
             if (item is not StardewValley.Object sapling || !StardewValley.Object.isWildTreeSeed(sapling.ItemId) || sapling.Stack < 1)
                 continue;
+            int stackRows = TargetRowBudget.RowsOneKeyCanSpend(rowLimit, sapling.Stack);
+            if (stackRows < 1)
+                continue;
             List<BridgeTreeSaplingTarget> rowsForThisStack = new();
             for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
@@ -630,7 +633,7 @@ internal sealed partial class ExecutionManager
                 rowsForThisStack,
                 player.TilePoint.X,
                 player.TilePoint.Y,
-                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
+                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(stackRows));
         }
         return result;
     }
@@ -1291,6 +1294,9 @@ internal sealed partial class ExecutionManager
         {
             if (item is not StardewValley.Object seed || seed.Category != StardewValley.Object.SeedsCategory)
                 continue;
+            int stackRows = TargetRowBudget.RowsOneKeyCanSpend(rowLimit, seed.Stack);
+            if (stackRows < 1)
+                continue;
             List<BridgeSeedTarget> rowsForThisStack = new();
             for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= player.TilePoint.X + TargetDiscoveryRadius; x++)
             {
@@ -1312,7 +1318,7 @@ internal sealed partial class ExecutionManager
                 rowsForThisStack,
                 player.TilePoint.X,
                 player.TilePoint.Y,
-                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(rowLimit));
+                target => new TargetCandidate(target.X, target.Y, target.Slot)).Take(stackRows));
         }
         return result;
     }

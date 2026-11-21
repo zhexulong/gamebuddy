@@ -533,7 +533,7 @@ internal sealed partial class ExecutionManager
             (int X, int Y) head = ordered[0].Tile;
             string population = $";candidates={candidates.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)};described={ordered.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
             if (!IsAStepTowardTheSubject(actor, target, head))
-                return new FrontierClearance($";blocker={ClearingEvidence.NoBlocker}{population}", Code: null);
+                return new FrontierClearance($";blocker={ClearingEvidence.EveryClearerBeyondTheSubject}{population}", Code: null);
             return new FrontierClearance(
                 DescribeFrontierBlocker(candidates.Find(candidate => candidate.Tile == head), player) + population,
                 Code: null);
@@ -632,8 +632,9 @@ internal sealed partial class ExecutionManager
     /// `no_reachable_approach:69:42` and the repair step named `twig@102,43` - thirty-three tiles from the subject,
     /// forty-one from her, on a rim that is the whole town - carrying `blocker_target=unpublished:worldObjectTargets`
     /// because no family publishes a row that far from the actor. She would have walked to it. A step farther than the
-    /// thing it is supposed to open is not a repair, so the refusal says <c>blocker=none_of_the_published</c> instead of
-    /// the family's nearest row.
+    /// thing it is supposed to open is not a repair, so the refusal says
+    /// <c>blocker=every_clearer_beyond_the_subject</c> instead of the family's nearest row - a DIFFERENT answer from
+    /// `no_cuttable_blocker`, which is the empty or unopenable rim: there IS a step here, and it is behind her.
     /// </para>
     /// </summary>
     private static bool IsAStepTowardTheSubject((int X, int Y) actor, (int X, int Y) subject, (int X, int Y) blocker) =>

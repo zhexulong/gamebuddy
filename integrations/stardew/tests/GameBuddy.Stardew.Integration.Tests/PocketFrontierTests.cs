@@ -175,7 +175,7 @@ public sealed class PocketFrontierTests
     /// <para>
     /// Nothing on this rim opens a way to the subject, so every candidate prices as `null` and the ranking falls back to
     /// "nearest to the subject" - which is how a tile forty-two tiles from her came to be called the step. The refusal
-    /// says <c>blocker=none_of_the_published</c> instead, in the evidence AND in the hint a settled failure keeps, and the
+    /// says <c>blocker=every_clearer_beyond_the_subject</c> instead, in the evidence AND in the hint a settled failure keeps, and the
     /// placement keeps its own code: there IS no approach, and that has not changed.
     /// </para>
     /// </summary>
@@ -198,12 +198,14 @@ public sealed class PocketFrontierTests
 
         code.Should().Be("no_reachable_approach:10:2", $"the placement still has no approach, and the code still names it - evidence={evidence}");
         evidence!.Should().NotContain("blocker_occupant", $"a rim tile farther from her than the subject is not a step, and naming it is an instruction to walk - got: {evidence}");
-        evidence.Should().Contain($"blocker={ClearingEvidence.NoBlocker}",
-            $"none of the published blockers is one, so the refusal says so rather than naming the family's nearest row - got: {evidence}");
+        evidence.Should().Contain($"blocker={ClearingEvidence.EveryClearerBeyondTheSubject}",
+            $"the rim's one clearer lies farther from her than the subject, so the refusal names THAT fact rather than the family's nearest row - got: {evidence}");
+        evidence.Should().NotContain("blocker=none_of_the_published",
+            $"'nothing clearable on the rim' and 'every clearer is behind her' are two different worlds, and one word answered both until this unit - got: {evidence}");
         evidence.Should().Contain("candidates=1;described=1",
             "the population it looked at is still printed, so the verdict is a measurement rather than a silence");
         hint.Should().NotBeNull();
-        hint!.Should().Contain($"blocker={ClearingEvidence.NoBlocker}",
+        hint!.Should().Contain($"blocker={ClearingEvidence.EveryClearerBeyondTheSubject}",
             $"a settled failure's evidence is withheld, so the hint is the only channel this reaches her through - got: {hint}");
         hint.Should().NotContain("blocker_occupant", "and it must not carry the walk instructions the evidence withheld on purpose");
     }

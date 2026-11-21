@@ -86,7 +86,7 @@ public sealed class TileTargetRequestSeamTests
             // The wire identity is the site's own declaration, not a name derived from the method: an action id and the
             // request method that serves it are free to differ (`npc_relationship` is served by
             // `RequestLocalInspectNpcRelationship`), and only the catalogue can say which ids exist.
-            string actionId = Regex.Match(site.Body, "this[.]RequestLocalTileTarget\\(\\s*\"(?<id>[a-z0-9_]+)\"").Groups["id"].Value;
+            string actionId = WireIdentity(File.ReadAllText(RepositoryFile("integrations", "stardew", site.File)), site.Body);
             if (actionId.Length == 0)
                 failures.Add($"{site.File}: {site.Method} must hand the seam its own wire identity");
             else if (!FarmhandActionCatalog.Registrations.Any(registration => registration.ActionId == actionId))
@@ -349,6 +349,28 @@ public sealed class TileTargetRequestSeamTests
         }
 
         return sites;
+    }
+
+    /// <summary>
+    /// The wire identity a site hands the seam: the literal it writes, or the CONSTANT it names, resolved from the file
+    /// that declares it.
+    ///
+    /// <para>
+    /// A constant is the identity spelled once - `ForagePickupActionId` exists because the leg and the verdict would
+    /// otherwise carry two copies of one id - so a site that hands the seam a constant is making the same claim a
+    /// literal makes. What is NOT admitted is a name nobody declares: an unresolvable one answers empty, which the caller
+    /// already fails as "must hand the seam its own wire identity", and the resolved value is then checked against the
+    /// catalogue exactly like a literal.
+    /// </para>
+    /// </summary>
+    private static string WireIdentity(string siteSource, string body)
+    {
+        Match literal = Regex.Match(body, "this[.]RequestLocalTileTarget\\(\\s*\"(?<id>[a-z0-9_]+)\"");
+        if (literal.Success) return literal.Groups["id"].Value;
+        Match named = Regex.Match(body, "this[.]RequestLocalTileTarget\\(\\s*(?:ExecutionManager[.])?(?<name>[A-Za-z_][A-Za-z0-9_]*)\\s*,");
+        if (!named.Success) return string.Empty;
+        Match declared = Regex.Match(siteSource, "const string " + named.Groups["name"].Value + " = \"(?<id>[a-z0-9_]+)\";");
+        return declared.Success ? declared.Groups["id"].Value : string.Empty;
     }
 
     private static int MatchingParenthesis(string source, int open)

@@ -381,17 +381,26 @@ public static class ClearingEvidence
     public const string NoClearingAction = "no_clearing_action";
 
     /// <summary>
-    /// What `blocker` says when the rim holds published blockers and NONE of them is a step the refusal may name.
+    /// What `blocker` says when the rim HOLDS clearable blockers and every one of them lies farther from her than the
+    /// refusal's own subject.
     ///
     /// <para>
     /// A named blocker is advice to WALK, so it is held to the one property that makes it advice: it must be nearer to
     /// her than the refusal's own subject, or walking to it is distance away from the thing she asked for. Measured
     /// `round82`: a refusal for Town `69,42` from `69,51` named `twig@102,43` - thirty-three tiles from the subject,
     /// forty-one from her - because every candidate had priced as "opens nothing" and the ranking had degenerated to
-    /// "nearest to the subject" over the whole town's rim. "None of the published blockers is one" is the honest answer
-    /// there, and it is not <see cref="NoClearingAction"/>: those tiles DO have clearing actions, they are simply not
-    /// on the way.
+    /// "nearest to the subject" over the whole town's rim.
+    /// </para>
+    ///
+    /// <para>
+    /// THIS IS NOT "NOTHING ON THE RIM CAN BE CLEARED", and the two readings were one word until `round85`. An empty or
+    /// unopenable rim answers <c>no_cuttable_blocker=&lt;reason&gt;</c> with the wall's own occupant; a rim whose clearers
+    /// all lie AWAY from her answers this token, and the population beside it (<c>candidates=</c>, <c>described=</c>) is
+    /// the measurement that makes it checkable. Measured `round85` (`plan_130` `n14`, `plan_154` `n09`):
+    /// <c>blocker=none_of_the_published</c> printed beside <c>candidates=740;described=8</c>, which reads as "the rim
+    /// holds nothing clearable" about a rim that held seven hundred and forty - so the one reading the caller needed,
+    /// "there is a step and it is behind you", had no word at all.
     /// </para>
     /// </summary>
-    public const string NoBlocker = "none_of_the_published";
+    public const string EveryClearerBeyondTheSubject = "every_clearer_beyond_the_subject";
 }

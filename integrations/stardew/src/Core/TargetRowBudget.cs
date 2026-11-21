@@ -65,4 +65,25 @@ public static class TargetRowBudget
         if (keys <= 0) return ceiling;
         return Math.Clamp(FamilyRowLimit / keys, 1, ceiling);
     }
+
+    /// <summary>
+    /// The rows ONE held key may publish: its share of the family window, and never more than the stack itself can spend.
+    ///
+    /// <para>
+    /// `PerKeyRowLimit` answers "how much of the family's window may this key take" and cannot answer "how much does this
+    /// key HAVE". One planting consumes one item from that exact slot, so a row is a planting the caller may name and the
+    /// stack is the only thing that can honour it. MEASURED `round85`, both halves of the defect: `plan_254` ordered the
+    /// sixteen rows a 15-seed stack published (fifteen planted, `n16` refused `seed_not_owned_in_pack`), and `plan_356`
+    /// ordered fifteen rows off a ten-seed stack (five refused). Six of the run's thirty-four planting nodes were rows the
+    /// pack could not pay for - a caller reading the rows cannot see a count the rows do not respect.
+    /// </para>
+    ///
+    /// <para>
+    /// The plan ceiling stays non-negotiable and a zero supply stays zero: a stack holding more than one plan can name
+    /// keeps the cheaper window, an empty stack publishes no row at all (the floor of one belongs to the WINDOW, which
+    /// exists so a qualifying key is never silent, and a key with nothing to spend is not qualifying).
+    /// </para>
+    /// </summary>
+    public static int RowsOneKeyCanSpend(int rowLimit, int keySupply) =>
+        Math.Clamp(keySupply, 0, Math.Clamp(rowLimit, 0, PlanNodes));
 }
