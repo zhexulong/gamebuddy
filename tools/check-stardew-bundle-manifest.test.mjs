@@ -23,7 +23,13 @@ const MANIFEST = "integrations/stardew/bundle.manifest.json";
 /** A root carrying the real project and the real manifest, so a proof edits one of them and nothing else. */
 function tree(label) {
   const root = mkdtempSync(join(tmpdir(), `stardew-bundle-${label}-`));
-  for (const file of [PROJECT, MANIFEST, "integrations/stardew/src/Core/GameBuddy.Stardew.Core.csproj"]) {
+  for (const file of [
+    PROJECT,
+    MANIFEST,
+    "integrations/stardew/src/Core/GameBuddy.Stardew.Core.csproj",
+    // Carried because the recorded restatement's expiry is read from this tree, like any other reading here.
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
+  ]) {
     const path = join(root, file);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, readFileSync(join(REPO, file)));
@@ -115,6 +121,37 @@ test("a built output missing a manifest entry is named with the directory that l
         "stardew_bundle_manifest_not_built:GameBuddy.Stardew.deps.json:integrations/stardew/bin/Release/net6.0",
       ),
       err.join(" | "),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a consumer that declares the names again is named, and a converted one is not", () => {
+  const root = tree("restated");
+  try {
+    const consumer = join(root, "tools/some-runner.mjs");
+    mkdirSync(dirname(consumer), { recursive: true });
+    writeFileSync(
+      consumer,
+      'export const BUNDLE = Object.freeze(["GameBuddy.Stardew.dll", "GameBuddy.Stardew.Core.dll", "manifest.json"]);\n',
+    );
+    const restated = verdict(root);
+    assert.equal(restated.code, 1);
+    assert.ok(
+      restated.err.some((line) => line.startsWith("stardew_bundle_name_restated:tools/some-runner.mjs:")),
+      restated.err.join(" | "),
+    );
+
+    // The conversion this reading asks for: the same file reading the manifest instead.
+    writeFileSync(
+      consumer,
+      'import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";\nexport const BUNDLE = MOD_BUNDLE_FILE_NAMES;\n',
+    );
+    // The recorded entry's expiry is checked against this temp tree too, so only the restatement reading is asserted.
+    assert.deepEqual(
+      verdict(root).err.filter((line) => line.startsWith("stardew_bundle_name_restated")),
+      [],
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

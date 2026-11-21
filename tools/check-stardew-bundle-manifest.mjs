@@ -56,6 +56,7 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 import { STARDEW_BUNDLE_BUILD, STARDEW_BUNDLE_MANIFEST_PATH } from "./lib/stardew-mod-bundle.mjs";
+import { vocabulariesIn } from "./check-fact-seams.mjs";
 
 const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -159,13 +160,107 @@ export function evaluate(root, { out = console.log, err = console.error } = {}) 
     }
   }
 
+  // A consumer that spells the names again is the defect this gate replaced ten of; the reading is derived, so a
+  // consumer added tomorrow fails by being a list, and a recorded one EXPIRES when it stops being one.
+  const restating = restatingDeclarations(root, manifest);
+  for (const declaration of restating) {
+    const known = KNOWN_RESTATEMENTS.find(
+      (entry) => entry.file === declaration.file && entry.name === declaration.name,
+    );
+    if (known === undefined) {
+      findings.push(
+        `stardew_bundle_name_restated:${declaration.file}:${declaration.line}:${declaration.name} (${declaration.members.join(", ")}) - import tools/lib/stardew-mod-bundle.mjs instead`,
+      );
+    }
+  }
+  for (const entry of KNOWN_RESTATEMENTS) {
+    if (!recordStillPresent(root, entry)) {
+      findings.push(
+        `stale_stardew_bundle_restatement:${entry.file}:${entry.name} (${entry.marker} is gone: delete the record)`,
+      );
+    }
+  }
+
   for (const finding of findings) err(finding);
   out(
     `stardew_bundle_manifest: declarations examined ${String(declared.length)} · manifest entries ${String(
       manifest.length,
-    )} · built outputs examined ${String(builds.length)}${builds.length === 0 ? " (no Mod build in this tree: pnpm build:stardew)" : ""} · findings ${String(findings.length)}`,
+    )} · built outputs examined ${String(builds.length)}${builds.length === 0 ? " (no Mod build in this tree: pnpm build:stardew)" : ""} · restating declarations examined ${String(restating.length)} (recorded ${String(KNOWN_RESTATEMENTS.filter((entry) => restating.some((declaration) => declaration.file === entry.file && declaration.name === entry.name)).length)}) · findings ${String(findings.length)}`,
   );
   return findings.length === 0 ? 0 : 1;
+}
+
+/**
+ * The files a restating list may still live in, each with the reason and the owner who owes the conversion.
+ *
+ * Not a waiver list: an entry EXPIRES. Once the file stops declaring two of these names, the record describes a tree
+ * that is not this one and the gate fails on `stale_stardew_bundle_restatement`, the same expiry the fact-seams ledger
+ * uses - so a paid debt cannot outlive its payment or hide behind the record.
+ */
+export const KNOWN_RESTATEMENTS = Object.freeze([
+  {
+    file: "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
+    name: "PHASE_B_PACKAGE_ENTRIES",
+    marker: "const PHASE_B_PACKAGE_ENTRIES = Object.freeze([",
+    reason:
+      "this list orders the same four names and compares them with JSON.stringify, so the Host's own staging contract needs them as a compile-time tuple; host/tsconfig.json sets rootDir=src and does not enable resolveJsonModule, so the manifest cannot be imported from integrations/ without a build-config change. It is also invisible to the shared vocabulary reader (`Object.freeze([...] as const)` in a file whose brace depth that reader mis-reads), which is why the record checks its own marker",
+    owner: "the stardew lifecycle lane",
+  },
+]);
+
+/** The roots a bundle name could be spelled as a list in. */
+const SCANNED_ROOTS = Object.freeze(["tools", "host/src", "dialogue-web/src"]);
+
+/** The two readers, which are the files allowed to hold the names without importing one. */
+const READERS = Object.freeze(["tools/lib/stardew-mod-bundle.mjs", "host/src/stardew-mod-bundle.test-support.ts"]);
+
+/**
+ * Every file that declares a module-level list of two or more of the bundle's names without reading the manifest.
+ *
+ * The population comes from the ARTIFACT: the names looked for are the manifest's own, so a consumer added tomorrow
+ * joins by declaring a list of them. A file that names ONE of them in a path (`BUNDLE_MANIFEST_ENTRY_DLL`, `releaseDll`)
+ * is not a second list of the bundle, which is why the threshold is two, and a test that writes the names into a
+ * directory to build a package is not a second list either - it builds the artifact, it does not decide it.
+ */
+export function restatingDeclarations(root, files = manifestFiles(root)) {
+  const found = [];
+  const walk = (directory) => {
+    let entries = [];
+    try {
+      entries = readdirSync(join(root, directory), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const path = `${directory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (/^(?:node_modules|dist|build|\.)/u.test(entry.name)) continue;
+        walk(path);
+        continue;
+      }
+      if (!/\.(?:ts|tsx|mjs|cjs)$/u.test(entry.name)) continue;
+      // A scratch copy is not a declaration the tree owns (`tools/.soft-suite.tmp.test.mjs`).
+      if (/\.tmp\./u.test(entry.name)) continue;
+      if (READERS.includes(path)) continue;
+      // A consumer that reads the manifest is not restating it, whatever else it names.
+      if (readFileSync(join(root, path), "utf8").includes("stardew-mod-bundle")) continue;
+      for (const list of vocabulariesIn(root, path)) {
+        const shared = list.members.filter((member) => files.includes(member));
+        if (shared.length >= 2) found.push({ file: path, line: list.line, name: list.name, members: shared });
+      }
+    }
+  };
+  for (const directory of SCANNED_ROOTS) walk(directory);
+  return found;
+}
+
+/** Whether a recorded restatement is still in the tree: its own marker, not a vocabulary parse it cannot pass. */
+function recordStillPresent(root, entry) {
+  try {
+    return readFileSync(join(root, entry.file), "utf8").includes(entry.marker);
+  } catch {
+    return false;
+  }
 }
 
 function rootFrom(argv) {

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { MOD_BUNDLE_FILE_NAMES } from "./lib/stardew-mod-bundle.mjs";
 import { readFixtureManifest } from "./run-stardew-navigation-p4-runtime-probe.mjs";
 import { validateMultiSourceTransitionCharacterization } from "./stardew-navigation-multisource-characterization-validator.mjs";
 
@@ -46,8 +47,8 @@ const PROBE_ID = "zhexulong.GameBuddy.NavigationTopologyCharacterization";
 const LOADER_PROFILE = Object.freeze(["manifest.json", "StardewNavigationP4Loader.dll", "fixture-load.json"]);
 const LOADER_SOURCE = Object.freeze(["manifest.json", "StardewNavigationP4Loader.dll"]);
 const PRODUCTION_FILES = Object.freeze([
-  "GameBuddy.Stardew.dll",
-  "GameBuddy.Stardew.Core.dll",
+  ...MOD_BUNDLE_FILE_NAMES.filter((name) => name.startsWith("GameBuddy.") && name.endsWith(".dll")),
+  // The one assembly this probe carries that is not part of the Mod's own bundle.
   "Raffinert.FuzzySharp.dll",
 ]);
 const PROBE_PROFILE = Object.freeze([
