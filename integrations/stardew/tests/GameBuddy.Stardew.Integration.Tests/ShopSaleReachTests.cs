@@ -326,7 +326,41 @@ public sealed class ShopSaleReachTests : IDisposable
 
         // The corpus names the goods it judged, so a reader can tell a purchase receipt from a receipt of something else.
         foreach ((string scenario, string detail) in receipts)
+        {
             detail.Should().Contain("money_before=", $"{scenario} states the purse it started from");
+            // EVERY RECEIPT THIS SUITE CAN MINT MUST FIT THE JOURNAL'S OWN BOUND. The per-unit click/drop trace made the
+            // detail grow with the quantity - a 25-seed purchase was 5,059 characters - and a receipt the journal refuses
+            // is a receipt the Host never reads, so a real purchase was filed as one that proved nothing.
+            detail.Length.Should().BeLessThanOrEqualTo(
+                FarmhandExecutionJournal.MaximumReceiptEvidenceLength,
+                $"{scenario} has to be a receipt the journal accepts and the Host can read");
+        }
+    }
+
+    /// <summary>
+    /// THE FOLD, read off the receipt a twenty-tile plot needs: a purchase of more units than the plot has tiles still
+    /// fits, and its two diagnostics still state how many clicks ran and which one names the outcome.
+    ///
+    /// <para>
+    /// The last entry is the one a reader consumes: the shop runner proves the menu's pager reached the sale from that
+    /// click's `row` and `cursor`. The count is the receipt's own fact - `purchased` says what the loop set out to buy,
+    /// this says how many native clicks ran - and the kept entry's ordinal says what was omitted.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APurchaseOfThirtySixUnitsFoldsItsTraceAndStillFitsItsOwnEvidence()
+    {
+        string detail = ProducePurchaseReceipts()
+            .Single(receipt => receipt.Scenario == "bag_absorbs_thirty_six_units")
+            .Detail;
+
+        detail.Should().Contain(
+            "clicks=36[click35:",
+            "thirty-six native clicks ran and the one kept is the last, which is the click a reader reads");
+        detail.Should().Contain("drops=36[drop35:", "and the last drop is the placement that ended the loop");
+        detail.Should().NotContain(
+            "||",
+            "one entry per unit bought is the shape that grew the detail past the bound; the trace is folded, not printed");
     }
 
     /// <summary>
@@ -342,6 +376,9 @@ public sealed class ShopSaleReachTests : IDisposable
             Purchase("bag_full_of_other_goods", FullBag(), money: 500),
             Purchase("bag_merges_into_a_partial_stack", PartialStackBag(), money: 500),
             Purchase("bag_absorbs_a_multi_unit_quantity", Bag(12, occupied: 9), money: 500, quantity: 5),
+            // Thirty-six, because a twenty-tile plot needs at least twenty-one and `buy_seeds_and_expand_plot` asks for a
+            // purchase that fills it. The receipt this produces is the one the per-unit trace used to overflow.
+            Purchase("bag_absorbs_thirty_six_units", Bag(12), money: 5000, quantity: 36),
             Purchase("tool_upgrade_needs_no_room", FullBag(), money: 5000, price: 5000,
                 shopId: "ClintUpgrade", consumeOnPurchase: true, requiredToolId: "(T)CopperHoe"),
         };

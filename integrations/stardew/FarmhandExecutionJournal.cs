@@ -548,6 +548,14 @@ internal sealed class FarmhandExecutionJournal
         };
     }
 
+    /// <summary>
+    /// How long one receipt's evidence may be before this journal refuses it. It is a RECEIPT bound, and the one the
+    /// Host's own reader restates (`MAX_ACTION_RECEIPT_EVIDENCE_LENGTH`) because it is the number the producer enforces.
+    /// A detail that reaches it has evidence of the wrong shape, not a bound that should move: `shop_purchase` printed
+    /// one diagnostic entry per unit bought until a 25-seed purchase was 5,059 characters.
+    /// </summary>
+    internal const int MaximumReceiptEvidenceLength = 4096;
+
     private static bool ValidateReceipt(FarmhandExecutionReceipt? receipt)
     {
         return receipt is not null
@@ -557,7 +565,7 @@ internal sealed class FarmhandExecutionJournal
             && Enum.IsDefined(receipt.State)
             && IsValidReasonCode(receipt.ReasonCode)
             && receipt.Revision >= 0
-            && (receipt.Evidence is null || receipt.Evidence.Length <= 4096)
+            && (receipt.Evidence is null || receipt.Evidence.Length <= MaximumReceiptEvidenceLength)
             && ValidateObservation(receipt.Observation);
     }
 

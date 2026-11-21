@@ -155,14 +155,13 @@ test("blocks when the shop cannot advertise the fifth sale", async () => {
 });
 
 test("the click diagnostic is read as the Mod writes it", () => {
-  const clicks = clickRows({
-    clicks: "2[click0:row=3|cursor=1|at=100,200|held_after=(O)476||click1:row=3|cursor=1|at=100,200|held_after=(O)476]",
-  });
+  // The Mod FOLDS the trace to `<count>[<last entry>]`: one entry per unit bought grew the detail with the quantity,
+  // and a 36-unit purchase overflowed the receipt bound. The fold is `ShopPurchaseTraceField` in
+  // farmhandexecutioncontroller.shoppurchasereceipt.cs, and the kept entry keeps its real ordinal - `click35` beside
+  // `clicks=36` names the thirty-five that were folded away.
+  const clicks = clickRows({ clicks: "36[click35:row=3|cursor=1|at=100,200|held_after=(O)476]" });
 
-  assert.deepEqual(clicks, [
-    { row: 3, cursor: 1 },
-    { row: 3, cursor: 1 },
-  ]);
+  assert.deepEqual(clicks, [{ row: 3, cursor: 1 }]);
   assert.deepEqual(clickRows({}), [], "a receipt with no click field records no click");
   assert.deepEqual(clickRows({ clicks: "0[]" }), [], "and a count of zero is no click either");
 });

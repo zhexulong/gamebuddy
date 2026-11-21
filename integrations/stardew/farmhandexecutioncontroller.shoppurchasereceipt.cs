@@ -170,9 +170,10 @@ internal sealed partial class ExecutionManager
     /// <list type="bullet">
     /// <item>a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects - so an
     /// absent owner is spelled `none`, the same way other optional values are spelled here;</item>
-    /// <item>the two diagnostics are lists, and their entries used to embed `;`, which split each entry into fields the
-    /// Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and entries with `||`, so
-    /// the whole diagnostic stays ONE field.</item>
+    /// <item>the two diagnostics spell `key=value` INSIDE their own value, so their parts separate with `|` and never with
+    /// `;` - an entry that embedded the separator split into fields the Host cannot read (`drop0:empty_slot=0` is not a
+    /// key). They are also FOLDED to the count and the one entry that names the outcome, because one entry per unit
+    /// bought made the whole detail grow with the quantity (<see cref="ShopPurchaseTraceField"/>).</item>
     /// </list>
     /// <para>
     /// <c>money_before</c>, <c>money_after</c>, <c>gained</c> and <c>tool_upgraded</c> are also the four fields the
@@ -190,8 +191,8 @@ internal sealed partial class ExecutionManager
             + $"owned_before={facts.OwnedBefore};owned_after={facts.OwnedAfter};gained={gained};"
             + $"stock_before={facts.StockBefore};stock_after={facts.StockAfter};"
             + $"owner_tile={facts.CounterX},{facts.CounterY};menu_closed={facts.MenuClosed.ToString().ToLowerInvariant()};"
-            + $"clicks={facts.Clicks.Count}[{string.Join("||", facts.Clicks)}];"
-            + $"drops={facts.Drops.Count}[{string.Join("||", facts.Drops)}]"
+            + ShopPurchaseTraceField("clicks", facts.Clicks) + ";"
+            + ShopPurchaseTraceField("drops", facts.Drops)
             + ShopToolUpgradeEvidence(
                 facts.UpgradedToolId,
                 facts.DaysLeftForToolUpgrade,
@@ -200,4 +201,29 @@ internal sealed partial class ExecutionManager
                 facts.RequiredToolAfter,
                 facts.PurchaseDialogue);
     }
+
+    /// <summary>
+    /// One folded diagnostic trace of a purchase receipt: HOW MANY entries the click loop produced, and the LAST of them.
+    ///
+    /// <para>
+    /// WHY IT IS FOLDED. The loop records one entry per unit bought and each entry is ~146 characters, so the detail grew
+    /// with the quantity: a real 25-seed purchase measured 5,059 characters and the Host refused the whole receipt
+    /// (`evidence_too_long:5059:4096`), which filed a completed trade as
+    /// `succeeded_receipt_without_its_own_postcondition`. The bound is the producer's own
+    /// (<c>FarmhandExecutionJournal.MaximumReceiptEvidenceLength</c>) and it is not raised for this: a receipt that cannot
+    /// fit its own evidence is a receipt whose evidence is the wrong shape. `buy_seeds_and_expand_plot` needs a
+    /// twenty-tile plot, so a purchase of 21 or more units has to fit, and with the fold the length stops depending on the
+    /// quantity at all - a thirty-six unit purchase states 343 characters.
+    /// </para>
+    /// <para>
+    /// WHAT A READER CONSUMES, stated so this stays a fold and not a deletion: the LAST entry only. The shop runner reads
+    /// that one click's <c>row</c> and <c>cursor</c> to prove the menu's pager really reached the sale
+    /// (tools/run-stardew-native-local-player-shop-purchase-smoke.mjs, <c>clickRows</c>), and the Host's `shop_purchase`
+    /// rule reads neither field. The count is the fact the receipt owes - `purchased` says how many the loop set out to
+    /// buy, this says how many native clicks ran - and the kept entry keeps its own ordinal, so the truncation is named
+    /// by the text itself: `clicks=25[click24:...]` is 25 clicks of which the last one, number 24, is printed.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseTraceField(string label, IReadOnlyList<string> entries) =>
+        entries.Count == 0 ? $"{label}=0[]" : $"{label}={entries.Count}[{entries[entries.Count - 1]}]";
 }
