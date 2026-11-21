@@ -1772,7 +1772,8 @@ async function hostAnswers(port) {
   const stopControl = await page.evaluate(readLifecycleControls);
   record("stop control", stopControl);
   if (stopControl.stop !== null && stopControl.stop.visible === true)
-    await pressStop(page, {
+    await pressStop({
+      page,
       say,
       record,
       budgetMs: BUDGET.stopMs,

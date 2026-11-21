@@ -47,7 +47,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { activateAndLaunch, runBoundary, waitForState, waitForStop } from "./game-surface-states.cjs";
+import { activateAndLaunch, pressStop, runBoundary, waitForState, waitForStop } from "./game-surface-states.cjs";
 
 /**
  * A run whose world this process claims: the launch state every driver reads, the staged `WorldCreation`
@@ -321,13 +321,19 @@ const ATTACHED_AND_STOPPED = Object.freeze({ ...ATTACHED_AND_STEADY, connectionS
 function clockedStatePage(stateAt) {
   const began = Date.now();
   const reads = [];
+  const pressed = [];
   return {
     reads,
+    pressed,
     elapsed: () => Date.now() - began,
     async evaluate(pageFunction) {
       if (pageFunction.name !== "readGameState") throw new Error(`unexpected_evaluate:${String(pageFunction.name)}`);
       reads.push(Date.now() - began);
       return stateAt(Date.now() - began);
+    },
+    locator(selector) {
+      const testId = /data-testid="([^"]+)"/u.exec(selector)?.[1] ?? selector;
+      return { first: () => ({ click: async () => pressed.push(testId) }) };
     },
   };
 }
@@ -386,6 +392,32 @@ test("a stop the Host refused ends the wait at once, with the Host's own code", 
   assert.equal(reading.settled, false);
   assert.equal(reading.refused.code, "stardew_game_runtime_unavailable");
   assert.ok(Date.now() - began < 5_000, "a refusal is an answer, so no budget is spent waiting for a phase");
+});
+
+test("the Stop press is the panel's own control, and the sentence after it names the receipt", async () => {
+  // The unit a driver calls, not just the predicate: `pressStop` takes `{ page, say, record, … }`, and a driver
+  // that passed the page positionally would throw before pressing anything - measured live on
+  // `E:\gb-lanes\stopwait-r1` (`DRIVER W FAILED: TypeError: Cannot read properties of undefined (reading
+  // 'locator')`, after a full 9/9 attach). The assertion below cannot pass without the press and the sentence.
+  const settledAtMs = 2_000;
+  const page = clockedStatePage((ms) => (ms < settledAtMs ? ATTACHED_AND_STEADY : ATTACHED_AND_STOPPED));
+  const said = [];
+  const steps = [];
+  const reading = await pressStop({
+    page,
+    say: (line) => said.push(line),
+    record: (step, value) => steps.push({ step, value }),
+    budgetMs: 8_000,
+    stopAnswer: () => (page.elapsed() >= settledAtMs ? { route: "game/stop", status: 200, atMs: Date.now() } : null),
+  });
+  assert.deepEqual(page.pressed, ["game-stop"], "the press is the product's own control, by its test id");
+  assert.equal(reading.settled, true);
+  assert.equal(steps.find((entry) => entry.step === "stop")?.value.settled, true, "the facts file carries the reading");
+  assert.match(
+    said.join("\n"),
+    /stop settled in [\d.]+s: answer=HTTP 200 .* connection=stopped instance=running/u,
+    "and the report says so, with the receipt and the world still running",
+  );
 });
 
 test("the game boundary is the run's Host child, and a launch state without one keeps the driver's start", () => {
