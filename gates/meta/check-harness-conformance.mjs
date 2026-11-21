@@ -2,11 +2,10 @@
 // red-proof: inject  planting check-red-proof-probe.mjs: a gate file in neither registry -> exit 1,
 //   `gate_falsifiers: BLOCKED`, `gate_without_falsifier: check-red-proof-probe.mjs`, and
 //   `gate_undeclared: ... no `red-proof:` marker in ...`, then `harness conformance blocked`
-// red-proof: inject  staging tools/check-source-reading-probe.mjs, a gate whose own text reads `src/**/*.ts` with
-//   `readFileSync` and declares nothing -> `source_reading_declarations: FAILED` naming
-//   `source_reading_invariant_missing:tools/check-source-reading-probe.mjs`,
-//   `source_reading_expiry_missing:tools/check-source-reading-probe.mjs` and
-//   `source_reading_undeclared:tools/check-source-reading-probe.mjs`, exit 1 (measured 2026-11-22 on this checkout)
+// red-proof: inject  staging a gate for one run that reads `dialogue-web/src/*.ts` through `readFileSync` and declares
+//   nothing (`check-source-reading-probe.mjs`) -> `source_reading_declarations: FAILED` naming that gate with
+//   `source_reading_invariant_missing:`, `source_reading_expiry_missing:` and `source_reading_undeclared:`, exit 1
+//   (measured 2026-11-22 on this checkout)
 
 export const gateDeclaration = {
   id: "check-harness-conformance",
