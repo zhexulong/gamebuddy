@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// red-proof: history With `--binary` pointed at the launcher published at 04:10:55 (preserved at
+//   `D:\gamebuddy-conformance\launcher-prefix\`, the build before `bdfb8e0e`), the frame-cap case reports
+//   `known-defect desktop_frame_cap_ends_the_launch`: the re-hello after the oversized frame gets no session.
+//   Against the shipped launcher the same case passes (`acceptedAfterReconnect=1`, `acknowledged=1`).
+// red-proof: inject  a peer that closes its own socket after writing the frame reports
+//   `frame_refused_by_the_peer`, because the ownership probe requires the launcher to be the one that closed.
 /**
  * The language-neutral conformance suite for the installed Desktop launcher.
  *

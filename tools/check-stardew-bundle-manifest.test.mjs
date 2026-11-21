@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url";
 
 import { declaredBundleFiles, evaluate } from "./check-stardew-bundle-manifest.mjs";
 
+// red-proof: inject  a manifest entry renamed to `GameBuddy.Stardew.renamed.dll` in a copy of the tree reports
+//   `mismatch:<new>:only_in_the_manifest` and `mismatch:<old>:only_in_the_build`, so the manifest is held to the build
+//   rather than to itself.
+// red-proof: inject  a `<None Update>` whose copy-to-output is removed reports `not_copied:<name>`, because a file the
+//   project declares but does not emit is the shape that deploys a Mod SMAPI cannot load.
+
 /**
  * The bundle manifest is held to the BUILD, and both directions are proved red.
  *

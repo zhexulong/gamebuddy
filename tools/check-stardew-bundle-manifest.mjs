@@ -42,6 +42,12 @@
  *                     (tools/check-stardew-bundle-manifest.test.mjs)
  */
 
+// source-invariant: no compiler can require the committed manifest to equal what the project emits - the build is a
+//   separate artifact, produced by a different tool, and a name can move in either one alone. This file reads the
+//   project's declarations and the output directory because that comparison is the only thing that catches a rename.
+// source-expiry: when `GameBuddy.Stardew.csproj` (or the build) generates the manifest and
+//   `check-generated-artifact-reproducibility` covers it, retire this reading and compare two artifacts instead.
+
 export const gateDeclaration = {
   id: "check-stardew-bundle-manifest",
   domain: "stardew",
