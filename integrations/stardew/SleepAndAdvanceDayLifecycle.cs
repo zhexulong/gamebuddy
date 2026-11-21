@@ -1080,7 +1080,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     {
         OvernightMenuRelease.Released => "released",
         OvernightMenuRelease.Refused => "refused",
-        _ => "failed",
+        OvernightMenuRelease.Failed => "failed",
     };
 
     /// <summary>
@@ -1247,7 +1247,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
         SettlementMenuOutcome.AlreadyCommitted => "already_committed",
         SettlementMenuOutcome.CommitUnavailable => "commit_unavailable",
         SettlementMenuOutcome.CommitFailed => "commit_failed",
-        _ => "none",
+        SettlementMenuOutcome.NotPresent => "none",
     };
 
     /// <summary>

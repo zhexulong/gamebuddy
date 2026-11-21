@@ -122,7 +122,6 @@ internal sealed class ModalFamily
         ClosePath.Dialogue => "native_dialogue_close",
         ClosePath.EngineShippingCommit => "engine_shipping_commit",
         ClosePath.PureCancel => "pure_cancel",
-        _ => throw new ArgumentOutOfRangeException(nameof(path), path, "no close effect for this path"),
     };
 
     /// <summary>

@@ -38,7 +38,7 @@ internal enum PostconditionReadPoint
 
 /// <summary>
 /// The wire word of each read point, and the whole set as data - the same shape <see cref="RefusalLayerWire"/> uses, so
-/// a fourth form cannot be invented and an unrenderable one is a programming error rather than a token nobody declared.
+/// a fourth form cannot be invented and the compiler refuses the build until one is given a word here.
 /// </summary>
 internal static class PostconditionReadPointWire
 {
@@ -46,7 +46,6 @@ internal static class PostconditionReadPointWire
     {
         PostconditionReadPoint.AfterTheSettle => "after_the_settle",
         PostconditionReadPoint.AtTheCall => "at_the_call",
-        _ => throw new ArgumentOutOfRangeException(nameof(point)),
     };
 
     /// <summary>Every word <see cref="PostconditionReadPoint"/> puts on the wire, in declaration order.</summary>

@@ -79,7 +79,7 @@ public readonly record struct BuildingContact
     {
         BuildingContactKind.HumanDoor => Chebyshev(tile, this.HumanDoor!.Value) <= 1,
         BuildingContactKind.Ring => this.Footprint.IsWithinRing(tile),
-        _ => false,
+        BuildingContactKind.Unreachable => false,
     };
 
     /// <summary>
@@ -87,18 +87,12 @@ public readonly record struct BuildingContact
     ///
     /// This is what an approach needs: the target of the walk, not just a yes/no reach answer.
     /// </summary>
-    public System.Collections.Generic.IReadOnlyList<TilePoint> InteractionTiles()
+    public System.Collections.Generic.IReadOnlyList<TilePoint> InteractionTiles() => this.Kind switch
     {
-        switch (this.Kind)
-        {
-            case BuildingContactKind.HumanDoor:
-                return Ring(this.HumanDoor!.Value);
-            case BuildingContactKind.Ring:
-                return this.Footprint.RingTiles();
-            default:
-                return Array.Empty<TilePoint>();
-        }
-    }
+        BuildingContactKind.HumanDoor => Ring(this.HumanDoor!.Value),
+        BuildingContactKind.Ring => this.Footprint.RingTiles(),
+        BuildingContactKind.Unreachable => Array.Empty<TilePoint>(),
+    };
 
     /// <summary>
     /// The tiles an approach must be measured against: the door tile when there is one, the occupied
@@ -110,7 +104,7 @@ public readonly record struct BuildingContact
     {
         BuildingContactKind.HumanDoor => new[] { this.HumanDoor!.Value },
         BuildingContactKind.Ring => this.Footprint.Tiles(),
-        _ => Array.Empty<TilePoint>(),
+        BuildingContactKind.Unreachable => Array.Empty<TilePoint>(),
     };
 
     /// <summary>

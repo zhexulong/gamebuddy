@@ -1599,7 +1599,7 @@ string? bodyProgramUnavailableReason = null,
         {
             BodyProgramExecutionOriginKind.Node => new BridgeExecutionOrigin("programme", origin.ProgramId, origin.NodeId),
             BodyProgramExecutionOriginKind.Standalone => new BridgeExecutionOrigin("standalone"),
-            _ => new BridgeExecutionOrigin("unattributed"),
+            BodyProgramExecutionOriginKind.Unattributed => new BridgeExecutionOrigin("unattributed"),
         };
     }
 
@@ -1656,7 +1656,6 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramSubmitCode.Conflict => "conflict",
         BodyProgramSubmitCode.PersistenceFailure => "persistence_failure",
         BodyProgramSubmitCode.Quarantined => "quarantined",
-        _ => "rejected",
     };
     private static string ToWire(BodyProgramControllerResultCode code) => code switch
     {
@@ -1674,14 +1673,12 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramControllerResultCode.RecoveryRequired => "recovery_required",
         BodyProgramControllerResultCode.PersistenceWriteFailed => "persistence_write_failed",
         BodyProgramControllerResultCode.DeadlineExpired => "deadline_expired",
-        _ => "invalid_input",
     };
     private static string ToWire(BodyProgramQueryCode code) => code switch
     {
         BodyProgramQueryCode.Found => "found",
         BodyProgramQueryCode.NotFound => "not_found",
         BodyProgramQueryCode.InvalidInput => "invalid_input",
-        _ => "invalid_input",
     };
     private static string ToWire(BodyProgramState state) => state switch
     {
@@ -1691,7 +1688,6 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramState.Cancelled => "cancelled",
         BodyProgramState.RecoveryRequired => "recovery_required",
         BodyProgramState.Quarantined => "quarantined",
-        _ => "recovery_required",
     };
     /// <summary>
     /// The wire name of one durable node state - EVERY state the journal can settle a node in.
@@ -1703,13 +1699,21 @@ string? bodyProgramUnavailableReason = null,
     /// the Mod's own journal, 31 `recovery_required` in the run's bundle, and no way to tell either fact from the other.
     /// </para>
     /// <para>
-    /// The default arm therefore FAILS CLOSED and names the state it could not name
+    /// The arm for a state this build cannot name FAILS CLOSED and names the state it could not name
     /// (`body_program_node_state_unmapped:&lt;value&gt;`), which `BridgeProtocol.IsBodyProgramNodeState` refuses: a
-    /// projection that ever meets a new enum value publishes a frame rather than a lie. A default arm that relabels an
-    /// unknown state as a meaningful one is the defect this replaces, not the pattern to copy.
+    /// projection that ever meets such a value publishes a frame rather than a lie. An arm that relabels an unknown
+    /// state as a meaningful one is the defect this replaces, not the pattern to copy.
+    /// </para>
+    /// <para>
+    /// THE SWITCH ITSELF HAS NO CATCH-ALL. The value the arm above answers is not a member of the enum but a
+    /// cast-invalid int, so it is answered before the switch, and the switch names all thirteen members - a fourteenth
+    /// fails the build at this projection, where its word belongs, instead of reaching a live run as
+    /// `body_program_node_state_unmapped:13`.
     /// </para>
     /// </summary>
-    private static string ToWire(BodyProgramNodeState state) => state switch
+    private static string ToWire(BodyProgramNodeState state) => !Enum.IsDefined(state)
+        ? $"body_program_node_state_unmapped:{(int)state}"
+        : state switch
     {
         BodyProgramNodeState.Pending => "pending",
         BodyProgramNodeState.AwaitingHostAdmission => "awaiting_host_admission",
@@ -1730,7 +1734,6 @@ string? bodyProgramUnavailableReason = null,
         // for one stale dispatch; the two causes travel as two tokens.
         BodyProgramNodeState.SkippedProgramAbandoned => "skipped_program_abandoned",
         BodyProgramNodeState.Abandoned => "abandoned",
-        _ => $"body_program_node_state_unmapped:{(int)state}",
     };
     private static BridgeBodyProgramSubmitVerification ToBridgeVerification(BodyProgramVerificationReport report) => new(
         report.Accepted,
@@ -1748,8 +1751,9 @@ string? bodyProgramUnavailableReason = null,
     /// `internal` rather than `private` so the projection can be driven directly by a test: the alternative is a fake
     /// game-thread session behind a pipe, and a test that can only reach this through a whole session cannot say which
     /// layer turned a state into a word. Every durable <see cref="BodyProgramNodeState"/> value that can be settled has
-    /// its own wire name here; a value with no arm is reported as `body_program_node_state_unmapped:<state>` rather than
-    /// borrowing a name that already means something else.
+    /// its own wire name here; a value that is not a member of the enum is reported as
+    /// `body_program_node_state_unmapped:<state>` rather than borrowing a name that already means something else, and a
+    /// member added without a word here does not compile.
     /// </para>
     /// </summary>
     internal static BridgeBodyProgramStatusSnapshot? ToBridgeSnapshot(BodyProgramStatusSnapshot? snapshot) => snapshot is null

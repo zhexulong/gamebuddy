@@ -90,8 +90,9 @@ internal enum RefusalLayerKind
 /// The wire word of each layer, and the whole set as data.
 ///
 /// <para>
-/// The switch is exhaustive over <see cref="RefusalLayerKind"/> and throws on anything else, so a layer the Mod cannot
-/// render is a programming error rather than a token nobody declared. <see cref="All"/> is derived from the enum, not
+/// The switch names every <see cref="RefusalLayerKind"/> and has no catch-all, so the compiler refuses the build when a
+/// layer is added without a word here - a layer the Mod cannot render is a programming error at build time rather than a
+/// token nobody declared. <see cref="All"/> is derived from the enum, not
 /// written out again: the gate reads it to check that every token the probe can emit belongs to the declared set.
 /// </para>
 /// </summary>
@@ -113,7 +114,6 @@ internal static class RefusalLayerWire
         RefusalLayerKind.Large => "large",
         RefusalLayerKind.Building => "building",
         RefusalLayerKind.Stamina => "stamina",
-        _ => throw new ArgumentOutOfRangeException(nameof(layer)),
     };
 
     /// <summary>Every word <see cref="RefusalLayerKind"/> can put on the wire, in declaration order.</summary>

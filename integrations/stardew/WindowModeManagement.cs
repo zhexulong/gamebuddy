@@ -97,7 +97,7 @@ public sealed partial class ModEntry
             WindowRaiseOutcome.Activated => "SetForegroundWindow=accepted",
             WindowRaiseOutcome.Raised => "SetForegroundWindow=refused; raised to the top of the z-order",
             WindowRaiseOutcome.Signalled => "focus and raise both refused; taskbar entry flashed",
-            _ => "window handle not usable yet"
+            WindowRaiseOutcome.NoWindow => "window handle not usable yet"
         };
     }
 

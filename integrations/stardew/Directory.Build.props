@@ -95,4 +95,30 @@
     <WarningsNotAsErrors>NU1900</WarningsNotAsErrors>
   </PropertyGroup>
 
+  <!--
+    CS8524 IS NOT A DEFECT IN THIS TREE, AND CS8509 IS THE ONE THAT MATTERS.
+
+    A `switch` expression over an enum that names every declared member is exhaustive over the set the product
+    switches on, and Roslyn says so with two different diagnostics depending on whether it is: CS8509 names the
+    MEMBER that has no arm (`The switch expression does not handle all possible values ... the pattern
+    'Three.C' is not covered`), while CS8524 only says the same type could also hold an int that no member
+    declared (`... which include unnamed enum values. For example, the pattern '(Three)3' is not covered`).
+
+    Measured 2026-11-22 on a throwaway net6.0 project built with this file's properties: a switch covering all
+    three members and no `_` produced CS8524 and nothing else; the same switch with `Three.C` removed produced
+    CS8509 naming `Three.C`. So a catch-all arm is not what makes an enum switch safe - it is what stops the
+    compiler from noticing the next member. Removing them (WorldModel's disposition projections, the wire tables
+    in BridgeProtocol/BridgeSession, RefusalLayer, PostconditionReadPoint, BuildingContact) turns every one of
+    those into a build failure at the projection that must gain a word.
+
+    CS8524 is therefore not reported at all, and CS8509 still fails the build through TreatWarningsAsErrors in
+    every project here. An unnamed enum value cannot reach these projections from the wire: each is reached
+    either from the game's own reading (which yields a declared member) or from a parse that validates the word
+    first, and the one place a cast-invalid value IS reachable - `BridgeSession.ToWire(BodyProgramNodeState)` -
+    answers it before the switch rather than through a catch-all arm.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS8524</NoWarn>
+  </PropertyGroup>
+
 </Project>

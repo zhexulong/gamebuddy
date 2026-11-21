@@ -36,7 +36,6 @@ public static class ExecutionStateWire
         ExecutionState.Rejected => "rejected",
         ExecutionState.Expired => "expired",
         ExecutionState.Uncertain => "uncertain",
-        _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown execution state."),
     };
 
     /// <summary>

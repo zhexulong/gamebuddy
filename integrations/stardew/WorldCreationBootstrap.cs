@@ -388,6 +388,6 @@ internal sealed class WorldCreationBootstrap
         WorldCreationRefusal.MultipleOwnWorlds => "multiple_own_worlds",
         WorldCreationRefusal.ForeignSlotCollision => "foreign_slot_collision",
         WorldCreationRefusal.CompanionCabinMissing => "companion_cabin_missing",
-        _ => "none",
+        WorldCreationRefusal.None => "none",
     };
 }

@@ -273,7 +273,7 @@ internal sealed partial class ExecutionManager
         {
             BuildingContactKind.HumanDoor => $"human_door={contact.HumanDoor!.Value.X},{contact.HumanDoor.Value.Y}",
             BuildingContactKind.Ring => $"ring={contact.Footprint.X},{contact.Footprint.Y},{contact.Footprint.Width},{contact.Footprint.Height}",
-            _ => "unreachable",
+            BuildingContactKind.Unreachable => "unreachable",
         };
     }
 
