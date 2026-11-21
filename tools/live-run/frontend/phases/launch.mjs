@@ -252,6 +252,10 @@ async function main() {
   say("production fingerprint BEFORE:", JSON.stringify(prodBefore));
 
   await rm(paths.runRoot, { recursive: true, force: true });
+  // The entry's stderr file is created empty BEFORE the child exists, so a driver that finds no file reads
+  // "this phase never got as far as the launch" and a driver that finds an empty one reads "the entry said
+  // nothing" - two different absences that must not look alike.
+  await writeFile(paths.entryStderrFile, "", "utf8");
   for (const name of ["data", "operational", "presentation"])
     await mkdir(join(paths.runRoot, "GameBuddy", name), { recursive: true });
   const declaredDataRoot = desktopCompositionMutableRootPaths(paths.runRoot).data;
@@ -382,6 +386,12 @@ async function main() {
         child.stderr.setEncoding("utf8");
         child.stderr.on("data", (chunk) => {
           stderr += chunk;
+          // The Host's own account of the turns it opened with nobody awaiting them is written HERE, on the
+          // entry's stderr (`GAME_TURN_ACCOUNT`, `host/src/companion-loop.ts:385`), and this phase used to keep
+          // the bytes in memory and print only their count. A capture driver runs in its own process and can
+          // only read a file, so the bytes are kept where the reading is: the driver that owns the
+          // `daily-agent-awake` step parses this file (`capture/turn-account.cjs`).
+          appendFileSync(paths.entryStderrFile, chunk);
         });
         return child;
       },
@@ -421,6 +431,11 @@ async function main() {
   };
   say("child pid:", launch.child.pid, "alive=", launch.child.exitCode === null);
   say("ENTRY STDERR BYTES (=0 required):", Buffer.byteLength(stderr, "utf8"));
+  say(
+    "entry stderr kept at:",
+    paths.entryStderrFile,
+    `(${String(Buffer.byteLength(stderr, "utf8"))} byte(s) so far, appended as the entry writes)`,
+  );
   if (stderr.length > 0) say("entry stderr (first 800):", stderr.slice(0, 800));
   say("entry alive after ack:", launch.child.exitCode === null);
 
@@ -608,6 +623,9 @@ async function main() {
         artifactRoot: paths.artifact,
         worktree: paths.worktree,
         stderrBytes: Buffer.byteLength(stderr, "utf8"),
+        // Where those bytes are kept, so a capture driver reads the entry's own account instead of the browser:
+        // the reading `daily-agent-awake` is measured by lives in this file (`capture/turn-account.cjs`).
+        entryStderrFile: paths.entryStderrFile,
         mounted: Boolean(mounted),
         connection,
         preset,

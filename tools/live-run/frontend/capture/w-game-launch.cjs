@@ -12,6 +12,7 @@
 //                                 (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2082-2152`)
 //   say one line               -> the Game surface's own composer
 //   read the reply             -> its own transcript, while the attachment is `attached`
+//   her agent awake            -> the Host's own `GAME_TURN_ACCOUNT` line, read out of the entry's stderr
 //   stop the game              -> POST /game/stop          (so no game process is left behind)
 //
 // WAITING IS MEASURED, NOT ENOUGH. The launch wait prints the product's own state every few seconds and
@@ -88,7 +89,8 @@
 //                 installation_registration_refused | lifecycle_activation_refused |
 //                 no_installation_panel | no_installation_discovered |
 //                 installation_panel_never_settled | game_state_unreadable |
-//                 game_surface_cannot_start_turn | cabin_handoff_not_offered
+//                 game_surface_cannot_start_turn | cabin_handoff_not_offered |
+//                 host_turn_account_unreadable
 //   BLOCKED-BY-PRODUCT: instance_status_never_running |
 //                 cabin_offer_expires_before_any_ui_can_answer | farmhand_not_initialized
 //   game_never_reached_ready:<instance>/<attachment>
@@ -96,6 +98,7 @@
 //   cabin_handoff_did_not_attach:<state>
 //   companion_silent_after:<ms>
 //   game_launch_unavailable:<code>[:<cause>]
+//   turn_account_absent | turn_account_without_world_fact | turn_account_without_world_fact_member
 const path = require("node:path");
 const { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync } = require("node:fs");
 const { execFileSync } = require("node:child_process");
@@ -140,6 +143,7 @@ const {
 const { pressStop, stepRecorder } = require("./game-surface-states.cjs");
 const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
 const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
+const { agentAwakeOf, describeTurnAccount, readTurnAccount } = require("./turn-account.cjs");
 
 /** The line the player says into the game surface. One line, in the language the product is set to. */
 const PLAYER_LINE = "你好，你在我旁边吗？";
@@ -183,6 +187,12 @@ const BUDGET = Object.freeze({
   cabinConfirmMs: 180_000,
   /** One real provider turn, the same budget driver F gives its reply. */
   replyMs: 240_000,
+  /**
+   * How long the first WORLD-FACT turn is given to appear in the Host's account after the attachment landed.
+   * Her client is started by the attach and its observation traffic is what opens the first turn, so this is a
+   * start-up budget rather than a turn's cost, and the wait reports the elapsed time it actually took.
+   */
+  awakeMs: 180_000,
   stopMs: 120_000,
 });
 
@@ -1680,6 +1690,37 @@ async function hostAnswers(port) {
     say(`the game reached ready: ${describeGameState(launched)} after ${String(Date.now() - launchBegan)}ms`);
   }
   await shot(page, "91-game-ready.png");
+
+  /*
+   * ---- 4b. her agent's own account: the world's facts open her turns with nobody speaking ----
+   *
+   * `daily-agent-awake`, and the one reading in this driver that is not the page's. The Host owns these turns:
+   * `acceptHostMintedFact` enqueues the fact and starts the flush with nothing awaiting it
+   * (`host/src/host-service.ts:976-982`), and `CompanionLoop.flush` prints `GAME_TURN_ACCOUNT` for every turn
+   * it opens (`host/src/companion-loop.ts:385`). Those bytes reach this process only as the product entry's
+   * stderr, which the launch phase keeps in `launch.state.entryStderrFile`; `capture/turn-account.cjs` reads
+   * the line and `agentAwakeOf` says whether a turn opened FOR A WORLD FACT. Nobody has spoken in this run at
+   * this point - the Game surface mounts no composer - so a turn that opened here was opened by the world.
+   */
+  const awakeBegan = Date.now();
+  let awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  while (awake.kind !== "awake" && Date.now() - awakeBegan < BUDGET.awakeMs) {
+    await sleep(1000);
+    awake = agentAwakeOf(readTurnAccount(launch.state?.entryStderrFile ?? null));
+  }
+  record("her agent awake", {
+    elapsedMs: Date.now() - awakeBegan,
+    budgetMs: BUDGET.awakeMs,
+    kind: awake.kind,
+    reason: awake.reason,
+    reading:
+      awake.reading === null
+        ? null
+        : { path: awake.reading.path, held: awake.reading.held, bytes: awake.reading.bytes, lines: awake.reading.lines.length },
+  });
+  say(`GAME-LAUNCH ${describeTurnAccount(awake)}`);
+  if (awake.kind === "unreadable") return await notMeasured(browser, awake.reason, awake.detail);
+  if (awake.kind !== "awake") return await failed(browser, awake.reason, awake.detail);
 
   // ---- 5. one player line, in the game surface ----
   //

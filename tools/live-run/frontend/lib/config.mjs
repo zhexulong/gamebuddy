@@ -82,6 +82,13 @@ export function runPaths(run) {
      */
     processLedgerFile: join(stage, "state", "process-ledger.json"),
     stopFlag: join(stage, "state", "stop.flag"),
+    /*
+     * The product entry's own stderr, as the launch phase read it. It is where the Host prints the turns it
+     * opened with nobody awaiting them (`GAME_TURN_ACCOUNT`, `host/src/companion-loop.ts:385`), so the file is
+     * the reading `daily-agent-awake` is measured by (`capture/turn-account.cjs`, driver `w-game-launch`).
+     * The launch phase used to hold these bytes in memory and print only their count.
+     */
+    entryStderrFile: join(stage, "state", "entry-stderr.log"),
     launchLog: join(stage, "logs", "launch.log"),
     buildLog: join(stage, "logs", "build.log"),
     pinLog: join(stage, "logs", "pin.log"),

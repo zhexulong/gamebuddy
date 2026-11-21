@@ -454,6 +454,9 @@ function observationsFor(L, driverTexts) {
       "proved that gap; `failed`",
       "names a refusal the product owes an answer for. The line's `steps=` is the chain rung by rung -",
       "how far the launch got, so a reader sees where it stopped without opening the logs.",
+      "A second line, `her agent is awake: ...`, is the Host's own `GAME_TURN_ACCOUNT` account read out of the",
+      "product entry's stderr after the attachment landed: how many of the turns it opened were opened by a",
+      "WORLD FACT, with the producers split, while the player said nothing (the `daily-agent-awake` step).",
     ],
     "the game-launch driver wrote no line",
   );
