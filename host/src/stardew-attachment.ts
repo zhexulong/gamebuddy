@@ -261,7 +261,7 @@ export class StardewAttachmentFlow {
         const response = validateResponse(value);
         if (!verifySignature(response, this.#options.sessionToken))
           throw new Error("stardew_response_authentication_failed");
-        if (response.requestId !== requestId || response.state === "awaiting_save") {
+        if (response.requestId !== requestId) {
           await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
           continue;
         }
@@ -441,7 +441,7 @@ function validateResponse(value: unknown): StardewAttachmentResponse {
     !isRecord(value) ||
     value.schemaVersion !== STARDew_PROVISIONING_VERSION ||
     !isOpaque(value.requestId) ||
-    (value.state !== "awaiting_save" && value.state !== "ready" && value.state !== "rejected") ||
+    (value.state !== "ready" && value.state !== "rejected" && value.state !== "uncertain") ||
     !isReason(value.reasonCode) ||
     !isTimestamp(value.updatedAtUnixMs) ||
     (value.manifestPath !== undefined && value.manifestPath !== "stardew-farmhand-manifest.json") ||

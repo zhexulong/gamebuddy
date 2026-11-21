@@ -85,7 +85,7 @@ test("Stardew attachment flow rejects stale or unauthenticated advertisements", 
   }
 });
 
-test("Stardew attachment flow waits through awaiting_save and rejects a manifest for another request", async () => {
+test("Stardew attachment flow waits for the answer to its own request, and a manifest for another request never lands", async () => {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
   try {
     const session = signed(baseSession);
@@ -97,15 +97,15 @@ test("Stardew attachment flow waits through awaiting_save and rejects a manifest
       cabinId: "cabin_01",
       nowMs: () => 2_000,
     });
-    const response = signed({
+    const otherRequest = signed({
       schemaVersion: 1,
-      requestId: "request_01",
-      state: "awaiting_save",
-      reasonCode: "binding_persist_pending",
+      requestId: "request_other",
+      state: "rejected",
+      reasonCode: "request_replayed",
       updatedAtUnixMs: 2_001,
       signature: "",
     });
-    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(response));
+    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(otherRequest));
     const requestFile = join(directory, "stardew-attachment-response.json");
     const pending = flow.waitForResponse("request_01", 2_000);
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 120));
@@ -135,6 +135,63 @@ test("Stardew attachment flow waits through awaiting_save and rejects a manifest
     await assert.rejects(
       () => flow.waitForManifest("request_01", 200),
       /stardew_attachment_rejected_binding_readback_mismatch|stardew_attachment_timeout/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a response state this Mod no longer answers is refused at once, not waited out", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(signed(baseSession)));
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+    const stale = signed({
+      schemaVersion: 1,
+      requestId: "request_01",
+      state: "awaiting_save",
+      reasonCode: "binding_persist_pending",
+      updatedAtUnixMs: 2_001,
+      signature: "",
+    });
+    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(stale));
+    const startedAtMs = Date.now();
+    await assert.rejects(() => flow.waitForResponse("request_01", 5_000), /invalid_stardew_response/);
+    assert.ok(Date.now() - startedAtMs < 1_500);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an attachment the Mod calls uncertain is read by its reason, not refused as an invalid response", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    await writeFile(join(directory, "stardew-session.json"), JSON.stringify(signed(baseSession)));
+    const flow = new StardewAttachmentFlow({
+      sessionDirectory: directory,
+      sessionToken: token,
+      companionId: "companion_01",
+      cabinId: "cabin_01",
+      nowMs: () => 2_000,
+    });
+    const uncertain = signed({
+      schemaVersion: 1,
+      requestId: "request_01",
+      state: "uncertain",
+      reasonCode: "manifest_publication_failed",
+      updatedAtUnixMs: 2_001,
+      signature: "",
+    });
+    await writeFile(join(directory, "stardew-attachment-response.json"), JSON.stringify(uncertain));
+    await assert.rejects(
+      () => flow.waitForManifest("request_01", 500),
+      /stardew_attachment_rejected_manifest_publication_failed/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
