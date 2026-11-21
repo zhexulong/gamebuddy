@@ -1,5 +1,15 @@
 import type { ChildProcess } from "node:child_process";
 
+/**
+ * The helper's whole legacy `inspect` verdict vocabulary, in one place. The consumer
+ * branches on this list, and `index.private.test.ts` holds it equal to the verdict
+ * literals the helper's `InspectLegacy` and its failure path answer, so a verdict the
+ * helper adds cannot arrive as an unknown answer and be reported as an unavailable
+ * inspection.
+ */
+export const LEGACY_INSPECT_VERDICTS = Object.freeze(["regular", "reparse", "missing", "indeterminate"] as const);
+export type LegacyInspectVerdict = (typeof LEGACY_INSPECT_VERDICTS)[number];
+
 export type WindowsReparseInspectorCapability = object;
 export type SpawnHelper = (command: string, args: readonly string[]) => ChildProcess;
 export type InspectorState = Readonly<{

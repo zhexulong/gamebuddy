@@ -19,6 +19,7 @@ import {
   type WindowsPathSecurity,
 } from "./index.js";
 import { createTestWindowsReparseInspector } from "./index.test-support.js";
+import { LEGACY_INSPECT_VERDICTS } from "./internal.js";
 
 const fileIdentity = Object.freeze({
   objectKind: "regular_file" as const,
@@ -43,7 +44,16 @@ test("build artifact boundary exports only the frozen adapter contract and keeps
   assert.equal(typeof BUILD_ARTIFACT_REPARSE_INSPECTION.assertNoReparse, "function");
 });
 
-type Outcome = "regular" | "reparse" | "malformed" | "unavailable" | "timeout" | "nonzero" | "stderr" | "overflow";
+type Outcome =
+  | "regular"
+  | "reparse"
+  | "missing"
+  | "malformed"
+  | "unavailable"
+  | "timeout"
+  | "nonzero"
+  | "stderr"
+  | "overflow";
 
 for (const outcome of [
   "regular",
@@ -63,7 +73,12 @@ for (const outcome of [
       assert.equal(await inspected, outcome);
       assert.deepEqual(observed, [{ schemaVersion: 1, operation: "inspect", path: resolve("absolute", "test-path") }]);
     } else {
-      await assert.rejects(inspected, /windows_reparse_inspection_unavailable/);
+      await assert.rejects(
+        inspected,
+        outcome === "malformed"
+          ? /windows_reparse_inspection_verdict_unrecognized/
+          : /windows_reparse_inspection_unavailable/,
+      );
     }
   });
 }
@@ -209,11 +224,41 @@ for (const source of ["stdout", "stderr"] as const) {
   });
 }
 
-test("assertNoWindowsReparse keeps the old exact reparse rejection", async () => {
+test("assertNoWindowsReparse reports the reparse point it found instead of an unavailable inspection", async () => {
+  const path = resolve("absolute", "test-path");
   const capability = createTestWindowsReparseInspector(() => legacyChild("reparse", []));
-  await assert.rejects(
-    assertNoWindowsReparse(capability, resolve("absolute", "test-path")),
-    /windows_reparse_inspection_unavailable/,
+  await assert.rejects(assertNoWindowsReparse(capability, path), (error: Error) => {
+    assert.match(error.message, /windows_reparse_point_detected/);
+    assert.ok(error.message.includes(path), "the refusal names the path it measured");
+    return true;
+  });
+});
+
+test("a missing verdict names the artifact entry that is not there", async () => {
+  const path = resolve("absolute", "test-path");
+  const capability = createTestWindowsReparseInspector(() => legacyChild("missing", []));
+  await assert.rejects(inspectWindowsReparse(capability, path), (error: Error) => {
+    assert.match(error.message, /windows_reparse_inspection_path_missing/);
+    assert.ok(error.message.includes(path), "the refusal names the path it measured");
+    return true;
+  });
+});
+
+test("the consumer's verdict vocabulary is the helper's own, so a new verdict cannot pass as unavailable", async () => {
+  const source = await readFile(new URL("../../native/windows-reparse-inspector/Program.cs", import.meta.url), "utf8");
+  const legacyStart = source.indexOf("private static string InspectLegacy(");
+  assert.ok(legacyStart >= 0, "the helper's legacy inspection moved, so this gate reads nothing");
+  const legacySource = source.slice(legacyStart);
+  const legacyBody = legacySource.slice(0, legacySource.indexOf("\n    }"));
+  const declared = new Set([
+    ...[...legacyBody.matchAll(/"([a-z]+)"/g)].map((match) => match[1]),
+    ...[...source.matchAll(/WriteLegacyResponse\("([a-z]+)"\)/g)].map((match) => match[1]),
+  ]);
+  assert.ok(declared.size > 0, "the helper declared no legacy verdict, so an empty vocabulary would agree with itself");
+  assert.deepEqual(
+    [...declared].sort(),
+    [...LEGACY_INSPECT_VERDICTS].sort(),
+    "a legacy verdict the helper answers is not named by the consumer, so it would be reported as an unavailable inspection",
   );
 });
 

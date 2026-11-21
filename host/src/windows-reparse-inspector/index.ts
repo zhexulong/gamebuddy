@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 import {
   createInspectorCapability,
   inspectorState,
+  LEGACY_INSPECT_VERDICTS,
   type InspectorState,
+  type LegacyInspectVerdict,
   type WindowsReparseInspectorCapability,
 } from "./internal.js";
 
@@ -69,7 +71,11 @@ export async function createPublishedWindowsReparseInspector(
   return await createFixedInspector(resolve(hostArtifactRoot, "native", "windows-reparse-inspector", rid));
 }
 
-/** Preserves the shipped v1 reparse classification operation exactly. */
+/**
+ * Preserves the shipped v1 reparse classification operation exactly, and refuses
+ * with the verdict it measured: a path the helper reports as `missing` is a
+ * statement about the path, not an inability to inspect it.
+ */
 export async function inspectWindowsReparse(
   capability: WindowsReparseInspectorCapability | undefined,
   absolutePath: string,
@@ -81,17 +87,21 @@ export async function inspectWindowsReparse(
     operation: "inspect",
     path: absolutePath,
   });
-  if (response.equals(Buffer.from('{"schemaVersion":1,"result":"regular"}\n', "utf8"))) return "regular";
-  if (response.equals(Buffer.from('{"schemaVersion":1,"result":"reparse"}\n', "utf8"))) return "reparse";
-  throw unavailable();
+  const verdict = LEGACY_INSPECT_VERDICTS.find((candidate) => response.equals(legacyVerdictResponse(candidate)));
+  if (verdict === "regular" || verdict === "reparse") return verdict;
+  if (verdict === "missing") throw new Error(`windows_reparse_inspection_path_missing: ${absolutePath}`);
+  if (verdict === "indeterminate") throw unavailable();
+  throw new Error(`windows_reparse_inspection_verdict_unrecognized: ${answeredText(response)}`);
 }
 
-/** Rejects paths reported as reparse points by the fixed inspector helper. */
+/** Rejects paths the fixed inspector helper reports as reparse points. */
 export async function assertNoWindowsReparse(
   capability: WindowsReparseInspectorCapability | undefined,
   absolutePath: string,
 ): Promise<void> {
-  if ((await inspectWindowsReparse(capability, absolutePath)) === "reparse") throw unavailable();
+  if ((await inspectWindowsReparse(capability, absolutePath)) === "reparse") {
+    throw new Error(`windows_reparse_point_detected: ${absolutePath}`);
+  }
 }
 
 /** Returns the strict handle-derived identity of one exact local-drive path object. */
@@ -448,6 +458,16 @@ function parseStrictJson(value: Buffer): unknown {
   } catch {
     throw unavailable();
   }
+}
+
+/** The exact bytes the helper answers for one verdict of its legacy protocol. */
+function legacyVerdictResponse(verdict: LegacyInspectVerdict): Buffer {
+  return Buffer.from(`{"schemaVersion":1,"result":"${verdict}"}\n`, "utf8");
+}
+
+/** Keeps an answer the vocabulary does not name readable and one line long. */
+function answeredText(response: Buffer): string {
+  return JSON.stringify(response.toString("utf8").slice(0, 200));
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {

@@ -70,18 +70,33 @@ const productionArtifactManifest = (
   outputDirectory: string,
   privateOutputDirectory: boolean,
   inspectionPolicy: BrowserArtifactInspectionPolicy,
-): Plugin => ({
-  name: "gamebuddy-production-artifact-manifest",
-  apply: "build",
-  async closeBundle() {
-    // Re-check the Host-precreated staging leaf after Vite writes it. Node has
-    // no portable atomic no-follow directory handle API, so this narrows the
-    // pre-build/closeBundle replacement window but does not claim arbitrary
-    // Windows reparse protection (design/42 remains blocked).
-    if (privateOutputDirectory) await validatePrivateOutputDirectory(outputDirectory, false);
-    await createProductionArtifactManifest(outputDirectory, inspectionPolicy);
-  },
-});
+): Plugin => {
+  // `closeBundle` runs after a FAILED build too. Asking the native inspector about
+  // an entry the build never wrote answers `missing`, and that refusal replaced the
+  // build's own error with `windows_reparse_inspection_unavailable`: a lightningcss
+  // failure in src/style.css sent four live runs to the reparse inspector this way.
+  // Only a build that reached `writeBundle` has an output to describe.
+  let outputWritten = false;
+  return {
+    name: "gamebuddy-production-artifact-manifest",
+    apply: "build",
+    writeBundle() {
+      outputWritten = true;
+    },
+    async closeBundle() {
+      if (!outputWritten) {
+        this.warn(`browser_artifact_output_not_written: ${outputDirectory}`);
+        return;
+      }
+      // Re-check the Host-precreated staging leaf after Vite writes it. Node has
+      // no portable atomic no-follow directory handle API, so this narrows the
+      // pre-build/closeBundle replacement window but does not claim arbitrary
+      // Windows reparse protection (design/42 remains blocked).
+      if (privateOutputDirectory) await validatePrivateOutputDirectory(outputDirectory, false);
+      await createProductionArtifactManifest(outputDirectory, inspectionPolicy);
+    },
+  };
+};
 
 export type WindowsReparseInspectorDescriptor = Readonly<{
   schemaVersion: 1;
