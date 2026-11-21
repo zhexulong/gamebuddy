@@ -89,7 +89,7 @@
 //                 no_installation_panel | no_installation_discovered |
 //                 installation_panel_never_settled | game_state_unreadable |
 //                 game_surface_cannot_start_turn | cabin_handoff_not_offered
-//   BLOCKED-BY-PRODUCT: instance_status_never_running | attach_needs_native_save |
+//   BLOCKED-BY-PRODUCT: instance_status_never_running |
 //                 cabin_offer_expires_before_any_ui_can_answer | farmhand_not_initialized
 //   game_never_reached_ready:<instance>/<attachment>
 //   cabin_read_never_fired | cabin_handoff_no_cabin:<state> | cabin_handoff_not_admitted |

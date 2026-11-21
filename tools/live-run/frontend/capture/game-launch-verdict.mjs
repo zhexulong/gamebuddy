@@ -56,16 +56,6 @@ export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
  *     `authenticated` (`game-browser/game-browser-state-provider.ts:164-180`), so no launch this
  *     product performs can publish it.
  *
- *   `attach_needs_native_save` - the first attachment binds a farmhand that must be written into
- *     the save: the Mod answers `awaiting_save`/`binding_persist_pending`
- *     (`integrations/stardew/HostFarmhandProvisioner.cs:639`), stages the binding on the
- *     engine's own `Saving` event (:180-186) and issues the manifest on `Saved` (:217-222). The only
- *     thing that drives that cycle is the HostAutomation fixture switch PAIR - `Enable` alone is not
- *     enough, the trigger also needs `TriggerNativeSaveAfterAttachment`
- *     (`integrations/stardew/ModEntry.Fixtures.cs:2088-2111`, the `SaveGameMenu` trigger) - which the
- *     Host never writes into the Mod's config, and which `tools/README.md:266` requires a production
- *     Host profile to keep off.
- *
  *   `cabin_offer_expires_before_any_ui_can_answer` - the cabin choice is offered with a deadline no page
  *     can answer inside: the Mod republishes the advertisement every second with a 3 s expiry
  *     (`integrations/stardew/HostFarmhandProvisioner.cs:152-156,318-358`), and the Host hands the browser
@@ -92,7 +82,6 @@ export const BLOCKED_BY_PRODUCT_PREFIX = "BLOCKED-BY-PRODUCT:";
  */
 export const PRODUCT_GAPS = Object.freeze({
   instanceStatusNeverRunning: "instance_status_never_running",
-  attachNeedsNativeSave: "attach_needs_native_save",
   cabinOfferExpiresBeforeAnyUiCanAnswer: "cabin_offer_expires_before_any_ui_can_answer",
   farmhandNotInitialized: "farmhand_not_initialized",
 });
@@ -514,11 +503,9 @@ export function chainStepsLine(chain) {
  * The ordering is the chain's own: the FURTHEST step reached decides, because the nearer gap is a
  * consequence of the same launch rather than its cause. An attachment that landed while the instance
  * word still read `launching` proves the projection gap and nothing else - the chain did everything it
- * was asked. A confirmation the Mod answered with `awaiting_save` proves the save gap: the Mod's own
- * published word for "this binding is waiting for the engine to save", written at the confirmation and
- * never replaced because no save cycle ever came to persist it. A confirmation the Mod answered with
- * `rejected`/`farmhand_not_initialized` proves the farmhand gap, which is further along than either: the
- * Mod took the choice, could not use what the engine's creation path produced, and rolled it back.
+ * was asked. A confirmation the Mod answered with
+ * `rejected`/`farmhand_not_initialized` proves the farmhand gap: the Mod took the choice, could not use
+ * what the engine's creation path produced, and rolled it back.
  *
  * A state that stopped moving proves the same instance-word gap from the other side, and that side is the
  * one a driver meets when it arrives after another driver's launch: `unchangedForMs` is how long the
@@ -556,13 +543,6 @@ export function classifyChainStop({
       verdict: VERDICTS.blockedByProduct,
       gap: PRODUCT_GAPS.instanceStatusNeverRunning,
       detail: `an instance exists and stayed ${describeGameState(state)} for ${String(Math.round(unchangedForMs / 1000))}s: the launch was admitted and the instance word never left launching, so the game cannot be reached by any driver that waits for running (the coordinator projects a GameBuddy-launched Player Host as launching for its whole life, stardew-role-lifecycle-projection.internal.ts:41-45, and the only authenticated slot the facade mints is ownership=player_external, stardew-role-lifecycle-facade.ts:29-41, which this host is not)`,
-    });
-  const awaiting = awaitingSaveReading(attachmentResponse, confirmPressedAtMs);
-  if (awaiting !== null)
-    return Object.freeze({
-      verdict: VERDICTS.blockedByProduct,
-      gap: PRODUCT_GAPS.attachNeedsNativeSave,
-      detail: awaiting,
     });
   const rolledBack = farmhandNotInitializedReading(cabinConfirm, attachmentResponse, confirmPressedAtMs);
   if (rolledBack !== null)
@@ -612,23 +592,6 @@ function staleOfferReading(cabinConfirm) {
     );
   const refused = refusals.at(-1);
   return `the confirmation was sent ${String(requested)} time(s) and the game refused it HTTP ${String(refused.status)} ${String(refused.code)}; two consecutive cabin reads: ${quoted.join(" then ")}. The Mod republishes the advertisement every second with a 3 s expiry (integrations/stardew/HostFarmhandProvisioner.cs:152-156,318-358) and the Host hands the page min(that expiry, the join deadline) on every read while holding the choice handle to the same deadline (host/src/stardew-production-lifecycle-coordinator.internal.ts:2065,2099), so the window a page must render, be clicked in, and answer inside is the Mod's own beat`;
-}
-
-/**
- * The Mod's own word for the confirmation, or `null` when it is absent or not from this run.
- *
- * Freshness is part of the proof: the response file lives in the run root and outlives the game, so a
- * reading taken from yesterday's run would prove nothing about today's. The Mod stamps
- * `updatedAtUnixMs` when it writes the file, and the confirmation press is this run's own clock.
- */
-function awaitingSaveReading(response, confirmPressedAtMs) {
-  if (response === null || typeof response !== "object") return null;
-  if (response.state !== "awaiting_save") return null;
-  const stamp = responseStampForPress(response, confirmPressedAtMs);
-  if (stamp === null) return null;
-  const reason =
-    typeof response.reasonCode === "string" && response.reasonCode.length > 0 ? response.reasonCode : "no_reason_code";
-  return `the confirmation reached the Mod and the Mod answered state=awaiting_save/reason=${reason} (stardew-attachment-response.json, updated ${new Date(stamp).toISOString()}): the first binding is written by the engine's own Saving/Saved cycle (HostFarmhandProvisioner.cs:180-222), and the only trigger for one is the HostAutomation fixture switch pair - Enable plus TriggerNativeSaveAfterAttachment (integrations/stardew/ModEntry.Fixtures.cs:2088-2111) - which production never writes into the Mod's config`;
 }
 
 /**

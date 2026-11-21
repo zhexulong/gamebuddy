@@ -369,11 +369,11 @@ test("the chain is one field on the report's line, and an empty one says so", ()
 });
 
 test("a product gap is a third verdict with its own line, and it round-trips", () => {
-  const line = blockedByProductLine(PRODUCT_GAPS.attachNeedsNativeSave, "the Mod answered awaiting_save");
-  assert.equal(line, "BLOCKED-BY-PRODUCT: attach_needs_native_save: the Mod answered awaiting_save");
+  const line = blockedByProductLine(PRODUCT_GAPS.cabinOfferExpiresBeforeAnyUiCanAnswer, "two reads of one beat");
+  assert.equal(line, "BLOCKED-BY-PRODUCT: cabin_offer_expires_before_any_ui_can_answer: two reads of one beat");
   assert.deepEqual(readBlockedByProduct(`noise\n${line}\nmore`), {
-    gap: "attach_needs_native_save",
-    detail: "the Mod answered awaiting_save",
+    gap: "cabin_offer_expires_before_any_ui_can_answer",
+    detail: "two reads of one beat",
   });
   // A driver that measured, and one that measured nothing, carry neither word.
   assert.equal(readBlockedByProduct("GAME-LAUNCH w: measured launch=ready"), null);
@@ -381,10 +381,15 @@ test("a product gap is a third verdict with its own line, and it round-trips", (
   assert.equal(readBlockedByProduct(null), null);
 });
 
-test("an attachment that landed proves the instance-word gap, and says nothing about a save", () => {
+test("an attachment that landed proves the instance-word gap, and says nothing about anything else", () => {
   const reading = classifyChainStop({
     state: { ok: true, instanceStatus: "launching", attachmentStatus: "attached" },
-    attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 5_000 },
+    attachmentResponse: {
+      state: "ready",
+      reasonCode: "manifest_issued",
+      manifestPath: "stardew-farmhand-manifest.json",
+      updatedAtUnixMs: 5_000,
+    },
     confirmPressedAtMs: 4_000,
   });
   assert.equal(reading.verdict, VERDICTS.blockedByProduct);
@@ -392,42 +397,38 @@ test("an attachment that landed proves the instance-word gap, and says nothing a
   assert.match(reading.detail, /ownership=player_external/u);
 });
 
-test("the save gap needs the Mod's own fresh word for THIS run's confirmation", () => {
+test("a state this Mod cannot answer proves no gap, however fresh the file holding it", () => {
   const state = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
-  const fresh = classifyChainStop({
-    state,
-    attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000_000 },
-    confirmPressedAtMs: 999_000,
-  });
-  assert.equal(fresh.verdict, VERDICTS.blockedByProduct);
-  assert.equal(fresh.gap, PRODUCT_GAPS.attachNeedsNativeSave);
-  assert.match(fresh.detail, /awaiting_save\/reason=binding_persist_pending/u);
-  // A response written by an EARLIER run is not a reading about this one.
-  assert.equal(
-    classifyChainStop({
-      state,
-      attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000 },
-      confirmPressedAtMs: 999_000,
-    }),
-    null,
-  );
-  // Nor is a confirmation this run never sent, or an answer that is not the save wait.
+  // `awaiting_save` is not a state the Mod answers: `HostFarmhandProvisioner.HandleRequest` mints the manifest
+  // from the binding it just verified (`state=ready`/`manifest_issued`) and owes the write to the engine's next
+  // `Saving`. A file that still says `awaiting_save` is a write from an older Mod, so it proves nothing about
+  // this run and names no product gap.
   assert.equal(
     classifyChainStop({
       state,
       attachmentResponse: { state: "awaiting_save", reasonCode: "binding_persist_pending", updatedAtUnixMs: 1_000_000 },
-      confirmPressedAtMs: null,
+      confirmPressedAtMs: 999_000,
     }),
     null,
   );
-  // Including the Mod's `farmhand_not_initialized` word: on its own it proves nothing, because the gap it
-  // names needs the Host's own 409 beside it (the test below holds that half).
+  // And an answer that is not the gap's own proof proves nothing either: the Mod's `farmhand_not_initialized`
+  // word needs the Host's own 409 beside it (the test below holds that half), a ready answer needs an instance
+  // word that moved, and a response this run did not cause is a reading about an earlier run.
   for (const attachmentResponse of [
     null,
     { state: "ready", reasonCode: "none", updatedAtUnixMs: 1_000_000 },
     { state: "rejected", reasonCode: "farmhand_not_initialized", updatedAtUnixMs: 1_000_000 },
+    { state: "ready", reasonCode: "none", updatedAtUnixMs: 1_000 },
   ])
     assert.equal(classifyChainStop({ state, attachmentResponse, confirmPressedAtMs: 999_000 }), null);
+  assert.equal(
+    classifyChainStop({
+      state,
+      attachmentResponse: { state: "rejected", reasonCode: "farmhand_not_initialized", updatedAtUnixMs: 1_000_000 },
+      confirmPressedAtMs: null,
+    }),
+    null,
+  );
 });
 
 test("a ready pair proves no gap, and neither does a launch that never produced an attachment", () => {
@@ -530,6 +531,42 @@ test("a farmhand the Mod created and rolled back proves its own gap, with both s
   // The Host's side: the code it answered the same confirmation with.
   assert.match(reading.detail, /HTTP 409 stardew_manifest_handoff_uncertain/u);
   assert.match(reading.detail, /HostFarmhandProvisioner\.cs/u);
+});
+
+/**
+ * THE GATE `every_gap_declared_is_a_gap_produced`: the gap names are one fact, and this file holds both
+ * spellings of it - `PRODUCT_GAPS`, and the classifier that returns one of its members. A member whose
+ * producer is deleted stays in the object and is printed by the driver as a gap nothing can prove: that
+ * is exactly how `attach_needs_native_save` outlived the `awaiting_save` answer it named, and why the
+ * population below is derived from the object rather than written out a second time.
+ */
+test("every gap the verdict declares is a gap some chain stop can still produce", () => {
+  const stops = [
+    classifyChainStop({ state: { ok: true, instanceStatus: "launching", attachmentStatus: "attached" } }),
+    classifyChainStop({
+      state: { ok: true, instanceStatus: "launching", attachmentStatus: "none" },
+      confirmPressedAtMs: 1_000_000,
+      cabinConfirm: {
+        requested: 3,
+        refusals: [{ status: 409, code: "stardew_cabin_choice_stale" }],
+        offers: [
+          { readAtMs: 990_000, expiresAtMs: 992_871 },
+          { readAtMs: 991_000, expiresAtMs: 993_902 },
+        ],
+      },
+    }),
+    farmhandReading(),
+  ];
+  const declared = Object.values(PRODUCT_GAPS);
+  const produced = new Set(stops.map((reading) => reading?.gap).filter(Boolean));
+  for (const gap of declared)
+    assert.ok(
+      produced.has(gap),
+      `${gap} is declared in PRODUCT_GAPS and no chain stop here produces it, so the driver would print a gap nothing can prove`,
+    );
+  for (const gap of produced)
+    assert.ok(declared.includes(gap), `${String(gap)} was produced and is not declared in PRODUCT_GAPS`);
+  assert.equal(produced.size, declared.length);
 });
 
 test("one side of the farmhand gap is not the gap, so a run holding one stays failed", () => {
