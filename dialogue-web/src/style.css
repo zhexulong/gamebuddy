@@ -7481,7 +7481,8 @@
    - It is hidden with `opacity` rather than `display: none` ON PURPOSE: a `display: none` control is
      not in the tab order at all, so a control hidden that way could never be revealed by taking
      focus. It appears on `:focus-visible` as well as on hover, because a control nobody can see while
-     focused is the trap this shape would otherwise trade for the one it removed.
+     focused is the trap this shape would otherwise trade for the one it removed. WHICH POINTER it is
+     hidden on at all is the media split below: a touch screen has no hover to reveal it with.
    - No transition: the reduced-motion gate counts motion sites, and a plate that appears is not a
      motion.
 
@@ -7496,6 +7497,8 @@
     min-block-size: 18px;
   }
 
+  /* The plate's geometry. Whether it is PAINTED is the media queries below: a bare `opacity: 0` here
+     would hide it on a touch screen, which has no hover state to bring it back. */
   .message-edit-hint {
     margin-inline-start: auto;
     /* (44 px target - 18 px band) / 2, so the band does not grow and the plate does not reach a word. */
@@ -7512,12 +7515,37 @@
     color: var(--text-secondary);
     line-height: 0;
     cursor: pointer;
-    opacity: 0;
   }
 
-  .message:hover .message-edit-hint,
-  .message-edit-hint:focus-visible {
-    opacity: 1;
+  /* A pointer that can hover - and only that pointer - gets the reveal.
+
+     MEASURED at 400x800 with `hasTouch`, which is what a phone reports (`hover: none`, `pointer:
+     coarse`): the plate computed `opacity: 0` with `pointer-events: auto`, so it was invisible and
+     still 44 px of the row a finger could land on - a real tap at its centre opened the editor, and
+     nothing in the row had announced that it would. The hover reveal could not be the whole answer,
+     because a tap never produces a hover for it to answer.
+
+     `(hover: hover) and (pointer: fine)` is the mouse. A finger, and a stylus on a coarse pointer,
+     match neither query; the base rule above therefore states no opacity at all, so a browser that
+     understands neither feature paints the control instead of hiding it. */
+  @media (hover: hover) and (pointer: fine) {
+    .message-edit-hint {
+      opacity: 0;
+    }
+
+    .message:hover .message-edit-hint,
+    .message-edit-hint:focus-visible {
+      opacity: 1;
+    }
+  }
+
+  /* A touch screen: painted as an affordance rather than as a ghost control, at a weight quieter than
+     the words it sits above. `pointer-events` needs no statement - the plate was already hit-testable
+     while invisible, which was the defect. */
+  @media (hover: none) or (pointer: coarse) {
+    .message-edit-hint {
+      opacity: 0.65;
+    }
   }
 
   .message-edit-hint:hover,
