@@ -154,6 +154,11 @@ const UNPROJECTED_OBSERVED_FAMILIES = Object.freeze([
   "museumRewardTargets",
   "tailoringTargets",
   "colorTargets",
+  // The recipe rows, measured 2026-11-21 (`round87b`): a `Furnace` row was absent from her view while `craft_item(Furnace)` was dispatched and refused
+  // `craft_ingredients_missing`. **The row is delivered by an observe, and its cost is askable from `look_up(table="CraftingRecipes")`** - the table the
+  // recipe lane added - so the per-turn block carries neither. A recipe list is a lookup answer, not a per-turn fact.
+  "craftingRecipeTargets",
+  "cookingRecipeTargets",
 ]);
 
 /**
