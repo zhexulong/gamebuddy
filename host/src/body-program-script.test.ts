@@ -46,7 +46,9 @@ type SurfaceAction = Readonly<{
   actionId: string;
   lifecycle: string;
   kind: string;
-  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
+  argumentSchema?: Readonly<
+    Record<string, { type: string; enum?: readonly string[]; description?: string; resolvedAtExecution?: boolean }>
+  >;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }>;
   /** The snapshot family the action's targets come from, or the surface's silence - the plan compiler reads it too. */
@@ -85,20 +87,24 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
 /**
  * The surface's own declaration of one action's arguments, in the order the artifact lists them.
  *
- * `required` is not on the artifact because the Mod's protocol has NO optional arguments
- * (`FarmhandActionDefinitions.cs:438-439`: "the protocol has no optional arguments") - every declared argument must be
- * present or the call is refused. That is the compiler's rule, and the gate at "every declared argument, omitted, is
- * refused" is what keeps this line honest: it compiles an omission of every argument of every action.
+ * `required` is the MOD's declaration, published as `resolvedAtExecution`: an argument the body answers for at execution
+ * is not the caller's to supply, and every other argument must be present or the call is refused. That is the compiler's
+ * rule, and the gate at "every declared argument, omitted, is refused" is what keeps these lines honest: it compiles an
+ * omission of every argument of every action.
  */
-function surfaceArguments(
-  actionId: string,
-): readonly Readonly<{ name: string; type: string; required: true; enum?: readonly string[]; description?: string }>[] {
+function surfaceArguments(actionId: string): readonly Readonly<{
+  name: string;
+  type: string;
+  required: boolean;
+  enum?: readonly string[];
+  description?: string;
+}>[] {
   const action = SURFACE.find((candidate) => candidate.actionId === actionId);
   assert.ok(action, `${actionId} is on the published surface`);
   return Object.entries(action.argumentSchema ?? {}).map(([name, declared]) => ({
     name,
     type: declared.type,
-    required: true as const,
+    required: declared.resolvedAtExecution !== true,
     ...(declared.enum === undefined ? {} : { enum: declared.enum }),
     ...(declared.description === undefined ? {} : { description: declared.description }),
   }));
@@ -3229,6 +3235,7 @@ test("one plan_shape call answers three actions whose argument tables differ, ea
  */
 test("every argument plan_shape marks required is one whose omission the builder refuses", () => {
   const faults: string[] = [];
+  let optional = 0;
   for (const action of ACTIONS.filter((candidate) => candidate.arguments.length > 0)) {
     const shape = planShape(ACTIONS, { actionIds: [action.actionId] });
     if (!shape.ok) {
@@ -3242,17 +3249,29 @@ test("every argument plan_shape marks required is one whose omission the builder
       );
       const code = omitted.status === "compiled" ? "accepted" : omitted.reasonCode;
       const refuses = code.startsWith(`plan_script_missing_argument:${action.actionId}.${argument.name}:`);
-      // THE SAME THREE ANSWERS ONE LEVEL UP: `required` is the WIRE's requirement, and this compiler satisfies it either
-      // by refusing the omission or by reading the row - `boundFromSnapshot` names which, per call.
+      // THE SAME THREE ANSWERS ONE LEVEL UP: `required` is the MOD's requirement, and this compiler satisfies it either
+      // by refusing the omission or by reading the row - `boundFromSnapshot` names which, per call. A TILE refusal is a
+      // different argument's business, so it is neither answer to this question.
       const reads =
         PLAN_SNAPSHOT_READINGS.has(argument.name) &&
         (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code));
       if (argument.required === true && !refuses && !reads)
         faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
-      if (argument.required !== true && (refuses || reads))
-        faults.push(`${action.actionId}.${argument.name}: marked optional, but an omission is answered by ${code}`);
+      // AN ARGUMENT THE BODY ANSWERS FOR IS NEVER THE REASON A REFUSAL NAMES: the Mod resolves it at execution, so an
+      // omission is either compiled (the node leaves it out, `resolvedAfter` says so) or refused for something else.
+      if (argument.required !== true) {
+        optional += 1;
+        if (refuses)
+          faults.push(
+            `${action.actionId}.${argument.name}: marked resolved-at-execution, but an omission is refused by ${code}`,
+          );
+      }
     }
   }
+  console.log(
+    `every argument plan_shape marks required is one whose omission the builder refuses: optional ${String(optional)}`,
+  );
+  assert.ok(optional > 0, "examined no argument the body answers for, so the second half of this gate could not run");
   assert.deepEqual(faults, [], faults.join("\n"));
 });
 

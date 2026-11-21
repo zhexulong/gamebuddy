@@ -1372,6 +1372,14 @@ test("the plan tool hands its compiled program to the one submission path a mode
     /\.\.\.stepAccountNote\(compiled\),/u,
     "an accepted answer still states the steps the compiler wrote or folded, not only the ones the author wrote",
   );
+  // THE RECEIPT THE COMPILER PROMISED REACHES THE MODEL. `boundFromSnapshot` was produced by every plan and read by
+  // nobody: a value she copied by hand was silently replaced there, and the answer meant to teach her to omit it never
+  // carried it - a field nobody reads is a claim nobody keeps. Both halves of the same question travel together now: what
+  // the snapshot answered for her, and what it could not answer at all.
+  assert.match(source, /\.\.\.planReadingsNote\(compiled\),/u);
+  assert.match(source, /boundFromSnapshot: compiled\.boundFromSnapshot,/u);
+  assert.match(source, /boundFromSnapshotCount: compiled\.boundFromSnapshotCount,/u);
+  assert.match(source, /readingsUnmeasured: compiled\.readingsUnmeasured,/u);
   // THE STATE THE ANSWER IS IN, beside the account, from the compiler's own field: `planStatus` is what distinguishes a
   // plan that ran all of it from one that ran the part that compiled, and an answer that omits it is read as a success.
   assert.match(source, /planStatus: compiled\.status,/u);

@@ -38,17 +38,22 @@ import { isNonNegativeSafeInteger, isRecord, isTileCoordinate } from "./protocol
 /**
  * One argument as the Mod declared it: the name a script must use, the kind it must supply, and any closed set.
  *
- * `required` is always `true`, and it is not decoration: the Mod's protocol has no optional arguments
- * (`FarmhandActionDefinitions.cs:438-439`, written when a gift-with-item action was split in two for exactly this reason),
- * and this compiler refuses any declared argument that is omitted. Measured in `.tmp/fork-why-slow.jsonl`: seven of the
- * fourteen voided batches omitted `expectedQualifiedItemId` or `slot` while supplying the action's other arguments, which
- * is what a flat name list reads like when nothing says the list is closed. The field states the rule the loop below
- * enforces, and `body-program-script.test.ts` ties the two together over every published action.
+ * `required` is the MOD's declaration, not this file's rule (`FarmhandActionArgument.ResolvedAtExecution`). `true` -
+ * every argument of every action until the planting pair declared otherwise - means the caller must supply it, and this
+ * compiler refuses an omission of one. `false` means the BODY answers for it at execution: the value is a pure function
+ * of arguments the request already carries (`plant_seed`'s `slot` and `expectedTargetId`, both re-derived on the game
+ * thread from the item the request names), so a plan may leave it out exactly where it cannot observe it. The compiler
+ * never invents a value for such an argument: it omits it and names the node the value waits for (`resolvedAfter`).
+ *
+ * Measured in `.tmp/fork-why-slow.jsonl`: seven of the fourteen voided batches omitted `expectedQualifiedItemId` or
+ * `slot` while supplying the action's other arguments, which is what a flat name list reads like when nothing says the
+ * list is closed. The field states the rule the loop below enforces, and `body-program-script.test.ts` ties the two
+ * together over every published action.
  */
 type PlanArgumentShape = Readonly<{
   name: string;
   type: string;
-  required: true;
+  required: boolean;
   enum?: readonly string[];
   description?: string;
 }>;
@@ -397,6 +402,18 @@ type RunnablePlan = Readonly<{
   readingsUnmeasured: readonly string[];
   /** Every unmeasured reading, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
   readingsUnmeasuredCount: number;
+  /**
+   * The readings this compiler OMITTED because a node earlier in the same program creates their target, one per reading,
+   * spelled `resolved_after=<actionId>.<argument>;producer=<nodeId>`.
+   *
+   * The whole point of the chained batch: `till_soil(79,18)` then `plant_seed(79,18)` composes, the plant node carries
+   * no target id at all, and the Mod computes it on the game thread from the item the request names. Named here so a
+   * reader can tell "the body was left to answer this" from "nobody wrote it". Bounded; `resolvedAfterCount` is the
+   * population.
+   */
+  resolvedAfter: readonly string[];
+  /** Every resolved-after reading, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  resolvedAfterCount: number;
   /**
    * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
    * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
@@ -875,7 +892,7 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
       Object.freeze({
         name: argument.name,
         type: argument.type,
-        required: true as const,
+        required: argument.resolvedAtExecution !== true,
         ...(argument.enum === undefined ? {} : { enum: Object.freeze([...argument.enum]) }),
         ...planArgumentDescription(argument),
       }),
@@ -889,7 +906,7 @@ function declaredArgumentsOf(registration: ActionRegistration): readonly PlanArg
       Object.freeze({
         name,
         type: declared.type,
-        required: true as const,
+        required: declared.resolvedAtExecution !== true,
         ...(declared.enum === undefined ? {} : { enum: Object.freeze([...declared.enum]) }),
         ...planArgumentDescription(declared),
       }),
@@ -1586,6 +1603,8 @@ export function compilePlanScript(
     boundFromSnapshotCount: state.boundFromSnapshot.length,
     readingsUnmeasured: Object.freeze(state.readingsUnmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
     readingsUnmeasuredCount: state.readingsUnmeasured.length,
+    resolvedAfter: Object.freeze(state.resolvedAfter.slice(0, MAX_REPORTED_PLAN_READINGS)),
+    resolvedAfterCount: state.resolvedAfter.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
@@ -1695,6 +1714,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     insertedNodeIds: [],
     boundFromSnapshot: [],
     readingsUnmeasured: [],
+    resolvedAfter: [],
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
@@ -1910,6 +1930,15 @@ type PlanScriptState = {
    * side could not check. Narrowed once, where the answer is built.
    */
   readingsUnmeasured: string[];
+  /**
+   * The readings this compiler OMITTED because a node earlier in the same program creates their target, in the order the
+   * calls were written, each `resolved_after=<actionId>.<argument>;producer=<nodeId>`.
+   *
+   * The third answer beside `boundFromSnapshot` and `readingsUnmeasured`, and the only one that is neither the snapshot's
+   * nor the author's: the value is not in the program at all, and the BODY computes it when the node runs - which is what
+   * makes `till_soil` then `plant_seed` on one tile expressible as one plan. Narrowed once, where the answer is built.
+   */
+  resolvedAfter: string[];
   /**
    * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
@@ -2418,6 +2447,14 @@ function refuseUnknownArguments(
  * unmatched tile is. (3) IS NOT SILENT: her number stands, so the answer names the argument the harness could not read
  * (`readingsUnmeasured`) - a value nothing on this side checked is a fact she has to know about the program she submits.
  * </p>
+ * <p>
+ * AND A FOURTH: the target may be one this program is ABOUT TO MAKE (`till_soil` then `plant_seed` on one tile). The
+ * snapshot cannot hold a row for a tile that is still bare, and refusing there made the batch the product needs
+ * impossible as one plan. A reading the Mod declared the body resolves (`required: false`) is therefore OMITTED when a
+ * node earlier in the same program addresses that tile, and named in `resolvedAfter` - the value is neither the
+ * snapshot's nor the author's, because the body computes it on the game thread. A reading the Mod did NOT declare that
+ * way is never omitted: it is still read from the row or refused by name.
+ * </p>
  */
 function bindSnapshotReadings(
   action: PublishedPlanAction,
@@ -2425,19 +2462,45 @@ function bindSnapshotReadings(
   snapshot: Snapshot,
   state: PlanScriptState,
   requirement: PlanArgumentRequirement,
-): readonly string[] {
+): PlanSnapshotReadings {
   const readings = action.arguments.filter((argument) => planReadingField(argument.name) !== undefined);
   const familyName = action.targetFamily;
-  if (readings.length === 0 || familyName === null) return [];
+  if (readings.length === 0 || familyName === null) return PLAN_NO_READINGS;
+  // THE TARGET THIS STEP NAMES MAY BE ONE THIS PROGRAM IS ABOUT TO MAKE, and the submit-moment snapshot cannot hold a
+  // row for a tile that is still bare: `till_soil` then `plant_seed` on that tile is the batch the product needs, and it
+  // was impossible as one plan because the binder read the snapshot and refused (`seedTargets:79,18`).
+  //
+  // THE BODY ANSWERS FOR A READING THE MOD DECLARED IT RESOLVES (`required: false`, `FarmhandActionArgument.ResolvedAtExecution`),
+  // and that declaration is what makes this honest rather than a guess: the value is a pure function of arguments the
+  // node already carries (`plant_seed`'s slot and target id are re-derived from the item the request names). So when the
+  // tile is one this program creates, this compiler OMITS the reading instead of inventing a number or copying a stale
+  // one, and says which node produces the target (`resolvedAfter`). A reading the body does NOT answer for is untouched:
+  // it is still read from the snapshot or refused by name.
+  const resolvable = readings.filter((reading) => !reading.required);
+  const tile = planWorldTileOf(action, canonical);
+  const producer = tile === null ? undefined : planProducerOnTile(state, tile);
+  const resolved: string[] = [];
+  if (producer !== undefined)
+    for (const reading of resolvable) {
+      // Her copy is dropped rather than kept: the row she remembers belongs to a tile that did not exist when she wrote
+      // it, so the only value that can be true at execution is the one the body computes.
+      delete canonical[reading.name];
+      resolved.push(`resolved_after=${action.actionId}.${reading.name};producer=${producer}`);
+    }
+  const outstanding = readings.filter((reading) => reading.required || producer === undefined);
+  if (outstanding.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved });
   const family = planSnapshotRows(snapshot, familyName);
   // NOT MEASURED, which is a different answer from "measured, and nothing is there": the doctrine every family in
   // `protocol.ts` states (`soilTiles` null versus an empty array). An unmeasured family cannot overrule the author's own
   // number and cannot refuse her either - but it SAYS SO, because a number nothing on this side checked is the one fact
   // she has to know about the program that is about to run.
   if (!family.measured) {
-    for (const reading of readings)
-      state.readingsUnmeasured.push(`unmeasured=${action.actionId}.${reading.name};family_not_published=${familyName}`);
-    return [];
+    // ONLY THE READINGS WHOSE VALUE IS STILL HERS ARE REPORTED HERE. An argument the body answers for needs no number at
+    // all, so telling her that one "stands unmeasured" would send her to supply a value the harness never wanted.
+    const unmeasured = outstanding
+      .filter((reading) => reading.required)
+      .map((reading) => `unmeasured=${action.actionId}.${reading.name};family_not_published=${familyName}`);
+    return Object.freeze({ bound: [], unmeasured: Object.freeze(unmeasured), resolved });
   }
   const rows = family.rows;
   // MEASURED, AND THE FAMILY HOLDS NOTHING: no row can match, so the target this step names does not exist. Refusing
@@ -2456,7 +2519,7 @@ function bindSnapshotReadings(
   // SELECTION, never a reading: it is how a row is found, not a value taken from it.
   const exact = planRowSelections(action, canonical, false, fields);
   const selecting = exact.length > 0 ? exact : planRowSelections(action, canonical, true, fields);
-  if (selecting.length === 0) return [];
+  if (selecting.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved });
   let chosen = planRowsMatching(rows, selecting);
   const place = planSelectedPlace(selecting);
   if (chosen.length > 1) {
@@ -2474,7 +2537,7 @@ function bindSnapshotReadings(
   if (chosen.length === 0)
     rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${place}`, state, requirement);
   const bound: string[] = [];
-  for (const reading of readings) {
+  for (const reading of outstanding) {
     const field = planReadingField(reading.name)!;
     // Only the fields the ROWS really carry: `chop_tree`'s slot is the tool its own claim names, not a field of
     // `treeChopSourceTargets`, so nothing is read for it and her number stays the only source.
@@ -2500,8 +2563,25 @@ function bindSnapshotReadings(
     canonical[reading.name] = value;
     bound.push(`bound=${action.actionId}.${reading.name};from=snapshot.${familyName}[].${field}`);
   }
-  return bound;
+  return Object.freeze({ bound: Object.freeze(bound), unmeasured: [], resolved });
 }
+
+/**
+ * What one call's readings came to, in the three answers that are not the author's - committed by `emitPlanNode` ONLY
+ * once the step is a node of the program (a call refused after being bound produced no node, and an answer that named a
+ * binding anyway would describe a program nobody runs).
+ */
+type PlanSnapshotReadings = Readonly<{
+  /** `bound=<actionId>.<argument>;from=snapshot.<family>[].<field>` - read out of the submit-moment snapshot. */
+  bound: readonly string[];
+  /** `unmeasured=<actionId>.<argument>;family_not_published=<family>` - her number stands, and nothing checked it. */
+  unmeasured: readonly string[];
+  /** `resolved_after=<actionId>.<argument>;producer=<nodeId>` - left out, and the body computes it at execution. */
+  resolved: readonly string[];
+}>;
+
+/** One call with no readings at all, which is most of them. */
+const PLAN_NO_READINGS: PlanSnapshotReadings = Object.freeze({ bound: [], unmeasured: [], resolved: [] });
 
 /** The row field this argument reads, when the surface states it as a reading rather than as a statement of intent. */
 function planReadingField(argumentName: string): string | undefined {
@@ -2685,6 +2765,7 @@ function emitPlanNode(
   const rejectMissing = (candidates: readonly PlanArgumentShape[], readingsCount: boolean): void => {
     const missing = candidates.filter(
       (declaration) =>
+        declaration.required &&
         !Object.hasOwn(supplied, declaration.name) &&
         (readingsCount || planReadingField(declaration.name) === undefined),
     );
@@ -2808,7 +2889,9 @@ function emitPlanNode(
   state.callOfNode.set(authorNodeId, state.builderCalls);
   // AND THE READINGS ARE COMMITTED ONLY NOW, because a step that was refused after being bound produced no node: an
   // answer that listed the binding anyway would be a sentence about a program nobody runs.
-  state.boundFromSnapshot.push(...readings);
+  state.boundFromSnapshot.push(...readings.bound);
+  state.readingsUnmeasured.push(...readings.unmeasured);
+  state.resolvedAfter.push(...readings.resolved);
 }
 
 /**

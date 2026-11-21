@@ -839,6 +839,52 @@ export function planRefusalAnswer(verification: unknown, submitted: string): Rea
 }
 
 /**
+ * WHAT THE HARNESS DID TO HER ARGUMENTS: the ones it read out of the snapshot, and the ones it could not.
+ *
+ * <p>
+ * Both halves are the answer to one question - "which values in this program are not the ones I wrote?" - and each is
+ * silent when it is empty, because an ordinary plan should not spend payload saying nothing. `boundFromSnapshot` is the
+ * receipt the compiler has always promised in its own docblock and never delivered: a value she copied by hand was
+ * REPLACED there, and a model that never learns it keeps paying context for a copy that will be overruled again.
+ * `readingsUnmeasured` is the same fact from the other side - the family the snapshot never published, so her number
+ * stands unchecked - and `resolvedAfter` is the third answer, the one that makes a chained batch possible: the value is
+ * not in the program at all because the BODY answers for it once the node a plan wrote before it has made the target.
+ * </p>
+ * <p>
+ * Both are windows: the count travels beside the list, and `*Truncated` states the cut rather than leaving a reader to
+ * compare two lengths.
+ * </p>
+ */
+function planReadingsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (compiled.status === "refused") return {};
+  const bound =
+    compiled.boundFromSnapshotCount === 0
+      ? {}
+      : {
+          boundFromSnapshot: compiled.boundFromSnapshot,
+          boundFromSnapshotCount: compiled.boundFromSnapshotCount,
+          boundFromSnapshotTruncated: compiled.boundFromSnapshotCount > compiled.boundFromSnapshot.length,
+        };
+  const unmeasured =
+    compiled.readingsUnmeasuredCount === 0
+      ? {}
+      : {
+          readingsUnmeasured: compiled.readingsUnmeasured,
+          readingsUnmeasuredCount: compiled.readingsUnmeasuredCount,
+          readingsUnmeasuredTruncated: compiled.readingsUnmeasuredCount > compiled.readingsUnmeasured.length,
+        };
+  const resolved =
+    compiled.resolvedAfterCount === 0
+      ? {}
+      : {
+          resolvedAfter: compiled.resolvedAfter,
+          resolvedAfterCount: compiled.resolvedAfterCount,
+          resolvedAfterTruncated: compiled.resolvedAfterCount > compiled.resolvedAfter.length,
+        };
+  return Object.freeze({ ...bound, ...unmeasured, ...resolved });
+}
+
+/**
  * The difference between the plan she wrote and the program that runs, on a plan that HAS a program.
  *
  * <p>
@@ -891,6 +937,7 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
     ...(compiled.noStepNeededCount === 0
       ? {}
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
+    ...planReadingsNote(compiled),
   });
 }
 

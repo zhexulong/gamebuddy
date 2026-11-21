@@ -51,7 +51,12 @@ const SURFACE = JSON.parse(readFileSync(SURFACE_PATH, "utf8")) as Readonly<{ act
 const PUBLISHED_ACTIONS = SURFACE.actions ?? [];
 assert.ok(PUBLISHED_ACTIONS.length > 0, "examined 0 published actions: this gate would agree with itself");
 
-type DeclaredArgument = Readonly<{ name: string; type: string; enum?: readonly string[] }>;
+type DeclaredArgument = Readonly<{
+  name: string;
+  type: string;
+  enum?: readonly string[];
+  resolvedAtExecution?: boolean;
+}>;
 
 function declaredArguments(action: Json): readonly DeclaredArgument[] {
   const schema = (action.argumentSchema ?? {}) as Record<string, Json>;
@@ -59,6 +64,9 @@ function declaredArguments(action: Json): readonly DeclaredArgument[] {
     name,
     type: typeof declared.type === "string" ? declared.type : "string",
     ...(Array.isArray(declared.enum) ? { enum: declared.enum as readonly string[] } : {}),
+    // The Mod's own declaration that its BODY answers for this value at execution, published on the artifact and read
+    // by the compiler as `required: false`.
+    ...(declared.resolvedAtExecution === true ? { resolvedAtExecution: true as const } : {}),
   }));
 }
 
@@ -392,14 +400,31 @@ test("a family the snapshot does not publish leaves the number she wrote alone",
   assert.equal(valueOf(result, "plant_seed", "expectedTargetId"), "seed_as_she_remembered_it");
   assert.equal(valueOf(result, "plant_seed", "slot"), "3");
   assert.deepEqual(boundOf(result), [], "nothing was read, so nothing claims to have been");
-  // An omission in that world is still the missing-argument refusal: the snapshot cannot answer, so it may not pretend to.
+  // AND THE ANSWER NAMES WHAT IT COULD NOT READ - for the readings whose value is still HERS. `plant_seed`'s two are not:
+  // its body answers both, so a number she never had to write is not reported as one nothing checked.
+  assert.deepEqual(result.status === "compiled" ? result.readingsUnmeasured : [], []);
+  // An omission in that world is the missing-argument refusal FOR A READING THE BODY DOES NOT ANSWER FOR: the snapshot
+  // cannot answer it and the Mod does not compute it, so accepting it would be a plan that fails once per node.
   const omitted = compile(
-    `builder.plant_seed({ x: 4, y: 9, expectedQualifiedItemId: "(O)472" });`,
-    bareSnapshot("plant_seed"),
+    `builder.fertilize_tile({ x: 4, y: 9, expectedQualifiedItemId: "(O)465" });`,
+    bareSnapshot("fertilize_tile"),
   );
   assert.match(
     omitted.status === "refused" || omitted.status === "partial" ? omitted.reasonCode : "compiled",
-    /^plan_script_missing_argument:plant_seed\.(slot|expectedTargetId):/u,
+    /^plan_script_missing_argument:fertilize_tile\.(slot|expectedTargetId):/u,
+  );
+  // THE PLANTING PAIR IS THE DECLARED EXCEPTION, in the same world: its body answers both readings, so the call compiles
+  // and the node carries neither.
+  const planted = compile(
+    `builder.plant_seed({ x: 4, y: 9, expectedQualifiedItemId: "(O)472" });`,
+    bareSnapshot("plant_seed"),
+  );
+  assert.equal(planted.status, "compiled", JSON.stringify(planted));
+  assert.equal(valueOf(planted, "plant_seed", "expectedTargetId"), undefined, "the body answers it, nobody else did");
+  assert.deepEqual(
+    planted.status === "compiled" ? planted.readingsUnmeasured : [],
+    [],
+    "a value the body owns is not an unread one",
   );
 });
 
@@ -440,9 +465,9 @@ test("a_measured_empty_family_refuses_and_an_unmeasured_one_is_named:<action>.<a
       faults.push(`${action.actionId}: an unpublished ${family} answered ${absent.reasonCode}`);
       continue;
     }
-    const expected = readings.map(
-      (reading) => `unmeasured=${action.actionId}.${reading.name};family_not_published=${family}`,
-    );
+    const expected = readings
+      .filter((reading) => reading.required)
+      .map((reading) => `unmeasured=${action.actionId}.${reading.name};family_not_published=${family}`);
     if (JSON.stringify(absent.readingsUnmeasured) !== JSON.stringify(expected))
       faults.push(
         `${action.actionId}: the answer named ${JSON.stringify(absent.readingsUnmeasured)} rather than ${JSON.stringify(expected)}`,
@@ -455,6 +480,150 @@ test("a_measured_empty_family_refuses_and_an_unmeasured_one_is_named:<action>.<a
   assert.ok(measuredEmpty > 20, `examined ${String(measuredEmpty)} actions with a measured-empty family`);
   assert.ok(unmeasured > 20, `examined ${String(unmeasured)} actions with an unpublished family`);
   assert.deepEqual(faults, [], faults.join("\n"));
+});
+
+/**
+ * THE GATE: `a_reading_bound_from_the_submit_snapshot_does_not_refuse_a_reading_a_prior_node_makes`.
+ *
+ * <p>
+ * THE PROPERTY. A reading is a value the model copies out of a snapshot. When the target does not exist YET because an
+ * earlier node of the same program is about to make it (`till_soil(79,18)` then `plant_seed(79,18)`), the snapshot cannot
+ * hold its row and refusing the plan makes the batch this product needs impossible as one plan. The Mod declares which
+ * readings its BODY answers for at execution (`resolvedAtExecution`); this gate drives every derived argument through a
+ * script whose first call addresses the same tile, against a snapshot whose family is MEASURED and holds a row at
+ * another tile - which is exactly the condition that refused the pair.
+ * </p>
+ * <p>
+ * POPULATION comes from the surface: every argument that is derived at all (a snapshot reading, or one the body answers
+ * for), never a hand-written list. A reading the body does NOT answer for is excluded from the third count on purpose -
+ * nobody can supply it, so refusing it there is the right answer and not this gate's business - and it stays in the
+ * first two counts, so the exclusion is visible.
+ * </p>
+ */
+test("a_reading_bound_from_the_submit_snapshot_does_not_refuse_a_reading_a_prior_node_makes:<action>.<argument>", () => {
+  const census: Census3 = { derived: 0, submitBound: 0, afterPriorNode: 0, refused: [], tileless: [] };
+  for (const action of PLAN_ACTIONS) for (const argument of action.arguments) readOneDerived(action, argument, census);
+  console.log(
+    `a_reading_bound_from_the_submit_snapshot_does_not_refuse_a_reading_a_prior_node_makes: derived ${String(census.derived)} · ` +
+      `bound-at-submit ${String(census.submitBound)} · bound-after-a-prior-node ${String(census.afterPriorNode)} · ` +
+      `refused ${String(census.refused.length)}`,
+  );
+  assert.ok(census.derived > 100, `examined ${String(census.derived)} derived arguments`);
+  assert.ok(census.submitBound > 50, `examined ${String(census.submitBound)} readings the snapshot answered`);
+  assert.ok(census.afterPriorNode > 0, "no reading was driven through a prior node, so this gate could not run");
+  assert.deepEqual(
+    census.refused,
+    [],
+    `the plan was refused for a reading a prior node makes: ${census.refused.join(", ")}`,
+  );
+});
+
+/** What the gate counted, so its loop stays one shape rather than five counters in scope. */
+type Census3 = {
+  derived: number;
+  submitBound: number;
+  afterPriorNode: number;
+  refused: string[];
+  tileless: string[];
+};
+
+/** One derived argument, driven twice: the ordinary submit-time binding, and the chain a prior node makes possible. */
+function readOneDerived(
+  action: PublishedPlanAction,
+  argument: PublishedPlanAction["arguments"][number],
+  census: Census3,
+): void {
+  const field = PLAN_SNAPSHOT_READINGS.get(argument.name);
+  if (field === undefined && argument.required) return;
+  census.derived += 1;
+  if (
+    field !== undefined &&
+    boundOf(compile(callScript(action, [argument.name]), snapshotWith(action))).some((binding) =>
+      binding.startsWith(`bound=${action.actionId}.${argument.name};`),
+    )
+  )
+    census.submitBound += 1;
+  // THE THIRD COUNT IS FOR THE ARGUMENTS THE BODY ANSWERS FOR: those are the ones a prior node can make readable.
+  if (argument.required) return;
+  const family = action.targetFamily;
+  const subject = `${action.actionId}.${argument.name}`;
+  if (family === null || !action.arguments.some((declared) => declared.name === "x")) {
+    census.tileless.push(subject);
+    return;
+  }
+  // The family is MEASURED and holds a row somewhere else - the exact shape that refused the pair.
+  const elsewhere = snapshotCarrying(bareSnapshot(action.actionId), family, [
+    rowAt(FAMILY_FIELDS.get(family) ?? [], { x: ROW_TILE.x + 30, y: ROW_TILE.y + 30 }),
+  ]);
+  const chained = compile(
+    [
+      `builder.till_soil({ x: ${String(ROW_TILE.x)}, y: ${String(ROW_TILE.y)}, charge: 0 });`,
+      callScript(
+        action,
+        action.arguments.filter((declared) => !declared.required).map((declared) => declared.name),
+      ),
+    ].join("\n"),
+    elsewhere,
+  );
+  const node = nodesOf(chained).find((candidate) => candidate.actionId === action.actionId);
+  if (node === undefined) {
+    census.refused.push(`${subject}:${chained.status === "refused" ? chained.reasonCode : "the step was dropped"}`);
+    return;
+  }
+  if (node.arguments[argument.name] !== undefined) {
+    census.refused.push(`${subject}:the node still carries a value nobody could observe`);
+    return;
+  }
+  census.afterPriorNode += 1;
+}
+
+/**
+ * THE FALSIFIER, spelled as the measured pair: `till_soil(79,18)` then `plant_seed(79,18)` in ONE script, with another
+ * tilled tile on the farm - the fixture under which this refused with `plan_script_target_not_in_the_submitted_snapshot:
+ * seedTargets:79,18` before the Mod declared the two readings its body answers for.
+ */
+test("till_soil then plant_seed on one tile is one plan, with another tilled tile on the farm", () => {
+  const fields = FAMILY_FIELDS.get("seedTargets");
+  assert.ok(fields !== undefined, "the Snapshot type publishes seedTargets");
+  const farm = snapshotCarrying(bareSnapshot("plant_seed"), "seedTargets", [
+    rowAt(fields, { x: 77, y: 18, slot: 11, targetId: "seed_41d8f0b6c9a2e573" }),
+  ]);
+  const chained = compile(
+    [
+      `builder.till_soil({ x: 79, y: 18, charge: 0 });`,
+      `builder.plant_seed({ x: 79, y: 18, expectedQualifiedItemId: "(O)472" });`,
+    ].join("\n"),
+    farm,
+  );
+  assert.equal(chained.status, "compiled", JSON.stringify(chained));
+  const plant = nodesOf(chained).find((node) => node.actionId === "plant_seed");
+  assert.ok(plant !== undefined, "the planting step is in the program");
+  assert.equal(
+    plant.arguments.expectedTargetId,
+    undefined,
+    "the identity the plan could not observe is left for the body, not invented and not copied from another tile",
+  );
+  assert.equal(plant.arguments.slot, undefined, "and so is the slot, which the body re-resolves from the item");
+  assert.deepEqual(
+    chained.status === "compiled" ? chained.resolvedAfter : [],
+    ["resolved_after=plant_seed.slot;producer=n01", "resolved_after=plant_seed.expectedTargetId;producer=n01"],
+    "the answer says which step the value waits for",
+  );
+  // HER COPY OF A TILE THAT DID NOT EXIST YET IS NOT CARRIED: the row she remembers belongs to another world, and the
+  // only value that can be true when the node runs is the one the body computes.
+  const withHerCopy = compile(
+    [
+      `builder.till_soil({ x: 79, y: 18, charge: 0 });`,
+      `builder.plant_seed({ x: 79, y: 18, slot: 11, expectedQualifiedItemId: "(O)472", expectedTargetId: "seed_deadbeefdeadbeef" });`,
+    ].join("\n"),
+    farm,
+  );
+  assert.equal(withHerCopy.status, "compiled", JSON.stringify(withHerCopy));
+  assert.deepEqual(
+    nodesOf(withHerCopy),
+    nodesOf(chained),
+    "her stale copy is dropped, so both scripts are one program",
+  );
 });
 
 /**
