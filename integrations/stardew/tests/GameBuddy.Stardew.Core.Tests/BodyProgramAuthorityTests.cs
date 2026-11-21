@@ -1675,6 +1675,47 @@ public sealed class BodyProgramAuthorityTests
         Open(store, catalog: catalog).OpenStatus.Should().Be(BodyProgramJournalOpenStatus.Opened);
     }
 
+    /// <summary>
+    /// TWO FACTS, TWO WORDS: the abandonment skip exists only where the programme ended `Failed`.
+    ///
+    /// <para>
+    /// `round85`'s `plan_180` closed three untilled tiles as `skipped_dependency`, so every one of them read as a tile whose
+    /// dependency failed - one stale dispatch blamed on three tiles. `SkippedProgramAbandoned` names the programme instead,
+    /// and the distinction has to be a RULE rather than a spelling: a document carrying the new word in any program state
+    /// but `Failed` would be a quiet way to close live work, so the journal refuses it by name. `Cancelled` is the case
+    /// that isolates the rule - it accepts a `Cancelled` node and a never-attempted skip - so without the clause this
+    /// document would pass on every other rule.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ASkipCausedByItsProgrammesAbandonmentIsOnlyLegalInAFailedProgram()
+    {
+        OpenBodyProgramJournalAuthority authority = Open();
+        authority.Submit(Program("program", twoNodes: true)).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+        BodyProgramJournalProgram submitted = authority.Snapshot.Programs.Single();
+
+        BodyProgramJournalState Document(BodyProgramState programState) => new(
+            BodyProgramJournalPersistence.SchemaVersion, Scope(), Policy(), 0,
+            new[]
+            {
+                submitted with
+                {
+                    State = programState,
+                    Nodes = Array.AsReadOnly(new[]
+                    {
+                        new BodyProgramJournalNode("first", BodyProgramNodeState.Cancelled, 0, 0, null, null),
+                        new BodyProgramJournalNode("second", BodyProgramNodeState.SkippedProgramAbandoned, 0, 0, null, null),
+                    }),
+                },
+            },
+            Array.Empty<BodyProgramJournalEvent>());
+
+        BodyProgramJournalPersistence.TryValidate(Document(BodyProgramState.Cancelled), out string? refusal).Should().BeFalse();
+        refusal.Should().Contain("skipped_program_abandoned_shape",
+            "the rule that separates the two skip words refuses this document, not a neighbouring state rule");
+        BodyProgramJournalPersistence.TryValidate(Document(BodyProgramState.Failed), out string? accepted).Should().BeTrue(accepted);
+    }
+
     [Fact]
     public void ReopenRejectsRejectedNodeWhoseDescendantStillCarriesExecutableContinuation()
     {

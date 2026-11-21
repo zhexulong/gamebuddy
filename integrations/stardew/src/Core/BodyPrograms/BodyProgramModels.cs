@@ -191,6 +191,18 @@ public enum BodyProgramNodeState
         /// `Failed` may carry no proof (`:163`, `:175`).
         /// </summary>
         PartiallySucceeded = 12,
+        /// <summary>
+        /// Never attempted, and never will be: the PROGRAMME was abandoned, not a dependency of this node.
+        ///
+        /// Why it exists: `round85`'s `plan_180` abandoned `n03` (a dispatch 659 s past its own deadline) and closed
+        /// `n04..n06` - three independent tiles, tied to it by `orderedAfter` alone - as `SkippedDependency`. The skips
+        /// were REQUIRED (`Pending` leaves the programme executable), so the defect was the WORD: it said a dependency
+        /// had failed, and the plan's answer then blamed three tiles for one stale dispatch. Two facts may not share one
+        /// code, so the programme's abandonment gets its own. The shape is a skip's - no attempt, no binding, no proof,
+        /// no code - so nothing downstream can read it as a failure that happened, and `TryAbandonProgram` is its only
+        /// writer.
+        /// </summary>
+        SkippedProgramAbandoned = 13,
     }
 public enum BodyProgramNodeOutcome { Succeeded = 1, Failed = 2, Cancelled = 3, Uncertain = 4, PartiallySucceeded = 5 }
 public enum BodyProgramClaimOwnershipState { NotAcquired = 1, Acquired = 2, Released = 3 }

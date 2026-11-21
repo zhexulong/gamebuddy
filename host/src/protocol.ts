@@ -1995,8 +1995,8 @@ export type BodyProgramStopRequest = Readonly<{ programId: string; stopEpoch: nu
 /**
  * Every node state the Mod's journal can settle a node in, in ONE declaration that also says what each one OWES a reader.
  *
- * The population is the Mod's own `BodyProgramNodeState` (eleven durable values, `BodyProgramModels.cs`), and it is
- * declared here as a value rather than as eleven `||` arms for one reason: the state list is what
+ * The population is the Mod's own `BodyProgramNodeState` (thirteen durable values, `BodyProgramModels.cs`), and it is
+ * declared here as a value rather than as thirteen `||` arms for one reason: the state list is what
  * `isBodyProgramNodeState` accepts AND what every reader of a plan row has to answer for, and a rule that says "only a
  * node that STOPPED owes a reason" cannot derive its population from a boolean function's source.
  *
@@ -2029,6 +2029,10 @@ export const BODY_PROGRAM_NODE_STATE_VERDICTS = Object.freeze({
   recovery_required: "stopped_without_success",
   rejected: "stopped_without_success",
   skipped_dependency: "stopped_without_success",
+  // Never attempted, and never will be, because the PROGRAMME was abandoned rather than a dependency failing. Its own
+  // token because the two causes are different facts: `round85`'s `plan_180` closed three untilled tiles under
+  // `skipped_dependency` and every one of them read as a tile to go back for.
+  skipped_program_abandoned: "stopped_without_success",
   abandoned: "stopped_without_success",
 } as const);
 export type BodyProgramNodeState = keyof typeof BODY_PROGRAM_NODE_STATE_VERDICTS;

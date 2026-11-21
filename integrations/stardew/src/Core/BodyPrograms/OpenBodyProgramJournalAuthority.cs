@@ -844,9 +844,10 @@ public sealed class OpenBodyProgramJournalAuthority
     /// What it is NOT: not a retry, and not a success. A node that was dispatched becomes \`Abandoned\` - terminal, its
     /// attempt and execution binding RETAINED (the fact that it was dispatched is the truth being recorded), its grant
     /// released, and no receipt, evidence or postcondition, so no success can ever be claimed from it. A node that was
-    /// never dispatched becomes \`SkippedDependency\`, the state for work that will not run because what it depended on
-    /// did not succeed. The program becomes \`Failed\` and the scope is writable again once no program still holds an
-    /// unknown node.
+    /// never dispatched becomes \`SkippedProgramAbandoned\`, the state for work that will not run because the PROGRAMME
+    /// it belongs to was abandoned - deliberately not \`SkippedDependency\`, which says a dependency failed and would
+    /// make every remaining tile of `round85`'s `plan_180` blame the one stale dispatch. The program becomes \`Failed\`
+    /// and the scope is writable again once no program still holds an unknown node.
     /// </para>
     /// <para>
     /// Only a poisoned program may be abandoned: an Active one has its own stop machinery, and bypassing that would skip
@@ -872,7 +873,7 @@ public sealed class OpenBodyProgramJournalAuthority
                 : node.NodeAttempt >= 1
                     // The diagnostic the recovery settlement wrote is CLEARED: in this format a non-success terminal may not carry one, and the reason now lives in the program-level `abandoned` event.
                     ? node with { State = BodyProgramNodeState.Abandoned, GrantId = null, RecoveryDiagnostic = null }
-                    : node with { State = BodyProgramNodeState.SkippedDependency, GrantId = null })
+                    : node with { State = BodyProgramNodeState.SkippedProgramAbandoned, GrantId = null })
             .ToArray();
         BodyProgramJournalProgram abandoned = program with
         {
@@ -1225,9 +1226,10 @@ public sealed class OpenBodyProgramJournalAuthority
         if (BodyProgramGraphRules.HasExecutableWork(BodyProgramGraphRules.FromJournalNodes(program), BodyProgramGraphRules.StatesOf(program))) return BodyProgramState.Active;
         // `PartiallySucceeded` is a settlement with no outright failure, so a program whose only shortfall is a partial node
         // settled `Succeeded`: the plan ran to its end, and each node's row carries what that node did not do. A
-        // `SkippedDependency`, on the other hand, is work that will never run - a node can only be skipped because what it
-        // waited on can never arrive - so it keeps the program `Failed`, exactly as a failed dependency already does.
-        return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency)
+        // `SkippedDependency` or `SkippedProgramAbandoned`, on the other hand, is work that will never run - a node is
+        // skipped because what it waited on can never arrive, or because its programme was abandoned - so either keeps the
+        // program `Failed`, exactly as a failed dependency already does.
+        return program.Nodes.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.SkippedProgramAbandoned)
             ? BodyProgramState.Failed
             : BodyProgramState.Succeeded;
     }

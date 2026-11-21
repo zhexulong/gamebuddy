@@ -53,6 +53,10 @@ const PROGRAM_STATE_NAMES = Object.freeze({
  * `partially_succeeded` (12) is the settlement of a `for_each` pass that did part of its rows. A reader that scores a
  * program from this file must not have to guess whether a partial pass was done or not done: it is neither, and the
  * name is the only thing that says so.
+ *
+ * `skipped_program_abandoned` (13) is a never-attempted node whose PROGRAMME was abandoned. It is not
+ * `skipped_dependency` (a dependency failed) and reading it as one is what made `round85`'s `plan_180` look like three
+ * tiles worth going back for.
  */
 const NODE_STATE_NAMES = Object.freeze({
   1: "pending",
@@ -67,6 +71,7 @@ const NODE_STATE_NAMES = Object.freeze({
   10: "skipped_dependency",
   11: "abandoned",
   12: "partially_succeeded",
+  13: "skipped_program_abandoned",
 });
 
 /**

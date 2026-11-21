@@ -55,6 +55,32 @@ public sealed class BodyProgramNodeStateWireTests
         projected.Nodes.Select(node => node.Y).Should().Equal(7, 7, 7);
     }
 
+    /// <summary>
+    /// THE TWO SKIP WORDS TRAVEL AS THEMSELVES, and one frame carries both.
+    ///
+    /// <para>
+    /// A dependency skip says a node never ran because what it needed never arrived; an abandonment skip says the same
+    /// node never ran because the PROGRAMME it belongs to was abandoned. `round85`'s `plan_180` reported the second as the
+    /// first, so three untilled tiles read as tiles to go back for. The second half is the load-bearing one: the wire
+    /// validator has its own copy of the vocabulary, so a state the journal can settle and the frame cannot carry would
+    /// turn the whole `program_status` answer into `invalid_body_program_result` at the one boundary where the model reads
+    /// it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheTwoSkipWordsNameThemselvesAndOneFrameCarriesBoth()
+    {
+        var snapshot = Snapshot(
+            new BodyProgramJournalNode("n01", BodyProgramNodeState.SkippedDependency, 0, 0, null, null),
+            new BodyProgramJournalNode("n02", BodyProgramNodeState.SkippedProgramAbandoned, 0, 0, null, null));
+
+        BridgeBodyProgramStatusSnapshot projected = BridgeSession.ToBridgeSnapshot(snapshot)!;
+
+        projected.Nodes.Select(node => node.State).Should().Equal("skipped_dependency", "skipped_program_abandoned");
+        BridgeProtocol.TrySerialize(new BridgeBodyProgramStatusResult("found", projected), out _, out _).Should().BeTrue(
+            "the frame carrying both words is one the wire validator accepts");
+    }
+
     [Fact]
     public void AnAbandonedNodeNamesItself()
     {

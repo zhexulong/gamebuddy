@@ -100,7 +100,7 @@ export type SettledDigestNode = ReturnType<typeof planBatchAnswer>["nodes"][numb
  * `counts` is over the WHOLE plan even when `nodes` is bounded (`MAX_SETTLED_DIGEST_NODES`), so `omitted` never turns
  * the aggregate into a partial one. Every state is the Mod's own token (`BodyProgramNodeState`), never a Host
  * translation: `succeeded`, `partially_succeeded`, `rejected`, `failed`, `cancelled`, `recovery_required`, `abandoned`,
- * `skipped_dependency`, and the Host's own `unknown` for a node the journal did not list.
+ * `skipped_dependency`, `skipped_program_abandoned`, and the Host's own `unknown` for a node the journal did not list.
  *
  * Deliberately absent: `settledAtMs` and any clock. When the journal closed, and how long this Host watched a node in
  * its state, are facts about the READING; the fact carries the first beside this rendering, and nothing about the
@@ -461,6 +461,7 @@ const SETTLED_DIGEST_SUMMARY_STATES: readonly string[] = Object.freeze([
   "recovery_required",
   "abandoned",
   "skipped_dependency",
+  "skipped_program_abandoned",
   "unknown",
 ]);
 

@@ -1528,7 +1528,7 @@ public sealed class BodyProgramControllerPumpTests
         load.Evidence.Should().BeNull();
         load.PostconditionVerification.Should().BeNull();
         foreach (BodyProgramJournalNode node in status.Nodes.Where(candidate => candidate.State != BodyProgramNodeState.Succeeded))
-            (node.State == BodyProgramNodeState.Abandoned || node.State == BodyProgramNodeState.SkippedDependency)
+            (node.State == BodyProgramNodeState.Abandoned || node.State == BodyProgramNodeState.SkippedProgramAbandoned)
                 .Should().BeTrue($"node {node.NodeId} ended as {node.State}");
 
         // THE POINT: the scope is mutable again, so the next submission is accepted instead of Quarantined.
@@ -1559,11 +1559,13 @@ public sealed class BodyProgramControllerPumpTests
     /// </para>
     /// <para>
     /// An abandoned programme that leaves its never-attempted nodes <c>Pending</c> still HAS executable work, so it is
-    /// not terminal at all: the journal refuses the document and the poison that made the scope unwritable stays. The
-    /// word is not a claim about the plan - <c>SkippedDependency</c> is the one terminal this contract can express for
-    /// work that will never run, and it carries no attempt, no binding and no proof, so nothing downstream can read it as
-    /// a failure that happened. A behavioural case for the live shape rather than for the dispatch half alone, because
-    /// only the pair together makes the scope writable again.
+    /// not terminal at all: the journal refuses the document and the poison that made the scope unwritable stays. So the
+    /// skip is required - and its WORD is the second half of this case. <c>skipped_dependency</c> would say these tiles
+    /// were waiting on something that failed, which is what the run's own answer then reported about three tiles tied to
+    /// the stale dispatch by <c>orderedAfter</c> alone; <c>skipped_program_abandoned</c> names the programme instead, and
+    /// carries no attempt, binding or proof, so nothing downstream can read it as a failure that happened. A behavioural
+    /// case for the live shape rather than for the dispatch half alone, because only the pair together makes the scope
+    /// writable again.
     /// </para>
     /// </summary>
     [Fact]
@@ -1601,7 +1603,7 @@ public sealed class BodyProgramControllerPumpTests
         dispatched.ReceiptId.Should().BeNull("no success may ever be claimed from an unknown dispatch");
 
         BodyProgramJournalNode neverStarted = abandoned.Nodes.Single(node => node.NodeId == "neighbour");
-        neverStarted.State.Should().Be(BodyProgramNodeState.SkippedDependency, "round85 closed n04..n06 exactly this way");
+        neverStarted.State.Should().Be(BodyProgramNodeState.SkippedProgramAbandoned, "round85 closed n04..n06 as a dependency skip, which blamed three tiles for one stale dispatch");
         neverStarted.NodeAttempt.Should().Be(0);
         neverStarted.AdmissionAttempt.Should().Be(0);
         neverStarted.ExecutionBinding.Should().BeNull();
@@ -1612,7 +1614,7 @@ public sealed class BodyProgramControllerPumpTests
         // The exit is durable, and the scope is writable again: a restart must not resurrect the never-started work.
         OpenBodyProgramJournalAuthority reopened = OpenBodyProgramJournalAuthority.Open(store, MachineCatalog(), Scope(), () => Policy(), () => clock.Value);
         reopened.Status("ordered").Snapshot!.Nodes.Single(node => node.NodeId == "neighbour").State
-            .Should().Be(BodyProgramNodeState.SkippedDependency);
+            .Should().Be(BodyProgramNodeState.SkippedProgramAbandoned);
         reopened.Submit(MachineProgram()).Code.Should().NotBe(BodyProgramSubmitCode.Quarantined);
     }
 

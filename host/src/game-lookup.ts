@@ -508,7 +508,8 @@ export function journalUnavailable(reason: string, missingField = "BodyProgramJo
  *
  * The population is the wire's own closed vocabulary - every state `BodyProgramNodeStatus.state` can hold has an arm - so a
  * state added to the Mod cannot arrive uncounted. `unsettled` is the four states that mean "not finished": pending, awaiting
- * admission, admitted and running.
+ * admission, admitted and running. The two skip words share one bucket because this answer counts WORK, and neither ran:
+ * which of the two causes is the plan's own node row (`planBatchAnswer`), never a total that would have to pick one.
  */
 const MY_WORK_NODE_BUCKETS: readonly (readonly [string, readonly string[]])[] = Object.freeze([
   ["succeeded", ["succeeded"]],
@@ -516,7 +517,7 @@ const MY_WORK_NODE_BUCKETS: readonly (readonly [string, readonly string[]])[] = 
   ["failed", ["failed"]],
   ["cancelled", ["cancelled"]],
   ["rejected", ["rejected"]],
-  ["skipped", ["skipped_dependency"]],
+  ["skipped", ["skipped_dependency", "skipped_program_abandoned"]],
   ["abandoned", ["abandoned"]],
   ["recoveryRequired", ["recovery_required"]],
   ["unsettled", ["pending", "awaiting_host_admission", "host_admitted", "running"]],

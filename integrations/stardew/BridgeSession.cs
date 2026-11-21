@@ -1697,7 +1697,7 @@ string? bodyProgramUnavailableReason = null,
     /// The wire name of one durable node state - EVERY state the journal can settle a node in.
     ///
     /// <para>
-    /// `BodyProgramNodeState` has eleven values and this switch used to name nine: `SkippedDependency` (10) and
+    /// `BodyProgramNodeState` has thirteen values and this switch once named nine: `SkippedDependency` (10) and
     /// `Abandoned` (11) fell through a `_ => "recovery_required"` arm, so both arrived at the Host wearing the name of a
     /// state that means "the outcome could not be determined". Measured 2026-11-08: 30 skipped and 1 abandoned node in
     /// the Mod's own journal, 31 `recovery_required` in the run's bundle, and no way to tell either fact from the other.
@@ -1725,6 +1725,10 @@ string? bodyProgramUnavailableReason = null,
         BodyProgramNodeState.RecoveryRequired => "recovery_required",
         BodyProgramNodeState.Rejected => "rejected",
         BodyProgramNodeState.SkippedDependency => "skipped_dependency",
+        // Never attempted, and never will be, because the PROGRAMME was abandoned - not because a dependency failed.
+        // `round85`'s `plan_180` closed three untilled tiles under the dependency word and the plan's answer blamed them
+        // for one stale dispatch; the two causes travel as two tokens.
+        BodyProgramNodeState.SkippedProgramAbandoned => "skipped_program_abandoned",
         BodyProgramNodeState.Abandoned => "abandoned",
         _ => $"body_program_node_state_unmapped:{(int)state}",
     };

@@ -1004,7 +1004,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     private static bool IsBodyProgramSubmitCode(string? value) => value is "accepted" or "rejected" or "idempotent" or "conflict" or "persistence_failure" or "quarantined";
     private static bool IsBodyProgramQueryCode(string? value) => value is "found" or "not_found" or "invalid_input";
     private static bool IsBodyProgramState(string? value) => value is "active" or "succeeded" or "failed" or "cancelled" or "recovery_required" or "quarantined";
-    private static bool IsBodyProgramNodeState(string? value) => value is "pending" or "awaiting_host_admission" or "host_admitted" or "running" or "succeeded" or "partially_succeeded" or "failed" or "cancelled" or "recovery_required" or "rejected" or "skipped_dependency" or "abandoned";
+    private static bool IsBodyProgramNodeState(string? value) => value is "pending" or "awaiting_host_admission" or "host_admitted" or "running" or "succeeded" or "partially_succeeded" or "failed" or "cancelled" or "recovery_required" or "rejected" or "skipped_dependency" or "skipped_program_abandoned" or "abandoned";
 
     private static bool IsValidBodyProgramDiagnostic(JsonElement value) => HasExactProperties(value, "severity", "code", "nodeId", "path", "message")
         && value.GetProperty("severity").ValueKind == JsonValueKind.String && value.GetProperty("severity").GetString() == "error"
@@ -1211,6 +1211,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         BodyProgramNodeState.RecoveryRequired => "recovery_required",
         BodyProgramNodeState.Rejected => "rejected",
         BodyProgramNodeState.SkippedDependency => "skipped_dependency",
+        BodyProgramNodeState.SkippedProgramAbandoned => "skipped_program_abandoned",
         BodyProgramNodeState.Abandoned => "abandoned",
         _ => throw new ArgumentOutOfRangeException(nameof(state), state, "Unknown Body Program node state."),
     };

@@ -236,7 +236,7 @@ public static class BodyProgramJournalPersistence
             BodyProgramState.Active => BodyProgramGraphRules.HasExecutableWork(graph, states)
                 && nodes.Values.All(node => node.State is not (BodyProgramNodeState.RecoveryRequired or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Abandoned)),
             BodyProgramState.Succeeded => nodes.Values.All(node => node.State is BodyProgramNodeState.Succeeded or BodyProgramNodeState.PartiallySucceeded),
-             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.SkippedDependency)
+             BodyProgramState.Failed => nodes.Values.Any(node => node.State is BodyProgramNodeState.Failed or BodyProgramNodeState.Rejected or BodyProgramNodeState.Abandoned or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.SkippedProgramAbandoned)
                  && !BodyProgramGraphRules.HasExecutableWork(graph, states),
             BodyProgramState.Cancelled => nodes.Values.Any(node => node.State == BodyProgramNodeState.Cancelled),
             BodyProgramState.RecoveryRequired => nodes.Values.Any(node => node.State is BodyProgramNodeState.Pending or BodyProgramNodeState.RecoveryRequired)
@@ -302,6 +302,18 @@ public static class BodyProgramJournalPersistence
                 || node.DerivedDeadlineMs is not null
                 || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null || node.FailureCode is not null) { refusal = "skipped_shape"; return false; }
         }
+        else if (node.State == BodyProgramNodeState.SkippedProgramAbandoned)
+        {
+            // The same shape as a dependency skip - it never ran - and ONE more condition, because the two words are a
+            // distinction and not a decoration: this node's cause is the PROGRAMME, so a document that carries it must be
+            // a program that ended `Failed`. Without that rule the state would be usable as a quiet way to close work in a
+            // live programme, which is the defect the distinction exists to name.
+            if (program.State != BodyProgramState.Failed || hasAttempt || node.NodeAttempt != 0 || node.AdmissionAttempt != 0
+                || node.GrantId is not null || node.ExecutionBinding is not null
+                || node.CanonicalBoundArguments is not null || node.AttemptPolicyIdentity is not null || node.ClaimOwnership is not null
+                || node.DerivedDeadlineMs is not null
+                || hasProof || node.RecoveryDiagnostic is not null || node.RejectionCode is not null || node.FailureCode is not null) { refusal = "skipped_program_abandoned_shape"; return false; }
+        }
         else if (node.State == BodyProgramNodeState.Succeeded)
         {
             if (!hasAttempt || node.RejectionCode is not null || node.FailureCode is not null || node.GrantId is not null || node.ExecutionBinding is null || !hasCompleteProof || node.RecoveryDiagnostic is not null) { refusal = "succeeded_shape"; return false; }
@@ -361,6 +373,7 @@ public static class BodyProgramJournalPersistence
             case BodyProgramNodeState.Rejected:
                 return hasAttempt && node.GrantId is null && node.ExecutionBinding is null;
             case BodyProgramNodeState.SkippedDependency:
+            case BodyProgramNodeState.SkippedProgramAbandoned:
                 return !hasAttempt && node.NodeAttempt == 0 && node.AdmissionAttempt == 0 && node.GrantId is null && node.ExecutionBinding is null;
             case BodyProgramNodeState.RecoveryRequired:
                 return hasAttempt && BodyProgramValidation.IsOpaqueDiagnostic(node.RecoveryDiagnostic) && node.GrantId is null;

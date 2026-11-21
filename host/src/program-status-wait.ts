@@ -616,9 +616,9 @@ interface PlanNodeAnswer {
    * `no_native_path` failure skipped 15 (`plan_1661`); a caller reading "15 skipped" without the name learns nothing
    * about the one tile to avoid.
    *
-   * Absent is a fact too, and not the same one: the Mod also settles every never-attempted node as
-   * `skipped_dependency` when a program is abandoned, and a skip whose producers are not in the graph (or are still
-   * running) names nothing rather than guessing one.
+   * Absent is a fact too, and not the same one: when a program is abandoned the Mod settles every never-attempted node
+   * as `skipped_program_abandoned`, whose own token names that cause (so it is not this state and owes no producer), and
+   * a skip whose producers are not in the graph (or are still running) names nothing rather than guessing one.
    */
   readonly skippedBecause?: readonly Readonly<{ nodeId: string; reasonCode: string }>[];
   /**

@@ -1166,7 +1166,7 @@ public sealed class BridgeBodyProgramProtocolTests
     /// The two node states the wire had no name for, and why they need one.
     ///
     /// <para>
-    /// <see cref="BodyProgramNodeState"/> has eleven durable values and the projection named nine: `SkippedDependency`
+    /// <see cref="BodyProgramNodeState"/> has thirteen durable values and the projection named nine: `SkippedDependency`
     /// (10) and `Abandoned` (11) had no arm, so `BridgeSession.ToWire` sent both through its catch-all as
     /// `recovery_required` - a state that means something else entirely. Measured 2026-11-08 on one run: the Mod's own
     /// durable journal held 30 `skipped_dependency` nodes, 1 `abandoned` and ZERO `recovery_required`, while the run's
@@ -1175,6 +1175,7 @@ public sealed class BridgeBodyProgramProtocolTests
     /// </summary>
     [Theory]
     [InlineData("skipped_dependency", 0, 0)]
+    [InlineData("skipped_program_abandoned", 0, 0)]
     [InlineData("abandoned", 0, 0)]
     public void BodyProgramNodeStateNamesTheJournalSettlesNodesInAreAdmittedOnTheWire(string wireState, int nodeAttempt, int admissionAttempt)
     {

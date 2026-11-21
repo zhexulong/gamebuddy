@@ -146,7 +146,7 @@ internal static class BodyProgramGraphRules
     /// </summary>
     internal static bool IsTerminal(BodyProgramNodeState state) => state is BodyProgramNodeState.Succeeded or BodyProgramNodeState.Failed
         or BodyProgramNodeState.PartiallySucceeded or BodyProgramNodeState.Cancelled or BodyProgramNodeState.Rejected
-        or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.Abandoned;
+        or BodyProgramNodeState.SkippedDependency or BodyProgramNodeState.SkippedProgramAbandoned or BodyProgramNodeState.Abandoned;
 
     private static bool DependenciesSatisfied(BodyProgramGraphNode node, IReadOnlyDictionary<string, BodyProgramNodeState> states) =>
         node.DependsOn.All(dependency => states[dependency] == BodyProgramNodeState.Succeeded);
