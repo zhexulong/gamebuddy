@@ -111,6 +111,7 @@ import { resolveRuntimePaths } from "../runtime-identity.js";
 import { type CompanionLocale, resolveCompanionLocale } from "../settings/player-preference-store.js";
 import { materializeAuthenticatedStardewLaunchPorts } from "../stardew-integration-launcher-body-program.internal.js";
 import { StardewLogicalActionRecoveryJournal } from "../stardew-logical-action-recovery-journal.js";
+import { boundObservedSnapshot } from "../stardew-observation-budget.js";
 import { buildGameSurfaceAuthoredCatalog } from "../tavern/catalog-service.js";
 import type { ChatVoiceSpeechPublisher } from "../voice.js";
 import {
@@ -256,10 +257,15 @@ function createBodyProgramTools(
         return result;
       },
       onSettled: async (status) => {
+        // Already delivered - by this pump, or by a tool call that held the turn and answered this program itself. The
+        // page read below is a bridge round trip, so a program with nothing left to say spends none.
+        if (settlement.delivered(programId)) return;
         const settledAtMs = await readProgramSettledAtMs(programId).catch(() => null);
         settlement.report({ programId, settledAtMs, compiled: nodes, status, nowMs: Date.now() });
       },
       stillWatching: () => bodyProgramConsumers.get(consumer)?.available === true,
+      // A program this Host is answering inside a tool call is not the watch's to announce (`ProgramSettlementHold`).
+      heldByToolCall: () => settlement.heldByToolCall(programId),
     }).catch(() => undefined);
   };
 
@@ -529,42 +535,66 @@ function createBodyProgramTools(
               });
               // `waited: false` AND THE REASON, from the same call: an answer silent about it leaves "this plan settles
               // in a second" and "this plan outlasts the bound" looking alike, and only one of them is worth a wait.
+              // NO SNAPSHOT HERE, and that is not an omission: the plan has not run, so the world the caller read when it
+              // wrote the script is still the world, and charging every submission a bridge round trip to re-state it
+              // would spend the latency this arm exists to save. The held arm, which answers AFTER the work, carries one.
               return answerOf(planBatchAnswer(nodes, recorded, programStatusProgress.observe(reading)?.nodes ?? []), {
                 waited: false,
                 waitReason: selfWait.reasonCode,
               });
             }
             const startedAtMs = Date.now();
-            const first = await readStatus();
-            const settled = isTerminalProgramStatus(first)
-              ? Object.freeze({
-                  result: first,
-                  waited: Object.freeze({ terminality: "terminal" as const, unreadable: null, snapshotChanged: false }),
-                })
-              : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
-            return answerOf(
-              planBatchAnswer(
-                nodes,
-                settled.result.snapshot,
-                programStatusProgress.observe(settled.result)?.nodes ?? [],
-              ),
-              {
-                // What the wait itself PROVED, on every arm: `settled` is true only when the read it ended on said the
-                // plan stopped, `waitedMs` is how long this call held the turn, and `snapshotChanged` answers whether the
-                // journal published anything while it did. "Still running" and "I could not read your plan" therefore
-                // never arrive in the same shape.
-                waited: Object.freeze({
-                  settled: settled.waited.terminality === "terminal",
-                  waitedMs: Math.max(0, Date.now() - startedAtMs),
-                  terminality: settled.waited.terminality,
-                  unreadable: settled.waited.unreadable,
-                  snapshotChanged: settled.waited.snapshotChanged,
-                }),
-                // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
-                // what is left and whether anything moved while this one held the turn.
-                status: settled.result,
-              },
-            );
+            // THE PROGRAM THIS CALL HOLDS, taken before the first read and released on every path. The watch started by
+            // `submitProgram` cannot help seeing the terminal state this call is waiting for, so while the hold is out it
+            // keeps polling and announces nothing (`ProgramSettlementHold`): one settlement, one turn.
+            const delivery = settlement.holdDelivery(programId);
+            try {
+              const first = await readStatus();
+              const settled = isTerminalProgramStatus(first)
+                ? Object.freeze({
+                    result: first,
+                    waited: Object.freeze({ terminality: "terminal" as const, unreadable: null, snapshotChanged: false }),
+                  })
+                : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
+              // The model is being handed this settlement in the result of this call, so the pump owes no fact for it.
+              // A wait that gave up claims nothing and the watch delivers the plan when it does settle.
+              if (settled.waited.terminality === "terminal") delivery.answerInTool();
+              // AND THE WORLD THE WORK LEFT BEHIND. A model that reads `settled: true` carries on in THIS turn, and a
+              // node list cannot say that the crops are in the bag or that the hoed tile is now a seed target: this is
+              // the observation `stardew_observe` would have made in its place (`readPlanWorldSnapshot`).
+              const world = await tracedStep(
+                runTrace,
+                RUN_SPAN_NAMES.snapshotObserve,
+                { surface: "game", ask: "plan_wait" },
+                () => readPlanWorldSnapshot(connection),
+              );
+              return answerOf(
+                planBatchAnswer(
+                  nodes,
+                  settled.result.snapshot,
+                  programStatusProgress.observe(settled.result)?.nodes ?? [],
+                ),
+                {
+                  // What the wait itself PROVED, on every arm: `settled` is true only when the read it ended on said the
+                  // plan stopped, `waitedMs` is how long this call held the turn, and `snapshotChanged` answers whether the
+                  // journal published anything while it did. "Still running" and "I could not read your plan" therefore
+                  // never arrive in the same shape.
+                  waited: Object.freeze({
+                    settled: settled.waited.terminality === "terminal",
+                    waitedMs: Math.max(0, Date.now() - startedAtMs),
+                    terminality: settled.waited.terminality,
+                    unreadable: settled.waited.unreadable,
+                    snapshotChanged: settled.waited.snapshotChanged,
+                  }),
+                  // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
+                  // what is left and whether anything moved while this one held the turn.
+                  status: settled.result,
+                  ...world,
+                },
+              );
+            } finally {
+              delivery.release();
+            }
           } catch (error) {
             span.end({ reasonCode: "plan_submission_failed" });
             throw error;
@@ -669,17 +699,25 @@ function createBodyProgramTools(
               ),
               staleness,
             );
-          const waited = await waitForTerminalProgramStatus(read, tracked.result, waitMs);
-          return toolResult(
-            waited.result,
-            waited.waited,
-            planAnswerReading(
-              waited.result,
-              programStatusProgress.observe(waited.result),
-              settlement.settled(params.programId),
-            ),
-            Object.freeze({ current: eventDelivery.observeStatus(waited.result), replaced: null }),
-          );
+          const delivery = settlement.holdDelivery(params.programId);
+          try {
+            const outcome = await waitForTerminalProgramStatus(read, tracked.result, waitMs);
+            // The same contract the plan tool's held turn keeps: this call is handing the settlement to the model, so the
+            // watch must not announce it as well. A wait that expires claims nothing and the watch still delivers.
+            if (outcome.waited.terminality === "terminal") delivery.answerInTool();
+            return toolResult(
+              outcome.result,
+              outcome.waited,
+              planAnswerReading(
+                outcome.result,
+                programStatusProgress.observe(outcome.result),
+                settlement.settled(params.programId),
+              ),
+              Object.freeze({ current: eventDelivery.observeStatus(outcome.result), replaced: null }),
+            );
+          } finally {
+            delivery.release();
+          }
         },
       }),
     ),
@@ -725,6 +763,47 @@ function readPlanActions(connection: GameConnection): readonly PublishedPlanActi
 function readLiveSnapshot(connection: GameConnection): Snapshot | null {
   const state = (connection as { state?: { snapshot?: Snapshot | null } }).state;
   return state?.snapshot ?? null;
+}
+
+/**
+ * The world as the Mod publishes it right now, for a plan answer that held its turn for that plan's own settlement.
+ *
+ * <p>
+ * THE LEDGER IS NOT THE WORLD. `waited.terminality: terminal` says what the journal thinks of the nodes; it says nothing
+ * about the bag or the soil the nodes just changed. Measured `round84`: a `harvest_crop` plan put the crops in the
+ * backpack and a `till_soil` plan made the tile at 70,18 a seed target (`plan_137` plants there next), and neither fact
+ * is in any node row - so a model that read `settled: true` and carried on had to spend a `stardew_observe` to learn
+ * what it had just done. This is that observation, taken inside the same call.
+ * </p>
+ *
+ * <p>
+ * THE SAME ROUTE AND THE SAME BOUND AS `stardew_observe`: the connection's own `observe` (the Mod's fresh observation,
+ * not the cached state a previous turn left) and `boundObservedSnapshot`, so the two answers carry one shape and cannot
+ * disagree about which rows a caller is handed. Where it could not be read the answer SAYS SO with a
+ * `snapshot_unavailable:<reason>` code - a cached snapshot served as though it were fresh is the exact defect
+ * `describeObservationAbsence` documents, so a failed refresh carries no `snapshot` at all: "no change" and "not read"
+ * are different facts and only one of them is safe to plan from.
+ * </p>
+ */
+export async function readPlanWorldSnapshot(connection: GameConnection): Promise<Readonly<Record<string, unknown>>> {
+  const observe = (connection as { observe?: () => Promise<Snapshot> }).observe;
+  if (typeof observe !== "function")
+    return Object.freeze({ snapshotUnavailable: "snapshot_unavailable:observation_route_unavailable" });
+  try {
+    await observe.call(connection);
+  } catch {
+    return Object.freeze({ snapshotUnavailable: "snapshot_unavailable:observe_failed" });
+  }
+  const observed = readLiveSnapshot(connection);
+  if (observed === null) return Object.freeze({ snapshotUnavailable: "snapshot_unavailable:no_snapshot_published" });
+  const bounded = boundObservedSnapshot(observed);
+  return Object.freeze({
+    snapshot: bounded.snapshot,
+    snapshotRevision: observed.revision,
+    // WHERE IT CAME FROM: the Mod's answer to this call, not the state the previous turn left behind.
+    snapshotSource: "stardew_bridge_observe",
+    observationBudget: bounded.budget,
+  });
 }
 
 function readPlanScriptRequest(value: unknown): PlanScriptRequest {

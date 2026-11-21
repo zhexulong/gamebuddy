@@ -33,6 +33,14 @@
  * snapshot of the same settled program (a later status read, a resubmission answered `idempotent`, a second watch)
  * produces nothing. A program that has not reached a terminal state produces nothing either - that claim is never
  * made, so a still-running plan cannot burn its one digest.
+ *
+ * THE SAME CLAIM ANSWERS A TOOL RESULT. A submission starts a watch immediately and the tool that submitted it may then
+ * hold its own turn for the settlement (`planSelfWaitDecision`), so both paths read the same terminal journal: measured
+ * `round84`, 40 of 57 programmes fit one wait, and each of those answers was announced again up to a second later as a
+ * `program_settled` fact with a presentation lease - one settlement, two turns. A tool call that holds a program takes
+ * `holdDelivery` before its first read (so the watch cannot announce from under it) and ends either `answerInTool` -
+ * the claim above, taken by the tool result, after which `report` says nothing for this program - or only `release`,
+ * which hands the program back to the watch: a wait that gave up is still a settlement nobody has been told about.
  */
 
 import type { WorldFact } from "./event-pump.js";
@@ -262,9 +270,45 @@ export function settledProgramFact(
   return Object.freeze({ fact, answer });
 }
 
+/**
+ * What a tool call holding a program's settlement owns while it does: the claim, or the program back.
+ *
+ * <p>
+ * ONE CALL, TWO WAYS TO END, and the difference is a fact about the model's context rather than a flag: `answerInTool`
+ * says this settlement is in the tool result the model is being handed, so nothing may announce it afterwards;
+ * `release` without it says the call did not get the settlement (a wait that expired, a read that failed) and the
+ * watch may deliver it when it does settle.
+ * </p>
+ *
+ * <p>
+ * THE HOLD IS WHAT MAKES IT RACE-FREE. Both readers poll the same journal, so a watch that read the terminal state
+ * while the call was still waiting would announce the very answer the call is about to return. `heldByToolCall` below
+ * is that gate: while a hold is out the watch keeps polling and announces nothing, and the call's own claim decides
+ * which of the two deliveries happens. Release is unconditional (`finally`), so a call that throws still hands the
+ * program back instead of silencing it.
+ * </p>
+ */
+export interface ProgramSettlementHold {
+  /** The settlement is in the tool result the model is being handed: this program's unprompted delivery is spent. */
+  answerInTool(): void;
+  /** Done holding: a program this call did NOT answer is the watch's again. */
+  release(): void;
+}
+
 export interface ProgramSettlementReporter {
   /** Compose, and hand the digest to the pump, at most once per program id. */
   report(input: SettledDigestInput): WorldFact | undefined;
+  /** Hold this program's unprompted delivery while a tool call waits on it (`ProgramSettlementHold`). */
+  holdDelivery(programId: string): ProgramSettlementHold;
+  /** Whether a tool call is holding this program right now: the watch's gate before it announces anything. */
+  heldByToolCall(programId: string): boolean;
+  /**
+   * Whether this program's settlement already reached the model, by the pump or inside a tool result.
+   *
+   * The watch asks it before composing a digest: an answer a tool result already carried owes no fact, and the answer's
+   * own clock is a bridge round trip this reading replaces.
+   */
+  delivered(programId: string): boolean;
   /**
    * The rendering this reporter announced for a program, or `null` when it has not settled one by that id.
    *
@@ -286,13 +330,19 @@ export interface ProgramSettlementReporter {
  * The map IS the claim: one entry per settled program id, holding the rendering the fact was built from. It grows with
  * the number of programs ONE runtime settled - a measured run submitted 26 programs in 24 minutes - and is released with
  * the runtime, so there is no drain to miss. An id is minted from the snapshot revision and the node list
- * (`planProgramId`), so a later plan does not inherit an earlier plan's entry.
+ * (`planProgramId`), so a later plan does not inherit an earlier plan's entry. The two sets beside it are bounded the
+ * same way and for the same reason: one entry per program this runtime answered in a tool result, and the holds that
+ * are out at this instant.
  */
 export function createProgramSettlementReporter(announce: (fact: WorldFact) => void): ProgramSettlementReporter {
   const settled = new Map<string, SettledProgramAnswer>();
+  /** Programs whose settlement a tool result carried: they have no digest, and `report` says nothing for them. */
+  const answeredInTool = new Set<string>();
+  /** Programs a tool call is waiting on right now. */
+  const held = new Set<string>();
   return Object.freeze({
     report(input: SettledDigestInput): WorldFact | undefined {
-      if (settled.has(input.programId)) return undefined;
+      if (settled.has(input.programId) || answeredInTool.has(input.programId)) return undefined;
       const composed = settledProgramFact(input);
       if (composed === undefined) return undefined;
       settled.set(input.programId, composed.answer);
@@ -301,6 +351,23 @@ export function createProgramSettlementReporter(announce: (fact: WorldFact) => v
     },
     settled(programId: string): SettledProgramAnswer | null {
       return settled.get(programId) ?? null;
+    },
+    holdDelivery(programId: string): ProgramSettlementHold {
+      held.add(programId);
+      return Object.freeze({
+        answerInTool(): void {
+          answeredInTool.add(programId);
+        },
+        release(): void {
+          held.delete(programId);
+        },
+      });
+    },
+    heldByToolCall(programId: string): boolean {
+      return held.has(programId);
+    },
+    delivered(programId: string): boolean {
+      return settled.has(programId) || answeredInTool.has(programId);
     },
   });
 }
@@ -315,6 +382,11 @@ export interface ProgramSettlementWatchOptions {
   readonly onSettled: (status: unknown) => Promise<void>;
   /** False when the runtime behind the port has drained (a closer ran, a session closed). */
   readonly stillWatching?: () => boolean;
+  /**
+   * True while a tool call is waiting on this program (`ProgramSettlementHold`): the watch keeps polling and announces
+   * nothing, because that call is about to hand the same settlement to the model inside its own result.
+   */
+  readonly heldByToolCall?: () => boolean;
   readonly now?: () => number;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly intervalMs?: number;
@@ -344,8 +416,15 @@ export async function watchProgramSettlement(
       return "stopped";
     }
     if (isTerminalProgramStatus(status)) {
-      await options.onSettled(status);
-      return "settled";
+      if (options.heldByToolCall?.() !== true) {
+        await options.onSettled(status);
+        return "settled";
+      }
+      // Held: a watcher whose bound runs out while the call still owns the answer loses the DELIVERY, not the fact -
+      // the journal holds it and `stardew_action_program_status` still reads it, exactly as for an expired watch.
+      if (now() >= deadline) return "expired";
+      await sleep(intervalMs);
+      continue;
     }
     if (options.stillWatching?.() === false) return "stopped";
     if (now() >= deadline) return "expired";
