@@ -90,11 +90,49 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
         await AcceptSessionAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Waits for one authenticated session, and refuses every connection whose frame this broker cannot
+    /// accept, one connection at a time, until the child this broker belongs to speaks the hello.
+    ///
+    /// A frame that is too long, is not JSON, is not this launch's hello, or arrives from anything but
+    /// that child refuses THE CONNECTION IT ARRIVED ON and nothing else. The pipe is bound to one child
+    /// (`maxInstances: 1`, `FirstPipeInstance`) and only that child can authenticate on it, so a refused
+    /// frame proves the writer of that connection is not serving this launch's hello - it says nothing
+    /// about the launch, which the re-offered pipe is for (ADR-0015 §3: the session is the attempt, so
+    /// ending one is not ending the launch). Measured 2026-11-22: the Host's own session frame grew past
+    /// `MaxWireBytes`, and the launch that frame belonged to was ended by the refusal.
+    ///
+    /// The wait is bounded outside this method - the supervisor hands in the bootstrap watchdog's token,
+    /// whose silence interval and ceiling are the launch's own numbers - so a child that never speaks a
+    /// hello still fails this launch, by name, without a second bound declared here.
+    /// </summary>
     private async Task AcceptSessionAsync(CancellationToken cancellationToken)
     {
         var child = host ?? throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
-        accepted = false;
-        await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+        while (true)
+        {
+            accepted = false;
+            await server.WaitForConnectionAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await AcceptConnectionAsync(child, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            // `EndOfStreamException` is an `IOException`: a peer that closed control inside its hello is
+            // refused by the same answer as one that wrote bytes this broker cannot read.
+            catch (Exception exception) when (exception is GuardianLaunchUnavailableException or IOException or JsonException)
+            {
+                DropRefusedConnection();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Authenticates the one connection this broker accepted. Everything here is decided from that
+    /// connection alone, so anything refused here is refused with the connection (see the caller).
+    /// </summary>
+    private async Task AcceptConnectionAsync(WindowsNative.SafeProcessHandle child, CancellationToken cancellationToken)
+    {
         if (!WindowsNative.GetNamedPipeClientProcessId(server.SafePipeHandle, out var clientPid) || clientPid != WindowsNative.GetProcessId(child) ||
             !WindowsNative.ProcessIdToSessionId(clientPid, out var clientSession) || !WindowsNative.ProcessIdToSessionId(WindowsNative.GetCurrentProcessId(), out var currentSession) || clientSession != currentSession)
             throw new GuardianLaunchUnavailableException("host_runtime_unavailable");
@@ -114,6 +152,18 @@ internal sealed class DesktopHostBootstrapBroker : IAsyncDisposable
             generation, inventoryDigest, runtimeAdmissionSha256,
         }, cancellationToken).ConfigureAwait(false);
         accepted = true;
+    }
+
+    /// <summary>
+    /// Gives the one pipe instance back after a connection was refused, so the next connection is
+    /// accepted. A client that left before this ran has already produced the state this asks for, and
+    /// the instance reporting either way is not a second failure.
+    /// </summary>
+    private void DropRefusedConnection()
+    {
+        try { server.Disconnect(); }
+        catch (IOException) { }
+        catch (InvalidOperationException) { }
     }
 
     /// <summary>
