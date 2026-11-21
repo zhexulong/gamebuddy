@@ -42,17 +42,20 @@
  *
  * GATE B: KEY-SET PARITY
  *
- * K_dark is the base root's key set (`:root`, 64 tokens today) and K_light the light root's (24). Two rules:
+ * K_dark is the base root's key set (`:root`) and K_light the light root's (`:root[data-theme="light"]`); the reading
+ * prints both sizes and the classification of every one-sided key. Two rules:
  *
  *   1. K_light ⊆ K_dark. A key the light root declares and the base root does not has a value in no appearance at
  *      all, so it is a finding even though the set is empty today: an assertion that only holds because nobody has
  *      written the defect yet is not an assertion.
  *   2. every k ∈ K_dark \ K_light is legal exactly when one of two properties holds:
  *
- *        P1 appearance-neutral. The value carries a unit or a family no appearance can change: a time or an easing
+ * P1 appearance-neutral. The value carries a unit or a family no appearance can change: a time or an easing
  *           (`150ms`, `0.2s`, `cubic-bezier(...)`, `steps(...)`, `ease`, `linear`), a length (`56px`, `0.1em`,
- *           `28rem`, `40ch`, `12cqi`), or a font-stack keyword (`monospace`, `system-ui`, `serif`, ...). The unit is
- *           what is matched, not the letter: `--font-mono`'s `monospace` is typography, never motion.
+ *           `28rem`, `40ch`, `12cqi`), a bare ratio (`1.68`, the leading a paragraph is read at - a multiple of
+ *           the font size, so it scales with whatever size an appearance paints), or a font-stack keyword
+ *           (`monospace`, `system-ui`, `serif`, ...). The unit is what is matched, not the letter: `--font-mono`'s
+ *           `monospace` is typography, never motion.
  *        P2 closed-loop alias. The value is exactly `var(--target)`, and following the chain from k to its terminal
  *           token must end on a token K_light re-states explicitly. An alias to a token only the dark root declares
  *           is a dark colour the light appearance inherits - the same defect, one indirection out.
@@ -85,6 +88,9 @@
  *     AA floor, and it holds each appearance's own table.
  *   - an alias whose target nothing declares. Stylelint's `value-no-unknown-custom-properties` owns that; here it
  *     arrives as the alias message, because the terminal token is missing from the light root too.
+ *   - a bare ratio's use site. The value `1.68` is read as a leading because that is what a `line-height` reads it
+ *     as, but the same bare number multiplied into a share (`calc(var(--x) * 1%)`) would pass here while carrying
+ *     the canvas's colour. A share the light root has to change is written with its `%`, which this gate does read.
  *
  * IF THE PALETTE MOVES TO `light-dark()`
  *
@@ -103,6 +109,8 @@
  *     `color_scheme_parity_failed: --badge-border aliases --palette-amber-base, but the terminal token is missing
  *     from the light root.` (scenario B below, and on the real sheet);
  *   - `--space-7: 28px` added to the base root -> green, `exemptions 0` (scenario C below, and on the real sheet);
+ *   - `--leading-planted: 1.6` added to the base root -> green, `neutral:typography` (scenario D below); before
+ *     `RATIO`, the real sheet's `--leading-relaxed: 1.68` failed as a `color_scheme_parity_failed` colour literal.
  *   - `--surface-elevated` deleted from the light root -> the literal message for it, and for `--surface-hover` the
  *     alias message naming the terminal it can no longer follow;
  *   - two tokens aliasing each other -> `alias_cycle`; a chain past the cap -> `alias_chain_too_long`;
@@ -142,6 +150,13 @@ const TIME = /(?:^|[^\w.-])\d*\.?\d+(?:ms|s)\b/u;
 const EASING = /(?:cubic-bezier|steps|linear)\(|(?:^|[^\w-])(?:ease|ease-in|ease-out|ease-in-out|linear|step-start|step-end)(?:$|[^\w-])/u;
 /** A length: the units this sheet writes its geometry and typography in. */
 const LENGTH = /(?:^|[^\w.-])\d*\.?\d+(?:px|rem|em|ch|cqi)\b/u;
+/**
+ * A bare ratio: a `line-height`, the multiple of the font size a paragraph is read at.
+ *
+ * Matched whole, because the number IS the value here - there is no unit to find it by, and
+ * `\d+` anywhere in a value would call a `rgb()` channel a ratio.
+ */
+const RATIO = /^\d*\.?\d+$/u;
 /** A generic font family. `--font-mono`'s whole value is a stack of these. */
 const FONT_FAMILY = /(?:^|[^\w-])(?:serif|sans-serif|monospace|system-ui|ui-monospace|ui-sans-serif|ui-serif|cursive|fantasy)(?:$|[^\w-])/u;
 
@@ -259,12 +274,14 @@ const appearanceOf = (selector) => APPEARANCE_ROOT.exec(selector)[1] ?? BASE;
  *
  * The families are the operator's three - `motion`, `geometry`, `typography` - and the order matters: a font stack
  * is read before the units, so `--font-mono`'s `monospace` is typography even though the value also contains the
- * letters `s` and `em` further along the stack.
+ * letters `s` and `em` further along the stack. A unitless ratio is typography for the same reason a length is
+ * geometry: `1.68` is a multiple of the font size, so it scales with whatever size an appearance paints.
  */
 export function neutralFamily(value) {
   if (FONT_FAMILY.test(value)) return "typography";
   if (TIME.test(value) || EASING.test(value)) return "motion";
   if (LENGTH.test(value)) return "geometry";
+  if (RATIO.test(value)) return "typography";
   return null;
 }
 
@@ -694,6 +711,18 @@ test("scenario C: a neutral addition is legal and needs no exemption", (t) => {
   assert.deepEqual(added, [], "a length carries no appearance, so a one-sided geometry token is legal");
   assert.equal(kind, "neutral:geometry", "--space-7: 28px is geometry, and P1 is what lets it stay one-sided");
   assert.equal(PARITY_EXEMPTIONS.length, 0, "scenario C must not need an exemption row");
+});
+
+test("scenario D: a unitless leading is typography, not a colour literal", (t) => {
+  const { added, kind } = parityDelta("leading-planted", "--leading-planted: 1.6;");
+  t.diagnostic(`scenario D: +${added.length} finding(s), leading-planted classified ${kind} - ${added.join(" | ")}`);
+
+  assert.deepEqual(
+    added,
+    [],
+    "a unitless line-height is a multiple of the font size, so it carries no appearance and the light root need not restate it",
+  );
+  assert.equal(kind, "neutral:typography", "a bare ratio is a typography fact, the leading a paragraph is read at");
 });
 
 test("gate: an alias chain is bounded, and a cycle or an overlong chain is named", (t) => {
