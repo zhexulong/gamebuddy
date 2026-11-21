@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 import {
+  BODY_PROGRAM_JOURNAL_LEASE_NAME,
   bootstrapNativeLocalPlayerFixture,
   prepareNativeLocalPlayerFixture,
   restoreNativeLocalPlayerFixture,
@@ -395,9 +396,51 @@ test("restore keeps the journal the run wrote in the bundle, then removes the li
     reason: null,
     directory: archiveDirectory,
     detail: null,
+    lease: "absent",
     fileCount: 2,
     files: liveDigests,
   });
+});
+
+/**
+ * The store's lease is a HANDLE's footprint, not the journal's content, and the bundle keeps the fact rather than the
+ * file.
+ *
+ * Measured 2026-11-21: a copy of that lease sat in `<repo>/tools/body-program-journal/` after a run whose game was
+ * killed hard, and the next launch was read as hung behind it for seven minutes; deleting the copy appeared to unblock
+ * the run, and released nothing, because a copied lease has no handle behind it to release. The archive therefore
+ * copies `journal.json` alone and records `lease: present|absent|not_scoped` in its place.
+ */
+test("restore keeps the journal and never the lease, and records that a writer held the scope", async (t) => {
+  const options = { ...(await createFixture(t, "journal-lease-not-archived")), action: "equip_tool" };
+  const stardewSaveRoot = join(options.root, "Saves");
+  const journalScope = journalScopeFor(options, stardewSaveRoot);
+  const template = join(options.root, "templates", options.saveName);
+  await mkdir(template, { recursive: true });
+  await mkdir(stardewSaveRoot);
+  await writeFile(join(template, options.saveName), "template-save");
+  await writeFile(join(template, "SaveGameInfo"), "template-info");
+  const evidenceDir = join(options.root, "run-bundle");
+  await mkdir(evidenceDir, { recursive: true });
+
+  await prepareNativeLocalPlayerFixture({ ...options, stardewSaveRoot });
+  await mkdir(journalScope, { recursive: true });
+  const journalLive = '{"state":2,"programId":"farm_day5_b"}\n';
+  await writeFile(join(journalScope, "journal.json"), journalLive);
+  // The lease exactly as the store leaves it: zero bytes, no pid, no owner, no start time inside.
+  await writeFile(join(journalScope, BODY_PROGRAM_JOURNAL_LEASE_NAME), "");
+
+  const restored = await restoreNativeLocalPlayerFixture({ ...options, stardewSaveRoot, evidenceDir });
+
+  const archiveDirectory = join(evidenceDir, "body-program-journal");
+  assert.deepEqual(await journalDigests(archiveDirectory), [{ path: "journal.json", sha256: sha256(journalLive) }]);
+  await assert.rejects(
+    lstat(join(archiveDirectory, BODY_PROGRAM_JOURNAL_LEASE_NAME)),
+    /ENOENT/,
+    "a copied lease carries no handle, so it is a lock-shaped file nobody owns: the bundle must not hold one",
+  );
+  assert.equal(restored.journalArchive.lease, "present", "whether a writer still held the scope is the fact kept");
+  assert.equal(restored.journalArchive.fileCount, 1);
 });
 
 /**

@@ -10,13 +10,19 @@ This directory holds the frozen measurement, and nowhere else. The live journal 
   `host/src/body-program-for-each.test.ts` names this file as the journal's document form; the refusal it measures
   (`for_each_where_unrecognised:in`) came from a live run, and this sample is another run's document - the sample is
   cited for what it is, never as the file that carried that code.
-- **`tools/body-program-journal/` is a run's output, not source.** It holds `journal.json` and the `.journal.lock`
-  lease beside it - a copy of one Mod journal scope directory
+- **`tools/body-program-journal/` is a run's output, not source.** It holds `journal.json` alone: a copy of one Mod
+  journal scope directory
   (`<Constants.DataPath>/BodyProgramJournal-v1/stardew/<saveId>/<worldId>/<playerId>/<companionId>/`, see
-  `integrations/stardew/WindowsBodyProgramJournalStore.cs`), which is why the lease sits beside the journal. Both names
-  are git-ignored there because `archiveBodyProgramJournal` in `tools/lib/stardew-native-local-player-fixture.mjs`
-  removes that whole directory (`rm`, recursive) before copying a fresh scope in, and a run's evidence root is
-  `<repo>/tools` (`launch-ladder-live.mjs` writes its result file there and hands `dirname(resultPath)` to `restore`).
+  `integrations/stardew/WindowsBodyProgramJournalStore.cs`), made by `archiveBodyProgramJournal` in
+  `tools/lib/stardew-native-local-player-fixture.mjs`, which removes that whole directory (`rm`, recursive) and copies
+  the journal in. A run's evidence root is `<repo>/tools` (`launch-ladder-live.mjs` writes its result file there and
+  hands `dirname(resultPath)` to `restore`), which is why the copy lives here.
+- **The scope's lease (`.journal.lock`) is NOT copied**, and the marker's
+  `lease: "present" | "absent" | "not_scoped"` says what the live scope held when the archive was taken. The lease is a
+  retained handle its Mod process owns and the operating system releases when that process dies; the file is zero bytes
+  with no pid, no owner and no time inside, so a copy carries nothing - it only reads as a lock somebody has to clear,
+  which is what it was taken for on 2026-11-21 (a seven-minute stall read as a hang behind a file nothing held). Both
+  names stay git-ignored here as a safety net for a scope copied by hand.
 
 The sample used to sit in that wiped directory, so every run deleted it and left the live pair in its place - measured
 2026-11-15, three times in one day, each time visible only as `D` on two paths in `git status`. A measurement stored

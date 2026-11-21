@@ -1414,6 +1414,24 @@ const JOURNAL_MARKER_FILE = `${JOURNAL_NAME}.json`;
  */
 export const BODY_PROGRAM_JOURNAL_ARCHIVE_NAME = JOURNAL_NAME;
 
+/**
+ * The scope's lease file, named here because the archive must NOT copy it.
+ *
+ * `WindowsBodyProgramJournalStore` holds `<scope>/.journal.lock` as a retained handle for as long as a writer lives,
+ * and the operating system releases that handle when the process dies
+ * (`integrations/stardew/WindowsBodyProgramJournalStore.cs:88`, `TryHoldScopeLease`). The FILE carries none of that:
+ * zero bytes, no pid, no owner, no start time - and a copy of it carries no handle either. Copied into a run's evidence
+ * bundle it becomes a lock-shaped file that nobody owns, in a directory no scope ever points at.
+ *
+ * Measured 2026-11-21: exactly that copy sat in `<repo>/tools/body-program-journal/` after `round87`'s game was killed
+ * hard, the next launch (`round87b`) was read as hung behind it for seven minutes, and deleting it appeared to unblock
+ * the run. The deletion released nothing - there was nothing behind it to release - so the cost was the gap between a
+ * file that LOOKS like a lock and a lock. The archive therefore copies the journal and RECORDS the lease's presence
+ * instead (`journalArchiveRecord.lease`), which is the fact worth keeping: whether a writer still held this scope when
+ * the run ended.
+ */
+export const BODY_PROGRAM_JOURNAL_LEASE_NAME = ".journal.lock";
+
 async function backupBodyProgramJournal(options, backup) {
   // The bootstrap-phase prepare has no binding yet (the game has not created the
   // save whose ids scope the journal), and offline callers declare no save root.
@@ -1493,7 +1511,7 @@ async function restoreBodyProgramJournal(backup, evidenceDir) {
   const { path, existed } = marker;
   if (existed === null) {
     if (path !== null || marker.saveRoot !== null) throw new Error("invalid_fixture_backup_manifest");
-    return journalArchiveRecord({ reason: "no_journal_scope" });
+    return journalArchiveRecord({ reason: "no_journal_scope", lease: "not_scoped" });
   }
   if (typeof path !== "string" || typeof existed !== "boolean") throw new Error("invalid_fixture_backup_manifest");
   const scopePath = ownedJournalScopePath(marker);
@@ -1534,13 +1552,18 @@ async function restoreBodyProgramJournal(backup, evidenceDir) {
  *
  * One constructor for both sides on purpose: the marker is the file a later reader finds and the result is what the
  * launcher prints, and two hand-written booleans would drift the moment either side gained a reason.
+ *
+ * `lease` is the one fact the archive keeps ABOUT the lease without keeping it: `present`/`absent` says whether a
+ * writer still held the scope when the archive was taken, and `not_scoped` says no scope was declared at all. A copy
+ * of the lease file is never taken - see `BODY_PROGRAM_JOURNAL_LEASE_NAME` for what that copy cost.
  */
-function journalArchiveRecord({ reason, directory = null, detail = null, files = [] }) {
+function journalArchiveRecord({ reason, directory = null, detail = null, files = [], lease = "absent" }) {
   return Object.freeze({
     archived: reason === null,
     reason,
     directory,
     detail,
+    lease,
     fileCount: files.length,
     files: Object.freeze([...files]),
   });
@@ -1550,12 +1573,15 @@ function journalArchiveRecord({ reason, directory = null, detail = null, files =
  * Every regular file under `root` with its sha256, `/`-separated and sorted so two trees compare as values.
  *
  * Symlinks are skipped rather than followed: the journal store writes one regular file per scope, and a link
- * followed out of the scope would copy bytes the transaction does not own.
+ * followed out of the scope would copy bytes the transaction does not own. The lease is skipped for a different
+ * reason: it is a handle's footprint, not the journal's content, and both sides of the comparison skip it - the live
+ * scope and the copy - so "the archive holds what was live" stays a statement about the journal.
  */
 async function journalFileDigests(root) {
   const files = [];
   const visit = async (directory, prefix) => {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === BODY_PROGRAM_JOURNAL_LEASE_NAME) continue;
       const name = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const absolute = join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolute, name);
@@ -1580,32 +1606,43 @@ async function journalFileDigests(root) {
  * bundle that cannot be written, a copy that does not match its source - is recorded in the marker and the removal
  * proceeds, so evidence capture can never block a run. The record names the absolute directory, the file count and
  * a sha256 per file, so "the archive holds what was live" is a comparison rather than a claim.
+ *
+ * What it copies is the JOURNAL. The lease is not copied: it is a process-held handle whose file says nothing about
+ * its holder, so a copy of it is a lock-shaped file with nothing behind it (`BODY_PROGRAM_JOURNAL_LEASE_NAME`). Its
+ * presence is recorded instead, which keeps the one thing worth knowing - whether a writer still held the scope then.
  */
 async function archiveBodyProgramJournal(scopePath, evidenceDir) {
   if (!(await exists(scopePath))) return journalArchiveRecord({ reason: "no_live_journal" });
+  const lease = (await exists(join(scopePath, BODY_PROGRAM_JOURNAL_LEASE_NAME))) ? "present" : "absent";
   if (typeof evidenceDir !== "string" || evidenceDir.length === 0)
-    return journalArchiveRecord({ reason: "no_bundle_path" });
-  if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute" });
+    return journalArchiveRecord({ reason: "no_bundle_path", lease });
+  if (!isAbsolute(evidenceDir)) return journalArchiveRecord({ reason: "bundle_path_not_absolute", lease });
   const directory = join(evidenceDir, BODY_PROGRAM_JOURNAL_ARCHIVE_NAME);
   // A bundle inside the scope would be copied and then deleted by the removal one line below, leaving a marker that
   // claims an archive nobody can read. Refused as a refusal rather than trusted.
   const containment = relative(resolve(scopePath), resolve(directory));
   if (!containment.startsWith("..") && !isAbsolute(containment))
-    return journalArchiveRecord({ reason: "bundle_inside_journal_scope", directory });
+    return journalArchiveRecord({ reason: "bundle_inside_journal_scope", directory, lease });
   try {
     const live = await journalFileDigests(scopePath);
     // The archive directory is ours and inside the bundle, so it is replaced rather than merged: a stale file
     // beside a fresh copy would make `fileCount` describe two different runs at once.
     await rm(directory, { recursive: true, force: true });
-    await cp(scopePath, directory, { recursive: true });
+    await cp(scopePath, directory, {
+      recursive: true,
+      // Filtered out of the copy itself: `cp` would otherwise put a fresh lease in the bundle, which is exactly the
+      // lock-shaped file this record exists to stop producing.
+      filter: (source) => basename(source) !== BODY_PROGRAM_JOURNAL_LEASE_NAME,
+    });
     const copied = await journalFileDigests(directory);
     if (JSON.stringify(copied) !== JSON.stringify(live)) throw new Error("journal_archive_hash_mismatch");
-    return journalArchiveRecord({ reason: null, directory, files: copied });
+    return journalArchiveRecord({ reason: null, directory, files: copied, lease });
   } catch (error) {
     return journalArchiveRecord({
       reason: "copy_failed",
       directory,
       detail: String(error?.message ?? error).slice(0, 200),
+      lease,
     });
   }
 }

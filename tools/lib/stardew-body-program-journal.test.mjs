@@ -367,7 +367,8 @@ test("the repo's frozen journal sample lives outside the directory a run deletes
   }
 
   // The two names a scope directory holds. `journal.json` is the journal and `.journal.lock` is the store's lease -
-  // both are written by a run, so the only directory that may hold them is the one a run owns. `wipe_target_tracked`
+  // only the journal is copied here (`lease` in the archive record says what the live scope held instead), but both
+  // stay ignored: a scope copied by hand must not turn the next commit into a dirty tree. `wipe_target_tracked`
   // above already refuses a tracked one (and prints the path), so what is left to assert here is the ignore itself: a
   // narrowed .gitignore turns the next re-harvest into an untracked file instead of a dirty one. Compared as git
   // spells it (`/`) rather than as `join` spells it - on Windows `join` yields a backslash, and the comparison would

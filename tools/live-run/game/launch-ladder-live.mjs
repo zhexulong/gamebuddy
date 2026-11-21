@@ -44,6 +44,7 @@ import {
 } from "../../lib/live-run-teardown.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
+import { waitForFixtureRootFree } from "../core/fixture-wait.mjs";
 import { resolveLiveRunRoot, runDirectoryName } from "../core/capture.mjs";
 import { openRunClosure } from "../core/run-closure.mjs";
 import { assertPromptSurfaceFresh } from "../core/prompt-surface-freshness.mjs";
@@ -212,28 +213,17 @@ const liveGameProcesses = () => listStardewProcessIds();
  * starts while another lane holds the lock has its own transaction overwritten
  * mid-flight and loses its restore — observed for real, which is why this waits
  * instead of racing.
+ *
+ * The wait itself — its three bounds and the line it prints on every heartbeat — lives in `core/fixture-wait.mjs`,
+ * where a test can put a real lock directory and a real clock in front of it. What stays here is the wiring: this
+ * launcher's lock path, its process reader, and the transaction record that names the holder.
  */
-async function waitForFreeFixture(deadlineMs = Date.now() + 45 * 60 * 1000) {
-  for (;;) {
-    const game = liveGameProcesses();
-    const locked = fs.existsSync(lockDir);
-    if (game.length === 0 && !locked) return;
-    if (game.length === 0 && locked) {
-      const idleMs = Date.now() - fs.statSync(lockDir).mtimeMs;
-      if (idleMs > 3 * 60 * 1000) {
-        const aside = `${lockDir}.orphaned-${Date.now()}`;
-        fs.renameSync(lockDir, aside);
-        console.log(
-          `[recover] orphaned fixture transaction renamed aside: ${path.basename(aside)} (idle ${Math.round(idleMs / 1000)}s)`,
-        );
-        return;
-      }
-    }
-    if (Date.now() > deadlineMs) throw new Error("fixture_never_became_free");
-    console.log(`[wait] fixture busy (game=${game.join(",") || "none"}, lock=${locked}); retrying in 30s`);
-    await sleep(30_000);
-  }
-}
+const waitForFreeFixture = () =>
+  waitForFixtureRootFree({
+    lockPath: lockDir,
+    gameProcessIds: liveGameProcesses,
+    ownerId: currentOwnerId,
+  });
 
 /**
  * When the game started talking, from the one file this launch already owns.
