@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { runPaths } from "./config.mjs";
+import { collectProcessLedger, openProcessLedger } from "./process-ledger.mjs";
 import {
   describeGameCleanup,
   GAME_CLIENT_ROLE,
@@ -21,7 +22,7 @@ import {
   recordRunGame,
   survivingGameIdentities,
 } from "./run-game.mjs";
-import { registerRunProcess } from "./run-owner.mjs";
+import { registerRunProcess, registeredRunProcesses } from "./run-owner.mjs";
 
 const STAGE = "E:\\projects\\ai-game-companion\\.live-runs\\gc1.stage";
 const GAME_DIR = "D:\\Steam\\steamapps\\common\\Stardew Valley";
@@ -55,6 +56,16 @@ const playerGame = () => [
   row(900, 5, "StardewModdingAPI.exe", `"${GAME_DIR}\\StardewModdingAPI.exe"`),
   row(901, 900, "Stardew Valley.exe", `"${GAME_DIR}\\Stardew Valley.exe"`),
 ];
+
+/**
+ * Another LANE's game: the same installation, the native ladder's fixture mods root.
+ *
+ * Measured 2026-11-21 (`cabinseat-r30wx`): this is pid 28328 as `SMAPI-latest.txt` described it, started 3s
+ * BEFORE that run's own launch driver, while its ledger named it `LEFT BEHIND`.
+ */
+const SIBLING_MODS = "C:\\Users\\long\\AppData\\Local\\GameBuddy\\stardew-fixtures\\mods";
+const siblingGame = (pid = 28328, parentPid = 4) =>
+  row(pid, parentPid, "StardewModdingAPI.exe", `"${GAME_DIR}\\StardewModdingAPI.exe" --mods-path "${SIBLING_MODS}"`);
 
 const tableOf = (rows) => () => ({ examined: rows.length + 600, rows });
 
@@ -191,6 +202,101 @@ test("the cleanup line says which of the three things happened", () => {
     describeGameCleanup({ recorded: [identity], surviving: { kind: "unverifiable", surviving: [] } })[0],
     /^RUN-GAME-CLEANUP: unverifiable - /u,
   );
+});
+
+/*
+ * The two lines of one run's terminal are two readings of ONE population: the game this run can prove it
+ * caused. Measured 2026-11-21 (`cabinseat-r30wx`) they were not - `RUN-GAME-CLEANUP: no game this run started`
+ * stood beside `PROCESS-LEDGER: LEFT BEHIND 28328(StardewModdingAPI.exe/game-smapi)` for another lane's
+ * native-ladder fixture game, which the ledger's shared-installation marker had claimed.
+ *
+ * The fix is not "print the game line last" - it is one authority (the loader whose command line carries this
+ * run's own mods root), so the ledger can only name a game this run caused, and the game line says which
+ * Stardew processes it saw and did NOT claim. Both halves are driven from the same table here.
+ */
+test("the cleanup line names the Stardew process it examined and did not claim, and claims nothing of it", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-game-unclaimed-"));
+  try {
+    const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+    mkdirSync(paths.stateDir, { recursive: true });
+    const record = recordRunGame({
+      paths,
+      stageRoot: paths.stageRoot,
+      readGame: tableOf([row(4, 0, "System"), siblingGame()]),
+    });
+    assert.deepEqual(record.added, [], "another lane's game is not this run's to claim");
+    assert.deepEqual(
+      record.unclaimed.map((entry) => [entry.pid, entry.name]),
+      [[28328, "StardewModdingAPI.exe"]],
+      "the reading names what it examined and did not claim, rather than staying silent about it",
+    );
+    const lines = describeGameCleanup({
+      recorded: recordedGameProcesses(paths),
+      surviving: { kind: "nothing_recorded", surviving: [] },
+      examined: record.examined,
+      unclaimed: record.unclaimed,
+    });
+    assert.equal(lines.length, 1, "nothing was claimed, so there is no second identity to report");
+    assert.match(
+      lines[0],
+      /^RUN-GAME-CLEANUP: no game this run started \(examined \d+ processes by image name; 1 other Stardew process from this installation is not this run's: 28328\(StardewModdingAPI\.exe\)\)$/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the cleanup line's claimed population is the ledger's game entries", () => {
+  const root = mkdtempSync(join(tmpdir(), "gb-run-game-authority-"));
+  try {
+    const paths = runPaths({ outRoot: join(root, "run"), stageRoot: join(root, "run.stage") });
+    mkdirSync(paths.stateDir, { recursive: true });
+    const table = [row(4, 0, "System"), smapi(paths.stageRoot), client(), siblingGame()];
+    const readGame = tableOf(table);
+    const record = recordRunGame({ paths, stageRoot: paths.stageRoot, readGame });
+    // The ledger is driven from the SAME table, with the registry the record just wrote - the shape `close()` uses.
+    // `before` is the run's OPENING table, which is what `createdOnly` compares against: the sibling game did not
+    // exist when this run opened and did when it closed, exactly as on `cabinseat-r30wx`.
+    const ledger = openProcessLedger({
+      stageRoot: paths.stageRoot,
+      readTable: tableOf([row(4, 0, "System")]),
+    });
+    const collected = collectProcessLedger(ledger, {
+      registry: registeredRunProcesses(paths),
+      query: (text) => ({
+        examined: table.length,
+        rows: table.filter((entry) => String(entry.commandLine ?? "").includes(text)),
+      }),
+      readTable: readGame,
+    });
+    const lines = describeGameCleanup({
+      recorded: recordedGameProcesses(paths),
+      surviving: { kind: "gone", surviving: [] },
+      examined: record.examined,
+      unclaimed: record.unclaimed,
+    });
+    const claimedByTheLine = [...lines[0].matchAll(/(\d+)\(game-(?:smapi|client)\)/gu)].map((match) =>
+      Number(match[1]),
+    );
+    const claimedByTheLedger = collected.entries.map((entry) => entry.pid);
+    assert.deepEqual(
+      claimedByTheLine.sort((left, right) => left - right),
+      claimedByTheLedger.sort((left, right) => left - right),
+      "the game line and the ledger name the same pids: two spellings of one population cannot disagree",
+    );
+    assert.deepEqual(
+      claimedByTheLedger,
+      [38372, 40100],
+      "and that population is this run's loader and its client, not the sibling lane's game",
+    );
+    assert.equal(lines.length, 2, "a claimed identity and an observed one are two lines, never one sentence");
+    assert.match(
+      lines[1],
+      /^RUN-GAME-CLEANUP: observed but not claimed: 1 other Stardew process from this installation is not this run's: 28328\(StardewModdingAPI\.exe\) - not this run's to claim or end$/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("a registered pid with no role of the game's is not part of the game population", () => {

@@ -467,7 +467,7 @@ async function main() {
    * to predate the first process this invocation creates, and its "after" snapshot has to follow the last one
    * it stops. A ledger opened inside `close()` would have nothing to compare.
    */
-  const ledger = openProcessLedger({ stageRoot: paths.stageRoot, gameDir: run.gameDir });
+  const ledger = openProcessLedger({ stageRoot: paths.stageRoot });
   const close = ({ code, reason, teardown }) => {
     if (closed) return code;
     closed = true;
@@ -508,6 +508,9 @@ async function main() {
       recorded: recordedGameProcesses(paths),
       surviving: survivingGameIdentities(recordedGameProcesses(paths)),
       examined: gameRecord.examined,
+      // The Stardew processes this run examined and did not claim. Named so the line cannot read as "no game"
+      // beside a live one on a machine where a sibling lane runs its own game (`.tmp/lane-launchorphan.md`).
+      unclaimed: gameRecord.unclaimed,
     };
     for (const line of describeGameCleanup(game)) console.log(line);
     const reading = closeProcessLedger(ledger, collected, {

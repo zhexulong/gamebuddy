@@ -9,10 +9,8 @@
  *
  *   stage          the run's stage root. It appears in the browser's `--user-data-dir=<stage>/browser-profile`,
  *                  in every phase process (`node …/phases/capture.mjs <stage>/state/run.json`) and in the
- *                  command line of anything they spawn.
- *   game-smapi     the SMAPI executable inside the installation this run was configured with. Scoped to
- *   game-client    processes that did not exist when the run opened, because the game folder is shared with
- *                  the player's own game and a marker alone would claim their session.
+ *                  command line of anything they spawn - including the Mod loader the Host launches, whose
+ *                  `--mods-path` names this run's own transaction under the stage.
  *   host           the pid of the Host child this run launched (`<stage>/state/launch.json` -> `childPid`).
  *   guardian-tree  everything BELOW the parent of that Host pid - the native Desktop supervisor's own tree.
  *                  Only the supervisor it launched the Host through is the server of this run's guardian
@@ -20,6 +18,23 @@
  *                  claimed here - but it is recorded by identity too (`lib/run-game.mjs`, roles `game-smapi`
  *                  and `game-client`), because a harness must take back the game it caused, and the
  *                  `policy` exemption below must never cover it.
+ *
+ * THERE IS NO "THE GAME INSTALLATION" MARKER, and its absence is a measurement. The ledger used to claim any
+ * `<gameDir>\StardewModdingAPI.exe` that appeared after it opened (`createdOnly`, which answers "not the player's
+ * session" - the case `a game process that existed before the run opened is not claimed` still guards). The
+ * installation is SHARED, so that marker could not tell two harnesses apart: on 2026-11-21 a frontend run whose
+ * launch had failed printed
+ *
+ *   RUN-GAME-CLEANUP: no game this run started (examined 357 processes by image name)
+ *   PROCESS-LEDGER: LEFT BEHIND 28328(StardewModdingAPI.exe/game-smapi)
+ *
+ * about pid 28328, a SIBLING lane's native-ladder fixture game (its SMAPI log says `Mods go here:
+ * …\GameBuddy\stardew-fixtures\mods` and its save is `GameBuddyFixtureStable2_453048112`; it was created three
+ * seconds BEFORE this run's own launch driver). The run's game reading, which asks the run-specific question
+ * (`lib/run-game.mjs`: the loader whose command line carries THIS stage's mods root), was right and the ledger
+ * was the false sentence. So the game is claimed here from ONE authority only - the identity the run recorded in
+ * its registry (`recordRunGame`, which `close()` calls before `collectProcessLedger`) - and this module no longer
+ * asks about the installation at all.
  *
  * The two readings the caller asserts:
  *
@@ -40,11 +55,12 @@ export const LEDGER_PREFIX = "PROCESS-LEDGER";
 /**
  * The markers this run's processes answer to, with the reason each one is specific to this run.
  *
- * `createdOnly` says the marker alone is not enough: the same path can belong to the player's own game, so
- * only a process that appeared after the run opened is attributed to it. That basis is recorded on the
- * reading rather than implied, so a row that appeared mid-run and was never ours can be spotted.
+ * `createdOnly` says the marker alone is not enough: the supervisor's tree also holds what the player already had
+ * on screen when this run opened, so only a process that appeared after the run opened is attributed to it. That
+ * basis is recorded on the reading rather than implied, so a row that appeared mid-run and was never ours can be
+ * spotted.
  */
-export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, hostStartTime = null, guardianPid = null }) {
+export function ownershipMarkers({ stageRoot, hostPid = null, hostStartTime = null, guardianPid = null }) {
   const markers = [
     {
       id: "stage",
@@ -54,22 +70,6 @@ export function ownershipMarkers({ stageRoot, gameDir, hostPid = null, hostStart
       reason: "the run's own stage root: the browser profile, the phase processes and their children",
     },
   ];
-  if (typeof gameDir === "string" && gameDir.length > 0) {
-    markers.push({
-      id: "game-smapi",
-      kind: "commandline",
-      text: `${gameDir}\\StardewModdingAPI.exe`,
-      createdOnly: true,
-      reason: "the Mod loader this run's launch started, in the installation it was configured with",
-    });
-    markers.push({
-      id: "game-client",
-      kind: "commandline",
-      text: `${gameDir}\\Stardew Valley.exe`,
-      createdOnly: true,
-      reason: "the game process under that loader, created after this run opened",
-    });
-  }
   if (Number.isSafeInteger(hostPid) && hostPid > 0) {
     const host = {
       id: "host",
@@ -112,7 +112,6 @@ const snapshotOf = (table) =>
  */
 export function openProcessLedger({
   stageRoot,
-  gameDir = null,
   hostPid = null,
   hostStartTime = null,
   guardianPid = null,
@@ -121,11 +120,10 @@ export function openProcessLedger({
   const before = snapshotOf(readTable());
   return Object.freeze({
     stageRoot,
-    gameDir,
     hostPid,
     hostStartTime,
     guardianPid,
-    markers: ownershipMarkers({ stageRoot, gameDir, hostPid, hostStartTime, guardianPid }),
+    markers: ownershipMarkers({ stageRoot, hostPid, hostStartTime, guardianPid }),
     before,
     openedAt: new Date().toISOString(),
   });
@@ -182,7 +180,6 @@ export function collectProcessLedger(
       notes: [],
       markers: ownershipMarkers({
         stageRoot: ledger.stageRoot,
-        gameDir: ledger.gameDir,
         hostPid: host,
         hostStartTime: hostStarts,
         guardianPid,
@@ -212,7 +209,6 @@ export function collectProcessLedger(
 
   const markers = ownershipMarkers({
     stageRoot: ledger.stageRoot,
-    gameDir: ledger.gameDir,
     hostPid: host,
     hostStartTime: hostStarts,
     guardianPid: guardian,

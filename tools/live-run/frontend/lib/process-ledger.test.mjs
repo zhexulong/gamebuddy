@@ -47,20 +47,16 @@ const row = (pid, parentPid, name, extra = {}) => ({
   ...extra,
 });
 
-test("the marker population names its reasons, and the game markers are created-only", () => {
-  const markers = ownershipMarkers({ stageRoot: STAGE, gameDir: GAME_DIR, hostPid: 8080, guardianPid: 7070 });
+test("the marker population names its reasons, and only the supervisor's tree is created-only", () => {
+  const markers = ownershipMarkers({ stageRoot: STAGE, hostPid: 8080, guardianPid: 7070 });
   assert.deepEqual(
     markers.map((marker) => marker.id),
-    ["stage", "game-smapi", "game-client", "host", "guardian-tree"],
+    ["stage", "host", "guardian-tree"],
+    "the installation is NOT one of them: a shared game folder cannot tell two harnesses apart (2026-11-21)",
   );
   for (const marker of markers) assert.ok(marker.reason.length > 20, `${marker.id} must state why it is this run's`);
   assert.equal(markers.find((marker) => marker.id === "stage").createdOnly, false);
-  assert.equal(markers.find((marker) => marker.id === "game-smapi").createdOnly, true);
-  assert.equal(markers.find((marker) => marker.id === "game-client").createdOnly, true);
   assert.equal(markers.find((marker) => marker.id === "guardian-tree").createdOnly, true);
-  // The executable markers are derived from the configured installation, not spelled here.
-  assert.equal(markers.find((marker) => marker.id === "game-smapi").text, `${GAME_DIR}\\StardewModdingAPI.exe`);
-  assert.equal(markers.find((marker) => marker.id === "game-smapi").text, `${GAME_DIR}` + "\\StardewModdingAPI.exe");
 });
 
 test("a process this run never claimed is not recorded", () => {
@@ -90,24 +86,55 @@ test("the stage root claims the browser and the phase processes, with their star
   for (const entry of collected.entries) assert.match(entry.startTime, /^2026-11-15T06:00/u);
 });
 
-test("a game process that existed before the run opened is not claimed, and one that appeared after is", () => {
-  const playerGame = row(500, 4, "StardewModdingAPI.exe");
-  const ourGame = row(501, 7070, "StardewModdingAPI.exe");
-  const sql = [`${GAME_DIR}\\StardewModdingAPI.exe`];
+test("a process under the supervisor's tree that predates the run is not claimed", () => {
+  const playerGame = row(500, 7070, "StardewModdingAPI.exe");
+  const ours = row(501, 7070, "StardewModdingAPI.exe");
   const ledger = openProcessLedger({
     stageRoot: STAGE,
-    gameDir: GAME_DIR,
-    readTable: tableOf([row(4, 0, "System"), row(500, 4, "StardewModdingAPI.exe")]),
+    guardianPid: 7070,
+    readTable: tableOf([row(4, 0, "System"), row(7070, 4, "GameBuddy.Desktop.exe"), playerGame]),
   });
   const collected = collectProcessLedger(ledger, {
-    query: queriesOf({ [sql[0]]: [playerGame, ourGame] }),
-    readTable: tableOf([row(4, 0, "System"), row(500, 4, playerGame.name), row(501, 7070, ourGame.name)]),
+    query: queriesOf({}),
+    readTable: tableOf([
+      row(4, 0, "System"),
+      row(7070, 4, "GameBuddy.Desktop.exe"),
+      row(500, 7070, playerGame.name),
+      row(501, 7070, ours.name),
+    ]),
   });
   assert.deepEqual(
     collected.entries.map((entry) => entry.pid),
     [501],
-    "the player's own game was running before this run opened, so it is not this run's",
+    "the supervisor's tree reaches only as far back as this run: a session already on screen is not this run's",
   );
+});
+
+test("a game from this installation that this run did not start is not claimed", () => {
+  /*
+   * Measured 2026-11-21 (`cabinseat-r30wx`): a sibling lane's native-ladder fixture game ran beside a frontend run
+   * whose launch had failed, and the ledger named it.
+   *
+   *   RUN-GAME-CLEANUP: no game this run started (examined 357 processes by image name)
+   *   PROCESS-LEDGER: LEFT BEHIND 28328(StardewModdingAPI.exe/game-smapi)
+   *
+   * The run's own game reading was right (the loader's command line carried no mods root of this stage's) and the
+   * ledger's marker was the coarse half: any `<gameDir>\StardewModdingAPI.exe` that appeared after this ledger
+   * opened, on a SHARED installation that cannot tell two harnesses apart.
+   */
+  const siblingMods = "C:\\Users\\long\\AppData\\Local\\GameBuddy\\stardew-fixtures\\mods";
+  const sibling = row(28328, 4, "StardewModdingAPI.exe", {
+    commandLine: `"${GAME_DIR}\\StardewModdingAPI.exe" --mods-path "${siblingMods}"`,
+  });
+  const ledger = openProcessLedger({
+    stageRoot: STAGE,
+    readTable: tableOf([row(4, 0, "System")]),
+  });
+  const collected = collectProcessLedger(ledger, {
+    query: queriesOf({ [`${GAME_DIR}\\StardewModdingAPI.exe`]: [sibling] }),
+    readTable: tableOf([row(4, 0, "System"), row(28328, 4, "StardewModdingAPI.exe")]),
+  });
+  assert.deepEqual(collected.entries, [], "another lane's game is not this run's, however much it looks like one");
 });
 
 test("the guardian tree claims what the supervisor started for us, and never the supervisor itself", () => {
@@ -260,13 +287,10 @@ test("a collect that could not read the table records no entries and says which 
 });
 
 test("the reading names the marker population it examined, so a zero is a measurement", () => {
-  const ledger = openProcessLedger({ stageRoot: STAGE, gameDir: GAME_DIR, readTable: tableOf([]) });
+  const ledger = openProcessLedger({ stageRoot: STAGE, readTable: tableOf([]) });
   const collected = collectProcessLedger(ledger, { query: queriesOf({}), readTable: tableOf([]) });
   const reading = closeProcessLedger(ledger, collected, { readTable: tableOf([]) });
-  assert.match(
-    describeProcessLedger(reading)[0],
-    /markers=\[stage,game-smapi\(created\),game-client\(created\)\] examined 0 run-owned, leftovers 0/u,
-  );
+  assert.match(describeProcessLedger(reading)[0], /markers=\[stage\] examined 0 run-owned, leftovers 0/u);
 });
 
 test("the Host pid this run launched is recorded even when the table no longer holds it", () => {

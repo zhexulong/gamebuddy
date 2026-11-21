@@ -44,6 +44,11 @@ const isGameRole = (role) => role === GAME_LOADER_ROLE || role === GAME_CLIENT_R
  *
  * `stageRoot` is resolved before it is compared because the run records the stage as the operator spelled
  * it (`--out .live-runs/x` gives a relative stage), while a command line always carries the absolute one.
+ *
+ * `unclaimed` is the other half of the same query and not a leftover of it: the game images this run examined
+ * and did NOT claim. On a machine where a sibling lane runs its own harness, that is a real fact about the run's
+ * terminal - `no game this run started` beside a live `StardewModdingAPI.exe` reads as a lie unless the line says
+ * which Stardew process it saw and refused (measured 2026-11-21, `.tmp/lane-launchorphan.md`).
  */
 export function identifyRunGame({
   stageRoot,
@@ -67,7 +72,11 @@ export function identifyRunGame({
       startTime: row.startTime,
       role: loaders.has(row.pid) ? GAME_LOADER_ROLE : GAME_CLIENT_ROLE,
     }));
-  return Object.freeze({ examined: measured.examined, rows });
+  const claimed = new Set(rows.map((row) => row.pid));
+  const unclaimed = measured.rows
+    .filter((row) => (LOADER_IMAGE.test(row.name) || CLIENT_IMAGE.test(row.name)) && !claimed.has(row.pid))
+    .map((row) => ({ pid: row.pid, name: row.name }));
+  return Object.freeze({ examined: measured.examined, rows, unclaimed });
 }
 
 /**
@@ -80,11 +89,18 @@ export function identifyRunGame({
 export function recordRunGame({ paths, stageRoot, readGame } = {}) {
   const recorded = registeredRunProcesses(paths);
   const reading = identifyRunGame({ stageRoot, recorded, readGame });
-  if (reading === null) return Object.freeze({ kind: "unverifiable", examined: null, rows: [], added: [] });
+  if (reading === null)
+    return Object.freeze({ kind: "unverifiable", examined: null, rows: [], added: [], unclaimed: [] });
   const known = new Set(recorded.map((record) => record.pid));
   const added = reading.rows.filter((row) => !known.has(row.pid));
   for (const row of added) registerRunProcess(paths, { pid: row.pid, role: row.role, startTime: row.startTime });
-  return Object.freeze({ kind: "measured", examined: reading.examined, rows: reading.rows, added });
+  return Object.freeze({
+    kind: "measured",
+    examined: reading.examined,
+    rows: reading.rows,
+    added,
+    unclaimed: reading.unclaimed,
+  });
 }
 
 /** The game identities this run recorded, `[]` when it recorded none. */
@@ -120,11 +136,31 @@ export function survivingGameIdentities(identities, { readTable = processTable, 
 
 const listed = (entries) => entries.map((entry) => `${entry.pid}(${entry.role ?? entry.name})`).join(" ");
 
+/** "1 other Stardew process from this installation is not this run's: 28328(StardewModdingAPI.exe)". */
+function describeUnclaimed(unclaimed) {
+  const one = unclaimed.length === 1;
+  return `${String(unclaimed.length)} other Stardew process${one ? "" : "es"} from this installation ${
+    one ? "is" : "are"
+  } not this run's: ${listed(unclaimed)}`;
+}
+
 /**
  * The game's own cleanup line. Three answers, because "this run started no game", "this run's game is still
  * on screen" and "this machine cannot say" are three different facts about a run.
+ *
+ * A fourth line carries the distinction two readers got wrong on 2026-11-21 (`.tmp/lane-launchorphan.md`): the
+ * game identity this run CLAIMED, and the game identity it merely OBSERVED. `unclaimed` is the second half - the
+ * Stardew processes the image query returned that carry no mods root of this run's - and it is named without
+ * being claimed or ended: another lane's harness game and the player's own world look like it, and neither is
+ * this run's to take back (#3715).
  */
-export function describeGameCleanup({ recorded, surviving, examined = null }) {
+export function describeGameCleanup({ recorded, surviving, examined = null, unclaimed = [] }) {
+  const observed =
+    unclaimed.length === 0
+      ? []
+      : [
+          `RUN-GAME-CLEANUP: observed but not claimed: ${describeUnclaimed(unclaimed)} - not this run's to claim or end`,
+        ];
   if (surviving.kind === "unverifiable")
     return [
       "RUN-GAME-CLEANUP: unverifiable - the process table did not answer, so this run cannot say whether the game it started is gone",
@@ -132,14 +168,15 @@ export function describeGameCleanup({ recorded, surviving, examined = null }) {
   if (surviving.kind === "alive")
     return [
       `RUN-GAME-CLEANUP: game_still_alive: ${listed(surviving.surviving)} (could not terminate) - this run started a game and did not take it back`,
+      ...observed,
     ];
   if (recorded.length === 0)
     return [
-      `RUN-GAME-CLEANUP: no game this run started${
+      `RUN-GAME-CLEANUP: no game this run started (${
         examined === null
-          ? " (the process table was not read for one)"
-          : ` (examined ${String(examined)} processes by image name)`
-      }`,
+          ? "the process table was not read for one"
+          : `examined ${String(examined)} processes by image name`
+      }${unclaimed.length === 0 ? "" : `; ${describeUnclaimed(unclaimed)}`})`,
     ];
-  return [`RUN-GAME-CLEANUP: game_terminated_by_run: ${listed(recorded)}`];
+  return [`RUN-GAME-CLEANUP: game_terminated_by_run: ${listed(recorded)}`, ...observed];
 }
