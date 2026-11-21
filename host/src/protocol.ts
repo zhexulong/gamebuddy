@@ -1853,11 +1853,22 @@ export type ActionDescriptorArgument = Readonly<{
    * tool. The meaning belongs to the action, so the action's owner states it and it cannot drift from the handler.
    */
   description?: string;
+  /**
+   * The Mod's own declaration that this argument's value may be ABSENT from a Body Program node, because the body
+   * resolves it on the game thread from the arguments that are present (`FarmhandActionArgument.ResolvedAtExecution`).
+   *
+   * Read rather than tolerated: it is what lets a plan leave out a value it cannot observe - the identity of a target
+   * its own earlier node creates - while every other argument stays mandatory. `true` only; the Mod omits the member
+   * when it has nothing to declare, so its absence is the claim that the argument is the caller's to supply.
+   */
+  resolvedAtExecution?: boolean;
 }>;
 
 export type ActionRegistrationDescriptor = Readonly<{
   arguments?: readonly ActionDescriptorArgument[];
-  argumentSchema?: Readonly<Record<string, { type: string; enum?: readonly string[]; description?: string }>>;
+  argumentSchema?: Readonly<
+    Record<string, { type: string; enum?: readonly string[]; description?: string; resolvedAtExecution?: boolean }>
+  >;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }> | string;
   effect?: "read" | "write";
@@ -6055,7 +6066,8 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     if (!Array.isArray(value.arguments) || value.arguments.length > 32) return false;
     for (const arg of value.arguments) {
       if (!isRecord(arg)) return false;
-      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues", "description"])) return false;
+      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues", "description", "resolvedAtExecution"]))
+        return false;
       if (typeof arg.name !== "string" || !/^[a-z][a-zA-Z0-9_]{0,63}$/.test(arg.name)) return false;
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
       if ("description" in arg && arg.description !== undefined) {
@@ -6069,6 +6081,8 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
         if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;
         if (!arg.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
       }
+      if ("resolvedAtExecution" in arg && arg.resolvedAtExecution !== undefined && arg.resolvedAtExecution !== true)
+        return false;
       if ("boundedEnumValues" in arg && arg.boundedEnumValues !== undefined) {
         if (
           !Array.isArray(arg.boundedEnumValues) ||
@@ -6087,6 +6101,8 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     for (const [key, prop] of Object.entries(value.argumentSchema)) {
       if (!/^[a-z][a-zA-Z0-9_]{0,63}$/.test(key)) return false;
       if (!isRecord(prop) || typeof prop.type !== "string") return false;
+      if ("resolvedAtExecution" in prop && prop.resolvedAtExecution !== undefined && prop.resolvedAtExecution !== true)
+        return false;
       if ("enum" in prop && prop.enum !== undefined) {
         if (!Array.isArray(prop.enum) || prop.enum.length === 0 || prop.enum.length > 128) return false;
         if (!prop.enum.every((item) => typeof item === "string" && item.length > 0 && item.length <= 64)) return false;
