@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 56 cs member(s) over 30, 8 class(es) over 200, 21 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4748, largest ExecutionManager at 27036 lines / 907 members across 53 partial(s).",
-  "revision": "bfc0c628",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 56 cs member(s) over 30, 8 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4755, largest ExecutionManager at 27102 lines / 908 members across 53 partial(s).",
+  "revision": "d41ef50e",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -35,7 +35,7 @@
       "language": "cs",
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-      "line": 2297,
+      "line": 2293,
       "value": 63,
       "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
@@ -266,7 +266,7 @@
       "language": "cs",
       "name": "ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1999,
+      "line": 2007,
       "value": 71,
       "reason": "70 -> 71 in `51ccae18`: the multiplexer's switch expression gained the `farmhand_action_policy_request` arm, and an arm is one point. Collapsing the three per-type marker `if`s above it was tried in this lane and the tree refused it - tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs:227 builds the phase vocabulary from `MonitorNativeChatIngress(\"literal\")` emissions and fails with `navigation_execution_dequeued is no longer emitted anywhere in the Mod`, and the same function refuses a marker passed as a value. One literal emission per message type is that guard's own requirement, so one point is what a new wire type costs here. Recorded, not absorbed; the revert in this lane is the proof it cannot be deleted."
     },
@@ -323,7 +323,7 @@
       "language": "cs",
       "name": "ModEntry.OnGameLaunched(object?,GameLaunchedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 308,
+      "line": 316,
       "value": 41
     },
     {
@@ -331,7 +331,7 @@
       "language": "cs",
       "name": "ModEntry.OnUpdateTicked(object?,UpdateTickedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1212,
+      "line": 1220,
       "value": 42
     },
     {
@@ -339,7 +339,7 @@
       "language": "cs",
       "name": "ModEntry.OnWarped(object?,WarpedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1511,
+      "line": 1519,
       "value": 71
     },
     {
@@ -347,7 +347,7 @@
       "language": "cs",
       "name": "ModEntry.TryCreateSceneObservationInput()",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 2836,
+      "line": 2844,
       "value": 60
     },
     {
@@ -355,7 +355,7 @@
       "language": "cs",
       "name": "ModEntry.TryInitializeEmbodiment()",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 893,
+      "line": 901,
       "value": 58
     },
     {
@@ -658,7 +658,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 1070,
+      "line": 1115,
       "value": 55,
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
@@ -732,7 +732,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 5146,
+      "line": 5150,
       "value": 67,
       "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one. 65 -> 67 here: the wallet's arm is the same three-part optional scalar test (`value.money !== undefined && value.money !== null && !isNonNegativeSafeInteger(value.money)`), inline for the same reason - a balance the diagnostic cannot name is a refusal that prints the bare `invalid_snapshot` the rest of this function exists to replace. Two points for one field, measured by the gate's own biome reading."
     },
@@ -741,7 +741,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 6154,
+      "line": 6158,
       "value": 199
     },
     {
@@ -749,7 +749,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2650,
+      "line": 2654,
       "value": 69,
       "reason": "recorded at 11e7cc9b: 66 -> 69, in `51ccae18` (a policy change reaches a running world as a message, not a poll). Measured 66 at 83ae46f0, 69 at that commit and at every commit after it."
     },
@@ -1144,7 +1144,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 547,
+      "value": 543,
       "reason": "550 -> 558 in `a3e6eb34`, the batch-node row table reaching the model: the two new overloads `IsProofShape(string?,string?,string?)` and `IsProofShape(JsonElement)` each test the proof shape against `BODY_PROGRAM_PROOF_NODE_STATES`, and `IsValidBodyProgramNodeStatus` gained the two `MayCarryProof` state guards plus `evidence`/`postconditionVerification` in its key list. Growth in branches, not a re-partition: the type is still one part and its 143 methods include the two new ones."
     },
     {
@@ -1153,8 +1153,8 @@
       "parts": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "value": 320,
-      "reason": "324 -> 329 over the same single part, and the arithmetic is in the members: `e2a6ae87` (a receipt states which programme its execution belongs to) added `OriginOf(string?)` = 5 and replaced the three-argument `TryProjectReceipt` (2) with one carrying a `BridgeExecutionOrigin` (2), so +5. Structure moved with it - 85 -> 86 methods - so this is a re-record of a changed shape, not a raised ceiling on an unchanged one."
+      "value": 317,
+      "reason": "317, three points below the 320 recorded at bfc0c628, over the same single part and the same 82 methods. `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member) is the only commit to touch this file since that record, so the fall is the six catch-all arms that left its wire projections - four of them could only ever return a word a named member already owns - with the one `!Enum.IsDefined(state)` guard that replaced the fifth adding a point back. The lines it bought are in this type's size entry."
     },
     {
       "id": "cs:ExecutionManager",
@@ -1162,8 +1162,8 @@
       "parts": 53,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4748,
-      "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved. THIS READING IS 4590 AND IT SHRANK: 4621 at `0e9d1db2` fell to 4608 at `4449d787` across the commits between them, and the last -18 is one commit - `DiscoverWoodFenceTargets`, `DiscoverCrabPotTargets` and `DiscoverFertilizerTargets` traded their duplicated window scans and their order-then-trim tails for one helper, which removed more points than the helper added."
+      "value": 4755,
+      "reason": "4748 -> 4755 over the same 53 parts. Three commits touched this type's partials after bfc0c628 and the arithmetic is theirs: `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member) took the `_ => throw` arm out of the facility-close projection and `f76de0b9` took four more out of the disposition and Body Program submit/query/state tables - every one of those arms named a member the switch already had, so what replaces them is the compiler's exhaustiveness check, not a new branch. An arm that threw WAS a branch, so removing five of them can only lower this number; the +7 is therefore inside `ef0d3cd3` (the fishing settle hands the body back before it restores the tool slot), whose settle now decides between `can_move`, `using_tool` and `pulling_out_of_water` by name instead of assuming the body came free. Growth in named decisions, not a raised ceiling: no catch-all survives in any of them, so the next member added to either enum is a build failure here rather than a silent word."
     },
     {
       "id": "cs:ModEntry",
@@ -1172,7 +1172,7 @@
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
       "value": 2755,
-      "reason": "2718 -> 2752 across eight commits (`07fe81f6` +4, `9b573a97` +16, `9bbadccf` +2, `52fb0b8d` +13, `2fb661e2` -15, `2c72e961` +27, `e0a3cb31` -6, `feff335b` -7), then 2752 -> 2749 over the same 58 parts across the five commits that followed `83ae46f0` (`cfc5d407`, `97b20e49`, `629760f2`, `51ccae18`, `9adf97b5`). The one that replaced a method is `51ccae18`: the 120-tick config poll is gone and a forward-only push pair took its place, and the drain's new switch arm is the one point it added back. 2749 is the ceiling now."
+      "reason": "HELD AT 2755, THE COMMITTED VALUE, and this working tree measures 2757. `git diff bfc0c628..HEAD -- 'integrations/stardew/ModEntry*.cs'` is empty: nothing committed has touched this type since the record. The +2 is UNCOMMITTED body-hold work - `ModEntry.Instrumentation.cs` adds `private static string BodyHoldReport()` and the two call-site interpolations it feeds, and `ModEntry.cs` installs the probe - so recording it here would encode a half-written state and go stale the moment that method is renamed or reverted, which is what this type's size entry names as the reason its own record is compared on `parts` and `methods`. Re-record when the body-hold lane commits."
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1250,7 +1250,7 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2443,
+      "lines": 2439,
       "methods": 141,
       "reason": "lines 2421 -> 2455 and methods 141 -> 143 in `a3e6eb34` (+38/-4 in the file): the two `IsProofShape` overloads, one for the typed status row and one for a `JsonElement`, which is the wire row's other half."
     },
@@ -1272,9 +1272,9 @@
       "files": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "lines": 1767,
+      "lines": 1771,
       "methods": 82,
-      "reason": "recorded at 11e7cc9b: methods 86 -> 82 and lines 1767 -> 1732, all of it in `04598eda` (the executor stops narrating its body). The four members that left are the body-trace channel, measured one by one: `TryCreateBodyTraceEvent`, `TryCreateSemanticEvent`, `IsBodyTraceCategory`, `IsNavigationTrace`. `parts` stays 1 and the type's value fell 329 -> 326 with them. `git log 04598eda..11e7cc9b -- integrations/stardew/BridgeSession.cs` is empty, so nothing has touched it since."
+      "reason": "Re-recorded at d41ef50e: 1767 -> 1771 lines over the SAME 82 methods and the same single part. All four lines are `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member), the only commit to touch this file since bfc0c628. SIX catch-all arms left and what replaced them is the cost: `BodyProgramExecutionOriginKind`'s `_ =>` became the named `BodyProgramExecutionOriginKind.Unattributed =>`; the `BodyProgramSubmitCode`, `BodyProgramControllerResultCode`, `BodyProgramQueryCode` and `BodyProgramState` tables lost their `_ =>` outright, because each switch already names every member and the arm could only return a word one of them owns; and `BodyProgramNodeState`'s `_ =>` became a `!Enum.IsDefined(state)` guard in front of a switch that now names all thirteen, so a cast-invalid int is still answered by name while a fourteenth member fails the build here. Those two code lines and the paragraphs saying why no catch-all is left are the whole +4: the compiler noticing the next member is bought with lines, not with branches, and the type's own complexity FELL 320 -> 317 in the same commit."
     },
     {
       "id": "cs:ExecutionManager",
@@ -1283,9 +1283,9 @@
       "files": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 27036,
-      "methods": 907,
-      "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED, and the arithmetic is 875 + 1 = 876 methods (the extracted helper `NearestFirstRadiusWindowRows`), 25623 + 9 = 25632 lines (three call sites made one) - both measured on this tree over the same 52 partials and 51 files, not carried from the previous record."
+      "lines": 27102,
+      "methods": 908,
+      "reason": "Re-recorded at d41ef50e: 907 -> 908 methods and 27036 -> 27102 lines at the same 53 parts. THE METHOD is `ef0d3cd3`'s, in `farmhandexecutioncontroller.fishingactions.cs`: `private static string DescribeHeldFishingBody(FishingRod rod)` reads `can_move`, `using_tool` and `pulling_out_of_water` back instead of assuming the body came free. THE LINES are that partial's 71 insertions and 5 deletions plus the settlement reorder in the same commit. THE RECORDED 27036 WAS ITSELF STALE-HIGH: this type's partials gained 74 net lines since bfc0c628 (fishing +66, the staged `resourcetoolactions` receipt change +8, and `bfd5871a`/`f76de0b9`'s catch-all removals 1-for-1) while the gate measures +66, so the number this pass replaces already carried 8 lines its own commit's tree did not have. The catch-all removals in those two commits cost no member and no line: five `_ => throw` arms went and the members they named were already in the switch - the compiler noticing the next member, not growth accepted."
     },
     {
       "id": "cs:FarmhandActionCatalog",
@@ -1308,6 +1308,17 @@
       "lines": 1363,
       "methods": 36,
       "reason": "recorded at 11e7cc9b: methods 34 -> 36 and lines 1255 -> 1363, all of it in `51ccae18` (a policy change reaches a running world as a message, not a poll) - the commit this record predates: two tests were added here to prove the push can only re-publish the catalogue's own enabled subset. The 83ae46f0 record went stale at that commit, not in the merge."
+    },
+    {
+      "id": "cs:FishingActionTests",
+      "name": "FishingActionTests",
+      "parts": 1,
+      "files": 1,
+      "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/FishingActionTests.cs",
+      "line": 50,
+      "lines": 1003,
+      "methods": 37,
+      "reason": "First record, and it is a TEST type rather than a branched body: 1003 lines / 37 methods / 1 part, three lines over the 1000-line ceiling. The arithmetic is `ef0d3cd3` (the fishing settle hands the body back before it restores the tool slot), which added 237 lines and removed 6 here because the settle gained the cases that measure it - the held-body receipt and the three flags that can keep the body, and the hand-back-before-slot-restore order as a gate - so this is 231 net lines of cases bought by one commit's defect. RECORDED AS DEBT, NOT TRIMMED: the three lines are cases and assertions like the other thousand, and shaving three of them to fit a ceiling would optimize the number and not the code. A class whose length is a table of cases is a length reading and not a complaint about hard-to-follow code - it is over the SIZE ceiling only, and the gate records no class-complexity entry for it - and what would really take it under 1000 is splitting the shape pins from the behaviour cases, which nothing in this unit does."
     },
     {
       "id": "cs:ForEachNodeExecutionTests",
@@ -1340,7 +1351,7 @@
       "line": 10,
       "lines": 15801,
       "methods": 344,
-      "reason": "15683 -> 15750 lines and 344 -> 345 methods at the same 58 parts, over the five commits that touched this type's partials after 83ae46f0. THE METHOD is `51ccae18`'s and has to stay on this type: the 120-tick config poll (`RefreshFarmhandCapabilityPublication`) is gone and `HandleFarmhandActionPolicy` + `ApplyFarmhandActionPolicy` replace it, and integrations/stardew/tests/farmhandcapabilitypublicationprojectionmetadata.cs:112,140 requires exactly those two method names on `ModEntry` by reflection, to prove a pushed policy can only re-publish the catalogue's own enabled subset - moving them to another type fails that test by name, not by degree. THE LINES are named rather than summed per commit because this history is not a line: `cfc5d407` is not an ancestor of 83ae46f0, it arrived through `9adf97b5`, so a per-commit sum would report a story nobody can replay. What each added: `cfc5d407` + `97b20e49` the live-locale wait and the fixture's re-arm, `629760f2` the companion bubble's declared engine slot and its draw site, `51ccae18` the policy push, `9adf97b5` the merge. Growth, not a move: no partial changed hands, and the class's own complexity FELL over the same stretch (2752 -> 2749), so this is 67 more lines without one more branch than the push needed. Then `04598eda` (the executor stops narrating its body) took the two trace methods out of this type - 345 -> 343 methods and 15750 -> 15730 lines - and the merges after it added the last 10 lines with no member change; the two policy methods named above are still here, so the reflection test still holds. Re-recorded at 11e7cc9b at 343 / 15740."
+      "reason": "HELD AT 15801 LINES / 344 METHODS, THE COMMITTED VALUES, and this working tree measures 15826 / 345. `git diff bfc0c628..HEAD -- 'integrations/stardew/ModEntry*.cs'` is empty: nothing committed has touched this type since the record was taken. The +25 lines and the one extra method are UNCOMMITTED body-hold work - `ModEntry.cs` +8 (the probe install) and `ModEntry.Instrumentation.cs` +18/-1 (`private static string BodyHoldReport()`), while `WindowModeManagement.cs` +1/-1 is `bfd5871a`'s catch-all rename and a wash. Recording 345 here would encode a half-written state and go stale the moment that method is renamed or reverted, which is the exact failure the `parts`/`methods` staleness test exists for, so this entry waits for the body-hold lane to commit `ModEntry.cs` and `ModEntry.Instrumentation.cs` - and this gate stays RED on this type until it does."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
