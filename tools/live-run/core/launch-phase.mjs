@@ -19,7 +19,7 @@
  * The session's phases are measured where they happen: the launcher owns the steps before the runner exists, the runner
  * owns the ones after. `event` is deliberately absent - a phase is a moment the launch reached, not an event stream.
  */
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 
 /** The one spelling of the marker, so a reader can grep a log for one token. */
 export const LAUNCH_PHASE_PREFIX = "LAUNCH_PHASE";
@@ -88,6 +88,12 @@ export function createLaunchPhaseLog({ startedAtMs, emit = (line) => process.std
  * A FILE, not an environment variable, because the last step the launcher measures (`game_launched`) happens AFTER the
  * orchestrator has been spawned with its environment already fixed. Written through a rename so a reader never parses
  * half a document.
+ *
+ * THE RENAME IS RETRIED AND THEN GIVES UP WITHOUT KILLING THE LAUNCH. On Windows a rename onto a path another process
+ * holds open fails `EPERM`, and that happened twice in a row on 2026-11-21 (`round85` and `round86`): the launcher died
+ * before the game started, on a file whose only reader is a diagnostic. The atomicity is worth a retry; it is not worth
+ * the round. After the retries the document is written in place - the reader parses a whole document either way - and
+ * only a real error from the filesystem still throws.
  */
 export function writeLaunchPhaseHandover({ path, startedAtMs, records }) {
   if (typeof path !== "string" || path.length === 0) throw new Error("invalid_launch_phase_handover_path");
@@ -96,10 +102,37 @@ export function writeLaunchPhaseHandover({ path, startedAtMs, records }) {
     startedAtMs,
     records: records.map((record) => assertLaunchPhaseRecord(record, "invalid_launch_phase_record")),
   };
+  const text = JSON.stringify(document);
   const temporary = `${path}.tmp`;
-  writeFileSync(temporary, JSON.stringify(document), "utf8");
-  renameSync(temporary, path);
+  writeFileSync(temporary, text, "utf8");
+  if (!renameOnto(temporary, path)) writeFileSync(path, text, "utf8");
+  rmSync(temporary, { force: true });
   return document;
+}
+
+/**
+ * `renameSync`, retried while the destination is held by another process.
+ *
+ * `true` when the rename landed. `false` when the destination stayed lockable-looking for the whole budget, which is the
+ * caller's cue to write in place; any other error is the filesystem's and is thrown untouched.
+ */
+function renameOnto(temporary, path) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      renameSync(temporary, path);
+      return true;
+    } catch (error) {
+      const code = error?.code;
+      if (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") throw error;
+      sleepMs(25);
+    }
+  }
+  return false;
+}
+
+/** Block for `ms`, because this whole file is synchronous by design. */
+function sleepMs(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /** The launcher's records, or `null` when this launch has none. A document that is not ours is refused by name. */
