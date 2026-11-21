@@ -476,8 +476,19 @@ test("language-neutral schema and Host share closed shapes for every published s
       "foodTargets",
       { slot: 2, qualifiedItemId: "(O)216", displayName: "Bread", stack: 1, edibility: 20, isDrink: false },
     ],
-    ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
-    ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
+    [
+      "craftingRecipeTargets",
+      { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true, missingIngredients: [] },
+    ],
+    [
+      "cookingRecipeTargets",
+      {
+        targetId: "Fried_Egg",
+        displayName: "Fried Egg",
+        ingredientsAvailable: false,
+        missingIngredients: [{ qualifiedItemId: "-5", displayName: "Egg", needed: 1, held: 0 }],
+      },
+    ],
     [
       "cookingStationTargets",
       { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" },

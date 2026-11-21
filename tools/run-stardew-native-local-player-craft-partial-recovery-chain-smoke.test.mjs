@@ -482,7 +482,7 @@ test("craft partial chain selects the recipe by its WIRE IDENTITY, not its local
   );
   assert.match(
     craft,
-    /new BridgeRecipeTarget\(wireIdentity, recipe\.DisplayName, recipe\.doesFarmerHaveIngredientsInInventory\(\)\)/,
+    /new BridgeRecipeTarget\(wireIdentity, recipe\.DisplayName, recipe\.doesFarmerHaveIngredientsInInventory\(\), MissingRecipeIngredients\(player, recipe\)\)/,
   );
   // The wire identity is what the action itself resolves back to the live key.
   assert.match(craft, /TryBuildWireRecipeIdentity\(table\.Keys, recipeKey\)/);

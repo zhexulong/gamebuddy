@@ -97,7 +97,7 @@ public sealed class ContentDataQueryFarmAnimalsTests
     [Fact]
     public void EveryTableTheModExposesIsDeclaredInTheRegistry()
     {
-        foreach (string table in new[] { "FarmAnimals", "Buildings", "Crops", "Objects", "BigCraftables", "Tools", "Machines", "Shops", "Locations" })
+        foreach (string table in new[] { "FarmAnimals", "Buildings", "Crops", "Objects", "BigCraftables", "Tools", "Machines", "Shops", "Locations", "CraftingRecipes", "CookingRecipes" })
             ContentDataQuery.Exposes(table).Should().BeTrue($"{table} is part of the published content-table surface");
         ContentDataQuery.Exposes("Animals").Should().BeFalse("the engine has no Data/Animals table; FarmAnimals is the real name");
     }

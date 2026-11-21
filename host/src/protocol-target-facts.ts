@@ -1370,15 +1370,65 @@ export function isShippingBinTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One learned recipe row: the identity the action is dispatched with, and WHY it cannot be made right now.
+ *
+ * <p>
+ * `missingIngredients` is required and is `[]` - never absent - when nothing is short: an absent array cannot be told
+ * apart from "the producer did not compute it", and those are `not_measured` against `available`. Every entry in it is a
+ * SHORT ingredient (`held < needed`), so the array can never describe an ingredient that is in fact covered.
+ * </p>
+ * <p>
+ * The row states one fact twice - the boolean `craft_recipe`'s own ingredient gate decides on, and the array beside it -
+ * so the equality `ingredientsAvailable === (missingIngredients.length === 0)` is ASSERTED here rather than assumed. The
+ * refusal that names it is `recipe_row_two_spellings:ingredientsAvailable=<b>:missingIngredients=<n>`
+ * (`protocol.ts` `recipeEntryReason`), which is a reading a producer can act on; a row that disagrees has one half
+ * computed from something other than the engine's gate, and the boolean is the half the action will actually obey.
+ * </p>
+ */
 export function isRecipeTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "displayName", "ingredientsAvailable"]) &&
+    hasExactKeys(value, ["targetId", "displayName", "ingredientsAvailable", "missingIngredients"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.displayName === "string" &&
     value.displayName.length > 0 &&
     value.displayName.length <= 128 &&
-    typeof value.ingredientsAvailable === "boolean"
+    typeof value.ingredientsAvailable === "boolean" &&
+    Array.isArray(value.missingIngredients) &&
+    value.missingIngredients.length <= 16 &&
+    value.missingIngredients.every(isMissingRecipeIngredientFact) &&
+    value.ingredientsAvailable === (value.missingIngredients.length === 0)
+  );
+}
+
+/**
+ * One ingredient the backpack is short of, under the engine's own ingredient key.
+ *
+ * <p>
+ * `qualifiedItemId` is `(O)388` where the key names an item, and the engine's negative category number where it names a
+ * category instead (`-5`; `-777` is its seasonal-wild-seeds rule) - a recipe's ingredient keys are both kinds, and
+ * `CraftingRecipe.ItemMatchesForCrafting` matches an item's `Category` before it looks at any `QualifiedItemId`
+ * (CraftingRecipe.cs:358-378). So `held` means what that key counts: the carried stack of the named item, or, for a
+ * category key, the sum of every carried item in that category. Its SHAPE is the one string shape every
+ * `qualifiedItemId` on this wire has (non-empty, at most 128 characters): what an ingredient key may say is the data's
+ * fact, and `ContentDataQuery.DescribeRecipeIngredient` is the one resolver that decides how it is spelled.
+ * </p>
+ */
+function isMissingRecipeIngredientFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["qualifiedItemId", "displayName", "needed", "held"]) &&
+    typeof value.qualifiedItemId === "string" &&
+    value.qualifiedItemId.length > 0 &&
+    value.qualifiedItemId.length <= 128 &&
+    typeof value.displayName === "string" &&
+    value.displayName.length > 0 &&
+    value.displayName.length <= 128 &&
+    isNonNegativeSafeInteger(value.needed) &&
+    value.needed > 0 &&
+    isNonNegativeSafeInteger(value.held) &&
+    value.held < value.needed
   );
 }
 

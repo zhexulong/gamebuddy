@@ -576,16 +576,37 @@ public sealed class BridgeProtocolSerializationTests
         // craft_item and cook_recipe carry only expectedTargetId, so without these
         // lists the Agent had no way to learn a recipe key or where a station is.
         // The wire shape is what an Agent sends back, so it is pinned exactly.
-        var crafting = new[] { new BridgeRecipeTarget("Wood_Fence", "Wood Fence", true) };
-        var cooking = new[] { new BridgeRecipeTarget("Fried_Egg", "Fried Egg", false) };
+        var crafting = new[]
+        {
+            new BridgeRecipeTarget("Wood_Fence", "Wood Fence", true, Array.Empty<BridgeRecipeMissingIngredient>()),
+            new BridgeRecipeTarget(
+                "Furnace",
+                "Furnace",
+                false,
+                new[] { new BridgeRecipeMissingIngredient("(O)378", "Copper Ore", 20, 3) }),
+        };
+        var cooking = new[]
+        {
+            new BridgeRecipeTarget(
+                "Fried_Egg",
+                "Fried Egg",
+                false,
+                new[] { new BridgeRecipeMissingIngredient("-5", "Egg", 1, 0) }),
+        };
         var stations = new[] { new BridgeCookingStationTarget("cooking_station_0123456789abcdef", "FarmHouse", 4, 5, "kitchen") };
 
         string craftingJson = JsonSerializer.Serialize(crafting, BridgeProtocol.JsonOptions);
         using (JsonDocument document = JsonDocument.Parse(craftingJson))
         {
             JsonElement entry = document.RootElement[0];
-            entry.EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("targetId", "displayName", "ingredientsAvailable");
+            entry.EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("targetId", "displayName", "ingredientsAvailable", "missingIngredients");
             entry.GetProperty("targetId").GetString().Should().Be("Wood_Fence");
+            entry.GetProperty("missingIngredients").GetArrayLength().Should().Be(0, "a craftable recipe carries an EMPTY array, never an absent one");
+            JsonElement missing = document.RootElement[1].GetProperty("missingIngredients")[0];
+            missing.EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("qualifiedItemId", "displayName", "needed", "held");
+            missing.GetProperty("qualifiedItemId").GetString().Should().Be("(O)378", "an item ingredient is published qualified, the spelling the inventory rows carry");
+            missing.GetProperty("needed").GetInt32().Should().Be(20);
+            missing.GetProperty("held").GetInt32().Should().Be(3);
         }
 
         string cookingJson = JsonSerializer.Serialize(cooking, BridgeProtocol.JsonOptions);

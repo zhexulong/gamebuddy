@@ -87,13 +87,31 @@ const snapshot: Snapshot = {
       inCurrentLocation: true,
     },
   ],
-  // Bounded: learned recipes that cannot be crafted from this inventory.
+  // NOT bounded: a recipe the inventory cannot make keeps its row and the ingredients it is short of (measured
+  // `round87b`: the row was dropped here and `craft_item(Furnace)` was then refused `craft_ingredients_missing`).
   craftingRecipeTargets: [
-    { targetId: "Campfire", displayName: "篝火", ingredientsAvailable: false },
-    { targetId: "Chest", displayName: "宝箱", ingredientsAvailable: false },
-    { targetId: "Wood_Fence", displayName: "木栅栏", ingredientsAvailable: true },
+    {
+      targetId: "Campfire",
+      displayName: "篝火",
+      ingredientsAvailable: false,
+      missingIngredients: [{ qualifiedItemId: "(O)390", displayName: "石头", needed: 10, held: 2 }],
+    },
+    {
+      targetId: "Chest",
+      displayName: "宝箱",
+      ingredientsAvailable: false,
+      missingIngredients: [{ qualifiedItemId: "(O)388", displayName: "木头", needed: 50, held: 12 }],
+    },
+    { targetId: "Wood_Fence", displayName: "木栅栏", ingredientsAvailable: true, missingIngredients: [] },
   ],
-  cookingRecipeTargets: [{ targetId: "Fried_Egg", displayName: "煎蛋", ingredientsAvailable: false }],
+  cookingRecipeTargets: [
+    {
+      targetId: "Fried_Egg",
+      displayName: "煎蛋",
+      ingredientsAvailable: false,
+      missingIngredients: [{ qualifiedItemId: "(O)180", displayName: "蛋", needed: 1, held: 0 }],
+    },
+  ],
 };
 
 interface Observation {
@@ -102,7 +120,6 @@ interface Observation {
   /** The bound's operator accounting, which the provider never sends. */
   readonly budget: Readonly<{
     elidedVillagerRows: number;
-    withheldUnavailableRecipes: number;
     withheldDistantSeedTargets: number;
     withheldDistantSaplingTargets: number;
     bytesRemoved: number;
@@ -210,22 +227,66 @@ test("an observation publishes a container's contents whole, whatever the budget
   assert.equal("chests" in budget, false, "the budget has no per-container withholding to report");
 });
 
-test("an observation publishes only currently craftable recipes and counts the rest", async () => {
-  const { published } = await observe(snapshot);
-  const crafting = published.craftingRecipeTargets as readonly Readonly<{ targetId: string }>[];
-  const cooking = published.cookingRecipeTargets as readonly Readonly<{ targetId: string }>[];
+test("a recipe the inventory cannot make keeps its row, and the row says what is short", async () => {
+  // `round87b` (2026-11-21): a `Furnace` row was absent from every observation while `craft_item(Furnace)` was
+  // dispatched and refused `craft_ingredients_missing`. This bound had removed exactly the row that explained the
+  // refusal and left `withheldUnavailableRecipes` behind - a count nobody can price a plan from, beside a row that
+  // said which ingredient and how many. The row IS the reason, so it arrives whole.
+  const furnace = {
+    targetId: "Furnace",
+    displayName: "熔炉",
+    ingredientsAvailable: false,
+    missingIngredients: [
+      { qualifiedItemId: "(O)378", displayName: "铜矿石", needed: 20, held: 3 },
+      { qualifiedItemId: "-5", displayName: "蛋", needed: 1, held: 0 },
+    ],
+  };
+  const { published, budget } = await observe({ ...snapshot, craftingRecipeTargets: [furnace] });
 
-  // A recipe whose ingredients are absent has exactly one decision attached - craft it now - and that
-  // decision cannot be taken. Its row goes; the fact that it exists does not.
   assert.deepEqual(
-    crafting.map((row) => row.targetId),
-    ["Wood_Fence"],
+    published.craftingRecipeTargets,
+    [furnace],
+    'the row that says "you cannot craft this, and here is why" must survive the bound untouched',
   );
-  assert.deepEqual(cooking, []);
+  // The one disclosure this payload still earns is the villager roster's (two of the three are on other maps); the
+  // recipe count that stood in for the dropped row is gone from both the payload and the operator ledger.
+  assert.equal(
+    "withheldUnavailableRecipes" in (published.observationBudget as object),
+    false,
+    "a count of reasons is not a reason: nothing stands in for the row any more",
+  );
+  assert.equal(
+    "withheldUnavailableRecipes" in budget,
+    false,
+    "the counter that replaced the dropped row is gone with it",
+  );
+});
 
-  // The count is disclosed in the payload, so "not in the list" cannot be misread as "not learned".
-  const disclosed = published.observationBudget as Readonly<{ withheldUnavailableRecipes: number }>;
-  assert.equal(disclosed.withheldUnavailableRecipes, 3, "2 crafting + 1 cooking, counted in one place");
+test("the recipe family is bounded by the Mod's own row cap, not by this bound", async () => {
+  // The old trim's whole justification was size. Measured: 64 rows carrying one short ingredient each are
+  // MEASURED below, and the family is already capped at 64 rows by the Mod (`DiscoverCraftingRecipeTargets`'s
+  // `Take(64)`), so the bound's job - bounding SIZE - is done by that cap while every row keeps its reason.
+  const rows = Array.from({ length: 64 }, (_, index) => ({
+    targetId: `Recipe_${String(index)}`,
+    displayName: `配方 ${String(index)}`,
+    ingredientsAvailable: false,
+    missingIngredients: [{ qualifiedItemId: "(O)378", displayName: "铜矿石", needed: 20, held: 3 }],
+  }));
+  const { published } = await observe({ ...snapshot, craftingRecipeTargets: rows });
+  const kept = published.craftingRecipeTargets as readonly Readonly<{ targetId: string }>[];
+
+  assert.equal(kept.length, rows.length, "no recipe row is withheld, whatever the family's size");
+  assert.deepEqual(
+    kept.map((row) => row.targetId),
+    rows.map((row) => row.targetId),
+    "and the Mod's own order survives - the bound re-ranks nothing it does not shorten",
+  );
+  const bytes = Buffer.byteLength(JSON.stringify(kept), "utf8");
+  assert.ok(
+    bytes <= 64 * 200,
+    `64 recipe rows with their reasons measured ${String(bytes)} B (${String(Math.round(bytes / 64))} B a row); ` +
+      "a row that fits the observation is not a row this bound may spend its budget on",
+  );
 });
 
 test("an observation keeps every fact an action is dispatched with", async () => {
@@ -378,19 +439,22 @@ test("a withheld plantable tile is counted in the payload, not silently missing"
 });
 
 test("the bound reports the NET bytes the model stops receiving", async () => {
-  const { published, budget } = await observe(snapshot);
-
   // The disclosure block itself costs payload bytes. A gross figure would overstate the saving by
   // exactly the size of the block that carries it - the same class of error as a ledger that counts
-  // inserts but not deletes.
+  // inserts but not deletes. The recipe family no longer contributes a saving at all (its rows are
+  // copied through, reasons included), so the payload measured here also carries a catalogue the bound
+  // really does shorten: a ledger that can only be non-zero when something else is withheld is still
+  // the right ledger, but it would test nothing on the recipe fixture alone.
+  const realized = { ...snapshot, treeSaplingTargets: catalogue(40, { slot: 13, item: "(O)309" }) };
+  const { published, budget } = await observe(realized);
+
   assert.equal(
     budget.bytesRemoved,
-    Buffer.byteLength(JSON.stringify(snapshot), "utf8") - Buffer.byteLength(JSON.stringify(published), "utf8"),
+    Buffer.byteLength(JSON.stringify(realized), "utf8") - Buffer.byteLength(JSON.stringify(published), "utf8"),
     "the reported saving must equal the measured payload difference",
   );
-  assert.ok(budget.bytesRemoved > 0, "on a real-shaped payload the bound must be a net saving");
+  assert.ok(budget.bytesRemoved > 0, "on a real-shaped payload with a catalogue, the bound must be a net saving");
   assert.equal(budget.elidedVillagerRows, 2);
-  assert.equal(budget.withheldUnavailableRecipes, 3);
 });
 
 test("an observation with nothing to bound is published unchanged and disclosed as no cost", async () => {
@@ -407,7 +471,9 @@ test("an observation with nothing to bound is published unchanged and disclosed 
         inCurrentLocation: true,
       },
     ],
-    craftingRecipeTargets: [{ targetId: "Wood_Fence", displayName: "木栅栏", ingredientsAvailable: true }],
+    craftingRecipeTargets: [
+      { targetId: "Wood_Fence", displayName: "木栅栏", ingredientsAvailable: true, missingIngredients: [] },
+    ],
     cookingRecipeTargets: [],
   };
   const { published, budget } = await observe(clean);
@@ -419,7 +485,6 @@ test("an observation with nothing to bound is published unchanged and disclosed 
   assert.deepEqual(published.craftingRecipeTargets, clean.craftingRecipeTargets);
   assert.equal(budget.bytesRemoved, 0);
   assert.equal(budget.elidedVillagerRows, 0);
-  assert.equal(budget.withheldUnavailableRecipes, 0);
 });
 
 test("the action surface is described once per catalog revision, not on every observation", () => {

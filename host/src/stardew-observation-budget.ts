@@ -15,8 +15,6 @@ export interface ObservationBudget {
    * are absent for the same reason, so two counters would be two spellings of one fact.
    */
   readonly elidedVillagerRows: number;
-  /** Learned recipes withheld because they are not craftable from the current inventory. */
-  readonly withheldUnavailableRecipes: number;
   /** Plantable tiles withheld because they are farther than the nearest `TARGETS_NAMED_PER_PLAN` of their held stack. */
   readonly withheldDistantSeedTargets: number;
   /** Plantable tiles withheld because they are farther than the nearest `TARGETS_NAMED_PER_PLAN` of their held stack. */
@@ -53,11 +51,16 @@ export interface ObservationBudget {
  *    the native identity a destination query resolves against and `displayName` is what the companion
  *    says to the player.
  *
- *  - `craftingRecipeTargets` / `cookingRecipeTargets` rows whose `ingredientsAvailable` is false
- *    (21,056 B over the run, 3.3%; 270 of 312 rows). A recipe that cannot be made from this
- *    inventory has exactly one decision attached - make it now - and that decision cannot be taken.
- *    `craft_recipe`/`cook_recipe` copy `expectedTargetId` from a row that IS craftable. The counts
- *    below keep the planning fact that those recipes are known.
+ *  - `craftingRecipeTargets` / `cookingRecipeTargets` rows whose `ingredientsAvailable` is false USED TO BE
+ *    dropped here, with only a count left behind (21,056 B of the 643,712 B that run spent - 3.3% - and
+ *    270 of the 312 recipe rows its 26 observations carried). That trade was the wrong one and it is gone:
+ *    the dropped row WAS the reason, and the count was a reading nobody can price a plan from. Measured
+ *    `round87b` (2026-11-21): a `Furnace` row was absent from every observation while `craft_item(Furnace)`
+ *    was dispatched and refused `craft_ingredients_missing` - the observation had said "recipes were
+ *    withheld" where it could have said "20 copper ore, you have 3". A recipe row measured 179 B once it carries
+ *    one short ingredient, the Mod caps each list at 64 rows (11,437 B for 64 of them), and a measured
+ *    observation carried a handful; the two catalogues below are what actually costs bytes, and they are what
+ *    this bound is for.
  *
  * Measured on the 2026-10-29 run `round7` (session `game-1793296897723`, the largest observation
  * 32,826 B, 33 `stardew_observe` calls for 1,720 KB - 90.6% of every tool result in the run, which
@@ -84,7 +87,8 @@ export interface ObservationBudget {
  *    fits the window is published untouched, not re-ranked.
  *
  * Everything else is copied through untouched, because a dispatched action reads it: target ids,
- * tiles and slots of every `*Targets` row, `tile`, `toolSlots`, `currentToolSlot`, `inventorySlots`,
+ * tiles and slots of every `*Targets` row, every recipe row with the ingredients it is short of,
+ * `tile`, `toolSlots`, `currentToolSlot`, `inventorySlots`,
  * `timeOfDay`/`dayOfMonth`/`seasonIndex`/`year`, `stamina`, `health`, and `revision`. An EMPTY family
  * is also kept as an empty array: plan scripts loop `for (const row of snapshot.<family>)`, and a
  * dropped key throws in the compiler instead of iterating zero times.
@@ -104,7 +108,6 @@ export function boundObservedSnapshot(
   budget: ObservationBudget;
 }> {
   let elidedVillagerRows = 0;
-  let withheldUnavailableRecipes = 0;
   let withheldDistantSeedTargets = 0;
   let withheldDistantSaplingTargets = 0;
   const bounded: Record<string, unknown> = { ...snapshot };
@@ -120,14 +123,6 @@ export function boundObservedSnapshot(
     delete bounded.capabilities;
     delete bounded.enabledActionIds;
     bounded.actionSurfaceUnchangedSinceRevision = snapshot.catalogRevision;
-  }
-
-  for (const field of ["craftingRecipeTargets", "cookingRecipeTargets"] as const) {
-    const rows = snapshot[field];
-    if (rows === undefined) continue;
-    const craftable = rows.filter((row) => row.ingredientsAvailable === true);
-    withheldUnavailableRecipes += rows.length - craftable.length;
-    bounded[field] = craftable;
   }
 
   const whereabouts = snapshot.villagerWhereabouts;
@@ -192,18 +187,13 @@ export function boundObservedSnapshot(
   // says "nothing was withheld" is pure cost on every clean observation. `bytesRemoved` stays operator
   // evidence in `details`: the openai provider sends `msg.content` text blocks only, so a byte count
   // there would never reach the model anyway and would spend payload saying nothing.
-  const disclosed =
-    elidedVillagerRows === 0 &&
-    withheldUnavailableRecipes === 0 &&
-    withheldDistantSeedTargets === 0 &&
-    withheldDistantSaplingTargets === 0;
+  const disclosed = elidedVillagerRows === 0 && withheldDistantSeedTargets === 0 && withheldDistantSaplingTargets === 0;
   const published = disclosed
     ? Object.freeze({ ...bounded })
     : Object.freeze({
         ...bounded,
         observationBudget: Object.freeze({
           elidedVillagerRows,
-          withheldUnavailableRecipes,
           withheldDistantSeedTargets,
           withheldDistantSaplingTargets,
         }),
@@ -214,7 +204,6 @@ export function boundObservedSnapshot(
     // overstate the saving by exactly the size of the block that carries it.
     budget: Object.freeze({
       elidedVillagerRows,
-      withheldUnavailableRecipes,
       withheldDistantSeedTargets,
       withheldDistantSaplingTargets,
       bytesRemoved:

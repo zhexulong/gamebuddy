@@ -1498,8 +1498,19 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
     ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, hayStack: 1 }],
     ["inventoryItemFacts", { slot: 4, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
-    ["craftingRecipeTargets", { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
-    ["cookingRecipeTargets", { targetId: "Fried_Egg", displayName: "Fried Egg", ingredientsAvailable: false }],
+    [
+      "craftingRecipeTargets",
+      { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true, missingIngredients: [] },
+    ],
+    [
+      "cookingRecipeTargets",
+      {
+        targetId: "Fried_Egg",
+        displayName: "Fried Egg",
+        ingredientsAvailable: false,
+        missingIngredients: [{ qualifiedItemId: "(O)180", displayName: "Egg", needed: 1, held: 0 }],
+      },
+    ],
     [
       "cookingStationTargets",
       { targetId: "cooking_station_0123456789abcdef", location: "FarmHouse", x: 4, y: 5, stationKind: "kitchen" },
@@ -4637,7 +4648,12 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     year: 1,
     activeExecution: null,
   };
-  const recipe = { targetId: "Wood_Fence", displayName: "Wood Fence", ingredientsAvailable: true };
+  const recipe = {
+    targetId: "Wood_Fence",
+    displayName: "Wood Fence",
+    ingredientsAvailable: true,
+    missingIngredients: [],
+  };
   const station = {
     targetId: "cooking_station_0123456789abcdef",
     location: "FarmHouse",
@@ -4693,19 +4709,97 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     ),
     "accepted",
   );
+  // The row states ONE fact twice - the boolean the action's gate decides on and the ingredients it is short of - so
+  // a row whose halves disagree is refused with both readings rather than with the family name. That is the check that
+  // keeps the boolean from being a second, independent claim beside an array a plan is priced from.
+  for (const [field, bad, reading] of [
+    [
+      "craftingRecipeTargets",
+      { ...recipe, ingredientsAvailable: false },
+      "recipe_row_two_spellings:ingredientsAvailable=false:missingIngredients=0",
+    ],
+    [
+      "cookingRecipeTargets",
+      {
+        ...recipe,
+        targetId: "Fried_Egg",
+        ingredientsAvailable: true,
+        missingIngredients: [{ qualifiedItemId: "-5", displayName: "Egg", needed: 1, held: 0 }],
+      },
+      "recipe_row_two_spellings:ingredientsAvailable=true:missingIngredients=1",
+    ],
+  ] as const) {
+    assert.equal(
+      diagnoseBridgeMessage(
+        newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_spellings_${field}`, now),
+        scope,
+        now,
+      ),
+      reading,
+      `${field}: a row whose two spellings of availability disagree must name both numbers`,
+    );
+  }
+  // A recipe that IS short is accepted with its reasons on it, whatever kind of ingredient key is short: an item key
+  // published qualified, or a category key the engine spells as its own negative number.
+  assert.equal(
+    diagnoseBridgeMessage(
+      newEnvelope(
+        "snapshot",
+        scope,
+        {
+          ...base,
+          craftingRecipeTargets: [
+            {
+              ...recipe,
+              targetId: "Furnace",
+              ingredientsAvailable: false,
+              missingIngredients: [{ qualifiedItemId: "(O)378", displayName: "Copper Ore", needed: 20, held: 3 }],
+            },
+          ],
+          cookingRecipeTargets: [
+            {
+              ...recipe,
+              targetId: "Fried_Egg",
+              ingredientsAvailable: false,
+              missingIngredients: [{ qualifiedItemId: "-5", displayName: "Egg", needed: 2, held: 0 }],
+            },
+          ],
+        },
+        "recipe_reasons",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    "accepted",
+  );
   for (const [field, bad] of [
     ["craftingRecipeTargets", { ...recipe, extra: 1 }],
     ["craftingRecipeTargets", { ...recipe, ingredientsAvailable: "yes" }],
     ["cookingRecipeTargets", { ...recipe, displayName: "" }],
-    ["cookingRecipeTargets", { targetId: "Wood Fence", displayName: "Wood Fence", ingredientsAvailable: true }],
+    ["cookingRecipeTargets", { ...recipe, missingIngredients: undefined }],
+    [
+      "craftingRecipeTargets",
+      {
+        ...recipe,
+        ingredientsAvailable: false,
+        missingIngredients: [{ qualifiedItemId: "(O)378", displayName: "Copper Ore", needed: 3, held: 3 }],
+      },
+    ],
+    [
+      "cookingRecipeTargets",
+      { targetId: "Wood Fence", displayName: "Wood Fence", ingredientsAvailable: true, missingIngredients: [] },
+    ],
   ] as const) {
-    assert.equal(
-      diagnoseBridgeMessage(
-        newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_bad_${field}`, now),
-        scope,
-        now,
+    assert.match(
+      String(
+        diagnoseBridgeMessage(
+          newEnvelope("snapshot", scope, { ...base, [field]: [bad] }, `recipe_bad_${field}`, now),
+          scope,
+          now,
+        ),
       ),
-      `invalid_snapshot:${field}`,
+      new RegExp(`^invalid_snapshot:${field}`, "u"),
       field,
     );
   }
@@ -4725,19 +4819,21 @@ test("snapshot admits crafting/cooking recipe and cooking-station discovery and 
     );
   }
   // Both recipe lists are bounded at 64, stations at 16.
-  assert.equal(
-    diagnoseBridgeMessage(
-      newEnvelope(
-        "snapshot",
+  assert.match(
+    String(
+      diagnoseBridgeMessage(
+        newEnvelope(
+          "snapshot",
+          scope,
+          { ...base, craftingRecipeTargets: Array.from({ length: 65 }, () => recipe) },
+          "recipe_many",
+          now,
+        ),
         scope,
-        { ...base, craftingRecipeTargets: Array.from({ length: 65 }, () => recipe) },
-        "recipe_many",
         now,
       ),
-      scope,
-      now,
     ),
-    "invalid_snapshot:craftingRecipeTargets",
+    /^invalid_snapshot:craftingRecipeTargets:count=65$/u,
   );
   assert.equal(
     diagnoseBridgeMessage(

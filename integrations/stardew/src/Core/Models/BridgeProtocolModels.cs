@@ -773,8 +773,40 @@ public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string D
 /// back to that same single key. Discovery only: the handler still resolves the
 /// identity and evaluates the learned and ingredient gates, so IngredientsAvailable
 /// is a fact, not admission.
+///
+/// <para>
+/// MissingIngredients is WHY IngredientsAvailable is false, one row per short
+/// ingredient: the boolean alone left the companion knowing a recipe was
+/// unmakeable and not what was short, which is the fact a plan is priced from
+/// (measured round87b: a Furnace row absent from every observation while
+/// craft_item(Furnace) was dispatched and refused craft_ingredients_missing). It is
+/// empty - never null, never absent - when nothing is short, because an absent array
+/// cannot be told apart from "the producer did not compute it", and those are
+/// `not_measured` against `available`. The row therefore states one fact twice, and the
+/// two are derived from the same predicate
+/// (CraftingRecipe.ItemMatchesForCrafting over the backpack, the walk
+/// doesFarmerHaveIngredientsInInventory itself ends in), so the Host can refuse a row
+/// where IngredientsAvailable is not exactly `MissingIngredients.Count == 0`.
+/// </para>
 /// </summary>
-public sealed record BridgeRecipeTarget(string TargetId, string DisplayName, bool IngredientsAvailable);
+public sealed record BridgeRecipeTarget(string TargetId, string DisplayName, bool IngredientsAvailable, IReadOnlyList<BridgeRecipeMissingIngredient> MissingIngredients);
+
+/// <summary>
+/// One ingredient a recipe needs and the backpack does not hold enough of.
+///
+/// <para>
+/// QualifiedItemId is the engine's own recipe ingredient key: the QUALIFIED item id
+/// when the key names an item (`(O)388`, the spelling the inventory rows carry), and
+/// the engine's negative category number when it names a category instead
+/// (`-5`, and `-777` for its seasonal-wild-seeds rule) - a recipe's keys are both
+/// kinds, because CraftingRecipe.ItemMatchesForCrafting matches an item's Category
+/// before it compares any QualifiedItemId (CraftingRecipe.cs:358-378). Held is
+/// therefore what that key counts: the carried stack of that item, or, for a category
+/// key, the sum across every carried item in the category. Needed is the recipe's own
+/// amount, so MissingIngredients never carries an entry that is not short.
+/// </para>
+/// </summary>
+public sealed record BridgeRecipeMissingIngredient(string QualifiedItemId, string DisplayName, int Needed, int Held);
 
 /// <summary>
 /// A live cooking station the companion must stand adjacent to: the vanilla

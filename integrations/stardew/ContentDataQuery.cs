@@ -10,6 +10,7 @@ using StardewValley.GameData.Machines;
 using StardewValley.GameData.Objects;
 using StardewValley.GameData.Shops;
 using StardewValley.GameData.Tools;
+using StardewValley.ItemTypeDefinitions;
 
 namespace GameBuddy.Stardew;
 
@@ -100,6 +101,15 @@ internal static class ContentDataQuery
             "DataLoader.Shops",
             () => DataLoader.Shops(Game1.content),
             ShopRow),
+        // WHAT A RECIPE COSTS. `craftingRecipeTargets`/`cookingRecipeTargets` publish which recipes are learned and whether
+        // the backpack can make one right now; the ingredients and their amounts are in the data and reached the Agent
+        // nowhere, so a companion holding an unmakeable recipe could not say what she was short of or what to buy. Keyed
+        // by the recipe's OWN key ("Wood Fence"), and the wire identity a recipe row carries ("Wood_Fence") is resolved
+        // back to it, because that is the name she has in hand.
+        ["CraftingRecipes"] = Recipes("Data/CraftingRecipes", "DataLoader.CraftingRecipes", isCooking: false),
+        // The product has a cooking action (`cook_recipe`, FarmhandActionDefinitions, cookingactions.cs), and its target
+        // family has the same gap, so the same answer is exposed over `Data/CookingRecipes` rather than only over crafting.
+        ["CookingRecipes"] = Recipes("Data/CookingRecipes", "DataLoader.CookingRecipes", isCooking: true),
         // A location row is tens of kilobytes of spawn tables, fish lists and art. Answering with it would be an
         // observation, so this table refuses by name instead of dumping a fragment that looks like an answer.
         ["Locations"] = new Table(
@@ -383,6 +393,127 @@ internal static class ContentDataQuery
             ? string.Empty
             : $" for {item.TradeItemAmount.ToString(CultureInfo.InvariantCulture)} {item.TradeItemId}";
         return $"{item.ItemId} price={item.Price.ToString(CultureInfo.InvariantCulture)} stock={stock}{trade}";
+    }
+
+    /// <summary>Ingredients per recipe row; the wire admits at most sixteen entries in one field array.</summary>
+    private const int MaximumRecipeIngredients = 15;
+
+    /// <summary>Alternative products per recipe row, which vanilla recipes declare one of.</summary>
+    private const int MaximumRecipeOutputs = 4;
+
+    /// <summary>
+    /// One recipe table, keyed by the recipe's own key and reachable by the wire identity a recipe row carries.
+    ///
+    /// <para>
+    /// The two tables are the same answer over the two assets the engine keeps distinct (<c>Data/CraftingRecipes</c>,
+    /// <c>Data/CookingRecipes</c>), parsed by the engine's own <see cref="CraftingRecipe" /> rather than by a second
+    /// reader of the pipe-delimited string.
+    /// </para>
+    /// </summary>
+    private static Table Recipes(string asset, string engineCache, bool isCooking)
+    {
+        Dictionary<string, string> Load() => isCooking
+            ? DataLoader.CookingRecipes(Game1.content)
+            : DataLoader.CraftingRecipes(Game1.content);
+        return new Table(
+            asset,
+            engineCache,
+            () => Load().Keys.OrderBy(static key => key, StringComparer.Ordinal).ToArray(),
+            key => ResolveRecipeKey(Load().Keys, key) is { } recipeKey ? RecipeRow(recipeKey, isCooking) : null);
+    }
+
+    /// <summary>
+    /// The live recipe key a caller named, which may be the wire identity an observation row carries.
+    ///
+    /// <para>
+    /// The opaque-argument alphabet cannot carry the space in "Wood Fence", so `craftingRecipeTargets` publishes
+    /// `Wood_Fence` and <c>craft_item</c> resolves that back. Asking for a recipe's cost by the name she was shown must
+    /// reach the same row as asking by the data's own key, so the handler's resolver is used rather than a second copy
+    /// of the alias rule.
+    /// </para>
+    /// </summary>
+    private static string? ResolveRecipeKey(IEnumerable<string> liveRecipeKeys, string key) =>
+        ExecutionManager.TryResolveRecipeIdentity(liveRecipeKeys, key, out string recipeId, out _) ? recipeId : null;
+
+    /// <summary>
+    /// One recipe: what it costs, what it makes, and how many it makes per craft.
+    ///
+    /// <para>
+    /// Dropped: the unlock condition string, the display-name token, the description and the sort order - the crafting
+    /// menu's half. What is kept is what a plan is priced from.
+    /// </para>
+    /// </summary>
+    private static BridgeDataQueryRow? RecipeRow(string key, bool isCooking)
+    {
+        CraftingRecipe recipe = new(key, isCooking);
+        // The vanilla constructor silently falls back to "Torch" for an unknown name (CraftingRecipe.cs:101-105), so a
+        // miss is published as a miss rather than as another recipe's cost.
+        if (!string.Equals(recipe.name, key, StringComparison.Ordinal)) return null;
+        return new BridgeDataQueryRow(
+            key,
+            Fields(
+                ("displayName", recipe.DisplayName),
+                ("ingredients", Bounded(recipe.recipeList.Select(static ingredient => DescribeRecipeCost(ingredient.Key, ingredient.Value)), MaximumRecipeIngredients)),
+                ("produces", Bounded(recipe.itemToProduce.Select(output => DescribeRecipeOutput(recipe, output)), MaximumRecipeOutputs)),
+                ("producedPerCraft", recipe.numberProducedPerCraft),
+                ("bigCraftable", recipe.bigCraftable)));
+    }
+
+    /// <summary>One ingredient as `<qualifiedItemId> <displayName> x<amount>`, the shape the building materials use.</summary>
+    private static string DescribeRecipeCost(string ingredientKey, int amount)
+    {
+        (string qualifiedItemId, string displayName) = DescribeRecipeIngredient(ingredientKey);
+        return string.Create(CultureInfo.InvariantCulture, $"{qualifiedItemId} {displayName} x{amount}");
+    }
+
+    /// <summary>One possible product of a craft, qualified with the type prefix the recipe's own flag decides.</summary>
+    private static string DescribeRecipeOutput(CraftingRecipe recipe, string itemId)
+    {
+        string qualifiedItemId = ItemRegistry.ManuallyQualifyItemId(itemId, recipe.bigCraftable ? "(BC)" : "(O)");
+        ParsedItemData data = ItemRegistry.GetDataOrErrorItem(qualifiedItemId);
+        return $"{data.QualifiedItemId} {data.DisplayName}";
+    }
+
+    /// <summary>
+    /// How ONE recipe ingredient key is addressed: the qualified item id, and the name to show for it.
+    ///
+    /// <para>
+    /// An ingredient key is an unqualified item id (<c>388</c>) or the engine's negative category number (<c>-5</c>, and
+    /// <c>-777</c> for its seasonal-wild-seeds rule), because <c>CraftingRecipe.ItemMatchesForCrafting</c> compares an
+    /// item's <c>Category</c> before it compares any <c>QualifiedItemId</c> (CraftingRecipe.cs:358-378). An item key is
+    /// answered QUALIFIED (<c>(O)388</c>) so it matches the inventory rows it is compared against; a category key has no
+    /// item to qualify and is answered as the engine spells it, named by the engine's own category name - never as a
+    /// fabricated item id. This is the one resolver: both the recipe tables above and the observation row's
+    /// <c>missingIngredients</c> ask it, so one ingredient cannot be named two ways in two answers.
+    /// </para>
+    /// </summary>
+    internal static (string QualifiedItemId, string DisplayName) DescribeRecipeIngredient(string ingredientKey)
+    {
+        if (IsRecipeIngredientCategory(ingredientKey, out int category))
+        {
+            string categoryName = StardewValley.Object.GetCategoryDisplayName(category);
+            return (ingredientKey, string.IsNullOrWhiteSpace(categoryName) ? ingredientKey : categoryName);
+        }
+
+        string qualifiedItemId = ItemRegistry.ManuallyQualifyItemId(ingredientKey, "(O)");
+        return (qualifiedItemId, ItemRegistry.GetDataOrErrorItem(qualifiedItemId).DisplayName);
+    }
+
+    /// <summary>
+    /// Whether an ingredient key names a CATEGORY rather than an item, and which one.
+    ///
+    /// <para>
+    /// The engine writes a category ingredient as its own negative number (<c>-5</c>, <c>-777</c>) and matches it against
+    /// an item's <c>Category</c>; every other key it writes is an item id. Split out because that one branch decides how
+    /// an ingredient is addressed and needs no content to decide it.
+    /// </para>
+    /// </summary>
+    internal static bool IsRecipeIngredientCategory(string ingredientKey, out int category)
+    {
+        category = 0;
+        return ingredientKey.Length > 1
+            && ingredientKey[0] == '-'
+            && int.TryParse(ingredientKey, NumberStyles.Integer, CultureInfo.InvariantCulture, out category);
     }
 
     /// <summary>The first `limit` entries plus the count that did not fit, so a short list is never mistaken for a full one.</summary>

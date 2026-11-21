@@ -308,7 +308,7 @@ internal sealed partial class ExecutionManager
             if (!table.ContainsKey(recipeKey)) continue;
             if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
             CraftingRecipe recipe = new(recipeKey, isCookingRecipe: true);
-            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(null)));
+            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(null), MissingRecipeIngredients(player, recipe)));
         }
         return result
             .OrderByDescending(target => target.IngredientsAvailable)

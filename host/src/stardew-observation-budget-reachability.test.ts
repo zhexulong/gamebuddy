@@ -36,11 +36,13 @@ import test from "node:test";
  *   <li>No elision removes an ADDRESSING property from a row, and no elision rewrites a row of an addressable family.
  *       Removing `targetId`/`qualifiedItemId`/`chestId` from a row that an action names its target through is the
  *       uncallable-action defect in its purest form.</li>
- *   <li>Every DROPPED row is justified by the row itself, per the reading. Dropping whole rows is legal - the recipe
- *       counter does it on every observation - but only when the dropped row could not be dispatched at anyway: a recipe
- *       the inventory cannot make, a plantable tile farther than the nearer window of its own stack, a villager who is
- *       not in the actor's location. Without this clause the recipe counter would be indistinguishable from an elision
- *       that silently emptied the family `craft_item` names.</li>
+ *   <li>Every DROPPED row is justified by the row itself, per the reading. Dropping whole rows is legal for an addressable
+ *       family, but only when the dropped row could not be dispatched at anyway: a plantable tile farther than the nearer
+ *       window of its own stack, a villager who is not in the actor's location. The recipe pair is NOT one of those
+ *       readings any more: a recipe the inventory cannot make used to be dropped here with a count left behind, and the
+ *       row it dropped was the one saying which ingredient was short (measured `round87b`, a `Furnace` row absent while
+ *       `craft_item(Furnace)` was refused `craft_ingredients_missing`). Both recipe families are now copied through, so
+ *       they are covered by the exhaustive test below rather than by a reading.</li>
  * </ol>
  *
  * <h2>What the roster elision is allowed to do, and why it had to change</h2>
@@ -197,13 +199,6 @@ const ELISION_READINGS: Readonly<Record<string, ElisionReading>> = {
       "refuses by its own precondition - so the tile it drops names nothing the actor could dispatch at from here, and " +
       "the `targetId` it keeps is the address the action resolves once the actor walks onto that map",
   },
-  withheldUnavailableRecipes: {
-    families: ["craftingRecipeTargets", "cookingRecipeTargets"],
-    justifies: (row) => row.ingredientsAvailable === false,
-    reasoning:
-      "`craft_item`/`cook_recipe` name these families through `targetId`, so a withheld row must be one the inventory " +
-      "cannot make now - otherwise the elision is removing a craftable address",
-  },
   withheldDistantSeedTargets: {
     families: ["seedTargets"],
     justifies: (row, context) => isBeyondPublishedWindow(row, context),
@@ -308,13 +303,6 @@ const BASE = Object.freeze({
  */
 const TRIGGERS: Readonly<Record<string, Readonly<Record<string, unknown>>>> = {
   elidedVillagerRows: { villagerWhereabouts: [OFF_MAP_VILLAGER, HERE_VILLAGER] },
-  withheldUnavailableRecipes: {
-    craftingRecipeTargets: [
-      { targetId: "Campfire", displayName: "篝火", ingredientsAvailable: false },
-      { targetId: "Chest", displayName: "宝箱", ingredientsAvailable: true },
-    ],
-    cookingRecipeTargets: [{ targetId: "Fried_Egg", displayName: "煎蛋", ingredientsAvailable: false }],
-  },
   withheldDistantSeedTargets: { seedTargets: catalogue(5, 40, "(O)474") },
   withheldDistantSaplingTargets: { treeSaplingTargets: catalogue(7, 40, "(O)309") },
 };
@@ -397,7 +385,7 @@ test("every counter the bound can report is accounted for, and every reading nam
       `as a green gate over a deleted feature.\nreported: [${elisions.join(", ")}]`,
   );
   // Neither side may be vacuously empty.
-  assert.ok(elisions.length >= 4, `the bound must still report its elisions (found ${elisions.length})`);
+  assert.ok(elisions.length >= 3, `the bound must still report its elisions (found ${elisions.length})`);
   assert.ok(
     (CATALOG.actions ?? []).length >= 50,
     `the catalog must have been read (found ${(CATALOG.actions ?? []).length})`,
@@ -545,9 +533,10 @@ test("an elision never removes an addressing property, and may rewrite an addres
 
 test("every dropped row is justified by the row itself, so a withheld address is never a lost one", () => {
   // The complement of the previous test. Dropping a ROW is legal only when the dropped row could not be dispatched at
-  // anyway - a recipe the inventory cannot make, a tile beyond the nearer window of its own stack, a villager who is not
-  // here. Without this clause `withheldUnavailableRecipes` would be indistinguishable from an elision that silently
-  // emptied the only family `craft_item` can name.
+  // anyway - a tile beyond the nearer window of its own stack, a villager who is not here. The recipe pair is the case
+  // that taught this: its rows were dropped with a count left behind, so a recipe the inventory could not make - the row
+  // that says WHICH ingredient is short - was the row the bound removed. Both recipe families are now copied through
+  // unchanged, and the exhaustive test above is what holds them there.
   const problems: string[] = [];
   for (const [counter, reading] of Object.entries(ELISION_READINGS)) {
     const measurement = measure(counter);

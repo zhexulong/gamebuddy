@@ -52,6 +52,7 @@ ClearDebrisOrthogonalityTests.cs	mod-assembly	Handlers
 ClearStepBlockerNamingTests.cs	game	HeadlessGameWorld@HeadlessGameWorld.cs
 CompanionBubbleTests.cs	game	Xna
 ContentDataQueryFarmAnimalsTests.cs	game	StardewValley, FarmAnimalData
+ContentDataQueryRecipesTests.cs	mod-assembly	ContentDataQuery
 ControlsFrozenHoldTests.cs	game	Netcode, StardewValley, Farmer
 CropRowFactsTests.cs	game	Xna, StardewValley
 CutsceneModalAdmissionTests.cs	mod-assembly	Handlers, Game1, GameLocation, Event, StardewValley.Menus, ExecutionManager, FarmhandActionRouter

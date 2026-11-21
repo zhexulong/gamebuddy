@@ -140,12 +140,53 @@ internal sealed partial class ExecutionManager
             if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
             CraftingRecipe recipe = new(recipeKey, isCookingRecipe: false);
             if (!string.Equals(recipe.name, recipeKey, StringComparison.Ordinal)) continue;
-            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory()));
+            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(), MissingRecipeIngredients(player, recipe)));
         }
         return result
             .OrderByDescending(target => target.IngredientsAvailable)
             .Take(64)
             .ToArray();
+    }
+
+    /// <summary>Short ingredients one row may carry; the `recipeTarget.missingIngredients` ceiling in the wire schema.</summary>
+    private const int MaximumMissingRecipeIngredients = 16;
+
+    /// <summary>
+    /// The ingredients <paramref name="player"/> is short of, one row each, in the recipe's own declared order.
+    ///
+    /// <para>
+    /// This is WHY <c>doesFarmerHaveIngredientsInInventory</c> is false, and it counts with the same predicate that gate
+    /// ends in: the engine's gate walks <c>Farmer.getItemCount</c> (Farmer.cs:3250), which is
+    /// <c>getItemCountInList(Items, key)</c> (Farmer.cs:3256), which sums every carried stack
+    /// <c>CraftingRecipe.ItemMatchesForCrafting</c> matches - exactly `CountCraftingIngredient`, the walk this Mod
+    /// already uses for its receipt's ingredient deltas. So the boolean and the array cannot disagree: an entry exists
+    /// exactly when the amount is short, which is what makes the row's two spellings checkable rather than merely
+    /// documented. (The engine's own <c>getItemCount</c> is marked obsolete in favour of <c>Items.CountId</c>, which does
+    /// NOT understand category keys - and those are half of this method's job.)
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<BridgeRecipeMissingIngredient> MissingRecipeIngredients(Farmer player, CraftingRecipe recipe)
+    {
+        List<BridgeRecipeMissingIngredient> missing = new();
+        foreach (KeyValuePair<string, int> ingredient in recipe.recipeList)
+        {
+            if (missing.Count >= MaximumMissingRecipeIngredients) break;
+            int held = CountCraftingIngredient(player, ingredient.Key);
+            if (held >= ingredient.Value) continue;
+            missing.Add(DescribeMissingIngredient(ingredient.Key, ingredient.Value, held));
+        }
+        return missing;
+    }
+
+    /// <summary>
+    /// One short ingredient, addressed the way the content answer addresses it (`ContentDataQuery.DescribeRecipeIngredient`):
+    /// the qualified item id when the recipe's key names an item, the engine's own category key when it names a category.
+    /// One resolver, so the same ingredient cannot be named two ways in the cost answer and in this row.
+    /// </summary>
+    private static BridgeRecipeMissingIngredient DescribeMissingIngredient(string ingredientKey, int needed, int held)
+    {
+        (string qualifiedItemId, string displayName) = ContentDataQuery.DescribeRecipeIngredient(ingredientKey);
+        return new BridgeRecipeMissingIngredient(qualifiedItemId, displayName, needed, held);
     }
 
     private static int CountCraftingIngredient(Farmer player, string ingredientKey)

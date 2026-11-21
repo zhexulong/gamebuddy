@@ -241,6 +241,45 @@ type ActiveExecution = Readonly<{
   cancelSafe?: boolean;
 }>;
 
+/**
+ * One learned recipe, under the identity `craft_item` / `cook_recipe` accept, WITH the reasons it cannot be made.
+ *
+ * <p>
+ * The row used to be `{ targetId, displayName, ingredientsAvailable }`, and `ingredientsAvailable: false` was the whole of
+ * what a companion could see about a recipe she could not make: not which ingredient was short, and not by how much. The
+ * observation budget then dropped those rows entirely and kept a count (`withheldUnavailableRecipes`), so the one row that
+ * says "you cannot craft this, and here is why" was the row the bound removed - measured `round87b`, a `Furnace` row absent
+ * from every observation while `craft_item(Furnace)` was dispatched and refused `craft_ingredients_missing`.
+ * </p>
+ * <p>
+ * `missingIngredients` carries one row per short ingredient, and it is ALWAYS present: `[]` means the recipe needs
+ * nothing more (measured, and the same fact `ingredientsAvailable: true` states), while an absent array would mean the
+ * producer never computed it. The two spellings cannot disagree - `isRecipeTargetFact` refuses a row where
+ * `ingredientsAvailable` is not exactly `missingIngredients.length === 0`.
+ * </p>
+ */
+type RecipeTargetRow = Readonly<{
+  targetId: string;
+  displayName: string;
+  /** `missingIngredients.length === 0`, the same boolean `craft_recipe`'s ingredient gate decides on. */
+  ingredientsAvailable: boolean;
+  /**
+   * The ingredients this backpack is short of, one row each; empty when nothing is short.
+   *
+   * The identity is the engine's own ingredient key, qualified where that key names an item (`(O)388`) and left as the
+   * engine's negative category number where it names a category instead (`-5`, `-777` seasonal wild seeds) - a recipe's
+   * `ingredientList` keys are both kinds (`CraftingRecipe.ItemMatchesForCrafting` matches either an item's
+   * `QualifiedItemId` or its `Category`, CraftingRecipe.cs:358-378), so a category row's `held` is the sum across every
+   * item in that category rather than the count of one item.
+   */
+  missingIngredients: readonly Readonly<{
+    qualifiedItemId: string;
+    displayName: string;
+    needed: number;
+    held: number;
+  }>[];
+}>;
+
 export type Snapshot = Readonly<{
   revision: number;
   location: string;
@@ -1015,9 +1054,9 @@ export type Snapshot = Readonly<{
     stack: number;
   }>[];
   /** Learned crafting recipes, each under the exact expectedTargetId craft_item accepts. */
-  craftingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
+  craftingRecipeTargets?: readonly RecipeTargetRow[];
   /** Learned cooking recipes, each under the exact expectedTargetId cook_recipe accepts. */
-  cookingRecipeTargets?: readonly Readonly<{ targetId: string; displayName: string; ingredientsAvailable: boolean }>[];
+  cookingRecipeTargets?: readonly RecipeTargetRow[];
   /** Live cooking stations (vanilla kitchen action tile or a placed (BC)278 cookout kit) on the current map. */
   cookingStationTargets?: readonly Readonly<{
     targetId: string;
@@ -4990,8 +5029,10 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "inventoryItemFacts", maxItems: 36, accepts: isInventoryItemFact },
   { field: "foodTargets", maxItems: 36, accepts: isFoodTargetFact },
   { field: "shippingBinTargets", maxItems: 1, accepts: isShippingBinTargetFact },
-  { field: "craftingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact },
-  { field: "cookingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact },
+  // The recipe pair states availability TWICE (the boolean the action's gate decides on, and the missing ingredients
+  // beside it), so a refused row is narrated with both readings rather than with its key set.
+  { field: "craftingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact, narrate: recipeEntryReason },
+  { field: "cookingRecipeTargets", maxItems: 64, accepts: isRecipeTargetFact, narrate: recipeEntryReason },
   { field: "cookingStationTargets", maxItems: 16, accepts: isCookingStationTargetFact },
   { field: "mineElevatorFloorTargets", maxItems: 32, accepts: isMineElevatorFloorFact },
   { field: "minecartTargets", maxItems: 24, accepts: isMinecartTargetFact },
@@ -5043,6 +5084,25 @@ function namedEntryReason(targets: unknown, rule: SnapshotFamilyRule): string {
   return `invalid_snapshot:${rule.field}:entry${index}:keys=${
     isRecord(entry) ? Object.keys(entry).join("|") : typeof entry
   }${nullKeys.length > 0 ? `:nulls=${nullKeys.join("|")}` : ""}`;
+}
+
+/**
+ * Why a recipe row was refused: the two spellings of its one availability fact, printed side by side.
+ *
+ * `ingredientsAvailable` is `missingIngredients.length === 0` (`isRecipeTargetFact` asserts it), so a row whose halves
+ * disagree is `recipe_row_two_spellings:ingredientsAvailable=<b>:missingIngredients=<n>` rather than a key list: the
+ * reader's next move is to find which half the producer computed from something other than the engine's own gate. Any
+ * OTHER refusal - a missing key, a bad id, a non-short entry - stays the named-entry reading.
+ */
+function recipeEntryReason(targets: unknown, rule: SnapshotFamilyRule): string {
+  if (!Array.isArray(targets)) return `invalid_snapshot:${rule.field}:not_an_array`;
+  if (targets.length > rule.maxItems) return `invalid_snapshot:${rule.field}:count=${targets.length}`;
+  const entry: unknown = targets.find((candidate) => !rule.accepts(candidate));
+  const missing = isRecord(entry) ? entry.missingIngredients : undefined;
+  const available = isRecord(entry) ? entry.ingredientsAvailable : undefined;
+  if (!Array.isArray(missing) || typeof available !== "boolean" || available === (missing.length === 0))
+    return namedEntryReason(targets, rule);
+  return `recipe_row_two_spellings:ingredientsAvailable=${String(available)}:missingIngredients=${String(missing.length)}`;
 }
 
 /** The first family its table rule refuses, or null when every family is acceptable. */
