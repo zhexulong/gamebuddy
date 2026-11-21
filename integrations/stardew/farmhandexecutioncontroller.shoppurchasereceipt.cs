@@ -1,0 +1,203 @@
+using System;
+using System.Collections.Generic;
+using GameBuddy.Stardew.Core.Models;
+
+namespace GameBuddy.Stardew;
+
+/// <summary>
+/// The RECEIPT seam of `shop_purchase`: the disposition of one purchase, and the detail text that states it.
+///
+/// <para>
+/// IT IS ITS OWN PART BECAUSE THE ACTION'S FILE REACHED THE FILE CEILING. `farmhandexecutioncontroller.shopactions.cs`
+/// grew past the 2,000-line ceiling for a `.cs` file (2,145 with this seam in it) and every commit that staged it was
+/// refused (`file_over_ceiling`), so the seam moved here rather than the ceiling moving. What is here has no native
+/// call in it: the trade happens in the handler, and this half only reads the facts the trade produced and writes the
+/// one text the Host reads. It is a small file against the same 2,000-line ceiling, and it carries no baseline entry.
+/// </para>
+/// </summary>
+internal sealed partial class ExecutionManager
+{
+    /// <summary>
+    /// The disposition of one purchase, from the facts the transaction produced — the ONE place that decides it, so the
+    /// state the caller reads and the terminal it reads cannot be two judgements.
+    ///
+    /// <para>
+    /// A TOOL UPGRADE is a purchase whose goods never enter the pack: <c>Tool.actionWhenPurchased</c> sets
+    /// <c>Farmer.toolBeingUpgraded</c> and <c>daysLeftForToolUpgrade = 2</c> for the shop id <c>ClintUpgrade</c>
+    /// (Tool.cs:875-895) and returns true, so <c>ShopMenu.tryToPurchaseItem</c> discards the entry it charged for
+    /// (ShopMenu.cs:1369-1378) while the tool the upgrade consumes leaves the pack (:879-888). Judged by "goods
+    /// arrived" alone, a successful upgrade therefore read as <c>Uncertain/purchase_partial</c> — the receipt could not
+    /// tell a finished upgrade from a half-done trade. The engine's own two fields are the effect, so they are what
+    /// this reads: nothing else in the game writes <c>toolBeingUpgraded</c>.
+    /// </para>
+    /// <para>
+    /// The upgraded tool's id is compared with the requested one because <c>toolBeingUpgraded</c> may already have held
+    /// a DIFFERENT tool (Tool.cs:875 is the only writer's guard); a purchase is never the answer for a tool it did not
+    /// put there. <paramref name="requiredToolBefore"/> and <paramref name="requiredToolAfter"/> are the pack counts of
+    /// the item the upgrade consumes, which is the second half of the engine's effect.
+    /// </para>
+    /// </summary>
+    internal readonly record struct ShopPurchaseOutcome(ExecutionState State, string ReasonCode);
+
+    internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(
+        long currencyBefore,
+        long currencyAfter,
+        int gained,
+        string? purchaseRefusal,
+        string expectedItemId,
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string? requiredToolId,
+        int requiredToolBefore,
+        int requiredToolAfter)
+    {
+        bool paid = currencyAfter < currencyBefore;
+        bool requiredToolTaken = requiredToolId is not null && requiredToolAfter == requiredToolBefore - 1;
+
+        if (purchaseRefusal is not null)
+            return new ShopPurchaseOutcome(
+                paid || gained > 0 || requiredToolTaken ? ExecutionState.Uncertain : ExecutionState.Rejected,
+                purchaseRefusal);
+
+        if (paid
+            && upgradedToolId is not null
+            && string.Equals(upgradedToolId, expectedItemId, StringComparison.Ordinal)
+            && daysLeftForToolUpgrade > 0
+            && requiredToolTaken)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "tool_upgrade_purchased");
+
+        if (paid && gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Succeeded, "item_purchased");
+
+        if (paid || gained > 0)
+            return new ShopPurchaseOutcome(ExecutionState.Uncertain, "purchase_partial");
+
+        return new ShopPurchaseOutcome(ExecutionState.Failed, ShopPurchaseRefusal("no_effect"));
+    }
+
+    /// <summary>
+    /// What a purchase that was a TOOL UPGRADE adds to the receipt: the engine's own three effects, in the one spelling
+    /// the Host's <c>tool_upgrade_purchased</c> rule declares.
+    ///
+    /// <para>
+    /// Empty for every other purchase, which is what keeps the ordinary <c>item_purchased</c> detail byte-identical: the
+    /// Host reads a detail as an exact key set, so an extra field on the ordinary path would be a producer bug there.
+    /// </para>
+    /// </summary>
+    internal static string ShopToolUpgradeEvidence(
+        string? upgradedToolId,
+        int daysLeftForToolUpgrade,
+        string requiredToolQualifiedId,
+        int requiredToolBefore,
+        int requiredToolAfter,
+        string purchaseDialogue)
+    {
+        if (upgradedToolId is null)
+            return string.Empty;
+        return $";tool_upgraded={upgradedToolId};days_left={daysLeftForToolUpgrade}"
+            + $";required_tool={(requiredToolQualifiedId.Length == 0 ? "none" : requiredToolQualifiedId)}"
+            + $";required_before={requiredToolBefore};required_after={requiredToolAfter}"
+            + $";purchase_dialogue={purchaseDialogue}";
+    }
+
+    /// <summary>
+    /// What one purchase receipt states, as the handler read each fact from the game.
+    ///
+    /// <para>
+    /// A record rather than a list of arguments because the receipt IS this shape: the Host reads the detail as an exact
+    /// key set (see <see cref="ShopPurchaseReceipt"/>), and the shop suite builds the same receipt from these same facts
+    /// so the invariant it asserts is asserted on the text the Mod emits.
+    /// </para>
+    ///
+    /// <para>
+    /// IT DECLARES WHEN ITS THREE PAIRS WERE READ, because `money_before`/`money_after`, `owned_before`/`owned_after`
+    /// and `stock_before`/`stock_after` are a world state compared with itself: a charge that the engine applied after
+    /// the read would report no effect, exactly as `pickup_forage`'s `removed=false` did for two rounds. The click that
+    /// spends the money runs inside <c>ShopMenu.receiveLeftClick</c> -> <c>tryToPurchaseItem</c> (ShopMenu.cs:1364) and the
+    /// after-facts are sampled once those clicks return (<c>RequestLocalShopPurchase</c>), so the point is
+    /// <see cref="PostconditionReadPoint.AfterTheSettle"/>.
+    /// </para>
+    ///
+    /// <para>
+    /// THE POINT IS DECLARED BUT NOT PRINTED, which is the one place this class of postcondition cannot reach the wire:
+    /// the Host's shop_purchase completion rule reads this detail as an exact key set
+    /// (host/src/stardew-completion-contracts.ts:4655-4704), so an extra token on the ordinary path is a producer bug
+    /// there rather than a fact - see <see cref="ShopToolUpgradeEvidence"/> for the same constraint stated on a field.
+    /// </para>
+    /// </summary>
+    internal readonly record struct ShopPurchaseReceiptFacts(
+        string ShopId,
+        string OwnerName,
+        bool TileOpened,
+        string ItemId,
+        int Requested,
+        int Purchased,
+        int UnitPrice,
+        long CurrencyBefore,
+        long CurrencyAfter,
+        int OwnedBefore,
+        int OwnedAfter,
+        int StockBefore,
+        int StockAfter,
+        int CounterX,
+        int CounterY,
+        bool MenuClosed,
+        IReadOnlyList<string> Clicks,
+        IReadOnlyList<string> Drops,
+        string? UpgradedToolId,
+        int DaysLeftForToolUpgrade,
+        string RequiredToolQualifiedId,
+        int RequiredToolBefore,
+        int RequiredToolAfter,
+        string PurchaseDialogue) : IReadsAWorldStateBeforeAndAfter
+    {
+        public string ActionId => "shop_purchase";
+
+        public PostconditionReadPoint ReadPoint => PostconditionReadPoint.AfterTheSettle;
+    }
+
+    /// <summary>
+    /// The ONE producer of a purchase receipt's detail.
+    ///
+    /// <para>
+    /// The evidence has to be MACHINE-READABLE by the Host's exact-shape contract, which splits the whole detail on `;`
+    /// and requires every field to be a non-empty `key=value`. <c>money_before</c>/<c>money_after</c> are frozen key
+    /// NAMES that the Host's shop_purchase completion rule requires
+    /// (host/src/stardew-game-integration-adapter.ts:1995-2055, exactEvidence, money_after &lt; money_before); their values
+    /// carry the amount of the CURRENCY the native charge moved, so a club-coin or Qi-gem purchase reports the decrease
+    /// that rule looks for:
+    /// </para>
+    /// <list type="bullet">
+    /// <item>a tile-opened shop has NO owner, and writing `owner=` made the field empty, which the Host rejects - so an
+    /// absent owner is spelled `none`, the same way other optional values are spelled here;</item>
+    /// <item>the two diagnostics are lists, and their entries used to embed `;`, which split each entry into fields the
+    /// Host cannot read (`drop0:empty_slot=0` is not a key). They now separate parts with `|` and entries with `||`, so
+    /// the whole diagnostic stays ONE field.</item>
+    /// </list>
+    /// <para>
+    /// <c>money_before</c>, <c>money_after</c>, <c>gained</c> and <c>tool_upgraded</c> are also the four fields the
+    /// purchase invariant is stated over (tools/check-stardew-shop-purchase-pays-for-goods.mjs): money may leave the
+    /// purse only when goods arrived or a tool was upgraded.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseReceipt(ShopPurchaseReceiptFacts facts)
+    {
+        int gained = facts.OwnedAfter - facts.OwnedBefore;
+        string entryKind = facts.TileOpened ? "tile_action" : "npc_owner";
+        return $"shop={facts.ShopId};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};item={facts.ItemId};"
+            + $"requested={facts.Requested};purchased={facts.Purchased};unit_price={facts.UnitPrice};"
+            + $"money_before={facts.CurrencyBefore};money_after={facts.CurrencyAfter};"
+            + $"owned_before={facts.OwnedBefore};owned_after={facts.OwnedAfter};gained={gained};"
+            + $"stock_before={facts.StockBefore};stock_after={facts.StockAfter};"
+            + $"owner_tile={facts.CounterX},{facts.CounterY};menu_closed={facts.MenuClosed.ToString().ToLowerInvariant()};"
+            + $"clicks={facts.Clicks.Count}[{string.Join("||", facts.Clicks)}];"
+            + $"drops={facts.Drops.Count}[{string.Join("||", facts.Drops)}]"
+            + ShopToolUpgradeEvidence(
+                facts.UpgradedToolId,
+                facts.DaysLeftForToolUpgrade,
+                facts.RequiredToolQualifiedId,
+                facts.RequiredToolBefore,
+                facts.RequiredToolAfter,
+                facts.PurchaseDialogue);
+    }
+}

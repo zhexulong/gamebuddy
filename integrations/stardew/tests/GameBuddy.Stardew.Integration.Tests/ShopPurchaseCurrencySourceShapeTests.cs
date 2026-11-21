@@ -27,6 +27,12 @@ public sealed class ShopPurchaseCurrencySourceShapeTests
 {
     private const string HandlerFile = "farmhandexecutioncontroller.shopactions.cs";
 
+    /// <summary>
+    /// The action's RECEIPT seam, which is its own part because the handler file reached the 2,000-line file ceiling:
+    /// <c>ShopPurchaseOutcomeFor</c>, <c>ShopToolUpgradeEvidence</c> and the receipt itself live there.
+    /// </summary>
+    private const string ReceiptFile = "farmhandexecutioncontroller.shoppurchasereceipt.cs";
+
     [Fact]
     public void Handler_ReadsTheShopsOwnCurrency_NotHardcodedMoney()
     {
@@ -63,7 +69,9 @@ public sealed class ShopPurchaseCurrencySourceShapeTests
         // (`ShopPurchaseOutcomeFor`, 67cf82ac), so the comparison the old pin named inline now lives there - still made
         // on the amounts the native reader returned, and still the only place an outcome is decided: a second
         // judgement in the request body is how the state and the terminal disagree.
-        string judgement = MethodBody(code, "internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(");
+        string judgement = MethodBody(
+            StripLineComments(ReadRepositoryFile(Path.Combine("integrations", "stardew", ReceiptFile))),
+            "internal static ShopPurchaseOutcome ShopPurchaseOutcomeFor(");
         judgement.Should().Contain("bool paid = currencyAfter < currencyBefore;", "the comparison is the shop's currency, not the purse");
         judgement.Should().Contain(
             "if (paid && gained > 0)",

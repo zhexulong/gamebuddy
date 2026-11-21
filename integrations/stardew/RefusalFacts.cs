@@ -149,7 +149,7 @@ internal static class RefusalFacts
         Row(ShopPurchase, "shop_purchase_refused", "the engine's own purchase path refused, in its own words"),
         Row(ShopPurchase, "shop_menu_unavailable", "the opened menu is not a ShopMenu"),
         Row(ShopPurchase, "shop_purchase_native_exception", "the native purchase call threw"),
-        Forwarded(ShopPurchase, "purchase_partial", "the trade moved only one side of the exchange", "farmhandexecutioncontroller.shopactions.cs", "ShopPurchaseOutcomeFor"),
+        Forwarded(ShopPurchase, "purchase_partial", "the trade moved only one side of the exchange", "farmhandexecutioncontroller.shoppurchasereceipt.cs", "ShopPurchaseOutcomeFor"),
         Forwarded(ShopPurchase, "body_owned", "another execution owns the body when the request arrives", "ExecutionAdmission.cs", "Describe"),
     });
 
