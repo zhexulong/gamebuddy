@@ -184,6 +184,12 @@
      code block, an id. Written once here so a `code` element and the chrome
      around it never drift apart. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* The leading a paragraph of CJK prose is read at. Chinese has no word spaces, so a line is a
+     denser band of ink than a Latin one of the same size, and comfortable leading is wider than the
+     sheet's 1.5 base. One token, because the conversation's bubbles, a settings hint and the Game
+     surface's own line are the same reading act and must not drift apart; it carries no appearance,
+     so the light root does not restate it. */
+  --leading-relaxed: 1.68;
   /* The 4/8 px spacing system the plan and design/26 §6.4 mandate. */
   --space-1: 4px;
   --space-2: 8px;
@@ -869,8 +875,12 @@
     padding: 10px 14px;
     border-radius: var(--radius-md);
     font-size: 14px;
-    line-height: 1.72;
+    line-height: var(--leading-relaxed);
     overflow-wrap: anywhere;
+    /* `pretty` rather than `balance`: a reply is prose, not a heading. It tells the line breaker to
+       leave the last line of a paragraph alone when honouring it costs an earlier line a word, which
+       is the single-character widow CJK prose gets for free - one glyph is a whole word. */
+    text-wrap: pretty;
     white-space: pre-wrap;
     /* Words are words: the pointer over a message is the text cursor, because the only thing a press
        in here does is start a selection. It was `cursor: pointer` while the body swapped itself for an
@@ -2384,7 +2394,8 @@
   .field-hint {
     margin: 0;
     font-size: 12px;
-    line-height: 1.5;
+    line-height: var(--leading-relaxed);
+    text-wrap: pretty;
     /* The sentence under a field says how to use it, so it is live text and not
        a control the player cannot use. Measured in the mounted shell: it read
        `--text-disabled` (`#90877e`) at 5.57:1 on this surface's canvas
@@ -4603,11 +4614,11 @@
 
    With colour out, the beat takes the size step a stage direction takes in
    print: `0.9em`. It renders in every script and every appearance, it needs no
-   colour, and it costs no line: the bubble's `line-height` is the unitless
-   `1.72`, so the beat's own leading shrinks with its type while the paragraph's
-   strut still sets the line box, and the paragraph keeps its height and its line
-   count (the mounted gate compares a reply with a beat against the same words
-   without one: 24.08 px and one line each).
+   colour, and it costs no line: the bubble's `line-height` is the unitless token
+   `--leading-relaxed` (1.68), so the beat's own leading shrinks with its type
+   while the paragraph's strut still sets the line box, and the paragraph keeps
+   its height and its line count (the mounted gate compares a reply with a beat
+   against the same words without one: 23.52 px, one line, each).
 
    The bubble's `pre-wrap` is neutralised for rendered Markdown: with `pre-wrap`
    the newlines between `<p>`/`<blockquote>`/`<li>` are preserved *as well as*
@@ -5745,7 +5756,8 @@
   .game-situation-line {
     margin: 0;
     font-size: 14px;
-    line-height: 1.6;
+    line-height: var(--leading-relaxed);
+    text-wrap: pretty;
     color: var(--text-primary);
     overflow-wrap: anywhere;
   }
