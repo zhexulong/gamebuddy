@@ -532,17 +532,83 @@ internal sealed partial class ExecutionManager
         return left;
     }
 
+    /// <summary>
+    /// Hands the body back FROM THE ROD THAT TOOK IT, and only then restores the slot the actor held before the cast.
+    ///
+    /// <para>
+    /// THE ORDER IS THE WHOLE OF IT, measured at `1795284512593` (Day 6 17:00, forest 47,26). `plan_449`'s `fish_here`
+    /// settled `fish_here_catch_window_deadline_expired` out of `awaiting_catch_window` - the nibble branch that lands
+    /// junk without ever opening a `BobberBar` - and the body stayed locked for 273 s: `can_move=false`, 29 receipts
+    /// saying `held_by=stalled_with_no_holder:CanMove`, six `move_to_tile`/`enter_exit` refused, and the game clock
+    /// stopped, because `shouldTimePass()` reads `CanMove`.
+    /// </para>
+    ///
+    /// <para>
+    /// The old order restored `PreviousSlot` FIRST, and `Farmer.CurrentToolIndex`'s setter runs
+    /// `CurrentItem.actionWhenStopBeingHeld` (`Farmer.cs:1817-1820`) - which a rod answers with `putAwayEvent`
+    /// (`FishingRod.cs:287-291`). That event fires and polls in the same call (`Netcode/NetEvent0.cs:21-27`), so its
+    /// handler `resetState` ran BEFORE the settle asked anything about the rod, clearing `isFishing`,
+    /// `isReeling`, `pullingOutOfWater` and `fishCaught` (`:298-337`); `Tool.actionWhenStopBeingHeld` cleared
+    /// `UsingTool` beside it (`Tool.cs:1259-1278`). `rod.inUse()` was therefore asked of a rod the switch had already
+    /// reset - it reads `isFishing`/`isCasting`/`isTimingCast`/`isNibbling`/`isReeling`/`fishCaught` and NOT
+    /// `pullingOutOfWater` (`:991-998`), which is the state a junk pull leaves (`:1338-1339`) - and answered false, so
+    /// `doneFishing` (`:1744-1747`, whose handler `doDoneFishing` is what hands the body back, `:1815-1824`) never ran.
+    /// The pull's own animation would have finished the job (`:611`/`:630` -> `donefishingEndFunction`, `:1000-1010`,
+    /// which sets `canMove`, clears `UsingTool` and ends the pull), but `tickUpdate` returns before it updates
+    /// `animations` whenever `who.CurrentTool` is no longer a rod (`:1906-1918` before `:1919`, and `:1910` is the
+    /// exact clause) - so the callback never fired again and `CanMove` stayed false. `shouldTimePass()` reads it, which
+    /// is why the clock stopped with the body.
+    /// </para>
+    ///
+    /// <para>
+    /// SO THE HAND-BACK HAPPENS HERE, while the rod is still the selected tool: `doneFishing` for the state the
+    /// engine's own settle can see, and the three flags for the state it cannot - `pullingOutOfWater` is not one
+    /// `inUse()` reads, and a body that has already been put away is a body nothing will come back for.
+    /// </para>
+    ///
+    /// <para>
+    /// THE THREE FLAGS ARE READ BACK, not assumed. `CanMove` is the engine's own `!Game1.eventUp` answer - what
+    /// `completelyStopAnimatingOrDoingAction` writes (`Farmer.cs:9015`) and both engine settles end with (`:1819`,
+    /// `BobberBar.cs:365`) - so an event that owns the body keeps it instead of being overruled. When any of the three
+    /// is still held after the hand-back, the receipt names WHICH one, so the next run does not need a 273 s stall to
+    /// say it.
+    /// </para>
+    /// </summary>
     private void SettleFishingCast(LocalFishingCastSpec spec, ExecutionState state, string reasonCode, string evidence)
     {
+        string heldBody = string.Empty;
+        if (spec.RodSlot >= 0 && spec.RodSlot < Game1.player.Items.Count
+            && Game1.player.Items[spec.RodSlot] is FishingRod rod
+            && (rod.inUse() || rod.pullingOutOfWater || Game1.player.UsingTool))
+        {
+            // After a credit `doneHoldingFish` has already performed the rod's own settle (`FishingRod.cs:2333`).
+            if (spec.Phase != LocalFishingPhase.AwaitingCredit) rod.doneFishing(Game1.player);
+            Game1.player.UsingTool = false;
+            Game1.player.CanMove = !Game1.eventUp;
+            rod.pullingOutOfWater = false;
+            heldBody = DescribeHeldFishingBody(rod);
+        }
+
         this.slots.Fishing.Clear();
         if (spec.PreviousSlot >= 0 && spec.PreviousSlot < Game1.player.Items.Count)
             Game1.player.CurrentToolIndex = spec.PreviousSlot;
-        if (spec.Phase != LocalFishingPhase.AwaitingCredit
-            && spec.RodSlot >= 0 && spec.RodSlot < Game1.player.Items.Count
-            && Game1.player.Items[spec.RodSlot] is FishingRod rod && rod.inUse())
-            rod.doneFishing(Game1.player);
         if (Game1.activeClickableMenu is BobberBar) Game1.exitActiveMenu();
         this.revision++;
-        this.RememberTerminal(spec.RequestId, spec.ExecutionId, state, reasonCode, evidence);
+        this.RememberTerminal(spec.RequestId, spec.ExecutionId, state, reasonCode,
+            heldBody.Length == 0 ? evidence : $"{evidence};{heldBody}");
+    }
+
+    /// <summary>
+    /// Which of the three body flags is still held after the hand-back, by name - or nothing when the body came free.
+    /// The caller appends it to the settlement's evidence, so an empty answer leaves a receipt's fields unchanged.
+    /// </summary>
+    private static string DescribeHeldFishingBody(FishingRod rod)
+    {
+        bool canMove = Game1.player.CanMove;
+        bool usingTool = Game1.player.UsingTool;
+        if (canMove && !usingTool && !rod.pullingOutOfWater) return string.Empty;
+        return "fishing_settled_but_body_held:"
+            + $"can_move={(canMove ? "true" : "false")}|using_tool={(usingTool ? "true" : "false")}"
+            + $"|pulling_out_of_water={(rod.pullingOutOfWater ? "true" : "false")}";
     }
 }

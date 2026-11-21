@@ -290,9 +290,7 @@ public sealed class FishingActionTests
             CaughtCountBefore: 0);
         BodySlotSeeding.Seed(executions, "activeFishing", spec);
 
-        typeof(ExecutionManager)
-            .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(executions, null);
+        FishingTick(executions);
 
         executions.TryGetReceipt("req_missing_credit", out LocalExecutionReceipt receipt).Should().BeTrue();
         receipt!.State.Should().Be(ExecutionState.Uncertain,
@@ -588,15 +586,248 @@ public sealed class FishingActionTests
             LocalFishingPhase.WaitingForBite);
         BodySlotSeeding.Seed(executions, "activeFishing", spec);
 
-        typeof(ExecutionManager)
-            .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(executions, null);
+        FishingTick(executions);
 
         executions.TryGetReceipt("req_unbitten", out _).Should().BeFalse(
             "a cast the world has not bitten is still a cast, not a catch");
         ((LocalFishingCastSpec)BodySlotSeeding.Peek(executions, "activeFishing")!).Phase.Should().Be(LocalFishingPhase.WaitingForBite,
             "the phase advances on the engine's own hook and on nothing else");
     }
+
+    /// <summary>
+    /// THE SETTLE HANDS THE BODY BACK FROM THE TOOL THAT TOOK IT, BEFORE THE SLOT MOVES.
+    ///
+    /// <para>
+    /// MEASURED (`1795284512593`, Day 6 17:00, forest 47,26). `plan_449`'s `fish_here` settled
+    /// `fish_here_catch_window_deadline_expired` out of `awaiting_catch_window` - the nibble branch that lands junk
+    /// without ever opening a `BobberBar` - and from that settlement on (revision 452 -&gt; 453) the body was locked for
+    /// 273 s: `can_move=false`, 29 receipts saying `held_by=stalled_with_no_holder:CanMove;can_move=false`,
+    /// `admissible_actions=none`, six movements refused, and the game CLOCK stopped, because `shouldTimePass()` reads
+    /// `CanMove`.
+    /// </para>
+    ///
+    /// <para>
+    /// WHY, exactly. `Farmer.CurrentToolIndex`'s setter runs `CurrentItem.actionWhenStopBeingHeld`
+    /// (`Farmer.cs:1817-1820`), which a rod answers with `putAwayEvent.Fire()` (`FishingRod.cs:287-291`) - and that
+    /// event fires and polls in the same call (`Netcode/NetEvent0.cs:21-27`), so its handler `resetState` had already
+    /// cleared `isFishing`, `isReeling`, `pullingOutOfWater` and `fishCaught` (`:298-337`) by the time the settle asked
+    /// `rod.inUse()` of it. `inUse()` reads those flags and not `pullingOutOfWater` (`:991-998`), and
+    /// `pullingOutOfWater` with `isFishing` false is exactly what a junk pull leaves (`:1338-1339`), so the answer was
+    /// false and `doneFishing` (`:1744-1747`) - whose handler `doDoneFishing` is what hands the body back
+    /// (`:1815-1824`) - never ran. The pull's own animation would have finished the job
+    /// (`:611`/`:630` -&gt; `donefishingEndFunction`, `:1000-1010`), except `tickUpdate` returns before it updates
+    /// `animations` when `who.CurrentTool` is no longer a rod (`:1910-1918` before `:1919`), which the same switch had
+    /// just made true. `CanMove` stayed false, `shouldTimePass()` read it, and the clock stopped with the body.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IS NOT DRIVEN, and why this is still the measured chain. The engine's own hook (`DoFunction`'s nibble
+    /// branch, `:491`) opens with `location.getFish(...)` -&gt; `DataLoader.Fish(Game1.content)`
+    /// (`GameLocation.cs:13908`), and this process has no content manager (class docblock). So that one step - the
+    /// phase advance and the rod state it leaves - is written here with the engine's own fields and the same
+    /// `slots.Fishing.Assign` the production tick uses. Everything after it is the shipped production path: the
+    /// deadline expiring in `awaiting_catch_window`, the receipt it mints, and the body it leaves behind.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnExpiredCastHandsTheBodyBackBeforeTheSlotMoves()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(FishingRod), "(T)FishingRod", upgradeLevel: 0);
+        // The slot the actor held BEFORE the cast: the switch to it is what fires the rod's put-away reset, so the
+        // settle must not be the one that performs it.
+        world.PutToolInPackSlot(3, typeof(Axe), "(T)Axe", upgradeLevel: 0);
+        world.Actor.CurrentToolIndex = 0;
+        var rod = (FishingRod)world.Actor.Items[0]!;
+        SeedRodPutAwayEvent(rod);
+        ExecutionManager executions = world.NewExecutionManager("fish_here");
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var spec = new LocalFishingCastSpec(
+            "exec_junk_pull",
+            "req_junk_pull",
+            world.Farm.NameOrUniqueName,
+            2,
+            3,
+            ExecutionManager.BuildWaterTargetId(world.Farm, 2, 3),
+            RodSlot: 0,
+            PreviousSlot: 3,
+            StaminaBefore: world.Actor.Stamina,
+            BaitBefore: 0,
+            StartedAtMs: now,
+            DeadlineMs: now + 30_000,
+            LocalFishingPhase.WaitingForBite);
+        BodySlotSeeding.Seed(executions, "activeFishing", spec);
+
+        // WAITING FOR BITE: the cast is live and the rod holds the body - `DoFunction`'s cast branch sets both
+        // (`FishingRod.cs:439-440`).
+        rod.isFishing = true;
+        world.Actor.UsingTool = true;
+        world.Actor.CanMove = false;
+        FishingTick(executions);
+        executions.TryGetReceipt("req_junk_pull", out _).Should().BeFalse(
+            "a cast whose deadline has not passed is still a cast, and it owns the body while it waits");
+
+        // THE JUNK PULL, as the engine leaves it: the bobber landed, so `isFishing` is false and `pullingOutOfWater`
+        // true (`:1338-1339`); `DoFunction`'s nibble branch already set `UsingTool` (`:635`) and the cast set
+        // `canMove` false (`:440`). No `BobberBar`, because nothing was pulled that opens a catch window.
+        rod.isFishing = false;
+        rod.pullingOutOfWater = true;
+        world.Actor.UsingTool = true;
+        world.Actor.CanMove = false;
+        rod.inUse().Should().BeFalse(
+            "`inUse()` does not read `pullingOutOfWater` (`:991-998`), which is how the settle came to skip the rod while it was still pulling");
+        BodySlotSeeding.Seed(executions, "activeFishing", spec with
+        {
+            Phase = LocalFishingPhase.AwaitingCatchWindow,
+            DeadlineMs = now - 1_000,
+        });
+
+        FishingTick(executions);
+
+        executions.TryGetReceipt("req_junk_pull", out LocalExecutionReceipt receipt).Should().BeTrue(
+            "the expired catch window settles the cast");
+        receipt!.ReasonCode.Should().Be("fish_here_catch_window_deadline_expired");
+        world.Actor.CanMove.Should().BeTrue(
+            "a settle that ends the cast hands the body back: `shouldTimePass()` reads this flag, and 273 s of stopped clock were the cost of the order that did not");
+        world.Actor.UsingTool.Should().BeFalse("the tool that took the body is the one that hands it back");
+        rod.pullingOutOfWater.Should().BeFalse("the pull is over, so the rod is not pulling out of the water any more");
+        world.Actor.CurrentToolIndex.Should().Be(3, "the slot the action found before the cast is still restored");
+        receipt.Evidence.Should().NotContain("fishing_settled_but_body_held",
+            "the hand-back was read back and it landed, so nothing is named as still held");
+    }
+
+    /// <summary>
+    /// AND WHEN THE BODY IS STILL HELD, THE RECEIPT NAMES WHICH OF THE THREE - it is read back, not assumed.
+    ///
+    /// <para>
+    /// The hand-back hands the body back as the engine's own stop does (`CanMove = !Game1.eventUp`, `Farmer.cs:9015`),
+    /// so a cutscene that owns the body keeps it instead of being overruled - and the settlement, which cannot free it,
+    /// says so by name. Three flags, three answers: `can_move`, `using_tool`, `pulling_out_of_water`.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ABodyAnEventHoldsIsNamedRatherThanStolen()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(FishingRod), "(T)FishingRod", upgradeLevel: 0);
+        world.Actor.CurrentToolIndex = 0;
+        var rod = (FishingRod)world.Actor.Items[0]!;
+        ExecutionManager executions = world.NewExecutionManager("fish_here");
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var spec = new LocalFishingCastSpec(
+            "exec_held_body",
+            "req_held_body",
+            world.Farm.NameOrUniqueName,
+            2,
+            3,
+            ExecutionManager.BuildWaterTargetId(world.Farm, 2, 3),
+            RodSlot: 0,
+            PreviousSlot: 0,
+            StaminaBefore: world.Actor.Stamina,
+            BaitBefore: 0,
+            StartedAtMs: now - 5_000,
+            DeadlineMs: now - 1_000,
+            LocalFishingPhase.AwaitingCatchWindow);
+        BodySlotSeeding.Seed(executions, "activeFishing", spec);
+        rod.isFishing = false;
+        rod.pullingOutOfWater = true;
+        world.Actor.UsingTool = true;
+        world.Actor.CanMove = false;
+
+        Game1.eventUp = true;
+        try
+        {
+            FishingTick(executions);
+        }
+        finally
+        {
+            Game1.eventUp = false;
+        }
+
+        executions.TryGetReceipt("req_held_body", out LocalExecutionReceipt receipt).Should().BeTrue();
+        receipt!.ReasonCode.Should().Be("fish_here_catch_window_deadline_expired");
+        world.Actor.CanMove.Should().BeFalse("an event owns the body, and a settlement may not overrule it");
+        receipt.Evidence.Should().Contain(
+            "fishing_settled_but_body_held:can_move=false|using_tool=false|pulling_out_of_water=false",
+            "the settlement names which flag is still held, so the next run reads it instead of waiting out a stall");
+    }
+
+    /// <summary>
+    /// THE ORDER, AS A GATE: the body hand-back precedes the slot restore in the shipped settle - the defect was two
+    /// statements in the wrong order, and a future reorder must fail here by name rather than in a live run.
+    /// </summary>
+    [Fact]
+    public void TheHandBackPrecedesTheSlotRestore()
+    {
+        string source = FishingSource();
+
+        BodyHandBackViolations(source).Should().BeEmpty(
+            "the settle must hand the body back while the rod is still selected, and name any flag still held");
+
+        const string handBack = "Game1.player.CanMove = !Game1.eventUp;";
+        string switchedFirst = source
+            .Replace(handBack, string.Empty, StringComparison.Ordinal)
+            .Replace("Game1.player.CurrentToolIndex = spec.PreviousSlot;",
+                $"Game1.player.CurrentToolIndex = spec.PreviousSlot;\n            {handBack}", StringComparison.Ordinal);
+        BodyHandBackViolations(switchedFirst).Should().Contain("body_handed_back_after_the_slot_moved",
+            "restoring the slot first is the shipped defect, and the gate must report it by name");
+
+        BodyHandBackViolations(source.Replace(handBack, string.Empty, StringComparison.Ordinal))
+            .Should().Contain("body_not_handed_back_at_the_settle",
+                "a settle that never hands the body back is the 273 s stall with no reading at all");
+
+        BodyHandBackViolations(source.Replace("rod.pullingOutOfWater = false;", string.Empty, StringComparison.Ordinal))
+            .Should().Contain("pull_not_ended_at_the_settle",
+                "the pull the engine left behind is the half `inUse()` cannot see");
+
+        BodyHandBackViolations(source.Replace("fishing_settled_but_body_held:", string.Empty, StringComparison.Ordinal))
+            .Should().Contain("held_body_not_named",
+                "a hand-back that does not say what is still held leaves the next run to discover it");
+    }
+
+    /// <summary>What the settle's hand-back must be, as a pure predicate so a mutated copy can be judged too.</summary>
+    private static IReadOnlyList<string> BodyHandBackViolations(string source)
+    {
+        var violations = new List<string>();
+        void Require(string text, string violation)
+        {
+            if (!source.Contains(text, StringComparison.Ordinal)) violations.Add(violation);
+        }
+
+        Require("Game1.player.UsingTool = false;", "tool_not_released_at_the_settle");
+        Require("Game1.player.CanMove = !Game1.eventUp;", "body_not_handed_back_at_the_settle");
+        Require("rod.pullingOutOfWater = false;", "pull_not_ended_at_the_settle");
+        Require("fishing_settled_but_body_held:", "held_body_not_named");
+        Require("can_move=", "held_body_does_not_name_can_move");
+        Require("using_tool=", "held_body_does_not_name_using_tool");
+        Require("pulling_out_of_water=", "held_body_does_not_name_pulling_out_of_water");
+
+        int handBack = source.IndexOf("Game1.player.CanMove = !Game1.eventUp;", StringComparison.Ordinal);
+        int switched = source.IndexOf("Game1.player.CurrentToolIndex = spec.PreviousSlot;", StringComparison.Ordinal);
+        if (switched < 0) violations.Add("slot_not_restored_at_the_settle");
+        else if (handBack >= 0 && handBack > switched) violations.Add("body_handed_back_after_the_slot_moved");
+        return violations;
+    }
+
+    /// <summary>One tick of the production cast handler, which is the only path this action settles through.</summary>
+    private static void FishingTick(ExecutionManager executions) =>
+        typeof(ExecutionManager)
+            .GetMethod("UpdateFishingCast", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(executions, null);
+
+    /// <summary>
+    /// The rod's put-away NET EVENT, which an uninitialized tool does not carry: `FishingRod.putAwayEvent` is
+    /// `new NetEvent0()` in a field initializer (`FishingRod.cs:213`), and `NetEvent0`'s only constructor takes an
+    /// OPTIONAL argument (`Netcode/NetEvent0.cs:16-19`), so the `NetFields` seeding that gives every other Netcode field
+    /// its initializer skips it - `Type.GetConstructor(Type.EmptyTypes)` finds nothing on an optional parameter. The slot
+    /// restore calls `actionWhenStopBeingHeld` -&gt; `putAwayEvent.Fire()` (`FishingRod.cs:289`), so without this the
+    /// switch throws before any settlement can be measured. No handler is wired, because `initNetFields` never ran on an
+    /// uninitialized rod: the event fires and the rod is left exactly in the state the fixture wrote.
+    /// </summary>
+    private static void SeedRodPutAwayEvent(FishingRod rod) =>
+        typeof(FishingRod)
+            .GetField("putAwayEvent", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(rod, new NetEvent0());
 
     /// <summary>
     /// THE FOUR READINGS. The receipt carries them so the run prints what it observed rather than re-deriving it, and
