@@ -157,14 +157,19 @@ Log "=== 4c. native helper pairs copied from the main checkout ==="
 # frontend live runs r9, r10 and r11 all died in the build phase this way.
 #
 #   windows-stale-lock-reclaimer   not required: build.ps1 builds it when the pair is absent
-#   windows-stardew-folder-picker  REQUIRED: its builder returns the pair from `readVerifiedPair()`
-#                                  before it spawns dotnet, so a verified copy is the whole fix
+#   windows-stardew-folder-picker  REQUIRED: whose absence fails the pin
 #
-# Neither copy is accepted on this script's own reading. `probes/verified-helper-pair.mjs` asks the
-# builder that will CONSUME the pair, so the acceptance rule stays in one place.
+# `required` decides ONE thing: whether an ABSENT pair fails the pin. Whether a PRESENT pair is checked is
+# never a per-helper decision - every copy below is handed to `probes/verified-helper-pair.mjs`, which asks
+# the builder that will CONSUME the pair, so the acceptance rule stays in one place. Measured 2026-11-22
+# (`D:\gb-lanes\deathproof-y`, commit 776f169f): the main checkout's reclaimer `.dist\win-x64` held a
+# manifest naming sha256 b10eddbf… beside an exe hashing 5d2cb694… (six files, two publishes into one shared
+# root). `required = $false` skipped the check, build.ps1 step 3 saw an exe and skipped its rebuild, and the
+# generation builder refused the copy `windows_stale_lock_reclaimer_pair_invalid` 137 s into the build phase
+# - after the typecheck and the Mod build, with nothing naming the copy as the cause.
 $helperPairs = @(
-  @{ name = 'windows-stale-lock-reclaimer'; required = $false },
-  @{ name = 'windows-stardew-folder-picker'; required = $true }
+  @{ name = 'windows-stale-lock-reclaimer'; required = $false; builder = 'host\scripts\build-windows-stale-lock-reclaimer.mjs' },
+  @{ name = 'windows-stardew-folder-picker'; required = $true; builder = 'host\scripts\build-windows-stardew-folder-picker.mjs' }
 )
 foreach ($helper in $helperPairs) {
   $src = Join-Path $Repo ("host\native\" + $helper.name + "\.dist")
@@ -183,13 +188,12 @@ foreach ($helper in $helperPairs) {
   robocopy $src $dst /E /NFL /NDL /NJH /NJS /NP | Out-Null
   $entries = @(Get-ChildItem (Join-Path $dst 'win-x64') -Name -ErrorAction SilentlyContinue)
   Log ("  " + $helper.name + " .dist copied; win-x64 entries=[" + ($entries -join ',') + "]")
-  if (-not $helper.required) { continue }
-  $builder = Join-Path $Worktree 'host\scripts\build-windows-stardew-folder-picker.mjs'
+  $builder = Join-Path $Worktree $helper.builder
   $verdict = (node (Join-Path (Join-Path $PSScriptRoot '..') 'probes\verified-helper-pair.mjs') $builder 2>&1)
   $verdict | ForEach-Object { Log ("  | " + $_) }
   if ($LASTEXITCODE -ne 0) {
-    Log ("  windows_stardew_folder_picker_pair_invalid: the copy at " + $dst + " is not the pair its builder accepts, so the build phase would publish one instead (the restore this phase exists to remove)")
-    Log "DONE-PIN-FAIL (a required helper pair did not survive the copy)"
+    Log ("  " + ($helper.name -replace '-', '_') + "_pair_invalid: the copy at " + $dst + " is not the pair its builder accepts, so the build phase would be handed a helper it refuses or republishes")
+    Log "DONE-PIN-FAIL (a native helper pair did not survive the copy)"
     exit 1
   }
 }

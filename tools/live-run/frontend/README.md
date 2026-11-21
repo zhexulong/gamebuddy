@@ -158,7 +158,7 @@ everything from the MAIN checkout (`<repo>` in the recipe below):
 |---|--------------|-------------|--------|
 | 1 | `host/node_modules/typescript` | **physical copy** — a junction makes host's tsc entry resolve out of the repo root and the build fails with `typescript_entry_escapes_repository_root` | robocopy `<repo>\host\node_modules\typescript` → `<wt>\host\node_modules\typescript`; junction every other child of `host\node_modules` |
 | 2 | `dialogue-web/node_modules/vite` + its pnpm siblings | vite **physical copy**; the 8 siblings (`rolldown`, `postcss`, `esbuild`, `picomatch`, `tinyglobby`, `jiti`, `lightningcss`, `yaml`) **junctioned** | robocopy vite; junction the 8 from `<repo>\node_modules\.pnpm\node_modules\<name>` |
-| 3 | `host/native/windows-stale-lock-reclaimer/.dist` | copied from main, then rebuilt fresh in the build phase from the pinned source | robocopy `.dist` (pin), `node host/scripts/build-windows-stale-lock-reclaimer.mjs` (build phase) |
+| 3 | `host/native/windows-stale-lock-reclaimer/.dist` | copied from main **only if its own builder accepts the copy** (`probes/verified-helper-pair.mjs`); an absent pair is rebuilt fresh in the build phase from the pinned source | robocopy `.dist` (pin), `node host/scripts/build-windows-stale-lock-reclaimer.mjs` (build phase) |
 | 4 | `integrations/stardew/bin/Release/net6.0` | compiled from the pinned source — never copied | `dotnet build .../GameBuddy.Stardew.csproj -c Release -p:GamePath=<gameDir>` (build phase) |
 
 `pin.ps1` also junctions the root `node_modules` and the `vendor/{pi-koe,magic-context}` submodules
