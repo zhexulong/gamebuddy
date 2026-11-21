@@ -36,15 +36,17 @@ const SCENARIO = "tools/scenario.mjs";
 const FORMATTER_LOG = ".formatter-invocations";
 
 /** The hook, and the library it imports, taken from this tree so the suite cannot agree with a hook that is not there. */
-const COPIED_FILES = ["tools/git-hooks/pre-commit", "tools/scripts/pre-commit.mjs", "tools/lib/subprocess-output.mjs"];
-
-/** The steps the hook runs after formatting. None of them is this suite's subject, and each one must not block here. */
-const STUBBED_STEPS = [
-  "host/scripts/check-staged-test-typecheck.mjs",
-  "tools/scripts/check-format-ratchet.mjs",
-  "tools/scripts/check-lint-ratchet.mjs",
-  "tools/scripts/check-lockfile-freeze.mjs",
+const COPIED_FILES = [
+  "tools/git-hooks/pre-commit",
+  "tools/scripts/pre-commit.mjs",
+  "tools/scripts/check-file-complexity-gate.mjs",
+  "tools/scripts/check-script-entry-existence.mjs",
+  "tools/scripts/cli-entry.mjs",
+  "tools/lib/subprocess-output.mjs",
 ];
+
+/** The steps the hook runs conditionally on Host/lockfile changes. None of them is this suite's subject. */
+const STUBBED_STEPS = ["host/scripts/check-staged-test-typecheck.mjs", "tools/scripts/check-lockfile-freeze.mjs"];
 
 /** One formatter process: both CLI modes, and a record of every invocation so "no formatter ran" is observable. */
 const FORMATTER = `#!/usr/bin/env node
@@ -60,8 +62,26 @@ const format_ = (text) => {
   return text.replace(/\\{(\\w+):(\\w+)\\}/g, "{ $1: $2 }");
 };
 const [subcommand, ...paths] = args.filter((arg) => !arg.startsWith("--"));
+if (subcommand === "lint") {
+  const diagnostics = [];
+  for (const path of paths) {
+    const text = readFileSync(path, "utf8");
+    if (!text.includes("LINT_ERROR")) continue;
+    diagnostics.push({
+      severity: "error",
+      description: "fixture lint error (LINT_ERROR)",
+      location: { path: { file: path }, span: [0, 1] },
+    });
+  }
+  const report = {
+    summary: { errors: diagnostics.length, warnings: 0, unchanged: paths.length - diagnostics.length, changed: diagnostics.length },
+    diagnostics,
+  };
+  process.stdout.write(JSON.stringify(report));
+  process.exit(diagnostics.length > 0 ? 1 : 0);
+}
 if (subcommand !== "format") {
-  process.stderr.write("formatter fixture: only the format subcommand is reproduced, got " + subcommand + "\\n");
+  process.stderr.write("formatter fixture: unexpected subcommand " + subcommand + "\\n");
   process.exit(1);
 }
 
@@ -97,7 +117,13 @@ const CHARACTER_REWRITING_FORMATTER = `#!/usr/bin/env node
 import { readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
-const [, ...paths] = args.filter((arg) => !arg.startsWith("--"));
+const [subcommand, ...paths] = args.filter((arg) => !arg.startsWith("--"));
+if (subcommand === "lint") {
+  process.stdout.write(
+    JSON.stringify({ summary: { errors: 0, warnings: 0, unchanged: paths.length, changed: 0 }, diagnostics: [] }),
+  );
+  process.exit(0);
+}
 if (args.includes("--write")) {
   for (const path of paths) {
     const text = readFileSync(path, "utf8");
@@ -275,4 +301,116 @@ test("a character the author wrote is not formatting", () => {
     /pre-commit: NOT reformatting tools\/scenario\.mjs \(U\+2716 \(\u2716\) -> U\+00D7 \(\u00d7\)\)/,
     "the hook must name the file and the character it refused to change",
   );
+});
+
+test("reformatted index hint names the exact paths that were rewritten", () => {
+  const { write, git, ok } = fixture();
+  write(SCENARIO, "export const lane = {p:8};\n");
+  ok(["add", "--", SCENARIO]);
+
+  const commit = git(["commit", "-m", "exact sync path"]);
+  assert.equal(commit.status, 0, combined(commit));
+  assert.match(
+    combined(commit),
+    /biome format --write tools\/scenario\.mjs/,
+    "the worktree sync instruction should carry the concrete path(s) rather than literal `<paths>`",
+  );
+});
+
+test("staged conflict markers and scratch debris paths refuse the commit", () => {
+  const { write, git, ok } = fixture();
+  const head = ok(["rev-parse", "HEAD"]);
+
+  write(
+    SCENARIO,
+    `${[
+      "export const a = 1;",
+      "<<<<<<< HEAD",
+      "export const b = 2;",
+      "=======",
+      "export const b = 3;",
+      ">>>>>>> branch",
+    ].join("\n")}\n`,
+  );
+  ok(["add", "--", SCENARIO]);
+  const conflictCommit = git(["commit", "-m", "conflict"]);
+  assert.notEqual(conflictCommit.status, 0, combined(conflictCommit));
+  assert.match(combined(conflictCommit), /conflict marker/i);
+  assert.equal(ok(["rev-parse", "HEAD"]), head);
+
+  ok(["reset", "HEAD", "--", SCENARIO]);
+  write("diag-temp.mjs", "console.log('debris');\n");
+  ok(["add", "--", "diag-temp.mjs"]);
+  const debrisCommit = git(["commit", "-m", "debris"]);
+  assert.notEqual(debrisCommit.status, 0, combined(debrisCommit));
+  assert.match(combined(debrisCommit), /diag-temp\.mjs/);
+  assert.equal(ok(["rev-parse", "HEAD"]), head);
+});
+
+test("a staged file that exceeds its extension line ceiling is refused on the staged blob", () => {
+  const { write, git, ok } = fixture();
+  const head = ok(["rev-parse", "HEAD"]);
+  // `.py` ceiling in `CEILINGS_BY_EXTENSION` is 300; stage 305 lines while keeping worktree short.
+  const longPy = `${Array.from({ length: 305 }, (_, i) => `x_${String(i)} = ${String(i)}`).join("\n")}\n`;
+  write("tools/too_long.py", longPy);
+  ok(["add", "--", "tools/too_long.py"]);
+  write("tools/too_long.py", "x = 1\n");
+
+  const commit = git(["commit", "-m", "oversized py"]);
+  assert.notEqual(commit.status, 0, combined(commit));
+  assert.match(
+    combined(commit),
+    /file_over_ceiling:tools\/too_long\.py:306:300|file_over_ceiling:tools\/too_long\.py:305:300/,
+  );
+  assert.equal(ok(["rev-parse", "HEAD"]), head);
+});
+
+test("a staged lint error refuses the commit while an unstaged neighbor lint error does not", () => {
+  const { write, git, ok } = fixture();
+  write("tools/clean.mjs", "export const ok = 1;\n");
+  write("tools/dirty-neighbour.mjs", "export const bad = LINT_ERROR;\n");
+  ok(["add", "--", "tools/clean.mjs"]);
+
+  const cleanCommit = git(["commit", "-m", "clean staged"]);
+  assert.equal(cleanCommit.status, 0, combined(cleanCommit));
+  const afterClean = ok(["rev-parse", "HEAD"]);
+
+  write("tools/bad.mjs", "export const bad = LINT_ERROR;\n");
+  ok(["add", "--", "tools/bad.mjs"]);
+  const blocked = git(["commit", "-m", "bad staged"]);
+  assert.notEqual(blocked.status, 0, combined(blocked));
+  assert.match(combined(blocked), /tools\/bad\.mjs/);
+  assert.equal(ok(["rev-parse", "HEAD"]), afterClean);
+});
+
+test("staging package.json checks script targets against the index, blocking dangling scripts and allowing paired additions", () => {
+  const { write, git, ok } = fixture();
+  write(".github/workflows/ci.yml", "steps:\n  - run: node tools/scenario.mjs\n");
+  write(
+    "package.json",
+    `${JSON.stringify({ name: "fixture", scripts: { good: "node tools/scenario.mjs" } }, null, 2)}\n`,
+  );
+  ok(["add", "--", ".github/workflows/ci.yml", "package.json"]);
+  ok(["commit", "-m", "add workflow and package"]);
+
+  const beforeBroken = ok(["rev-parse", "HEAD"]);
+  write(
+    "package.json",
+    `${JSON.stringify({ name: "fixture", scripts: { broken: "node tools/missing-script.mjs" } }, null, 2)}\n`,
+  );
+  ok(["add", "--", "package.json"]);
+  const brokenCommit = git(["commit", "-m", "dangling script"]);
+  assert.notEqual(brokenCommit.status, 0, combined(brokenCommit));
+  assert.match(combined(brokenCommit), /tools\/missing-script\.mjs/);
+  assert.equal(ok(["rev-parse", "HEAD"]), beforeBroken);
+
+  // Now stage BOTH the new script file and the package.json referencing it in one commit -> must succeed.
+  write("tools/new-script.mjs", "export const x = 1;\n");
+  write(
+    "package.json",
+    `${JSON.stringify({ name: "fixture", scripts: { added: "node tools/new-script.mjs" } }, null, 2)}\n`,
+  );
+  ok(["add", "--", "tools/new-script.mjs", "package.json"]);
+  const pairedCommit = git(["commit", "-m", "paired script and package"]);
+  assert.equal(pairedCommit.status, 0, combined(pairedCommit));
 });
