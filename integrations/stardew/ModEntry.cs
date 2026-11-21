@@ -1830,7 +1830,6 @@ public sealed partial class ModEntry : Mod
         this.sleepLifecycle?.ObserveSaved();
         if (this.TryGetAiState(out ScreenEmbodimentState savedState))
             savedState.Executions!.ObserveDayAdvanceSaved();
-        this.hostFarmhandProvisioner?.OnSaved();
         // A request can arrive while the previous native SaveGameMenu cycle is
         // still settling. Release the latch at the authoritative Saved
         // edge so a newly pending attachment can request its own native save.

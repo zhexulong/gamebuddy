@@ -7,6 +7,11 @@
 // Mod's config. The Host waits, the Mod answers `awaiting_save`, and nobody saves. The requirement
 // was legitimate (Mod save data lands only with the engine's save) and the TRIGGER was missing.
 //
+// The waiting itself is gone: an attach is answered from the in-memory record, and being durable in the
+// save on disk is owed to the engine's next cycle instead of waited for. The trigger stays, because
+// prompt durability is still worth having, and `EntryDoesNotWaitForTheEngineSaveSourceShapeTests` is the
+// gate for the half this table cannot express - that no answer refuses an entry for a save.
+//
 // So the population of this gate is the answers the provisioning surface can give, parsed from the
 // source that gives them, and the property is: every answer names the precondition it refused on,
 // and that precondition is created by a production path here, by the engine's own lifecycle, by the
@@ -58,7 +63,6 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
         {
             ["invalid_or_unauthorized_request"] = new(Owner.Host, "HasValidSignature"),
             ["request_replayed"] = new(Owner.Host, "ConsumedRequestIds"),
-            ["save_persistence_pending"] = new(Owner.Engine, "pendingSaveRequest"),
             ["protocol_mismatch"] = new(Owner.Engine, "protocolVersion"),
             ["host_not_ready"] = new(Owner.Ours, "CompanionSessionHosting"),
             ["companion_profile_not_authorized"] = new(Owner.Host, "AuthorizedCompanionIds"),
@@ -80,16 +84,10 @@ public sealed class AttachPreconditionOwnershipSourceShapeTests
             ["farmhand_profile_mismatch"] = new(Owner.Ours, "PrepareTargetFarmhand"),
             ["cabin_identity_mismatch"] = new(Owner.Ours, "PrepareTargetFarmhand"),
             ["target_farmhand_busy"] = new(Owner.Engine, "getOnlineFarmers"),
-            // The one answer that names a missing SAVE, and therefore the one this gate was written
-            // for: the trigger is ours, the save cycle is the engine's, and the binding is only
-            // durable once both have happened.
-            ["binding_persist_pending"] = new(Owner.Ours, "RequestsNativeSave"),
-            ["save_persistence_failed"] = new(Owner.Engine, "WriteSaveData"),
-            ["binding_readback_mismatch"] = new(Owner.Engine, "isCustomized"),
-            ["binding_readback_unavailable"] = new(Owner.Host, "ReadBindings"),
+            // There is no row here for a binding that is not yet in the save. The surface stopped answering one:
+            // `EntryDoesNotWaitForTheEngineSaveSourceShapeTests` is the gate that keeps it from coming back, because
+            // the durability of a binding is owed to the engine's next save cycle and no attach answer may wait on it.
             ["binding_store_unavailable"] = new(Owner.Host, "ReadBindings"),
-            ["binding_not_persisted"] = new(Owner.Engine, "WriteSaveData"),
-            ["manifest_issuance_failed"] = new(Owner.Ours, "IssueManifestForPersistedBinding"),
             ["manifest_publication_failed"] = new(Owner.Ours, "WriteJson"),
             ["manifest_issued"] = new(Owner.Ours, "WriteJson"),
             ["native_lan_endpoint_unavailable"] = new(Owner.Ours, "NativeLanEndpoint"),

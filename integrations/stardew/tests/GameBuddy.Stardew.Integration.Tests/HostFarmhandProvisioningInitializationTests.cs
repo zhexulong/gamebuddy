@@ -31,11 +31,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 /// <para>
 /// WHAT IS NOT MEASURED HERE, SAID PLAINLY. The request handler's host-state gate sits above this seam and requires a
-/// running native LAN server (<c>NativeLanEndpoint.TryRead</c>) plus SMAPI world readiness, so the final response state
-/// <c>awaiting_save</c> is not produced by this fixture: <c>live: not measured</c>. The runner that does produce it is
-/// <c>dotnet test integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests -c Release --filter
-/// FullyQualifiedName~HostFarmhandProvisioningInitializationTests</c> for this seam, and the Player Host live run for the
-/// response file itself.
+/// running native LAN server (<c>NativeLanEndpoint.TryRead</c>) plus SMAPI world readiness, so the answer an attach
+/// request finally receives is not produced by this fixture: <c>live: not measured</c>. The gate that pins that answer -
+/// that it does not wait for the save (<c>EntryDoesNotWaitForTheEngineSaveSourceShapeTests</c>) - reads the source, the
+/// save cycle's own side is driven by <c>HostFarmhandProvisioningSaveCycleTests</c>, and the response file itself is the
+/// Player Host live run's.
 /// </para>
 /// </summary>
 [Collection(HeadlessGameWorld.Collection)]

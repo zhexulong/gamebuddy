@@ -150,7 +150,7 @@ public sealed class HostFarmhandProvisionerPublicationTests
     }
 
     [Fact]
-    public void PersistPendingBinding_WhenWriteSaveDataFails_QuarantinesAllLaterLifecycleActivity()
+    public void PersistBindingsOwedToTheNextSave_WhenWriteSaveDataFails_QuarantinesAndRetiresTheObligation()
     {
         string directory = Path.Combine(Path.GetTempPath(), $"gamebuddy-provisioning-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
@@ -162,17 +162,22 @@ public sealed class HostFarmhandProvisionerPublicationTests
             ((ModHelperProxy)(object)helper).Data = data;
             object provisioner = CreateUninitializedProvisioner(directory);
             SetField(provisioner, "helper", helper);
-            SetField(provisioner, "pendingSaveRequest", new FarmhandAttachmentRequest { RequestId = "request_01" });
-            SetField(provisioner, "pendingSaveObserved", true);
+            SetField(provisioner, "bindingsOwedToTheNextSave", new List<HostFarmhandProvisioner.PendingSaveBinding>
+            {
+                new(
+                    new FarmhandAttachmentRequest { RequestId = "request_01" },
+                    new FarmhandBinding { CompanionId = "companion_01", FarmhandId = 42L, CabinId = "cabin_01", SaveId = "save_01", WorldId = "world_01" }),
+            });
 
-            InvokePrivate<object>(provisioner, "PersistPendingBinding");
+            InvokePrivate<object>(provisioner, "PersistBindingsOwedToTheNextSave");
 
             dataProxy.WriteAttempts.Should().Be(1);
             IsQuarantined(provisioner).Should().BeTrue();
             ((FarmhandAttachmentResponse)GetField(provisioner, "lastResponse")!).ReasonCode.Should().Be("save_persistence_failed");
+            ((List<HostFarmhandProvisioner.PendingSaveBinding>)GetField(provisioner, "bindingsOwedToTheNextSave")!).Should().BeEmpty(
+                "a write that throws leaves the save request armed, and the save it opens is the engine's own: retrying it every second would be a save loop");
 
             File.WriteAllText(Path.Combine(directory, FarmhandProvisioningProtocol.RequestFileName), "{}");
-            InvokePrivate<object>(provisioner, "OnSaved");
             InvokePrivate<object>(provisioner, "Update");
             InvokePrivate<object>(provisioner, "ProcessRequest", 0L);
             InvokePrivate<bool>(provisioner, "PublishFixtureReadiness", "fixture", "save", "fixture_ready", "ready").Should().BeFalse();

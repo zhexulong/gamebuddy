@@ -129,7 +129,7 @@ public sealed partial class ModEntry
         // start and the engine starts serving as soon as the world is live - observed live as
         // `multiplayer_gate_topology_failed:host_fixture_readiness` after the world had loaded and the Cabin
         // already existed.
-        if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || (!scenario.ArmsAfterNativeLanServer && Game1.server is not null) || this.hostFarmhandProvisioner?.IsAwaitingSave == true)
+        if (!automation.SaveName.StartsWith("GameBuddyFixture_", StringComparison.Ordinal) || !Context.IsWorldReady || !Game1.IsMasterGame || (!scenario.ArmsAfterNativeLanServer && Game1.server is not null) || this.hostFarmhandProvisioner?.HasBindingOwedToTheNextSave == true)
             return;
 
         try

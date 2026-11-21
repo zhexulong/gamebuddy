@@ -2144,19 +2144,17 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
             this.hostAutomationObservedAiClient = true;
             return;
         }
-        if (this.hostAutomationObservedAiClient && !this.hostAutomationObservedAiClientExit && !this.hostFarmhandProvisioner.IsAwaitingSave)
+        if (this.hostAutomationObservedAiClient && !this.hostAutomationObservedAiClientExit && !this.hostFarmhandProvisioner.HasBindingOwedToTheNextSave)
             this.hostAutomationObservedAiClientExit = true;
     }
 
     /// <summary>
-    /// Asks the engine to run its own save cycle when the Host is waiting for one to make something it
-    /// staged durable.
+    /// Asks the engine to run its own save cycle when something this session admitted is still only in memory.
     ///
-    /// Two facts can be waiting: a Farmhand binding this session staged (the first attachment of a
-    /// GameBuddy-launched world happens on a morning nobody has ended, so no player save is coming), and
-    /// the fixture's own client-exit check, which is fixture setup and stays with the fixture. The save
-    /// itself is the engine's - this method only opens the native <c>SaveGameMenu</c> the player's own
-    /// save uses, and the engine raises <c>Saving</c>/<c>Saved</c> as it always does.
+    /// Two facts can be waiting for a save: a Farmhand binding a companion ALREADY ENTERED on (so the write buys the
+    /// next launch, never this one), and the fixture's own client-exit check, which is fixture setup and stays with the
+    /// fixture. The save itself is the engine's - this method only opens the native <c>SaveGameMenu</c> the player's
+    /// own save uses, and the engine raises <c>Saving</c>/<c>Saved</c> as it always does.
     /// </summary>
     private void TryTriggerNativeSave()
     {

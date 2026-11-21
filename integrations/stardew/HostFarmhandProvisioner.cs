@@ -22,16 +22,13 @@ internal sealed class HostFarmhandProvisioner
     private readonly bool allowNativeAutomationWorldReady;
     private readonly string sessionNonce;
     private FarmhandSessionAdvertisement? lastAdvertisement;
-    private FarmhandAttachmentRequest? pendingSaveRequest;
-    private FarmhandBinding? pendingBinding;
     private string? lastRequestId;
     private FarmhandAttachmentResponse? lastResponse;
     private long nextAdvertisementAtMs;
-    private bool pendingSaveObserved;
-    private bool pendingSaveWriteFailed;
     private bool quarantined;
     private Cabin? pendingCreatedCabin;
     private long? pendingCreatedFarmhandId;
+    private List<PendingSaveBinding>? bindingsOwedToTheNextSave;
 
     private HostFarmhandProvisioner(IModHelper helper, IMonitor monitor, HostFarmhandProvisioningConfig config, string sessionDirectory, bool allowNativeAutomationWorldReady)
     {
@@ -56,18 +53,45 @@ internal sealed class HostFarmhandProvisioner
             this.EnterQuarantine("publication_cleanup_failed");
     }
 
-    internal bool IsAwaitingSave => this.pendingSaveRequest is not null && !this.pendingSaveObserved;
+    /// <summary>
+    /// A binding this session ADMITTED, and the engine's next save cycle still owes to the disk.
+    ///
+    /// <para>
+    /// WHY THESE ARE TWO FACTS AND NOT ONE. A Farmhand that <c>Cabin.CreateFarmhand()</c> built and
+    /// <c>SaveGame.loadDataToFarmer</c> initialised exists in this world, carries the companion's profile, and can be
+    /// admitted as a player right now: every fact the signed manifest is made of is read from the world. Whether the
+    /// save ON DISK holds it is answered only at the engine's <c>Saving</c>, and Stardew saves when the player sleeps,
+    /// so a world entered at 09:00 has no save behind it until the day ends. Entry needs the first fact. The second is
+    /// OWED, not waited for.
+    /// </para>
+    /// </summary>
+    /// <param name="Request">The Host's own signed request, whose id the save's replay index has to record.</param>
+    /// <param name="Binding">
+    /// The binding to write, or null when the store already held this companion's binding and only the request id is
+    /// still owed.
+    /// </param>
+    internal sealed record PendingSaveBinding(FarmhandAttachmentRequest Request, FarmhandBinding? Binding);
 
     /// <summary>
-    /// Whether this Host must ask the engine to save the binding it has just staged.
+    /// The bindings the next save cycle must write, as one list: a granted entry is never taken back because a second
+    /// companion was admitted before the first save happened.
     ///
-    /// The engine raises <c>Saving</c>/<c>Saved</c> only from its own save cycle, and a Mod's save data
-    /// lands with that cycle: a binding staged outside one is not durable, and the manifest that lets the
-    /// companion join is only issued once it is. So the precondition is real, and who creates it is not
-    /// the player - the Host asks, through the same native <c>SaveGameMenu</c> the player's own save
-    /// uses, and the engine performs it.
+    /// <c>??=</c> and not a field initializer, because this surface is also constructed uninitialized by the
+    /// fixtures, which skip every constructor.
     /// </summary>
-    internal bool RequestsNativeSave => this.IsAwaitingSave && this.config.TriggerNativeSaveAfterBinding;
+    private List<PendingSaveBinding> OwedToTheNextSave => this.bindingsOwedToTheNextSave ??= new();
+
+    /// <summary>Whether a companion entered on a binding the engine's own save cycle has not written yet.</summary>
+    internal bool HasBindingOwedToTheNextSave => this.bindingsOwedToTheNextSave is { Count: > 0 };
+
+    /// <summary>
+    /// Whether this Host asks the engine to run its own save now.
+    ///
+    /// Nobody has to sleep for the FIRST binding of a world to become durable: the Host asks, through the same native
+    /// <c>SaveGameMenu</c> the player's own save uses, and the engine performs it. Nothing waits on the answer - the
+    /// companion is already playing - so this buys a prompt record, not an entry.
+    /// </summary>
+    internal bool RequestsNativeSave => this.HasBindingOwedToTheNextSave && this.config.TriggerNativeSaveAfterBinding;
 
     /// <summary>Publishes only Host-owned fixture readiness diagnostics.</summary>
     internal bool PublishFixtureReadiness(string scenario, string saveName, string state, string reasonCode)
@@ -130,139 +154,77 @@ internal sealed class HostFarmhandProvisioner
     {
         if (this.quarantined)
             return;
-        this.pendingSaveRequest = null;
-        this.pendingBinding = null;
-        if (!this.pendingSaveObserved)
-            this.RollbackCreatedFarmhand();
+        // The world these bindings describe is gone with the title screen, and the save on disk is what the next
+        // launch reads: an obligation to write into a world that ended has nothing left to write into.
+        this.bindingsOwedToTheNextSave?.Clear();
+        this.RollbackCreatedFarmhand();
         this.pendingCreatedCabin = null;
         this.pendingCreatedFarmhandId = null;
-        this.pendingSaveObserved = false;
-        this.pendingSaveWriteFailed = false;
         this.lastRequestId = null;
         this.lastResponse = null;
         this.RemovePublishedFiles();
     }
 
+    /// <summary>
+    /// Writes the bindings this session admitted into the engine's own save cycle.
+    ///
+    /// <para>
+    /// THIS IS THE ONLY PLACE A BINDING REACHES THE DISK, and it is the engine's event rather than a timer of ours.
+    /// Stardew raises <c>Saving</c> from the save it runs when the player sleeps, and from the save
+    /// <see cref="RequestsNativeSave"/> has the Host open through the native <c>SaveGameMenu</c>. A companion that
+    /// entered has already played; what this adds is that the NEXT launch finds its binding instead of provisioning
+    /// the Cabin a second time.
+    /// </para>
+    /// <para>
+    /// It runs even when this surface has quarantined: quarantine stops NEW attachments, and it must not take back
+    /// the record of one that was already granted.
+    /// </para>
+    /// </summary>
     internal void OnSaving()
     {
-        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || this.pendingSaveRequest is null)
+        if (!Context.IsWorldReady || !Game1.IsMasterGame || this.bindingsOwedToTheNextSave is not { Count: > 0 })
             return;
-        this.pendingSaveObserved = true;
-        this.PersistPendingBinding();
+        this.PersistBindingsOwedToTheNextSave();
     }
 
-    private void PersistPendingBinding()
+    private void PersistBindingsOwedToTheNextSave()
     {
-        FarmhandAttachmentRequest request = this.pendingSaveRequest
-            ?? throw new InvalidOperationException("pending_save_request_unavailable");
+        List<PendingSaveBinding> owed = this.OwedToTheNextSave;
         try
         {
             FarmhandBindingStore bindings = this.ReadBindings();
-            if (this.pendingBinding is not null)
+            foreach (FarmhandBinding binding in owed.Select(pending => pending.Binding).OfType<FarmhandBinding>())
             {
-                bindings.Bindings.RemoveAll(binding => binding.CompanionId == this.pendingBinding.CompanionId && binding.SaveId == this.pendingBinding.SaveId && binding.WorldId == this.pendingBinding.WorldId);
-                bindings.Bindings.Add(this.pendingBinding);
+                bindings.Bindings.RemoveAll(existing => existing.CompanionId == binding.CompanionId && existing.SaveId == binding.SaveId && existing.WorldId == binding.WorldId);
+                bindings.Bindings.Add(binding);
             }
-            bindings.ConsumedRequestIds.RemoveAll(requestId => requestId == request.RequestId);
-            bindings.ConsumedRequestIds.Add(request.RequestId);
+            foreach (string requestId in owed.Select(pending => pending.Request.RequestId))
+            {
+                if (!bindings.ConsumedRequestIds.Contains(requestId, StringComparer.Ordinal))
+                    bindings.ConsumedRequestIds.Add(requestId);
+            }
             this.helper.Data.WriteSaveData(FarmhandProvisioningProtocol.SaveDataKey, bindings);
+            this.monitor.Log(
+                $"GameBuddy wrote {owed.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)} Farmhand binding(s) into the engine's save cycle; the next launch finds them instead of provisioning the Cabin again.",
+                LogLevel.Info);
+            owed.Clear();
         }
         catch (Exception exception)
         {
-            this.pendingSaveWriteFailed = true;
-            this.pendingBinding = null;
-            // Saving is raised before the native serializer consumes the world;
-            // remove a newly-created Farmhand now so a failed mod-data write
-            // cannot leave an unbound identity in the native save.
-            this.RollbackCreatedFarmhand();
-            this.monitor.Log($"GameBuddy could not stage Farmhand binding data during the native save: {exception.GetType().Name}; provisioning is quarantined.", LogLevel.Error);
+            // The entry stands and cannot be taken back: the companion is playing as this Farmhand, and the engine is
+            // in the middle of the save that would have recorded it. So NOTHING IS DELETED here - what is lost is the
+            // record, not the session. This launch keeps the Farmhand; the next launch finds the Cabin without a
+            // binding beside it, and provisions it again.
+            //
+            // The obligation is retired with it, and not retried: a write that throws leaves RequestsNativeSave armed,
+            // and the save menu it opens is the engine's own - retrying it every second would be a save loop, not a
+            // repair.
+            owed.Clear();
+            this.monitor.Log(
+                $"GameBuddy could not write Farmhand bindings into the native save: {exception.GetType().Name}; the Farmhand stays in this world unrecorded for later launches, and provisioning is quarantined.",
+                LogLevel.Error);
             this.EnterQuarantine("save_persistence_failed");
         }
-    }
-
-    internal void OnSaved()
-    {
-        if (this.quarantined || !Context.IsWorldReady || !Game1.IsMasterGame || !this.pendingSaveObserved)
-            return;
-        this.CompletePendingSave();
-    }
-
-    private void CompletePendingSave()
-    {
-        if (this.quarantined || this.pendingSaveRequest is not { } request)
-            return;
-
-        bool saveWriteFailed = this.pendingSaveWriteFailed;
-        string? manifestPath = null;
-        FarmhandProvisioningResult result;
-        if (saveWriteFailed)
-        {
-            result = new("rejected", "save_persistence_failed");
-        }
-        else
-        {
-            try
-            {
-                FarmhandBindingStore bindings = this.ReadBindings();
-                string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                bool readbackValid = true;
-                foreach (FarmhandBinding binding in bindings.Bindings.Where(binding => binding.SaveId == saveId && binding.WorldId == worldId))
-                {
-                    Farmer? farmhand = Game1.GetPlayer(binding.FarmhandId, onlyOnline: false);
-                    Cabin? cabin = this.FindCabin(binding.CabinId);
-                    if (farmhand is null || cabin?.OwnerId != binding.FarmhandId || !farmhand.isCustomized.Value)
-                    {
-                        readbackValid = false;
-                        this.monitor.Log($"GameBuddy detected a persisted Farmhand binding mismatch for companion '{binding.CompanionId}'; manifest issuance is disabled.", LogLevel.Error);
-                    }
-                }
-
-                if (readbackValid)
-                {
-                    result = this.IssueManifestForPersistedBinding(request, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), bindings, out manifestPath);
-                }
-                else
-                {
-                    this.RemoveAdvertisementAndManifestOrQuarantine();
-                    result = this.quarantined
-                        ? new("rejected", "publication_cleanup_failed")
-                        : new("rejected", "binding_readback_mismatch");
-                }
-            }
-            catch (InvalidOperationException exception)
-            {
-                this.monitor.Log($"GameBuddy could not read persisted Farmhand bindings after the native save: {exception.GetType().Name}; manifest issuance is disabled.", LogLevel.Error);
-                this.RemoveAdvertisementAndManifestOrQuarantine();
-                result = this.quarantined
-                    ? new("rejected", "publication_cleanup_failed")
-                    : new("rejected", "binding_readback_unavailable");
-            }
-            catch (Exception exception)
-            {
-                this.monitor.Log($"GameBuddy could not issue the persisted Farmhand manifest: {exception.GetType().Name}; manifest issuance is disabled.", LogLevel.Error);
-                result = new("rejected", "manifest_issuance_failed");
-            }
-        }
-
-        this.pendingSaveRequest = null;
-        this.pendingBinding = null;
-        this.pendingSaveObserved = false;
-        this.pendingSaveWriteFailed = false;
-        this.pendingCreatedCabin = null;
-        this.pendingCreatedFarmhandId = null;
-        FarmhandAttachmentResponse response = new()
-        {
-            SchemaVersion = FarmhandProvisioningProtocol.Version,
-            RequestId = request.RequestId,
-            State = result.State,
-            ReasonCode = result.ReasonCode,
-            UpdatedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-            ManifestPath = manifestPath,
-        };
-        this.lastRequestId = request.RequestId;
-        this.lastResponse = response;
-        this.WriteResponse(response);
     }
 
     private bool IsWorldReady => Context.IsWorldReady
@@ -337,7 +299,10 @@ internal sealed class HostFarmhandProvisioner
         // facts across that lifecycle boundary.
         if (!Context.IsWorldReady)
             return "host_not_ready";
-        if (this.pendingSaveRequest is not null || Game1.game1.IsSaving)
+        // A binding owed to the next save does NOT make this Host unready: the companion entered on the in-memory
+        // Farmhand and the manifest it joined by is already published. Withholding `ready` here withdraws the
+        // advertisement the Host reads that manifest against, which is the same hang in a second file.
+        if (Game1.game1.IsSaving)
             return "host_not_ready";
         if (!Game1.options.enableServer || !NativeLanEndpoint.TryRead(out _))
             return "host_not_ready";
@@ -448,8 +413,6 @@ internal sealed class HostFarmhandProvisioner
             return new("rejected", "invalid_or_unauthorized_request");
         if (this.ReadBindings().ConsumedRequestIds.Contains(request.RequestId, StringComparer.Ordinal))
             return new("rejected", "request_replayed");
-        if (this.pendingSaveRequest is not null)
-            return new("rejected", "save_persistence_pending");
         string hostState = this.GetHostState();
         if (hostState != "ready")
         {
@@ -513,31 +476,32 @@ internal sealed class HostFarmhandProvisioner
             return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "cabin_identity_mismatch");
         if (farmhand.isActive())
             return this.RefusePreparedFarmhand(cabin, farmhand, createdFarmhand, "target_farmhand_busy");
-        if (existingBinding is null)
+
+        FarmhandBinding binding = existingBinding ?? new FarmhandBinding
         {
-            this.pendingBinding = new FarmhandBinding
-            {
-                CompanionId = request.CompanionId,
-                FarmhandId = farmhand.UniqueMultiplayerID,
-                CabinId = request.CabinId,
-                SaveId = saveId,
-                WorldId = worldId,
-                BoundAtUnixMs = now,
-            };
-        }
-        else
-        {
-            this.pendingBinding = null;
-        }
-        this.pendingSaveRequest = request;
-        this.pendingSaveObserved = false;
-        this.pendingSaveWriteFailed = false;
-        if (!createdFarmhand)
-        {
-            this.pendingCreatedCabin = null;
-            this.pendingCreatedFarmhandId = null;
-        }
-        return new("awaiting_save", "binding_persist_pending", farmhand.UniqueMultiplayerID);
+            CompanionId = request.CompanionId,
+            FarmhandId = farmhand.UniqueMultiplayerID,
+            CabinId = request.CabinId,
+            SaveId = saveId,
+            WorldId = worldId,
+            BoundAtUnixMs = now,
+        };
+        // ENTRY IS THE IN-MEMORY RECORD'S DECISION. Every fact the manifest carries has just been read from this
+        // world - the Farmhand the Cabin owns, its id, its profile, this save's identity - and a client can be
+        // admitted as it right now. Whether the save ON DISK holds the binding is answered at the engine's next
+        // `Saving`, which is that save's business and not this answer's.
+        FarmhandProvisioningResult result = this.IssueManifest(request, now, binding, out manifestPath);
+        if (result.State != "ready")
+            return result;
+        // The companion is entering on this Farmhand, so it is no longer the leftover of a creation attempt: no later
+        // failure, and no return to title, may delete an identity a player is playing as.
+        this.pendingCreatedCabin = null;
+        this.pendingCreatedFarmhandId = null;
+        this.OwedToTheNextSave.Add(new PendingSaveBinding(request, existingBinding is null ? binding : null));
+        this.monitor.Log(
+            $"GameBuddy admitted companion profile '{request.CompanionId}' on Farmhand {farmhand.UniqueMultiplayerID}; its binding is owed to the engine's next save cycle.",
+            LogLevel.Info);
+        return result;
     }
 
     /// <summary>
@@ -564,27 +528,23 @@ internal sealed class HostFarmhandProvisioner
     internal static string ComposeObservedSaveSlot(string logicalSaveName, ulong uniqueId) =>
         $"{SaveGame.FilterFileName(logicalSaveName)}_{uniqueId.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
 
-    private FarmhandProvisioningResult IssueManifestForPersistedBinding(FarmhandAttachmentRequest request, long now, FarmhandBindingStore bindings, out string? manifestPath)
+    /// <summary>
+    /// Mints and publishes the signed join manifest for a binding this Host has just admitted.
+    ///
+    /// The manifest is what lets the companion join, so it is written from the facts ENTRY verified - the Farmhand the
+    /// Cabin owns, its id, its profile, this world's identity - and never from the stored binding: a first attachment
+    /// happens in a world nobody has saved, and requiring the save first is what made a morning's attachment wait for
+    /// the day to end.
+    /// </summary>
+    private FarmhandProvisioningResult IssueManifest(FarmhandAttachmentRequest request, long now, FarmhandBinding binding, out string? manifestPath)
     {
         manifestPath = null;
         if (this.quarantined)
             return new("uncertain", "manifest_publication_failed");
-        string saveId = Game1.uniqueIDForThisGame.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        string worldId = Game1.MasterPlayer.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture);
         // The observed physical slot is derived next to the save/world identity it
         // belongs to, from the game's own save name plus its unique ID, so the
         // manifest publishes exactly the slot the native create/load path observed.
         string observedSaveSlot = ComposeObservedSaveSlot(Game1.GetSaveGameName(set_value: false), Game1.uniqueIDForThisGame);
-        FarmhandBinding? binding = bindings.Bindings.FirstOrDefault(candidate => candidate.CompanionId == request.CompanionId && candidate.SaveId == saveId && candidate.WorldId == worldId && candidate.CabinId == request.CabinId);
-        Farmer? farmhand = binding is null ? null : Game1.GetPlayer(binding.FarmhandId, onlyOnline: false);
-        Cabin? cabin = this.FindCabin(request.CabinId);
-        if (binding is null || farmhand is null || cabin?.OwnerId != binding.FarmhandId || !farmhand.isCustomized.Value)
-        {
-            this.RemoveAdvertisementAndManifestOrQuarantine();
-            return this.quarantined
-                ? new("rejected", "publication_cleanup_failed")
-                : new("rejected", "binding_not_persisted");
-        }
         if (!NativeLanEndpoint.TryRead(out string endpoint))
         {
             this.RemoveAdvertisementAndManifestOrQuarantine();
@@ -604,11 +564,11 @@ internal sealed class HostFarmhandProvisioner
             MultiplayerProtocol = Multiplayer.protocolVersion,
             Endpoint = endpoint,
             RequestId = request.RequestId,
-            SaveId = saveId,
-            WorldId = worldId,
+            SaveId = binding.SaveId,
+            WorldId = binding.WorldId,
             ObservedSaveSlot = observedSaveSlot,
             CompanionId = request.CompanionId,
-            FarmhandId = farmhand.UniqueMultiplayerID.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            FarmhandId = binding.FarmhandId.ToString(System.Globalization.CultureInfo.InvariantCulture),
             CabinId = request.CabinId,
             SessionNonce = this.sessionNonce,
             IssuedAtUnixMs = now,
@@ -616,10 +576,10 @@ internal sealed class HostFarmhandProvisioner
         };
         manifest = manifest with { Signature = FarmhandProvisioningProtocol.Sign(manifest, this.config.SessionToken) };
         if (!this.WriteJson(FarmhandProvisioningProtocol.ManifestFileName, manifest))
-            return this.ManifestPublicationFailed(farmhand.UniqueMultiplayerID);
+            return this.ManifestPublicationFailed(binding.FarmhandId);
         manifestPath = FarmhandProvisioningProtocol.ManifestFileName;
         this.monitor.Log($"GameBuddy issued a signed Farmhand join manifest for companion profile '{request.CompanionId}'.", LogLevel.Info);
-        return new("ready", "manifest_issued", farmhand.UniqueMultiplayerID);
+        return new("ready", "manifest_issued", binding.FarmhandId);
     }
 
     private FarmhandProvisioningResult ManifestPublicationFailed(long farmhandId)
@@ -996,10 +956,8 @@ internal sealed class HostFarmhandProvisioner
         if (this.quarantined)
             return;
         this.quarantined = true;
-        this.pendingSaveRequest = null;
-        this.pendingBinding = null;
-        this.pendingSaveObserved = false;
-        this.pendingSaveWriteFailed = false;
+        // A binding already owed to the next save is NOT dropped here: quarantine stops new attachments, and the
+        // companion that entered on it is still playing.
         this.RollbackCreatedFarmhand();
         this.lastAdvertisement = null;
         this.lastRequestId = null;
