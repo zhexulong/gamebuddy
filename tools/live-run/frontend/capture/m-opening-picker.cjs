@@ -182,6 +182,29 @@ const clickOption = (index) => {
   return "clicked";
 };
 
+/**
+ * Wait for the shell to SHOW the created conversation, and say what it saw if it never does.
+ *
+ * Committing an opening is two steps in order: the Chat is created durably (on the default opening)
+ * and then the shell switches the region into it and applies the chosen opening. This was read one
+ * round after the press - "does the transcript have rows" - and that is true immediately, because the
+ * conversation already mounted keeps its rows while parked (`.surface-slot-parked` hides it without
+ * removing it). The reading therefore answered about the OTHER conversation: measured r17, the surface
+ * route said `chat-surface=false` 1.2 s after the press while the panel's card already held the new
+ * Chat, and the assertion that exists to prove a chosen opening lands could not pass.
+ */
+const waitForCreatedConversation = async (page, timeoutMs = 30000) => {
+  const started = Date.now();
+  for (;;) {
+    if (await page.evaluate(conversationShown)) return { landed: true, waitedMs: Date.now() - started, panel: null };
+    if (Date.now() - started > timeoutMs) {
+      const panel = await page.evaluate(() => new URLSearchParams(window.location.hash.slice(1)).get("panel"));
+      return { landed: false, waitedMs: Date.now() - started, panel };
+    }
+    await page.waitForTimeout(250);
+  }
+};
+
 (async () => {
   const { browser, page } = await connect();
   const { say, flush } = reporter("m-opening-picker.txt");
@@ -239,17 +262,19 @@ const clickOption = (index) => {
     chosen = picker.options[index];
     say(`choosing option #${index + 1} (NOT the default #1): ${JSON.stringify(chosen)}`);
     say(`the click answers: ${await page.evaluate(clickOption, index)}`);
-    // Picking an opening creates the Chat and the shell lands IN it, so the created
-    // conversation is the mounted one and its first line is read from the transcript.
-    let rows = [];
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      await page.waitForTimeout(1200);
-      rows = await page.evaluate(transcript);
-      if (rows.length > 0) break;
-    }
+    // Picking an opening creates the Chat AND the shell lands IN it, so the created conversation is
+    // the mounted one and its first line is read from the transcript - after the landing, not before
+    // it (see `waitForCreatedConversation`).
+    const landing = await waitForCreatedConversation(page);
+    say(
+      landing.landed
+        ? `the shell showed the created conversation after ${String(landing.waitedMs)}ms`
+        : `the shell never showed the created conversation in ${String(landing.waitedMs)}ms; the surface route still read panel=${JSON.stringify(landing.panel)}`,
+    );
+    const rows = landing.landed ? await page.evaluate(transcript) : [];
     say("=== ITEM: the new Chat's first line (the transcript's own row 0) ===");
     say(JSON.stringify(rows.slice(0, 2), null, 1));
-    const landedInCreated = await page.evaluate(conversationShown);
+    const landedInCreated = landing.landed;
     say(`the surface the shell left us on: chat-surface=${landedInCreated}`);
     // The chosen opening is the one the Chat opened on, compared as rendered structure: the chooser's
     // own option (its action line and its line) against the row's beat element and its spoken text.
