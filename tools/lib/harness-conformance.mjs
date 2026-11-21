@@ -1383,8 +1383,8 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason:
       "prints `ceiling sites examined 103 · from a declaration 103 · from a name list 0`, so its reading is lines and not " +
       "a `{gate, checks[]}` report; its falsifier suite is tools/check-deadline-ceiling-declaration.test.mjs, run by " +
-      "`test:deadline-ceiling-declaration`, which plants the pre-fix `action === \"navigate_to_destination\" || action === " +
-      "\"sleep\"` name list and asserts the finding it produces",
+      '`test:deadline-ceiling-declaration`, which plants the pre-fix `action === "navigate_to_destination" || action === ' +
+      '"sleep"` name list and asserts the finding it produces',
   },
   {
     gate: "check-declared-deleted-facts.mjs",
@@ -1461,6 +1461,13 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
       "no report to read; its `check:run-walking` script takes `--log <a recorded run> --expect walked=647,…`. Its " +
       "falsifier suite is tools/check-run-walking.test.mjs, run by `test:run-walking`, which asserts " +
       "`walking_not_measured` for a log with no positioned event and `walking_nothing_to_place` for the empty one",
+  },
+  {
+    gate: "check-stardew-bundle-manifest.mjs",
+    reason:
+      "prints one reading line rather than a `{gate, checks[]}` report, so a zero-finding run says nothing about " +
+      "whether it can fail; tools/check-stardew-bundle-manifest.test.mjs (`test:stardew-bundle-manifest`) renames an " +
+      "entry and moves an `<AssemblyName>`, asserting both mismatch directions by name",
   },
   ...AUDIT_WITHOUT_SELF_REPORT.map((gate) => ({ gate, reason: AUDIT_WITHOUT_SELF_REPORT_REASON })),
 ]);
