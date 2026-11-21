@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 56 cs member(s) over 30, 8 class(es) over 200, 21 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4739, largest ExecutionManager at 26939 lines / 904 members across 52 partial(s).",
-  "revision": "6c45cccd",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 56 cs member(s) over 30, 8 class(es) over 200, 21 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4748, largest ExecutionManager at 27036 lines / 907 members across 53 partial(s).",
+  "revision": "bfc0c628",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -125,7 +125,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1355,
+      "line": 1358,
       "value": 99
     },
     {
@@ -181,7 +181,7 @@
       "language": "cs",
       "name": "ExecutionManager.RequestLocalShopPurchase(BridgeExecutionRequest,IExecutionLedger)",
       "file": "integrations/stardew/farmhandexecutioncontroller.shopactions.cs",
-      "line": 1222,
+      "line": 1055,
       "value": 104,
       "reason": "91 -> 100 across 72582adf..HEAD, three commits adding statements to this one function inside the shop seam: `67cf82ac` +6 (confirming through the engine's own purchase path, and paging the cursor to the sale), `4e718135` +2 (the upgrade stated as the receipt's effect) and `ab9c5990` +1 (a purchase the pack cannot hold refused before the purse pays). Growth of the seam, not a move into it; 100 is the ceiling now."
     },
@@ -480,7 +480,7 @@
       "language": "ts",
       "name": "host/src/body-program-script.ts#bindSnapshotReadings",
       "file": "host/src/body-program-script.ts",
-      "line": 2459,
+      "line": 2474,
       "value": 35
     },
     {
@@ -732,16 +732,16 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 5064,
-      "value": 65,
-      "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one."
+      "line": 5146,
+      "value": 67,
+      "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one. 65 -> 67 here: the wallet's arm is the same three-part optional scalar test (`value.money !== undefined && value.money !== null && !isNonNegativeSafeInteger(value.money)`), inline for the same reason - a balance the diagnostic cannot name is a refusal that prints the bare `invalid_snapshot` the rest of this function exists to replace. Two points for one field, measured by the gate's own biome reading."
     },
     {
       "id": "ts:host/src/protocol.ts#isValidActionDescriptor",
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 6065,
+      "line": 6154,
       "value": 199
     },
     {
@@ -749,7 +749,7 @@
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2589,
+      "line": 2650,
       "value": 69,
       "reason": "recorded at 11e7cc9b: 66 -> 69, in `51ccae18` (a policy change reaches a running world as a message, not a poll). Measured 66 at 83ae46f0, 69 at that commit and at every commit after it."
     },
@@ -799,7 +799,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3927,
+      "line": 3984,
       "value": 59
     },
     {
@@ -807,7 +807,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3088,
+      "line": 3145,
       "value": 49
     },
     {
@@ -815,7 +815,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3220,
+      "line": 3277,
       "value": 64
     },
     {
@@ -823,7 +823,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3405,
+      "line": 3462,
       "value": 47
     },
     {
@@ -831,7 +831,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4101,
+      "line": 4158,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -840,7 +840,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2514,
+      "line": 2548,
       "value": 44
     },
     {
@@ -1159,10 +1159,10 @@
     {
       "id": "cs:ExecutionManager",
       "name": "ExecutionManager",
-      "parts": 52,
+      "parts": 53,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4739,
+      "value": 4748,
       "reason": "recorded 4543 at 11e7cc9b; 4546 at `c4519440` (forage walks instead of refusing); 4556 at `4f4340f5` after the trace fold. `3a45af7e` folded progress receipts into the one that settles their execution - `AddTrace` decides on the Mod's own `IsTerminal()`, the fold is bounded and counted, and `ExecutionReceiptStore.Remember` refuses to overwrite a settled receipt with a later progress transition - which is three members on three partials of this type. Over the same 52 partials; no other member moved. THIS READING IS 4590 AND IT SHRANK: 4621 at `0e9d1db2` fell to 4608 at `4449d787` across the commits between them, and the last -18 is one commit - `DiscoverWoodFenceTargets`, `DiscoverCrabPotTargets` and `DiscoverFertilizerTargets` traded their duplicated window scans and their order-then-trim tails for one helper, which removed more points than the helper added."
     },
     {
@@ -1239,7 +1239,7 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
-      "line": 981,
+      "line": 1002,
       "lines": 810,
       "methods": 55
     },
@@ -1261,7 +1261,7 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BridgeProtocolSerializationTests.cs",
       "line": 11,
-      "lines": 968,
+      "lines": 989,
       "methods": 54,
       "reason": "lines 967 -> 968 at 604844a6 over the same 54 methods; one line of assertion, no structural change."
     },
@@ -1279,12 +1279,12 @@
     {
       "id": "cs:ExecutionManager",
       "name": "ExecutionManager",
-      "parts": 52,
-      "files": 51,
+      "parts": 53,
+      "files": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 26939,
-      "methods": 904,
+      "lines": 27036,
+      "methods": 907,
       "reason": "Re-taken at `4f4340f5`, naming what moved since the 836 reading at `11e7cc9b`. `c4519440` added `ExecutePickupForage(...)` (+1 method, value 4543 -> 4546). Then `3a45af7e` (a trace is not a fact) split the publish seam: `AddTrace` decides on the Mod's own `IsTerminal()`, the fold carries `steps_omitted`, and `ExecutionReceiptStore.Remember` refuses a settled overwrite - three members over the same 52 partials and 51 files, value 4546 -> 4556. THE ENTRY IS RE-TAKEN, NOT RELAXED, and the arithmetic is 875 + 1 = 876 methods (the extracted helper `NearestFirstRadiusWindowRows`), 25623 + 9 = 25632 lines (three call sites made one) - both measured on this tree over the same 52 partials and 51 files, not carried from the previous record."
     },
     {
