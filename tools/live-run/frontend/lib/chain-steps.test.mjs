@@ -206,7 +206,7 @@ test("daily-play names the account member the turn reader reads, and says it has
   // TWO FAILURES THIS HOLDS APART. A fact spelled by hand is a second spelling of the producer's vocabulary -
   // the step would keep reading as declared after `capture/turn-account.cjs` stopped printing or parsing that
   // member. And a `driver:` here would claim a reading no driver in this kit can produce: every capture driver
-  // types into a browser, while the player's words reach her only through the game's own chat box.
+  // types into a browser, and the only producer of a `player_input` turn needs a keystroke in the game window.
   const play = CHAIN_STEPS.filter((entry) => entry.id === "daily-play");
   assert.equal(play.length, 1, "the daily chain has exactly one step for the player speaking to her");
   const [entry] = play;
@@ -218,5 +218,44 @@ test("daily-play names the account member the turn reader reads, and says it has
     entry.fact,
     `${turnAccount.TURN_ACCOUNT_FACT} ${turnAccount.PLAYER_INPUT}`,
     `${entry.id}'s fact must be the account member \`capture/turn-account.cjs\` reads (${turnAccount.TURN_ACCOUNT_FACT} + ${turnAccount.PLAYER_INPUT}), not a sentence about her trace`,
+  );
+});
+
+test("the player speaking to her has two rungs, and each names its own missing thing", () => {
+  // The interaction is declared twice because its two halves fail independently: the ADMISSION (the Host
+  // producing a `player_input` turn at all) and the ENGINE SEAM (a keystroke in the game's own chat box).
+  // Collapsing them into one `gap:` reason is how the difference between "nothing listens on either route this
+  // stage can speak to" and "OS input injection was removed on purpose" disappears from the map - and a reader
+  // who has only the second sentence goes looking for a driver to write instead of a boundary to reopen.
+  const [admission, engineChat] = ["daily-play", "daily-play-in-engine-chat"].map((id) =>
+    CHAIN_STEPS.filter((entry) => entry.id === id),
+  );
+  assert.equal(admission.length, 1, "rung 1: the words admitted while attached is one step");
+  assert.equal(engineChat.length, 1, "rung 2: the words typed through the engine's own chat box is its own step");
+  const [rung1] = admission;
+  const [rung2] = engineChat;
+  assert.ok(
+    rung1.driver.startsWith(GAP_PREFIX) && rung2.driver.startsWith(GAP_PREFIX),
+    "both rungs are gaps: no driver in this kit produces either reading",
+  );
+  assert.notEqual(
+    rung1.driver,
+    rung2.driver,
+    "one reason cannot name both: rung 1 has no route this stage can drive, rung 2 has an OS-input boundary in the way",
+  );
+  assert.equal(
+    rung2.driver,
+    `${GAP_PREFIX}no_os_input_injection`,
+    "rung 2's missing capability is the one `tools/README.md` removed by name: window focus and OS input injection",
+  );
+  assert.match(
+    rung2.fact,
+    /textBoxEnter/u,
+    `${rung2.id}'s fact has to name the engine seam it would be read from (\`ChatBox.textBoxEnter\`), not her trace`,
+  );
+  assert.match(
+    rung1.owner,
+    /acceptPlayerInput/u,
+    `${rung1.id}'s owner is the admission: the seam that mints the \`player_input\` turn and refuses it by name`,
   );
 });

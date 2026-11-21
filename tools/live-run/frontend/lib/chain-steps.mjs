@@ -20,15 +20,25 @@
 //
 // TWO KINDS, and a reader has to tell them apart or all of them read as missing product. Four of the
 // gaps are READING gaps: `owner.json`, the session document, the recovery journal and her client's trace
-// are written by any ordinary run and a driver only has to open a file that is already there. One is an
-// INTERACTION gap (`no_driver_types_into_the_game_window`): the player's words reach her only when somebody
-// types them into the game's own chat box, and every driver in this kit types into a browser. The product
-// side of that route is complete (`ModEntry.cs`'s Harmony postfix on `ChatBox.textBoxEnter`, then
-// `HostService.acceptIntegrationFact` -> `acceptPlayerInput` -> the pump's `player_input` opener), so the
-// missing thing is a driver that can put keystrokes into the player host's window. Her turn account used to
-// be a fifth reading gap and is not one any more: the Host prints `GAME_TURN_ACCOUNT` on the product
-// entry's stderr, `phases/launch.mjs` keeps those bytes in a file, and `capture/turn-account.cjs` reads the
-// line `w-game-launch` waits for (`daily-agent-awake`).
+// are written by any ordinary run and a driver only has to open a file that is already there. TWO are
+// INTERACTION gaps, and they are the TWO RUNGS of one interaction - the player saying something to her:
+//
+//   `daily-play`                 the words ADMITTED while attached, and her account counting the turn it
+//                                 opened. The admission exists twice in the product and neither copy is
+//                                 reachable from this stage: the engine's chat box feeds it (rung 2) and
+//                                 `companion-control-server.ts` declares a `player_input` frame, but no entry
+//                                 starts that server and its launch credentials are minted into the child's
+//                                 environment only (`host/scripts/production-control-launch.mjs`).
+//   `daily-play-in-engine-chat`  the words TYPED through the engine's own ChatBox. The Mod's postfix is in
+//                                 place; what is missing is OS input injection into the game window, which
+//                                 `tools/README.md` removed on purpose.
+//
+// Collapsing the two into one `gap:` is how the first draft of this table lost the difference between
+// "nothing listens" and "nothing may press the key". `chain-steps.test.mjs` holds them apart by name.
+//
+// Her turn account used to be a fifth reading gap and is not one any more: the Host prints
+// `GAME_TURN_ACCOUNT` on the product entry's stderr, `phases/launch.mjs` keeps those bytes in a file, and
+// `capture/turn-account.cjs` reads the line `w-game-launch` waits for (`daily-agent-awake`).
 //
 // One fact per step, and it is a literal that the named driver (or a capture module that driver
 // requires) really writes. Two spellings of one fact is how a table starts disagreeing with itself.
@@ -278,26 +288,44 @@ export const CHAIN_STEPS = Object.freeze([
   step({
     id: "daily-play",
     chain: "daily",
-    title: "the player says something to her in the world, and the account counts the turn it opened",
-    // THE PLAYER'S WAY IN IS THE GAME'S OWN CHAT BOX. The engine opens it on its own key
-    // (`Game1.UpdateChatBox` -> `options.chatButton`, no multiplayer gate), and the Mod observes only the
-    // submit seam: a Harmony postfix on `ChatBox.textBoxEnter(string)` publishes the line as
-    // `PlayerControlProtocol.PlayerInput`, her client mints the bridge fact, and `HostService.acceptIntegrationFact`
-    // admits it into `acceptPlayerInput` - the pump's `player_input` opener, in the same session the world's
-    // facts open turns in. Nothing browser-side reaches it: the Chat surface's send is
-    // `/api/tavern/v1/messages` and its own session.
-    //
-    // Every driver in this kit types into a browser, so nobody types into the game window. Naming the missing
-    // capability rather than the missing reading is the point: there is no file to open until somebody
-    // speaks, and the capability that would speak is blocked by Windows refusing the foreground to a
-    // background process (`WindowModeManagement.cs:104-113`, measured twice with the session unlocked), and
-    // by the two game windows this run causes sharing one `GAMEBUDDY_WINDOW_MODE`.
-    driver: "gap:no_driver_types_into_the_game_window",
+    title: "the player says something to her while attached, and the account counts the turn it opened",
+    // RUNG 1: THE ADMISSION. `HostService.acceptIntegrationFact` is where a `player_input` fact becomes
+    // `acceptPlayerInput` (`host-service.ts:985-1029`), then `pump.enqueuePlayerInput`, then the
+    // `player_input` opener in `GAME_TURN_ACCOUNT` - the same pump and the same session the world's facts
+    // open turns in. That admission has TWO producers in tree and neither is reachable from this stage:
+    //   - the Mod's native chat ingress (`ModEntry.cs` postfix on `ChatBox.textBoxEnter`), which needs the
+    //     player to type in the game window - declared as rung 2 below;
+    //   - `host/src/companion-control-server.ts:299-330`, whose `player_input` frame answers the disposition
+    //     it actually got - but no entry starts that server (`startCompanionControlServer` has no call site
+    //     outside its own test, and `semantic-main-config.private.test.ts:27-28` forbids `main.ts` naming it),
+    //     and its `launchToken` is minted into the child's own environment by
+    //     `host/scripts/production-control-launch.mjs:41-44` after deleting any inherited copy (`:25-26`), with
+    //     the only publisher behind a D0 test-only IPC handoff (`:65-73`).
+    // So this rung's gap is not "no driver types into the game window" - that is rung 2's gap. Here nothing
+    // can ADMIT the words from either side this stage can speak to.
+    driver: "gap:no_player_input_route_the_frontend_stage_can_drive",
     // The account member, not the trace: `GAME_TURN_ACCOUNT` already counts who opened each turn, and
     // `capture/turn-account.cjs` reads it. `chain-steps.test.mjs` holds this string against that reader.
     fact: "GAME_TURN_ACCOUNT player_input",
     owner:
-      "integrations/stardew/ModEntry.cs native chat ingress (ChatBox.textBoxEnter postfix -> PublishNativeChat) + host/src/host-service.ts acceptIntegrationFact -> acceptPlayerInput",
+      "host/src/host-service.ts acceptIntegrationFact -> acceptPlayerInput (the admission) + integrations/stardew/ModEntry.cs (its live producer, rung 2)",
+  }),
+  step({
+    id: "daily-play-in-engine-chat",
+    chain: "daily",
+    title: "the words are typed through the game's own chat box",
+    // RUNG 2: THE ENGINE'S OWN KEY. The engine opens `ChatBox` on `options.chatButton` (T by default,
+    // `Game1.UpdateChatBox`, no multiplayer gate), and the Mod observes only the submit seam
+    // (`ModEntry.cs:243,499,522` -> `PublishNativeChat(PlayerControlProtocol.PlayerInput, text, null)`), so
+    // the whole route below that point is product and this step adds no product work. What is missing is
+    // the keystroke: `tools/README.md` §"Removed UI/XInput automation" records that `drive-stardew-ui.ps1`
+    // and `check-xinput.ps1` were removed because window focus and OS input injection conflict with the
+    // formal non-UI AI-Farmhand boundary. That is a boundary decision, not a harness oversight, which is why
+    // this gap is named after the capability rather than after a driver.
+    driver: "gap:no_os_input_injection",
+    fact: "the engine's own ChatBox submit (`ChatBox.textBoxEnter`) arriving as a player_input fact",
+    owner:
+      "tools/README.md §Removed UI/XInput automation (the boundary that removed window focus and OS input injection) + integrations/stardew/ModEntry.cs:243,499,522 (the postfix that would carry the line)",
   }),
   Object.freeze({
     id: "daily-stop",
