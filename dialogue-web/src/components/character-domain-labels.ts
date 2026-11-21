@@ -555,7 +555,7 @@ const en: CharacterLabels = Object.freeze({
     "{{count}} of her background entries asked to sit at an exact depth. To keep replies fast they now ride her standing context - they are still delivered, just not at the depth the card asked for.",
   importDepthRemappedToPerTurn:
     "{{count}} of her background entries asked to sit at an exact depth. To keep replies fast they now appear when their words come up - they are still delivered, just not at the depth the card asked for.",
-  importFailed: "The card could not be imported.",
+  importFailed: "The card could not be imported. Check that it is a character card, then try again.",
   importFailedText: "That file is not readable character card text.",
   importFailedTooLarge: "That file is too large to import (limit 2 MB).",
   importReviewTitle: "Review before importing",
@@ -605,7 +605,7 @@ const en: CharacterLabels = Object.freeze({
     "Restart GameBuddy from its tray icon for her to take over - a restart is what applies the choice.",
   companionChosen: "chosen",
   companionStopGameBadge: "stop the game first",
-  companionActivateFailed: "The choice could not be recorded.",
+  companionActivateFailed: "Her choice was not recorded, so she is still the one in play. Try it again.",
   companionActivateUnsupported: "This build does not serve choosing a companion. Update GameBuddy or reload the page.",
   companionSwitchAlreadyInPlay: "She is already the companion in play, so there is nothing to choose.",
   companionSwitchRequiresNoSession:
@@ -638,12 +638,12 @@ const en: CharacterLabels = Object.freeze({
 
   voiceTitle: "Performance directive",
   voiceHint:
-    "The card's own direction for how this companion performs, kept after GameBuddy's own rules. You can rewrite it or clear it; a cleared direction is left out entirely rather than sent empty.",
+    "The card's own guidance for how she behaves and sounds, applied after GameBuddy's general rules. Rewrite it or clear it however you like: this is where you make her yours.",
   voiceEmptyHint:
     "This companion has no performance directive yet. You can write one here; it is stored with her and used when she performs.",
   voiceFromCard: "From the card",
   voiceEditedByYou: "Edited by you",
-  voiceText: "Directive",
+  voiceText: "Behaviour and tone",
   voiceSave: "Save directive",
   voiceTextRequired: "Write the direction before saving it.",
   voiceClear: "Clear directive",
@@ -701,8 +701,8 @@ const en: CharacterLabels = Object.freeze({
   worldBookAttach: "Attach",
   worldBookDetach: "Detach",
   worldBookPending: "Saved. It fully applies on the next turn.",
-  worldBookUnavailable: "The world book is temporarily unavailable.",
-  worldBookFailed: "The world book could not be updated.",
+  worldBookUnavailable: "The world book is unavailable for a moment. Try it again.",
+  worldBookFailed: "The world book could not be updated. Try saving it again.",
   worldBookReadFailed: "The world book could not be read.",
   worldBookSelectionConflict:
     "The chat this panel was reading is no longer the selected one, so nothing was sent. Read it again to work on the chat that is selected now.",
@@ -757,9 +757,9 @@ const en: CharacterLabels = Object.freeze({
   worldBookEntryRemoveConfirmYes: "Remove the entry",
   worldBookEntryRemoveConfirmNo: "Keep the entry",
   worldBookDeleted: "Removed from the library.",
-  worldBookCreateFailed: "The world book could not be created.",
-  worldBookSaveFailed: "The world book could not be saved.",
-  worldBookDeleteFailed: "The world book could not be deleted.",
+  worldBookCreateFailed: "The world book could not be created. Try it again.",
+  worldBookSaveFailed: "The world book could not be saved. Check the entries and save again.",
+  worldBookDeleteFailed: "The world book could not be deleted. Try it again.",
   worldBookDetailFailed: "Its own text could not be read.",
 
   worldBookImport: "Import a lorebook file",
@@ -768,12 +768,12 @@ const en: CharacterLabels = Object.freeze({
   worldBookImportImported: "Imported this world book into your library. Its entries are now in the list above.",
   worldBookImportInvalid: "That file is not a readable world book (JSON).",
   worldBookImportTooLarge: "That file is too large to import (limit 2 MB).",
-  worldBookImportFailed: "The world book could not be imported.",
+  worldBookImportFailed: "The world book could not be imported. Check the file, then try it again.",
 
   worldBookExport: "Save this world book as a file",
   worldBookExportBusy: "Saving…",
   worldBookExportSaved: "Saved {{file}}. It can be imported again here or opened in another app.",
-  worldBookExportFailed: "This world book could not be saved as a file.",
+  worldBookExportFailed: "This world book could not be saved as a file. Try exporting it again.",
 
   companionWorldBookTitle: "Your companion's own world book",
   companionWorldBookHint:
@@ -827,10 +827,11 @@ const en: CharacterLabels = Object.freeze({
   exportSaved: "Saved {{file}}.",
   exportNothing: "There is no companion to export yet.",
   exportUnreadable: "Her records could not be read, so no card was made.",
-  exportTooLarge: "Her records are too large to fit in a character card, so nothing was saved.",
+  exportTooLarge:
+    "Her records are too large to fit in a character card, so nothing was saved. Remove a few entries and export again.",
   exportImageAbsent:
     "She has no picture yet, so a PNG card has no image to carry. Open her row, use Give her a picture, then export again — or save the JSON card, which carries her records without a picture.",
-  exportFailed: "The character card could not be exported.",
+  exportFailed: "The character card could not be exported. Try it again.",
 
   dispositionAccepted: "used",
   dispositionPreserved: "kept unchanged",
@@ -848,7 +849,7 @@ const en: CharacterLabels = Object.freeze({
     "GameBuddy could not read that file as a picture, so nothing was sent. Choose a PNG, JPEG or WebP image.",
   avatarNotFound: "That companion is no longer in your library, so nothing was saved.",
   avatarUnreadable: "Her picture could not be read, so nothing was saved.",
-  avatarFailed: "Her picture could not be saved.",
+  avatarFailed: "Her picture could not be saved. Choose it again, or pick a smaller one.",
 
   companionDeleteTitle: "Remove this companion",
   companionDeleteHint:
@@ -866,7 +867,7 @@ const en: CharacterLabels = Object.freeze({
   companionDeleteNotFound: "That companion is no longer in your library, so nothing was deleted.",
   companionDeleteUnreadable:
     "Her saved record could not be read, so nothing was deleted. Reopening her may tell you more.",
-  companionDeleteFailed: "She could not be deleted.",
+  companionDeleteFailed: "She could not be deleted, so she is still here. Try deleting her again.",
 });
 
 const zh: CharacterLabels = Object.freeze({
@@ -903,7 +904,7 @@ const zh: CharacterLabels = Object.freeze({
     "有 {{count}} 条背景设定要求放在对话的某个固定深度。为了保持回复速度，它们改为随她的常驻背景一起送达——内容仍在，只是不在卡片要求的深度。",
   importDepthRemappedToPerTurn:
     "有 {{count}} 条背景设定要求放在对话的某个固定深度。为了保持回复速度，它们改为在这些词被提到时出现——内容仍在，只是不在卡片要求的深度。",
-  importFailed: "无法导入该角色卡。",
+  importFailed: "无法导入这张角色卡。请确认它是角色卡，然后再试一次。",
   importFailedText: "该文件不是可读取的角色卡文本。",
   importFailedTooLarge: "该文件过大，无法导入（上限 2 MB）。",
   importReviewTitle: "导入前确认",
@@ -950,7 +951,7 @@ const zh: CharacterLabels = Object.freeze({
   companionActivationRestart: "想让她上场，请从托盘图标重新启动 GameBuddy——重新启动才会兑现这个选择。",
   companionChosen: "已选好",
   companionStopGameBadge: "请先停掉游戏",
-  companionActivateFailed: "没能记下这个选择。",
+  companionActivateFailed: "没能记下这个选择，所以还是一位之前的伙伴。请再试一次。",
   companionActivateUnsupported: "当前版本不支持选择伙伴。请更新 GameBuddy 或重新加载页面。",
   companionSwitchAlreadyInPlay: "她已经就是在玩的伙伴，不用再选。",
   companionSwitchRequiresNoSession:
@@ -980,11 +981,11 @@ const zh: CharacterLabels = Object.freeze({
 
   voiceTitle: "演出指导",
   voiceHint:
-    "卡片自带的演出指令，排在 GameBuddy 自己的规则之后。你可以改写或清除；清除后她收到的内容里不再有这条指令，而不是留下一段空文本。",
+    "卡片自带的行为与性格引导，排在 GameBuddy 的通用规则之后生效。你可以随意改写或清空，把她调成你喜欢的语气。",
   voiceEmptyHint: "这位伙伴还没有演出指导。你可以在这里写一条；它会随她保存，并在她演出时用于提示词。",
   voiceFromCard: "来自卡片",
   voiceEditedByYou: "你已修改",
-  voiceText: "指令内容",
+  voiceText: "行为与性格引导",
   voiceSave: "保存指令",
   voiceTextRequired: "写点什么，再保存这段演出指导。",
   voiceClear: "清除指令",
@@ -1040,8 +1041,8 @@ const zh: CharacterLabels = Object.freeze({
   worldBookAttach: "关联",
   worldBookDetach: "解除关联",
   worldBookPending: "已保存，将在下一回合完全生效。",
-  worldBookUnavailable: "世界书暂时不可用。",
-  worldBookFailed: "无法更新世界书。",
+  worldBookUnavailable: "世界书暂时用不了。请再试一次。",
+  worldBookFailed: "无法更新世界书。请再保存一次。",
   worldBookReadFailed: "无法读取世界书。",
   worldBookSelectionConflict:
     "这个面板读的那条对话已经不是当前选中的那条了，所以什么都没提交。重新读取一下，再改现在选中的对话。",
@@ -1094,9 +1095,9 @@ const zh: CharacterLabels = Object.freeze({
   worldBookEntryRemoveConfirmYes: "移除这条词条",
   worldBookEntryRemoveConfirmNo: "保留这条词条",
   worldBookDeleted: "已从书库中删除。",
-  worldBookCreateFailed: "无法创建这本世界书。",
-  worldBookSaveFailed: "无法保存这本世界书。",
-  worldBookDeleteFailed: "无法删除这本世界书。",
+  worldBookCreateFailed: "无法创建这本世界书。请再试一次。",
+  worldBookSaveFailed: "无法保存这本世界书。请检查词条后再保存一次。",
+  worldBookDeleteFailed: "无法删除这本世界书。请再试一次。",
   worldBookDetailFailed: "无法读取它的内容。",
 
   worldBookImport: "导入世界书文件",
@@ -1105,12 +1106,12 @@ const zh: CharacterLabels = Object.freeze({
   worldBookImportImported: "已把这本世界书导入到你的书库，它的词条已在上面列表中。",
   worldBookImportInvalid: "该文件不是可读取的世界书（JSON）。",
   worldBookImportTooLarge: "该文件过大，无法导入（上限 2 MB）。",
-  worldBookImportFailed: "无法导入这本世界书。",
+  worldBookImportFailed: "无法导入这本世界书。请检查文件后再试一次。",
 
   worldBookExport: "把这本世界书保存为文件",
   worldBookExportBusy: "正在保存…",
   worldBookExportSaved: "已保存 {{file}}。可以在这里重新导入，也可以用其他应用打开。",
-  worldBookExportFailed: "无法把这本世界书保存为文件。",
+  worldBookExportFailed: "无法把这本世界书保存为文件。请再导一次。",
 
   companionWorldBookTitle: "伙伴自己的世界书",
   companionWorldBookHint:
@@ -1163,10 +1164,10 @@ const zh: CharacterLabels = Object.freeze({
   exportSaved: "已保存 {{file}}。",
   exportNothing: "还没有可以导出的伙伴。",
   exportUnreadable: "无法读取她的档案，未能生成角色卡。",
-  exportTooLarge: "她的档案太大，放不进一张角色卡，因此没有导出。",
+  exportTooLarge: "她的档案太大，放不进一张角色卡，所以这次没有导出。请删掉几条再导出。",
   exportImageAbsent:
     "她还没有画像，PNG 角色卡里没有图片可放。打开她的资料，用「给她一张图片」，再导出；或者改存 JSON 角色卡——它同样携带她的设定，只是没有画像。",
-  exportFailed: "无法导出这张角色卡。",
+  exportFailed: "无法导出这张角色卡。请再试一次。",
 
   dispositionAccepted: "已使用",
   dispositionPreserved: "原样保留",
@@ -1183,7 +1184,7 @@ const zh: CharacterLabels = Object.freeze({
   avatarUndecodable: "GameBuddy 无法把这个文件读成图片，因此没有送出。请选择 PNG、JPEG 或 WebP 图片。",
   avatarNotFound: "这位伙伴已不在你的伙伴库中，因此没有保存。",
   avatarUnreadable: "无法读取她的画像，这次没有保存。",
-  avatarFailed: "无法保存她的画像。",
+  avatarFailed: "无法保存她的画像。请重新选一张，或者换一张更小的。",
 
   companionDeleteTitle: "移除这位伙伴",
   companionDeleteHint:
@@ -1198,7 +1199,7 @@ const zh: CharacterLabels = Object.freeze({
   companionDeleteConflict: "在你打开这里之后她的记录已被改动，因此没有删除任何内容。请关闭这里，重新打开她，再删除。",
   companionDeleteNotFound: "这位伙伴已不在你的伙伴库中，因此没有删除任何内容。",
   companionDeleteUnreadable: "无法读取她保存的记录，因此没有删除任何内容。重新打开她可能会得到更多信息。",
-  companionDeleteFailed: "无法删除她。",
+  companionDeleteFailed: "没能删除她，所以她还在。请再试一次。",
 });
 
 export function characterLabels(locale: Locale): CharacterLabels {

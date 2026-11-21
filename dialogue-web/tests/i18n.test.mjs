@@ -299,9 +299,11 @@ test("the failed-turn refusal names the credential, the model and Settings, in b
   // Where to fix it: the panel's own name, in each catalogue.
   assert.match(readings.en, /Settings \(Connection and model\)/u);
   assert.match(readings["zh-CN"], /连接与模型/u);
-  // And that a retry is not the way out, which is what the old sentence got wrong.
-  assert.match(readings.en, /fail the same way/u);
-  assert.match(readings["zh-CN"], /同样方式失败/u);
+  // And that a retry is not the way out, which is what the old sentence got wrong. The premise is
+  // unchanged; the phrasing is the owner's "do not scold": the sentence says what a resend will meet
+  // rather than telling the player off for trying.
+  assert.match(readings.en, /fail the same way|turned down the same way/u);
+  assert.match(readings["zh-CN"], /同样方式失败|同样的方式被拒绝/u);
   assert.doesNotMatch(readings.en, /not available right now/iu);
   assert.doesNotMatch(readings["zh-CN"], /暂不可用|稍后再试/u);
 

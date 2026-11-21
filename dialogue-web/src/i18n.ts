@@ -86,7 +86,8 @@ const en = {
   gameStop: "Stop game",
   gameStopFailed: "The game stop result is uncertain. What this page shows is the last state it read from the game.",
   gameDisconnect: "Disconnect game",
-  gameDisconnectFailed: "The game could not be disconnected; it is still connected.",
+  gameDisconnectFailed:
+    "GameBuddy could not disconnect from the game, so it is still connected. Disconnect again; if it keeps failing, quit GameBuddy from the tray and open it again.",
   gameResume: "Resume game",
   gameResumeInProgress: "Resuming the game connection...",
   gameResumeFailed: "The game could not be resumed. What this page shows is the last state it read from the game.",
@@ -139,7 +140,7 @@ const en = {
   // a screen with nothing to press that says only "quit GameBuddy and start it again" leaves the
   // player with the task manager as the one thing that matches the words.
   gameLaunchQuarantined:
-    "This start failed. GameBuddy is still holding on to that attempt, and it lets go only when it is started again: no control on this page reaches it, and reloading this page does not either. If Stardew Valley is still running, close it, then quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again. Once GameBuddy is open again, the game starts normally.",
+    "This start failed. GameBuddy keeps that attempt until it is started again, so starting this page over will not change it: the way forward is a fresh GameBuddy. If Stardew Valley is still running, close it, then quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again. Once it is open again, the game starts normally.",
   // The same dead end without the failure claim, for the ending the Guardian really reported
   // (`instance.status: stopped`, `playerHostExitCode`). The one fact that tells the two apart is
   // the exit the Host published, and it changes one thing in the sentence: a reported exit is a
@@ -147,7 +148,7 @@ const en = {
   // process that does not exist. The clause stays in the sentence above, where the launch's
   // outcome is unknown and the game may well still be running.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in. GameBuddy keeps that ending until it is started again, so it will not launch the game: no control on this page reaches it, and reloading this page does not either. Quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again: once it is open again, the game starts normally.",
+    "Stardew Valley ended before your companion moved in. GameBuddy keeps that ending until it is started again, so it will not launch the game, and starting this page over will not change it. Quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again: once it is open again, the game starts normally.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state whose step is the read itself. The subject is the Host's read of the player's
@@ -212,7 +213,7 @@ const en = {
     "Your game is starting, and her cabin is ready: confirm the one that is hers below, and she moves in.",
   stardewCabinsLaunchWaitExpired:
     'Your game is still starting, and the cabins have not come back yet. Load your farm, then press "Read cabins again" - that asks this same game once more without leaving this page.',
-  stardewManifestAdmitted: "Cabin request admitted. Waiting for the next game setup step.",
+  stardewManifestAdmitted: "Cabin request received. Waiting for the game world to be ready.",
   stardewCabinConfirmationUncertain:
     "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
   stardewCabinCheckGame: "Check the game again",
@@ -282,14 +283,14 @@ const en = {
   worldInfoLocked: "World Info binding is locked after this chat has messages.",
 
   // Persona
-  userPersona: "User Persona",
+  userPersona: "You",
   personaName: "Your Display Name",
   personaDescription: "Persona Description",
   save: "Save",
   discard: "Discard",
 
   // Memory
-  semanticMemory: "Semantic Memory",
+  semanticMemory: "Long-term memory",
   noMemories: "No recorded memories yet.",
   refreshMemory: "Refresh Memory",
   memoryContent: "Memory content",
@@ -364,7 +365,7 @@ const en = {
   // model the endpoint does not serve; an endpoint that cannot be reached - because naming the
   // product's own "runtime" pointed at nothing.
   chatFailedRuntimeUnavailable:
-    "The reply never reached a model: the endpoint GameBuddy sends your messages to refused it — the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Check the connection and model in Settings (Connection and model); repeating this message will fail the same way.",
+    "This reply never reached a model: the endpoint GameBuddy sends your messages to turned it down - the API key is missing, wrong or revoked, the model you picked is not one that endpoint serves, or the endpoint could not be reached. Open Settings (Connection and model), fix the connection there, then send this message again; sending it unchanged will be turned down the same way.",
   // One sentence per classified cause. The Host reads the cause from the provider's own status line
   // and publishes it as a closed class beside `problemCode` (`providerFailure`), because the
   // paragraph above covers five causes and therefore prescribes nothing: a player holding a
@@ -523,7 +524,7 @@ const en = {
   connectionShapeMistral: "Mistral",
   connectionShapePiMessages: "Pi messages",
   connectionApiKey: "API key",
-  connectionApiKeyWriteOnly: "Write-only. It is stored for your companion and is never shown again.",
+  connectionApiKeyWriteOnly: "Saved once and never shown again: it is kept for your companion to use.",
   connectionApiKeyRequirement: "API key needed",
   connectionApiKeyRequirementYes: "Yes, this endpoint needs one",
   connectionApiKeyRequirementNone: "No, this endpoint needs no credential",
@@ -991,7 +992,27 @@ const en = {
     "GameBuddy could not carry out this step of the game. What this page shows is the last state it read from the game; check Game installation, then try again.",
   // The wrapper the Host answers with when a step of the game's own lifecycle failed. The bounded
   // `stardew_*` cause it registers says which step, and that name is for the record and for a report:
-  // a player cannot act on it, so this sentence is the same one with or without it.
+  // a player cannot act on it, so what reaches the sentence is the clause `humanizeProblemCause`
+  // picks for it - and when we do not know the cause, the clause says exactly that instead of
+  // guessing one. The raw name never appears; `player-vocabulary.8` drives every declared cause
+  // through this sentence to hold that.
+  gameProblemUnavailableCauseDetail:
+    "GameBuddy could not carry out this step of the game: {{cause}}. What this page shows is the last state it read from the game; check Game installation, then try again.",
+  // One clause per bounded cause, in the player's terms, naming what went wrong without naming a
+  // mechanism. `player-vocabulary.10` holds each of these to a `stardew_*` name the Host declares.
+  gameCauseContainedPlayerHostLaunchFailed: "the game itself did not start",
+  gameCauseContainedAiClientLaunchFailed: "her side of the connection did not start",
+  gameCausePlayerHostLaunchFailed: "the mod could not start the game",
+  gameCauseLaunchRuntimeUnavailable: "what the game needs in order to run was not ready",
+  gameCauseLaunchExecutableInvalid: "the launcher for that copy of the game was not found",
+  gameCauseCabinHandoffUnavailable: "the game had no cabin to hand her yet",
+  gameCauseCabinUnavailable: "the farm has no cabin set aside for her yet",
+  gameCauseCabinPublicationUncertain: "the cabin could not be confirmed",
+  gameCauseWorldHeldByPlayer: "that save already holds your own farm",
+  gameCauseSlotHolderNotGone: "an earlier attempt is still letting go of that save",
+  // The honest fallback: we do not know, we say we do not know, and the sentence it sits in carries
+  // the step. A fallback that guessed a cause would be the invention this whole lane exists against.
+  gameCauseUnknown: "nothing here says which step it was",
   gameProblemPrerequisitesMissingTitle: "Companion play is not ready yet",
   gameProblemPrerequisitesMissingDetail:
     "GameBuddy has not started a game for you yet. Enable companion play first, then try this again.",
@@ -1047,7 +1068,7 @@ const en = {
   // the cabins belong to the handoff's own words, not to a launch's refusal.
   gameProblemPlayerHostExitedTitle: "The game ended",
   gameProblemPlayerHostExitedDetail:
-    "Stardew Valley ended, so this launch is over and will not be repeated. GameBuddy keeps that ending until it is started again, so it will not launch the game: no control on this page reaches it, and reloading the page does not either. Quit GameBuddy itself from the tray icon (Quit GameBuddy), open it again, and another launch can begin.",
+    "Stardew Valley ended, so this launch is over and will not be repeated. GameBuddy keeps that ending until it is started again, so it will not launch the game, and starting this page over will not change it. Quit GameBuddy itself from the tray icon (Quit GameBuddy), open it again, and another launch can begin.",
   gameInstanceExited: "Ended (exit code {{code}})",
   gameProblemCabinMissingTitle: "This farm has no cabin for your companion yet",
   gameProblemCabinMissingDetail:
@@ -1073,7 +1094,7 @@ const en = {
   companionListEmpty: "No companions yet.",
   companionCurrent: "current",
   companionCreateTitle: "New companion",
-  companionCreateHint: "A display name only; GameBuddy mints every identity.",
+  companionCreateHint: "Give her a name; GameBuddy fills in the rest of who she is.",
   companionCreateSubmit: "Create companion",
   companionDetailTitle: "Companion details",
   companionDetailName: "Name",
@@ -1101,7 +1122,7 @@ const en = {
   chatRetentionFailed: "The chat lifecycle could not be changed.",
   cardImportTitle: "Import card",
   cardImportHint:
-    "Paste a character card (SillyTavern V2/V3 JSON). You review what is included before it becomes a companion.",
+    "Paste a character card here - the card's own JSON text. You see what she comes with before she is created.",
   cardImportStage: "Review card",
   cardImportStaging: "Reviewing…",
   cardImportFieldsTitle: "Included fields",
@@ -1111,7 +1132,8 @@ const en = {
   cardImportConfirming: "Creating…",
   cardImportCreated: "Imported companion created.",
   cardImportError: "The card could not be imported. Paste a valid character card and try again.",
-  cardImportLongHint: "This description is long ({{chars}} chars); it may raise per-turn token use.",
+  cardImportLongHint:
+    "This description is long ({{chars}} characters), so it takes more of her attention on every reply.",
   cardImportHistoryTitle: "Import history",
   cardImportHistoryHint: "Every confirmed import and what it kept or dropped, by class.",
   cardImportHistoryEmpty: "No confirmed imports yet.",
@@ -1143,7 +1165,7 @@ const en = {
   presetUnfilledNone: "Every marker has a content source.",
   presetMacrosTitle: "Macros this product cannot evaluate",
   presetMacrosNone: "Every macro this preset spells is implemented.",
-  presetDepthTitle: "Depth injection",
+  presetDepthTitle: "How deep in the chat it is inserted",
   presetDepthLine: "{{count}} blocks at depths {{depths}}",
   presetDepthNone: "No entry is injected at a depth.",
   presetEmpty: "No preset has been imported yet.",
@@ -1156,10 +1178,10 @@ const en = {
     "GameBuddy did not report which preset is in use, so this build cannot say whether these requests go through one.",
   presetSamplingTitle: "Sampling in force",
   presetSamplingHint:
-    "What each sampler key is actually sent as, and which layer decided it - a preset value can be overridden by the model or the thinking level, and unset means nothing is sent.",
+    "What each sampler key is actually sent as, and which layer decided it: a preset value can be overridden by the model or the thinking level, and a key nobody sets is simply left out.",
   presetSamplingUnavailable:
     "Sampling not measured: no composed model exists for this preset yet, so nothing states what would be sent.",
-  presetNotAppliedTitle: "Recognised and not sent",
+  presetNotAppliedTitle: "Managed by GameBuddy",
   presetNotAppliedNone: "This preset states no field this product recognises and leaves out.",
   presetNotAppliedReasonModelOwnedSetting:
     "is not sent: the context window and output reserve belong to the selected model.",
@@ -1188,6 +1210,10 @@ const en = {
   chatsPanel: "Chats",
   charactersPanel: "Characters",
   settingsPanel: "Settings",
+  // The Settings surface's three tabs. The middle one is `connectionSettings` (the same two regions the
+  // surface has always called by that name), so only the two this split introduces are named here.
+  settingsTabPreferences: "Preferences",
+  settingsTabAdvanced: "Advanced and tuning",
   memoryPanel: "Memory",
   loading: "Loading...",
   chatsEmpty: "No chats yet.",
@@ -1197,7 +1223,8 @@ const en = {
   voiceAccepted: "Accepted",
   voiceRevoked: "Revoked",
   voiceUndecided: "Undecided",
-  gameStateUnavailable: "Game state is unavailable for this profile.",
+  gameStateUnavailable:
+    "GameBuddy cannot read your game with this profile. Reload the page; if it stays empty, check Game installation.",
   gameGroupConnection: "Connection",
   gameGroupNextStep: "Next step",
   gameGroupSession: "This game",
@@ -1215,7 +1242,7 @@ const en = {
   gameFactOutcome: "Last result",
   gameValueNone: "None",
   gameCapabilityCount: "{{count}} available",
-  gameCapabilitiesUnavailable: "Not published",
+  gameCapabilitiesUnavailable: "Waiting for the game",
 
   gameConnectionNone: "No game connection",
   gameConnectionDiscovering: "Looking for your game…",
@@ -1230,7 +1257,8 @@ const en = {
   gameConnectionReconnecting: "Reconnecting…",
   gameConnectionSyncing: "Syncing…",
   gameConnectionStopped: "Stopped",
-  gameConnectionFailed: "Connection failed",
+  gameConnectionFailed:
+    "Her connection to the game dropped. It comes back by itself; if it does not, start the game again.",
   gameConnectionDisconnected: "Disconnected",
 
   gameInstanceNone: "Not running",
@@ -1245,13 +1273,13 @@ const en = {
   gameCompatibilityIncompatible: "Not compatible",
   gameCompatibilityWarning: "Needs attention",
 
-  gameAuthorityUnavailable: "Not available",
+  gameAuthorityUnavailable: "She is not taking actions right now. Resume actions when you want her to carry on.",
   gameAuthorityActive: "Companion can act",
   gameAuthorityPaused: "Paused",
 
   gameOutcomeNone: "No activity yet",
   gameOutcomeSucceeded: "Completed successfully",
-  gameOutcomeFailed: "Did not complete",
+  gameOutcomeFailed: "She did not finish that. Ask her again if you want her to retry.",
   gameOutcomeCancelled: "Stopped by you",
 
   // Installation discovery (design/104 §5.1). The panel's `data-state` stays the
@@ -1270,7 +1298,8 @@ const en = {
   gameInstallationPickerWaiting:
     "Waiting for the folder window to close. If you can't see it, it may have opened behind this window.",
   gameInstallationCancelled: "Search cancelled.",
-  gameInstallationSourceUnavailable: "The installation search is unavailable right now.",
+  gameInstallationSourceUnavailable:
+    "GameBuddy cannot look for your game right now. Try again in a moment; if it keeps refusing, quit GameBuddy from the tray and open it again.",
   gameInstallationNoCandidates: "No Stardew Valley installation was found.",
   gameInstallationResultUnavailable: "We couldn't read the installation search result.",
   // A copy the player HAS, found by the Microsoft Store / PC Game Pass channel, in the folder the
@@ -1333,7 +1362,8 @@ const en = {
   // the player does next (the two steps on the game panel above it).
   gameInstallationConfirmed: "Confirmed. Next, enable companion play and set up Stardew Valley, then load your farm.",
   gameInstallationExpired: "These search results expired. Search again.",
-  gameInstallationError: "The installation search failed.",
+  gameInstallationError:
+    "The search for your game stopped unexpectedly. Try it again; if it stops in the same place, choose the folder yourself.",
   gameInstallationConfirm: "Confirm",
   gameInstallationChooseFolder: "Choose game folder",
   gameModLoaderInstallRequired:
@@ -1408,7 +1438,7 @@ const en = {
   gameStartGuide: "Getting started together",
   gameGuideStepOneTitle: "Prepare for the game",
   gameGuideStepOneDetail:
-    "Choose your game folder under Game installation on this page if you have not yet, then press the one button below. This step gets the companion and her mod ready and starts nothing: starting the game is the next step.",
+    "Choose your Stardew Valley folder in Game installation above if you have not yet, then press the button below to set up the companion's mod. Setting up is all this step does; the game itself is started in the next step.",
   // The one staging action the step does not lead with, put behind a disclosure instead of
   // beside it: the Host refuses setup until companion play has been enabled, so only the
   // player who says that first step is already behind them is offered it here.
@@ -1426,7 +1456,8 @@ const en = {
   // The terminal operation is set apart from Stop/Disconnect: it reads as its
   // own block, and its wording must not promise reversibility it does not have.
   gameEndgame: "End the game",
-  gameEndgameConfirm: "This ends and permanently closes the player's game world. This cannot be undone. Continue?",
+  gameEndgameConfirm:
+    "This ends your companion's game and disconnects her from this farm. It cannot be undone, and your farm save is not affected. Continue?",
   gameEndgameConfirmYes: "End the game",
   gameEndgameConfirmNo: "Keep playing",
   gameEndgameInProgress: "Ending the game...",
@@ -1612,7 +1643,8 @@ const zh: Messages = {
   gameStop: "停止游戏",
   gameStopFailed: "游戏停止结果尚不确定；这里显示的是最近一次从游戏读到的状态。",
   gameDisconnect: "断开游戏连接",
-  gameDisconnectFailed: "无法断开游戏连接；当前连接已保留。",
+  gameDisconnectFailed:
+    "GameBuddy 没能断开和游戏的连接，所以现在还连着。请再断开一次；如果一直不行，从系统托盘退出 GameBuddy 再重新打开。",
   gameResume: "恢复游戏连接",
   gameResumeInProgress: "正在恢复游戏连接...",
   gameResumeFailed: "无法恢复游戏连接;这里显示的是最近一次从游戏读到的状态。",
@@ -1638,9 +1670,9 @@ const zh: Messages = {
   gameLaunch: "启动游戏",
   gameLaunchFailed: "游戏启动结果不确定；这里显示的是最近一次从游戏读到的状态。",
   gameLaunchQuarantined:
-    "这次启动失败了。GameBuddy 还留着那次尝试，只有重新打开它才会放手：本页没有任何控件能做到，刷新本页也不行。如果《星露谷物语》还在运行，请先关掉它，然后从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开。重新打开之后，游戏就能正常启动。",
+    "这次启动失败了。GameBuddy 会一直留着那次尝试，直到它重新打开，所以刷新这一页也不会改变这一点：往前的路是重新打开 GameBuddy。如果《星露谷物语》还在运行，请先关掉它，然后从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开。重新打开之后，游戏就能正常启动。",
   gameEndedQuarantined:
-    "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏：本页没有任何控件能做到，刷新本页也不行。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开：重新打开之后，游戏就能正常启动。",
+    "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏，刷新这一页也不会改变这一点。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开：重新打开之后，游戏就能正常启动。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
@@ -1678,7 +1710,7 @@ const zh: Messages = {
   stardewCabinsLaunchFound: "游戏还在启动，她的小屋已经就绪：在下面确认哪一间是她的，她就住进去。",
   stardewCabinsLaunchWaitExpired:
     "游戏仍在启动，小屋还没有读取结果。先载入农场，然后按“再读一次小屋”：它会在当前页面上再问一次这个游戏。",
-  stardewManifestAdmitted: "小屋请求已接纳，正在等待下一步游戏设置。",
+  stardewManifestAdmitted: "已收到小屋入住申请，正在等待游戏世界准备就绪…",
   stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
   stardewCabinCheckGame: "再查一次游戏状态",
   stardewCabinCheckGameHint:
@@ -1732,14 +1764,14 @@ const zh: Messages = {
   worldInfoLocked: "当前对话已有消息，世界书绑定已锁定。",
 
   // Persona
-  userPersona: "用户设定 (Persona)",
+  userPersona: "你的设定",
   personaName: "你的显示名称",
   personaDescription: "设定描述 (外貌、身份、习惯等)",
   save: "保存",
   discard: "丢弃",
 
   // Memory
-  semanticMemory: "长期记忆 (Semantic Memory)",
+  semanticMemory: "长期记忆",
   noMemories: "暂未记录任何长期记忆。",
   refreshMemory: "刷新记忆",
   memoryContent: "记忆内容",
@@ -1780,7 +1812,7 @@ const zh: Messages = {
   chatFailedNoVisiblePresentation: "她没能开口，回复没有显示出来。你可以重试。",
   // 拒绝分类：英文目录同名字段说明了承载它的 wire 代码（runtime_unavailable）和理由。
   chatFailedRuntimeUnavailable:
-    "这条回复没有送达任何模型：GameBuddy 转发消息的端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型不是该端点提供的，或者根本连不上那个端点。请在「设置 → 连接与模型」里检查连接和模型；重复发送同一条消息只会以同样方式失败。",
+    "这条回复没有送到模型：GameBuddy 转发消息的那个端点拒绝了它——API Key 缺失、错误或已被吊销，你选的模型该端点不提供，或者根本连不上它。请打开「设置 → 连接与模型」检查连接，改好之后再发这一条；原样重发会以同样的方式被拒绝。",
   // 每种已分类原因一句话，见英文目录同名字段的说明。每句都说明玩家可以做什么；
   // 上下文超长那句不得过度承诺：只有「对话太长」时开新会话才真的有用，
   // 而固定底座（系统提示词、工具、记忆、作者上下文）不是玩家能缩短的东西。
@@ -1895,7 +1927,7 @@ const zh: Messages = {
   connectionShapeMistral: "Mistral",
   connectionShapePiMessages: "Pi messages",
   connectionApiKey: "API Key",
-  connectionApiKeyWriteOnly: "只写：它保存给你的伙伴使用，之后不会再回显。",
+  connectionApiKeyWriteOnly: "只保存一次，之后不再显示：它专供你的伙伴使用。",
   connectionApiKeyRequirement: "是否需要 API Key",
   connectionApiKeyRequirementYes: "需要，该端点要使用 API Key",
   connectionApiKeyRequirementNone: "不需要，该端点无需凭据",
@@ -2209,6 +2241,19 @@ const zh: Messages = {
   gameProblemUnavailableTitle: "游戏没有进行下去",
   gameProblemUnavailableDetail:
     "GameBuddy 无法完成这一步游戏操作。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
+  gameProblemUnavailableCauseDetail:
+    "GameBuddy 无法完成这一步游戏操作：{{cause}}。下面是游戏现在报告的状态；请检查「游戏安装」，再试一次。",
+  gameCauseContainedPlayerHostLaunchFailed: "星露谷的游戏主程序没能启动",
+  gameCauseContainedAiClientLaunchFailed: "她这一侧的连接没能启动",
+  gameCausePlayerHostLaunchFailed: "模组没能唤起游戏",
+  gameCauseLaunchRuntimeUnavailable: "运行游戏所需的环境还没准备好",
+  gameCauseLaunchExecutableInvalid: "没找到那份游戏副本的启动文件",
+  gameCauseCabinHandoffUnavailable: "游戏那边还没有可交给她的小屋",
+  gameCauseCabinUnavailable: "农场里暂时没有分给她的小屋",
+  gameCauseCabinPublicationUncertain: "小屋的安置没能确认下来",
+  gameCauseWorldHeldByPlayer: "那个存档里已经是你自己的农场",
+  gameCauseSlotHolderNotGone: "上一次尝试还在放开那个存档位置",
+  gameCauseUnknown: "这一页说不清是哪一步",
   gameProblemPrerequisitesMissingTitle: "伙伴陪玩还没有准备好",
   gameProblemPrerequisitesMissingDetail: "GameBuddy 还没有为你启动游戏。请先启用伙伴陪玩，再重试。",
   gameProblemInstanceGoneTitle: "那个游戏已经不在了",
@@ -2258,7 +2303,7 @@ const zh: Messages = {
   // 也来自一次被已结束的尝试拒绝的启动，所以句子只说“结局”和“下一步”，不提小屋。
   gameProblemPlayerHostExitedTitle: "游戏已退出",
   gameProblemPlayerHostExitedDetail:
-    "《星露谷物语》已经退出，所以这次启动到此为止，不会再重来。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏：本页没有任何控件能做到，刷新页面也不行。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），重新打开，才能再启动一次游戏。",
+    "《星露谷物语》已经退出，所以这次启动到此为止，不会再重来。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏，刷新这一页也不会改变这一点。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），重新打开，才能再启动一次游戏。",
   gameInstanceExited: "已退出（退出代码 {{code}}）",
   gameProblemCabinMissingTitle: "这个农场还没有伙伴可住的小屋",
   gameProblemCabinMissingDetail:
@@ -2283,7 +2328,7 @@ const zh: Messages = {
   companionListEmpty: "还没有伙伴。",
   companionCurrent: "当前",
   companionCreateTitle: "新建伙伴",
-  companionCreateHint: "只需填写显示名称；所有身份由 GameBuddy 铸造。",
+  companionCreateHint: "你只要给她起个名字，她其余的一切由 GameBuddy 补齐。",
   companionCreateSubmit: "创建伙伴",
   companionDetailTitle: "伙伴详情",
   companionDetailName: "名称",
@@ -2310,7 +2355,7 @@ const zh: Messages = {
   chatRetentionTrash: "删除",
   chatRetentionFailed: "无法更改聊天生命周期。",
   cardImportTitle: "导入角色卡",
-  cardImportHint: "粘贴角色卡（SillyTavern V2/V3 JSON）。它会先经过审查，确认包含哪些内容后才会成为伙伴。",
+  cardImportHint: "把角色卡的文本粘贴到这里。创建之前，你可以先看清她带来了哪些内容。",
   cardImportStage: "审查卡片",
   cardImportStaging: "审查中…",
   cardImportFieldsTitle: "将包含的内容",
@@ -2320,7 +2365,7 @@ const zh: Messages = {
   cardImportConfirming: "创建中…",
   cardImportCreated: "已导入并创建伙伴。",
   cardImportError: "无法导入该卡片。请粘贴有效角色卡后重试。",
-  cardImportLongHint: "该描述较长（{{chars}} 字符），可能会增加每轮 Token 消耗。",
+  cardImportLongHint: "这段描述比较长（{{chars}} 字），每次回复都会多占用她一些注意力。",
   cardImportHistoryTitle: "导入历史",
   cardImportHistoryHint: "每次已确认的导入，以及按类别保留或丢弃的内容。",
   cardImportHistoryEmpty: "暂无已确认的导入。",
@@ -2340,7 +2385,7 @@ const zh: Messages = {
   presetUnfilledNone: "每个标记都有内容来源。",
   presetMacrosTitle: "本产品无法求值的宏",
   presetMacrosNone: "这个预设用到的宏都已实现。",
-  presetDepthTitle: "深度注入",
+  presetDepthTitle: "插入深度（离对话结尾多远）",
   presetDepthLine: "{{count}} 个块，深度 {{depths}}",
   presetDepthNone: "没有条目注入到某个深度。",
   presetEmpty: "还没有导入预设。",
@@ -2352,9 +2397,9 @@ const zh: Messages = {
   presetActiveUnreported: "GameBuddy 没有说明哪个预设正在使用，因此这里无法说明这些请求是否经过预设。",
   presetSamplingTitle: "实际生效的采样参数",
   presetSamplingHint:
-    "每个采样键真正下发的值，以及是哪一层决定的——预设里的值可能被模型或思考等级覆盖；unset 表示不发这个键。",
+    "每个采样键真正下发的值，以及由哪一层决定：预设里的值可能被模型或思考等级覆盖；没有被设置的键就不会发送。",
   presetSamplingUnavailable: "未测量采样参数：这个预设还没有合成后的模型，因此无法说明会下发什么。",
-  presetNotAppliedTitle: "已识别但不下发",
+  presetNotAppliedTitle: "由 GameBuddy 统一管理",
   presetNotAppliedNone: "这个预设没有填写本产品会识别但不下发的字段。",
   presetNotAppliedReasonModelOwnedSetting: "不下发：上下文窗口与输出上限属于所选模型。",
   presetNotAppliedReasonHostOwnedTransport: "不下发：这个产品始终使用流式传输，不由预设决定。",
@@ -2377,6 +2422,8 @@ const zh: Messages = {
   chatsPanel: "会话",
   charactersPanel: "角色",
   settingsPanel: "设置",
+  settingsTabPreferences: "常规偏好",
+  settingsTabAdvanced: "高级与调优",
   memoryPanel: "记忆",
   loading: "加载中...",
   chatsEmpty: "还没有聊天。",
@@ -2386,7 +2433,7 @@ const zh: Messages = {
   voiceAccepted: "已接受",
   voiceRevoked: "已撤销",
   voiceUndecided: "未决定",
-  gameStateUnavailable: "当前配置下没有游戏状态。",
+  gameStateUnavailable: "这个配置下 GameBuddy 读不到你的游戏。请刷新页面；如果还是空着，去「游戏安装」看看。",
   gameGroupConnection: "连接",
   gameGroupNextStep: "下一步",
   gameGroupSession: "这次游戏",
@@ -2404,7 +2451,7 @@ const zh: Messages = {
   gameFactOutcome: "最近结果",
   gameValueNone: "无",
   gameCapabilityCount: "{{count}} 项可用",
-  gameCapabilitiesUnavailable: "未发布",
+  gameCapabilitiesUnavailable: "等待进入游戏后同步",
 
   gameConnectionNone: "尚未连接游戏",
   gameConnectionDiscovering: "正在查找你的游戏…",
@@ -2419,7 +2466,7 @@ const zh: Messages = {
   gameConnectionReconnecting: "正在重新连接…",
   gameConnectionSyncing: "正在同步…",
   gameConnectionStopped: "已停止",
-  gameConnectionFailed: "连接失败",
+  gameConnectionFailed: "她和游戏的连接断了。这边会自己重连；如果没重连上，再启动一次游戏。",
   gameConnectionDisconnected: "已断开连接",
 
   gameInstanceNone: "未运行",
@@ -2434,13 +2481,13 @@ const zh: Messages = {
   gameCompatibilityIncompatible: "不兼容",
   gameCompatibilityWarning: "需要留意",
 
-  gameAuthorityUnavailable: "尚未提供",
+  gameAuthorityUnavailable: "她现在不行动。想让她继续时，点恢复行动。",
   gameAuthorityActive: "伙伴可以行动",
   gameAuthorityPaused: "已暂停",
 
   gameOutcomeNone: "尚无执行记录",
   gameOutcomeSucceeded: "已成功完成",
-  gameOutcomeFailed: "未完成",
+  gameOutcomeFailed: "她那件事没做完。想让她再做一次，就跟她说一声。",
   gameOutcomeCancelled: "已由你停止",
 
   // 游戏安装发现（design/104 §5.1）。面板的 `data-state` 仍保留类型化状态供测试使用，
@@ -2454,7 +2501,8 @@ const zh: Messages = {
   gameInstallationRetrying: "正在重新搜索…",
   gameInstallationPickerWaiting: "正在等待文件夹窗口关闭。如果没有看到它，它可能开在了这个窗口后面。",
   gameInstallationCancelled: "搜索已取消。",
-  gameInstallationSourceUnavailable: "目前无法搜索游戏安装位置。",
+  gameInstallationSourceUnavailable:
+    "现在没法搜索你的游戏位置。请稍后再试；如果一直不行，从系统托盘退出 GameBuddy 再重新打开。",
   gameInstallationNoCandidates: "未找到《星露谷物语》安装位置。",
   gameInstallationResultUnavailable: "无法读取游戏安装搜索结果。",
   gameInstallationCannotLoadMods:
@@ -2482,7 +2530,7 @@ const zh: Messages = {
   gameInstallationSelectionUnavailable: "GameBuddy 没能完成这次登记，请再试一次；这个文件夹本身并没有被拒绝。",
   gameInstallationConfirmed: "已确认。接下来启用伙伴陪玩，再设置《星露谷物语》，就可以载入你的农场。",
   gameInstallationExpired: "搜索结果已过期，请重新搜索。",
-  gameInstallationError: "搜索游戏安装位置失败。",
+  gameInstallationError: "搜索游戏位置时中断了。请再搜一次；如果还是停在这里，可以直接自己选文件夹。",
   gameInstallationConfirm: "确认",
   gameInstallationChooseFolder: "选择游戏文件夹",
   gameModLoaderInstallRequired:
@@ -2526,7 +2574,7 @@ const zh: Messages = {
   gameStartGuide: "怎么开始",
   gameGuideStepOneTitle: "先为这次游戏做准备",
   gameGuideStepOneDetail:
-    "如果还没选过游戏目录，请先在本页的「游戏安装」里选好，然后按下面唯一的那个按钮。这一步只是把伙伴和她的模组准备好，不会启动任何东西；启动游戏是下一步。",
+    "如果还没有选过游戏目录，请先在上方「游戏安装」里确认《星露谷物语》的位置，然后按下面的按钮装好伴玩模组。这一步只做准备工作，下一步才启动游戏。",
   gameGuideStepOneAlternate: "已经启用伙伴陪玩？",
   gameActivationHint: "让伙伴为这次游戏做好准备。",
   gameSetupHint: "准备好《星露谷物语》和伙伴模组。",
@@ -2539,7 +2587,7 @@ const zh: Messages = {
 
   // --- 终局操作 lane：唯一会彻底结束游戏世界的刻意控件 ---
   gameEndgame: "结束游戏",
-  gameEndgameConfirm: "这会终止并永久关闭玩家的游戏世界，且无法撤销。确定继续吗？",
+  gameEndgameConfirm: "这会结束这次伴玩，断开她与这座农场的连接。此操作无法撤销，但你的农场存档不受影响。确定继续吗？",
   gameEndgameConfirmYes: "结束游戏",
   gameEndgameConfirmNo: "继续游玩",
   gameEndgameInProgress: "正在结束游戏...",

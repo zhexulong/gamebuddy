@@ -953,12 +953,13 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     );
   }
   // …and both say that the page is not where that step is carried out: the ending is held inside
-  // GameBuddy until it is started again, so no control here reaches it and reloading comes back to
-  // this same screen. The instruction that sent the player looking for a control this page does not
-  // have is gone.
+  // GameBuddy until it is started again, so reloading comes back to this same screen. The premise is
+  // unchanged; the wording is not "nothing on this page can do it", which the owner read as the
+  // product giving up before it had said what happened - a reload that will not change the state is
+  // stated plainly instead.
   for (const labels of [en, zh]) {
-    assert.match(labels.gameLaunchQuarantined, /no control on this page|本页没有任何控件/u);
-    assert.match(labels.gameLaunchQuarantined, /reloading this page does not|刷新本页也不行/u);
+    assert.match(labels.gameLaunchQuarantined, /starting this page over will not change|刷新这一页也不会改变/u);
+    assert.doesNotMatch(labels.gameLaunchQuarantined, /no control on this page|本页没有任何控件/u);
     assert.doesNotMatch(labels.gameLaunchQuarantined, /then play with your companion|然后再启动伙伴陪玩/u);
   }
   t.diagnostic(`game-ended: quit -> ${quitControls.phase}, crashed -> ${crashedControls.phase}`);
