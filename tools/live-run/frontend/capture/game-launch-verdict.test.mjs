@@ -38,6 +38,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  attachmentActionsStopped,
   blockedByProductLine,
   CHAIN_RUNGS,
   CHAIN_STEP_NAMES,
@@ -50,6 +51,7 @@ import {
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
+  describeStopReading,
   gameLocaleMismatch,
   guardianCanArm,
   LAUNCH_PLATEAU_MS,
@@ -268,6 +270,87 @@ test("readiness is one exact pair; a dead instance is a failure rather than a wa
     /instance=launching\/attachment=pending/u,
   );
   assert.match(describeGameState({}), /unobserved/u);
+});
+
+/*
+ * THE STOP'S OWN SHAPE, and the shape it is not.
+ *
+ * The press was measured twice on HEAD (`.live-runs`-style roots `E:\gb-lanes\launchorphan-r1` and
+ * `firstjoin-r1`) and both reports said the same thing about every stop: `settled: false`,
+ * `elapsedMs 120000`, `last instance=running/attachment=attached`. The driver of that day waited for
+ * `instance=stopped|none && attachment!==attached`, which is the shape a game's DEATH leaves - a stop keeps
+ * the world running (project rule #3023/#506) - so a stop that settled perfectly could only ever be reported
+ * as a timeout. These assertions pin the product's own facts instead, one per word the coordinator writes
+ * (`stardew-production-lifecycle-coordinator.internal.ts:2623,2641`), and the wait in
+ * `game-surface-states.test.mjs` drives the same predicate over a scripted page.
+ *
+ * red-proof: inject  reverting `attachmentActionsStopped` to the driver's old predicate
+ *                   (`attachmentStatus !== "attached"`) turns the first assertion below red with the settled
+ *                   stop shape, and the wait's own test red with `settled: false` for a stop that answered
+ *                   HTTP 200 at 3.2s; measured readings are in `.tmp/lane-stopwait.md`.
+ */
+test("a stop is settled by the phase the product publishes for it, and never by an ended game", () => {
+  // The shape a real stop leaves: the attachment is still held, the coordinator's own word is `stopped`, and
+  // the world is still running.
+  assert.equal(
+    attachmentActionsStopped({ attachmentStatus: "attached", attachmentGeneration: 1, connectionStatus: "stopped" }),
+    true,
+  );
+  // The two words of the SAME press that are not it: `stopping` is a stop still in flight, `failed` is one the
+  // Host could not settle - and neither is a settled stop.
+  for (const connectionStatus of ["connected_idle", "stopping", "failed", "disconnected", "none", null, undefined])
+    assert.equal(
+      attachmentActionsStopped({ attachmentStatus: "attached", attachmentGeneration: 1, connectionStatus }),
+      false,
+      `connectionStatus=${String(connectionStatus)} is not a stop that settled`,
+    );
+  // The OTHER ending, which the old predicate was written for: no attachment to stop, so no phase to read.
+  assert.equal(
+    attachmentActionsStopped({ attachmentStatus: "none", attachmentGeneration: 0, connectionStatus: "stopped" }),
+    false,
+  );
+  // A generation of 0 is the product's "no attachment at all" whatever the status word says.
+  assert.equal(
+    attachmentActionsStopped({ attachmentStatus: "attached", attachmentGeneration: 0, connectionStatus: "stopped" }),
+    false,
+  );
+  assert.equal(attachmentActionsStopped(), false);
+});
+
+test("a stop's line names the receipt, the two facts that settled it, and the world that is still running", () => {
+  const line = describeStopReading({
+    settled: true,
+    state: {
+      instanceStatus: "running",
+      attachmentStatus: "attached",
+      attachmentGeneration: 1,
+      connectionStatus: "stopped",
+    },
+    answer: { status: 200, atMs: 1_795_267_000_000 },
+    elapsedMs: 3_200,
+  });
+  assert.match(line, /^stop settled in 3\.2s: answer=HTTP 200 at 2026-11-21T/u);
+  assert.match(line, /connection=stopped/u);
+  assert.match(line, /instance=running/u, "the world the stop left running is printed, not implied");
+  // An unanswered press says so rather than printing an elapsed that looks like a measurement of the Host.
+  const unanswered = describeStopReading({
+    settled: false,
+    state: {
+      instanceStatus: "running",
+      attachmentStatus: "attached",
+      attachmentGeneration: 1,
+      connectionStatus: "stopping",
+    },
+    answer: null,
+    elapsedMs: 120_000,
+  });
+  assert.match(unanswered, /^stop did not settle in 120s: answer=none \(the Host has answered no game\/stop\)/u);
+  assert.match(unanswered, /connection=stopping/u);
+  // A state route that answered nothing is not a state: the line says unobserved rather than inventing one.
+  assert.match(
+    describeStopReading({ settled: false, state: null, answer: null, elapsedMs: 0 }),
+    /connection=unobserved/u,
+  );
 });
 
 test("the not-measured line round-trips, and a driver that measured reads as null", () => {

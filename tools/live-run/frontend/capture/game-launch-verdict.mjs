@@ -376,6 +376,58 @@ export function describeGameState({ instanceStatus, attachmentStatus }) {
 }
 
 /**
+ * What the product publishes when the companion's game actions are stopped, in the words of its own
+ * derivation: the panel's phase is `attached_stopped` exactly when the attachment is still held with a
+ * live generation AND `connectionStatus === "stopped"` (`dialogue-web/src/game-lifecycle-controls.ts:390-400`).
+ *
+ * EVERY FIELD HERE HAS A PUBLISHER, AND NO ONE OF THEM IS THIS HARNESS'S OWN WORD:
+ *
+ *   - `connectionStatus` crosses the browser boundary as `game.connectionStatus`
+ *     (`host/src/game-browser-contract/index.ts:367`), projected from the coordinator's attachment reader
+ *     (`host/src/game-browser/game-browser-state-provider.ts:198`), which writes `"stopping"` when it
+ *     seals the epoch and `"stopped"` once the Host's STOP has settled
+ *     (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2623,2641`).
+ *   - `attachment.status`/`generation` are the same reader's other two facts: a stop leaves the
+ *     attachment held, which is what tells a stopped companion apart from one that was never there.
+ *
+ * THE INSTANCE WORD IS NOT PART OF THIS SHAPE AND MUST NEVER BE WAITED ON. An ordinary stop is
+ * `player_stop_all`: it settles the AI authority and the world keeps running (project rules #3023/#506), so
+ * `instance=running` is the expected reading both before and after the press. `instance=stopped|none` is the
+ * OTHER ending - the player quitting the game, which the surface offers only "restart GameBuddy" for - and
+ * a wait for that shape reports every stop that works as a timeout.
+ */
+export function attachmentActionsStopped({ attachmentStatus, attachmentGeneration, connectionStatus } = {}) {
+  return (
+    attachmentStatus === "attached" &&
+    Number.isInteger(attachmentGeneration) &&
+    attachmentGeneration > 0 &&
+    connectionStatus === "stopped"
+  );
+}
+
+/**
+ * A stop in one line: what settled it, the wire's own receipt for the same fact, and the world that is
+ * still running afterwards because that is what the product promises.
+ *
+ * `answer` is the `game/stop` response this run saw (`{status, atMs}`), or `null` while the Host has not
+ * answered - the route returns the STOP's settled promise
+ * (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2598-2662`), so an answer IS the Host
+ * saying it finished.
+ */
+export function describeStopReading({ settled, state, answer, elapsedMs } = {}) {
+  const receipt =
+    answer === null || answer === undefined
+      ? "answer=none (the Host has answered no game/stop)"
+      : `answer=HTTP ${String(answer.status)} at ${new Date(answer.atMs).toISOString()}`;
+  const facts = [
+    `attachment=${String(state?.attachmentStatus ?? "unobserved")}/${String(state?.attachmentGeneration ?? "unobserved")}`,
+    `connection=${String(state?.connectionStatus ?? "unobserved")}`,
+    `instance=${String(state?.instanceStatus ?? "unobserved")}`,
+  ].join(" ");
+  return `stop ${settled === true ? "settled" : "did not settle"} in ${String(Math.round(Number(elapsedMs ?? 0) / 100) / 10)}s: ${receipt}; ${facts} - the instance word is read, never waited on: an ordinary stop leaves the world running`;
+}
+
+/**
  * How long an unchanged launch state is read as "waiting for a step" rather than "still moving".
  *
  * Measured 2026-11-15 (`SMAPI-latest.txt`): the launch chain itself - Guardian role, SMAPI, Mod, loaded

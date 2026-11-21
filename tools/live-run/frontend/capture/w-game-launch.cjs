@@ -137,7 +137,7 @@ const {
   readinessOf,
   responseStampForPress,
 } = require("./game-launch-verdict.mjs");
-const { stepRecorder } = require("./game-surface-states.cjs");
+const { pressStop, stepRecorder } = require("./game-surface-states.cjs");
 const { prepareOwnWorld, describeOwnWorld } = require("./fixture-world.cjs");
 const { readInstallationPanel, registerInstallation } = require("./installation-registration.cjs");
 
@@ -206,6 +206,9 @@ const readGameState = async () => {
       instanceGeneration: game?.instance?.generation ?? null,
       attachmentStatus: game?.attachment?.status ?? null,
       attachmentGeneration: game?.attachment?.generation ?? null,
+      // The coordinator's `stopping`/`stopped` word, published at `game-browser-contract/index.ts:367`; the stop
+      // wait reads it through `capture/game-surface-states.cjs`.
+      connectionStatus: game?.connectionStatus ?? null,
       role: game?.role ?? null,
       companionName: game?.companionName ?? null,
       latestOutcome: game?.latestOutcome ?? null,
@@ -1759,18 +1762,24 @@ async function hostAnswers(port) {
   await observe(page, say, "w", { sinceMs: observationFrom });
 
   // ---- 6. stop the game this driver asked the product to start ----
+  /*
+   * A STOP IS NOT AN ENDED GAME. The press settles the companion's game actions and leaves the world standing
+   * (project rules #3023/#506), so `pressStop` waits on the product's own `attached_stopped` phase and the
+   * Host's `game/stop` answer - never on `instance=stopped|none`, which is the shape a game's DEATH leaves.
+   * On HEAD before this lane both `firstjoin-r1` and `launchorphan-r1` printed the same sentence for both
+   * outcomes: `settled: false, elapsedMs 120000, last instance=running/attachment=attached`.
+   */
   const stopControl = await page.evaluate(readLifecycleControls);
   record("stop control", stopControl);
-  if (stopControl.stop !== null && stopControl.stop.visible === true) {
-    await page.locator('[data-testid="game-stop"]').first().click();
-    const stopped = await waitForState(
-      (reading) => reading.ok === true && (reading.instanceStatus === "stopped" || reading.instanceStatus === "none") && reading.attachmentStatus !== "attached",
-      BUDGET.stopMs,
-    );
-    record("stop", stopped);
-    if (!stopped.settled)
-      say(`the stop request did not settle within ${String(BUDGET.stopMs)}ms (last ${describeGameState(stopped.state)}); the run's own cleanup names what remained`);
-  } else say(`no stop control was offered (${JSON.stringify(stopControl.stop)}); the run's own cleanup names what remained`);
+  if (stopControl.stop !== null && stopControl.stop.visible === true)
+    await pressStop(page, {
+      say,
+      record,
+      budgetMs: BUDGET.stopMs,
+      // The wire's own receipt: the `game/stop` answer this run saw, read by the listener above.
+      stopAnswer: () => answers.filter((answer) => answer.route === "game/stop").at(-1) ?? null,
+    });
+  else say(`no stop control was offered (${JSON.stringify(stopControl.stop)}); the run's own cleanup names what remained`);
   return await conclude(browser, { verdict: VERDICTS.measured, code: "measured", exit: 0 });
 })().catch((error) => {
   console.log("DRIVER W FAILED:", String(error).slice(0, 900));

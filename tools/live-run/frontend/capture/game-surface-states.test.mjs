@@ -26,6 +26,20 @@
  *                   `game-launch` without claiming its world): `✖ a lifecycle the product has not activated is
  *                   still activated through its own control` fails, because the launch then enters whatever
  *                   world the previous run left behind and the step that says so is gone.
+ *
+ * THE STOP'S WAIT is the fourth property here, and it exists because a wait can be wrong about what an
+ * operation even produces. Driver W pressed 停止游戏 on two HEAD runs (`E:\gb-lanes\launchorphan-r1`,
+ * `firstjoin-r1`) and both printed `settled: false, elapsedMs 120000, last
+ * instance=running/attachment=attached`: the predicate was `instance=stopped|none` with the attachment gone,
+ * which is what a game's DEATH leaves. An ordinary stop keeps the world running (project rule #3023/#506),
+ * so that predicate is false for every stop that works and the number in the report was the budget, not the
+ * stop. The tests below drive a scripted page whose stop settles at 3 s and assert the reading BOTH ways:
+ * the product's own phase plus the Host's `game/stop` answer settles it, the old endgame shape never does,
+ * and a refusal ends the wait at once instead of at the budget.
+ * red-proof: inject  `attachmentActionsStopped`'s body reverted to `attachmentStatus !== "attached"` (driver
+ *                   W's old predicate): `✖ a stop that settles in seconds is settled...` fails with
+ *                   `settled: false` after the full budget, and the verdict suite's first stop assertion
+ *                   fails with the settled shape. Measured readings in `.tmp/lane-stopwait.md`.
  */
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -33,7 +47,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { activateAndLaunch, runBoundary } from "./game-surface-states.cjs";
+import { activateAndLaunch, runBoundary, waitForState, waitForStop } from "./game-surface-states.cjs";
 
 /**
  * A run whose world this process claims: the launch state every driver reads, the staged `WorldCreation`
@@ -280,6 +294,100 @@ test("a Host that holds no reading of the game asks for the reread step, not the
  * while the run's own attached game was alive. The boundary is the run's Host child, and the reading says which
  * boundary it used.
  */
+/*
+ * ---- the Stop press ----
+ *
+ * The two shapes a stop can leave, in the product's own words: `connected_idle` is attached-and-steady
+ * (what the panel draws a Stop button in), and `attached_stopped` is the same attachment held with the
+ * coordinator's `stopped`. The instance word is `running` in BOTH - that is the promise the press keeps.
+ */
+const ATTACHED_AND_STEADY = Object.freeze({
+  ok: true,
+  prerequisites: "met",
+  instanceStatus: "running",
+  instanceGeneration: 0,
+  attachmentStatus: "attached",
+  attachmentGeneration: 1,
+  connectionStatus: "connected_idle",
+});
+const ATTACHED_AND_STOPPED = Object.freeze({ ...ATTACHED_AND_STEADY, connectionStatus: "stopped" });
+
+/**
+ * A page whose state read is a function of the clock, so a stop can settle mid-wait.
+ *
+ * The wait reads `/state` once per second; this page answers the same facts the product would at that
+ * moment, and `elapsed()` is the page's own clock, which is also what the wire receipt below is timed by.
+ */
+function clockedStatePage(stateAt) {
+  const began = Date.now();
+  const reads = [];
+  return {
+    reads,
+    elapsed: () => Date.now() - began,
+    async evaluate(pageFunction) {
+      if (pageFunction.name !== "readGameState") throw new Error(`unexpected_evaluate:${String(pageFunction.name)}`);
+      reads.push(Date.now() - began);
+      return stateAt(Date.now() - began);
+    },
+  };
+}
+
+/** Driver W's predicate before this lane: the ENDGAME/death shape, which a stop never produces. */
+const ENDED_GAME = (reading) =>
+  reading.ok === true &&
+  (reading.instanceStatus === "stopped" || reading.instanceStatus === "none") &&
+  reading.attachmentStatus !== "attached";
+
+test("a stop that settles in seconds is settled, and the endgame shape it used to wait for never is", async () => {
+  const settledAtMs = 3_000;
+  const page = clockedStatePage((ms) => (ms < settledAtMs ? ATTACHED_AND_STEADY : ATTACHED_AND_STOPPED));
+  const settled = await waitForStop(page, {
+    budgetMs: 9_000,
+    stopAnswer: () => (page.elapsed() >= settledAtMs ? { route: "game/stop", status: 200, atMs: Date.now() } : null),
+  });
+  assert.equal(settled.settled, true, "the phase and the Host's answer are both there, so the stop settled");
+  assert.ok(
+    settled.elapsedMs >= settledAtMs - 1_000 && settled.elapsedMs <= settledAtMs + 2_000,
+    `the wait ends when the stop settles (${String(settled.elapsedMs)}ms), not when its budget runs out`,
+  );
+  assert.equal(settled.answer.status, 200, "the wire's own receipt travels with the reading");
+  assert.equal(settled.state.connectionStatus, "stopped");
+  assert.equal(
+    settled.state.instanceStatus,
+    "running",
+    "the world is still running after a successful stop: that is what the product promises, not a failure",
+  );
+
+  // The SAME page under the predicate this wait replaced: a stop that settled at 3 s reads as nothing at all
+  // for the whole budget. This is the defect, held as a reading rather than described in a comment.
+  const ended = await waitForState(page, ENDED_GAME, 6_000);
+  assert.equal(ended.settled, false, "an ordinary stop never produces the endgame shape, however long it is waited");
+  assert.equal(ended.state.instanceStatus, "running");
+});
+
+test("the phase alone is not the receipt: a stop nobody answered has not settled", async () => {
+  // The state says `stopped` from 2 s, but the Host never answers the route. The reading stays unsettled
+  // rather than calling a half-published fact a finished stop - the phase is the coordinator's word and the
+  // answer is the same fact on the wire, and this wait requires both.
+  const page = clockedStatePage((ms) => (ms < 2_000 ? ATTACHED_AND_STEADY : ATTACHED_AND_STOPPED));
+  const reading = await waitForStop(page, { budgetMs: 4_000 });
+  assert.equal(reading.settled, false);
+  assert.equal(reading.answer, null);
+  assert.equal(reading.state.connectionStatus, "stopped", "the phase it did read is still reported");
+});
+
+test("a stop the Host refused ends the wait at once, with the Host's own code", async () => {
+  const page = clockedStatePage(() => ATTACHED_AND_STEADY);
+  const began = Date.now();
+  const reading = await waitForStop(page, {
+    budgetMs: 120_000,
+    stopAnswer: () => ({ route: "game/stop", status: 409, code: "stardew_game_runtime_unavailable", atMs: Date.now() }),
+  });
+  assert.equal(reading.settled, false);
+  assert.equal(reading.refused.code, "stardew_game_runtime_unavailable");
+  assert.ok(Date.now() - began < 5_000, "a refusal is an answer, so no budget is spent waiting for a phase");
+});
+
 test("the game boundary is the run's Host child, and a launch state without one keeps the driver's start", () => {
   const hostChild = runBoundary({
     driverStartedMs: Date.parse("2026-11-21T12:00:00.000Z"),

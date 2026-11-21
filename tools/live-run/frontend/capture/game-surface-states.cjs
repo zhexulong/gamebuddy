@@ -1,7 +1,8 @@
-// The readings a game's END is made of, shared by the three drivers that measure one
-// (`x-game-death.cjs`, `y-game-endgame.cjs`, `z-game-disconnect.cjs`).
+// The readings a game's lifecycle state is made of, shared by the three drivers that measure an END
+// (`x-game-death.cjs`, `y-game-endgame.cjs`, `z-game-disconnect.cjs`) and by the one press driver W makes
+// that none of them shows: the Stop (`w-game-launch.cjs`, whose world keeps running after it).
 //
-// Its own module for the reason `game-launch-verdict.mjs` is: the three scenarios read the same four things -
+// Its own module for the reason `game-launch-verdict.mjs` is: these drivers read the same four things -
 // the Host's state route, the panel's own fact rows and controls, the game surface's transcript, and the
 // process table - and a second copy of any of them in a driver would eventually answer differently from the
 // first one.
@@ -19,12 +20,14 @@ const { registerInstallation } = require("./installation-registration.cjs");
 const {
   LAUNCH_PLATEAU_MS,
   LIFECYCLE_SHAPES,
+  attachmentActionsStopped,
   blockedByProductLine,
   classifyChainStop,
   classifyLaunchRefusal,
   classifySilentLaunch,
   notMeasuredLine,
   describeGameState,
+  describeStopReading,
   lifecycleShapeOf,
   readinessOf,
 } = require("./game-launch-verdict.mjs");
@@ -228,6 +231,59 @@ async function waitForState(page, predicate, budgetMs) {
     state = await page.evaluate(readGameState);
   }
   return { settled: predicate(state), state, elapsedMs: Date.now() - began };
+}
+
+/**
+ * The Stop press, waited on the two facts the product publishes for it and on nothing else.
+ *
+ * WHAT SETTLES IT: the attachment's phase reports the stopped shape (`attachmentActionsStopped` - the
+ * panel's own `attached_stopped`, its publishers named there) AND the Host's `game/stop` answer has
+ * arrived, which is the wire's receipt for the same fact because that route returns the STOP's settled
+ * promise (`host/src/stardew-production-lifecycle-coordinator.internal.ts:2598-2662`).
+ *
+ * WHAT DOES NOT SETTLE IT, AND USED TO BE THE WHOLE PREDICATE: `instance=stopped|none` with the
+ * attachment gone. That is the ENDGAME/death shape - a stop leaves the world running by design (project
+ * rules #3023/#506) - so a wait for it reports every stop that works as a timeout. Measured on HEAD
+ * before this reading existed: `E:\gb-lanes\launchorphan-r1\w-game-launch.txt` and
+ * `firstjoin-r1`'s, both `settled: false, elapsedMs 120000, last instance=running/attachment=attached`,
+ * with no way to tell a settled stop from a stuck one.
+ *
+ * A REFUSAL ENDS THE WAIT AT ONCE: a 4xx on the same route is the Host's own answer that it did not stop
+ * anything, and waiting the rest of the budget for a phase that can no longer arrive would print the same
+ * "did not settle" for a named refusal.
+ */
+async function waitForStop(page, { budgetMs, stopAnswer = () => null } = {}) {
+  const began = Date.now();
+  let state = await page.evaluate(readGameState);
+  for (;;) {
+    const answer = stopAnswer();
+    const elapsedMs = Date.now() - began;
+    if (answer !== null && Number.isFinite(answer?.status) && answer.status >= 400)
+      return { settled: false, refused: answer, answer, state, elapsedMs };
+    if (answer !== null && attachmentActionsStopped(state)) return { settled: true, answer, state, elapsedMs };
+    if (elapsedMs >= budgetMs) return { settled: false, answer, state, elapsedMs };
+    await sleep(1000);
+    state = await page.evaluate(readGameState);
+  }
+}
+
+/**
+ * The Stop press in one unit: press it, wait on the two facts above, and say what happened either way.
+ *
+ * The outcome is SAID, not only recorded: `settled` is one boolean in a facts file, and the sentence beside it
+ * carries the wire's receipt and the world that is still running - the two things a reader needs to tell a stop
+ * that worked from a stop nobody answered.
+ */
+async function pressStop({ page, say, record, budgetMs, stopAnswer = () => null }) {
+  await page.locator('[data-testid="game-stop"]').first().click();
+  const stopped = await waitForStop(page, { budgetMs, stopAnswer });
+  record("stop", stopped);
+  say(describeStopReading(stopped));
+  if (!stopped.settled)
+    say(
+      `the stop did not settle within ${String(budgetMs)}ms (${describeGameState(stopped.state)}${stopped.answer === null ? ", and the Host has answered no game/stop" : `, and the Host answered game/stop HTTP ${String(stopped.answer.status)}`}); the run's own cleanup names what remained`,
+    );
+  return stopped;
 }
 
 /** Poll until one lifecycle control is drawn, visible and pressable, or the budget runs out. */
@@ -725,6 +781,8 @@ module.exports = {
   readCabinFact,
   postGameRoute,
   waitForState,
+  waitForStop,
+  pressStop,
   waitForControl,
   activateAndLaunch,
   gamePids,
