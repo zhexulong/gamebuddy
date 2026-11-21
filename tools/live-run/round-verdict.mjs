@@ -12,11 +12,11 @@
  * one false claim earlier in this loop.
  * </p>
  *
- * Usage: node tools/live-run/round-verdict.mjs [run-dir]
+ * Usage: node tools/live-run/round-verdict.mjs [run-dir | published-bundle.result.json]
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { median, seconds, shareToATenth } from "../lib/action-cadence.mjs";
 import {
   actionExecutions,
@@ -54,8 +54,7 @@ function newestRun() {
 }
 
 /** The session file the harness bound to this run, from its own `toolTiming.record`. */
-function sessionPath(runDir) {
-  const resultPath = join(runDir, "result.json");
+function sessionPath(runDir, resultPath) {
   const record = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")).toolTiming?.record : null;
   if (typeof record === "string") {
     const found = newestUnder(join(runDir, "runtime-root", "contexts"), (entry) => entry === record);
@@ -1395,19 +1394,27 @@ const positionalRun =
       argument !== explicitLog &&
       argument !== logDirOption,
   ) ?? null;
-const runDir = positionalRun === null ? newestRun() : resolve(positionalRun);
-if (runDir === null || !existsSync(runDir)) {
+const targeted = positionalRun === null ? newestRun() : resolve(positionalRun);
+if (targeted === null || !existsSync(targeted)) {
   process.stderr.write("no run directory\n");
   process.exit(2);
 }
 
-const resultPath = join(runDir, "result.json");
+// A RUN'S PUBLISHED BUNDLE IS ALSO A RUN TO ASK ABOUT. A round's `result.json` is copied out of its run directory under
+// another name (`tools/_multiday_routine-round85.result.json`), and reading that path as a DIRECTORY made every reading
+// `not_measured` beside a source line naming `<bundle>/result.json` - measured 2026-11-21, `round85` read as `wall
+// not_measured` from the copy and as `wall 1,941.1s` from its directory, with `startedAtMs`/`endedAtMs` at the copy's own
+// top level the whole time. The bundle a reader points at IS the record this verdict reads; the run's other artifacts are
+// looked for beside it, and the header names both paths so no reading is ambiguous.
+const pointedAtABundle = statSync(targeted).isFile();
+const runDir = pointedAtABundle ? dirname(targeted) : targeted;
+const resultPath = pointedAtABundle ? targeted : join(runDir, "result.json");
 const result = existsSync(resultPath) ? JSON.parse(readFileSync(resultPath, "utf8")) : {};
 const smapiPath = join(process.env.APPDATA ?? "", "StardewValley", "ErrorLogs", "SMAPI-latest.txt");
 const modLogPath = join(runDir, "mod-log.txt");
 // `--session` exists because a hand-stopped run never copies its runtime root into the run directory: the session is
 // still under the live runtime root it was mounted on, and pricing that run means reading it there. Read-only either way.
-const boundSession = explicitSession === null ? sessionPath(runDir) : resolve(explicitSession);
+const boundSession = explicitSession === null ? sessionPath(runDir, resultPath) : resolve(explicitSession);
 
 // 0. DID THIS RUN END, AND DOES ANYTHING SAY SO?
 //
@@ -1715,10 +1722,20 @@ const efficiency = efficiencyLines({ sessionFile: boundSession, result, repoRoot
 // It is printed BESIDE the accounting rather than after the whole verdict, because `idleMs` was read as the answer to
 // "where did the run go" while the partition that answers it did not exist. The session walk is shared with the efficiency
 // block above rather than parsed twice: one file, one parse, two readings of it.
-const standstill = summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath: locatedLog.path });
+const standstill = summarizeStandstill({
+  runDir,
+  result,
+  resultPath,
+  sessionWalk,
+  runnerLogPath: locatedLog.path,
+});
 
 const width = Math.max(...rows.map((row) => row.name.length));
 process.stdout.write(`run   ${runDir}\n`);
+if (pointedAtABundle)
+  process.stdout.write(
+    `bundle ${resultPath} (pointed at directly: the run's other artifacts are looked for beside it, in ${runDir})\n`,
+  );
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n\n`);
 for (const row of rows)
   process.stdout.write(`${row.name.padEnd(width)}  ${row.verdict.padEnd(14)} ${row.detail}\n    <- ${row.source}\n`);
@@ -1742,6 +1759,8 @@ if (runEnded.verdict === "BLOCKED") process.exitCode = 2;
 // tail with 4.5 s counted twice, so the old `unexplained >= 1` failed a run whose wall was fully accounted for.
 else if (readings.failed() || standstill.gate === "failed") process.exitCode = 1;
 // A residual NOBODY MEASURED is a refused reading, in the same code a blocked ending already uses: the partition prints
-// `not_measured:<the input that was absent>` and the verdict exits 2, so a run whose body window was never placed can be
-// read as neither a pass nor a defect.
+// `not_measured:<the input that was absent>` and the verdict exits 2, so a run whose wall is known and whose buckets or
+// body window were not placed can be read as neither a pass nor a defect. `blocked` is the other case and stays exit 0: a
+// bundle carrying no clock at all cannot be asked the question, and nothing was refused - the block prints `not_measured`
+// on every reading it could not take either way.
 else if (standstill.gate === "not_measured") process.exitCode = 2;

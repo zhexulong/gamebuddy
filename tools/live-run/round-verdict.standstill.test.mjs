@@ -17,9 +17,14 @@
 // quoted by hand (261.1 / 1,265.2 / 437.5 / 43.7) must come back out of the reading, its head and tail must be NAMED, and
 // the residual must be judged inside the 9,134 ms its own paired admissions span. If they do not, the reading is
 // measuring something else - which is what the last assertion says out loud instead of failing on a bare "expected true".
+//
+// AND A PUBLISHED COPY OF A BUNDLE IS THAT RUN'S RECORD: `--run <round>.result.json` used to read the file as a
+// directory, so two readers of one run disagreed about whether it had a wall clock at all. The two paths are now
+// cross-checked against each other, and where the copy cannot answer (no `run-trace.json` beside it) it is
+// `not_measured:<the input that was absent>` and the verdict refuses it rather than passing it.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -345,15 +350,16 @@ test("a run whose Host trace never reached its directory prices no share and say
     assert.match(block, /^autonomy_horizon\s+not_measured/mu, block);
     assert.match(block, /^intent_yield\s+not_measured \(this run has no run-trace\.json\)/mu, block);
     assert.match(block, /accounted\s+not_measured \(a bucket above could not be read/u, block);
-    assert.match(block, /a_residual_is_either_named_or_bounded:blocked/u, block);
-    // A reading that could not be taken is not a failure of the run: the block is visibly not green, and the verdict does
-    // not turn an absent file into either a pass or a defect.
+    // THE CLOCK IS THERE AND A BUCKET ABOVE IT IS NOT: this is a refused reading, not a run with a defect, and it says so
+    // with the input that was absent rather than with a residual of zero.
+    assert.match(block, /a_residual_is_either_named_or_bounded:not_measured:explained_buckets/u, block);
     assert.match(block, /blocked\/modal not_measured/u, block);
     assert.match(
       block,
       /residual not_measured · tolerance not_measured \(no admission span paired the two clocks/u,
       block,
     );
+    assert.equal(result.status, 2, `a wall known and not attributable is a refused reading:\n${block}`);
   });
 });
 
@@ -368,6 +374,62 @@ test("a run that published no bundle has no wall clock to attribute, and the gat
       block,
     );
   });
+});
+
+/**
+ * A ROUND'S PUBLISHED BUNDLE IS THE SAME RECORD UNDER ANOTHER NAME, and pointing at it must not read it as a directory.
+ *
+ * A round's `result.json` is copied out of its run directory when the round closes
+ * (`tools/_multiday_routine-round85.result.json`), and `--run` on that path read the FILE as a directory: every reading
+ * became `not_measured` beside a source line naming `<bundle>/result.json`. Measured 2026-11-21 on `round85`: one reader
+ * got `wall 1,941.1s` from the run directory and another got `wall not_measured` from the copy, while the copy's own
+ * `startedAtMs`/`endedAtMs` sat at its top level the whole time. Two readers of one run disagreeing is the defect here,
+ * so the reading is CROSS-CHECKED: the two paths must produce the same wall and the same body, and where they differ
+ * (the copy has no `run-trace.json` beside it) the block must say which input it lacked rather than print a zero.
+ */
+test("a published bundle file is read as the run's record, and the block names the file it read", () => {
+  const root = mkdtempSync(join(tmpdir(), "round-verdict-standstill-published-"));
+  try {
+    const runDir = writeRun({ root });
+    const published = join(root, "round99.result.json");
+    copyFileSync(join(runDir, "result.json"), published);
+    const appData = join(root, "appdata");
+    mkdirSync(appData, { recursive: true });
+    const fromFile = spawnSync(process.execPath, [VERDICT, published], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: { ...process.env, APPDATA: appData },
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    const fromDirectory = verdictProcess(runDir);
+    const fileBlock = standstillBlock(`${fromFile.stdout}${fromFile.stderr}`);
+    const directoryBlock = standstillBlock(`${fromDirectory.stdout}${fromDirectory.stderr}`);
+    // THE FILE IT READ, named on both the header and the reading itself.
+    assert.ok(
+      fromFile.stdout.includes(`bundle ${published} (pointed at directly`),
+      `the header must name the bundle it was pointed at:\n${fromFile.stdout}`,
+    );
+    assert.ok(
+      fileBlock.includes(`<- ${published} startedAtMs..endedAtMs, whole run`),
+      `the wall must name the file it was read from:\n${fileBlock}`,
+    );
+    // THE SAME WALL AND BODY AS THE RUN DIRECTORY: one record, two paths, no disagreement about what the run holds.
+    const wallLine = (block) => /^standstill .*$/mu.exec(block)?.[0];
+    assert.match(fileBlock, /^standstill\s+wall 100\.0s/mu, fileBlock);
+    assert.match(fileBlock, /^body\s+5\.9s = 5\.9% of the wall/mu, fileBlock);
+    assert.equal(
+      wallLine(fileBlock).replace(`<- ${published} `, ""),
+      wallLine(directoryBlock).replace(`<- ${join(runDir, "result.json")} `, ""),
+      "the published copy and the run directory must price the same wall from the same bytes",
+    );
+    // AND WHERE THE COPY CANNOT ANSWER, IT SAYS WHICH INPUT WAS ABSENT: no `run-trace.json` sits beside it, so the body's
+    // window is never placed - refused with the word and the input, never a residual of zero and never green.
+    assert.match(fileBlock, /^turn_gap\s+not_measured \(this run has no run-trace\.json\)/mu, fileBlock);
+    assert.match(fileBlock, /a_residual_is_either_named_or_bounded:not_measured:explained_buckets/u, fileBlock);
+    assert.equal(fromFile.status, 2, `a bucket the copy cannot answer is a refused reading:\n${fileBlock}`);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 /**

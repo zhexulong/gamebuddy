@@ -458,19 +458,22 @@ function residualState({ explainedMs, placed }) {
  * A residual is SIGNED and both directions are wrong in their own way: negative means the middle buckets charge more
  * than the window between the first step and the last settlement holds, positive means that window holds seconds no
  * bucket charges. Either way it is judged against the same tolerance, and a run whose residual was never measured is
- * neither green nor red, because a number nobody measured is neither a pass nor a defect: `blocked` when the wall or a
- * bucket above it could not be read, `not_measured` when no admission span placed the body's window.
+ * neither green nor red, because a number nobody measured is neither a pass nor a defect.
+ * </p>
+ * <p>
+ * THE TWO WORDS ARE READINGS OF DIFFERENT THINGS. `blocked` is the bundle carrying no clock at all, where nothing was
+ * refused because nothing could be asked of that copy. `not_measured` is the clock being there and a bucket above the
+ * residual being unreadable, so the wall IS known and its attribution is not: that is a reading the artifacts could have
+ * answered and did not, and it names the input that was absent.
  * </p>
  */
 function residualVerdict({ wallMs, residual }) {
   if (wallMs === null) return "blocked";
-  if (residual.state === "not_measured") {
-    return residual.absent === "explained_buckets" ? "blocked" : "not_measured";
-  }
+  if (residual.state === "not_measured") return "not_measured";
   return Math.round(Math.abs(residual.ms)) > Math.round(residual.toleranceMs) ? "failed" : "within";
 }
 
-export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath }) {
+export function summarizeStandstill({ runDir, result, resultPath = null, sessionWalk, runnerLogPath }) {
   const wallMs =
     Number.isFinite(result?.startedAtMs) && Number.isFinite(result?.endedAtMs) && result.endedAtMs > result.startedAtMs
       ? result.endedAtMs - result.startedAtMs
@@ -509,6 +512,10 @@ export function summarizeStandstill({ runDir, result, sessionWalk, runnerLogPath
     programmes === null ? [] : programmes.windows.map((window) => window.lastSettledMs - window.firstAtMs);
   return {
     wallMs,
+    // The bundle this reading was pointed at, named so `standstill` says WHICH `result.json` the wall came from: a run
+    // directory has one and a published copy carries the same bytes under another name, and a reader comparing two
+    // readings of one run has to be able to see they were not the same file.
+    resultPath: resultPath ?? join(runDir, "result.json"),
     tracePath: trace.path,
     traceWhy: trace.why,
     body,
@@ -545,7 +552,7 @@ export function standstillLines(report) {
       report.wallMs === null
         ? "not_measured (result.json carried no readable startedAtMs..endedAtMs)"
         : seconds(report.wallMs)
-    }  <- result.json startedAtMs..endedAtMs, whole run`,
+    }  <- ${report.resultPath} startedAtMs..endedAtMs, whole run`,
   );
   // 1. THE BODY'S DUTY CYCLE. One number for "how much of the run was she actually working", and the longest single
   // standstill beside it: a duty cycle of 12.6 % says she stood still most of the run, and the longest freeze says whether
@@ -761,10 +768,14 @@ export function standstillGateLines(report) {
       `  ${STANDSTILL_GATE}:blocked - result.json published no readable startedAtMs..endedAtMs, so there is no wall clock to attribute and nothing here is green`,
     ];
   const line = `  ${STANDSTILL_GATE} wall ${ms(report.wallMs)} · ${parts.join(" · ")}`;
-  if (report.gate === "blocked")
+  // THE WALL IS KNOWN AND A BUCKET ABOVE THE RESIDUAL IS NOT: whether the residual is inside the tolerance was never
+  // measured, and the input that would have answered is named rather than the residue being reported as zero.
+  if (residual.absent === "explained_buckets")
     return [
       line,
-      `  ${STANDSTILL_GATE}:blocked - a bucket above could not be read, so whether the residual is inside the tolerance is not_measured rather than green`,
+      `  ${STANDSTILL_GATE}:not_measured:explained_buckets - the ${ms(
+        report.wallMs,
+      )} ms wall is readable but a bucket above it is not, so what this run spent between its body steps is not_measured rather than green`,
     ];
   // A run whose body window was never placed cannot name its head or its tail at all, so the residual is never measured:
   // it is reported as `not_measured` with the input that was absent, which is neither green nor a finding.
