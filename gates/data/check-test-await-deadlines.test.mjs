@@ -5,14 +5,14 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { auditTestAwaitDeadlines, statusOf } from "./check-test-await-deadlines.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-test-await-deadlines.mjs");
 
 /** One throwaway root holding the given test files, keyed by their path inside it. */

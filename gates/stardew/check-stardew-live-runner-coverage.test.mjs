@@ -46,7 +46,7 @@ import {
 import { CONTRACT_ROUTE, resolveStardewActionGateRoute } from "../../tools/lib/stardew-action-gate-route.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../tools/stardew-action-gate-descriptors.mjs";
 
-const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const HISTORICAL_RUNNER_FILES = "tools/fixtures/stardew-runner-file-index-pre-fcc2c1b7.json";
 const realCatalog = () => readFileSync(resolve(REPOSITORY_ROOT, CATALOG_PATH), "utf8");
 const realCensus = () => gateArtifactsInIndex({ root: REPOSITORY_ROOT });
@@ -293,6 +293,7 @@ test("blocked: a gate-artifact census git refuses to answer is not an empty cens
 test("the duplication census counts spellings from the sources it is handed, not from a list", () => {
   const base = `
 import { readNativeClientConfig } from "../../tools/lib/stardew-native-smoke-harness-v1.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 async function run(executeFresh, client) {
   const requestId = \`native_local_alpha_\${Date.now()}\`;
   const receipt = await executeFresh(client, { requestId, action: "alpha", args: {}, snapshot, timeoutMs: 1000 });

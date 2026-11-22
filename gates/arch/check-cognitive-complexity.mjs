@@ -172,8 +172,9 @@ import { Language, Parser } from "web-tree-sitter";
 
 import { isProductionSource, listSources, sourcePath } from "../../tools/lib/host-production-sources.mjs";
 import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const require = createRequire(import.meta.url);
 const BIOME_EXECUTABLE = require.resolve("@biomejs/biome/bin/biome");
 const BIOME_VERSION = require("@biomejs/biome/package.json").version;

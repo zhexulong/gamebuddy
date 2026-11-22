@@ -54,8 +54,8 @@ export const gateDeclaration = {
 };
 
 import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { fixtureActions, fixtureScenario } from "../../tools/lib/stardew-native-local-player-fixture.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "../../tools/lib/stardew-published-action-registry.mjs";
@@ -66,8 +66,9 @@ import {
   parsePublishedGates,
   PROMOTION_PATHS,
 } from "../../tools/promote-stardew-action.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The Mod's declared scenario enumeration, which is what makes a row's scenario a real world. */
 export const KNOWN_SCENARIOS_PATH = "integrations/stardew/ModConfig.cs";

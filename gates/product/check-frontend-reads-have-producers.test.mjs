@@ -37,17 +37,16 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   checkFrontendReadsHaveProducers,
   frontendRouteReads,
   hostServedRoutes,
 } from "./check-frontend-reads-have-producers.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-frontend-reads-have-producers.mjs");
 
 /** A throwaway tree written at the real relative paths, so the gate's own scope rules decide what is read. */

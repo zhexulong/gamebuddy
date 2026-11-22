@@ -13,8 +13,9 @@ export const gateDeclaration = {
 
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repoRoot = resolve(import.meta.dirname, "..");
+const repoRoot = repositoryRoot(import.meta.url);
 const vendorPluginDist = resolve(repoRoot, "vendor/magic-context/packages/pi-plugin/dist");
 
 async function main() {

@@ -5,9 +5,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   credentialContainer,
   credentialPayloadPopulation,
@@ -22,7 +21,7 @@ import {
   patternArrays,
 } from "./check-credential-export-isolation.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-credential-export-isolation.mjs");
 
 /**
@@ -213,6 +212,7 @@ test("an artifact assembler that calls a credential path builder is the same vio
   const { violations } = withFixtureRoot({
     "host/scripts/export-logs.mjs": `import { copyFile } from "node:fs/promises";
 import { connectionKeysPath } from "../../../host/src/tavern/connection-store.js";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 export async function exportLogs(agentDir, out) {
   await copyFile(connectionKeysPath(agentDir), out);
 }

@@ -74,7 +74,7 @@ export const gateDeclaration = {
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
 import {
@@ -91,8 +91,9 @@ import {
   PROJECT,
   SUITE_DIR,
 } from "../../tools/lib/nogame-partition.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const CORE_PROJECT = join(ROOT, "integrations/stardew/src/Core/GameBuddy.Stardew.Core.csproj");
 
 /** Upper bound on fixpoint rounds. Each round removes at least one file, so the loop terminates

@@ -32,7 +32,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   AFFORDANCE_DECLARATIONS,
@@ -46,8 +45,9 @@ import {
   readRegisterSeams,
 } from "./check-engine-affordance-census.mjs";
 import { STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "../../tools/lib/stardew-decompile-root.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const CENSUS_TOOL = path.join(REPOSITORY_ROOT, "tools", "check-engine-affordance-census.mjs");
 
 /** One C# source that declares a player entry on a type the fixture names. */

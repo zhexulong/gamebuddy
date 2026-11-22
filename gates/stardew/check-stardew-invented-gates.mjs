@@ -94,7 +94,7 @@ export const gateDeclaration = {
 };
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -103,8 +103,9 @@ import {
   matchingBracket,
   readModSources,
 } from "../../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The engine's own sources: the only place a number can come from, and the reason `engine=` can be `unstated`. */
 export const DECOMPILED_ROOT = "ref/external/StardewValleyDecompiled";

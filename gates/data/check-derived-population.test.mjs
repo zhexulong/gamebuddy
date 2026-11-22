@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   auditDerivedPopulation,
@@ -14,6 +13,7 @@ import {
   verdictCounts,
 } from "./check-derived-population.mjs";
 import { describeMemberDiff, memberDiff } from "../../tools/lib/member-diff.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 // red-proof: inject  `assert.equal(list.length, 15)` into a test file -> `literal_population_assertion:
 //            <file>:2:15 - use list.length or assert.deepEqual(...)` (see "a frozen count beside a derived
@@ -38,7 +38,7 @@ import { describeMemberDiff, memberDiff } from "../../tools/lib/member-diff.mjs"
 //
 // The last one is exactly what `describeMemberDiff` prints, and the third test below pins that output.
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-derived-population.mjs");
 
 /** A throwaway tree written at the real relative paths, so the scope rules are the product's own. */

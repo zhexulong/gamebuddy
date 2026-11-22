@@ -64,10 +64,11 @@ export const gateDeclaration = {
 };
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const CONDITION_KEYS = ["types", "import", "require", "default", "node", "module"];
 
 /** Workspace package directories, from `pnpm-workspace.yaml`'s `packages:` list plus the root itself. */

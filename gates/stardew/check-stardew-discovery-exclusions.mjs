@@ -65,10 +65,10 @@ export const gateDeclaration = {
 };
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const STARDEW = "integrations/stardew";
 const VOCABULARY = "integrations/stardew/src/Core/Policy/DiscoveryExclusionReasons.cs";
 const CONTROLLER = "integrations/stardew/farmhandexecutioncontroller.cs";

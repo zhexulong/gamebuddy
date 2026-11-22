@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,7 @@ import {
   normalizeReceiptFrame,
   readChannels,
 } from "./check-stardew-execution-terminal-uniqueness.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const GATE = fileURLToPath(new URL("./check-stardew-execution-terminal-uniqueness.mjs", import.meta.url));
 
@@ -166,7 +167,7 @@ test("an artifact with no receipt frame is blocked, never green", () => {
 });
 
 test("the gate is reachable from the repository the same way its siblings are", () => {
-  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const root = repositoryRoot(import.meta.url);
   const scripts = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts;
   assert.match(
     scripts["check:stardew-execution-terminal-uniqueness"],

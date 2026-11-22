@@ -140,13 +140,16 @@ export const gateDeclaration = {
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { Language, Parser } from "web-tree-sitter";
 import { fail } from "../../tools/lib/gate-preamble.mjs";
-import { assertStardewDecompileRoot, STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "../../tools/lib/stardew-decompile-root.mjs";
+import {
+  assertStardewDecompileRoot,
+  STARDEW_DECOMPILE_ROOT_RELATIVE_PATH,
+} from "../../tools/lib/stardew-decompile-root.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const require = createRequire(import.meta.url);
 const CSHARP_GRAMMAR = require.resolve("@vscode/tree-sitter-wasm/wasm/tree-sitter-c-sharp.wasm");
 

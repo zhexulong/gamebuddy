@@ -15,7 +15,6 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   STATED_GAME_MODULE_PLACEMENT,
@@ -25,8 +24,9 @@ import {
   hostSourceDirectories,
   selfCheck,
 } from "./check-host-source-directories.mjs";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 const gate = resolve(repositoryRoot, "tools", "check-host-source-directories.mjs");
 
 /** A tree the gate must judge, built on disk so `git ls-files` is the listing exactly as in the product. */

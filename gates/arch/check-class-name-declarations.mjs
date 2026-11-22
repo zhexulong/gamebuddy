@@ -28,13 +28,14 @@ export const gateDeclaration = {
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkClassNameDeclarations, formatFinding, verdict } from "../../tools/lib/class-name-declarations.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const toolsDir = dirname(fileURLToPath(import.meta.url));
+const _toolsDir = dirname(fileURLToPath(import.meta.url));
 const rootIndex = process.argv.indexOf("--root");
 const repoRoot =
   rootIndex >= 0 && typeof process.argv[rootIndex + 1] === "string"
     ? resolve(process.argv[rootIndex + 1])
-    : resolve(toolsDir, "..");
+    : repositoryRoot(import.meta.url);
 
 const readout = checkClassNameDeclarations({ repoRoot });
 const failed = verdict(readout);
@@ -83,16 +84,16 @@ if (process.argv.includes("--json")) {
       `  used ${entry.sites.length} time(s): ${entry.sites.map((site) => `${site.path}:${site.line}`).join(", ")}\n`,
     );
   }
-  if (!failed) {
+  if (failed) {
+    const total = readout.undeclared.length + readout.staleExemptions.length + readout.problems.length;
+    process.stdout.write(
+      `class_name_declarations: ${total} finding(s); ${readout.unreported.length} unreadable site(s) undeclared\n`,
+    );
+  } else {
     process.stdout.write(
       `class_name_declarations: none (${counts.names} names in ${counts.files} tsx files, ` +
         `${counts.declared} classes declared, ${counts.exempt} names exempt, ` +
         `${readout.unreadable.length} unreadable site(s) declared)\n`,
-    );
-  } else {
-    const total = readout.undeclared.length + readout.staleExemptions.length + readout.problems.length;
-    process.stdout.write(
-      `class_name_declarations: ${total} finding(s); ${readout.unreported.length} unreadable site(s) undeclared\n`,
     );
   }
 }

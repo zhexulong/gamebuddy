@@ -17,12 +17,12 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { checkSwitchExhaustiveness } from "./check-switch-exhaustiveness.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const workspaces = [];
 
 after(() => {

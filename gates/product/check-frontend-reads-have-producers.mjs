@@ -114,8 +114,9 @@ export const gateDeclaration = {
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = join(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 const WEB = "dialogue-web/src";
 const HOST = "host/src";

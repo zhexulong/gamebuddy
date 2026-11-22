@@ -97,8 +97,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const DEFAULT_ROOT = repositoryRoot(import.meta.url);
 
 /**
  * The support window of every framework this repository could name, as published by Microsoft for the .NET releases.

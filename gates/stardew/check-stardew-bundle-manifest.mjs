@@ -63,8 +63,9 @@ import process from "node:process";
 
 import { STARDEW_BUNDLE_BUILD, STARDEW_BUNDLE_MANIFEST_PATH } from "../../tools/lib/stardew-mod-bundle.mjs";
 import { vocabulariesIn } from "../../tools/check-fact-seams.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** A project's own output name: an explicit `<AssemblyName>`, or the project file's base name. */
 function assemblyOf(root, projectPath) {

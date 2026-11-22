@@ -37,10 +37,11 @@ export const gateDeclaration = {
 };
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 
 /**
  * Names whose value is consumed as "this part of the run is OK".

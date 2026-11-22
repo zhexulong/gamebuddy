@@ -39,8 +39,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const ROOT = repositoryRoot(import.meta.url);
 export const ASSERTION_DIRECTORY = resolve(ROOT, "tools/assertions");
 const TEST_SUFFIX = ".test.mjs";
 /** The one input the structure of a hook is measured with: a world it cannot know anything about. */

@@ -5,14 +5,13 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { auditSourceShapeReaders, patternTokens, statusOf } from "./check-source-shape-readers.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-source-shape-readers.mjs");
 
 /** The revision the failing assertion shipped at: its raw-text signature match went red on a reformat, not on a change. */

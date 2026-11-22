@@ -91,13 +91,13 @@ export const gateDeclaration = {
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { isProductionSource, listSources, sourcePath } from "../../tools/lib/host-production-sources.mjs";
 import { runWhenEntry } from "../../tools/scripts/cli-entry.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 export const HOST_SOURCE = join(REPOSITORY_ROOT, "host", "src");
 const BASELINE_PATH = join(REPOSITORY_ROOT, "tools", "host-diagnostic-output-baseline.json");
 

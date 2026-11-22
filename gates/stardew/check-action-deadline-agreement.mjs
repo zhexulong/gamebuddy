@@ -41,16 +41,16 @@ export const gateDeclaration = {
 };
 
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   STARDEW_EXPERIMENTAL_ACTION_RUNNERS,
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../../tools/stardew-action-gate-descriptors.mjs";
 
-const TOOLS = dirname(fileURLToPath(import.meta.url));
-const REPO = resolve(TOOLS, "..");
+const _TOOLS = dirname(fileURLToPath(import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const SURFACE = "integrations/stardew/action-development/contracts/generated/action-surface.v1.json";
 const WINDOWS = "integrations/stardew/action-development/contracts/generated/action-deadline-windows.v1.json";
 

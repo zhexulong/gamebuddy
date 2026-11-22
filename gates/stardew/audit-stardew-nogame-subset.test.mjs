@@ -4,13 +4,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { deriveGameFreeFiles } from "./audit-stardew-nogame-subset.mjs";
 import { compiledFiles, suiteFiles } from "../../tools/lib/nogame-partition.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const PROJECT = join(
   ROOT,
   "integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/GameBuddy.Stardew.NoGame.Tests.csproj",

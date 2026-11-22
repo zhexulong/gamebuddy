@@ -35,6 +35,7 @@ export const gateDeclaration = {
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * Resolved from THIS FILE, not from `process.cwd()`.
@@ -44,7 +45,7 @@ import { join, resolve } from "node:path";
  * threw `node:fs:483` there and read as a broken gate rather than a gate that never ran. Which directory the caller
  * happened to stand in is not a property of the tree we are checking.
  */
-const ROOT = join(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 const CONTRACT = "host/src/tavern/browser-contract/index.ts";
 const WEB = "dialogue-web/src";

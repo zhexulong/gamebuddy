@@ -58,8 +58,9 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { blockedOnEmptyPopulation } from "../../tools/lib/gate-population.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const DEFAULT_WEB_ROOT = join(ROOT, "dialogue-web");
 const WEB_ROOT = DEFAULT_WEB_ROOT;
 /** The TypeScript compiler the web workspace builds with: the same parser, not a second spelling of it. */

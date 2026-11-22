@@ -67,7 +67,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** A path builder whose name marks a credential, and whose leaf is a durable document. */
 const CREDENTIAL_NAME = /AUTH|CREDENTIAL|SECRET|TOKEN|KEY|PASS/iu;
@@ -709,6 +709,7 @@ export async function bundle(agentDir, out) {
 `);
   const control = selfCheckRoot(`import { copyFile } from "node:fs/promises";
 import { join } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 const AGENT_EXPORT_FILES = Object.freeze(["identity-profile.json"]);
 export async function bundle(agentDir, out) {
   for (const name of AGENT_EXPORT_FILES) await copyFile(join(agentDir, name), join(out, name));

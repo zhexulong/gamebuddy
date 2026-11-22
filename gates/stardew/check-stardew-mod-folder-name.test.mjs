@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * The check asserts one name across the csproj, two JavaScript seams and every PowerShell harness under `tools/`.
@@ -14,7 +15,7 @@ import test from "node:test";
  * harnesses carried on 2026-11-04, when a correct lane died at preflight with `Missing harness path`.
  */
 
-const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
+const REPO = repositoryRoot(import.meta.url);
 const CHECK = join(REPO, "tools", "check-stardew-mod-folder-name.mjs");
 
 function runCheck(...args) {

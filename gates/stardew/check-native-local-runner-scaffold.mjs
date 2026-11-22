@@ -99,8 +99,9 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { describeUntracked, untrackedSources } from "../../tools/lib/indexed-sources.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The template's one path. A runner imports the lifecycle from it, or it owns the lifecycle. */
 export const TEMPLATE_FILE = "tools/lib/native-local-runner-scaffold.mjs";

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { checkUnreportedCatches, DECLARED, formatFinding } from "../../tools/lib/unreported-catch.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 // red-proof: inject  a handler whose catch only re-reads -> `unreported_catch:<path>:<line>:<symbol>`
 // with `only calls rereadChat` beside it ("a catch that only re-reads is a finding" below); the
@@ -16,7 +16,7 @@ import { checkUnreportedCatches, DECLARED, formatFinding } from "../../tools/lib
 // ended in a re-read and nothing else -> the gate names all seven of them
 // ("the pre-fix handlers are reported" below, reading the real commit's own file).
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = repositoryRoot(import.meta.url);
 const roots = [];
 
 function makeRoot(files) {

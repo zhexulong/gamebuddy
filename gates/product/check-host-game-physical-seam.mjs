@@ -19,10 +19,11 @@ import { builtinModules, createRequire } from "node:module";
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const requireFromHost = createRequire(resolve(dirname(fileURLToPath(import.meta.url)), "../host/package.json"));
+const requireFromHost = createRequire(resolve(findRepositoryRoot(import.meta.url), "host/package.json"));
 const ts = requireFromHost("typescript");
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const IGNORED_DIRECTORIES = new Set([
   ".worktrees",

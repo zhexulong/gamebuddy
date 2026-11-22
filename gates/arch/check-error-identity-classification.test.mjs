@@ -1,14 +1,14 @@
 // red-proof: inject  dropping the aliased-local arm from findViolations -> `✖ flags a local copy of another module's
 //   typed error message` and the planted-aliased CLI case (tools/check-error-identity-classification.test.mjs)
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { findViolations, isProductionSource, main } from "./check-error-identity-classification.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const HOST_SOURCE = join(REPOSITORY_ROOT, "host", "src");
 
 /**

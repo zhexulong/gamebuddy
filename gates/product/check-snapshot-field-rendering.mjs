@@ -78,11 +78,12 @@ export const gateDeclaration = {
 };
 
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutComments } from "../../tools/lib/gate-preamble.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** Where the wire declares what a Mod snapshot may carry. */
 const PROTOCOL_SOURCE = "host/src/protocol.ts";

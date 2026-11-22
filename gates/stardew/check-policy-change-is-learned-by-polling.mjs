@@ -46,12 +46,13 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The Mod's source root: the one authority for "what the Mod compiles". */
 export const MOD_SOURCE_ROOT = "integrations/stardew";

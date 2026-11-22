@@ -27,9 +27,8 @@
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   auditInventoryRowFields,
@@ -43,8 +42,9 @@ import {
   wireTileSpellings,
   WITHHELD_TILE_SPELLINGS,
 } from "./check-inventory-row-field-rendering.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /**
  * The files the gate reads, as paths relative to a root.

@@ -47,8 +47,9 @@ import { appendLaneOutput, laneDiagnosis, liveLaneVerdict } from "../../tools/li
 import { STARDEW_MOD_FOLDER } from "../../tools/lib/stardew-mod-folder.mjs";
 import { laneSaveName, laneSmapiLogPath } from "../../tools/lib/stardew-lane-scope.mjs";
 import { MOD_BUNDLE_FILE_NAMES } from "../../tools/lib/stardew-mod-bundle.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
+const REPO = repositoryRoot(import.meta.url);
 const RELEASE_DIR = join(REPO, "integrations", "stardew", "bin", "Release", "net6.0");
 const STEAM_MODS = "D:\\Steam\\steamapps\\common\\Stardew Valley\\Mods";
 const GAME_PATH = "D:\\Steam\\steamapps\\common\\Stardew Valley";

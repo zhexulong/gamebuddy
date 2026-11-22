@@ -62,11 +62,11 @@ export const gateDeclaration = {
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const BASELINE_PATH = "tools/audit-stardew-handler-actor-guard-baseline.json";
 
 const argv = process.argv.slice(2);

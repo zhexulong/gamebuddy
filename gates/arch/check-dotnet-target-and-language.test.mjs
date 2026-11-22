@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const GATE = resolve(dirname(fileURLToPath(import.meta.url)), "check-dotnet-target-and-language.mjs");
 const roots = [];
@@ -274,7 +275,7 @@ describe("the population is derived, and sums", () => {
 
 describe("this repository, through the CLI", () => {
   it("reads green at 2026-11-16, with every framework inside its window or forced by SMAPI", () => {
-    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const root = repositoryRoot(import.meta.url);
     const result = runCli(root, "--today", "2026-11-16");
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /langversion in a csproj 0/u);

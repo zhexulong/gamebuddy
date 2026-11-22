@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   comparePresetDocuments,
@@ -14,6 +13,7 @@ import {
   uncoveredDocumentedFields,
 } from "./check-preset-round-trip.mjs";
 import { assertNonVacuous } from "../../tools/lib/assert-non-vacuous.mjs";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * The gate's falsifier. `comparePresetDocuments` is the whole rule, and the two directions are measured here: a
@@ -26,7 +26,7 @@ import { assertNonVacuous } from "../../tools/lib/assert-non-vacuous.mjs";
  *                    in-chat entries, beside the green run's `examined 14 prompt entries` (tools/check-preset-round-trip.mjs)
  */
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 const gatePath = join(repositoryRoot, "tools", "check-preset-round-trip.mjs");
 const builtStore = join(repositoryRoot, "host", "dist-test", "tavern", "preset-store.js");
 const REQUIRES_HOST_BUILD = existsSync(builtStore)

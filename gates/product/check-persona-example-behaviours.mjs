@@ -93,12 +93,13 @@ export const gateDeclaration = {
 };
 
 import { globSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BEHAVIOURS, CLAIM_MODES } from "../../tools/lib/persona-behaviour-vocabulary.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** The corpus. A directory scan of it is the population: no card, preset or world book is named below. */
 const PRESETS_GLOB = "assets/tavern/presets/**/*.json";

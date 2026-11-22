@@ -51,9 +51,12 @@ export const gateDeclaration = {
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION, SWEEP_DAILY_TASKS } from "../../tools/lib/multiday-daily-tasks.mjs";
+import {
+  DAILY_TASK_ACTION_HINTS,
+  DAILY_TASK_ROTATION,
+  SWEEP_DAILY_TASKS,
+} from "../../tools/lib/multiday-daily-tasks.mjs";
 import {
   isProviderInvoked,
   multidayTaskFamilyVerdict,
@@ -61,8 +64,9 @@ import {
   rotationRequirement,
 } from "../../tools/lib/multiday-task-families.mjs";
 import { readStardewActionFamilies } from "../../tools/lib/stardew-published-action-registry.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const FIXTURES_DIR = join(REPO, "integrations", "stardew");
 
 /** The finding code a verdict entry carries, without the ids it names: `task_requires_absent_family:tend_the_animals` -> `task_requires_absent_family`. */

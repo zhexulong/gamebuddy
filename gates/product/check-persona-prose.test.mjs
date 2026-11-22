@@ -30,6 +30,7 @@ import {
   presetPromptLeaves,
   runCheck,
 } from "./check-persona-prose.mjs";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const GATE = resolve(dirname(fileURLToPath(import.meta.url)), "check-persona-prose.mjs");
 const CARD = "assets/tavern/presets/default-companion/card.json";
@@ -305,7 +306,7 @@ test("a range with no commits is blocked rather than a pass over nothing", (cont
 });
 
 test("the two parsers that read git's own output hold on the real shipped document and real history", () => {
-  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const repositoryRoot = findRepositoryRoot(import.meta.url);
   // Sliced by the byte length in `cat-file`'s header, not by characters: this document is 3459 characters and 5343
   // bytes, and a character slice would cut its Chinese dialogue and stop it being JSON.
   const spec = `HEAD:${CARD.replace("card.json", "worldbook.json")}`;
@@ -324,7 +325,7 @@ test("the two parsers that read git's own output hold on the real shipped docume
 });
 
 test("the default run of this repository reads the shipped preset, and finds it unchanged", () => {
-  const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const repositoryRoot = findRepositoryRoot(import.meta.url);
   const result = runCheck({ root: repositoryRoot });
   assert.equal(result.status, "passed");
   assert.match(

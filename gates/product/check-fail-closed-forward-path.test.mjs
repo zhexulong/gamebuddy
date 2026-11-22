@@ -26,9 +26,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   checkForwardPath,
   checkForwardPathOf,
@@ -36,8 +35,9 @@ import {
   SOURCES,
   turnStates,
 } from "./check-fail-closed-forward-path.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const WEB_ROOT = join(ROOT, "dialogue-web");
 const typescript = createRequire(join(WEB_ROOT, "package.json"))("typescript");
 

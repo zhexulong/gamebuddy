@@ -30,6 +30,7 @@ export const gateDeclaration = {
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 export const LOCKFILE_PATHS = Object.freeze([
   "pnpm-lock.yaml",
@@ -70,7 +71,7 @@ const DATE_TIME_RE = /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(?:\.(\
 const ECOSYSTEMS = new Set(["npm", "bun", "nuget", "other"]);
 const SEVERITIES = new Set(["critical", "high", "moderate", "low", "unknown"]);
 
-const rootFromModule = resolve(import.meta.dirname, "..");
+const rootFromModule = repositoryRoot(import.meta.url);
 const _absentLockHash = Object.fromEntries(LOCKFILE_PATHS.map((path) => [path, null]));
 
 function issue(code, detail) {

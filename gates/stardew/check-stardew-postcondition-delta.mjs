@@ -82,8 +82,9 @@ import {
   withoutComments,
 } from "../../integrations/stardew/action-development/src/analysis/stardew-mod-csharp-source.mjs";
 import { handlerDispatch } from "../../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 export const POSTCONDITION_DELTA = Object.freeze({
   surface: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",

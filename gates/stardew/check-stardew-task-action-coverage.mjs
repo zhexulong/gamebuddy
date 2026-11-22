@@ -59,11 +59,11 @@ export const gateDeclaration = {
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { DAILY_TASK_ACTION_HINTS } from "../../tools/lib/multiday-daily-tasks.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const SURFACE = join(
   REPO,
   "integrations",

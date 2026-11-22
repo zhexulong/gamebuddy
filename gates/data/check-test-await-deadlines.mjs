@@ -51,10 +51,11 @@ export const gateDeclaration = {
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /**
  * The two directories whose tests can await a listener, and the suffix that makes a file one of them.

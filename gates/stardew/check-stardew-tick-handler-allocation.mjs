@@ -65,17 +65,18 @@ export const gateDeclaration = {
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Language, Parser } from "web-tree-sitter";
 import { stripComments } from "./audit-stardew-test-shape.mjs";
 import { describeUntracked, untrackedSources } from "../../tools/lib/indexed-sources.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const require = createRequire(import.meta.url);
 
 export const MARKER = "\u2716";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The Mod's sources: this directory minus build output and the test projects. */
 export const SOURCE_ROOT = join(ROOT, "integrations", "stardew");

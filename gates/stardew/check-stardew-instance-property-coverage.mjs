@@ -62,13 +62,14 @@ export const gateDeclaration = {
 };
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { publishedRowFields } from "../../integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
 import { STARDEW_DECOMPILE_ROOT_RELATIVE_PATH } from "../../tools/lib/stardew-decompile-root.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 export const VERDICT_TABLE_PATH = "tools/stardew-instance-property-verdicts.json";
 export const VERDICT_TABLE_SCHEMA = "gamebuddy-stardew-instance-property-verdicts/v1";

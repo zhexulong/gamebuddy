@@ -53,13 +53,14 @@ export const gateDeclaration = {
 };
 
 import { execFileSync } from "node:child_process";
-import { dirname, relative, resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PERF_SCALING_ENV } from "../../tools/perf/harness.mjs";
 import { benchFiles, caseResults } from "../../tools/perf/run-benchmarks.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** One bench file's default: how long a whole gate run may take before it is reported as hung. */
 const BENCH_TIMEOUT_MS = 10 * 60_000;

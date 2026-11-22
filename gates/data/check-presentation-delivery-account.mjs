@@ -29,8 +29,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assessBundleDeliveryAccount } from "../../tools/lib/presentation-delivery-account.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const RUNS_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)), ".live-runs");
+const RUNS_ROOT = resolve(repositoryRoot(import.meta.url), ".live-runs");
 
 /** Every `result.json` under `.live-runs`, newest first: the bundle a reader means when they name none. */
 function bundlesNewestFirst(root = RUNS_ROOT) {

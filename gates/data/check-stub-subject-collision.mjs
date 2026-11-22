@@ -60,8 +60,9 @@ import { fileURLToPath } from "node:url";
 
 import { journeySpecs, parseTests } from "../../tools/lib/journey-source.mjs";
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 /** Path segments that name a version or a transport rather than a resource. */
 const GENERIC = new Set(["api", "v1", "v2", "v3", "http", "https", "127.0.0.1", "localhost"]);
 const ROUTE_CALL = /\.route\s*\(\s*/gu;

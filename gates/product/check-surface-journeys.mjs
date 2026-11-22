@@ -76,8 +76,9 @@ import { fileURLToPath } from "node:url";
 
 import { assertionsOf, journeySpecs, parseTests } from "../../tools/lib/journey-source.mjs";
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const ROUTE_SOURCE = "dialogue-web/src/composed-surface-route.ts";
 const SHELL_SOURCE = "dialogue-web/src/components/ComposedReferenceGameApp.tsx";
 /** A literal test id. `data-testid={testId}` forwards a variable and names no id of its own here. */

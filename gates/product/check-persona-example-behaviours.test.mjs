@@ -40,9 +40,10 @@ import {
 } from "./check-persona-example-behaviours.mjs";
 import { batchContents } from "./check-persona-prose.mjs";
 import { BEHAVIOURS } from "../../tools/lib/persona-behaviour-vocabulary.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const GATE = resolve(dirname(fileURLToPath(import.meta.url)), "check-persona-example-behaviours.mjs");
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const PRESETS = "assets/tavern/presets";
 const CARD = `${PRESETS}/default-companion/card.json`;
 

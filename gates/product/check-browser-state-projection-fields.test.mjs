@@ -20,10 +20,9 @@
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   auditBrowserStateProjection,
   CONTRACT_PATH,
@@ -34,7 +33,7 @@ import {
   UNPUBLISHED_PROJECTION_FIELDS,
 } from "./check-browser-state-projection-fields.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 function fixtureTree(t) {
   const root = mkdtempSync(join(tmpdir(), "browser-projection-"));

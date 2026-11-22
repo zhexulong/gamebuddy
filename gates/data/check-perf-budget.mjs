@@ -113,14 +113,19 @@ export const gateDeclaration = {
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, cpus, platform } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { actionPaceRecord, compareActionPace, measureActionPace, renderActionPace } from "../../tools/lib/action-pace.mjs";
+import { join, resolve } from "node:path";
+import {
+  actionPaceRecord,
+  compareActionPace,
+  measureActionPace,
+  renderActionPace,
+} from "../../tools/lib/action-pace.mjs";
 import { assessBenchmarkArtifact } from "../../tools/perf/artifact-readiness.mjs";
 import { benchFiles, caseResults, runSuite } from "../../tools/perf/run-benchmarks.mjs";
 import { runWhenEntry } from "../../tools/scripts/cli-entry.mjs";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 
 /** How much more a path may cost than it recorded, before the difference is a regression. */
 export const BUDGET_TOLERANCE = 0.5;

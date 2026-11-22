@@ -38,7 +38,7 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -48,8 +48,9 @@ import {
   formatFinding,
   loadDeclaredModels,
 } from "../../tools/lib/catalog-fact-ownership.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = repositoryRoot(import.meta.url);
 
 /**
  * The disagreements and findings, or a thrown error. Exported so a test can drive

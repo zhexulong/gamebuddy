@@ -100,8 +100,9 @@ import {
   resolveStardewActionGateRoute,
 } from "../../tools/lib/stardew-action-gate-route.mjs";
 import { parseModRegistrations } from "../../tools/promote-stardew-action.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 const TOOLS_DIRECTORY = "tools";
 

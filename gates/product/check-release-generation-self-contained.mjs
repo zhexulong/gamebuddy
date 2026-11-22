@@ -102,7 +102,7 @@ export const gateDeclaration = {
 
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, posix, resolve } from "node:path";
+import { join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -110,8 +110,9 @@ import {
   readArtifactConfig,
   readArtifactConfigFromText,
 } from "../../host/scripts/production-artifact.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const HOST_ROOT = join(REPOSITORY_ROOT, "host");
 const DEFAULT_OUTPUT_ROOT = join(HOST_ROOT, "dist");
 

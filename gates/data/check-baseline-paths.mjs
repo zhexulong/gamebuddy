@@ -97,8 +97,9 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** The key whose value names a baseline's member. A key outside this set names an input, a label or prose. */
 export const REFERENCE_KEY = /^(?:file|files|path|paths)$/u;

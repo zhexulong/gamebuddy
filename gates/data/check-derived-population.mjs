@@ -165,14 +165,14 @@ export const gateDeclaration = {
   kind: "totality",
 };
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
+import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /**
  * The directories whose tests can freeze a population, and the suffix that makes a file one of them.

@@ -49,12 +49,13 @@ export const gateDeclaration = {
 };
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 /** Where the analysis scripts live. Directory rules only: a hand-maintained file list is a test, not a gate. */
 const SCANNED_TREES = Object.freeze([

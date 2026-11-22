@@ -154,8 +154,9 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const PATCH_DIRECTORY = ["patches", "vendor-magic-context"];
 const SUBMODULE_DIRECTORY = ["vendor", "magic-context"];
 const MAX_MODIFIED_LINES_PER_FILE = 10;

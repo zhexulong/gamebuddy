@@ -1,9 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   bubbleGaps,
@@ -22,8 +21,9 @@ import {
   speechRules,
   TEXT_TESTS,
 } from "./check-live-run-speech.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const CARD = JSON.parse(readFileSync(resolve(REPOSITORY_ROOT, CARD_PATH), "utf8"));
 
 /**

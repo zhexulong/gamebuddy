@@ -58,8 +58,9 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { blockedOnEmptyPopulation } from "../../tools/lib/gate-population.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const WEB_ROOT = join(ROOT, "dialogue-web");
 const testsRootOf = (webRoot) => join(webRoot, "tests");
 const POLICY_FILE = "viewport-policy.ts";

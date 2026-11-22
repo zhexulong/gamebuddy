@@ -21,8 +21,9 @@ import { readModSources } from "../../integrations/stardew/action-development/sr
 // ONE READING OF THE HELLO'S PROJECTION for both artifacts that must agree about it: the producer that publishes the
 // source snapshot and this gate. Two readers would be two spellings of the same fact.
 import { helloProjectedRegistrationCatalogs } from "../../integrations/stardew/action-development/src/action-source-projection-producer.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 // Lifecycles that carry a live-run gate descriptor. `live_verified` and
 // `published` both do: they are adjacent rungs of the same ladder
@@ -74,7 +75,7 @@ export const LIVE_EVIDENCE = Object.freeze({
  * silently reads as zero receipts would disable the lag check while still
  * reporting a pass.
  */
-export async function readDurableLiveEvidence({ root = resolve(import.meta.dirname, "..") } = {}) {
+export async function readDurableLiveEvidence({ root = repositoryRoot(import.meta.url) } = {}) {
   const receipts = [];
   const problems = [];
 
@@ -705,7 +706,11 @@ function parseExplicitRoutes(gameTools, actionRegistry = "") {
   // counted literals reported `host_tool_count:<id>:0` for all forty-eight - a loud report of the wrong fact, since the
   // tools were mounted and the reader had lost its population. A list this reader cannot read is BLOCKED by name, never
   // turned into forty-eight missing tools.
-  if (/for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\) \{[\s\S]*?makeGameActionTool\(\{/u.test(gameTools)) {
+  if (
+    /for \(const [A-Za-z_$][\w$]* of STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS\) \{[\s\S]*?makeGameActionTool\(\{/u.test(
+      gameTools,
+    )
+  ) {
     const derived = frozenStringArray(actionRegistry, "STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS");
     if (derived === null || derived.length === 0)
       problems.push("tool_mount_projection_ids_unreadable:STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS");

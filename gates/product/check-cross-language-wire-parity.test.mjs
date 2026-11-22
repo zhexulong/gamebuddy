@@ -12,9 +12,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   checkCrossLanguageWireParity,
@@ -34,8 +33,9 @@ import {
   UNPAIRED_FRAME_EXEMPTIONS,
   wireNameOf,
 } from "./check-cross-language-wire-parity.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "gates/product/check-cross-language-wire-parity.mjs");
 
 const MODELS_FILE = `${MODELS_DIRECTORY}/BridgeProtocolModels.cs`;

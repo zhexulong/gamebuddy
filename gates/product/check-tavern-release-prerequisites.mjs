@@ -11,6 +11,7 @@ import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 export const REQUIRED_MUST_FLOWS = Object.freeze([
   "companion-library",
@@ -140,8 +141,8 @@ const TAVERN_FILESYSTEM_THREAT_MODEL = Object.freeze({
   }),
 });
 
-const here = dirname(fileURLToPath(import.meta.url));
-export const repositoryRoot = resolve(here, "..");
+const _here = dirname(fileURLToPath(import.meta.url));
+export const repositoryRoot = findRepositoryRoot(import.meta.url);
 
 function result(id, status, detail) {
   return { id, status, detail };
@@ -342,15 +343,7 @@ export async function checkTavernReleasePrerequisites({
         "magic_context_source_contract_only: source rendering is not runtime-wired through the required marker/render lifecycle; Tavern live run must not begin",
       ),
     );
-  } else if (!verifyStableContextRuntime) {
-    checks.push(
-      result(
-        "magic_context_stable_source",
-        "blocked",
-        "magic_context_source_runtime_proof_missing: version-locked source/marker/render tests were not executed",
-      ),
-    );
-  } else {
+  } else if (verifyStableContextRuntime) {
     // Run the version-locked proof in a scratch root above any git repository,
     // so its project-identity resolution cannot collapse every temporary
     // directory onto an unrelated ancestor repository (see
@@ -395,6 +388,14 @@ export async function checkTavernReleasePrerequisites({
     } finally {
       removeHermeticScratchRoot(scratchRoot);
     }
+  } else {
+    checks.push(
+      result(
+        "magic_context_stable_source",
+        "blocked",
+        "magic_context_source_runtime_proof_missing: version-locked source/marker/render tests were not executed",
+      ),
+    );
   }
 
   if (verifyReferences) {

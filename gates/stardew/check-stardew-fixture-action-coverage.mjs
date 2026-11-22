@@ -22,7 +22,6 @@ export const gateDeclaration = {
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import {
   fixtureActionCoverageViolations,
@@ -30,8 +29,9 @@ import {
   REQUIRED_LANE_ACTIONS,
 } from "../../tools/lib/fixture-action-coverage.mjs";
 import { fixtureScenario } from "../../tools/lib/stardew-native-local-player-fixture.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const FIXTURE = join(REPO, "tools", "lib", "stardew-native-local-player-fixture.mjs");
 const RUNNER = join(REPO, "tools", "live-run", "game", "run-stardew-native-local-agent-ab-live.mjs");
 /** The scenario key the runner publishes for the multi-day lane. */

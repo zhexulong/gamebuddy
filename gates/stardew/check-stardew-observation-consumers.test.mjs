@@ -18,9 +18,8 @@
 //   widened, and on the unaskable-after-removal case when a look_up subject's case is deleted.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   auditConsumers,
@@ -37,8 +36,9 @@ import {
   targetBearingPairs,
 } from "./check-stardew-observation-consumers.mjs";
 import { perTurnFamilies, tableKeys } from "../product/check-snapshot-field-rendering.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const read = (file) => readFileSync(resolve(ROOT, file), "utf8");
 
 const TREE = {

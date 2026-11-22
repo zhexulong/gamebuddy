@@ -84,12 +84,13 @@ export const gateDeclaration = {
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { blockedOnEmptyPopulation } from "../../tools/lib/gate-population.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const WEB_ROOT = join(ROOT, "dialogue-web");
 const SRC_ROOT = join(WEB_ROOT, "src");
 const HOST_SRC = join(ROOT, "host", "src");

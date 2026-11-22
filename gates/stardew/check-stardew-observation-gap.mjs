@@ -44,9 +44,9 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const ANALYSIS = "integrations/stardew/action-development/src/analysis";
 export const DECOMPILED_ROOT = "ref/external/StardewValleyDecompiled/Stardew Valley";
 export const ACTION_REGISTER =

@@ -87,8 +87,9 @@ export const gateDeclaration = {
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const TOOL_ROOT = repositoryRoot(import.meta.url);
 export const FAMILY_DIRECTORY = "integrations/stardew";
 /** The family's name, and the whole derivation: a partial that matches it is in the population. */
 export const FAMILY_FILE = /^farmhandexecutioncontroller.*\.cs$/u;

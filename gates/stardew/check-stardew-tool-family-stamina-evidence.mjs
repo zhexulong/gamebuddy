@@ -42,8 +42,9 @@ export const gateDeclaration = {
 
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(import.meta.dirname, "..");
+const ROOT = repositoryRoot(import.meta.url);
 export const STARDEW_EXECUTION_MANAGER_FILES = Object.freeze([
   "integrations/stardew/farmhandexecutioncontroller.cs",
   "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",

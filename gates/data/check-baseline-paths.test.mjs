@@ -47,8 +47,9 @@ import {
   resolves,
   runBaselinePathsGate,
 } from "./check-baseline-paths.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = resolve(import.meta.dirname, "check-baseline-paths.mjs");
 
 /** The two runner names `b6128a58` retired while `tools/prelive-l3-baseline.json` still recorded them. */

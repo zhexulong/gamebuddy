@@ -6,6 +6,7 @@ import test from "node:test";
 import { catalogDefaultLifecycle, checkPromotionPlaces } from "./check-stardew-promotion-parity.mjs";
 import { PROMOTION_PATHS } from "../../tools/promote-stardew-action.mjs";
 import { parseKnownFixtureScenarios } from "../../tools/prelive.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * Falsifiers for "a promotion has one path".
@@ -23,7 +24,7 @@ import { parseKnownFixtureScenarios } from "../../tools/prelive.mjs";
  *   `catalog=live_verified;gate=absent` (tools/check-stardew-promotion-parity.test.mjs)
  */
 
-const root = resolve(import.meta.dirname, "..");
+const root = repositoryRoot(import.meta.url);
 const catalogSource = await readFile(resolve(root, PROMOTION_PATHS.modCatalog), "utf8");
 const gateDescriptorSource = await readFile(resolve(root, PROMOTION_PATHS.gateDescriptors), "utf8");
 const knownScenarios = parseKnownFixtureScenarios(

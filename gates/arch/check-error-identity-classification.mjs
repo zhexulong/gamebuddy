@@ -56,11 +56,12 @@ export const gateDeclaration = {
 };
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const DEFAULT_SCOPE = join(REPOSITORY_ROOT, "host", "src");
 
 const MESSAGE_COMPARISON = /(?:\b[A-Za-z_$][\w$]*\??\.message)\s*(?:===|!==|==|!=)\s*"([^"]*)"/gu;

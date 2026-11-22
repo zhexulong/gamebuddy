@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { gapReasonReading, gapReasonVerdict, readGapReasonInputs } from "./check-stardew-task-gap-reasons.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * The falsifier suite for `tools/check-stardew-task-gap-reasons.mjs`.
@@ -25,7 +26,7 @@ import { gapReasonReading, gapReasonVerdict, readGapReasonInputs } from "./check
  *                     (tools/check-stardew-task-gap-reasons.test.mjs)
  */
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const GATE = fileURLToPath(new URL("./check-stardew-task-gap-reasons.mjs", import.meta.url));
 
 /** The Mod's surface as the reader takes it: an action id, its lifecycle, and the postcondition it declares. */

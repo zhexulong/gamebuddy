@@ -48,8 +48,9 @@ import {
 import { defineSmokeScenario, projectSnapshotForBlockedReport } from "../../tools/lib/native-local-runner-scaffold.mjs";
 import { parseEvidence } from "../../tools/lib/native-local-runner-primitives.mjs";
 import { describeMemberDiff } from "../../tools/lib/member-diff.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const MIGRATED = "tools/run-stardew-native-local-player-sweep-scythe-smoke.mjs";
 const templateSource = () => readFileSync(resolve(REPOSITORY_ROOT, TEMPLATE_FILE), "utf8");
 const primitivesSource = () => readFileSync(resolve(REPOSITORY_ROOT, PRIMITIVES_FILE), "utf8");

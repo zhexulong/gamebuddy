@@ -80,10 +80,11 @@ export const gateDeclaration = {
 
 import { rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 /** The one stylesheet this product's tokens live in. */
 export const STYLESHEET = "dialogue-web/src/style.css";
 /** WCAG 2.1 AA (1.4.3) for body text: 4.5:1. Every pair below carries text the player reads. */

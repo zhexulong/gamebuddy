@@ -34,9 +34,9 @@ export const gateDeclaration = {
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPO = fileURLToPath(new URL("..", import.meta.url));
+const REPO = repositoryRoot(import.meta.url);
 const DECOMPILED = join(REPO, "ref", "external", "StardewValleyDecompiled");
 const MOD = join(REPO, "integrations", "stardew");
 

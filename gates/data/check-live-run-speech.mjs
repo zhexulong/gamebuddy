@@ -65,12 +65,12 @@ export const gateDeclaration = {
 };
 
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
 import { COUNT_UNITS, SCHEDULED_DIALOGUE_GATES } from "../../tools/live-run/dialogue-gates.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** The shipped card whose own text declares the conduct this gate reads. */
 export const CARD_PATH = "assets/tavern/presets/default-companion/card.json";

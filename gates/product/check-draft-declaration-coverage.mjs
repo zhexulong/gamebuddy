@@ -43,11 +43,12 @@ export const gateDeclaration = {
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const toolsRoot = dirname(fileURLToPath(import.meta.url));
-const repositoryRoot = resolve(toolsRoot, "..");
+const _toolsRoot = dirname(fileURLToPath(import.meta.url));
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 const webRoot = join(repositoryRoot, "dialogue-web");
 const JOURNEY = "tests/draft-declaration-coverage.spec.ts";
 

@@ -10,8 +10,9 @@ import {
   validatePromotionSources,
 } from "./check-stardew-action-promotion.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../tools/stardew-action-gate-descriptors.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const root = resolve(import.meta.dirname, "..");
+const root = repositoryRoot(import.meta.url);
 const sources = await Object.fromEntries(
   await Promise.all(
     [
@@ -96,7 +97,10 @@ test("promotion checker rejects a Bridge hello that stops advertising the action
 
   const failures = failuresFor({ bridgeSession: replaced });
 
-  assert.ok(failures.includes("bridge_hello_registration_advertisement_missing:move_to_tile"), JSON.stringify(failures));
+  assert.ok(
+    failures.includes("bridge_hello_registration_advertisement_missing:move_to_tile"),
+    JSON.stringify(failures),
+  );
   assert.ok(
     !failures.some((failure) => failure.startsWith("bridge_hello_projection_unreadable")),
     "the shape is readable - it projects a catalog - and the finding must be about the ACTIONS it left out",

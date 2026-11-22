@@ -80,9 +80,10 @@ import { fileURLToPath } from "node:url";
 
 import { isProductionSource, listSources } from "../../tools/lib/host-production-sources.mjs";
 import { parseJavaScript } from "../../tools/lib/javascript-ast.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const TOOLS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const REPOSITORY_ROOT = resolve(TOOLS_DIRECTORY, "..");
+const _TOOLS_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const CONTRACTS = "integrations/stardew/action-development/contracts/generated";
 const WINDOWS_ARTIFACT = `${CONTRACTS}/action-deadline-windows.v1.json`;
 const SURFACE_ARTIFACT = `${CONTRACTS}/action-surface.v1.json`;

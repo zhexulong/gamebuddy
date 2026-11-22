@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 /**
  * The worklist for converging the forked admission sites has to be MEASURED, not remembered: a hand-kept list
@@ -15,7 +16,7 @@ import test from "node:test";
  * SYNTHETIC tree instead. Asserting only "the real tree has no forks" would leave the detector untested and the
  * suite vacuous: a detector that always returns zero would pass it.
  */
-const REPO = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1").replace(/\/$/, "");
+const REPO = repositoryRoot(import.meta.url);
 
 function measure(args = []) {
   const out = spawnSync(process.execPath, ["gates/stardew/audit-stardew-admission-fork-delta.mjs", "--json", ...args], {

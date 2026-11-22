@@ -23,11 +23,10 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { checkSilentFailures, formatFinding } from "../../tools/lib/silent-failure.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = repositoryRoot(import.meta.url);
 const { findings, undeclared, problems } = checkSilentFailures(repoRoot);
 // The population is the silent sites the scan FOUND: a declaration can only be compared against one of them. Zero is
 // a finding rather than a pass, because a tree this size always carries silent sites and a scan that reports none is

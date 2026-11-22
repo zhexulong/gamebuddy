@@ -48,10 +48,11 @@ export const gateDeclaration = {
 
 import { readFileSync } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** What Node names a crash report: `report.<date>.<time>.<pid>.<n>.<n>.json`. */
 const CRASH_REPORT_NAME = /^report\..*\.json$/u;

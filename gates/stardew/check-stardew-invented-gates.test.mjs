@@ -18,8 +18,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -31,8 +30,9 @@ import {
   engineReadingAt,
   ruleChecks,
 } from "./check-stardew-invented-gates.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const GATE = "gates/stardew/check-stardew-invented-gates.mjs";
 const CONTROLLER = "integrations/stardew/farmhandexecutioncontroller.test.cs";
 

@@ -91,13 +91,14 @@ export const gateDeclaration = {
 };
 
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { snapshotFields } from "./check-snapshot-field-rendering.mjs";
 import { bracesFrom, withoutComments } from "../../tools/lib/gate-preamble.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** Where the block she reads is composed. */
 export const COMPOSER_SOURCE = "host/src/fact-brief.ts";

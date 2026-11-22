@@ -67,10 +67,11 @@ export const gateDeclaration = {
 
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const ASSESSMENTS = "security/dependency-audit-assessments.json";
 
 /** The severities the advisory database uses, ordered worst first so the summary reads that way. */

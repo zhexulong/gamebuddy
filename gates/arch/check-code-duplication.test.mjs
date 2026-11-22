@@ -47,10 +47,10 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
+import { RUNNER_FILE, runnerFiles } from "../stardew/check-native-local-runner-scaffold.mjs";
 import {
   attributionLine,
   baselinePayload,
@@ -85,9 +85,8 @@ import {
   tokenCountLine,
   untrackedSources,
 } from "./check-code-duplication.mjs";
-import { RUNNER_FILE, runnerFiles } from "../stardew/check-native-local-runner-scaffold.mjs";
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO = repositoryRoot(import.meta.url);
 const GATE = join(REPO, "gates/arch/check-code-duplication.mjs");
 const workspaces = [];
 

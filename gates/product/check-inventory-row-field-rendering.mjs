@@ -90,14 +90,15 @@ export const gateDeclaration = {
 };
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readWireSurface } from "../stardew/check-action-surface-parity.mjs";
 import { tableKeys } from "./check-snapshot-field-rendering.mjs";
 import { bracesFrom, rootFromArgv } from "../../tools/lib/gate-preamble.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 /** The wire document: the row shapes the Mod publishes and the Host validates. */
 export const WIRE_SCHEMA = "protocol/bridge-v1.schema.json";
@@ -419,7 +420,16 @@ export const WITHHELD_TILE_SPELLINGS = Object.freeze({
  * than infer, and which the "dropped" count must not be confused with - a handle or a state the line never promised is
  * not a drop.
  */
-export const READER_ROW_FIELDS = Object.freeze(["kind", "displayName", "w", "h", "blockX", "blockY", "blockW", "blockH"]);
+export const READER_ROW_FIELDS = Object.freeze([
+  "kind",
+  "displayName",
+  "w",
+  "h",
+  "blockX",
+  "blockY",
+  "blockW",
+  "blockH",
+]);
 
 /** The families the per-turn line claims to print as rows: its label table minus the ones it declines, with reasons. */
 export function claimedFamilies(source) {

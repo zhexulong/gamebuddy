@@ -36,10 +36,10 @@ export const gateDeclaration = {
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repositoryRoot = findRepositoryRoot(import.meta.url);
 const usage =
   "usage: node tools/check-head-typecheck.mjs [--rev <rev>] [--projects <tsconfig.json,...>] [--worktree <dir>] [--keep]";
 // Production only. `tsconfig.test.json` is available through `--projects` and adds real coverage, but

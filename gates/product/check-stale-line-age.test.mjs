@@ -13,13 +13,13 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { auditStaleLines, COMPOSER_SOURCE, PROTOCOL_SOURCE, VOCABULARY_SOURCE } from "./check-stale-line-age.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-stale-line-age.mjs");
 
 const readReal = (relative) => readFileSync(join(REPOSITORY_ROOT, ...relative.split("/")), "utf8");

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { findAbsencePassBranches } from "./check-live-run-verdict-guards.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const CHECKER = join(here, "check-live-run-verdict-guards.mjs");
@@ -78,7 +79,7 @@ test("the marker requires a reason - a bare marker is not an exception", async (
 });
 
 test("the repository itself has no undocumented absence-as-pass branch", () => {
-  const findings = findAbsencePassBranches({ root: join(here, "..", "tools") });
+  const findings = findAbsencePassBranches({ root: resolve(repositoryRoot(import.meta.url), "tools") });
   assert.deepEqual(
     findings,
     [],

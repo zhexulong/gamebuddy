@@ -18,11 +18,10 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { DECLARED, findDuplicatedAuthorities, formatFinding } from "../../tools/lib/duplicated-authority.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = repositoryRoot(import.meta.url);
 const findings = findDuplicatedAuthorities(repoRoot);
 // The population is the DECLARED table: each entry is one fact this gate asserts has exactly one owner. An empty table
 // would make "no second spelling" true of nothing while printing the same `none` a scan of the tree prints.

@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import {
   checkClassNameDeclarations,
@@ -14,6 +13,7 @@ import {
   UNREADABLE_GAPS,
   verdict,
 } from "../../tools/lib/class-name-declarations.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 // red-proof: inject  a `className` written in a `.tsx` file with no rule and no exemption ->
 // `undeclared_class:<that file>:<line>:visually-hidden-input-label`
@@ -23,7 +23,7 @@ import {
 // on two selects' labels and declared nowhere -> `undeclared_class:` names it at both sites
 // ("the pre-fix tree is reported" below, reading the real commit's own files).
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = repositoryRoot(import.meta.url);
 const roots = [];
 
 function makeRoot(files) {

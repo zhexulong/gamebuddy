@@ -50,11 +50,12 @@ export const gateDeclaration = {
 };
 
 import { readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 export const MOD_PATH = "integrations/stardew/src/Core/BodyPrograms/BodyProgramModels.cs";
 export const HOST_PATH = "host/src/protocol.ts";

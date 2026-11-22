@@ -49,10 +49,11 @@ export const gateDeclaration = {
 };
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 
 export const GATE = "rederivation_parity/v1";
 export const REGISTRY_PATH = "tools/rederivation-parity-registry.json";

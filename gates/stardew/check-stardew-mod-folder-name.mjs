@@ -50,8 +50,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 import { STARDEW_MOD_FOLDER, STARDEW_MOD_FOLDER_ALIASES } from "../../tools/lib/stardew-mod-folder.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const DEFAULT_ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/u, "$1");
+const DEFAULT_ROOT = repositoryRoot(import.meta.url);
 
 function parseRoot(argv) {
   const index = argv.indexOf("--root");

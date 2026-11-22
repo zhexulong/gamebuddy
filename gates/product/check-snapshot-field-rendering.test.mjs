@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { auditSnapshotRendering, RENDERER_SOURCES, RENDERING_EXEMPTIONS } from "./check-snapshot-field-rendering.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 // red-proof: inject  deleting `formatCarriedCanWater`'s call and its body from a copy of `host/src/fact-brief.ts` ->
 //            `fact_not_visible_to_the_companion:wateringCanFacts` (see "a field the prose stops rendering is named").
@@ -28,7 +28,7 @@ import { auditSnapshotRendering, RENDERER_SOURCES, RENDERING_EXEMPTIONS } from "
 // receives, and the gate called the field handled. That module and its block were deleted; the audience it held is still
 // a member kind, declared in the proofs below with a fixture renderer.
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-snapshot-field-rendering.mjs");
 const SOURCES = {
   protocol: "host/src/protocol.ts",

@@ -56,11 +56,12 @@ export const gateDeclaration = {
 };
 
 import { spawnSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const CONFIGURATION = "Debug";
 

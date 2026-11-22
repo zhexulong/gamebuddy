@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 
 import { declaredBundleFiles, evaluate } from "./check-stardew-bundle-manifest.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 // red-proof: inject  a manifest entry renamed to `GameBuddy.Stardew.renamed.dll` in a copy of the tree reports
 //   `mismatch:<new>:only_in_the_manifest` and `mismatch:<old>:only_in_the_build`, so the manifest is held to the build
@@ -22,7 +22,7 @@ import { declaredBundleFiles, evaluate } from "./check-stardew-bundle-manifest.m
  * built-output reading, and a green control in the same tree.
  */
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO = repositoryRoot(import.meta.url);
 const PROJECT = "integrations/stardew/GameBuddy.Stardew.csproj";
 const MANIFEST = "integrations/stardew/bundle.manifest.json";
 

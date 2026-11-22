@@ -28,14 +28,15 @@ export const gateDeclaration = {
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { checkUnreportedCatches, formatFinding } from "../../tools/lib/unreported-catch.mjs";
 
-const toolsDir = dirname(fileURLToPath(import.meta.url));
+const _toolsDir = dirname(fileURLToPath(import.meta.url));
 const rootIndex = process.argv.indexOf("--root");
 const repoRoot =
   rootIndex >= 0 && typeof process.argv[rootIndex + 1] === "string"
     ? resolve(process.argv[rootIndex + 1])
-    : resolve(toolsDir, "..");
+    : repositoryRoot(import.meta.url);
 
 const readout = checkUnreportedCatches({ repoRoot });
 const failed = readout.unreported.length > 0 || readout.problems.length > 0;

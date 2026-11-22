@@ -20,12 +20,13 @@ import {
   matchingToken,
   tokens,
 } from "../../tools/lib/javascript-lexicon.mjs";
+import { repositoryRoot as findRepositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const requireFromHost = createRequire(resolve(import.meta.dirname, "../host/package.json"));
+const requireFromHost = createRequire(resolve(repositoryRoot(import.meta.url), "host/package.json"));
 const ts = requireFromHost("typescript");
 
-const here = dirname(fileURLToPath(import.meta.url));
-export const repositoryRoot = resolve(here, "..");
+const _here = dirname(fileURLToPath(import.meta.url));
+export const repositoryRoot = findRepositoryRoot(import.meta.url);
 export const DEFAULT_ROOTS = Object.freeze(["host/src/main.ts"]);
 /** Mounted-turn composition is a production island, not an application entry root. */
 export const MOUNTED_TURN_COMPOSITION_ROOTS = Object.freeze([

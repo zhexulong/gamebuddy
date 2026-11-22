@@ -21,11 +21,11 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const ROOT = repositoryRoot(import.meta.url);
 const GATE = join(ROOT, "gates/product/check-declared-deleted-facts.mjs");
 const FIXTURES = join(ROOT, "tools/fixtures/declared-deleted");
 const ROUND66 = join(FIXTURES, "round66-facts.runner-log");

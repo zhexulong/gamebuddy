@@ -37,7 +37,6 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   CODES,
   checkActionSurfaceParity,
@@ -48,8 +47,9 @@ import {
   readModSurface,
   readToolSurface,
 } from "./check-action-surface-parity.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const real = (path) => readFileSync(resolve(REPOSITORY_ROOT, path), "utf8");
 const realCatalog = () => JSON.parse(real(PATHS.catalog));
 const sources = () => ({

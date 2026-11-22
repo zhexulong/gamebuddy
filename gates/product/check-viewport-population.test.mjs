@@ -21,12 +21,11 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { checkViewportPopulation } from "./check-viewport-population.mjs";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = repositoryRoot(import.meta.url);
 const REAL_POLICY = readFileSync(join(ROOT, "dialogue-web", "tests", "viewport-policy.ts"), "utf8");
 
 /** A throwaway workspace: the real policy, the specs this case needs, and a config. */
@@ -56,6 +55,7 @@ test("a spec that measures the matrix", async ({ page }) => {
 
 const ITERATES_THE_PAIR = `import { test } from "@playwright/test";
 import { LAYOUT_PAIR } from "../../tools/viewport-policy";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 test("a copy journey that varies the two layouts", async ({ page }) => {
   for (const viewport of LAYOUT_PAIR) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });

@@ -19,10 +19,9 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import test from "node:test";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   BOUND_RULES,
   BUBBLE_CLAMP,
@@ -31,7 +30,7 @@ import {
   TRANSPORT_DECLARATIONS,
 } from "./check-delivery-truncation-bound.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 
 const readReal = (path) => readFileSync(join(REPOSITORY_ROOT, ...path.split("/")), "utf8");
 

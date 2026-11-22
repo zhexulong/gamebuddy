@@ -25,9 +25,8 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   MERGED_SEAMS,
   MERGED_SEAM_REASON,
@@ -36,8 +35,9 @@ import {
 } from "./check-vendor-patches-apply.mjs";
 import { NOT_MEASURED_MARKER } from "../../tools/prelive.mjs";
 import { assertNonVacuous } from "../../tools/lib/assert-non-vacuous.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
-const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "tools", "check-vendor-patches-apply.mjs");
 const PATCH_DIRECTORY = join(REPOSITORY_ROOT, "patches", "vendor-magic-context");
 const SEAM_FILE = "packages/pi-plugin/src/context-handler.ts";
