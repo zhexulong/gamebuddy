@@ -106,6 +106,11 @@ type Model = Readonly<{
    */
   replyTruncated: boolean;
   /**
+   * The shell's `awaitingFirstWord` (a turn is mounted and no delta of it has painted), as ChatSurface hands it to the
+   * timeline. False by default, because a probe that says nothing about a turn says nothing about one running.
+   */
+  awaitingReply: boolean;
+  /**
    * The shell's `isGenerating` (a turn admitted and not yet terminal), as ChatSurface hands it to the
    * timeline. Defaults to true, because a transcript that ends on the player's own line IS a turn in
    * flight in the ordinary case - a journey that wants the settled failure says so.
@@ -127,6 +132,7 @@ let model: Model = {
   deleteArmedHandle: null,
   swipeRemoveArmed: null,
   replyTruncated: false,
+  awaitingReply: false,
   turnInFlight: true,
   composerState: { phase: "idle", send: { gate: "open" }, armed: null, pendingLine: null },
 };
@@ -250,6 +256,7 @@ function Probe() {
         pending={model.pending}
         replyTruncated={model.replyTruncated}
         turnInFlight={model.turnInFlight}
+        awaitingReply={model.awaitingReply}
       />
       <Composer
         value={drafted}
@@ -307,6 +314,48 @@ const chatProbe = {
     rerender?.();
   },
   /**
+   * The shell's `awaitingFirstWord`, set exactly as ChatSurface hands it over: a turn is mounted and no delta of it has
+   * painted. A journey passes the value the shell would pass and then reads what the reading flow draws.
+   */
+  setAwaitingReply(value: boolean): void {
+    model = { ...model, awaitingReply: value };
+    rerender?.();
+  },
+  /**
+   * The row the reading flow draws while she has written nothing yet, or `null` when it draws none.
+   *
+   * `text` is the word itself, `liveRegion` is the assertion that it is NOT a second polite region (the app bar's
+   * `role="status"` already speaks this moment), `inMessageList` is the assertion that it is not painted as one of the
+   * transcript's durable rows, and `isTail` is that it stands where her reply will arrive rather than above the
+   * player's own line.
+   */
+  awaitingRow(): {
+    text: string | null;
+    ariaBusy: string | null;
+    liveRegion: boolean;
+    inMessageList: boolean;
+    isTail: boolean;
+    avatar: boolean;
+    height: number;
+    width: number;
+  } | null {
+    const row = document.querySelector('[data-testid="companion-awaiting-reply"]');
+    if (row === null) return null;
+    const list = document.querySelector(".message-list");
+    const section = row.closest("section.timeline");
+    const box = row.getBoundingClientRect();
+    return {
+      text: row.querySelector(".message-waiting")?.textContent ?? null,
+      ariaBusy: row.querySelector("[aria-busy]")?.getAttribute("aria-busy") ?? null,
+      liveRegion: row.querySelector('[role="status"]') !== null,
+      inMessageList: list !== null && list.contains(row),
+      isTail: section !== null && section.lastElementChild === row,
+      avatar: row.querySelector(".avatar") !== null,
+      height: Math.round(box.height),
+      width: Math.round(box.width),
+    };
+  },
+  /**
    * The composer band's one state, exactly as the shell derives it (`deriveChatUIState`). A journey
    * passes the value the shell would pass, so the controls are read from the same authority the
    * product uses instead of from a flag the test invented.
@@ -350,6 +399,10 @@ const chatProbe = {
   /** The sentence in each catalogue, so a journey can pin both languages' words. */
   truncatedSentence(locale: "en" | "zh-CN"): string {
     return messages(locale).chatReplyCutOff;
+  },
+  /** The one word the waiting row and the app bar share, so a journey can hold both catalogues to one spelling. */
+  awaitingSentence(locale: "en" | "zh-CN"): string {
+    return messages(locale).generating;
   },
   setVoice(state: VoiceSurfaceStateV1 | null): void {
     model = { ...model, voice: state };

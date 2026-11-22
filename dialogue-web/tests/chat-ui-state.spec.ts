@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "./frontend-coverage";
 import {
   armedRows,
+  awaitingFirstWord,
   deriveChatUIState,
   isTurnInFlight,
   replyHasNoModel,
@@ -86,19 +87,23 @@ test("a surface with nothing in flight cannot carry a turn's own facts", () => {
 test("one armed act names exactly one row", () => {
   const arms: readonly ChatArmedAction[] = [
     { action: "delete", targetId: "D".repeat(42) + "A", expectedOrder: 2 },
-    { action: "rewind", targetId: "R".repeat(42) + "A", expectedOrder: 3 },
+    { action: "from_here", targetId: "R".repeat(42) + "A", expectedOrder: 3 },
     { action: "swipe_remove", targetId: "S".repeat(42) + "A" },
   ];
   for (const armed of arms) {
     const state = deriveChatUIState(inputs({ armed }));
     const rows = armedRows(state);
-    const named = [rows.delete, rows.rewind, rows.swipeRemove].filter((target) => target !== null);
+    // The rewind arm is `from_here` and `armedRows` names its row `fromHere` - the spelling the fork lane shipped on
+    // 2026-11-15 (79d0323d) and the one `ChatSurface` reads. This test was left behind by that rename: it armed
+    // `"rewind"`, which maps to no row at all, so it failed from that commit until the three spellings were brought
+    // back to the product's own.
+    const named = [rows.delete, rows.fromHere, rows.swipeRemove].filter((target) => target !== null);
     expect(named, `arming ${armed.action} names one row, not two`).toEqual([armed.targetId]);
     expect(Object.keys(state).filter((key) => key === "armed"), "the state carries one arm, not one per verb").toHaveLength(1);
   }
   expect(armedRows(deriveChatUIState(INPUTS)), "no arm names no row").toEqual({
     delete: null,
-    rewind: null,
+    fromHere: null,
     swipeRemove: null,
   });
 });
@@ -133,6 +138,32 @@ test("the phases partition the turn facts", () => {
       expect(state.phase, `turn=${turn !== null} submission=${submissionInFlight}`).toBe(expected);
       expect(isTurnInFlight(state)).toBe(turn !== null || submissionInFlight);
     }
+  }
+});
+
+/**
+ * `awaitingFirstWord` answers one window and only one: a turn is mounted and nothing of it has painted.
+ *
+ * The failure it prevents is a claim about a turn nobody started. A held submission (`submitting`) has no turn behind
+ * it yet - the Host may still refuse it - so a surface that drew "thinking" there would describe a generation that
+ * does not exist, and the optimistic player row's own "sending" is that fact. A preview on screen means she IS
+ * writing, so the row would then sit beside the words it claims are still coming.
+ */
+test("only a mounted turn with nothing painted is awaiting her first word", () => {
+  const held: readonly Readonly<{ submissionInFlight: boolean; turn: typeof TURN | null; preview: boolean }>[] = [
+    { submissionInFlight: false, turn: TURN, preview: false },
+    { submissionInFlight: false, turn: TURN, preview: true },
+    { submissionInFlight: true, turn: null, preview: false },
+    { submissionInFlight: false, turn: null, preview: false },
+    { submissionInFlight: true, turn: TURN, preview: false },
+  ];
+  for (const facts of held) {
+    const state = deriveChatUIState(inputs({ submissionInFlight: facts.submissionInFlight, turn: facts.turn }));
+    const expected = state.phase === "streaming" && !facts.preview;
+    expect(
+      awaitingFirstWord(state, facts.preview),
+      `phase=${state.phase} preview=${facts.preview} submissionInFlight=${facts.submissionInFlight}`,
+    ).toBe(expected);
   }
 });
 

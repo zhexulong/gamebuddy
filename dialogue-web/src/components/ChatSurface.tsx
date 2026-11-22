@@ -2,7 +2,7 @@ import { MessageSquare } from "lucide-react";
 import type { RefObject } from "react";
 import type { Messages } from "../i18n";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
-import { armedRows, replyHasNoModel, isTurnInFlight, type ChatUIState } from "./chat-ui-state";
+import { armedRows, awaitingFirstWord, replyHasNoModel, isTurnInFlight, type ChatUIState } from "./chat-ui-state";
 import { Composer, type ComposerDraftActions, type ComposerSettingsAction, type VoiceSurfaceStateV1 } from "./Composer";
 import { SurfaceView } from "./SurfaceView";
 import { Timeline } from "./Timeline";
@@ -136,6 +136,11 @@ export function ChatSurface({
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   const rows = armedRows(uiState);
+  /**
+   * Her side of the transcript has nothing on it yet: a turn is mounted and no delta of it has painted. `Timeline`
+   * draws that window as a row of its own, so "she is working on it" and "it is broken" stop looking the same.
+   */
+  const awaitingReply = awaitingFirstWord(uiState, preview !== null);
   return (
     <SurfaceView
       title={labels.chatPanel}
@@ -173,6 +178,7 @@ export function ChatSurface({
         pendingPlayerMessage={uiState.pendingLine}
         replyTruncated={replyTruncated}
         turnInFlight={isTurnInFlight(uiState)}
+        awaitingReply={awaitingReply}
       />
       {replyHasNoModel(uiState.send) && (
         // The standing fact, above the one line that reports the last outcome: the Host could not

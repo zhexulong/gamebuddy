@@ -186,6 +186,24 @@ export function isTurnInFlight(state: ChatUIState): boolean {
 }
 
 /**
+ * She has not written a word of the mounted turn yet: a turn exists and nothing has painted.
+ *
+ * This is a WINDOW rather than a phase, and it is the one the player reads as silence. `streaming` says a turn is
+ * mounted; `previewOnScreen` says a delta of it has reached the transcript. Between the two sits the whole of the
+ * model's own thinking - the Chat row's delta lane withholds every fragment a reasoning frame still owns
+ * (`native-companion-content.ts`: the scaffolding projection releases nothing, and an empty release dispatches no
+ * event at all), so a turn whose first seconds are reasoning produces no preview whatsoever.
+ *
+ * It is answered here rather than in a component because the two readers that need it - the surface's own row and the
+ * journey that holds it to the words - must be asking one question, and because `submitting` is deliberately NOT
+ * part of it: a held submission has no turn behind it yet, so `Timeline`'s own optimistic row ("sending") is that
+ * fact and a second one would describe a turn nobody started.
+ */
+export function awaitingFirstWord(state: ChatUIState, previewOnScreen: boolean): boolean {
+  return state.phase === "streaming" && !previewOnScreen;
+}
+
+/**
  * A phase the surface cannot enter is a compile error rather than a fallback.
  *
  * Every `switch (state.phase)` in the components ends here, so a phase added to the union without a

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BrowserMessageV1 } from "../reference-pipeline-api";
+import { CompanionAvatar } from "./CompanionAvatar";
 import { MessageBubble } from "./MessageBubble";
 
 /**
@@ -81,6 +82,7 @@ export function Timeline({
   pendingPlayerMessage = null,
   replyTruncated = false,
   turnInFlight = false,
+  awaitingReply = false,
 }: {
   transcript: readonly BrowserMessageV1[];
   preview?: Readonly<{ turnHandle: string; text: string }> | null;
@@ -105,6 +107,11 @@ export function Timeline({
     you: string;
     /** The send lane's one word while the Host has not answered yet. */
     chatSending: string;
+    /**
+     * The app bar's own word for a turn in flight (`appBarStatus`). The row below reuses it rather than coining a
+     * second word for one moment.
+     */
+    generating: string;
     swipeNavigation: string;
     swipePrevious: string;
     swipeNext: string;
@@ -264,6 +271,26 @@ export function Timeline({
    * that target until the ledger is terminal.
    */
   turnInFlight?: boolean;
+  /**
+   * True while a mounted turn is running and she has not written a word of it yet: the window between the
+   * acceptance and the first streamed delta, and the same window again after a reload mid-turn.
+   *
+   * It is a window and not a moment, because the Chat row's delta lane withholds every fragment a reasoning
+   * frame could still claim (`native-companion-content.ts` dispatches nothing while the scaffolding projection
+   * holds it), so a model that spends its first seconds on `<thinking>` produces no preview at all. The player
+   * then read her silence with nothing to tell "she is working on it" from "it is broken", and the spelling is
+   * the app bar's own word for a turn in flight rather than a second one.
+   *
+   * The row says only what is known: a turn is mounted and no words have arrived. There is deliberately no typing
+   * indicator, because nothing is tokenizing yet in the case this row exists for - and it carries no live region,
+   * because the app bar's `role="status"` already speaks this moment once.
+   *
+   * The review that measured this silence asked instead for her reasoning to be shown, as a collapsible
+   * `<thinking>` accordion. That is refused, and it is the owner's call rather than a lane's: it would put the
+   * model's self-talk in front of the player and change what a durable Chat row carries, which is the one rule
+   * `host/src/companion-scaffolding.ts` states.
+   */
+  awaitingReply?: boolean;
 }) {
   // The anchor names the companion the way the transcript will: the profile's
   // own name, or the catalog's word for an unnamed one, so the invitation's own
@@ -618,6 +645,27 @@ export function Timeline({
             labels={labels}
             waitingNote={labels.chatSending}
           />
+        </div>
+      )}
+      {/* Her side of the transcript while she has not written a word of it yet: a turn is mounted and no delta has
+          painted (see `awaitingReply`). It is drawn outside `message-list` for the same reason the optimistic player
+          row is - it is not one of the transcript's durable rows - and it repeats the app bar's own word rather than
+          coining a second one. `aria-busy` says this row is about to be replaced (`MessageBubble` says the same of a
+          streaming or waiting row); there is deliberately no `role="status"`, because the bar's region already spoke
+          this moment and a second sentence about it is how a reader learns to ignore both. */}
+      {awaitingReply && (
+        <div className="message-pending" data-pending="true" data-testid="companion-awaiting-reply">
+          <div className="message companion" aria-busy="true" data-waiting="true">
+            <CompanionAvatar
+              handle={companionHandle}
+              name={anchorName}
+              className="avatar-small"
+              digest={companionDigest}
+            />
+            <div className="message-body">
+              <span className="message-waiting">{labels.generating}</span>
+            </div>
+          </div>
         </div>
       )}
     </section>
