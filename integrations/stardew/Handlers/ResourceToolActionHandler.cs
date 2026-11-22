@@ -114,8 +114,20 @@ internal sealed class ResourceToolActionHandler : IFarmhandActionHandler
         /// <summary>The absolute millisecond timestamp after which a seam refuses this execution as `invalid_deadline`.</summary>
         public long DeadlineMs => this.request.DeadlineMs;
 
-        /// <summary>The backpack slot an action names, or slot 0 when the request names none.</summary>
-        public int Slot => this.request.Args.Slot ?? 0;
+        /// <summary>
+        /// The backpack slot an action names, in the Mod's own word for "no slot named" when the request carries none
+        /// (`-1`, the same value `ResolveLiveSlot` and `DeclaredToolResolution` use).
+        ///
+        /// <para>
+        /// `-1` RATHER THAN `0` SINCE `slot` BECAME OMISSIBLE. A declared-tool action's row says its slot may be left out
+        /// (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>), and no handler in that family reads the number: they
+        /// take the slot their own <c>tool:</c> claim selects and publish it in the receipt (`slot=` of the selection
+        /// facts). The old default, index 0, turned an absence into a REAL SLOT the refusal details then quoted
+        /// (`slot=0`), which reads as "your slot was wrong" about a slot nobody sent. `-1` is not an inventory index, so
+        /// a detail that mentions it says only that none was named.
+        /// </para>
+        /// </summary>
+        public int Slot => this.request.Args.Slot ?? -1;
 
         /// <summary>The tile column: the wire carries a float, every seam takes the truncated column.</summary>
         public int X => (int)(this.request.Args.X ?? 0);

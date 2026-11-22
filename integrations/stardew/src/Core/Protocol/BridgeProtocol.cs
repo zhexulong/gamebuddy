@@ -1411,7 +1411,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 || action.ValueKind != JsonValueKind.String
                 || !payload.TryGetProperty("args", out JsonElement args)
                 || ExecutionArgumentProperties(action.GetString()) is not { } argumentProperties
-                || !HasExactProperties(args, argumentProperties)
+                || !HasExecutionArgumentShape(args, action.GetString()!, argumentProperties)
                  || (action.GetString() == "navigate_to_destination"
                      && (!args.TryGetProperty("destination", out JsonElement destination)
                          || !IsExactNavigationDestinationSelector(destination)))
@@ -2288,6 +2288,41 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 return false;
         }
         return actual.SetEquals(expected);
+    }
+
+    /// <summary>
+    /// The inbound <c>args</c> object's shape: every property present is one this action declares, and every name this
+    /// action's wire list names is present - UNLESS the action's own catalogue row says the BODY resolves that argument at
+    /// execution (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>), in which case it may be absent.
+    ///
+    /// <para>
+    /// WHY THE DECLARATION IS READ HERE RATHER THAN A SECOND LIST KEPT. The wire list
+    /// (<see cref="ExecutionArgumentProperties"/>) states which NAMES an action takes; the catalogue states which of them
+    /// the caller may leave out. Splitting the omission into a third list beside both would be a third spelling of a fact
+    /// the row has already stated, and `cut_weeds`'s old shape is the incident that shape produces: the row declared its
+    /// target resolvable at execution while this parser still demanded the key, so a clearing proxy that mints its own
+    /// target could not be dispatched without a snapshot row it does not need. A row that resolves nothing keeps the
+    /// exact set, and an action the catalogue does not know keeps it too.
+    /// </para>
+    /// </summary>
+    private static bool HasExecutionArgumentShape(JsonElement args, string action, string[] declared)
+    {
+        if (args.ValueKind != JsonValueKind.Object) return false;
+        FarmhandActionRegistration? registration = FarmhandActionCatalog.Registrations
+            .FirstOrDefault(candidate => string.Equals(candidate.ActionId, action, StringComparison.Ordinal));
+        FarmhandActionDescriptor? descriptor = registration?.Descriptor;
+        HashSet<string> names = new(declared, StringComparer.Ordinal);
+        HashSet<string> seen = new(StringComparer.Ordinal);
+        foreach (JsonProperty property in args.EnumerateObject())
+            if (!names.Contains(property.Name) || !seen.Add(property.Name))
+                return false;
+        foreach (string name in declared)
+        {
+            bool resolvable = descriptor is not null && descriptor.Arguments.Any(argument =>
+                string.Equals(argument.Name, name, StringComparison.Ordinal) && argument.ResolvedAtExecution);
+            if (!resolvable && !seen.Contains(name)) return false;
+        }
+        return true;
     }
 
     public static string[]? ExecutionArgumentProperties(string? action) => action switch

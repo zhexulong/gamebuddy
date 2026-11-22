@@ -65,6 +65,13 @@ public static class FarmhandExecutionAcceptance
         FarmhandExecutionAcceptanceFacts facts = descriptor.Acceptance ?? Default;
         foreach (FarmhandActionArgument argument in descriptor.Arguments)
         {
+            // AN ARGUMENT THE ROW DECLARES THE BODY RESOLVES IS NOT THE CALLER'S TO SUPPLY, so an absent one is skipped
+            // rather than judged: `args.Slot is { }` is false for a slot nobody sent, and the answer to that is not
+            // `invalid_execution_request` but nothing at all (the handler's own `tool_not_owned:<word>` is what an
+            // unsatisfiable claim answers). A value that IS present is judged exactly as it always was - the omission is
+            // legal, a wrong number is not.
+            if (argument.ResolvedAtExecution && !CarriesArgument(argument.Name, args))
+                continue;
             if (!IsValidArgumentValue(argument, facts, args, destinationValidator))
             { reasonCode = "invalid_execution_request"; return false; }
         }
@@ -73,9 +80,47 @@ public static class FarmhandExecutionAcceptance
     }
 
     /// <summary>
+    /// Whether the request carries this argument AT ALL - the question an omission is answered with.
+    ///
+    /// <para>
+    /// SEPARATE FROM <see cref="IsValidArgumentValue"/> ON PURPOSE. That switch answers "is this value legal", and a
+    /// missing slot is not an illegal slot: it is an absence, which only <see cref="FarmhandActionArgument.ResolvedAtExecution"/>
+    /// may excuse. Reading presence here keeps the two questions apart so a declared omission cannot widen into "any
+    /// argument may be absent", and its own `false` arm is what refuses a name this map does not know.
+    /// </para>
+    /// </summary>
+    private static bool CarriesArgument(string name, BridgeExecutionArgs args) => name switch
+    {
+        "x" => args.X.HasValue,
+        "y" => args.Y.HasValue,
+        "slot" => args.Slot.HasValue,
+        "chestId" => args.ChestId is not null,
+        "expectedQualifiedItemId" => args.ExpectedQualifiedItemId is not null,
+        "expectedTargetId" => args.ExpectedTargetId is not null,
+        "destination" => args.Destination is not null,
+        "emote" => args.Emote is not null,
+        "direction" => args.Direction is not null,
+        "tool" => args.Tool is not null,
+        "responseKey" => args.ResponseKey is not null,
+        "quantity" => args.Quantity.HasValue,
+        "text" => args.Text is not null,
+        "buildingType" => args.BuildingType is not null,
+        "leftSlot" => args.LeftSlot.HasValue,
+        "rightSlot" => args.RightSlot.HasValue,
+        "colorSelection" => args.ColorSelection.HasValue,
+        "choice" => args.Choice is not null,
+        "expectedSkill" => args.ExpectedSkill.HasValue,
+        "expectedLevel" => args.ExpectedLevel.HasValue,
+        "charge" => args.Charge.HasValue,
+        _ => false,
+    };
+
+    /// <summary>
     /// The request must carry exactly the arguments declared by the registered
     /// descriptor and nothing else. A declared argument missing, or an undeclared
-    /// argument present, fails closed.
+    /// argument present, fails closed - except for a declared argument the row says
+    /// the BODY resolves (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>): that one may be absent, and
+    /// `<see langword="false"/> == <see cref="Presents"/>` would refuse exactly the omission the declaration grants.
     /// </summary>
     private static bool HasExactArgumentShape(FarmhandActionDescriptor descriptor, BridgeExecutionArgs args)
     {
@@ -100,31 +145,41 @@ public static class FarmhandExecutionAcceptance
     bool expectedSkill = args.ExpectedSkill.HasValue;
     bool expectedLevel = args.ExpectedLevel.HasValue;
     bool charge = args.Charge.HasValue;
-        return x == HasArgument(descriptor, "x")
-            && y == HasArgument(descriptor, "y")
-            && slot == HasArgument(descriptor, "slot")
-            && chestId == HasArgument(descriptor, "chestId")
-            && qualifiedItem == HasArgument(descriptor, "expectedQualifiedItemId")
-            && target == HasArgument(descriptor, "expectedTargetId")
-            && destination == HasArgument(descriptor, "destination")
-            && emote == HasArgument(descriptor, "emote")
-            && direction == HasArgument(descriptor, "direction")
-            && tool == HasArgument(descriptor, "tool")
-            && responseKey == HasArgument(descriptor, "responseKey")
-            && quantity == HasArgument(descriptor, "quantity")
-            && text == HasArgument(descriptor, "text")
-            && buildingType == HasArgument(descriptor, "buildingType")
-            && leftSlot == HasArgument(descriptor, "leftSlot")
-            && rightSlot == HasArgument(descriptor, "rightSlot")
-            && colorSelection == HasArgument(descriptor, "colorSelection")
-        && choice == HasArgument(descriptor, "choice")
-        && expectedSkill == HasArgument(descriptor, "expectedSkill")
-        && expectedLevel == HasArgument(descriptor, "expectedLevel")
-        && charge == HasArgument(descriptor, "charge");
+        return Presents(descriptor, "x", x)
+            && Presents(descriptor, "y", y)
+            && Presents(descriptor, "slot", slot)
+            && Presents(descriptor, "chestId", chestId)
+            && Presents(descriptor, "expectedQualifiedItemId", qualifiedItem)
+            && Presents(descriptor, "expectedTargetId", target)
+            && Presents(descriptor, "destination", destination)
+            && Presents(descriptor, "emote", emote)
+            && Presents(descriptor, "direction", direction)
+            && Presents(descriptor, "tool", tool)
+            && Presents(descriptor, "responseKey", responseKey)
+            && Presents(descriptor, "quantity", quantity)
+            && Presents(descriptor, "text", text)
+            && Presents(descriptor, "buildingType", buildingType)
+            && Presents(descriptor, "leftSlot", leftSlot)
+            && Presents(descriptor, "rightSlot", rightSlot)
+            && Presents(descriptor, "colorSelection", colorSelection)
+        && Presents(descriptor, "choice", choice)
+        && Presents(descriptor, "expectedSkill", expectedSkill)
+        && Presents(descriptor, "expectedLevel", expectedLevel)
+        && Presents(descriptor, "charge", charge);
     }
 
-    private static bool HasArgument(FarmhandActionDescriptor descriptor, string name) =>
-        descriptor.Arguments.Any(argument => string.Equals(argument.Name, name, StringComparison.Ordinal));
+    /// <summary>
+    /// Whether the request's presence of <paramref name="name"/> matches what the row asks of it: a declared argument is
+    /// present, an undeclared one is absent, and an argument the row declares the body resolves is present ONLY if the
+    /// caller sent it.
+    /// </summary>
+    private static bool Presents(FarmhandActionDescriptor descriptor, string name, bool present)
+    {
+        FarmhandActionArgument? declared = descriptor.Arguments
+            .FirstOrDefault(argument => string.Equals(argument.Name, name, StringComparison.Ordinal));
+        if (declared is null) return !present;
+        return declared.ResolvedAtExecution || present;
+    }
 
     private static bool IsValidArgumentValue(
         FarmhandActionArgument argument,

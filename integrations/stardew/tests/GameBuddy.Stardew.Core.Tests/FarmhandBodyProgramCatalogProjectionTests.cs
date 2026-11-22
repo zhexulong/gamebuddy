@@ -88,7 +88,11 @@ public sealed class FarmhandBodyProgramCatalogProjectionTests
         // The projected node carries the registration's own lifecycle: live_verified is admitted to
         // programs and is still not a publication.
         cutWeeds!.Metadata.Should().Be(new BodyProgramActionMetadata("live_verified", "execution", "write", "native_action_postcondition"));
-        cutWeeds.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("slot", BodyProgramArgumentKind.Integer));
+        // THE ARGUMENT IS STILL PROJECTED, AND ITS DECLARATION TRAVELS WITH IT: which readings the body answers for at
+        // execution is the fact a plan is compiled against, so a projection that dropped it would publish `slot` as the
+        // caller's to send and re-break the very programs this row was fixed for.
+        cutWeeds.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("slot", BodyProgramArgumentKind.Integer, ResolvedAtExecution: true));
+        cutWeeds.Arguments.Should().Contain(new BodyProgramArgumentDescriptor("expectedTargetId", BodyProgramArgumentKind.String, ResolvedAtExecution: true));
         FarmhandActionCatalog.Registrations.Single(registration => registration.ActionId == "cut_weeds")
             .Lifecycle.Should().Be(FarmhandActionLifecycle.LiveVerified);
     }

@@ -770,7 +770,10 @@ test("round89 plan_12: an edge exit's source is outside the grid, so no walk is 
     const result = compile(`builder.${actionId}({ x: 40, y: -1 });`, { warps: edgeWarps } as Partial<Snapshot>);
     const nodes = nodesOf(result);
     // Her transition, alone: the ring of wall the clamp used to send the body to was not a step anybody wrote.
-    assert.deepEqual(nodes.map((node) => [node.nodeId, node.actionId]), [["n01", actionId]]);
+    assert.deepEqual(
+      nodes.map((node) => [node.nodeId, node.actionId]),
+      [["n01", actionId]],
+    );
     assert.deepEqual(walkRefusalsOf(result), ["auto_walk_refused:target_off_map:40:-1"]);
     assert.deepEqual(insertedNodeIdsOf(result), [], "nothing was inserted, so nothing can be refused in the program");
     // The transition's own coordinate is the warp's real source, so the program is still one the Mod's validator accepts.
@@ -1149,9 +1152,7 @@ test("a refused prerequisite never leaves its dependants in the plan: every gene
         );
     for (const call of pairing.mustRunCalls)
       if (!accepted.has(call))
-        submittedAnyway.push(
-          `${pairing.label}: n0${call} was written BEFORE the refused step and must still run`,
-        );
+        submittedAnyway.push(`${pairing.label}: n0${call} was written BEFORE the refused step and must still run`);
   }
 
   // THE POPULATION, PRINTED AND REFUSED AT ZERO: a property test that cannot say how many cases it examined is a test.
@@ -2511,8 +2512,11 @@ test("a refused builder call answers with the action id, its required argument n
   const required = surfaceArguments("cut_weeds");
   assert.ok(required.length >= 2, "cut_weeds declares more than one argument");
   for (const script of [
-    // Already the live failure: x and y supplied, the tool slot and the target id guessed at or omitted.
-    "builder.cut_weeds({ x: 10, y: 10 });",
+    // A GENUINELY REQUIRED ARGUMENT, because the two the tile could answer are not required any more: `cut_weeds`
+    // declares both `slot` and `expectedTargetId` resolved at execution, so omitting either is the plan doing what the
+    // Mod's own row allows (`body-program-script.test.ts`, "the same strip of clear nodes compiles"). The tile itself is
+    // what a swing cannot be written without, and this is the refusal that still has to carry the whole shape.
+    "builder.cut_weeds({ y: 10 });",
     "builder.cut_weeds({ x: 10, y: 10, slot: 3, expectedTargetId: 'weed_01', targetId: 'weed_01' });",
     "builder.cut_weeds({ x: 10, y: 10, slot: 'first', expectedTargetId: 'weed_01' });",
   ])
@@ -4885,44 +4889,88 @@ test("a strip this session read compiles its plantings, and every node says wher
   );
 });
 
-test("the same strip of clear nodes is refused by the one reading the body does not mint", () => {
-  // THE STRIP IS PROVED AND THE STEP STILL CANNOT EXIST, because a declaration - not this seam - decides that. The Mod
-  // mints `cut_weeds.expectedTargetId` at execution now (`ResolvesTargetAtExecution`, and `BuildWeedTargetId` derives it
-  // from the live tile), while the scythe family's `slot` is still the caller's to supply even though the handler selects
-  // the tool from its own `tool:` claim (`ResolveDeclaredTool`). So the refusal names `slot`, and the tile claim is never
-  // reached - which is why it says `reading` and not `target`.
-  const asDeclared = compile(stripCalls("cut_weeds", ""), { weedTargets: [] }, readOf(readRows(STRIP, "weed")));
+test("the same strip of clear nodes compiles now that the body answers for its own tool slot", () => {
+  // THE SAME STRIP, THE SAME READ, AND THE STEP EXISTS. `cut_weeds` declares TWO readings - the weed's opaque id and the
+  // scythe's backpack slot - and the Mod's own row now says the body answers for both (`ResolvesToolSlotAtExecution`,
+  // `try_select_declared_tool` in the handler), so nothing is left for this side to copy: the weed is minted from the
+  // live tile when she swings and the tool is the one the row's `tool:scythe` claim selects. The rectangle read is the
+  // whole proof, and the answer says so per node.
+  const result = compile(stripCalls("cut_weeds", ""), { weedTargets: [] }, readOf(readRows(STRIP, "weed")));
   assert.equal(
-    firstRefusalOf(asDeclared),
-    "plan_script_reading_outside_the_submitted_snapshot:cut_weeds.slot:weedTargets:30,4",
-  );
-  assert.equal(asDeclared.status === "refused" ? asDeclared.droppedCount : -1, 30, "thirty calls, thirty refusals");
-  // THE FALSIFIER: the same surface with that ONE declaration changed, and nothing else about the script or the snapshot.
-  // The strip compiles, with the session's own read as the proof of every tile it works.
-  const minted = ACTIONS.map((action) =>
-    action.actionId === "cut_weeds"
-      ? {
-          ...action,
-          arguments: action.arguments.map((argument) =>
-            argument.name === "slot" ? { ...argument, required: false } : argument,
-          ),
-        }
-      : action,
-  );
-  const compiled = compilePlanScript(
-    { script: stripCalls("cut_weeds", "") },
-    { snapshot: snapshot({ weedTargets: [] }), actions: minted, tileRead: readOf(readRows(STRIP, "weed")) },
-  );
-  assert.equal(
-    compiled.status,
+    result.status,
     "compiled",
-    JSON.stringify(compiled.status === "refused" ? compiled.reasonCode : compiled.dropped),
+    JSON.stringify(result.status === "refused" ? result.reasonCode : result.dropped),
   );
-  assert.equal(compiled.status === "compiled" ? compiled.program.nodes.length : -1, 30, "thirty tiles, thirty swings");
+  assert.equal(result.status === "compiled" ? result.program.nodes.length : -1, 30, "thirty tiles, thirty swings");
+  for (const node of result.status === "compiled" ? result.program.nodes : [])
+    assert.deepEqual(
+      Object.keys(node.arguments).sort(),
+      ["x", "y"],
+      "every reading of this swing is the body's: no target id and no slot travel in the node",
+    );
   assert.equal(
-    compiled.status === "compiled" ? compiled.resolvedFromObservationCount : -1,
+    result.status === "compiled" ? result.resolvedFromObservationCount : -1,
     60,
-    "both readings of every swing are the body's, and every one names the tile the session read",
+    "two readings per node, one for the weed and one for the scythe's slot",
+  );
+});
+
+test("a fifteen-node clear program over a three-wide strip compiles, each node proved by the read", () => {
+  // THE MEASURED SHAPE: nine weeds and six stones down a three-wide strip twenty tiles from her, read as ONE rectangle.
+  // `weedTargets` and `rockSourceTargets` are published and hold nothing for those tiles, so each family's silence is
+  // "not asked" rather than "measured empty" - and every node resolves BOTH of its readings from the tile it names: the
+  // occupant's opaque id and the tool's backpack slot.
+  const rows = [
+    ...readRows({ x: STRIP.x, y: 4, w: 3, h: 3 }, "weed"),
+    ...readRows({ x: STRIP.x, y: 7, w: 3, h: 2 }, "stone"),
+  ];
+  const script = [
+    "for (let y = 4; y <= 6; y += 1) for (let x = 30; x <= 32; x += 1) builder.cut_weeds({ x, y });",
+    "for (let y = 7; y <= 8; y += 1) for (let x = 30; x <= 32; x += 1) builder.break_rock({ x, y });",
+  ].join("\n");
+  const result = compile(script, { weedTargets: [], rockSourceTargets: [] }, readOf(rows));
+  assert.equal(
+    result.status,
+    "compiled",
+    JSON.stringify(result.status === "refused" ? result.reasonCode : result.dropped),
+  );
+  assert.equal(result.status === "compiled" ? result.program.nodes.length : -1, 15, "nine weeds and six stones");
+  assert.deepEqual(
+    result.status === "compiled" ? [...new Set(result.program.nodes.map((node) => node.actionId))].sort() : [],
+    ["break_rock", "cut_weeds"],
+  );
+  // THIRTY READINGS: fifteen targets and fifteen tool slots, every one of them the body's to mint. The count is the
+  // population, so a reading that quietly stopped being resolved fails here instead of passing on a shorter list.
+  assert.equal(result.status === "compiled" ? result.resolvedFromObservationCount : -1, 30);
+});
+
+/**
+ * THE THIRD ACTION OF THE MEASURED PROGRAM IS STILL REFUSED, AND FOR A DIFFERENT READING.
+ *
+ * `remove_placed_item` now resolves its SLOT like the other fourteen (`ResolvesToolSlotAtExecution`), and its
+ * `expectedTargetId` is still the caller's: `worldObjectTargets` has no arm in `TileTargetMint`, so the Mod cannot mint a
+ * twig's identity from a tile and the declaration that would let a plan omit it does not exist. The refusal therefore
+ * names `expectedTargetId` rather than `slot`, which is the one fact a reader needs to know before writing the next node
+ * - and it is pinned here so the day that mint learns the family, this line goes red and the test is re-read.
+ * </p>
+ *
+ * <p>
+ * AND IT IS NOT A PROMISE ABOUT THE WORLD, WHICH THIS SIDE STILL DOES NOT CHECK. A rectangle read proves what stood where
+ * she looked, and the Mod refuses a tile that holds something else by name (`break_rock_target_changed:stone:tree`,
+ * `named_tile=30,4`) - which
+ * `WorkThatIsAlreadyDoneIsTheOutcomeTests.ABreakRockSwingGivenNoTargetOrSlotOverATreeRefusesAndNamesTheTile` drives. A
+ * per-action occupant rule here would be a second spelling of the `Clears` declaration the Mod already enforces.
+ * </p>
+ */
+test("the third action of the measured program is refused for the reading the mint still cannot name", () => {
+  const result = compile(
+    `builder.remove_placed_item({ x: 30, y: 9 });`,
+    { worldObjectTargets: [] },
+    readOf([...readRows({ x: 30, y: 9, w: 1, h: 1 }, "twig")]),
+  );
+  assert.equal(
+    firstRefusalOf(result),
+    "plan_script_reading_outside_the_submitted_snapshot:remove_placed_item.expectedTargetId:worldObjectTargets:30,9",
   );
 });
 

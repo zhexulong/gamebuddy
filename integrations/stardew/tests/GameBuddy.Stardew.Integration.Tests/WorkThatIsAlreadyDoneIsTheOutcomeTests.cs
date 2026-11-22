@@ -309,14 +309,109 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
         receipt.Evidence.Should().Contain("already_tapped", "the clause travels in the receipt as well as in the code");
     }
 
+    /// <summary>
+    /// A CLEARING SWING THAT NAMES NEITHER THE TARGET NOR THE SLOT RESOLVES BOTH FROM THE TILE, and its receipt quotes no
+    /// inventory index for a slot nobody sent.
+    ///
+    /// <para>
+    /// THIS IS THE SHAPE A PLAN OUTSIDE THE SNAPSHOT'S WINDOW COMPILES TO. Every published clearing family lives six tiles
+    /// from the actor (<c>ExecutionManager.TargetDiscoveryRadius</c>), so a node over a strip the session read with a
+    /// rectangle has no row to copy either reading out of: the scythe's SLOT is no more in the snapshot than the weed's
+    /// identity is, and the handler answers both - the claim selects the tool and the tile mints the identity. The
+    /// declaration that permits it is <see cref="FarmhandActionArgument.ResolvedAtExecution"/> on <c>slot</c>, and this is
+    /// the reading of it that has to hold end to end.
+    /// </para>
+    /// <para>
+    /// AND IT SAYS NOTHING ABOUT A SLOT THAT WAS NOT NAMED. The scythe sits in slot 3 and the request names no slot at all;
+    /// a receipt that printed `slot=0` would tell the companion its index was wrong when it sent none, so the absence
+    /// travels as <c>-1</c> - the Mod's own word for "no slot" (<c>ResolveLiveSlot</c>, <c>DeclaredToolResolution</c>) -
+    /// and the slot the SELECTION used is the one the success path already publishes.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ASwingGivenNeitherTargetNorSlotResolvesBothFromTheTile()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(3, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceWeed(x: 3, y: 2);
+        world.Actor.Stamina = 0f;
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("cut_weeds"), "cut_weeds_unnamed_unslotted", "cut_weeds", 3, 2, expectedTargetId: null, slot: null);
+
+        receipt.ReasonCode.Should().Be(
+            "insufficient_stamina",
+            "the request got past the tool claim and the tile's identity mint and was stopped by the body's own "
+                + $"precondition; a claim that could not find a scythe would have answered tool_not_owned instead: {receipt.Evidence}");
+        receipt.Evidence.Should().Contain("target=3,2", "the swing names the tile it was asked about");
+        receipt.Evidence.Should().NotContain("slot=-1", "a slot nobody sent is not a slot to report");
+    }
+
+    /// <summary>
+    /// A SWING WHOSE CLAIM THE PACK CANNOT ANSWER SAYS SO, AND QUOTES NO SLOT NOBODY SENT.
+    ///
+    /// <para>
+    /// The refusal is the resolver's own word - <c>tool_not_owned:scythe</c>, the code every declared-tool action has
+    /// always answered an unsatisfiable claim with, so no second vocabulary is invented for the omission. What the
+    /// evidence must NOT do is name an inventory index: the companion sent none, so `slot=0` would read as "your slot was
+    /// wrong" and send it to fix a number it never wrote. The Mod's `-1` is its existing word for "no slot named".
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ASwingWhoseClaimThePackCannotAnswerNamesTheToolAndQuotesNoSlotItWasNotGiven()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.StandAt(2, 2);
+        world.PlaceWeed(x: 3, y: 2);
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("cut_weeds"), "cut_weeds_no_scythe", "cut_weeds", 3, 2, expectedTargetId: null, slot: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be(
+            "tool_not_owned:scythe",
+            "the row's own claim is what the pack was asked about, so the refusal names the tool rather than the request");
+        receipt.Evidence.Should().Contain("slot=-1", "no slot was named, and the Mod says that with its own word for it");
+        receipt.Evidence.Should().NotContain("slot=0", "index 0 is a real slot, and quoting it would name one nobody sent");
+    }
+
+    /// <summary>
+    /// THE SAME DECLARATION OVER A TREE IS STILL A REFUSAL, and it names the tile.
+    ///
+    /// <para>
+    /// A <c>break_rock</c> swing whose request named no target over a tile holding a TREE is not made legal by the fact that
+    /// nobody had to send a slot: the mint's answer is the world's, and it says which kind stood there instead. That is the
+    /// half of the declaration a plan cannot see - the rectangle read is a PERMISSION about what stood there when she
+    /// looked, and the promise is kept here, on the tile, by name.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ABreakRockSwingGivenNoTargetOrSlotOverATreeRefusesAndNamesTheTile()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(3, typeof(StardewValley.Tools.Pickaxe), "(T)Pickaxe", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceTree(x: 3, y: 2);
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("break_rock"), "break_rock_unnamed_tree", "break_rock", 3, 2, expectedTargetId: null, slot: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "a pickaxe swing and a tree are not the same work");
+        receipt.ReasonCode.Should().Be("break_rock_target_changed:stone:tree", "the action removes a stone; the tile carries a tree");
+        receipt.Evidence.Should().Contain("named_tile=3,2", "the refusal names the tile the caller asked about");
+        receipt.Evidence.Should().Contain("found=tree", "and the kind it found there, in the vocabulary the rows publish");
+    }
+
     /// <summary>The request as the plan compiler emits it, through the handler the production router dispatches to.</summary>
-    private static LocalExecutionReceipt Request(ExecutionManager manager, string requestId, string action, int x, int y, string? expectedTargetId)
+    /// <param name="slot">
+    /// The backpack slot the request names, or null for the shape a plan emits once the action's own row declares its tool
+    /// slot resolved at execution (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>).
+    /// </param>
+    private static LocalExecutionReceipt Request(ExecutionManager manager, string requestId, string action, int x, int y, string? expectedTargetId, int? slot = 0)
     {
         var request = new BridgeExecutionRequest(
             requestId,
             $"{requestId}_idem",
             action,
-            new BridgeExecutionArgs { X = x, Y = y, Slot = 0, ExpectedTargetId = expectedTargetId },
+            new BridgeExecutionArgs { X = x, Y = y, Slot = slot, ExpectedTargetId = expectedTargetId },
             1,
             DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeMilliseconds());
         IFarmhandActionHandler handler = string.Equals(action, "till_soil", StringComparison.Ordinal)

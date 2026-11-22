@@ -743,22 +743,52 @@ public sealed class BodyProgramAuthorityTests
         reopened.Snapshot.Programs.Single().Program.Nodes.Single().DerivedResourceClaims.Should().Contain("tool:scythe", "tool:scythe");
     }
 
+    /// <summary>
+    /// THE DECLARATION IS THE ONE THAT DECIDES, AND THIS IS ITS READING AT THE JOURNAL'S DOOR.
+    ///
+    /// <para>
+    /// <c>cut_weeds</c> declares both <c>slot</c> and <c>expectedTargetId</c> resolved at execution, so a node that names
+    /// neither is a complete node: the handler takes the slot its own <c>tool:scythe</c> claim selects and mints the
+    /// weed's identity from the tile at the moment it swings. This used to assert the opposite - a `cut_weeds` node without
+    /// a slot was `invalid_arguments:cut_weeds` - which made the surface's own permission unexecutable and left a plan over a
+    /// tile the submit-moment snapshot holds no row for impossible to write.
+    /// </para>
+    /// <para>
+    /// AND A NODE THE DECLARATION STILL BOUNDS IS REFUSED BY THE SAME CODE PATH: `y` is required on every tile action, so
+    /// dropping it is what that diagnostic is for - the assertion below would pass on a verifier that refused everything,
+    /// which is why the accepted case sits beside it.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument()
+    public void ProjectedWeedNodeWithNeitherItsToolSlotNorItsIdentityIsAdmittedAndOneThatDropsItsTileIsRefused()
     {
         BodyProgramActionCatalog catalog = FarmhandBodyProgramCatalogProjection.Create().Catalog!;
-        ActionProgramCandidate candidate = new("weed_clear_a", new[]
+        var store = new MemoryStore();
+        OpenBodyProgramJournalAuthority authority = Open(store, catalog: catalog);
+
+        ActionProgramCandidate complete = new("weed_clear_a", new[]
         {
-            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(withSlot: false), Array.Empty<string>(), Bindings()),
+            new ActionProgramCandidateNode("first", "cut_weeds", WeedArguments(withSlot: false, withTargetId: false), Array.Empty<string>(), Bindings()),
+        });
+        authority.Verify(complete).Accepted.Should().BeTrue(
+            "the row declares both readings resolved at execution, so a node carrying only the tile is complete");
+
+        Dictionary<string, BodyProgramRuntimeValue> withoutY = new(StringComparer.Ordinal)
+        {
+            ["x"] = new("integer", "20"),
+        };
+        ActionProgramCandidate incomplete = new("weed_clear_b", new[]
+        {
+            new ActionProgramCandidateNode("first", "cut_weeds", withoutY, Array.Empty<string>(), Bindings()),
         });
 
-        BodyProgramVerificationReport verification = Open(catalog: catalog).Verify(candidate);
+        BodyProgramVerificationReport verification = authority.Verify(incomplete);
 
         verification.Accepted.Should().BeFalse();
         BodyProgramDiagnostic diagnostic = verification.Diagnostics.Should().ContainSingle().Subject;
         diagnostic.Code.Should().Be("invalid_arguments:cut_weeds");
         diagnostic.NodeId.Should().Be("first");
-        diagnostic.Message.Should().Contain("slot");
+        diagnostic.Message.Should().Contain("y", "the diagnostic names the argument the row still requires");
         BridgeProtocol.IsReasonCode(diagnostic.Code).Should().BeTrue();
     }
 
@@ -2101,14 +2131,14 @@ public sealed class BodyProgramAuthorityTests
     private static IReadOnlyDictionary<string, ActionProgramBinding> Bindings(params object[] values) => values.Chunk(2).ToDictionary(pair => (string)pair[0], pair => (ActionProgramBinding)pair[1], StringComparer.Ordinal);
     private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> RuntimeMap(string key, long value) => new Dictionary<string, BodyProgramRuntimeValue>(StringComparer.Ordinal) { [key] = new("integer", value.ToString(System.Globalization.CultureInfo.InvariantCulture)) };
     /// <summary>The declared arguments of the projected `cut_weeds` descriptor; `slot` is the equipped scythe's.</summary>
-    private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> WeedArguments(bool withSlot = true)
+    private static IReadOnlyDictionary<string, BodyProgramRuntimeValue> WeedArguments(bool withSlot = true, bool withTargetId = true)
     {
         Dictionary<string, BodyProgramRuntimeValue> arguments = new(StringComparer.Ordinal)
         {
             ["x"] = new("integer", "20"),
             ["y"] = new("integer", "12"),
-            ["expectedTargetId"] = new("string", "weed_20_12"),
         };
+        if (withTargetId) arguments["expectedTargetId"] = new("string", "weed_20_12");
         if (withSlot) arguments["slot"] = new("integer", "1");
         return arguments;
     }
