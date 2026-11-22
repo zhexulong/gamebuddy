@@ -826,6 +826,11 @@ public sealed partial class ModEntry : Mod
         // genuinely cannot host it still refuses BY NAME (`fixture_map_cannot_hold_animal_building` when there was
         // ground and no road, `fixture_native_local_play_session_animal_site_missing` when there was no ground at all)
         // rather than quietly dropping the animal half the rotation still asks for.
+        //
+        // AND THE GROUND IS JUDGED AS THE FARM IT IS, not as the farm nobody has swept: the search now clears what a
+        // published action clears (see `PlaySessionAnimalFootprintWall`) and says how many tiles it took
+        // (`cleared=`), because `object=2332` of 5195 candidates on `round93` was the farm's own debris and a player
+        // builds on a swept patch. The barn's ten extra tiles were only half of that refusal.
         InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
         // The hay belongs to that house and travels in the pack rather than on the ground, so it is placed with the
         // animal: the two are one `animals_pets` Given and nothing may arm half of it.

@@ -306,10 +306,32 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // could only be found by re-reading this search - it cost three relaunches. Each gate that can refuse a
         // footprint tile is therefore named with the tile it refused, and every refusal is COUNTED per rule, so the
         // log says "one rule eliminated everything" instead of leaving an operator to guess.
+        //
+        // THE RULES ARE NOT A LIST IN THIS FILE ANY MORE. A tile is judged by what the map holds (`TileOccupancy.Of`) and
+        // by whether a published action clears it (`ClearingActionSurface.ClearersOf` over the catalogue), so the words a
+        // refusal prints are the vocabulary's own - a weed stopped being a wall, and asking a hand-written set of gate
+        // names here would keep passing while the search answered a different question. What is pinned is that the search
+        // asks THOSE TWO authorities and prints the tile and the rule it refused, which is what makes the reading
+        // diagnosable. The population behaviour is `AnimalBuildingSiteGroundTests`'.
         string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
-        foreach (string gate in new[] { "off_map", "object", "terrain_feature", "building", "not_placeable" })
-            search.Should().Contain($"\"{gate}\"", $"the site search must name the {gate} gate that refused a tile");
+        string source = ReadFixtureSource();
+        // The first wall of a footprint is asked ONCE per candidate through one helper, so the admission and the re-ask
+        // after the clearing cannot break at different tiles: `PlaySessionAnimalFootprintWall` is the classifier, and this
+        // is the loop over the footprint that calls it.
+        search.Should().Contain(
+            "PlaySessionAnimalFootprintFirstWall(farm, footprint, out Vector2 refusedTile, out bool clearing)",
+            "every footprint tile is judged by the one classifier, not by a presence test beside it");
+        search.Should().NotContain("farm.objects.ContainsKey",
+            "an object being there is not a reason the house cannot be built: what clears it is asked instead");
+        string firstWall = InitializerBody("private static string? PlaySessionAnimalFootprintFirstWall(");
+        firstWall.Should().Contain("PlaySessionAnimalFootprintWall(location, tile, out _, out string clearer)");
+        firstWall.Should().Contain("clearing |= clearer.Length > 0;", "a tile a published action opens is clearing, not a wall");
+        source.Should().Contain("TileOccupancy.Of(location, (int)tile.X, (int)tile.Y)",
+            "the occupant word is the one the rectangle query and the `where.occupant` filter answer in");
+        source.Should().Contain("ClearingActionSurface.ClearersOf(occupant, FarmhandActionCatalog.Registrations)",
+            "whether that occupant is a wall is the catalogue's own `Clears` declaration, not a second table");
         search.Should().Contain("blocked=", "the refusal publishes the blocked reasons, not only the free count");
+        search.Should().Contain("@{refusedTile.X},{refusedTile.Y}", "a refusal names the tile it refused, not only a code");
         // The tally, under the SAME names the gates answer with - one spelling per fact.
         search.Should().Contain("eliminated=", "the refusal counts the candidates each rule eliminated");
         search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, refusal)");
@@ -317,6 +339,14 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
             "string rule = PlaySessionAnimalRule(rejection);",
             "a candidate that got as far as the probe is counted under the rule that refused THAT candidate");
         search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, rule)");
+        // AND WHAT THE SEARCH CLEARED is part of the same reading: a number that only says how much ground was left
+        // would hide the farm the fixture swept to get it.
+        search.Should().Contain("ClearPlaySessionAnimalFootprint(farm, footprint, clearedKinds, out string? failingClearing)");
+        search.Should().Contain("cleared_total={clearedTotal}", "the refusal says how many tiles the search took off the farm");
+        search.Should().Contain("cleared_kinds=", "and of what, in the vocabulary's own words");
+        search.Should().Contain("cleared={cleared}", "each blocked/rejected entry carries the tiles IT needed cleared");
+        search.Should().Contain("PlaySessionAnimalClearingFailedRefusal",
+            "a clearing that did not come free is named rather than silently skipped");
     }
 
     [Fact]

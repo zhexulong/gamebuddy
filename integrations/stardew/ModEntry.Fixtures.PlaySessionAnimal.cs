@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Buildings;
+using StardewValley.TerrainFeatures;
 using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
@@ -163,7 +166,7 @@ public sealed partial class ModEntry
     private void InstallNativeLocalPlaySessionAnimalGiven(Farmer player, Farm farm, Vector2 startTile, Vector2? mustRemainReachable)
     {
         Building barn = new(PlaySessionAnimalBuildingType, Vector2.Zero);
-        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, barn, startTile, mustRemainReachable, out _, out string refusalMessage))
+        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, barn, startTile, mustRemainReachable, out _, out int cleared, out string refusalMessage))
         {
             // NO SITE IS A REFUSAL, NOT A WORLD WITH ONE ANIMAL FEWER. This used to log a warning and return, and that
             // line is exactly how an animal house could disappear with every gate still green: `tend_the_animals` kept
@@ -270,7 +273,7 @@ public sealed partial class ModEntry
         this.Monitor.Log(
             "GameBuddy native-local-player initialized play-session animal Given before bridge attachment: "
                 + $"building={barn.buildingType.Value};origin={barn.tileX.Value},{barn.tileY.Value};door={door.X},{door.Y};"
-                + $"start={startTile.X},{startTile.Y};walkable_after={walkableAfter};"
+                + $"start={startTile.X},{startTile.Y};walkable_after={walkableAfter};cleared={cleared};"
                 + $"family={PlaySessionAnimalGivenFamily};family_targets=1;animal={animal.myID.Value};type={animal.type.Value};"
                 + $"tile={(int)animal.Tile.X},{(int)animal.Tile.Y};adult={animal.isAdult().ToString().ToLowerInvariant()};"
                 + $"friendship={animal.friendshipTowardFarmer.Value};was_pet={animal.wasPet.Value.ToString().ToLowerInvariant()};"
@@ -341,21 +344,43 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The first free footprint whose REAL building leaves the day its ground and its route, measured on the farm.
+    /// The first footprint the day's own ground and route survive, measured on the farm.
     ///
     /// <para>
-    /// Three facts, each one a live reading rather than a guess: the footprint is on the map with no building, object or
-    /// terrain feature on it and does not cover the tile the session starts on; the session's start still belongs to a
-    /// walkable piece of at least <see cref="PlaySessionMinimumComponentTiles"/> tiles with the building standing on it;
-    /// and <see cref="RejectsThePlaySessionAnimalBuilding"/> passes - the door has an approach the start can walk to and
-    /// the porch still reaches the field.
+    /// Four facts, each one a live reading rather than a guess: every footprint tile is empty ground (or a tile a
+    /// published action clears, and this search then clears it); the footprint does not cover the tile the session starts
+    /// on; the session's start still belongs to a walkable piece of at least
+    /// <see cref="PlaySessionMinimumComponentTiles"/> tiles with the building standing on it; and
+    /// <see cref="RejectsThePlaySessionAnimalBuilding"/> passes - the door has an approach the start can walk to and the
+    /// porch still reaches the field.
+    /// </para>
+    ///
+    /// <para>
+    /// A TILE IS JUDGED BY WHAT THE MAP HOLDS AND WHAT THE ACTION CATALOGUE DOES ABOUT IT, in the ONE vocabulary
+    /// <c>TileOccupancy.Of</c> answers and the ONE join `ClearingActionSurface.ClearersOf` is: a weed, a stone or a twig
+    /// is not ground the farm lacks, it is ground a player opens before building, and the search CLEARS it instead of
+    /// counting it as a wall. Measured `round93` (2026-11-22): `object=2332` of 5195 candidates - the farm's own debris,
+    /// held against a house a player would simply have swept clear. What stays a wall is what no published action opens
+    /// AT ALL, or only by spending a destructive swing: the objects-layer `object` whose own action is not a way through
+    /// (forage, a machine, a chest), a grassy tuft or a crop the catalogue marks destructive, a fruit tree, a bush, and a
+    /// kind the vocabulary names without a clearer. A tree, a stump and a clump are NOT walls: `chop_tree`, `chop_stump`,
+    /// `clear_debris` and `break_resource_clump` all declare them, non-destructively.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT IT CLEARS IS WHAT IT THEN STANDS THE HOUSE ON. A footprint measured as available and then handing the
+    /// placement a weed would refuse itself at `barn.ReloadBuildingData`/`updateLayout`, so the occupant is taken out of
+    /// the layer the classifier read it from and the tile is re-read before the candidate is probed: a clearing that does
+    /// not come free is `clearing_failed`, counted per candidate and left behind rather than placed on. The count of
+    /// tiles each candidate needed `cleared` travels with its entry and with the accepted site, so the arm log says what
+    /// the fixture did to the farm.
     /// </para>
     ///
     /// <para>
     /// THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET, and that ground is UNTILLED: the play-session
     /// Given spreads no soil (a fixture may not pre-satisfy the hoeing a task asks for - see
     /// `InitializeNativeLocalPlaySessionFixture`'s own rule), so a field tile carries a terrain feature only where the
-    /// MAP put one - a tree, a bush, a boulder. Any of those, an object, a building or a not-placeable tile still
+    /// MAP put one. A building, an object with its own action, a destructive-only occupant or a not-placeable tile still
     /// refuses the candidate, by name.
     /// </para>
     ///
@@ -376,11 +401,13 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// THE READING answers what each rule refused: `eliminated` counts the candidates EACH rule refused
-    /// (`terrain_feature=...,object=...,arm_refused=...`), `blocked`/`rejected` name the first few with their tiles, and
-    /// `footprints` counts the candidates the emptiness rules admitted. A bare `footprints=0` distinguishes none of them -
-    /// it reads the same whether the farm has no room or one rule refuses every tile in the world - which is what made
-    /// round93's refusal answerable only by re-reading this file.
+    /// THE READING answers what each rule refused: `eliminated` counts the candidates EACH rule refused (`object=...,
+    /// no_safe_clear:grass:cut_grass=..., arm_refused=...`, in the vocabulary's own words), `blocked`/`rejected` name the
+    /// first few with their tiles, `cleared_total`/`cleared_kinds` count the tiles THIS SEARCH removed from the farm, and
+    /// `footprints` counts the candidates whose ground the house could actually take - the ground the farm already had and
+    /// the ground the search cleared, told apart by the `cleared=` on each entry. A bare `footprints=0` distinguishes none
+    /// of them - it reads the same whether the farm has no room or one rule refuses every tile in the world - which is
+    /// what made round93's refusal answerable only by re-reading this file.
     /// </para>
     ///
     /// <para>
@@ -396,9 +423,11 @@ public sealed partial class ModEntry
         Vector2 startTile,
         Vector2? mustRemainReachable,
         out Vector2 site,
+        out int clearedTiles,
         out string refusalMessage)
     {
         site = Vector2.Zero;
+        clearedTiles = 0;
         refusalMessage = "no_candidate";
         xTile.Layers.Layer? back = farm.map?.GetLayer("Back");
         if (back is null)
@@ -408,6 +437,12 @@ public sealed partial class ModEntry
         }
         int footprints = 0;
         int tried = 0;
+        // WHAT THE WHOLE SEARCH TOOK OFF THE FARM, beside the count the accepted site reports: a candidate refused after
+        // its ground was cleared still cost it, and the refusal is the only message that can say so.
+        int clearedTotal = 0;
+        // WHAT THE SEARCH ITSELF TOOK OFF THE FARM, keyed by the occupant word it read: the answer to "how much work did
+        // the fixture do", which a cleared site otherwise hides.
+        Dictionary<string, int> clearedKinds = new(StringComparer.Ordinal);
         // HOW MANY CANDIDATES EACH RULE ELIMINATED, not just a count of the survivors. round93's refusal was
         // `free_footprints=0;rejected=none`, which reads the same whether the farm has no room left or ONE rule refuses
         // every tile in the world - and it was the second. The tally is keyed by the gate names themselves, so the
@@ -430,22 +465,7 @@ public sealed partial class ModEntry
             building.tileX.Value = candidate.X;
             building.tileY.Value = candidate.Y;
             List<Vector2> footprint = PlaySessionAnimalFootprint(building, candidate);
-            string? refusal = null;
-            Vector2 refusedTile = Vector2.Zero;
-            foreach (Vector2 tile in footprint)
-            {
-                refusal = !farm.isTileOnMap(tile) ? "off_map"
-                    : farm.objects.ContainsKey(tile) ? "object"
-                    : farm.terrainFeatures.ContainsKey(tile) ? "terrain_feature"
-                    : farm.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y)) ? "building"
-                    : !farm.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true) ? "not_placeable"
-                    : null;
-                if (refusal is not null)
-                {
-                    refusedTile = tile;
-                    break;
-                }
-            }
+            string? refusal = PlaySessionAnimalFootprintFirstWall(farm, footprint, out Vector2 refusedTile, out bool clearing);
             if (refusal is not null)
             {
                 CountPlaySessionAnimalRefusal(eliminated, refusal);
@@ -461,26 +481,44 @@ public sealed partial class ModEntry
                 CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalStartTileRefusal);
                 continue;
             }
+            // THE CLEARING THE ADMISSION ABOVE ASSUMED, RUN BEFORE THE HOUSE STANDS. A footprint measured as available
+            // and then handed to the placement with a weed still on it would refuse itself at `updateLayout`, so the
+            // ground the search just certified is made the ground it described.
+            int cleared = 0;
+            if (clearing)
+            {
+                cleared = ClearPlaySessionAnimalFootprint(farm, footprint, clearedKinds, out string? failingClearing);
+                clearedTotal += cleared;
+                if (failingClearing is not null)
+                {
+                    CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalClearingFailedRefusal);
+                    if (blocked.Count < 8)
+                        blocked.Add($"{candidate.X},{candidate.Y}:{PlaySessionAnimalClearingFailedRefusal}:{failingClearing};cleared={cleared}");
+                    continue;
+                }
+            }
+            // THE TILE THAT WAS CLEARED IS JUDGED AGAIN, because a weed under a tilled tile comes free of the object layer
+            // and leaves ground the house still may not take - which `not_placeable` now says instead of being hidden by
+            // the occupant that was just removed.
+            refusal = clearing ? PlaySessionAnimalFootprintFirstWall(farm, footprint, out refusedTile, out _) : null;
+            if (refusal is not null)
+            {
+                CountPlaySessionAnimalRefusal(eliminated, refusal);
+                if (blocked.Count < 8)
+                    blocked.Add($"{candidate.X},{candidate.Y}@{refusedTile.X},{refusedTile.Y}:{refusal};cleared={cleared}");
+                continue;
+            }
+            // A FOOTPRINT IS GROUND THE HOUSE CAN STAND ON, whether the farm already had it clear or the search cleared
+            // it: the two are told apart by `cleared=`, not by leaving one of them out of the count.
             footprints += 1;
-            // Stand the real building on the real farm, ask the composed world's own question, and take it down again.
-            // The same footprint measured with stones on it asked a different question and got a different answer.
-            //
-            // FINISHED, because that is how the world will hold it: an under-construction footprint answers the collision
-            // question for a work site (`Building.isTilePassable` short-circuits on it), so the door and animal-door tiles
-            // would read differently here than after the day has built it.
-            building.daysOfConstructionLeft.Value = 0;
-            farm.buildings.Add(building);
-            int fieldComponent = WalkableComponentSize(farm, startTile);
-            string? rejection = fieldComponent >= PlaySessionMinimumComponentTiles
-                ? RejectsThePlaySessionAnimalBuilding(player, farm, building, startTile, mustRemainReachable)
-                : $"{PlaySessionAnimalFieldComponentRefusal}:{fieldComponent}";
-            farm.buildings.Remove(building);
+            string? rejection = ProbePlaySessionAnimalFootprint(player, farm, building, startTile, mustRemainReachable);
             if (rejection is not null)
             {
                 string rule = PlaySessionAnimalRule(rejection);
                 CountPlaySessionAnimalRefusal(eliminated, rule);
                 // Bounded, because a farm has thousands of candidate origins and the reason only has to be readable.
-                if (rejected.Count < 8) rejected.Add($"{candidate.X},{candidate.Y}:{rejection}");
+                if (rejected.Count < 8)
+                    rejected.Add(cleared > 0 ? $"{candidate.X},{candidate.Y}:{rejection};cleared={cleared}" : $"{candidate.X},{candidate.Y}:{rejection}");
                 int progress = PlaySessionAnimalRefusalProgress(rule);
                 if (progress > bestProgress)
                 {
@@ -491,10 +529,13 @@ public sealed partial class ModEntry
                 continue;
             }
             site = new Vector2(candidate.X, candidate.Y);
+            clearedTiles = cleared;
             return true;
         }
         string reading = $"candidates={candidates.Count};tried={tried};"
             + $"eliminated={(eliminated.Count == 0 ? "none" : string.Join("|", eliminated.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")))};"
+            + $"cleared_total={clearedTotal};"
+            + $"cleared_kinds={(clearedKinds.Count == 0 ? "none" : string.Join("|", clearedKinds.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")))};"
             + $"rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))};"
             + $"blocked={(blocked.Count == 0 ? "none" : string.Join("|", blocked))}";
         // NO FOOTPRINT AT ALL is a map with no ground for the house; footprints that were all refused is a map with
@@ -508,8 +549,185 @@ public sealed partial class ModEntry
     /// <summary>The refusal a building uses when its footprint would cover the tile the session starts on.</summary>
     private const string PlaySessionAnimalStartTileRefusal = "start_tile";
 
+    /// <summary>
+    /// The first wall in a footprint, with the tile it stands on and whether the footprint needs the search's clearing.
+    ///
+    /// <para>
+    /// ONE PASS, ONE ANSWER, so the two places that ask the question - the admission and the re-ask after the clearing -
+    /// cannot drift into two loops that break at different tiles or count different walls.
+    /// </para>
+    /// </summary>
+    private static string? PlaySessionAnimalFootprintFirstWall(
+        GameLocation location,
+        IEnumerable<Vector2> footprint,
+        out Vector2 refusedTile,
+        out bool clearing)
+    {
+        refusedTile = Vector2.Zero;
+        clearing = false;
+        foreach (Vector2 tile in footprint)
+        {
+            string? wall = PlaySessionAnimalFootprintWall(location, tile, out _, out string clearer);
+            if (wall is not null)
+            {
+                refusedTile = tile;
+                return wall;
+            }
+            clearing |= clearer.Length > 0;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Stand the REAL building on the real farm, ask the composed world's own question, and take it down again - the same
+    /// footprint measured with stones on it asked a different question and got a different answer.
+    ///
+    /// <para>
+    /// FINISHED, because that is how the world will hold it: an under-construction footprint answers the collision question
+    /// for a work site (<c>Building.isTilePassable</c> short-circuits on it), so the door and animal-door tiles would read
+    /// differently here than after the day has built it.
+    /// </para>
+    /// </summary>
+    private string? ProbePlaySessionAnimalFootprint(
+        Farmer player,
+        Farm farm,
+        Building building,
+        Vector2 startTile,
+        Vector2? mustRemainReachable)
+    {
+        building.daysOfConstructionLeft.Value = 0;
+        farm.buildings.Add(building);
+        int fieldComponent = WalkableComponentSize(farm, startTile);
+        string? rejection = fieldComponent >= PlaySessionMinimumComponentTiles
+            ? RejectsThePlaySessionAnimalBuilding(player, farm, building, startTile, mustRemainReachable)
+            : $"{PlaySessionAnimalFieldComponentRefusal}:{fieldComponent}";
+        farm.buildings.Remove(building);
+        return rejection;
+    }
+
     /// <summary>The refusal a site gets when its door has no approach the session's start can walk to.</summary>
     private const string PlaySessionAnimalNoApproachRefusal = "no_approach";
+
+    /// <summary>
+    /// A tile the house may not stand on for a reason that has nothing to do with what occupies it: the map's own edge, a
+    /// building already there, or ground `CanItemBePlacedHere` refuses. Named here so the three are told apart from the
+    /// occupants.
+    /// </summary>
+    internal const string PlaySessionAnimalOffMapRefusal = "off_map";
+
+    private const string PlaySessionAnimalBuildingRefusal = "building";
+
+    internal const string PlaySessionAnimalNotPlaceableRefusal = "not_placeable";
+
+    /// <summary>
+    /// A tile the clearing would have had to destroy: the only published action that removes its occupant is declared
+    /// destructive (<see cref="FarmhandClearingDeclaration.Destructive"/>), so the swing would level what the player put
+    /// there. A fixture may not spend that, and it says which swing instead of quietly skipping the tile.
+    /// </summary>
+    internal const string PlaySessionAnimalDestructiveClearRefusal = "no_safe_clear";
+
+    /// <summary>
+    /// A tile the search TRIED to clear and did not come free of. Its own name rather than the occupant that is left
+    /// behind, because "the clearing failed" and "nothing can clear this" are two different reports.
+    /// </summary>
+    internal const string PlaySessionAnimalClearingFailedRefusal = "clearing_failed";
+
+    /// <summary>
+    /// What stands on one footprint tile, as the SEARCH sees it: the wall rule that refuses the tile, or null with the
+    /// occupant word and the published action that clears it (`clearer` empty when the tile is already free).
+    ///
+    /// <para>
+    /// ONE VOCABULARY, TWO READS. What stands on the tile is <see cref="TileOccupancy.Of"/> - the same classifier the
+    /// rectangle query and the `where.occupant` filter answer with - and whether that is a wall is
+    /// <see cref="ClearingActionSurface.ClearersOf"/> over <see cref="FarmhandActionCatalog.Registrations"/>, the join the
+    /// route refusals already use. No kind-to-action table lives here, and none could: the answer is the catalogue's own
+    /// `Clears` declaration, so a row that stops accepting an occupant stops opening this tile in the same commit.
+    /// </para>
+    /// <para>
+    /// THE ORDER IS OCCUPANT FIRST, THEN WHAT THE MAP ALLOWS. A weed on water is the weed's report, not `not_placeable`'s,
+    /// because the weed is what the caller can act on before the second question is asked. The three non-occupant walls
+    /// keep their own words: `off_map` for a tile the map does not hold, `building` for a house already standing there, and
+    /// `not_placeable` for water, a cliff, a floor the map does not accept an object on, or a tile a clump's own footprint
+    /// covers without holding its origin.
+    /// </para>
+    /// </summary>
+    internal static string? PlaySessionAnimalFootprintWall(GameLocation location, Vector2 tile, out string occupant, out string clearer)
+    {
+        occupant = TileOccupantKind.None;
+        clearer = string.Empty;
+        if (!location.isTileOnMap(tile))
+            return PlaySessionAnimalOffMapRefusal;
+        occupant = TileOccupancy.Of(location, (int)tile.X, (int)tile.Y);
+        if (occupant != TileOccupantKind.None)
+        {
+            IReadOnlyList<FarmhandClearingOffer> clearers =
+                ClearingActionSurface.ClearersOf(occupant, FarmhandActionCatalog.Registrations);
+            if (clearers.Count == 0)
+                return occupant;
+            // NOTHING IT WOULD HAVE TO DESTROY IS OPENED: the destructive filter is
+            // `FarmhandForEachHealing.ClearanceFor`'s own rule, in this file's words rather than a second spelling of the
+            // question.
+            FarmhandClearingOffer? safe = clearers.FirstOrDefault(offer => !offer.Destructive);
+            if (safe is null)
+                return $"{PlaySessionAnimalDestructiveClearRefusal}:{occupant}:{clearers[0].ActionId}";
+            clearer = safe.ActionId;
+            return null;
+        }
+        if (location.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y)))
+            return PlaySessionAnimalBuildingRefusal;
+        return location.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true)
+            ? null
+            : PlaySessionAnimalNotPlaceableRefusal;
+    }
+
+    /// <summary>
+    /// The clearing <see cref="PlaySessionAnimalFootprintWall"/> just promised, performed on the layers the classifier
+    /// read and then RE-READ tile by tile.
+    ///
+    /// <para>
+    /// It is the occupant's removal, not a swing: this fixture has no actor, no pack and no stamina, and the day's own
+    /// actions are the only bodies allowed to earn a receipt. What a player's swing leaves is what this leaves - the
+    /// occupant out of the layer it stood in (`Object.performToolAction`'s weed and stone branches, the clump's own
+    /// teardown) - and the reading states it as `cleared=`, so the log never claims the farm came that way.
+    /// </para>
+    /// <para>
+    /// A REMOVAL THAT DOES NOT COME FREE IS NAMED, NOT SHRUGGED AT: the tile is re-asked through the same classifier, and
+    /// an occupant still standing there returns the running count with the failure detail
+    /// (`<occupant>@x,y:-><what is left>`). The caller refuses that candidate and moves on - the alternative was to
+    /// place the house on whatever the removal missed.
+    /// </para>
+    /// </summary>
+    internal static int ClearPlaySessionAnimalFootprint(
+        GameLocation location,
+        IEnumerable<Vector2> footprint,
+        Dictionary<string, int> clearedKinds,
+        out string? failure)
+    {
+        int cleared = 0;
+        failure = null;
+        foreach (Vector2 tile in footprint)
+        {
+            string occupant = TileOccupancy.Of(location, (int)tile.X, (int)tile.Y);
+            if (occupant == TileOccupantKind.None)
+                continue;
+            if (!location.objects.Remove(tile)
+                && !location.terrainFeatures.Remove(tile)
+                && location.resourceClumps.RemoveWhere(clump => clump.occupiesTile((int)tile.X, (int)tile.Y)) == 0)
+            {
+                failure = $"{occupant}@{tile.X},{tile.Y}:not_in_the_layer_that_named_it";
+                return cleared;
+            }
+            string after = TileOccupancy.Of(location, (int)tile.X, (int)tile.Y);
+            if (after != TileOccupantKind.None)
+            {
+                failure = $"{occupant}@{tile.X},{tile.Y}:->{after}";
+                return cleared;
+            }
+            clearedKinds[occupant] = clearedKinds.TryGetValue(occupant, out int seen) ? seen + 1 : 1;
+            cleared += 1;
+        }
+        return cleared;
+    }
 
     /// <summary>
     /// The refusal a site gets when its door is approachable but the farmhouse can no longer walk to that porch - the
