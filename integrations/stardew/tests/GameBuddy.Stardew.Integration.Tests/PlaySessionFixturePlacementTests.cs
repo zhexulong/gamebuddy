@@ -76,4 +76,59 @@ public sealed class PlaySessionFixturePlacementTests
         Point[] exits = { new(11, 12), new(13, 12), new(12, 11), new(12, 13) };
         exits.Should().OnlyContain(exit => !ordered.Contains(exit));
     }
+
+    /// <summary>The tiles a 7x4 barn stands on when its top-left corner is at this origin.</summary>
+    private static List<Vector2> BarnFootprint(Point origin)
+    {
+        List<Vector2> footprint = new();
+        for (int offsetX = 0; offsetX < 7; offsetX++)
+            for (int offsetY = 0; offsetY < 4; offsetY++)
+                footprint.Add(new Vector2(origin.X + offsetX, origin.Y + offsetY));
+        return footprint;
+    }
+
+    [Fact]
+    public void TheDoorRingIsTheFourTilesBesideTheDoorAndNeverTheDoorItself()
+    {
+        // The ring is one fact with two readers - the animal Given's `no_approach` probe and the prop rule that keeps
+        // the ring clear - so it lives in one place. The door tile itself is a building tile nobody stands on.
+        Point door = new(4, 2);
+        PlaySessionFixturePlacement.DoorApproachTiles(door)
+            .Should()
+            .BeEquivalentTo(
+                new[] { new Point(4, 3), new Point(3, 2), new Point(5, 2), new Point(4, 1) },
+                "an actor stands BESIDE a door, never on it");
+    }
+
+    [Fact]
+    public void NoPropMayTakeTheAnimalHousesGroundOrItsDoorRing()
+    {
+        // The house is sited BEFORE the props because it needs a 7x4 footprint of clean ground, and the props are
+        // placed nearest the start first - which is where the house was sited. Without this rule the next prop takes a
+        // tile the house is reached from, and the arm-time porch assertion then refuses a world whose every part was
+        // placed lawfully. Measured 2026-11-22: two free footprints on the whole farm, one `no_approach`, one refused
+        // because the building's own tile sat across the road home.
+        Point origin = new(8, 9);
+        Point door = new(12, 12);
+        Point start = new(5, 5);
+        List<Vector2> footprint = BarnFootprint(origin);
+        List<Point> footprintTiles = footprint.Select(tile => new Point((int)tile.X, (int)tile.Y)).ToList();
+        HashSet<Point> held = PlaySessionFixturePlacement.TilesHeldByBuilding(footprint, door);
+
+        // The footprint entire, plus the ring - the tiles the ring shares with the footprint are the same tiles.
+        held.Should().Contain(footprintTiles, "the barn's own ground is not placeable");
+        held.Should().Contain(new Point(12, 13), "and neither is the one ring tile outside its footprint");
+        held.Should().BeSubsetOf(footprintTiles.Concat(PlaySessionFixturePlacement.DoorApproachTiles(door)));
+
+        List<Point> ordered = PlaySessionFixturePlacement.PlaceableCandidates(Grid(20, 20), start, held).ToList();
+        ordered.Should().NotBeEmpty("the rule must not refuse the world");
+        ordered.Should().NotIntersectWith(held, "a prop on the house or on its door ring spends the road to the animals");
+        // The tiles beside the house stay placeable: the exclusion is the building's own ground and ring, not a
+        // neighbourhood. Without the held list the very ring tiles ARE candidates, which is what makes this a rule.
+        ordered.Should().Contain(new Point(7, 8));
+        ordered.Should().Contain(new Point(13, 13));
+        PlaySessionFixturePlacement.PlaceableCandidates(Grid(20, 20), start)
+            .Should()
+            .Contain(PlaySessionFixturePlacement.DoorApproachTiles(door), "the ring is free ground until the house owns it");
+    }
 }

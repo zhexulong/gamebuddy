@@ -314,8 +314,71 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         search.Should().Contain("eliminated=", "the refusal counts the candidates each rule eliminated");
         search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, refusal)");
         search.Should().Contain(
-            "CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalRule(rejection))",
+            "string rule = PlaySessionAnimalRule(rejection);",
             "a candidate that got as far as the probe is counted under the rule that refused THAT candidate");
+        search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, rule)");
+    }
+
+    [Fact]
+    public void ARefusalSaysWhetherTheSearchExhaustedTheMap()
+    {
+        // `tried` is what separates the two readings a refusal used to collapse into one: a search that tried every
+        // candidate and found no usable site, and a search that gave up halfway. `candidates` is what the pool offered
+        // and `tried` what the loop actually judged, so `tried < candidates` is a search that stopped early.
+        string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
+        search.Should().Contain("tried += 1;", "every candidate the loop met is counted, not only the ones it refused");
+        search.Should().Contain("List<Point> candidates = PlaySessionFixturePlacement.PlaceableCandidates(");
+        search.Should().Contain("candidates={candidates.Count}", "the refusal says how many candidates the pool offered");
+        search.Should().Contain("tried={tried}", "and how many of them the search actually judged");
+        search.Should().Contain("footprints={footprints}", "and how many of them the emptiness rules admitted");
+        // The two failures are two codes because they are two repairs: no ground at all, versus ground with no approach
+        // or no road. The second names the least-bad candidate - a house one repair away from usable is a different
+        // finding from a map with nowhere to put one.
+        search.Should().Contain("fixture_map_cannot_hold_animal_building:footprints={footprints};best={best.X},{best.Y}:{bestRule};");
+        search.Should().Contain("fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};footprints={footprints};");
+        search.Should().Contain("PlaySessionAnimalRefusalProgress(rule)", "the candidate named is ranked by how far it got");
+
+        // The ranking is keyed on the rules that can refuse a FREE footprint, under the same names the tally counts.
+        string source = ReadFixtureSource();
+        foreach (string rule in new[]
+        {
+            "PlaySessionAnimalArmRefusedRefusal",
+            "PlaySessionAnimalNoApproachRefusal",
+            "PlaySessionAnimalFieldComponentRefusal",
+        })
+        {
+            source.Should().Contain($"{rule} =>", $"{rule} must be ranked: it is one of the three answers a free footprint can get");
+        }
+    }
+
+    [Fact]
+    public void ThePropSearchKeepsTheAnimalHousesGroundAndDoorRing()
+    {
+        // The house is sited first BECAUSE the props spend the ground nearest the crossroads - so the props must also
+        // know where it stands. A prop on the footprint or on the ring its door is used from is the defect the props
+        // already answer one layer down (a prop on the actor's own ring), and the arm-time porch assertion can only see
+        // it after the whole day has been laid out.
+        string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
+        body.Should().Contain("animalHouseHeldTiles", "the prop loops are handed the tiles the house holds");
+        body.Should().Contain(
+            "fixture_native_local_play_session_animal_house_tiles_unrecorded",
+            "a prop search running without that list is a search that does not know the house is there");
+
+        // EVERY prop family, read out of the initializer rather than listed here, so the next family added has to pass
+        // the list too instead of quietly spending the house's ring.
+        var calls = Regex.Matches(body, @"FindNativeLocalPlaySessionSpot\([^)]*\)").Cast<Match>().ToArray();
+        calls.Should().NotBeEmpty("the props are placed by that search");
+        calls.Select(call => call.Value)
+            .Should()
+            .OnlyContain(
+                call => call.EndsWith(", animalHouseHeldTiles)", StringComparison.Ordinal),
+                "every prop placement keeps the house's footprint and door ring free");
+
+        // ...and the animal Given records them from the building that actually stands there, through the one spelling
+        // of the ring the `no_approach` probe also reads.
+        string source = ReadFixtureSource();
+        source.Should().Contain("this.nativeLocalPlaySessionAnimalHeldTiles = PlaySessionFixturePlacement.TilesHeldByBuilding(");
+        source.Should().Contain("PlaySessionFixturePlacement.DoorApproachTiles(door)");
     }
 
     [Fact]

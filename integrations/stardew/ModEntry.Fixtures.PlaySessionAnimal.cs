@@ -97,7 +97,7 @@ public sealed partial class ModEntry
         bool approach = PlaySessionAnimalDoorApproach(farm, building)
             .Any(tile => NativeLocalMultiDayWalkableFrom(farm, from, new Point((int)tile.X, (int)tile.Y)));
         if (!approach)
-            return $"no_approach:door={door.X},{door.Y}";
+            return $"{PlaySessionAnimalNoApproachRefusal}:door={door.X},{door.Y}";
         // The composed world is the one that insists on the route home; a plain play-session world has no such promise to
         // keep, and asking it there would refuse every site in a farm whose porch and crossroads are different pieces.
         if (mustRemainReachable is null)
@@ -111,7 +111,7 @@ public sealed partial class ModEntry
         }
         catch (InvalidOperationException refused)
         {
-            return $"arm_refused:door={door.X},{door.Y};{refused.Message}";
+            return $"{PlaySessionAnimalArmRefusedRefusal}:door={door.X},{door.Y};{refused.Message}";
         }
     }
 
@@ -163,14 +163,15 @@ public sealed partial class ModEntry
     private void InstallNativeLocalPlaySessionAnimalGiven(Farmer player, Farm farm, Vector2 startTile, Vector2? mustRemainReachable)
     {
         Building barn = new(PlaySessionAnimalBuildingType, Vector2.Zero);
-        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, barn, startTile, mustRemainReachable, out _, out string measured))
+        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, barn, startTile, mustRemainReachable, out _, out string refusalMessage))
         {
             // NO SITE IS A REFUSAL, NOT A WORLD WITH ONE ANIMAL FEWER. This used to log a warning and return, and that
             // line is exactly how an animal house could disappear with every gate still green: `tend_the_animals` kept
-            // being rotated into a world with no animal in it. The reason is measured - how many free footprints were
-            // tried and why each was refused - so "there is nowhere to put it" can be answered rather than assumed.
-            throw new InvalidOperationException(
-                $"fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};{measured}");
+            // being rotated into a world with no animal in it. The search builds the whole message, because WHICH refusal
+            // it is depends on what it measured: no free footprint at all is a map with no ground for the house, while
+            // footprints that were all refused is a map with ground and no approach or no road - and those are different
+            // repairs, named by different codes rather than by one `site_missing` a relaunch cannot tell apart.
+            throw new InvalidOperationException(refusalMessage);
         }
         barn.ReloadBuildingData(forUpgrade: false, forConstruction: true);
         barn.daysOfConstructionLeft.Value = 0;
@@ -195,6 +196,12 @@ public sealed partial class ModEntry
         // Remembered for the composed world's own assertion, which runs after the props exist (see
         // `nativeLocalPlaySessionAnimalDoor`): the door of the house that actually stands here.
         this.nativeLocalPlaySessionAnimalDoor = door;
+        // AND THE GROUND IT NEEDS KEPT FREE. The props below are placed nearest the crossroads first, which is exactly
+        // where this house was sited, so without this list the next prop takes a tile the house is reached from and the
+        // arm-time porch assertion then refuses a world whose parts were each placed lawfully.
+        this.nativeLocalPlaySessionAnimalHeldTiles = PlaySessionFixturePlacement.TilesHeldByBuilding(
+            PlaySessionAnimalFootprint(barn, new Point(barn.tileX.Value, barn.tileY.Value)),
+            door);
 
         FarmAnimal animal = new(PlaySessionAnimalType, Game1.random.Next(int.MaxValue), player.UniqueMultiplayerID);
         house.adoptAnimal(animal);
@@ -360,11 +367,26 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// `measured` is the refusal as a reading, in two shapes that answer different questions: `eliminated` counts the
-    /// candidates EACH rule refused (`terrain_feature=...,object=...,arm_refused=...`), `blocked`/`rejected` name the first
-    /// few with their tiles, and `free_footprints` counts the candidates the emptiness rules admitted. A bare
-    /// `free_footprints=0` distinguishes none of them - it reads the same whether the farm has no room or one rule refuses
-    /// every tile in the world - which is what made round93's refusal answerable only by re-reading this file.
+    /// `refusalMessage` is the whole message the caller throws, and its CODE is chosen by what this search measured,
+    /// because the two failures are different repairs: `fixture_native_local_play_session_animal_site_missing` when the
+    /// map offers no free footprint at all (no ground for the house), and `fixture_map_cannot_hold_animal_building`
+    /// when footprints existed and every one of them was refused by a probe (ground, but no approach or no road). The
+    /// second names the LEAST-BAD candidate, because a house one repair away from usable is not the same finding as a
+    /// map with nowhere to put one.
+    /// </para>
+    ///
+    /// <para>
+    /// THE READING answers what each rule refused: `eliminated` counts the candidates EACH rule refused
+    /// (`terrain_feature=...,object=...,arm_refused=...`), `blocked`/`rejected` name the first few with their tiles, and
+    /// `footprints` counts the candidates the emptiness rules admitted. A bare `footprints=0` distinguishes none of them -
+    /// it reads the same whether the farm has no room or one rule refuses every tile in the world - which is what made
+    /// round93's refusal answerable only by re-reading this file.
+    /// </para>
+    ///
+    /// <para>
+    /// `candidates` counts the origin candidates the pool offered and `tried` counts the ones this loop actually judged,
+    /// so the reading says whether the search exhausted the map or stopped early: `tried &lt; candidates` is a search that
+    /// gave up, and every free footprint it admits is probed on the farm before the next candidate is considered.
     /// </para>
     /// </summary>
     private bool TryFindNativeLocalPlaySessionAnimalSite(
@@ -374,17 +396,18 @@ public sealed partial class ModEntry
         Vector2 startTile,
         Vector2? mustRemainReachable,
         out Vector2 site,
-        out string measured)
+        out string refusalMessage)
     {
         site = Vector2.Zero;
-        measured = "no_candidate";
+        refusalMessage = "no_candidate";
         xTile.Layers.Layer? back = farm.map?.GetLayer("Back");
         if (back is null)
         {
-            measured = "farm_has_no_back_layer";
+            refusalMessage = "farm_has_no_back_layer";
             return false;
         }
-        int freeFootprints = 0;
+        int footprints = 0;
+        int tried = 0;
         // HOW MANY CANDIDATES EACH RULE ELIMINATED, not just a count of the survivors. round93's refusal was
         // `free_footprints=0;rejected=none`, which reads the same whether the farm has no room left or ONE rule refuses
         // every tile in the world - and it was the second. The tally is keyed by the gate names themselves, so the
@@ -392,11 +415,18 @@ public sealed partial class ModEntry
         Dictionary<string, int> eliminated = new(StringComparer.Ordinal);
         List<string> rejected = new();
         List<string> blocked = new();
-        foreach (Point candidate in PlaySessionFixturePlacement.PlaceableCandidates(
-            Enumerable.Range(0, back.LayerWidth)
-                .SelectMany(x => Enumerable.Range(0, back.LayerHeight).Select(y => new Point(x, y))),
-            new Point((int)startTile.X, (int)startTile.Y)))
+        // The LEAST-BAD refused footprint, for the map-level refusal below.
+        Point best = default;
+        string? bestRule = null;
+        int bestProgress = 0;
+        List<Point> candidates = PlaySessionFixturePlacement.PlaceableCandidates(
+                Enumerable.Range(0, back.LayerWidth)
+                    .SelectMany(x => Enumerable.Range(0, back.LayerHeight).Select(y => new Point(x, y))),
+                new Point((int)startTile.X, (int)startTile.Y))
+            .ToList();
+        foreach (Point candidate in candidates)
         {
+            tried += 1;
             building.tileX.Value = candidate.X;
             building.tileY.Value = candidate.Y;
             List<Vector2> footprint = PlaySessionAnimalFootprint(building, candidate);
@@ -431,7 +461,7 @@ public sealed partial class ModEntry
                 CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalStartTileRefusal);
                 continue;
             }
-            freeFootprints += 1;
+            footprints += 1;
             // Stand the real building on the real farm, ask the composed world's own question, and take it down again.
             // The same footprint measured with stones on it asked a different question and got a different answer.
             //
@@ -443,27 +473,66 @@ public sealed partial class ModEntry
             int fieldComponent = WalkableComponentSize(farm, startTile);
             string? rejection = fieldComponent >= PlaySessionMinimumComponentTiles
                 ? RejectsThePlaySessionAnimalBuilding(player, farm, building, startTile, mustRemainReachable)
-                : $"field_component_too_small:{fieldComponent}";
+                : $"{PlaySessionAnimalFieldComponentRefusal}:{fieldComponent}";
             farm.buildings.Remove(building);
             if (rejection is not null)
             {
-                CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalRule(rejection));
+                string rule = PlaySessionAnimalRule(rejection);
+                CountPlaySessionAnimalRefusal(eliminated, rule);
                 // Bounded, because a farm has thousands of candidate origins and the reason only has to be readable.
                 if (rejected.Count < 8) rejected.Add($"{candidate.X},{candidate.Y}:{rejection}");
+                int progress = PlaySessionAnimalRefusalProgress(rule);
+                if (progress > bestProgress)
+                {
+                    bestProgress = progress;
+                    best = candidate;
+                    bestRule = rule;
+                }
                 continue;
             }
             site = new Vector2(candidate.X, candidate.Y);
             return true;
         }
-        measured = $"free_footprints={freeFootprints};"
+        string reading = $"candidates={candidates.Count};tried={tried};"
             + $"eliminated={(eliminated.Count == 0 ? "none" : string.Join("|", eliminated.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")))};"
             + $"rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))};"
             + $"blocked={(blocked.Count == 0 ? "none" : string.Join("|", blocked))}";
+        // NO FOOTPRINT AT ALL is a map with no ground for the house; footprints that were all refused is a map with
+        // ground but no approach or no road. Different repairs, so different codes.
+        refusalMessage = bestRule is null
+            ? $"fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};footprints={footprints};{reading}"
+            : $"fixture_map_cannot_hold_animal_building:footprints={footprints};best={best.X},{best.Y}:{bestRule};start={startTile.X},{startTile.Y};{reading}";
         return false;
     }
 
     /// <summary>The refusal a building uses when its footprint would cover the tile the session starts on.</summary>
     private const string PlaySessionAnimalStartTileRefusal = "start_tile";
+
+    /// <summary>The refusal a site gets when its door has no approach the session's start can walk to.</summary>
+    private const string PlaySessionAnimalNoApproachRefusal = "no_approach";
+
+    /// <summary>
+    /// The refusal a site gets when its door is approachable but the farmhouse can no longer walk to that porch - the
+    /// building's own footprint can be what stands in the way.
+    /// </summary>
+    private const string PlaySessionAnimalArmRefusedRefusal = "arm_refused";
+
+    /// <summary>The refusal a site gets when standing on it cuts the session's own ground below the minimum.</summary>
+    private const string PlaySessionAnimalFieldComponentRefusal = "field_component_too_small";
+
+    /// <summary>
+    /// How far a refused footprint got, so a map-level refusal names the LEAST-BAD one rather than the first met: a
+    /// house whose door has an approach and only its road home is broken is one repair away from a usable world, a
+    /// house with no approach at all is another, and a footprint that shrank the session's own ground is the worst of
+    /// the three. Ties go to the candidate met first, which is the one nearest the crossroads.
+    /// </summary>
+    private static int PlaySessionAnimalRefusalProgress(string rule) => rule switch
+    {
+        PlaySessionAnimalArmRefusedRefusal => 3,
+        PlaySessionAnimalNoApproachRefusal => 2,
+        PlaySessionAnimalFieldComponentRefusal => 1,
+        _ => 0,
+    };
 
     /// <summary>The tiles the building would stand on if its top-left corner were at this origin.</summary>
     private static List<Vector2> PlaySessionAnimalFootprint(Building building, Point origin)
@@ -477,16 +546,15 @@ public sealed partial class ModEntry
 
     /// <summary>
     /// The tiles an actor stands on to use the building's door, asked by <see cref="RejectsThePlaySessionAnimalBuilding"/>:
-    /// an approach tile the session's start can walk to is what "the door is usable" means.
+    /// an approach tile the session's start can walk to is what "the door is usable" means. The ring itself is
+    /// <see cref="PlaySessionFixturePlacement.DoorApproachTiles"/>, because the same four tiles are what the props may
+    /// not take once the house stands on them.
     /// </summary>
     private static List<Vector2> PlaySessionAnimalDoorApproach(GameLocation farm, Building building)
     {
         Point door = building.getPointForHumanDoor();
-        return new[]
-            {
-                new Vector2(door.X, door.Y + 1), new Vector2(door.X - 1, door.Y),
-                new Vector2(door.X + 1, door.Y), new Vector2(door.X, door.Y - 1),
-            }
+        return PlaySessionFixturePlacement.DoorApproachTiles(door)
+            .Select(tile => new Vector2(tile.X, tile.Y))
             .Where(tile => farm.isTileOnMap(tile))
             .ToList();
     }

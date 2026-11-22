@@ -35,7 +35,39 @@ internal static class PlaySessionFixturePlacement
     internal static bool IsInStartRing(Point tile, Point start) =>
         Math.Abs(tile.X - start.X) + Math.Abs(tile.Y - start.Y) <= 1;
 
-    /// <summary>The tiles a fixture may place a prop on, in the order it must try them.</summary>
-    internal static IEnumerable<Point> PlaceableCandidates(IEnumerable<Point> allTiles, Point start) =>
-        OrderByDistanceFrom(allTiles.Where(tile => !IsInStartRing(tile, start)), start);
+    /// <summary>
+    /// The four tiles an actor stands on to use a building's door, one per cardinal step. The door tile itself is a
+    /// building tile nobody stands on, so this ring is what "the door can be used" means - asked by the animal
+    /// Given's `no_approach` rule and reserved against the props by <see cref="TilesHeldByBuilding"/>.
+    /// </summary>
+    internal static IReadOnlyList<Point> DoorApproachTiles(Point door) => new[]
+    {
+        new Point(door.X, door.Y + 1),
+        new Point(door.X - 1, door.Y),
+        new Point(door.X + 1, door.Y),
+        new Point(door.X, door.Y - 1),
+    };
+
+    /// <summary>
+    /// The tiles a standing building holds against this fixture's props: its own footprint, and the ring its door is
+    /// used from. A prop on either is the defect the start-ring rule answers one layer down - a road the day needs,
+    /// spent on scenery - and the arm-time assertion can only see it after the whole day has been laid out.
+    /// </summary>
+    internal static HashSet<Point> TilesHeldByBuilding(IEnumerable<Vector2> footprint, Point door) =>
+        footprint
+            .Select(tile => new Point((int)tile.X, (int)tile.Y))
+            .Concat(DoorApproachTiles(door))
+            .ToHashSet();
+
+    /// <summary>
+    /// The tiles a fixture may place a prop on, in the order it must try them. <paramref name="held"/> is what a
+    /// building already standing in this world owns; a prop may never take one of those tiles.
+    /// </summary>
+    internal static IEnumerable<Point> PlaceableCandidates(
+        IEnumerable<Point> allTiles,
+        Point start,
+        IReadOnlySet<Point>? held = null) =>
+        OrderByDistanceFrom(
+            allTiles.Where(tile => !IsInStartRing(tile, start) && (held is null || !held.Contains(tile))),
+            start);
 }

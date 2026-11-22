@@ -99,6 +99,9 @@ public sealed class ModEntryFixtureBoundaryTests
         "PlaySessionAnimalFootprint", "PlaySessionAnimalDoorApproach",
         // The refusal reading: one tally per rule, and the rule name inside a rejection message.
         "CountPlaySessionAnimalRefusal", "PlaySessionAnimalRule",
+        // How far a refused footprint got, so a map-level refusal names the least-bad candidate rather than whichever
+        // one the search met first (`arm_refused` beat `no_approach` beat `field_component_too_small`).
+        "PlaySessionAnimalRefusalProgress",
         // The placeable check: the coop's own footprint, its door's approach and the arm-time assertion itself, all
         // measured on the real building standing on the real farm rather than on a footprint simulated with stones.
         "RejectsThePlaySessionAnimalBuilding",

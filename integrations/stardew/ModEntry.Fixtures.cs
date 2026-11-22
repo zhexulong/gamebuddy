@@ -50,6 +50,13 @@ public sealed partial class ModEntry : Mod
     private Point? nativeLocalPlaySessionAnimalDoor;
 
     /// <summary>
+    /// The tiles the animal house holds against the play-session props: its own footprint and the ring its door is used
+    /// from. Recorded by the animal Given and read by the prop search, because a prop on one of them spends the only
+    /// road the day has to its animals - and the arm-time assertion can only see that once the day has been laid out.
+    /// </summary>
+    private HashSet<Point>? nativeLocalPlaySessionAnimalHeldTiles;
+
+    /// <summary>
     /// Whether the declared hand has been placed. The initializer entry is called on every tick, and a declared Given
     /// must exist exactly once.
     /// </summary>
@@ -800,14 +807,22 @@ public sealed partial class ModEntry : Mod
         // a run that never arms measures nothing. The barn needs ten tiles more than the coop it replaced, which is the
         // whole difference between a 6x3 footprint the props left room for and a 7x4 one they did not.
         //
-        // Nothing else about it moves: the house is measured against the same world (the dirt the fixture has spread,
-        // the door, the shipping bin, the start tile) and with the same predicate as before, so a farm that genuinely
-        // cannot host it still refuses BY NAME (`fixture_native_local_play_session_animal_site_missing`) rather than
-        // quietly dropping the animal half the rotation still asks for.
+        // Nothing else about it moves: the house is measured against the same world (the ground the fixture has left
+        // untilled, the door, the shipping bin, the start tile) and with the same predicate as before, so a farm that
+        // genuinely cannot host it still refuses BY NAME (`fixture_map_cannot_hold_animal_building` when there was
+        // ground and no road, `fixture_native_local_play_session_animal_site_missing` when there was no ground at all)
+        // rather than quietly dropping the animal half the rotation still asks for.
         InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
         // The hay belongs to that house and travels in the pack rather than on the ground, so it is placed with the
         // animal: the two are one `animals_pets` Given and nothing may arm half of it.
         InstallNativeLocalPlaySessionHayGiven(player);
+        // THE HOUSE KEEPS THE GROUND IT STANDS ON AND THE RING ITS DOOR IS USED FROM. The order below gives the house
+        // its pick, and the props are placed nearest the crossroads first - which is where it was sited - so a prop may
+        // still take the only tile the house is reached from and the arm-time porch assertion then refuses a world
+        // whose every part was placed lawfully. The list is REQUIRED rather than optional: a prop search running
+        // without it would be a search that does not know the house is there, and that is the defect one layer down.
+        HashSet<Point> animalHouseHeldTiles = this.nativeLocalPlaySessionAnimalHeldTiles
+            ?? throw new InvalidOperationException("fixture_native_local_play_session_animal_house_tiles_unrecorded");
         Vector2? standingTile = null;
         // The prop counts come from the ground, not from a literal. The walkable piece around the start is the
         // budget: on the multi-day farm it is 123 tiles, not the 5200-tile map, and every literal count tried
@@ -849,7 +864,7 @@ public sealed partial class ModEntry : Mod
         int treesPlaced = 0;
         for (int index = 0; index < treesCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? treeSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? treeSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
             if (treeSpot is null)
             {
                 this.Monitor.Log(
@@ -868,7 +883,7 @@ public sealed partial class ModEntry : Mod
         int foragePlaced = 0;
         for (int index = 0; index < forageCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? forageSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? forageSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
             if (forageSpot is null)
             {
                 this.Monitor.Log(
@@ -894,9 +909,10 @@ public sealed partial class ModEntry : Mod
         if (forageCount > 0 && foragePlaced <= 0)
             throw new InvalidOperationException("fixture_native_local_play_session_forage_count_missing");
 
+        int weedsPlaced = 0;
         for (int index = 0; index < weedCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
                 if (spot is null)
                 {
                     // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
@@ -915,23 +931,27 @@ public sealed partial class ModEntry : Mod
             provisioned.Add($"weed={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
+            weedsPlaced += 1;
         }
+        int grassPlaced = 0;
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
             provisioned.Add($"grass={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
+            grassPlaced += 1;
         }
         // Ten stones, because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
         // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
         // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
         // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
+        int stonesPlaced = 0;
         for (int index = 0; index < stoneCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
             if (spot is null)
             {
                 // The search ran out of ground that can host a stone without splitting the farm. A world with
@@ -947,6 +967,7 @@ public sealed partial class ModEntry : Mod
             provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
+            stonesPlaced += 1;
         }
         // A few mature crops, placed explicitly (the scythe-crop fixture's recipe) rather than
         // seeded across the field, so harvesting is one of several things to do instead of the only
@@ -955,7 +976,7 @@ public sealed partial class ModEntry : Mod
         int plantedCrops = 0;
         for (int index = 0; index < cropCount; index += 1)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable);
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
                 if (spot is null)
                 {
                     // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
@@ -1041,7 +1062,17 @@ public sealed partial class ModEntry : Mod
             player.warpFarmer(new StardewValley.Warp(0, 0, farm.NameOrUniqueName, (int)startTile.X, (int)startTile.Y, false));
         provisioned.Add($"standing={(int)startTile.X},{(int)startTile.Y}");
         this.nativeLocalPlayerFixtureInitialized = true;
-        this.Monitor.Log($"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; planted_crops=4; standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; no chain is scripted and production alone acts.", LogLevel.Info);
+        this.Monitor.Log(
+            $"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; "
+                + $"ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; "
+                + $"standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; "
+                // WHAT THE PROP LOOPS ACTUALLY PLACED, counted as they ran and reported here, because "the ground ran
+                // out" was previously only visible as a warning for the family that ran short.
+                + $"props=trees:{treesPlaced},forage:{foragePlaced},weeds:{weedsPlaced},grass:{grassPlaced},stones:{stonesPlaced},crops:{plantedCrops},kept:{provisionedTiles.Count}; "
+                // The tiles the house holds: its footprint and the ring its door is used from. The prop search may not
+                // take one, so this count is what says the day's road to its animals was never spent on scenery.
+                + $"animal_house_held={animalHouseHeldTiles.Count}; no chain is scripted and production alone acts.",
+            LogLevel.Info);
     }
 
     /// <summary>
@@ -1675,192 +1706,6 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
         }
         return null;
     }
-    /// <summary>
-    /// The same emptiness/standability probe the other fixtures use, with one addition: the target may not sit
-    /// in the actor's own neighbourhood, so this fixture's props cannot fence the companion in. The session
-    /// starts on the first placement's standing tile, and everything placed after it keeps that tile's cardinal
-    /// ring clear.
-    /// </summary>
-    /// <summary>
-    /// How many stones the play-session world carries. Six, not ten: the stamina story needs "more than a
-    /// handful" - but the count is bounded by geometry, not by stamina: with the strict predicate every prop
-    /// also consumes a standable neighbour, so four stones plus four weeds, four crops and a grass still fit
-    /// while six do not (measured 2026-10-24: stone_spot_missing after the predicate was unified).
-    /// the walkable graph too fragmented to keep every prop's approach open.
-    /// </summary>
-    /// <summary>Fewest walkable tiles the door must keep after each placement, set from the state before props.</summary>\n    private static int PlaySessionDoorComponentFloor;\n\n    private const int STONE_COUNT = 4;
-
-    /// <summary>Fewest walkable tiles a play-session start must belong to.</summary>
-    ///
-    /// The scenario places several props, each needing a standable neighbour, so a pocket of five tiles cannot
-    /// host the day. 64 is comfortably above the requirement and far below the farm's own 1623, so it refuses
-    /// pockets without refusing a legitimately small farm.
-    private const int PlaySessionMinimumComponentTiles = 64;
-
-    /// <summary>
-    /// Trees the play-session world offers.
-    ///
-    /// Two of the daily tasks name things a bare farm does not contain, and a task the world cannot satisfy measures
-    /// the world rather than the companion. Kept small and fixed: these are props for a day?s work, not a forest - the
-    /// prop budget for stones/weeds/crops is derived from walkable ground, but a tree consumes that ground, so the
-    /// count has to be a decision rather than a fraction.
-    /// </summary>
-    private const int PlaySessionTreeCount = 3;
-
-    /// <summary>Forage items the play-session world offers; same reasoning as the trees.</summary>
-    private const int PlaySessionForageCount = 3;
-
-    /// <summary>
-    /// The forage items a fixture plants, in the order they are tried, declared ONCE for all three fixtures that
-    /// place one: the play-session world, the native-local `pickup_forage` scenario and its HostAutomation twin. Each
-    /// site keeps its own placement loop because their failure policies differ (the dedicated fixtures throw when
-    /// their one target is missing; the play-session degrades like every other prop family), but the ids are one fact
-    /// and must not be three hand-written copies.
-    ///
-    /// They are tried in this order rather than one being assumed: `dropObject` is the engine's own placement test and
-    /// it refuses a tile for reasons no caller can predict from the tile alone, and `isForage()` filters any id whose
-    /// content record does not call it forage.
-    /// </summary>
-    private static readonly string[] FixtureForageItemIds =
-        new[] { "(O)399", "(O)396", "(O)398", "(O)16", "(O)18", "(O)20", "(O)22" };
-
-    /// <summary>Fewest walkable tiles the door must keep after each placement.</summary>
-    ///
-    /// Set from the state BEFORE any prop exists. Measured 2026-10-25: the door's component was 1623 tiles and
-    /// the field was inside it; after six props it was 122 and the field was outside. A tile in the middle of a
-    /// field costs one tile of opening, the only bridge between two halves costs fifteen hundred.
-    private static int PlaySessionDoorComponentFloor;
-
-    private static int WalkableComponentSize(GameLocation farm, Vector2 from)
-    {
-        var layer = farm.map.Layers[0];
-        HashSet<Point>? tiles = StardewBodyController.ReachableTiles(
-            new Point((int)from.X, (int)from.Y),
-            Math.Max(8000, layer.LayerWidth * layer.LayerHeight),
-            tile =>
-                tile.X >= 0
-                && tile.Y >= 0
-                && tile.X < layer.LayerWidth
-                && tile.Y < layer.LayerHeight
-                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)));
-        // An unknown size is treated as large: the placement guards still refuse a prop that cannot be walked
-        // to, so an over-generous budget cannot arm an unusable world - it can only make the search try harder.
-        return tiles?.Count ?? int.MaxValue;
-    }
-
-    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start, IReadOnlyList<Vector2>? alreadyPlaced = null, Vector2? mustRemainReachable = null)
-    {
-        int width = farm.map.Layers[0].LayerWidth;
-        int height = farm.map.Layers[0].LayerHeight;
-        // Outward from the actor's start, never inside its ring: the ordering and the exclusion are pure rules
-        // (`PlaySessionFixturePlacement`) so their properties can be pinned without a live game.
-        var candidates = PlaySessionFixturePlacement.PlaceableCandidates(
-            Enumerable.Range(0, width)
-                .SelectMany(x => Enumerable.Range(0, height).Select(y => new Point(x, y))),
-            new Point((int)start.X, (int)start.Y));
-        foreach (Point candidate in candidates)
-        {
-            Vector2 target = new(candidate.X, candidate.Y);
-            if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
-                continue;
-            // The target must be reachable too, not only the tile the actor stands on to work it. A prop whose
-            // standable neighbour is inside the actor's component can still be walled off from it, and the
-            // fail-closed check after placement then refuses the world for a prop this search should never
-            // have chosen (measured 2026-10-24: prop_unreachable_from_home:58,9).
-            // The composed-world assertion counts this fixture's own placements as blockers, so placement must
-            // ask the same question. `IsWalkableTile` runs the engine's collision test with `pathfinding: true`, which
-            // does NOT treat a stone as blocking - so a prop could be chosen on a tile the assertion then called
-            // unreachable, with no single step looking wrong. Measured 2026-10-24: the props were placed, then
-            // `home_unreachable:what=field` refused the world.
-            if (!IsReachableFromStart(farm, start, target))
-                continue;
-            // The composed-world assertion treats this fixture's own placements as blockers; placement therefore
-            // has to ask the same question, or a prop gets chosen on a tile the assertion then calls unreachable.
-            //
-            // `IsWalkableTile` runs the engine's collision test with `pathfinding: true`, which does NOT treat a
-            // stone as blocking; the assertion's predicate does. That difference is what let 6 stones and 4 crops
-            // be placed, then refused the whole day with `home_unreachable:what=field;door=66,15;target=56,11;
-            // component_tiles=123`. Both predicates are right about their own question - the bug was using one to
-            // choose and the other to judge.
-            
-            if (!IsReachableFromStart(farm, start, target))
-                continue;
-            // A placement must not isolate a prop already on the ground. Protecting only the door left the
-            // earlier props exposed: stones were placed outward from the start, each one fine on its own, until
-            // the field's walkable piece had shrunk to nine tiles and the door could no longer reach the work
-            // (measured 2026-10-24: the world was refused after every placement "succeeded").
-            //
-            // Cheap because it is bounded: at most fifteen props exist by the time the last one is placed.
-            // Protects the route the session depends on: the door. Earlier props are NOT protected here, and
-            // that is a measured decision rather than an oversight - protecting every placed prop as well
-            // refused 7 of 8 stones and then ran out of ground for the crops too, because every candidate had to
-            // satisfy several reachability floods at once. A prop cut off by a later one is handled where it can
-            // be judged: the pass after placement drops it and says which tile (see
-            // `dropped_unreachable`), which keeps the world usable and the reason visible.
-            if (alreadyPlaced is not null && alreadyPlaced.Count > 0)
-            {
-                // Nothing to do: kept as a parameter so the call sites state what they considered.
-            }
-            // A placement must not sever the route the session depends on. The start was chosen while the
-            // farm was clean, so it could reach the door; a stone between them breaks that promise without any
-            // single choice looking wrong, and the composed-world assertion then refuses the whole day
-            // (measured 2026-10-24: home_unreachable:what=field;door=66,15;target=56,11;component_tiles=123).
-            //
-            // Checked by simulating the placement's effect: an actor can no longer WALK THROUGH the target, so the
-            // route must survive with the target treated as blocked.
-            if (mustRemainReachable is { } anchor)
-            {
-                // Put the prop down for real, ask the question, and undo it if the answer is bad. Every earlier
-                // version of this guard simulated a partial world and therefore asked a question that could not
-                // fail: first it moved a prop off an empty tile, then it placed one and put it back before
-                // measuring the component.
-                StardewValley.Object? displaced = null;
-                farm.objects.TryGetValue(target, out displaced);
-                farm.objects[target] = ItemRegistry.Create<StardewValley.Object>("(O)2", 1);
-                bool stillConnected = IsReachableFromStartPessimistic(
-                    farm,
-                    start,
-                    anchor,
-                    tile => farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
-                        || farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y)));
-                // Measured 2026-10-25: six props took the door's component from 1623 tiles to 122 and dropped the
-                // field out of it. A tile in the middle of a field costs one; the only bridge between two halves
-                // costs fifteen hundred. This is the rule that refuses the second kind.
-                bool keepsDoorOpen = PlaySessionDoorComponentFloor <= 0
-                    || WalkableComponentSize(farm, anchor) >= PlaySessionDoorComponentFloor;
-                if (displaced is not null) farm.objects[target] = displaced;
-                else farm.objects.Remove(target);
-                if (!stillConnected || !keepsDoorOpen) continue;
-            }
-            Vector2[] cardinal =
-            {
-                target + new Vector2(-1f, 0f), target + new Vector2(1f, 0f),
-                target + new Vector2(0f, -1f), target + new Vector2(0f, 1f),
-            };
-            Vector2[] validStanding = cardinal
-                .Where(standing => farm.isTileOnMap(standing)
-                    && standing != start
-                    && !farm.objects.ContainsKey(standing)
-                    && !farm.terrainFeatures.ContainsKey(standing)
-                    && !farm.IsTileOccupiedBy(standing, ~CollisionMask.Farmers, CollisionMask.None, useFarmerTile: false)
-                    // Two facts, both required, both from the planner's own authority:
-                    //   * the planner will stand there (IsWalkableTile), and
-                    //   * the actor can WALK there from where the session starts (AssessReachability).
-                    // Without the second, a prop lands outside the actor's component -- measured: a crop two tiles
-                    // away with component_tiles=28 and no cardinal route, which the session read as a system
-                    // failure and re-aimed at eight times.
-                    && StardewBodyController.IsWalkableTile(farm, Game1.player, standing)
-                    && IsReachableFromStart(farm, start, standing))
-                .ToArray();
-            // Any one usable neighbour will do. Requiring EXACTLY one refused every tile of an open
-            // field (measured: 1881 free tiles, 1881 refused), because a cleared field almost never has a
-            // single approach. The first entry wins so the choice stays deterministic across runs.
-            if (validStanding.Length > 0)
-                return (target, validStanding[0]);
-        }
-        return null;
-    }
-
     private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalWeedFixtureSpot(GameLocation farm)
     {
         int width = farm.map.Layers[0].LayerWidth;
