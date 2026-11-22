@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { checkViewportPopulation } from "./check-viewport-population.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const ROOT = repositoryRoot(import.meta.url);
 const REAL_POLICY = readFileSync(join(ROOT, "dialogue-web", "tests", "viewport-policy.ts"), "utf8");
@@ -39,12 +40,12 @@ function workspace({ policy = REAL_POLICY, specs = {}, config = CONFIG_WITH_DEFA
   return { root, web, read: (options) => checkViewportPopulation({ webRoot: web, exemptions: [], ...options }) };
 }
 
-const CONFIG_WITH_DEFAULT = `import { DEFAULT_VIEWPORT } from "../../tools/tests/viewport-policy";
+const CONFIG_WITH_DEFAULT = `import { DEFAULT_VIEWPORT } from "./tests/viewport-policy";
 export default { projects: [{ name: "chromium", use: { viewport: DEFAULT_VIEWPORT } }] };
 `;
 
 const ITERATES_THE_MATRIX = `import { test } from "@playwright/test";
-import { VIEWPORT_SIZES } from "../../tools/viewport-policy";
+import { VIEWPORT_SIZES } from "./viewport-policy";
 test("a spec that measures the matrix", async ({ page }) => {
   for (const viewport of VIEWPORT_SIZES) {
     await page.setViewportSize(viewport);
@@ -54,7 +55,7 @@ test("a spec that measures the matrix", async ({ page }) => {
 `;
 
 const ITERATES_THE_PAIR = `import { test } from "@playwright/test";
-import { LAYOUT_PAIR } from "../../tools/viewport-policy";
+import { LAYOUT_PAIR } from "./viewport-policy";
 import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 test("a copy journey that varies the two layouts", async ({ page }) => {
   for (const viewport of LAYOUT_PAIR) {
@@ -168,7 +169,7 @@ test("a config that leaves the inherited cell to the device, or spells it, is re
   });
   const spelled = workspace({
     specs: { "cell.spec.ts": ONE_CELL },
-    config: `import { DEFAULT_VIEWPORT } from "../../tools/tests/viewport-policy";\nexport default { projects: [{ name: "chromium", use: { viewport: { width: 1280, height: 720 } } }] };\n`,
+    config: `import { DEFAULT_VIEWPORT } from "./tests/viewport-policy";\nexport default { projects: [{ name: "chromium", use: { viewport: { width: 1280, height: 720 } } }] };\n`,
   });
   try {
     assert.deepEqual(codes(bare.read()), ["viewport_default_undeclared"]);

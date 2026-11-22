@@ -43,6 +43,7 @@ import {
   renderCoverage,
   runCoverage,
 } from "./check-stardew-live-runner-coverage.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { CONTRACT_ROUTE, resolveStardewActionGateRoute } from "../../tools/lib/stardew-action-gate-route.mjs";
 import { STARDEW_PUBLISHED_ACTION_GATES } from "../../tools/stardew-action-gate-descriptors.mjs";
 

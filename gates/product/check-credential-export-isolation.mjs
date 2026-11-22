@@ -66,6 +66,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 

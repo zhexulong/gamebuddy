@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   credentialContainer,
   credentialPayloadPopulation,
@@ -20,9 +21,10 @@ import {
   liveSecretFields,
   patternArrays,
 } from "./check-credential-export-isolation.mjs";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
-const GATE = join(REPOSITORY_ROOT, "tools", "check-credential-export-isolation.mjs");
+const GATE = join(dirname(fileURLToPath(import.meta.url)), "check-credential-export-isolation.mjs");
 
 /**
  * The module the population is derived from, reduced to the shape that matters: an exported path
