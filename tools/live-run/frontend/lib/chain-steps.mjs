@@ -352,6 +352,14 @@ export const CHAIN_STEPS = Object.freeze([
     fact: "game/stop",
     owner: "dialogue-web/src/components/GameSurface.tsx handleGameStop",
   }),
+  /*
+   * THE THREE SCENARIOS THAT END A WORLD ARE MEASURED IN AN INVOCATION OF THEIR OWN, and this table is where a
+   * reader checks it. One mounted Host carries one world (`lib/world-invocations.mjs`: the runner pays for a
+   * `cleanup` + `launch` + `capture` per roster driver marked `ownWorld`, with the launch-chain driver first on
+   * that mount), so these three steps are produced there and nowhere else - not in the shared invocation that
+   * runs every other driver. Driver w's steps above are produced in the shared invocation AND in each of these,
+   * because w runs on every mount that needs a world brought up.
+   */
   Object.freeze({
     id: "daily-endgame",
     chain: "daily",

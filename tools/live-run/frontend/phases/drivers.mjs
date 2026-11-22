@@ -75,23 +75,23 @@ export const DRIVERS = Object.freeze([
   // a turn (driver X), the explicit endgame that must still settle in the session that saw the exit - invariant
   // 506 (driver Y), and the surface disconnecting while the game keeps running (driver Z).
   //
-  // `ownWorld` IS THE ONE FACT THAT DECIDES WHICH DRIVERS SHARE A LAUNCH, and it is `true` here because the code
-  // cannot give these three a world between them. A state driver launches only when the lifecycle holds no
-  // instance (`capture/game-surface-states.cjs` `activateAndLaunch`), and the product draws neither the launch
-  // nor the activation control while one exists (`dialogue-web/src/game-lifecycle-controls.ts:93-101`); each of
-  // these three scenarios then ENDS or OCCUPIES that single world (x kills it, y ends it, z is measured on its
-  // staying up), and the product's own step out of a world it has ended is `restart_gamebuddy` - outside the
-  // surface (`game-lifecycle-controls.ts:426-430`). So one mounted Host carries one of them, whatever the roster
-  // order: the first driver after W takes W's world, and the rest arrive at what that driver's scenario left.
+  // `ownWorld` IS THE ONE FACT THAT DECIDES WHICH DRIVERS SHARE A MOUNTED HOST, and it is `true` here because each
+  // of these three scenarios ENDS or OCCUPIES the world it is measured on (x kills it, y ends it, z is measured on
+  // its staying up). The product draws neither the launch nor the activation control while an instance exists
+  // (`dialogue-web/src/game-lifecycle-controls.ts:93-101`), and its step out of a world it has ended is
+  // `restart_gamebuddy`, outside the surface (`:426-430`) - so no two of these can be measured on one world.
   //
-  // The driver says so by name now (`world_not_owned_by_this_driver`, `capture/game-states-verdict.mjs`) instead
-  // of reporting the product defect `instance_status_never_running` for the run's own ordering - measured
-  // 2026-11-22, `.tmp/livenow-r28.log:5202,5264`. To measure one of them, give it its own mount:
-  //   node tools/live-run/frontend/run.mjs cleanup --out R
-  //   node tools/live-run/frontend/run.mjs launch  --out R
-  //   node tools/live-run/frontend/run.mjs capture --driver=<key> --force --out R
-  // Each one reports `not_measured: guardian_pipe_unreachable` on a machine with no guardian server, which is
-  // the prerequisite W already names.
+  // SO THE RUN GIVES EACH ONE A MOUNTED HOST OF ITS OWN: `lib/world-invocations.mjs` derives the split from this
+  // flag, and `run.mjs` pays for a `cleanup` + `launch` + `capture` per world-owning driver. The launch-chain
+  // driver above runs FIRST on that mount, because it is the only driver that brings a world to
+  // `attachment=attached` (`capture/w-game-launch.cjs` `driveCabinHandoff`): measured 2026-11-22 (lane YZOWN,
+  // `.tmp/lane-yzown.md`), a state driver alone on a fresh mount presses the launch control and the launch
+  // settles at `instance=running/attachment=none` after 307s and never attaches.
+  //
+  // A hand-run stepwise invocation that puts two of them on one mount still cannot split itself, and the second
+  // one says `not_measured: world_not_owned_by_this_driver` by name (`capture/game-states-verdict.mjs`) instead of
+  // reporting the product defect `instance_status_never_running` for the run's own ordering - measured 2026-11-22,
+  // `.tmp/livenow-r28.log:5202,5264`.
   { key: "x-game-death", file: "x-game-death.cjs", out: "x-game-death.txt", requiresGame: true, ownWorld: true },
   { key: "y-game-endgame", file: "y-game-endgame.cjs", out: "y-game-endgame.txt", requiresGame: true, ownWorld: true },
   {

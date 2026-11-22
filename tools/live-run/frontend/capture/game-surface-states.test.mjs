@@ -293,7 +293,10 @@ test("a world that arrived already ended is the harness's, not the product's - a
   assert.equal(reading.gap, undefined, "and no gap, so the capture phase cannot count it as blocked-by-product");
   assert.match(reading.detail, /instance=crashed\/attachment=attached/u, "the detail keeps the world it found");
   assert.match(reading.detail, /exit code 1/u, "and the fact that the ending was observed");
-  assert.match(reading.detail, /capture --driver=/u, "and the runner step that gives this driver a world");
+  // The runner step that gives it a world, named where a reader can open it: `run.mjs` pays for a `cleanup` +
+  // `launch` + `capture` per world-owning driver, and `lib/world-invocations.mjs` derives which those are.
+  assert.match(reading.detail, /run\.mjs/u, "and the runner that gives this driver a mount of its own");
+  assert.match(reading.detail, /lib\/world-invocations\.mjs/u, "and the module that derives its own invocation");
   assert.deepEqual(page.pressed, [], "an ended world is not this driver's to press anything on");
 });
 

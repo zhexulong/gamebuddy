@@ -551,7 +551,7 @@ async function settleInFlightInstance({ page, say, record, budget, state }) {
       reason: NOT_MEASURED_REASONS.worldNotOwnedByThisDriver,
       detail: `this driver needs a world it launched itself, and the lifecycle already held one that had ended: ${describeGameState(current)}${
         current.playerHostExitCode === undefined ? "" : ` with the player host's exit code ${String(current.playerHostExitCode)}`
-      }. Nothing here is a product fault and nothing was measured: a world an earlier driver's scenario ended is not this driver's to kill, end or disconnect from, and the product draws no launch control while an instance exists, so this driver launched nothing. It needs its own mounted Host - \`node tools/live-run/frontend/run.mjs cleanup\`, then \`launch\`, then \`capture --driver=<this driver>\` in that order (\`tools/live-run/frontend/phases/drivers.mjs\` \`ownWorld\`)`,
+      }. Nothing here is a product fault and nothing was measured: a world an earlier driver's scenario ended is not this driver's to kill, end or disconnect from, and the product draws no launch control while an instance exists, so this driver launched nothing. The run gives it one: \`run.mjs\` runs a \`cleanup\` + \`launch\` + \`capture\` per world-owning driver (\`lib/world-invocations.mjs\`, derived from the roster's \`ownWorld\`); this line means the invocation it was given still carried another driver's world, which is a stepwise invocation rather than a full round`,
     };
   const gap = classifyChainStop({ state: current, unchangedForMs, plateauMs: budget.plateauMs });
   if (gap !== null) {

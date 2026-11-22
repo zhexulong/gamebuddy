@@ -41,6 +41,7 @@ import {
   saveRunConfig,
 } from "./lib/config.mjs";
 import { describePhaseFailure } from "./lib/phase-failure.mjs";
+import { describeWorldInvocations, worldInvocations } from "./lib/world-invocations.mjs";
 import {
   closeProcessLedger,
   collectProcessLedger,
@@ -67,6 +68,7 @@ import {
   teardownRun,
   writeLeftoversReading,
 } from "./lib/run-owner.mjs";
+import { DRIVERS } from "./phases/drivers.mjs";
 
 const PHASES = ["check", "pin", "build", "launch", "capture", "cleanup", "report"];
 const POWER = "powershell.exe";
@@ -368,6 +370,46 @@ async function phaseCapture(paths, run, values) {
   return await runPhase([process.execPath, ...args], { logPath: paths.captureLog });
 }
 
+/**
+ * WHICH CAPTURE INVOCATIONS A FULL ROUND RUNS, and why one mount is not enough.
+ *
+ * ONE MOUNTED HOST CARRIES ONE WORLD: the product draws neither the launch nor the activation control while an
+ * instance exists, and a state driver's scenario ends or occupies the world it is measured on. So the drivers
+ * the roster marks `ownWorld` cannot share an invocation - the second one arrives at the world the first one
+ * killed and reports `not_measured: world_not_owned_by_this_driver` (measured 2026-11-22, `.tmp/livenow-r29.log`:
+ * two of the three did exactly that).
+ *
+ * The split is DERIVED from the roster (`lib/world-invocations.mjs`), never listed here: the shared invocation
+ * runs every driver that does not own a world, and each world-owning driver then gets a `cleanup` + `launch` +
+ * `capture` of its own, with the launch-chain driver ahead of it on that same mount because that driver is the
+ * one that brings a world to `attachment=attached`.
+ *
+ * `--driver=` stays the operator's selection: a world-owning driver it does not name gets no mount, and a
+ * selection that names only world-owning drivers runs no shared invocation at all.
+ */
+function captureInvocations(values) {
+  const worlds = worldInvocations(DRIVERS);
+  if (worlds.problems.length > 0)
+    throw new Error(
+      `world_invocations_refused: ${worlds.problems.map((problem) => `${problem.code} - ${problem.detail}`).join("; ")}`,
+    );
+  const operator = Array.isArray(values.drivers) && values.drivers.length > 0 ? values.drivers : null;
+  const owners = new Set(worlds.invocations.map((invocation) => invocation.driver));
+  const shared = operator === null ? [...worlds.shared] : operator.filter((key) => !owners.has(key));
+  const invocations = worlds.invocations.filter(
+    (invocation) => operator === null || operator.includes(invocation.driver),
+  );
+  const lines = [describeWorldInvocations(worlds)];
+  if (operator !== null) {
+    const unknown = operator.filter((key) => !DRIVERS.some((driver) => driver.key === key));
+    lines.push(
+      `WORLDS: --driver= selected ${operator.join(",")}: the shared invocation runs [${shared.join(",")}] and ${String(invocations.length)} world invocation(s) run [${invocations.map((invocation) => invocation.driver).join(",")}]`,
+    );
+    if (unknown.length > 0) lines.push(`WORLDS: --driver= names ${unknown.join(",")}, which the roster does not hold`);
+  }
+  return { shared: shared.length === 0 ? null : shared, invocations, lines };
+}
+
 async function phaseCleanup(paths, run) {
   const script = join(KIT_ROOT, "phases", "cleanup.ps1");
   return await runPhase(
@@ -547,11 +589,25 @@ async function main() {
 
   try {
     if (fullMode) {
+      const worlds = captureInvocations(values);
+      for (const line of worlds.lines) console.log(line);
       await runner("check", () => phaseCheck(paths, run));
       await runner("pin", () => phasePin(paths, run));
       await runner("build", () => phaseBuild(paths, run));
-      await runner("launch", () => phaseLaunch(paths, run));
-      await runner("capture", () => phaseCapture(paths, run, values));
+      if (worlds.shared !== null) {
+        await runner("launch", () => phaseLaunch(paths, run));
+        await runner("capture", () => phaseCapture(paths, run, { ...values, drivers: worlds.shared ?? undefined }));
+      }
+      for (const invocation of worlds.invocations) {
+        console.log(
+          `WORLDS: ${invocation.driver} gets a mounted Host of its own: cleanup, launch, capture --driver=${invocation.drivers.join(",")}`,
+        );
+        await runner("cleanup", () => phaseCleanup(paths, run));
+        await runner("launch", () => phaseLaunch(paths, run));
+        await runner("capture", () =>
+          phaseCapture(paths, run, { ...values, drivers: invocation.drivers, force: true }),
+        );
+      }
       await runner("cleanup", () => phaseCleanup(paths, run));
       await runner("report", () => phaseReport(paths, run));
       console.log("DONE-FULL-RUN");

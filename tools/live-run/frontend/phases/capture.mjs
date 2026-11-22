@@ -76,16 +76,24 @@ async function main() {
     `\n===== capture invocation ${new Date().toISOString()} drivers=[${selected.map((d) => d.key).join(",")}] force=${force} =====\n`,
   );
   /*
-   * One mounted Host carries one world, and these drivers' scenarios end or occupy it (the roster's `ownWorld`,
-   * derived here rather than restated). Said ONCE before the first of them runs, because the reading that
-   * follows - `world_not_owned_by_this_driver` from the second one onwards - is about this line and not about
-   * the product. Measured 2026-11-22 (`.tmp/livenow-r28.log:5202,5264`): the same ordering was reported as
+   * ONE MOUNTED HOST CARRIES ONE WORLD, and this invocation says which world it is for: the split is derived by
+   * the runner from the roster's `ownWorld` (`lib/world-invocations.mjs`), so a full round runs this phase once
+   * per world-owning driver, with the launch-chain driver ahead of it on the same mount because that is the one
+   * that brings a world to `attachment=attached`.
+   *
+   * A HAND-RUN stepwise invocation cannot split itself - it has one Host - so a second world-owning driver selected
+   * here says `not_measured: world_not_owned_by_this_driver` by name instead of reporting the product as broken.
+   * Measured 2026-11-22 (`.tmp/livenow-r28.log:5202,5264`): the same ordering was reported as
    * `blocked-by-product: instance_status_never_running`, which named the product for it.
    */
   const worldOwning = selected.filter((driver) => driver.ownWorld === true);
+  if (worldOwning.length === 1)
+    log(
+      `  WORLD: this invocation is one mounted Host, and ${worldOwning[0].key} is the only driver here that ends or occupies its world (roster \`ownWorld\`; the runner gives each such driver a mount of its own)`,
+    );
   if (worldOwning.length > 1)
     log(
-      `  WORLD: ${worldOwning.map((driver) => driver.key).join(",")} each need a world of their own, and this invocation gives them ONE mounted Host - the first to run takes it and ends or occupies it, so the rest report world_not_owned_by_this_driver (run each against its own \`launch\` to measure it)`,
+      `  WORLD: ${worldOwning.map((driver) => driver.key).join(",")} each need a world of their own, and this invocation gives them ONE mounted Host - the first to run takes it and ends or occupies it, so the rest report world_not_owned_by_this_driver. A full round does not run them together: \`run.mjs\` gives each one its own \`cleanup\` + \`launch\` + \`capture\` (\`lib/world-invocations.mjs\`)`,
     );
 
   let failed = 0;
