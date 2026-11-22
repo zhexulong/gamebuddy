@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4878, largest ExecutionManager at 28168 lines / 937 members across 53 partial(s).",
-  "revision": "5b10e0d2",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4867, largest ExecutionManager at 28162 lines / 938 members across 53 partial(s).",
+  "revision": "b8691b2c",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -101,7 +101,7 @@
       "language": "cs",
       "name": "ExecutionManager.Cancel(string,string,string)",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 751,
+      "line": 774,
       "value": 40
     },
     {
@@ -109,7 +109,7 @@
       "language": "cs",
       "name": "ExecutionManager.CompleteTravelAfterWarp()",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 1424,
+      "line": 1416,
       "value": 92
     },
     {
@@ -117,7 +117,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1156,
+      "line": 1179,
       "value": 107
     },
     {
@@ -125,7 +125,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1068,
+      "line": 1091,
       "value": 34
     },
     {
@@ -133,7 +133,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1358,
+      "line": 1381,
       "value": 99
     },
     {
@@ -173,8 +173,8 @@
       "language": "cs",
       "name": "ExecutionManager.RequestLocalDoorTransition(string,int,int,long,bool)",
       "file": "integrations/stardew/farmhandexecutioncontroller.movementactions.cs",
-      "line": 803,
-      "value": 39
+      "line": 799,
+      "value": 37
     },
     {
       "id": "cs:ExecutionManager.RequestLocalMove(string,Vector2,long?,bool)",
@@ -568,7 +568,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda13",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 1982,
+      "line": 2011,
       "value": 48,
       "reason": "the same function the record called `materializeEnter#lambda11`, at the same 48: Biome reports 48 for the callback passed to `materializeExactEnter` in both trees (`72582adf` at line 1514, HEAD at line 1522). Only the ID moved, and this gate names an anonymous function by its nearest named owner plus `anonymousOrdinal`, which counts the anonymous functions in that owner's subtree (11 at `72582adf`, 13 at HEAD). The two added are `1f9ae023`'s `tracedStep` wrappers around the recovery-journal open and the recovery-binding read. Nothing was raised: 48 stays the ceiling, and this row exists because the identity moved, not because the number did."
     },
@@ -1186,7 +1186,7 @@
       "parts": 53,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4878,
+      "value": 4867,
       "reason": "4748 -> 4755 over the same 53 parts. Three commits touched this type's partials after bfc0c628 and the arithmetic is theirs: `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member) took the `_ => throw` arm out of the facility-close projection and `f76de0b9` took four more out of the disposition and Body Program submit/query/state tables - every one of those arms named a member the switch already had, so what replaces them is the compiler's exhaustiveness check, not a new branch. An arm that threw WAS a branch, so removing five of them can only lower this number; the +7 is therefore inside `ef0d3cd3` (the fishing settle hands the body back before it restores the tool slot), whose settle now decides between `can_move`, `using_tool` and `pulling_out_of_water` by name instead of assuming the body came free. Growth in named decisions, not a raised ceiling: no catch-all survives in any of them, so the next member added to either enum is a build failure here rather than a silent word."
     },
     {
@@ -1315,8 +1315,8 @@
       "files": 52,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 28168,
-      "methods": 937,
+      "lines": 28162,
+      "methods": 938,
       "reason": "Re-recorded at d41ef50e: 907 -> 908 methods and 27036 -> 27102 lines at the same 53 parts. THE METHOD is `ef0d3cd3`'s, in `farmhandexecutioncontroller.fishingactions.cs`: `private static string DescribeHeldFishingBody(FishingRod rod)` reads `can_move`, `using_tool` and `pulling_out_of_water` back instead of assuming the body came free. THE LINES are that partial's 71 insertions and 5 deletions plus the settlement reorder in the same commit. THE RECORDED 27036 WAS ITSELF STALE-HIGH: this type's partials gained 74 net lines since bfc0c628 (fishing +66, the staged `resourcetoolactions` receipt change +8, and `bfd5871a`/`f76de0b9`'s catch-all removals 1-for-1) while the gate measures +66, so the number this pass replaces already carried 8 lines its own commit's tree did not have. The catch-all removals in those two commits cost no member and no line: five `_ => throw` arms went and the members they named were already in the switch - the compiler noticing the next member, not growth accepted."
     },
     {
