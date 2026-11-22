@@ -2019,9 +2019,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"watering_can_refill_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int hayStack)
+    /// <summary>
+    /// The trough's identity, with the two facts a request is judged against: which empty trough, and which pack stack
+    /// fills it. `bag_hay` is the ACTOR's count and is named for the actor - the trough this id names holds none - so the
+    /// raw string, which is hashed and never published, carries the same spelling as the row's `bagHay` field.
+    /// </summary>
+    private static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int bagHay)
     {
-        string raw = $"{location.NameOrUniqueName}:trough:{x},{y}:slot:{slot}:hay_stack:{hayStack}";
+        string raw = $"{location.NameOrUniqueName}:trough:{x},{y}:slot:{slot}:bag_hay:{bagHay}";
         return $"feed_trough_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 

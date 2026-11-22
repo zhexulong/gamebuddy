@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using GameBuddy.Stardew.Core.Models;
@@ -253,16 +254,38 @@ public enum BodyProgramExecutionOriginKind { Node = 1, Standalone = 2, Unattribu
 /// </para>
 /// </summary>
 public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, BodyProgramNodeOutcome Outcome, IReadOnlyList<RuntimeFact>? Facts,
-    string? ReceiptId, string? Evidence, string? PostconditionVerification, string? FailureCode = null, string? Hint = null,
+    string? ReceiptId, string? Evidence, string? PostconditionVerification)
+{
+    /// <summary>
+    /// The receipt's own `ReasonCode` for a terminal that did NOT succeed, written by name beside
+    /// <see cref="Hint"/> and <see cref="RefusalDetail"/>.
+    ///
+    /// <para>
+    /// THREE ADJACENT STRINGS THAT MEAN THREE DIFFERENT THINGS, which is why none of them is a positional parameter any
+    /// more: `reasonCode`, `hint` and `evidence` were the seventh, eighth and ninth arguments of every settlement, so a
+    /// swapped pair compiled and read as a fact, and a writer could hand a detail past a scan of the named writes. A named
+    /// write is the shape a bound can be checked at (`RefusalDetailWriterPopulationGateTests`).
+    /// </para>
+    /// </summary>
+    public string? FailureCode { get; init; }
+
+    /// <summary>
+    /// Where the caller can act, in the field the journal stores as <see cref="BodyProgramJournalNode.Hint"/>.
+    /// </summary>
+    public string? Hint { get; init; }
+
     /// <summary>
     /// The receipt's own <see cref="LocalExecutionReceipt.Evidence"/> for a terminal that did NOT succeed, carried into
     /// <see cref="BodyProgramJournalNode.RefusalDetail"/> instead of into <see cref="Evidence"/>.
     ///
     /// The two fields hold the same string on the same receipt and must not be confused: `Evidence` licenses `Succeeded`
     /// (ADR-006 `:175`) and is therefore refused on every other outcome by <c>TryComplete</c>, while this one is the reason
-    /// detail a caller reads and is legal exactly there.
+    /// detail a caller reads and is legal exactly there. A writer passes it through
+    /// <see cref="BodyProgramValidation.BoundRefusalDetail"/>: the journal refuses a longer detail, and a refusal it refuses
+    /// is settled as RecoveryRequired instead of settling as the refusal it is.
     /// </summary>
-    string? RefusalDetail = null);
+    public string? RefusalDetail { get; init; }
+}
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
     IReadOnlyList<string> DependsOn, IReadOnlyDictionary<string, ActionProgramBinding> Bindings, IReadOnlyDictionary<string, string> DerivedResourceClaims)
@@ -513,6 +536,55 @@ internal static class BodyProgramValidation
     internal const int MaximumNodeRefusalDetailLength = 512;
     internal static bool IsValidRefusalDetail(string? value) => value is null
         || (value.Length is >= 1 and <= MaximumNodeRefusalDetailLength && !value.Any(char.IsControl));
+    /// <summary>
+    /// A writer's reason detail in the form the journal stores: whatever the refusing layer wrote, this is a value
+    /// <see cref="IsValidRefusalDetail"/> accepts, so a real refusal cannot change its STATE because its text was long.
+    ///
+    /// <para>
+    /// MEASURED `round92`: two `no_native_path` refusals carried 544 and 698 characters of route evidence, the journal
+    /// refused both as `InvalidInput`, and the controller settled those nodes `RecoveryRequired`
+    /// (`terminal_rejected_by_authority`) while every shorter `no_native_path` of the same run stayed an ordinary `Failed`.
+    /// The bound is therefore applied WHERE THE DETAIL IS WRITTEN - by every writer of a reason detail - and what does not
+    /// fit is COUNTED, never dropped in silence: `;truncated=N` names how many characters the bound left out. The journal
+    /// keeps refusing a detail a writer never bounded, because a bound at the reader would be a second place a refusal
+    /// could disappear.
+    /// </para>
+    /// <para>
+    /// The cut lands on a `;` boundary when there is one, so the kept text stays a whole `key=value` list instead of ending
+    /// mid-token; a detail with no separator is cut at the budget. Control characters become spaces for the same reason the
+    /// length is bounded: the journal refuses them, and that refusal costs the node its state exactly as a long detail did.
+    /// A writer with no detail to state writes `null` - absence is this product's word for it, and an empty string is not a
+    /// detail any reader can use.
+    /// </para>
+    /// </summary>
+    internal static string? BoundRefusalDetail(string? detail)
+    {
+        if (string.IsNullOrEmpty(detail)) return null;
+        string flat = detail.Any(char.IsControl) ? NeutralizeControlCharacters(detail) : detail;
+        if (flat.Length <= MaximumNodeRefusalDetailLength) return flat;
+        // The marker's own width depends on the count it names, and the count depends on how much the marker leaves: the
+        // two are settled against each other here rather than by reserving a worst case the text would then waste.
+        int keep = MaximumNodeRefusalDetailLength;
+        while (true)
+        {
+            string marker = TruncationMarker(flat.Length - keep);
+            int fits = MaximumNodeRefusalDetailLength - marker.Length;
+            if (fits >= keep) return string.Concat(flat.AsSpan(0, keep), marker);
+            int boundary = flat.LastIndexOf(';', Math.Min(fits, flat.Length - 1));
+            keep = boundary > 0 ? boundary : fits;
+        }
+    }
+
+    private static string NeutralizeControlCharacters(string detail)
+    {
+        char[] characters = detail.ToCharArray();
+        for (int index = 0; index < characters.Length; index += 1)
+            if (char.IsControl(characters[index])) characters[index] = ' ';
+        return new string(characters);
+    }
+
+    private static string TruncationMarker(int dropped) =>
+        string.Create(CultureInfo.InvariantCulture, $";truncated={dropped}");
     internal const long MaximumJavaScriptSafeInteger = 9007199254740991L;
     /// <summary>Descriptor-owned static watchdog budget for ordinary short actions (hang protection, not ETA).</summary>
     internal const long DefaultWatchdogMs = 60_000;

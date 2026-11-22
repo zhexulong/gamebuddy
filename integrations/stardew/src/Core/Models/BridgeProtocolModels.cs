@@ -712,7 +712,25 @@ public sealed record BridgeFarmAnimalPetTarget(string TargetId, int X, int Y, st
 
 public sealed record BridgeAnimalProductTarget(string TargetId, int Slot, int X, int Y, string AnimalType, string QualifiedProduceItemId, string DisplayName, string ToolKind, int ProduceStack);
 
-public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int HayStack);
+/// <summary>
+/// One EMPTY trough of an <see cref="AnimalHouse"/> interior, paired with the actor's own Hay slot.
+///
+/// <para>
+/// EVERY FACT ON THIS ROW IS THE TROUGH'S EXCEPT <c>BagHay</c>, AND THE NAME SAYS SO. Membership is the trough's own
+/// fact: `DiscoverFeedTroughTargets` publishes a tile only while `location.objects` holds nothing at it, so a row means
+/// "this trough holds no hay, and here is the pack stack that can fill it". The number beside it is the ACTOR's - the
+/// stack in <c>Slot</c> that `feed_animal` will spend one of - so it is published as `bagHay`.
+/// </para>
+///
+/// <para>
+/// THE MEASUREMENT. `round92` day 2 (2026-11-22, `tend_the_animals`, run
+/// `.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine`): three empty troughs published
+/// <c>hayStack: 5</c> each while the pack held one stack of five Hay in slot 9, her thinking read the number as the
+/// trough's - "料槽三个都有 5 干草（已够）… 槽里 hayStack 5 表示已有" - and the day neither fed nor collected. A field
+/// named for the trough carrying the bag's count is a wrong answer the row itself printed.
+/// </para>
+/// </summary>
+public sealed record BridgeFeedTroughTarget(string TargetId, int Slot, int X, int Y, int BagHay);
 
 /// <summary>
 /// One storage container as a SENSED ENTITY: its identity, where it is, and every item inside it.

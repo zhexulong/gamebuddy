@@ -226,6 +226,7 @@ public sealed class ShopCounterReachTests
         const int purse = 500;
         return ExecutionManager.ShopPurchaseReceipt(new ExecutionManager.ShopPurchaseReceiptFacts(
             ShopId: "SeedShop",
+            Location: "SeedShop",
             OwnerName: tileOpened ? string.Empty : "Pierre",
             TileOpened: tileOpened,
             ItemId: "(O)472",

@@ -1280,18 +1280,25 @@ export function isAnimalProductTargetFact(value: unknown): boolean {
   );
 }
 
+/**
+ * One empty trough row: the trough's address, the pack slot that fills it, and THAT slot's own Hay stack.
+ *
+ * `bagHay` is the actor's count, not the trough's - the family publishes only troughs holding nothing (see
+ * `feedTroughTargets` in `host/src/protocol.ts`). A row that named the pack's stack as the trough's is the `round92`
+ * reading this field exists to stop.
+ */
 export function isFeedTroughTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, ["targetId", "slot", "x", "y", "hayStack"]) &&
+    hasExactKeys(value, ["targetId", "slot", "x", "y", "bagHay"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
-    typeof value.hayStack === "number" &&
-    Number.isSafeInteger(value.hayStack) &&
-    value.hayStack > 0 &&
-    value.hayStack <= 999
+    typeof value.bagHay === "number" &&
+    Number.isSafeInteger(value.bagHay) &&
+    value.bagHay > 0 &&
+    value.bagHay <= 999
   );
 }
 

@@ -470,7 +470,7 @@ test("language-neutral schema and Host share closed shapes for every published s
         produceStack: 1,
       },
     ],
-    ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, hayStack: 1 }],
+    ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 2, x: 10, y: 12, bagHay: 1 }],
     ["inventoryItemFacts", { slot: 2, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
     [
       "foodTargets",

@@ -462,6 +462,18 @@ type RunnablePlan = Readonly<{
   /** Every seed count this plan could not read, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
   heldSeedsUnmeasuredCount: number;
   /**
+   * The can water this plan needed and the snapshot did not publish, one per watering action it writes, spelled
+   * `unmeasured=water_crop.watering_can;family_not_published=wateringCanFacts`.
+   *
+   * The other half of the bound `planWaterBudget` applies, and the same doctrine as `heldSeedsUnmeasured`: with a can
+   * published, a plan that waters more than it holds is refused by name; with the can NOT published there is no number to
+   * compare against, so nothing is refused - and this list is what keeps that from reading as a plan the harness checked.
+   * Bounded; `heldWaterUnmeasuredCount` is the population.
+   */
+  heldWaterUnmeasured: readonly string[];
+  /** Every can reading this plan could not find, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  heldWaterUnmeasuredCount: number;
+  /**
    * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
    * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
    * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
@@ -531,6 +543,19 @@ const EQUIP_TOOL_ACTION_ID = "equip_tool";
 
 /** The published action whose one job is putting the body on (or beside) a tile; a transition's approach step uses it. */
 const MOVE_TO_TILE_ACTION_ID = "move_to_tile";
+
+/**
+ * The surface's own claim word for the watering can - the ONE declaration that says an action swings that can.
+ *
+ * The population `planWaterBudget` counts is derived from it rather than listed here: every action whose `tool:` claim
+ * names the can spends its water, so `water_crop`, `water_pet_bowl` and `water_slime_hutch_trough` are all bounded by the
+ * same reading and a fourth one joins in the change that declares it. `refill_watering_can` names the same can and is the
+ * one exception - it is the action that FILLS it.
+ */
+const WATERING_CAN_CLAIM_CATEGORY = "watering_can";
+
+/** The published action whose one job is filling the can: it spends no water and tops the can up to its maximum. */
+const REFILL_WATERING_CAN_ACTION_ID = "refill_watering_can";
 
 /**
  * The id prefixes a plan node carries, so a reader can tell the compiler's own nodes from the author's.
@@ -1525,6 +1550,121 @@ function planSeedCounts(
 }
 
 /**
+ * The water this plan will spend and what its can holds, answered before a node exists.
+ *
+ * <p>
+ * MEASURED `round92`, `plan_534` (30 nodes): the can ran dry at `n21`, and `n22`..`n30` each WALKED to their tile and were
+ * then refused `watering_can_empty` - nine walks bought to be told one fact the plan could read for free. A can's water is
+ * spent by the node that swings it (`WateringCan.cs:189-191`: `WaterLeft -= power + 1`, and that `power` is the `charge`
+ * argument every charged watering action declares), so the count and the program are one reading: `wateringCanFacts`
+ * publishes the can's own `water` and `max`, which is the same number the Mod's guard compares against zero.
+ * </p>
+ *
+ * <p>
+ * THE PLAN ANSWERS FOR WHAT IT REFILLS ITSELF, exactly as `planSeedCounts` answers for what it buys: a `refill_watering_can`
+ * node sets the can back to its maximum (`WateringCan.cs:155-158`), so the nodes after one start from `max` again. The
+ * simulation therefore runs in PROGRAM ORDER over the nodes that will really run, and `held` in the refusal is the water
+ * the plan had AT THE POINT IT RAN DRY - which is the number the correction is written from: with no refill in the plan it
+ * is the can's water, and with a refill written after the dry point it is still the water that ran out, so moving the
+ * refill earlier is the remedy the code names without having to say so in prose.
+ * </p>
+ *
+ * <p>
+ * THE CAN IS THE ONE THE MOD SELECTS, not one this file picks: `publishedSlotOfCategory` is the same ranking the Mod's
+ * `ResolveDeclaredTool`/`ResolveOwnedTool` applies (highest upgrade level, ties to the smallest slot), so the row whose
+ * `water` is compared is the row of the can the swing will use. A pack carrying two cans of different levels ranks them
+ * the way the Mod does; a surface whose two watering actions ranked DIFFERENT cans is named (`slot_ambiguous`) instead of
+ * comparing a plan against one of them.
+ * </p>
+ *
+ * <p>
+ * AN UNPUBLISHED CAN IS NOT ZERO, and neither is a can this side cannot find. `wateringCanFacts` absent (an older Mod, or
+ * one that does not advertise `refill_watering_can`), no resolvable `tool:watering_can` slot, no row for the slot that was
+ * resolved, and a `water`/`max` that is not a whole number all say the same thing: NOTHING WAS MEASURED, so nothing is
+ * bound, and the plan compiles exactly as it would have while the list names what was missing.
+ * </p>
+ *
+ * <p>
+ * STAMINA IS NOT THE SAME QUESTION, and the reason is on this side of the wire: a swing's stamina cost is computed from
+ * the actor's skill level and its enchantment (`WateringCan.cs:167-170`: `2 * (power + 1) - FarmingLevel * 0.1`, skipped
+ * entirely when the tool is efficient), neither of which the snapshot publishes, and stamina RECOVERS while a long plan
+ * runs - so `snapshot.stamina` is one reading of a quantity that changes by rules this compiler cannot evaluate. The Mod
+ * answers that at the swing (`ToolStaminaGuard`) instead, which is the layer that owns it. Water is different in exactly
+ * the way a bound needs: `water` and `max` are published, the spend is one unit per charge level the request ITSELF names,
+ * and nothing inside a plan restores it except a refill node this compiler can see.
+ * </p>
+ *
+ * <p>
+ * A BOTTOMLESS CAN IS INDISTINGUISHABLE HERE AND IS NAMED RATHER THAN HIDDEN: `WateringCan.WaterLeft` answers `waterCanMax`
+ * whenever `IsBottomless` holds (`WateringCan.cs:25-34`), so such a can publishes a FULL reading and never depletes - a
+ * plan longer than that many waterings is refused by this bound though the engine would run it. Publishing the flag is the
+ * fix and is separate work; the direction of the error is safe (a split plan, one can's worth at a time, is what the
+ * refusal asks for) and the alternative - no bound at all - is the nine walks above.
+ * </p>
+ */
+function planWaterBudget(
+  nodes: readonly PlanNode[],
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+): Readonly<{ refusal: string | null; unmeasured: readonly string[] }> {
+  const watering = actions.filter(
+    (action) =>
+      action.actionId !== REFILL_WATERING_CAN_ACTION_ID &&
+      action.toolRequirement.declared &&
+      action.toolRequirement.category === WATERING_CAN_CLAIM_CATEGORY,
+  );
+  const spends = (node: PlanNode): boolean => watering.some((action) => action.actionId === node.actionId);
+  const written = nodes.filter((node) => spends(node) || node.actionId === REFILL_WATERING_CAN_ACTION_ID);
+  const spenders = [...new Set(written.filter(spends).map((node) => node.actionId))];
+  if (spenders.length === 0) return Object.freeze({ refusal: null, unmeasured: Object.freeze([]) });
+  const slots = new Set<number>();
+  for (const actionId of spenders) {
+    const action = watering.find((candidate) => candidate.actionId === actionId)!;
+    const slot = publishedSlotOfCategory(snapshot, WATERING_CAN_CLAIM_CATEGORY, action.toolRequirement);
+    if (slot !== null) slots.add(slot);
+  }
+  const unmeasured = (reason: string): Readonly<{ refusal: null; unmeasured: readonly string[] }> =>
+    Object.freeze({
+      refusal: null,
+      unmeasured: Object.freeze(spenders.map((actionId) => `unmeasured=${actionId}.watering_can;${reason}`)),
+    });
+  if (slots.size === 0) return unmeasured(`slot_unresolved=${WATERING_CAN_CLAIM_CATEGORY}`);
+  if (slots.size > 1) return unmeasured(`slot_ambiguous=${[...slots].sort((left, right) => left - right).join("|")}`);
+  const slot = [...slots][0]!;
+  const facts = planSnapshotRows(snapshot, "wateringCanFacts");
+  if (!facts.measured) return unmeasured("family_not_published=wateringCanFacts");
+  const row = facts.rows.find((candidate) => candidate.slot === slot);
+  if (row === undefined) return unmeasured(`slot_not_published=${String(slot)}`);
+  const water = row.water;
+  const maximum = row.max;
+  if (!isNonNegativeSafeInteger(water) || !isNonNegativeSafeInteger(maximum)) return unmeasured(`can_reading_invalid=${String(slot)}`);
+  // The cost of one node is the engine's own: `WaterLeft -= power + 1`, where `power` is the `charge` the request names -
+  // an action that declares no `charge` swings at power 0 and spends one. A charge this compiler cannot read is priced at
+  // the same 0, which is the surface's own minimum and the only call a builder could write without one.
+  const costOf = (node: PlanNode): number => {
+    const chargeText = nodeArgumentText(node, "charge");
+    const charge = chargeText !== undefined && /^\d+$/u.test(chargeText) ? Number(chargeText) : 0;
+    return Number.isSafeInteger(charge) && charge >= 0 ? charge + 1 : 1;
+  };
+  const planned = written.reduce((total, node) => total + (spends(node) ? costOf(node) : 0), 0);
+  let available = water;
+  let spent = 0;
+  for (const node of written) {
+    if (!spends(node)) {
+      available = maximum;
+      continue;
+    }
+    spent += costOf(node);
+    if (spent > available)
+      return Object.freeze({
+        refusal: `plan_script_not_enough_water:planned=${String(planned)}:held=${String(available)}`,
+        unmeasured: Object.freeze([]),
+      });
+  }
+  return Object.freeze({ refusal: null, unmeasured: Object.freeze([]) });
+}
+
+/**
  * The layout facts a compiled plan assumed but the snapshot it was compiled against does not carry.
  *
  * <p>
@@ -1726,6 +1866,13 @@ export function compilePlanScript(
   const seeds = planSeedCounts(ordered.nodes, snapshot);
   if (seeds.refusal !== null)
     return refused(seeds.refusal, scriptSource, snapshotRevision, undefined, undefined, state);
+  // A PLAN MAY NOT WATER MORE THAN ITS CAN HOLDS, and it is answered from the same nodes, in the same place, for the same
+  // reason: `round92`'s thirty `water_crop` nodes against a can of twenty walked nine of them to their tiles to be told
+  // `watering_can_empty` nine times. See `planWaterBudget` for the count, the plan's own refills, and the two facts that
+  // are NOT measured and therefore bound nothing.
+  const water = planWaterBudget(ordered.nodes, snapshot, dependencies.actions);
+  if (water.refusal !== null)
+    return refused(water.refusal, scriptSource, snapshotRevision, undefined, undefined, state);
   // THE RULE THAT USED TO STAND HERE - ONE REFUSED CALL VOIDS THE BATCH - answered a real forgery and cost the calls that
   // were correct. The forgery is measured: at `3d249ff1`, `builder.talk_to_npc(...); builder.shop_purchase(...)` answered
   // `ok: true` and carried ONE node, the purchase refused and the plan submitted without it; round40 is the same shape
@@ -1772,6 +1919,8 @@ export function compilePlanScript(
     resolvedAfterCount: state.resolvedAfter.length,
     heldSeedsUnmeasured: Object.freeze(seeds.unmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
     heldSeedsUnmeasuredCount: seeds.unmeasured.length,
+    heldWaterUnmeasured: Object.freeze(water.unmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
+    heldWaterUnmeasuredCount: water.unmeasured.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),

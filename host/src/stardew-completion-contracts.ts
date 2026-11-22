@@ -2348,9 +2348,9 @@ const ENGINE_HAS_NO_GATE_FOR_NPC_COUNTERS = "engine_has_no_gate_for_npc_counters
  * produces.
  * </para>
  * <para>
- * Evidence literal: farmhandexecutioncontroller.shopactions.cs `ShopToolUpgradeEvidence` - the ordinary detail plus
- * tool_upgraded;days_left;required_tool;required_before;required_after;purchase_dialogue, and the same
- * distance_required/distance/why triple the ordinary terminal carries.
+ * Evidence literal: farmhandexecutioncontroller.shoppurchasereceipt.cs `ShopToolUpgradeEvidence` - the ordinary detail
+ * plus tool_upgraded;days_left;required_tool;required_before;required_after;purchase_dialogue, and the same
+ * distance_required/distance/why triple and `location` the ordinary terminal carries.
  * </para>
  */
 function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
@@ -2358,6 +2358,7 @@ function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
     detail,
     [
       "shop",
+      "location",
       "owner",
       "entry",
       "item",
@@ -2384,6 +2385,7 @@ function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
     ],
     (e) =>
       e.shop === TOOL_UPGRADE_SHOP_ID &&
+      hasBoundedNonemptyEvidenceValue(e.location) &&
       (e.entry === "tile_action" || e.entry === "npc_owner") &&
       hasOpaqueEvidenceValue(e.owner) &&
       hasOpaqueEvidenceValue(e.item) &&
@@ -2462,8 +2464,16 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
   },
   remove_placed_item: (claim) => {
     // Evidence literal: ExecuteRemovePlacedItem — target;location;tile;item;type;tool;tool_kind;
-    // slot;swings;removed;tile_object_after;drops;drop_count;stamina_before;stamina_after.
+    // slot;swings;removed;tile_object_after;placed_target;drops;drop_count;stamina_before;stamina_after.
     // The removal is proved by the tile being empty afterwards, never by a native return value.
+    //
+    // `placed_target` IS DECLARED AND NOT READ, and it is the identity statement rather than a second proof of the
+    // removal: `NamePlacedPieceAfterWrite` (`farmhandexecutioncontroller.worldobjectactions.cs`) writes the id the NEXT
+    // furniture action and every observation will use for whatever stands on that tile, and after a removal it is
+    // `none`. Measured `round92`: two real removals (`removed=true;tile_object_after=none`) were refused
+    // `succeeded_receipt_without_its_own_postcondition` because this list omitted the field, so a success was refused
+    // for an extra key it was right to publish. Reading it as a second emptiness clause would be one fact with two
+    // spellings - `tile_object_after=none` already states it.
     return (
       claim.reasonCode === "placed_item_removed" &&
       declaredCompletionEvidence(
@@ -2480,6 +2490,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "swings",
           "removed",
           "tile_object_after",
+          "placed_target",
           "drops",
           "drop_count",
           "stamina_before",
@@ -4810,11 +4821,18 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // is judged by the engine's own upgrade fields and refused for any shop that is not the upgrade counter.
     if (claim.reasonCode === "tool_upgrade_purchased") return hasShopToolUpgradeCompletionEvidence(claim.detail);
 
-    // Evidence literal: farmhandexecutioncontroller.shopactions.cs - the terminal is minted only when the trade
+    // Evidence literal: farmhandexecutioncontroller.shoppurchasereceipt.cs - the terminal is minted only when the trade
     // moved BOTH sides (`moneyAfter < moneyBefore && gained > 0`), and the receipt carries:
-    // shop;owner;entry;distance_required;item;requested;purchased;unit_price;money_before;money_after;owned_before;
-    // owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops, plus `distance=` for a counter
-    // that is a tile and `why=` for one an NPC runs.
+    // shop;location;owner;entry;distance_required;item;requested;purchased;unit_price;money_before;money_after;
+    // owned_before;owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops, plus `distance=` for
+    // a counter that is a tile and `why=` for one an NPC runs.
+    //
+    // `location` IS THE MAP THE PURCHASE HAPPENED ON, and `owner_tile` without it is a coordinate with no map - the
+    // shape `till_soil`'s settlement paid for (`62,18` exists on the Farm and on the Mountain), which is why this row
+    // requires both. Measured `round92`: day 3 `town_market` was `unjudged` (`task_purpose_needs_an_unpublished_fact`)
+    // over two purchases that had succeeded, because nothing in the receipt said WHERE the trade happened - `shop=SeedShop`
+    // names the shop and `owner_tile=4,17` a coordinate on a map the receipt never named. The producer now publishes the
+    // map it stood on, and this clause reads it.
     //
     // The rule restates the Mod's OWN success condition from the evidence instead of trusting the code: money
     // went down, goods went up, and the menu really closed. `owner` is `none` when the shop is entered through
@@ -4846,6 +4864,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
         claim.detail,
         [
           "shop",
+          "location",
           "owner",
           "entry",
           "item",
@@ -4866,6 +4885,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
         ],
         (e) =>
           (e.shop?.length ?? 0) > 0 &&
+          hasBoundedNonemptyEvidenceValue(e.location) &&
           (e.owner?.length ?? 0) > 0 &&
           (e.entry === "tile_action" || e.entry === "npc_owner") &&
           hasOpaqueEvidenceValue(e.item) &&

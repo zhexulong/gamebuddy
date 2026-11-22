@@ -1015,6 +1015,25 @@ function heldSeedsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>
 }
 
 /**
+ * THE CAN WATERS THIS PLAN COULD NOT COUNT, the same half of the same bound for the can's other resource.
+ *
+ * <p>
+ * With the can published, a plan that waters more than it holds is refused by name (`plan_script_not_enough_water`); with
+ * the can's `wateringCanFacts` absent - or no row for the slot the Mod would select - there is no number to compare
+ * against, so nothing is refused and this list is what keeps that from reading as a plan the harness checked. Silent when
+ * it is empty, for the same reason `heldSeedsNote` is.
+ * </p>
+ */
+function heldWaterNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (compiled.status === "refused" || compiled.heldWaterUnmeasuredCount === 0) return {};
+  return Object.freeze({
+    heldWaterUnmeasured: compiled.heldWaterUnmeasured,
+    heldWaterUnmeasuredCount: compiled.heldWaterUnmeasuredCount,
+    heldWaterUnmeasuredTruncated: compiled.heldWaterUnmeasuredCount > compiled.heldWaterUnmeasured.length,
+  });
+}
+
+/**
  * The difference between the plan she wrote and the program that runs, on a plan that HAS a program.
  *
  * <p>
@@ -1069,6 +1088,7 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
     ...planReadingsNote(compiled),
     ...heldSeedsNote(compiled),
+    ...heldWaterNote(compiled),
   });
 }
 

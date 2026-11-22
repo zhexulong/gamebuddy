@@ -5,17 +5,31 @@ using Microsoft.Xna.Framework;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Buildings;
+using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
 
 public sealed partial class ModEntry
 {
-    /// <summary>The one animal house the play-session world carries. A coop, because it is the smallest
-    /// <see cref="AnimalHouse"/> the game ships and the world has to stay walkable.</summary>
-    private const string PlaySessionAnimalBuildingType = "Coop";
+    /// <summary>
+    /// The one animal house the play-session world carries. A BARN, and the reason is the day's collect half.
+    ///
+    /// <para>
+    /// IT WAS A COOP, whose smallest-<see cref="AnimalHouse"/> footprint is the easiest to place. A coop cannot supply
+    /// `collect_animal_product` at all: that action addresses `animalProductTargets`, whose one admission is
+    /// `FarmAnimal.CanGetProduceWithTool` (`farmhandexecutioncontroller.targetdiscovery.cs`), and that answers
+    /// `FarmAnimalData.HarvestTool == tool.Name` - which is null for every coop animal (`host/src/protocol.ts`'s
+    /// `harvestTool` note: "a hen drops its egg"). A hen's egg is a floor drop, so the coop's produce can never be a
+    /// tool target and the day's third step was unreachable by construction, not by chance.
+    /// </para>
+    /// </summary>
+    private const string PlaySessionAnimalBuildingType = "Barn";
 
-    /// <summary>The one animal inside it.</summary>
-    private const string PlaySessionAnimalType = "White Chicken";
+    /// <summary>
+    /// The one animal inside it: adult, and one whose produce a tool takes (a barn animal's `HarvestTool` is
+    /// `Milk Pail`/`Shears`; see <see cref="PlaySessionAnimalType"/>'s own Given below, which also stocks that tool).
+    /// </summary>
+    private const string PlaySessionAnimalType = "White Cow";
 
     /// <summary>The one item an animal house trough accepts.</summary>
     private const string PlaySessionHayQualifiedItemId = "(O)178";
@@ -43,8 +57,8 @@ public sealed partial class ModEntry
     ///
     /// <para>
     /// The family name is not a taxonomy invented here: `pet_farm_animal`, `feed_animal`, `collect_animal_product` and
-    /// `water_pet_bowl` are all declared `animals_pets` in `FarmhandActionDefinitions.cs`, and coop stock is the only
-    /// target any of them addresses.
+    /// `water_pet_bowl` are all declared `animals_pets` in `FarmhandActionDefinitions.cs`, and animal-house stock is the
+    /// only target any of them addresses.
     /// </para>
     /// </summary>
     internal const string PlaySessionAnimalGivenFamily = "animals_pets";
@@ -105,8 +119,8 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The play-session world's ANIMAL Given: one coop holding ONE adult animal, placed where the session's own
-    /// crossroads can walk to its door.
+    /// The play-session world's ANIMAL Given: one BARN holding ONE adult, milking animal, placed where the session's own
+    /// crossroads can walk to its door - with the produce it can give and the tool that takes it.
     ///
     /// <para>
     /// WHY. `tend_the_animals` is one of the rotation's days, and three of its four actions are farm-animal actions
@@ -114,6 +128,17 @@ public sealed partial class ModEntry
     /// held crops, weeds, stone, loose soil and tools and <b>no animal at all</b>, so those actions could only ever be
     /// chosen by their single-action scenarios - a play session could not reach one no matter what the companion
     /// decided. A task the world cannot satisfy measures the world.
+    /// </para>
+    ///
+    /// <para>
+    /// THE PRODUCE AND THE TOOL ARE PART OF THE GIVEN, because a house with an animal in it is not the same fact as a
+    /// product an action can collect. Measured `round92` day 2 (2026-11-22, `tend_the_animals`): the world held one adult
+    /// White Chicken with `currentProduce = null` and a pack with no Milk Pail or Shears, and the observation published
+    /// `animalProductTargets: []` - so the day's collect half had nothing to address and the day could not be achieved
+    /// however well the companion played it. A HEN NEVER COULD HAVE SUPPLIED IT: `CanGetProduceWithTool` answers
+    /// `FarmAnimalData.HarvestTool == tool.Name`, a hen's harvest tool is null (her egg drops on the floor), and the
+    /// action addresses tool-collected produce only. Hence a barn animal, and hence this Given states the product and
+    /// puts the tool that takes it in the pack.
     /// </para>
     ///
     /// <para>
@@ -140,35 +165,35 @@ public sealed partial class ModEntry
     /// </summary>
     private void InstallNativeLocalPlaySessionAnimalGiven(Farmer player, Farm farm, Vector2 startTile, Vector2? mustRemainReachable)
     {
-        Building coop = new(PlaySessionAnimalBuildingType, Vector2.Zero);
-        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, coop, startTile, mustRemainReachable, out _, out string measured))
+        Building barn = new(PlaySessionAnimalBuildingType, Vector2.Zero);
+        if (!TryFindNativeLocalPlaySessionAnimalSite(player, farm, barn, startTile, mustRemainReachable, out _, out string measured))
         {
             // NO SITE IS A REFUSAL, NOT A WORLD WITH ONE ANIMAL FEWER. This used to log a warning and return, and that
-            // line is exactly how a coop could disappear with every gate still green: `tend_the_animals` kept being
-            // rotated into a world with no animal in it. The reason is measured - how many free footprints were tried
-            // and why each was refused - so "there is nowhere to put it" can be answered rather than assumed.
+            // line is exactly how an animal house could disappear with every gate still green: `tend_the_animals` kept
+            // being rotated into a world with no animal in it. The reason is measured - how many free footprints were
+            // tried and why each was refused - so "there is nowhere to put it" can be answered rather than assumed.
             throw new InvalidOperationException(
                 $"fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};{measured}");
         }
-        coop.ReloadBuildingData(forUpgrade: false, forConstruction: true);
-        coop.daysOfConstructionLeft.Value = 0;
-        farm.buildings.Add(coop);
+        barn.ReloadBuildingData(forUpgrade: false, forConstruction: true);
+        barn.daysOfConstructionLeft.Value = 0;
+        farm.buildings.Add(barn);
         farm.updateLayout();
 
-        if (coop.GetIndoors() is not AnimalHouse house)
+        if (barn.GetIndoors() is not AnimalHouse house)
             throw new InvalidOperationException("fixture_native_local_play_session_animal_interior_missing");
 
-        Point door = coop.getPointForHumanDoor();
+        Point door = barn.getPointForHumanDoor();
         // The search measured this building while it stood on the farm, and the world has changed since: the layout is
         // updated and the interior exists. The same question is asked of the building the world now holds, so a search
         // and a placement that disagree refuse the whole day BY NAME instead of quietly dropping the animal half.
-        string? rejected = RejectsThePlaySessionAnimalBuilding(player, farm, coop, startTile, mustRemainReachable);
+        string? rejected = RejectsThePlaySessionAnimalBuilding(player, farm, barn, startTile, mustRemainReachable);
         if (rejected is not null)
         {
-            farm.buildings.Remove(coop);
+            farm.buildings.Remove(barn);
             farm.updateLayout();
             throw new InvalidOperationException(
-                $"fixture_native_local_play_session_animal_site_rejected:origin={coop.tileX.Value},{coop.tileY.Value};{rejected}");
+                $"fixture_native_local_play_session_animal_site_rejected:origin={barn.tileX.Value},{barn.tileY.Value};{rejected}");
         }
 
         FarmAnimal animal = new(PlaySessionAnimalType, Game1.random.Next(int.MaxValue), player.UniqueMultiplayerID);
@@ -187,35 +212,72 @@ public sealed partial class ModEntry
         if (animal.wasPet.Value)
             throw new InvalidOperationException("fixture_native_local_play_session_animal_already_petted");
 
-        // THE ASSERTION THE ABSENT COOP NEEDED. The world must now publish the family the `tend_the_animals` day names:
-        // `pet_farm_animal` addresses `location.animals` of the house the actor walks into, so the row exists exactly when
-        // that house holds a grown animal carrying a real engine id - and that id IS the target id the discovery derives
-        // (`BuildFarmAnimalPetTargetId` hashes the location with `animal.myID`). Measured 2026-11-09: with this Given off,
-        // the arm log said `animal_start=absent` and no gate anywhere failed.
+        // THE PRODUCT, AND WHERE IT COMES FROM. An adult animal with `currentProduce = null` is an animal whose product
+        // the day before took, or one no morning has run for: the game sets `currentProduce` in `FarmAnimal.dayUpdate`
+        // (`FarmAnimal.cs:1057`), which this fixture never runs. The id is not invented here -
+        // `FarmAnimal.GetProduceID` (`:910`) is the engine's own resolver over `Data/FarmAnimals`, including the
+        // friendship/condition filter a hand-copied item id would skip.
+        if (string.IsNullOrWhiteSpace(animal.currentProduce.Value))
+            animal.currentProduce.Value = animal.GetProduceID(Game1.random);
+        if (string.IsNullOrWhiteSpace(animal.currentProduce.Value))
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_product_missing:type={animal.type.Value};animal={animal.myID.Value};"
+                    + $"friendship={animal.friendshipTowardFarmer.Value}");
+
+        // THE TOOL THE ACTION TAKES ITS SLOT FROM. `collect_animal_product`'s `slot` is the Milk Pail or Shears in the
+        // pack (`FarmhandActionDefinitions.cs`: `Finishes(SelfWalked(SlotTarget(ItemSlotMeaning)))`), and discovery
+        // publishes a row only for a tool the animal's own `HarvestTool` names - so the compatible tool is part of the
+        // Given, exactly as the animal-product scenario's own fixture stocks it.
+        Tool collectionTool = animal.CanGetProduceWithTool(new MilkPail()) ? new MilkPail() : new Shears();
+        if (!animal.CanGetProduceWithTool(collectionTool))
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_not_collectable:type={animal.type.Value};"
+                    + $"harvest_type={animal.GetHarvestType()};milkable={animal.CanGetProduceWithTool(new MilkPail())};"
+                    + $"shearable={animal.CanGetProduceWithTool(new Shears())}");
+        if (!player.Items.OfType<Tool>().Any(tool => tool.GetType() == collectionTool.GetType())
+            && player.addItemToInventory(collectionTool) is not null)
+            throw new InvalidOperationException("fixture_native_local_play_session_animal_tool_inventory_full");
+        if (!player.Items.OfType<Tool>().Any(tool => tool.GetType() == collectionTool.GetType()))
+            throw new InvalidOperationException("fixture_native_local_play_session_animal_tool_missing_after_add");
+
+        // THE ASSERTION THE ABSENT ANIMAL HOUSE NEEDED, now in both halves. The world must publish the family the
+        // `tend_the_animals` day names: `pet_farm_animal` addresses `location.animals` of the house the actor walks into,
+        // so the row exists exactly when that house holds a grown animal carrying a real engine id - and that id IS the
+        // target id the discovery derives (`BuildFarmAnimalPetTargetId` hashes the location with `animal.myID`). Measured
+        // 2026-11-09: with this Given off, the arm log said `animal_start=absent` and no gate anywhere failed. The other
+        // half is `animalProductTargets`: `DiscoverAnimalProductTargets` requires adult, a produce id, a tool in the pack
+        // that takes it, AND room in that pack for the produce, so each of the four is asked here rather than left to a
+        // silent empty family (`round92`: the family was empty and nothing said so).
         FarmAnimal published = house.animals.Values.Single();
         if (published.myID.Value <= 0 || !published.isAdult())
             throw new InvalidOperationException(
                 $"fixture_native_local_play_session_animal_family_target_missing:family={PlaySessionAnimalGivenFamily};"
                     + $"animal={published.myID.Value};adult={published.isAdult().ToString().ToLowerInvariant()}");
+        string produceQualifiedItemId = "(O)" + published.currentProduce.Value;
+        if (!player.couldInventoryAcceptThisItem(produceQualifiedItemId, 1))
+            throw new InvalidOperationException(
+                $"fixture_native_local_play_session_animal_product_inventory_full:produce={produceQualifiedItemId};"
+                    + $"slots={player.MaxItems}");
 
         int walkableAfter = WalkableComponentSize(farm, startTile);
         this.Monitor.Log(
             "GameBuddy native-local-player initialized play-session animal Given before bridge attachment: "
-                + $"building={coop.buildingType.Value};origin={coop.tileX.Value},{coop.tileY.Value};door={door.X},{door.Y};"
+                + $"building={barn.buildingType.Value};origin={barn.tileX.Value},{barn.tileY.Value};door={door.X},{door.Y};"
                 + $"start={startTile.X},{startTile.Y};walkable_after={walkableAfter};"
                 + $"family={PlaySessionAnimalGivenFamily};family_targets=1;animal={animal.myID.Value};type={animal.type.Value};"
                 + $"tile={(int)animal.Tile.X},{(int)animal.Tile.Y};adult={animal.isAdult().ToString().ToLowerInvariant()};"
                 + $"friendship={animal.friendshipTowardFarmer.Value};was_pet={animal.wasPet.Value.ToString().ToLowerInvariant()};"
-                + $"house_animals={house.animals.Count()};production alone pets, feeds and collects.",
+                + $"house_animals={house.animals.Count()};produce={produceQualifiedItemId};tool={collectionTool.GetType().Name};"
+                + "production alone pets, feeds and collects.",
             LogLevel.Info);
     }
 
     /// <summary>
-    /// The play-session world's HAY Given: one stack of Hay in the pack, which is what turns the coop's troughs into
-    /// targets a day can reach.
+    /// The play-session world's HAY Given: one stack of Hay in the pack, which is what turns the animal house's troughs
+    /// into targets a day can reach.
     ///
     /// <para>
-    /// WHY. The coop Given brought the house and one adult animal, and `feed_animal` still had no target in every
+    /// WHY. The animal Given brought the house and one adult animal, and `feed_animal` still had no target in every
     /// multi-day run: `DiscoverFeedTroughTargets` (farmhandexecutioncontroller.cs:4178) publishes a trough only for a
     /// pack stack of `(O)178`, and the play-session world carried none. The action was in the catalog and unreachable in
     /// the world it was advertised for.

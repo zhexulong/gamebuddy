@@ -1182,6 +1182,17 @@ internal sealed partial class ExecutionManager
         return slots;
     }
 
+    /// <summary>
+    /// Every EMPTY trough of the animal house the actor stands in, paired with the pack stack of Hay that can fill it.
+    ///
+    /// <para>
+    /// TWO FACTS, AND EACH IS NAMED FOR ITS OWNER. The trough's fact is its emptiness, and it is carried by membership:
+    /// a tile that already holds an object is skipped, so no row is published about a trough that has hay in it. The
+    /// actor's fact is the stack in the slot - the count the row publishes as `bagHay`, and the count
+    /// `BuildFeedTroughTargetId` binds the request's `expectedTargetId` to. It is NOT the trough's count: nothing on this
+    /// row states that the trough holds hay, because nothing in this family does.
+    /// </para>
+    /// </summary>
     private IReadOnlyList<BridgeFeedTroughTarget> DiscoverFeedTroughTargets(Farmer player)
     {
         if (player.currentLocation is not AnimalHouse location) return Array.Empty<BridgeFeedTroughTarget>();

@@ -118,6 +118,34 @@ public sealed class TileTargetSeamBranchTests
     }
 
     /// <summary>
+    /// AN EMPTY CAN IS ANSWERED BEFORE THE WALK, which is the one refusal the walking rows above must not swallow.
+    ///
+    /// <para>
+    /// MEASURED `round92`, `plan_534` (30 nodes): the can ran dry at `n21`, and `n22`..`n30` each WALKED to their tile and
+    /// were then refused `watering_can_empty` - nine walks for a fact the plan knew when it was written. The Host now
+    /// refuses such a plan at compile; this is the other half, for a request that arrives anyway: it does not travel.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnEmptyCanIsAnsweredBeforeTheWalkToTheCrop()
+    {
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(1, 1);
+        world.PutToolInPackSlot(4, typeof(StardewValley.Tools.WateringCan), "(T)WateringCan", upgradeLevel: 0);
+        ((StardewValley.Tools.WateringCan)world.Actor.Items[4]!).WaterLeft = 0;
+        world.PlaceWaterableCrop(FarTileX, FarTileY);
+        string targetId = CropTargetId(world, FarTileX, FarTileY);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("water_crop")
+            .RequestLocalWaterCrop("req_water_empty_can", FarTileX, FarTileY, targetId, 0, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("watering_can_empty", $"an empty can cannot water any tile (evidence: {receipt.Evidence})");
+        receipt.Evidence.Should().Contain("water_left=0", "the refusal publishes the number its guard read");
+        receipt.Evidence.Should().NotContain("approach=", "the can is answered before the approach leg is armed");
+    }
+
+    /// <summary>
     /// A SEED REQUEST CANNOT WALK IN THIS PROCESS, and this row says so instead of disappearing.
     ///
     /// <para>

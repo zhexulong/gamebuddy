@@ -268,8 +268,9 @@ internal sealed partial class ExecutionManager
         (int X, int Y) target,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
-        Func<(int X, int Y), bool> isReachable) =>
-        ApproachTileSelector.Select(new[] { target }, actor, isStandable, isReachable);
+        Func<(int X, int Y), bool> isReachable,
+        ApproachStance stance = ApproachStance.Any) =>
+        ApproachTileSelector.Select(new[] { target }, actor, isStandable, isReachable, stance);
 
     /// <summary>
     /// The same choice for a target that occupies several tiles - a 2x2 ResourceClump (big rock, stump) or any other
@@ -280,8 +281,9 @@ internal sealed partial class ExecutionManager
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> targetTiles,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
-        Func<(int X, int Y), bool> isReachable) =>
-        ApproachTileSelector.Select(targetTiles, actor, isStandable, isReachable);
+        Func<(int X, int Y), bool> isReachable,
+        ApproachStance stance = ApproachStance.Any) =>
+        ApproachTileSelector.Select(targetTiles, actor, isStandable, isReachable, stance);
     /// <summary>
     /// The refusal for a placement with no reachable standing tile: the code an agent can branch
     /// on, the evidence a reader needs to see WHY, and the one line the settled node keeps.
@@ -310,6 +312,15 @@ internal sealed partial class ExecutionManager
     /// body nobody asked about. Absent - a caller with no world, as the arithmetic tests have none - the refusal keeps
     /// the words it always had.
     /// </para>
+    /// <para>
+    /// THE STANCE IS WHAT A SEARCH OVER THE WRONG RING OWES THE READER. When the action declares one, this counts the tiles
+    /// she could stand on inside it, and - when that count is zero but the full ring has some - says so rather than
+    /// calling the ring empty: `no_cardinal_stance:diagonal_only` with `standable_tiles=0` beside
+    /// `standable_outside_stance=4`. "There is nowhere to stand" and "the only tiles to stand on will not do" are
+    /// different answers, and a caller sent to clear a wall by the second one wastes the turn on the wrong obstacle
+    /// (`round92`: the leg walked her onto diagonals, which is exactly what a full-ring search hands a swing that cannot
+    /// use them).
+    /// </para>
     /// </summary>
     internal static (string Code, string Evidence, string Hint) DescribeNoReachableApproach(
         (int X, int Y) target,
@@ -318,17 +329,29 @@ internal sealed partial class ExecutionManager
         System.Collections.Generic.IReadOnlyList<(int X, int Y)>? footprint = null,
         string? reasonCodePrefix = null,
         GameLocation? location = null,
-        Farmer? player = null)
+        Farmer? player = null,
+        ApproachStance stance = ApproachStance.Any)
     {
         System.Collections.Generic.IReadOnlyList<(int X, int Y)> tiles = footprint ?? new[] { target };
-        int standableTiles = ApproachTileSelector.StandableCandidates(tiles, isStandable).Count;
-        string neighbour = standableTiles > 0 ? "unreachable" : "none";
+        int standableTiles = ApproachTileSelector.StandableCandidates(tiles, isStandable, stance).Count;
+        int standableOutsideStance = stance == ApproachStance.Any
+            ? 0
+            : ApproachTileSelector.StandableCandidates(tiles, isStandable).Count;
+        string neighbour = standableTiles > 0
+            ? "unreachable"
+            : ApproachStanceWords.OutsideNeighbour(stance) is { } outside && standableOutsideStance > 0
+                ? outside
+                : "none";
         string evidence = $"target={target.X},{target.Y};actor={actor.X},{actor.Y};reach=1;approach=none;standable_neighbour={neighbour};standable_tiles={standableTiles.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+        if (ApproachStanceWords.Name(stance) is { } stanceName)
+            evidence += $";stance={stanceName};standable_outside_stance={standableOutsideStance.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
         if (footprint is not null)
             evidence += $";footprint={footprint.Count}";
-        string code = reasonCodePrefix is null
-            ? $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}"
-            : $"{reasonCodePrefix}:{neighbour}";
+        string code = reasonCodePrefix is not null
+            ? $"{reasonCodePrefix}:{neighbour}"
+            : ApproachStanceWords.StanceRefusalCode(stance) is { } stanceRefusal && standableTiles == 0 && standableOutsideStance > 0
+                ? $"{stanceRefusal}:{neighbour}"
+                : $"{NoReachableApproachReasonCode}:{target.X}:{target.Y}";
         string hint = $"no_approach;standable_neighbour={neighbour}";
         if (standableTiles == 0
             && location is not null

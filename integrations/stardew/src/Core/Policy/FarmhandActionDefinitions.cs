@@ -136,11 +136,29 @@ public sealed record FarmhandActionResourceTemplateClaim(string Key, FarmhandRes
 /// </summary>
 /// <param name="Relation">The surface's own word for the relationship, e.g. `adjacent`.</param>
 /// <param name="WithinTiles">How far away that relationship allows, or null when the surface states no distance.</param>
-public sealed record FarmhandActionApproachRequirement(string Relation, int? WithinTiles)
+/// <param name="Stance">
+/// Which neighbours of the target the body may work it from (<see cref="ApproachStance"/>), for an action whose native
+/// entry cannot be aimed from all eight. It is a SEPARATE FACT from the relation: the relation says who closes the
+/// distance, the stance says which tiles count once it is closed. `sweep_scythe` needs both - it walks in itself and it
+/// must end on a cardinal neighbour, because the swing's facing IS its arc's orientation.
+/// </param>
+public sealed record FarmhandActionApproachRequirement(string Relation, int? WithinTiles, ApproachStance Stance = ApproachStance.Any)
 {
     /// <summary>You must already stand beside the target, in a step of your own: the handler refuses from further
     /// away (`enter_exit`'s `door_out_of_range`, `ride_minecart`'s `minecart_station_out_of_range`).</summary>
     public static readonly FarmhandActionApproachRequirement Adjacent = new("adjacent", 1);
+
+    /// <summary>
+    /// Whether this is the <c>self_walked</c> relation: the action closes the distance itself.
+    ///
+    /// <para>
+    /// Read by the gates that ask "does this row say it walks" (<c>ApproachDeclarationCoverageTests</c>,
+    /// <c>ActionExecutionCapabilityMatrixTests</c>) instead of comparing the whole record, because a row may also declare
+    /// a <see cref="Stance"/> and the two facts are independent: `sweep_scythe` walks in AND must end on a cardinal tile,
+    /// and a gate that compared records would read that second declaration as "does not walk".
+    /// </para>
+    /// </summary>
+    public bool Walks => string.Equals(this.Relation, SelfWalked.Relation, StringComparison.Ordinal);
 
     /// <summary>
     /// The action closes the distance itself, so there is nothing for the caller to stand beside first and no distance
@@ -612,6 +630,24 @@ public static class FarmhandActionCatalog
     /// IT COSTS NO WORLD READ: the claim is a descriptor fact this catalogue already publishes.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Where the body must stand to work the action <paramref name="actionId"/> names, or null when its row declares no
+    /// approach relation.
+    ///
+    /// <para>
+    /// THE APPROACH LEG READS THIS, which is the whole point of it: <c>TryBeginToolApproach</c> is handed an action id and
+    /// nothing about its geometry, so the stand tile it picks has to be chosen for the action that will stand there. Asking
+    /// the catalogue rather than hard-coding an adjacency keeps the two halves of the leg - "is she already where this
+    /// action can be done from?" and "where may she be sent?" - reading one declaration.
+    /// </para>
+    /// </summary>
+    public static FarmhandActionApproachRequirement? ApproachOf(string? actionId) =>
+        actionId is null
+            ? null
+            : Registrations
+                .FirstOrDefault(registration => string.Equals(registration.ActionId, actionId, StringComparison.Ordinal))
+                ?.Descriptor?.Approach;
+
     public static string? ChoreFamilyOf(string? actionId)
     {
         if (actionId is null) return null;
@@ -928,7 +964,14 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // comparison is the one that separates a swing that cut from a swing that reached nothing, which is why a
         // no-change arc is `sweep_postcondition_unavailable` rather than a success. The native binding is the engine entry
         // the swing is driven through (`MeleeWeapon.DoDamage`, one call per frame index).
-        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap) }, new Dictionary<string, string>(), ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "write", "scythe_arc_occupancy_changed", "MeleeWeapon.DoDamage")), FarmhandActionLifecycle.LiveVerified),
+        // THE STANCE IS DECLARED, because the arc's orientation IS the facing: `MeleeWeapon.DoDamage` derives one
+        // rectangle per animation frame from the wielder's bounding box and facing (MeleeWeapon.cs:694-867), so a swing
+        // can only be aimed from a cardinal neighbour. Measured `round92` `plan_40`: four swings, zero successes - the
+        // approach leg chose a DIAGONAL stand tile three times (target 64,22 while she stood at 65,21; target 66,23
+        // while she stood at 65,22), which every other tool family works from and this one cannot, and each swing was
+        // refused `sweep_needs_cardinal_stance` after the walk had already committed. Declaring it here is what makes
+        // the leg walk her to a cardinal tile instead.
+        E("sweep_scythe", "resource_gathering", FarmhandActionHandlerGroup.ResourceTools, SelfWalked(new FarmhandActionDescriptor(new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap) }, new Dictionary<string, string>(), ToolResource("scythe", FarmhandResourceTemplateValue.AnyUpgrade), "write", "scythe_arc_occupancy_changed", "MeleeWeapon.DoDamage"), ApproachStance.Cardinal), FarmhandActionLifecycle.LiveVerified),
         E("harvest_bush", "resource_gathering", FarmhandActionHandlerGroup.Farming, Finishes(SelfWalked(Target())), FarmhandActionLifecycle.LiveVerified, "bushTargets"),
         E("harvest_fruit_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Finishes(SelfWalked(Target())), FarmhandActionLifecycle.LiveVerified, "fruitTreeTargets"),
         E("shake_tree", "resource_gathering", FarmhandActionHandlerGroup.Farming, Finishes(SelfWalked(Target())), FarmhandActionLifecycle.LiveVerified, "shakeTreeTargets"),
@@ -1245,9 +1288,12 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     ///
     /// One wrapper rather than a `with { Approach = ... }` at every row, because the fact is the same on all of them and
     /// `ApproachDeclarationCoverageTests` derives the set of rows that must carry it from the handlers themselves.
+    ///
+    /// <paramref name="stance"/> is the SECOND fact a few rows also owe - which tiles the body may end on. It defaults to
+    /// <see cref="ApproachStance.Any"/> so a row that has no stance still declares one relation and nothing else.
     /// </summary>
-    private static FarmhandActionDescriptor SelfWalked(FarmhandActionDescriptor descriptor) =>
-        descriptor with { Approach = FarmhandActionApproachRequirement.SelfWalked };
+    private static FarmhandActionDescriptor SelfWalked(FarmhandActionDescriptor descriptor, ApproachStance stance = ApproachStance.Any) =>
+        descriptor with { Approach = FarmhandActionApproachRequirement.SelfWalked with { Stance = stance } };
 
     /// <summary>
     /// The same descriptor with the OCCUPANTS it removes and the PRICE of removing them declared, in the engine's own

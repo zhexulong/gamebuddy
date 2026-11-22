@@ -127,14 +127,58 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
     }
 
+    /// <summary>
+    /// Water one crop, walking to it first - and ANSWER THE CAN BEFORE THAT WALK.
+    ///
+    /// <para>
+    /// The can's water is spent by the swing, so a can that is already empty cannot water ANY of the tiles a plan has
+    /// left. The seam asks a gate before the approach leg is armed, so the empty can is answered there and no walk is
+    /// bought for it. MEASURED `round92`, `plan_534` (30 nodes): the can ran dry at `n21` and `n22`..`n30` each walked to
+    /// their tile and were refused `watering_can_empty` - nine walks for one fact the plan knew when it was written. The
+    /// body keeps its own check, because a request admitted before the walk may have waited through one.
+    /// </para>
+    /// </summary>
     public LocalExecutionReceipt RequestLocalWaterCrop(string requestId, int targetX, int targetY, string expectedTargetId, int charge, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
             "water_crop", requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: this.AuthorizeActorOnReadyWorld,
-            gate: location => DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out _),
+            gate: location => DescribeWaterCropRefusal(location, targetX, targetY, expectedTargetId, out _)
+                ?? DescribeEmptyWateringCanRefusal(),
             inReach: IsCropTargetInRange,
             execute: (executionId, admittedRequestId) => this.ExecuteWaterCrop(executionId, admittedRequestId, targetX, targetY, expectedTargetId, charge, requestedDeadlineMs));
+
+    /// <summary>
+    /// What makes the can this action will swing unable to water, asked WITHOUT selecting it - the selection belongs to the
+    /// body, which runs after the walk.
+    ///
+    /// <para>
+    /// The resolution is <see cref="ResolveDeclaredTool"/>, which mutates nothing and ranks the pack exactly as the
+    /// selection does, so the can answered about here is the can the swing will use. A pack that resolves no can at all is
+    /// left to the body: its refusal is `tool_not_owned:watering_can` and only the selection holds the facts it publishes.
+    /// </para>
+    /// </summary>
+    private static TileTargetRefusal? DescribeEmptyWateringCanRefusal()
+    {
+        DeclaredToolResolution resolution = ResolveDeclaredTool(Game1.player.Items, "water_crop");
+        return resolution.RefusalCode is null
+            && Game1.player.Items[resolution.Slot] is WateringCan can
+            && DescribeEmptyWateringCan(can, resolution.Slot) is { } evidence
+                ? new TileTargetRefusal("watering_can_empty", evidence)
+                : null;
+    }
+
+    /// <summary>
+    /// The empty-can evidence when the can cannot water - its water is spent and nothing the actor carries waters for free -
+    /// or null when it can.
+    ///
+    /// ONE SPELLING FOR THE TWO READERS, the gate that answers before the walk and the body that answers after one, so a
+    /// refusal cannot say the can is empty in the place the body says it is full.
+    /// </summary>
+    private static string? DescribeEmptyWateringCan(WateringCan wateringCan, int slot) =>
+        wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment
+            ? $"water_left={wateringCan.WaterLeft.ToString(CultureInfo.InvariantCulture)};slot={slot.ToString(CultureInfo.InvariantCulture)}"
+            : null;
 
     /// <summary>
     /// What makes this tile a place the actor can water: the crop is there, it wants water, it is dry, and it is the one
@@ -178,9 +222,8 @@ internal sealed partial class ExecutionManager
         {
             if (selection.Tool is not WateringCan wateringCan)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
-            if (wateringCan.WaterLeft <= 0 && !Game1.player.hasWateringCanEnchantment)
-                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty",
-                    $"water_left={wateringCan.WaterLeft};slot={selection.Slot}");
+            if (DescribeEmptyWateringCan(wateringCan, selection.Slot) is { } empty)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "watering_can_empty", empty);
             if (RefuseToolCharge(charge, wateringCan, Game1.player, targetX, targetY) is { } chargeRefusal)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, chargeRefusal, $"target={targetX},{targetY};charge={charge};max={ToolChargeCeiling(wateringCan)}");
 

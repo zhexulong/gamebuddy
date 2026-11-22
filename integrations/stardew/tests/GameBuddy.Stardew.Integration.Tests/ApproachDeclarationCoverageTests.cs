@@ -113,7 +113,7 @@ public sealed class ApproachDeclarationCoverageTests
         // walking row says so, never because the row left the population. Printed whole, because "declared 61 of 67"
         // makes the reader do the arithmetic to learn how many are missing.
         List<CoverageRow> undeclared = walking
-            .Where(row => row.Declared != FarmhandActionApproachRequirement.SelfWalked)
+            .Where(row => row.Declared is not { Walks: true })
             .ToList();
         this.output.WriteLine(
             $"handlers examined {measured.HandlersExamined} · begin an approach leg {walking.Count} · declared "
@@ -188,11 +188,13 @@ public sealed class ApproachDeclarationCoverageTests
         // exists to end). `ride_bus` is the standing example of an action that declares nothing on purpose; declaring
         // `self_walked` there would be exactly this defect.
         IReadOnlyList<CoverageRow> rows = Measured.Value.Rows;
-        rows.Should().Contain(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked,
+        // The relation, not the whole record: a row may also declare a STANCE (`sweep_scythe` must end on a cardinal
+        // tile), and that second declaration is not a denial of the first.
+        rows.Should().Contain(row => row.Declared != null && row.Declared.Walks,
             "the catalog declares the relation somewhere, or this gate reads nothing");
 
         List<string> unbacked = rows
-            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && !row.Walks)
+            .Where(row => row.Declared is { Walks: true } && !row.Walks)
             .Select(row => row.Site)
             .ToList();
 
@@ -231,7 +233,7 @@ public sealed class ApproachDeclarationCoverageTests
     {
         Measurement measured = Measured.Value;
         List<CoverageRow> population = measured.Rows
-            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked)
+            .Where(row => row.Declared is { Walks: true })
             .ToList();
         List<CoverageRow> walks = population.Where(row => row.Walks).ToList();
         List<CoverageRow> refuses = population.Where(row => row.RefusesForDistance).ToList();
@@ -266,7 +268,7 @@ public sealed class ApproachDeclarationCoverageTests
     public void FALSIFIER_TheGateIsRedOnTheDistanceRefusalThisUnitDeleted()
     {
         Measured.Value.Rows
-            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && row.RefusesForDistance)
+            .Where(row => row.Declared is { Walks: true } && row.RefusesForDistance)
             .Should()
             .BeEmpty("the shipped tree has to be green first, or this replay proves nothing about the gate");
 
@@ -292,7 +294,7 @@ public sealed class ApproachDeclarationCoverageTests
         sources[relativePath] = replayed;
 
         List<string> refusing = Measure(sources).Rows
-            .Where(row => row.Declared == FarmhandActionApproachRequirement.SelfWalked && row.RefusesForDistance)
+            .Where(row => row.Declared is { Walks: true } && row.RefusesForDistance)
             .Select(row => row.ActionId)
             .ToList();
 

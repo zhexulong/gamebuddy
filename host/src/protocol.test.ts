@@ -1181,7 +1181,7 @@ test("bridge message payloads fail closed", () => {
           produceStack: 1,
         },
       ],
-      feedTroughTargets: [{ targetId: "feed_trough_deadbeef", slot: 7, x: 10, y: 11, hayStack: 2 }],
+      feedTroughTargets: [{ targetId: "feed_trough_deadbeef", slot: 7, x: 10, y: 11, bagHay: 2 }],
       inventoryItemFacts: [{ slot: 8, qualifiedItemId: "(O)184", displayName: "Milk", stack: 1 }],
       foodTargets: [
         { slot: 5, qualifiedItemId: "(O)216", displayName: "Bread", stack: 3, edibility: 20, isDrink: false },
@@ -1496,7 +1496,7 @@ test("snapshot target facts reject schema-forbidden extra keys before Host consu
         produceStack: 1,
       },
     ],
-    ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, hayStack: 1 }],
+    ["feedTroughTargets", { targetId: "trough_deadbeef", slot: 4, x: 10, y: 12, bagHay: 1 }],
     ["inventoryItemFacts", { slot: 4, qualifiedItemId: "(O)184", stack: 1 }],
     ["foodTargets", { slot: 4, qualifiedItemId: "(O)216", stack: 1, edibility: 20, isDrink: false }],
     [

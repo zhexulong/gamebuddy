@@ -157,8 +157,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// (<see cref="ReasonsByCount"/>) so they cannot disagree about which reason is dominant.
     /// </param>
     private static BodyProgramTerminalResult Failed(NodeExecutionBinding execution, string reasonCode, string? hint = null, string? detail = null) =>
-        new(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null,
-            BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null, hint, detail);
+        new(execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null)
+        {
+            FailureCode = BodyProgramValidation.IsReasonCode(reasonCode) ? reasonCode : null,
+            Hint = hint,
+            RefusalDetail = BodyProgramValidation.BoundRefusalDetail(detail),
+        };
 
     /// <summary>
     /// Projects the validated canonical arguments onto the wire argument shape
@@ -484,7 +488,18 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // `owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1` sat in this receipt, and the model received the
                 // reason code alone and invented the world fact it needed. ADR-006's ban is on evidence for a node that
                 // claims no effect; a reason detail is the same statement the reason code makes, one level down.
-                new BodyProgramTerminalResult(execution, outcome, Array.Empty<RuntimeFact>(), null, null, null, receipt.ReasonCode, receipt.Hint, receipt.Evidence),
+                //
+                // AND IT IS BOUNDED HERE, WHERE IT IS WRITTEN. Measured `round92`: `plan_703` and `plan_745` were refused
+                // `no_native_path` with 544 and 698 characters of route evidence; passed through verbatim, the journal
+                // refused the detail and the controller settled two ordinary refusals as `RecoveryRequired`. The bound is
+                // `BodyProgramValidation.MaximumNodeRefusalDetailLength` characters, and what did not fit is counted in the
+                // detail itself (`;truncated=N`) - a reason that states less than it had is a reason a caller can read.
+                new BodyProgramTerminalResult(execution, outcome, Array.Empty<RuntimeFact>(), null, null, null)
+                {
+                    FailureCode = receipt.ReasonCode,
+                    Hint = receipt.Hint,
+                    RefusalDetail = BodyProgramValidation.BoundRefusalDetail(receipt.Evidence),
+                },
         };
 
     /// <summary>
@@ -551,8 +566,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         if (verdict == ForEachPassVerdict.Continue) return null;
         if (verdict == ForEachPassVerdict.Cancelled)
             return new BodyProgramTerminalResult(
-                execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null, ForEachStoppedReason,
-                FailureHint(pass), FailureDetail(pass));
+                execution, BodyProgramNodeOutcome.Cancelled, Array.Empty<RuntimeFact>(), null, null, null)
+            {
+                FailureCode = ForEachStoppedReason,
+                Hint = FailureHint(pass),
+                RefusalDetail = BodyProgramValidation.BoundRefusalDetail(FailureDetail(pass)),
+            };
         if (verdict is ForEachPassVerdict.NoRows or ForEachPassVerdict.Failed)
             return Failed(execution, verdict == ForEachPassVerdict.NoRows ? NoRowsReason : DominantReason(pass), FailureHint(pass), FailureDetail(pass));
 
@@ -571,10 +590,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // identity is the lineage a reader needs to find this attempt.
                 LastReceiptId(pass) ?? execution.ExecutionId,
                 aggregate,
-                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(PassChoreFamily(pass))}",
-                DominantReason(pass),
-                FailureHint(pass),
-                FailureDetail(pass));
+                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(PassChoreFamily(pass))}")
+            {
+                FailureCode = DominantReason(pass),
+                Hint = FailureHint(pass),
+                RefusalDetail = BodyProgramValidation.BoundRefusalDetail(FailureDetail(pass)),
+            };
         return new BodyProgramTerminalResult(
             execution,
             BodyProgramNodeOutcome.Succeeded,

@@ -136,9 +136,17 @@ internal sealed partial class ExecutionManager
     /// answer" (<see cref="ShopStockToken"/> writes that as a word, and <c>int.MaxValue</c> is the game's own word for
     /// unbounded).
     /// </para>
+    /// <para>
+    /// THE MAP IS ON THE RECEIPT because `owner_tile` is a coordinate and a coordinate without a map says nothing: `4,17`
+    /// is a tile in Pierre's shop and a tile on the Farm. Every other tile-bearing receipt names its map (`till_soil`'s
+    /// `location`, `remove_placed_item`'s `location=NameOrUniqueName`), and a purchase that named only the counter tile
+    /// left `round92`'s day-3 `town_market` purpose `unjudged` (`task_purpose_needs_an_unpublished_fact`) over two
+    /// purchases that had already succeeded.
+    /// </para>
     /// </summary>
     internal readonly record struct ShopPurchaseReceiptFacts(
         string ShopId,
+        string Location,
         string OwnerName,
         bool TileOpened,
         string ItemId,
@@ -203,7 +211,7 @@ internal sealed partial class ExecutionManager
     {
         int gained = facts.OwnedAfter - facts.OwnedBefore;
         string entryKind = facts.TileOpened ? "tile_action" : "npc_owner";
-        return $"shop={facts.ShopId};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};"
+        return $"shop={facts.ShopId};location={facts.Location};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};"
             + $"{ShopPurchaseDistanceEvidence(facts.TileOpened, facts.CounterX, facts.CounterY, facts.ActorX, facts.ActorY)};"
             + $"item={facts.ItemId};"
             + $"requested={facts.Requested};purchased={facts.Purchased};unit_price={facts.UnitPrice};"

@@ -530,7 +530,9 @@ public sealed class ActionExecutionCapabilityMatrixTests
         bool tileAddressed = arguments.Contains(TileXArgument, StringComparer.Ordinal)
             && arguments.Contains(TileYArgument, StringComparer.Ordinal);
         bool reachLeg = tileAddressed && arguments.Contains(TargetIdentityArgument, StringComparer.Ordinal);
-        bool selfWalked = registration.Descriptor?.Approach == FarmhandActionApproachRequirement.SelfWalked;
+        // The RELATION, not the whole record: a row may also declare a stance, and `sweep_scythe` does - it walks in AND
+        // must end on a cardinal tile. Reading the record as one value would call that second declaration "does not walk".
+        bool selfWalked = registration.Descriptor?.Approach is { Walks: true };
         bool declaresSlotAndItem = arguments.Contains(SlotArgument, StringComparer.Ordinal)
             && arguments.Contains(ExpectedItemArgument, StringComparer.Ordinal);
 

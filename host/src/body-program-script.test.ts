@@ -547,6 +547,120 @@ function plantingSteps(tiles: number): string {
 }
 
 /**
+ * The can one plan's water belongs to, and the pack row that says the Mod would swing it.
+ *
+ * TWO FAMILIES, TWO FACTS: `toolSlots` is the pack's own list, which is where a slot is resolved (the compiler ranks it
+ * exactly as the Mod's selection does), and `wateringCanFacts` is that can's `water`/`max` - the same reading the Mod's
+ * `watering_can_empty` guard compares against zero.
+ */
+const WATERING_CAN = Object.freeze({
+  slot: 4,
+  qualifiedItemId: "(T)WateringCan",
+  displayName: "Watering Can",
+  label: "Watering Can",
+  water: 20,
+  max: 40,
+});
+const WATERING_CAN_PACK = [{ slot: 4, label: "Watering Can", category: "watering_can", upgradeLevel: 0 }];
+
+/** `tiles` unwatered crops in one row of the farm: the family a watering plan iterates. */
+function cropRows(tiles: number): readonly ReturnType<typeof crop>[] {
+  return Array.from({ length: tiles }, (_, index) => crop(`crop_${String(60 + index)}`, 60 + index, 18));
+}
+
+/** One `water_crop` call per published crop, charging 0: the loop round92 wrote, whose every node spends one unit. */
+const WATERING_STEPS =
+  "for (const tile of snapshot.cropTargets ?? []) builder.water_crop({ x: tile.x, y: tile.y, expectedTargetId: tile.targetId, charge: 0 });";
+
+/**
+ * ROUND92, `plan_534`: a can holding TWENTY water and a plan carrying THIRTY `water_crop` nodes.
+ *
+ * <p>
+ * The can ran dry at `n21`, and `n22`..`n30` each WALKED to their tile and were then refused `watering_can_empty` - nine
+ * walks bought to learn one fact the plan held in its own hand. A can's water is spent by the node that swings it
+ * (`WateringCan.cs:189-191`, one unit per charge level the request itself names) and `wateringCanFacts` publishes what the
+ * can holds, so the two are one reading taken at submit: a plan that asks for more is a fact about the PLAN.
+ * </p>
+ */
+test("a plan that waters more than its can holds is refused, naming what it plans and what it holds", () => {
+  const can = { toolSlots: WATERING_CAN_PACK, wateringCanFacts: [WATERING_CAN], cropTargets: cropRows(30) };
+  const over = compile(WATERING_STEPS, can);
+  assert.equal(over.status, "refused", "thirty waterings against a can of twenty is not a program");
+  assert.equal(refusalOf(over), "plan_script_not_enough_water:planned=30:held=20");
+  // AND NOTHING WAS WRITTEN: the nine nodes that could only have been refused are not dispatched, which is the whole
+  // difference between this refusal and nine walks to nine tiles.
+  assert.equal(
+    over.status === "refused" ? over.acceptedStepsCount : -1,
+    30,
+    "every call is still accounted for, by the position she wrote it",
+  );
+  // The same can and a plan that fits it compiles clean - the bound is the water held, not a margin under it.
+  const fits = compile(WATERING_STEPS, { ...can, cropTargets: cropRows(20) });
+  assert.equal(fits.status, "compiled");
+  assert.equal(nodesOf(fits).length, 20);
+});
+
+/**
+ * THE PLAN ANSWERS FOR WHAT IT REFILLS ITSELF, the same way it answers for the seed it buys.
+ *
+ * A `refill_watering_can` node sets the can back to its maximum, so the count runs in PROGRAM ORDER: with the refill FIRST
+ * a plan of forty waterings against a can of twenty is executable, and with the refill written after the dry point it is
+ * refused at the same node it would have died at - and `held` says twenty, which is the water that ran out.
+ */
+test("a refill in the plan tops the can up, and one written after the dry point does not", () => {
+  const rows = cropRows(40);
+  const refill = 'builder.refill_watering_can({ x: 60, y: 20, slot: 4, expectedTargetId: "refill_1" });\n';
+  const can = {
+    toolSlots: WATERING_CAN_PACK,
+    wateringCanFacts: [WATERING_CAN],
+    cropTargets: rows,
+    refillWateringCanTargets: [{ targetId: "refill_1", x: 60, y: 20 }],
+  };
+  const refillsFirst = compile(refill + WATERING_STEPS, can);
+  assert.equal(refillsFirst.status, "compiled", "a refill before the work is a plan of forty waterings");
+  assert.equal(nodesOf(refillsFirst).length, 41, "the refill and the forty waterings are all in the program");
+  const refillsLate = compile(
+    "for (const tile of (snapshot.cropTargets ?? []).slice(0, 21)) builder.water_crop({ x: tile.x, y: tile.y, expectedTargetId: tile.targetId, charge: 0 });\n" +
+      refill +
+      "for (const tile of (snapshot.cropTargets ?? []).slice(21)) builder.water_crop({ x: tile.x, y: tile.y, expectedTargetId: tile.targetId, charge: 0 });",
+    can,
+  );
+  assert.equal(
+    refusalOf(refillsLate),
+    "plan_script_not_enough_water:planned=40:held=20",
+    "the twenty-first watering is already past a can that is only refilled afterwards",
+  );
+});
+
+/**
+ * THE OTHER ANSWERS, because "the can's water was not published", "the snapshot holds no row for the can" and "no slot
+ * carries a can" are three different facts and none of them may bound a plan.
+ */
+test("an unpublished can bounds nothing and is named, and so is a can with no row and a pack with no can slot", () => {
+  const absent = compile(WATERING_STEPS, { toolSlots: WATERING_CAN_PACK, cropTargets: cropRows(30) });
+  assert.equal(absent.status, "compiled", "no can was published, so no count is invented");
+  assert.equal(nodesOf(absent).length, 30);
+  assert.deepEqual(
+    absent.heldWaterUnmeasured,
+    ["unmeasured=water_crop.watering_can;family_not_published=wateringCanFacts"],
+    "the plan says which reading it could not make instead of guessing one",
+  );
+  // MEASURED, AND HOLDING NO ROW FOR THE SLOT the Mod would swing: the can this plan is about is not on the wire.
+  const noRow = compile(WATERING_STEPS, {
+    toolSlots: WATERING_CAN_PACK,
+    wateringCanFacts: [],
+    cropTargets: cropRows(30),
+  });
+  assert.equal(noRow.status, "compiled");
+  assert.deepEqual(noRow.heldWaterUnmeasured, ["unmeasured=water_crop.watering_can;slot_not_published=4"]);
+  // A PACK THAT NAMES NO CAN AT ALL (an older Mod, whose slots carry no category) resolves no slot, so there is no can to
+  // look up - and the plan is not refused for a reading nobody took.
+  const noPack = compile(WATERING_STEPS, { cropTargets: cropRows(30) });
+  assert.equal(noPack.status, "compiled");
+  assert.deepEqual(noPack.heldWaterUnmeasured, ["unmeasured=water_crop.watering_can;slot_unresolved=watering_can"]);
+});
+
+/**
  * A door is entered from BESIDE it: the Mod refuses a transition whose source tile is more than one tile from the actor
  * (`door_out_of_range` / `warp_out_of_range`, `farmhandexecutioncontroller.movementactions.cs:478`). A plan that names
  * only the door is therefore refused one submit later, so the compiler writes the walk itself - with the door's own

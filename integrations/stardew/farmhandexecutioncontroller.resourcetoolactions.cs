@@ -10,8 +10,36 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager
 {
+    /// <summary>
+    /// The reach every tool family but a stance-constrained swing hands the seam: the body stands somewhere on the target's
+    /// eight-neighbour ring, which is <see cref="ApproachStance.Any"/> said by the ring's owner
+    /// (<see cref="ApproachTileSelector.StandsWithin"/>: Chebyshev-1 and never the tile under her feet).
+    ///
+    /// <para>
+    /// IT IS A DELEGATION RATHER THAN A RADIUS, because a second copy of "which tiles are beside this" is how the reach
+    /// and the stand-tile search came to disagree - `round92`: the reach admitted a diagonal and the swing refused it.
+    /// A row that restricts its stance hands the seam its own ring instead (<see cref="IsTileWithinDeclaredStance"/>) and
+    /// both then read the same predicate.
+    /// </para>
+    /// </summary>
     private static bool IsTileWithinToolReach(Farmer player, int targetX, int targetY) =>
-        IsTileWithinChebyshevRadius(player, targetX, targetY, 1) && !IsToolTargetUnderActor(player, targetX, targetY);
+        ApproachTileSelector.StandsWithin((targetX, targetY), ((int)player.Tile.X, (int)player.Tile.Y), ApproachStance.Any);
+
+    /// <summary>
+    /// The reach an action with a declared stance hands the seam: the tile the body stands on is inside the ring its OWN
+    /// row declares, read from the catalogue so the answer cannot drift from the one the approach leg selects with.
+    ///
+    /// <para>
+    /// It also decides WHETHER TO WALK. Standing diagonally is inside the native radius and outside a cardinal stance, so
+    /// without this a request from a diagonal goes straight to the swing and the swing refuses - `round92`'s three
+    /// `sweep_needs_cardinal_stance`, each after the plan had already committed to that tile.
+    /// </para>
+    /// </summary>
+    private static Func<Farmer, int, int, bool> IsTileWithinDeclaredStance(string actionId) =>
+        (player, targetX, targetY) => ApproachTileSelector.StandsWithin(
+            (targetX, targetY),
+            ((int)player.Tile.X, (int)player.Tile.Y),
+            FarmhandActionCatalog.ApproachOf(actionId)?.Stance ?? ApproachStance.Any);
 
     public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
@@ -1420,7 +1448,9 @@ internal sealed partial class ExecutionManager
     /// state: `MeleeWeapon.DoDamage` derives one rectangle per animation frame from the wielder's bounding box and the
     /// facing (`MeleeWeapon.cs:694-867`), so "cut here" can only mean "stand on a cardinal neighbour of this tile, face
     /// it, swing once". A diagonal stance refuses `sweep_needs_cardinal_stance` rather than swinging at whatever
-    /// direction the actor last faced, because the facing IS the arc's orientation.
+    /// direction the actor last faced, because the facing IS the arc's orientation - and the row DECLARES that cardinal
+    /// stance, so the approach leg walks her in at a cardinal tile instead of leaving the swing to refuse from a diagonal
+    /// the leg chose (measured `round92`: three such refusals in one plan, each after the walk had committed).
     /// </para>
     /// <para>
     /// IT DESTROYS ONLY WHAT THE CALLER NAMED. The engine's arc reaches behind the actor as well as in front, so every
@@ -1453,7 +1483,7 @@ internal sealed partial class ExecutionManager
                 ResolveDeclaredTool(Game1.player.Items, "sweep_scythe").RefusalCode is { } toolRefusal
                     ? new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusal))
                     : null,
-            inReach: IsTileWithinToolReach,
+            inReach: IsTileWithinDeclaredStance("sweep_scythe"),
             execute: (executionId, admittedRequestId) => this.ExecuteSweepScythe(executionId, admittedRequestId, targetX, targetY));
 
     private LocalExecutionReceipt ExecuteSweepScythe(string executionId, string requestId, int targetX, int targetY)
@@ -1753,6 +1783,9 @@ internal sealed partial class ExecutionManager
         string? noStandingTileCodePrefix = null)
     {
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
+        // THE STAND TILE IS CHOSEN FOR THE ACTION THAT WILL STAND THERE, so the ring comes from the action's own row. A row
+        // that declares nothing is `Any` and gets the eight neighbours it always had.
+        ApproachStance stance = FarmhandActionCatalog.ApproachOf(actionId)?.Stance ?? ApproachStance.Any;
         Func<(int X, int Y), bool> isStandable = tile =>
             StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
             && !IsWarpBufferTile(location, tile);
@@ -1764,7 +1797,8 @@ internal sealed partial class ExecutionManager
             isStandable,
             StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } component
                 ? tile => component(new Vector2(tile.X, tile.Y))
-                : _ => true);
+                : _ => true,
+            stance);
         if (standingTile is null)
         {
             if (actorOnTarget)
@@ -1774,13 +1808,13 @@ internal sealed partial class ExecutionManager
                     executionId,
                     ExecutionState.Rejected,
                     "hollow_ring_no_step_out",
-                    DescribeNoReachableApproach(anchor, actor, isStandable, footprint, location: location, player: Game1.player).Evidence
+                    DescribeNoReachableApproach(anchor, actor, isStandable, footprint, location: location, player: Game1.player, stance: stance).Evidence
                         + ";hollow_ring=true;step_out=none"
                         + DescribeApproachRange(footprint[0].X, footprint[0].Y));
             }
 
             (string refusalCode, string refusalEvidence, string refusalHint) = DescribeNoReachableApproach(
-                anchor, actor, isStandable, footprint, noStandingTileCodePrefix, location, Game1.player);
+                anchor, actor, isStandable, footprint, noStandingTileCodePrefix, location, Game1.player, stance);
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, refusalCode, refusalEvidence + DescribeApproachRange(targetX: anchor.X, targetY: anchor.Y, standingTileAsked: noStandingTileCodePrefix is not null), hint: refusalHint);
         }
         (int X, int Y) goal = standingTile.Value;

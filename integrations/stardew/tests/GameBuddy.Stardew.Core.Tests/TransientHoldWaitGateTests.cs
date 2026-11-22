@@ -351,7 +351,8 @@ public sealed class TransientHoldWaitGateTests
             this.Runs++;
             if (this.HeldReasonCode is { } code)
                 return new BodyProgramTerminalResult(
-                    execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null, code, null, "held_by=" + code);
+                    execution, BodyProgramNodeOutcome.Failed, Array.Empty<RuntimeFact>(), null, null, null)
+                { FailureCode = code, RefusalDetail = "held_by=" + code };
             return new BodyProgramTerminalResult(
                 execution, BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt-1", "evidence-1", "postcondition-1");
         }

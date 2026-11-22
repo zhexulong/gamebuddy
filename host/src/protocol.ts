@@ -1019,8 +1019,23 @@ export type Snapshot = Readonly<{
     toolKind: "milk_pail" | "shears";
     produceStack: number;
   }>[];
-  /** Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot. Placement does not prove an animal has eaten. */
-  feedTroughTargets?: readonly Readonly<{ targetId: string; slot: number; x: number; y: number; hayStack: number }>[];
+  /**
+   * Nearby empty native AnimalHouse Trough tiles paired with an owned Hay slot.
+   *
+   * Membership IS the trough's fact: a row is published only for a trough tile the location holds no object at, so no row
+   * of this family says a trough has hay in it. `bagHay` is the actor's own stack - the count in `slot` that `feed_animal`
+   * spends one of - and is named for the bag. Measured `round92` day 2 (2026-11-22): three empty troughs published
+   * `hayStack: 5` from the pack, she read it as the troughs' five hay and skipped feeding the day entirely.
+   *
+   * Placement does not prove an animal has eaten.
+   */
+  feedTroughTargets?: readonly Readonly<{
+    targetId: string;
+    slot: number;
+    x: number;
+    y: number;
+    bagHay: number;
+  }>[];
   /**
    * Every storage container the actor can reach, each carrying its own contents.
    *

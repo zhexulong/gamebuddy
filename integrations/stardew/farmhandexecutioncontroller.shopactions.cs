@@ -1569,6 +1569,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         string evidence = ShopPurchaseReceipt(new ShopPurchaseReceiptFacts(
             ShopId: target.ShopId,
+            Location: location.NameOrUniqueName,
             OwnerName: target.OwnerName,
             TileOpened: tileOpened,
             ItemId: expectedItemId,

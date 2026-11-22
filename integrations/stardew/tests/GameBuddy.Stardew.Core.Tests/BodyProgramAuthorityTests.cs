@@ -512,7 +512,8 @@ public sealed class BodyProgramAuthorityTests
         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
 
         // A success may not also name a failure: accepting both would let a reader pick whichever it preferred.
-        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition", "door_out_of_range"))
+        authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded, Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition")
+            { FailureCode = "door_out_of_range" })
             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
         // Nor may a reason that is not a code: ADR-006 is explicit that "the code is not free-form text".
         authority.TryComplete(grant, TerminalReason(grant, BodyProgramNodeOutcome.Failed, "Door Out Of Range"))
@@ -546,7 +547,8 @@ public sealed class BodyProgramAuthorityTests
 
          const string detail = "owner=Pierre;owner_tile=4,17;actor_tile=4,19;radius=1";
          authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
-             Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, detail)).IsSuccess.Should().BeTrue();
+             Array.Empty<RuntimeFact>(), null, null, null)
+             { FailureCode = "shop_counter_out_of_reach", RefusalDetail = detail }).IsSuccess.Should().BeTrue();
 
          BodyProgramJournalNode failed = authority.Status("program").Snapshot!.Nodes.Single();
          failed.State.Should().Be(BodyProgramNodeState.Failed);
@@ -580,21 +582,82 @@ public sealed class BodyProgramAuthorityTests
          const string detail = "owner=Pierre;owner_tile=4,17";
 
          authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Succeeded,
-                 Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition", null, null, detail))
+                 Array.Empty<RuntimeFact>(), "receipt", "evidence", "postcondition") { RefusalDetail = detail })
              .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
          authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Uncertain,
-                 Array.Empty<RuntimeFact>(), null, null, null, null, null, detail))
+                 Array.Empty<RuntimeFact>(), null, null, null) { RefusalDetail = detail })
+             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
+         // A writer that bypasses the bound: the value is presented to the journal as it was built, and the journal still
+         // refuses it rather than storing a detail over the bound. Nothing here may be softened into a truncation, or the
+         // producer's bound would be unobservable - and a writer that skipped it would be settled RecoveryRequired.
+         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
+                 Array.Empty<RuntimeFact>(), null, null, null)
+                 { FailureCode = "shop_counter_out_of_reach", RefusalDetail = new string('a', BodyProgramValidation.MaximumNodeRefusalDetailLength + 1) })
              .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
          authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
-                 Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, new string('a', BodyProgramValidation.MaximumNodeRefusalDetailLength + 1)))
-             .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
-         authority.TryComplete(grant, new BodyProgramTerminalResult(Execution(grant), BodyProgramNodeOutcome.Failed,
-                 Array.Empty<RuntimeFact>(), null, null, null, "shop_counter_out_of_reach", null, "owner=Pierre\nradius=1"))
+                 Array.Empty<RuntimeFact>(), null, null, null)
+                 { FailureCode = "shop_counter_out_of_reach", RefusalDetail = "owner=Pierre\nradius=1" })
              .Code.Should().Be(BodyProgramControllerResultCode.InvalidInput);
 
          // Nothing was mutated by any of the four refusals.
          authority.Status("program").Snapshot!.Nodes.Single().State.Should().Be(BodyProgramNodeState.Running);
          BodyProgramJournalPersistence.TryValidate(authority.Snapshot, out string? refusal).Should().BeTrue(refusal);
+     }
+
+     /// <summary>
+     /// A LEGITIMATE REFUSAL DOES NOT CHANGE ITS STATE BECAUSE ITS TEXT WAS LONG.
+     ///
+     /// <para>
+     /// Measured `round92`: `plan_703` (`move_to_tile` 71,51) and `plan_745` (`navigate_to_destination` Mountain) were
+     /// refused `no_native_path` with 544 and 698 characters of route evidence. The executor carried that evidence into
+     /// `RefusalDetail` verbatim, the journal refused it as `InvalidInput`, and the controller settled the node
+     /// `RecoveryRequired` with `terminal_rejected_by_authority` - two ordinary refusals stopped their programs, while every
+     /// shorter `no_native_path` of the run stayed an ordinary `Failed`. The bound belongs to the WRITER, and this is the
+     /// chain it has to hold across: a receipt, the executor's settlement, and the journal's own write gate.
+     /// </para>
+     /// </summary>
+     [Theory]
+     [InlineData(544)]
+     [InlineData(698)]
+     public void ALegitimateRefusalsLongEvidenceSettlesTheNodeInsteadOfPromotingIt(int evidenceLength)
+     {
+         var store = new MemoryStore(); var authority = Open(store);
+         authority.Submit(Program("program")).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+         NodeAdmissionChallenge challenge = authority.TryCreateAdmissionChallenge("program").Value!; HostAdmissionGrant grant = Grant(challenge);
+         grant = authority.TryConsumeHostGrant(grant).Value!; authority.TryBeginNativeDispatch(grant, Execution(grant)).IsSuccess.Should().BeTrue();
+
+         string evidence = RouteRefusalEvidence(evidenceLength);
+         BodyProgramTerminalResult terminal = RouteReenteringBodyProgramExecutor.SettleWithoutProof(
+             Execution(grant),
+             new LocalExecutionReceipt("exec_1", "req_1", ExecutionState.Rejected, "no_native_path", 7, evidence, ActionId: "move_to_tile"),
+             BodyProgramNodeOutcome.Failed);
+
+         authority.TryComplete(grant, terminal).IsSuccess.Should().BeTrue(
+             "the journal's acceptance gate is what turns a long reason into `RecoveryRequired`; the writer owes it a detail it can store");
+
+         BodyProgramJournalNode node = authority.Status("program").Snapshot!.Nodes.Single();
+         node.State.Should().Be(BodyProgramNodeState.Failed, "a refused route is a refuted node, not an unknown one");
+         node.RecoveryDiagnostic.Should().BeNull("nothing about this dispatch is unknown");
+         node.FailureCode.Should().Be("no_native_path");
+         node.Evidence.Should().BeNull();
+         BodyProgramValidation.IsValidRefusalDetail(node.RefusalDetail).Should().BeTrue(
+             $"the stored detail is bounded: {evidenceLength} characters of evidence became "
+             + $"{(node.RefusalDetail is null ? "null" : node.RefusalDetail.Length.ToString(System.Globalization.CultureInfo.InvariantCulture))}");
+         authority.OpenStatus.Should().NotBe(
+             BodyProgramJournalOpenStatus.RecoveryRequired,
+             "round92's cost was that two ordinary refusals left the scope's program routes answering `quarantined`; a refusal that settles stores a reason, it does not report an unknown dispatch");
+         BodyProgramJournalPersistence.TryValidate(authority.Snapshot, out string? reason).Should().BeTrue(reason);
+     }
+
+     /// <summary>The route evidence `no_native_path` composes, at the exact length `round92` measured.</summary>
+     private static string RouteRefusalEvidence(int length)
+     {
+         var evidence = new System.Text.StringBuilder(
+             "from=71,49;to=71,51;component_tiles=19;target_enclosed=true;route_exists_cardinal=false;closest=71,50;closest_distance=1;blocked_by:stone@71,50",
+             length + 64);
+         for (int tile = 0; evidence.Length < length; tile += 1)
+             evidence.Append(System.Globalization.CultureInfo.InvariantCulture, $";component_tile={tile},51");
+         return evidence.ToString()[..length];
      }
 
      [Fact]
@@ -1984,7 +2047,8 @@ public sealed class BodyProgramAuthorityTests
     private static NodeExecutionBinding Execution(HostAdmissionGrant grant) => grant.ExecutionBinding!;
     private static BodyProgramTerminalResult TerminalSuccess(HostAdmissionGrant grant, RuntimeFact fact) => new(Execution(grant), BodyProgramNodeOutcome.Succeeded, new[] { fact }, "receipt-1", "evidence-1", "postcondition-1");
     private static BodyProgramTerminalResult TerminalOutcome(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome) => new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null);
-    private static BodyProgramTerminalResult TerminalReason(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, string failureCode) => new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null, failureCode);
+    private static BodyProgramTerminalResult TerminalReason(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, string failureCode) =>
+        new(Execution(grant), outcome, Array.Empty<RuntimeFact>(), null, null, null) { FailureCode = failureCode };
     private static BodyProgramTerminalResult TerminalWithFact(HostAdmissionGrant grant, BodyProgramNodeOutcome outcome, RuntimeFact fact) => new(Execution(grant), outcome, new[] { fact }, null, null, null);
     private static BodyProgramActionCatalog MultiFactCatalog() => new(7, new[]
     {

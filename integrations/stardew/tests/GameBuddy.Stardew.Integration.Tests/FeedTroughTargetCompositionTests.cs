@@ -3,6 +3,7 @@ using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using GameBuddy.Stardew.Core.Protocol;
 using Netcode;
 using StardewValley;
 using StardewValley.Network;
@@ -55,11 +56,85 @@ public sealed class FeedTroughTargetCompositionTests
         targets.Select(target => (target.X, target.Y)).Should().BeEquivalentTo(
             TroughWorld.TroughTiles,
             "every trough tile of the house is inside the discovery radius of that house's own entry tile");
-        targets.Select(target => target.HayStack).Should().OnlyContain(
+        targets.Should().NotBeEmpty("an empty family would make every assertion below agree with itself");
+        targets.Select(target => target.BagHay).Should().OnlyContain(
             stack => stack == GivenHayStack,
             "the target id binds the stack the request will be judged against");
         targets.Select(target => target.TargetId).Should().OnlyHaveUniqueItems(
             "two troughs must not publish one identity");
+    }
+
+    /// <summary>
+    /// `round92` day 2's shape, replayed: three empty troughs beside a pack stack of five Hay. What the row states is the
+    /// TROUGH's fact by membership and the ACTOR's by name, and these are the two readings that say so.
+    ///
+    /// <para>
+    /// Measured 2026-11-22 (run `.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine`, `tend_the_animals`): the
+    /// observation carried three rows `<c>hayStack: 5</c>` at (6,3), (7,3), (8,3) while the pack held `(O)178` x5 in slot 9.
+    /// Her thinking read the number as the troughs' ("料槽三个都有 5 干草（已够）… 槽里 hayStack 5 表示已有") and the day
+    /// neither fed nor collected. The number was the BAG's, and only the field's name said otherwise.
+    /// </para>
+    ///
+    /// <para>
+    /// The first reading moves only the pack: the count follows the pack, so it is the pack's fact. The second fills one
+    /// trough and the row for that tile DISAPPEARS - the trough's own hay is not a count this family publishes at all, which
+    /// is why no row of it can claim a trough is full.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheRowsCountFollowsThePackAndAFilledTroughIsAbsentRatherThanCounted()
+    {
+        using TroughWorld world = TroughWorld.Create();
+
+        world.PutInPackSlot(9, GivenHayItemId, GivenHayStack);
+        IReadOnlyList<BridgeFeedTroughTarget> measured = world.Troughs();
+        measured.Should().HaveCount(
+            TroughWorld.TroughTiles.Length,
+            "the four empty troughs of the house are the rows this world publishes");
+        measured.Select(target => target.BagHay).Should().OnlyContain(
+            hay => hay == GivenHayStack,
+            "the only count on the row is the pack stack the request spends from, not anything the trough holds");
+
+        world.PutInPackSlot(9, GivenHayItemId, 3);
+        IReadOnlyList<BridgeFeedTroughTarget> afterThePackShrank = world.Troughs();
+        afterThePackShrank.Select(target => target.BagHay).Should().OnlyContain(
+            hay => hay == 3,
+            "nothing but the pack changed, so a count that did not follow it would be a fact about something else");
+
+        (int X, int Y) filled = TroughWorld.TroughTiles[0];
+        world.PutInTrough(filled);
+        IReadOnlyList<BridgeFeedTroughTarget> afterOneTroughWasFilled = world.Troughs();
+        afterOneTroughWasFilled.Select(target => (target.X, target.Y)).Should().BeEquivalentTo(
+            TroughWorld.TroughTiles.Where(tile => tile != filled),
+            "a trough that holds hay is absent from the family rather than published with a count: the family's own fact "
+                + "about a trough is that it is EMPTY");
+    }
+
+    /// <summary>
+    /// The row's own field set, in the spelling the companion READS, so the count's name is part of what is checked.
+    ///
+    /// <para>
+    /// No compiler can express "this number is the actor's, not the trough's": both are an `int` on the same row. So the
+    /// assertion is taken from the SHIPPED frame writer (`BridgeProtocol.TrySerialize`) rather than from a list of names
+    /// here - an attribute or a policy that put `hayStack` back on the wire has to fail this. `round92` day 2 (2026-11-22)
+    /// is why the spelling is not cosmetic: three empty troughs published `hayStack: 5` each from the pack, she read it as
+    /// five hay in each trough and skipped feeding the day.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheOnlyCountOnTheTroughRowIsNamedForTheBagThatHoldsIt()
+    {
+        var row = new BridgeFeedTroughTarget("feed_trough_0123456789abcdef", Slot: 9, X: 6, Y: 3, BagHay: 5);
+
+        BridgeProtocol.TrySerialize(row, out string json, out string reasonCode).Should().BeTrue(reasonCode);
+        using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(json);
+        string[] wireNames = document.RootElement.EnumerateObject().Select(property => property.Name).ToArray();
+
+        wireNames.Should().BeEquivalentTo(
+            new[] { "targetId", "slot", "x", "y", "bagHay" },
+            "a row of `feedTroughTargets` is published only for a trough that holds NOTHING, so the one count it carries "
+                + "is the actor's Hay stack in `slot`; named `hayStack`, three empty troughs each read as holding five hay "
+                + "and the day's feeding was skipped");
     }
 
     /// <summary>
@@ -159,10 +234,19 @@ public sealed class FeedTroughTargetCompositionTests
             // `new Object()` runs its own field initializers, so `Item.Id`/`Item.Stack`/`Object.bigCraftable` all exist
             // without loading item data; the qualified id composes from `Object.TypeDefinitionId` and the item id, which
             // is exactly the pair the discovery compares.
+            this.Actor.Items[slot] = Hay(qualifiedItemId, stack);
+        }
+
+        /// <summary>Fill one trough tile with the item the house accepts, which is the world `round92` day 2 did not have.</summary>
+        internal void PutInTrough((int X, int Y) tile) =>
+            this.House.objects.Add(new Microsoft.Xna.Framework.Vector2(tile.X, tile.Y), Hay(GivenHayItemId, 1));
+
+        private static StardewValley.Object Hay(string qualifiedItemId, int stack)
+        {
             var hay = new StardewValley.Object();
             typeof(Item).GetProperty("ItemId", BindingFlags.Instance | BindingFlags.Public)!.SetValue(hay, qualifiedItemId[3..]);
             hay.Stack = stack;
-            this.Actor.Items[slot] = hay;
+            return hay;
         }
 
         public void Dispose()

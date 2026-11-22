@@ -523,7 +523,9 @@ public sealed class OpenBodyProgramJournalAuthority
     /// <param name="refusalDetail">
     /// What the rejection is a statement ABOUT, when the code alone cannot say it - the hold a node waited on for its
     /// whole watchdog, for instance. The code is a closed vocabulary and a detail is the sentence beside it, the same
-    /// division a failed node's `FailureCode` and `RefusalDetail` already make.
+    /// division a failed node's `FailureCode` and `RefusalDetail` already make. Written through
+    /// <see cref="BodyProgramValidation.BoundRefusalDetail"/>: a hold's evidence has no budget of its own, and a rejection
+    /// must not stop being a rejection because its sentence was long.
     /// </param>
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryRejectAdmission(NodeAdmissionChallenge challenge, string code, string? refusalDetail = null)
     {
@@ -567,7 +569,7 @@ public sealed class OpenBodyProgramJournalAuthority
             RecoveryDiagnostic = null,
             RejectionCode = code,
             FailureCode = null,
-            RefusalDetail = BodyProgramValidation.IsValidRefusalDetail(refusalDetail) ? refusalDetail : null,
+            RefusalDetail = BodyProgramValidation.BoundRefusalDetail(refusalDetail),
         };
         HashSet<string> descendants = new(StringComparer.Ordinal);
         bool changed;
@@ -724,10 +726,11 @@ public sealed class OpenBodyProgramJournalAuthority
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
             FailureCode = namesShortfall ? result.FailureCode : null,
             Hint = namesShortfall ? result.Hint : null,
-            // The reason detail rides the same states as the hint, for the same reason: it names why nothing happened. Its
-            // bound and its control-character ban are enforced by `BodyProgramValidation.IsValidRefusalDetail` on the write
-            // path, on the read-back path and on the wire, so this assignment carries a checked value.
-            RefusalDetail = namesShortfall ? result.RefusalDetail : null,
+            // The reason detail rides the same states as the hint, for the same reason: it names why nothing happened. It is
+            // written through `BoundRefusalDetail` like every other writer of the field: the gate above has already refused a
+            // terminal that carried a detail out of bounds, so this is the same value, and the bound is the one spelling the
+            // writers share (`RefusalDetailWriterPopulationGateTests`).
+            RefusalDetail = namesShortfall ? BodyProgramValidation.BoundRefusalDetail(result.RefusalDetail) : null,
             ClaimOwnership = released,
         };
         BodyProgramJournalProgram updated = ReplaceNode(program!, completed) with { Facts = result.Outcome == BodyProgramNodeOutcome.Succeeded ? Array.AsReadOnly(program!.Facts.Concat(result.Facts!).ToArray()) : program!.Facts };

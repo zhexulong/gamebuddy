@@ -20,6 +20,12 @@ namespace GameBuddy.Stardew.Core;
 /// The eight neighbours are tried in a fixed declared order and the nearest by Manhattan distance wins,
 /// with strict `&lt;` so equidistant candidates keep that order. Determinism is a requirement, not a
 /// nicety: a run-to-run diff has to mean the world changed, not that the sort was unstable.
+///
+/// WHICH NEIGHBOURS ARE OFFERED IS THE ACTION'S DECLARATION, NOT THIS CLASS'S OPINION. A row that declares
+/// <see cref="ApproachStance.Any"/>, or declares no stance at all, is offered all eight; a swing that must be FACED at the
+/// target (<see cref="ApproachStance.Cardinal"/>) is offered four, because a diagonal is a stand tile it cannot work from.
+/// Both halves of the approach leg ask this class - the search below and <see cref="StandsWithin"/>, which the reach test
+/// reads - so the tile she is sent to and the tile she is admitted to swing from cannot be two different answers.
 /// </summary>
 public static class ApproachTileSelector
 {
@@ -34,6 +40,26 @@ public static class ApproachTileSelector
         (-1, 1),
         (1, 1),
     };
+
+    /// <summary>
+    /// Whether a body standing on <paramref name="standing"/> can work <paramref name="target"/> from there under
+    /// <paramref name="stance"/>.
+    ///
+    /// <para>
+    /// THE ONE ANSWER BOTH HALVES OF THE LEG ASK: "is she already standing where this action can be done from?" (the reach
+    /// test that decides whether to walk at all) and "which tile may she be sent to?" (<see cref="Select"/>). They used to
+    /// answer separately - a bare Chebyshev-1 radius, which admits a diagonal - and `round92` is what that costs: the reach
+    /// said yes from a diagonal and the swing refused `sweep_needs_cardinal_stance` three times in one plan.
+    /// </para>
+    /// </summary>
+    public static bool StandsWithin((int X, int Y) target, (int X, int Y) standing, ApproachStance stance) =>
+        stance == ApproachStance.Cardinal
+            ? SwingFacing.For(standing, target) is not null
+            : IsNeighbourOf(target, standing);
+
+    /// <summary>The tile the body stands on is not a neighbour of itself - hence the two halves.</summary>
+    private static bool IsNeighbourOf((int X, int Y) target, (int X, int Y) tile) =>
+        tile != target && Math.Abs(tile.X - target.X) <= 1 && Math.Abs(tile.Y - target.Y) <= 1;
 
     /// <summary>
     /// The nearest neighbour of <paramref name="target"/> that the actor can stand on AND walk to, or
@@ -54,12 +80,17 @@ public static class ApproachTileSelector
     /// Among candidates the nearest to the actor wins, and a candidate that sits BEHIND the target - farther from the
     /// actor than the target is - loses ties to one on the near side. That is a preference, not a rule: when the near
     /// face is walled off the far face is still chosen, because a distant approach beats no approach.
+    ///
+    /// <paramref name="stance"/> narrows the ring to the tiles the action can be worked from, and null from this search
+    /// is then the honest answer for an action whose ring has nowhere to stand - the refusal the caller owes, not a walk
+    /// to a tile the action will refuse on arrival.
     /// </summary>
     public static (int X, int Y)? Select(
         IReadOnlyList<(int X, int Y)> targetTiles,
         (int X, int Y) actor,
         Func<(int X, int Y), bool> isStandable,
-        Func<(int X, int Y), bool> isReachable)
+        Func<(int X, int Y), bool> isReachable,
+        ApproachStance stance = ApproachStance.Any)
     {
         if (targetTiles is null || targetTiles.Count == 0) return null;
         (int X, int Y) anchor = targetTiles[0];
@@ -68,7 +99,7 @@ public static class ApproachTileSelector
         int bestDistance = int.MaxValue;
         bool bestIsBehind = true;
 
-        foreach ((int X, int Y) candidate in StandableCandidates(targetTiles, isStandable))
+        foreach ((int X, int Y) candidate in StandableCandidates(targetTiles, isStandable, stance))
         {
             if (!isReachable(candidate)) continue;
 
@@ -98,10 +129,15 @@ public static class ApproachTileSelector
     /// twice in one breath: "is there anywhere to stand at all?" is a count, and "which one can I walk to?" is the
     /// choice. A second enumeration of the same ring here is how the two start disagreeing about a tile that exists.
     /// </para>
+    /// <para>
+    /// The count it answers is over <paramref name="stance"/>'s ring, so a refusal can tell "no tile at all" apart from
+    /// "the only tiles are outside the stance" - see <c>DescribeNoReachableApproach</c>.
+    /// </para>
     /// </summary>
     public static IReadOnlyList<(int X, int Y)> StandableCandidates(
         IReadOnlyList<(int X, int Y)> targetTiles,
-        Func<(int X, int Y), bool> isStandable)
+        Func<(int X, int Y), bool> isStandable,
+        ApproachStance stance = ApproachStance.Any)
     {
         List<(int X, int Y)> candidates = new();
         if (targetTiles is null || targetTiles.Count == 0) return candidates;
@@ -119,6 +155,9 @@ public static class ApproachTileSelector
             {
                 (int X, int Y) candidate = (occupiedTile.X + dx, occupiedTile.Y + dy);
                 if (occupied.Contains(candidate)) continue;
+                // The STANCE decides which of the eight this action can be worked from; the offsets only fix the order,
+                // so a restricted ring is the same walk down the same list with tiles it cannot use dropped.
+                if (!StandsWithin(occupiedTile, candidate, stance)) continue;
                 if (!isStandable(candidate)) continue;
                 if (!offered.Add(candidate)) continue;
 

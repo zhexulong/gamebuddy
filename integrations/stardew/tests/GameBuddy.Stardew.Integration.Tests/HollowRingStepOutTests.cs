@@ -103,16 +103,26 @@ public sealed class HollowRingStepOutTests
     /// The one predicate the tool families hand the seam. It must be the native radius AND the body tile, because the
     /// seam acts on whatever it is handed: a reach that dropped either half would admit a swing from six tiles away or
     /// from the actor's own feet, and neither would fail anywhere else.
+    ///
+    /// <para>
+    /// BOTH HALVES ARE NOW THE RING'S OWN ANSWER rather than a private copy in this file, so the assertion is that the
+    /// reach DELEGATES (<c>ApproachTileSelector.StandsWithin</c> with <c>ApproachStance.Any</c>) and that no second radius
+    /// was left beside it. The two halves themselves are held over the ring in
+    /// <c>Core.Tests.ApproachStanceTests</c>, which is where they now live: a source reading of a delegation can only
+    /// check that the delegation is there.
+    /// </para>
     /// </summary>
     [Fact]
     public void TheToolReachIsTheNativeRadiusAndNeverTheBodyTile()
     {
         string rule = ExpressionBody(Read(ResourceToolActions), "private static bool IsTileWithinToolReach(");
 
-        rule.Should().Contain("IsTileWithinChebyshevRadius(player, targetX, targetY, 1)",
-            "the native interaction radius is the half the game itself enforces (Game1.cs:11509)");
-        rule.Should().Contain("!IsToolTargetUnderActor(player, targetX, targetY)",
-            "the hollow ring is the other half; a target under the actor is walked out of, never swung at");
+        rule.Should().Contain("ApproachTileSelector.StandsWithin(",
+            "the ring has one owner; a radius written here again is the second spelling round92 was made of");
+        rule.Should().Contain("ApproachStance.Any",
+            "a family with no declared stance hands the seam the eight-neighbour ring it always had");
+        rule.Should().NotContain("IsTileWithinChebyshevRadius",
+            "the native radius is the ring's half now (ApproachTileSelector.IsNeighbourOf), not a copy beside it");
     }
 
     [Fact]

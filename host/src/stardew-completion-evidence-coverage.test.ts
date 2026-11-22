@@ -983,6 +983,9 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     reasonCode: "item_purchased",
     fields: [
       ["shop", "SeedShop"],
+      // THE MAP THE PURCHASE HAPPENED ON. `owner_tile=1,6` below is a coordinate, and `round92`'s day-3 `town_market`
+      // purpose could not be decided from two successful purchases that named a shop, a counter tile and no map.
+      ["location", "SeedShop"],
       ["owner", "Pierre"],
       ["entry", "npc_owner"],
       // WHICH DISTANCE GATE THIS COUNTER FORM HAS. `round92`'s receipt named an NPC-run counter and stated nothing
@@ -1011,6 +1014,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     // `stock_before`/`stock_after` are diagnostics of the offer and are not part of the world fact.
     requiredFields: [
       "shop",
+      "location",
       "owner",
       "item",
       "money_before",
@@ -1066,6 +1070,35 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["standing", "true"],
       ["furniture_in_location", "3"],
     ],
+  },
+  remove_placed_item: {
+    reasonCode: "placed_item_removed",
+    // `round92`'s own removal, key for key, from
+    // `.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine/timeline.jsonl` (index 261): litter off (70,20)
+    // with one axe swing and one drop. `placed_target` is the identity the removal LEFT BEHIND - `none`, because
+    // nothing stands there any more - and it is the key the rule omitted, so both of that run's real removals were
+    // refused as `succeeded_receipt_without_its_own_postcondition`.
+    fields: [
+      ["target", "placed_item_630c66af58fa0e31"],
+      ["location", "Farm"],
+      ["tile", "70,20"],
+      ["item", "(O)295"],
+      ["type", "Litter"],
+      ["tool", "(T)Axe"],
+      ["tool_kind", "axe"],
+      ["slot", "0"],
+      ["swings", "1"],
+      ["removed", "true"],
+      ["tile_object_after", "none"],
+      ["placed_target", "none"],
+      ["drops", "(O)388"],
+      ["drop_count", "1"],
+      ["stamina_before", "246"],
+      ["stamina_after", "244"],
+    ],
+    // The fields the rule READS. `tool`, `slot`, `type`, `item`, `location` and the stamina pair describe the removal
+    // and are not what decides it; `drops`/`drop_count` are the two spellings the rule holds to each other.
+    requiredFields: ["target", "swings", "removed", "tile_object_after", "tool_kind", "drops", "drop_count"],
   },
   remove_fence: {
     reasonCode: "fence_removed",
@@ -1350,9 +1383,9 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
 });
 
 /**
- * The two actions whose success detail is composed OUTSIDE a `ToolActionEvidence` list, each with the reader that pulls
- * its field names out of the Mod's own source: an interpolated literal for `plant_seed`, a declared array for
- * `sweep_scythe`.
+ * The actions whose success detail is composed OUTSIDE a `ToolActionEvidence` list, each with the reader that pulls its
+ * field names out of the Mod's own source: an interpolated literal for `plant_seed` and `remove_placed_item`, a declared
+ * array for `sweep_scythe`.
  */
 const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
   actionId: string;
@@ -1386,8 +1419,45 @@ const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
     },
   },
   {
-    actionId: "sweep_scythe",
-    file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
+    actionId: "remove_placed_item",
+    file: "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
+    read: (source) => {
+      const body = source.slice(source.indexOf("private LocalExecutionReceipt ExecuteRemovePlacedItem("));
+      const from = body.indexOf("string evidence =");
+      assert.ok(from > 0, "blocked: ExecuteRemovePlacedItem no longer assembles its success evidence in one statement");
+      const to = body.indexOf("return removed", from);
+      assert.ok(
+        to > from,
+        "blocked: the success evidence statement and the terminal that mints it are no longer adjacent pieces",
+      );
+      const statement = body.slice(from, to);
+      const keys = new Set(
+        [...statement.matchAll(/"((?:[^"\\]|\\.)*)"/gu)].flatMap((literal) =>
+          [...(literal[1] as string).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu)].map((match) => match[1] as string),
+        ),
+      );
+      // THE IDENTITY THE WRITE LEFT BEHIND COMES FROM A HELPER, and a reader that only walked the statement above would
+      // miss exactly the key that refused both of round92's real removals. So every `…AfterWrite` the statement
+      // interpolates is followed to its own literal - one hop, because that is the shape the producer uses: the evidence
+      // names the field, the helper composes its value.
+      for (const call of new Set(
+        [...statement.matchAll(/\b(Name[A-Za-z]*AfterWrite)\s*\(/gu)].map((match) => match[1] as string),
+      )) {
+        const declaration = source.indexOf(`internal static string ${call}(`);
+        assert.ok(declaration > 0, `blocked: ${call} is interpolated into the removal evidence and lives elsewhere now`);
+        const arrow = source.indexOf("=>", declaration);
+        const literal = arrow < 0 ? -1 : source.indexOf('$"', arrow);
+        assert.ok(literal > declaration, `blocked: ${call} no longer returns an interpolated literal`);
+        const close = source.indexOf(";", literal);
+        assert.ok(close > literal, `blocked: ${call}'s returned literal is unterminated`);
+        for (const match of source.slice(literal + 2, close).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu))
+          keys.add(match[1] as string);
+      }
+      return [...keys];
+    },
+  },
+  {
+    actionId: "sweep_scythe",    file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
     read: (source) => {
       const at = source.indexOf("internal static readonly IReadOnlyList<string> SweepScythe = Array.AsReadOnly(new[]");
       assert.ok(at >= 0, "blocked: ToolActionEvidence.SweepScythe is no longer where this reads it");
@@ -1789,6 +1859,60 @@ test("shop_purchase: a receipt that spent nothing and gained nothing is not a pu
   assert.equal(completionEvidence("shop_purchase", "item_purchased", detail(noop)), false);
 });
 
+/**
+ * ROUND92'S OWN RECEIPTS, from
+ * `.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine/timeline.jsonl`.
+ *
+ * THE REMOVALS ARE THE RUN'S TEXT CHARACTER FOR CHARACTER, including the settlement envelope this module strips
+ * (`chore`/`steps`/`folded`). Both came back `removed=true;tile_object_after=none` and both were filed by
+ * `tools/lib/task-purpose.mjs` as `succeeded_receipt_without_its_own_postcondition`, because `placed_target=none` was a
+ * key the contract did not declare: a real success refused for an extra key it was right to publish.
+ *
+ * THE PURCHASES CARRY THE FIELD THE PRODUCER WAS AMENDED TO WRITE. `round92` is the run that asked for it, so it predates
+ * `location` on this receipt; the map is added to the run's own text the way round81's `till_soil` settlements carry the
+ * `location` that producer was amended to write. The money, the pack and the click trace are the run's own: 820 -> 420
+ * for twenty seeds, then 420 -> 220 for ten.
+ */
+const ROUND92_REMOVALS: readonly string[] = [
+  "target=placed_item_630c66af58fa0e31;location=Farm;tile=70,20;item=(O)295;type=Litter;tool=(T)Axe;tool_kind=axe;slot=0;swings=1;removed=true;tile_object_after=none;placed_target=none;drops=(O)388;drop_count=1;stamina_before=246;stamina_after=244;chore=worldObjectTargets;steps=2;folded=accepted@location=Farm,target=placed_item_630c66af58fa0e31,tile=70,20,distance=5,reach=1,approach=adjacent,stand_at=71,19|tool_approach_completed@tile=71,19,target=71,19,arrival=exact,path=stardew_native",
+  "target=placed_item_1e1fc9298b31f6bf;location=Farm;tile=68,19;item=(O)294;type=Litter;tool=(T)Axe;tool_kind=axe;slot=0;swings=1;removed=true;tile_object_after=none;placed_target=none;drops=(O)388;drop_count=1;stamina_before=244;stamina_after=242;chore=worldObjectTargets;steps=2;folded=accepted@location=Farm,target=placed_item_1e1fc9298b31f6bf,tile=68,19,distance=3,reach=1,approach=adjacent,stand_at=69,19|tool_approach_completed@tile=69,19,target=69,19,arrival=exact,path=stardew_native",
+];
+
+const ROUND92_PURCHASES: readonly string[] = [
+  "shop=SeedShop;location=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=20;purchased=20;unit_price=20;money_before=820;money_after=420;owned_before=0;owned_after=20;gained=20;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=20[click19:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=440->420|stock=2147483647->2147483647|held_after=(O)472];drops=20[drop19:slot=10|at=1792,984|held=(O)472->none]",
+  "shop=SeedShop;location=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=10;purchased=10;unit_price=20;money_before=420;money_after=220;owned_before=0;owned_after=10;gained=10;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=10[click9:row=0|cursor=0|at=1380,531|addressed=True|safety_before=0|held_null=True|currency=240->220|stock=2147483647->2147483647|held_after=(O)472];drops=10[drop9:slot=15|at=1344,1052|held=(O)472->none]",
+];
+
+test("round92: the two removals refused for their own extra key now read as complete", () => {
+  for (const detail of ROUND92_REMOVALS)
+    assert.deepEqual(
+      judgeStardewCompletionEvidence("remove_placed_item", {
+        state: "succeeded",
+        reasonCode: "placed_item_removed",
+        evidence: { detail },
+      }),
+      { accepted: true, refusal: null },
+      `the tile was emptied by one axe swing and the receipt says so, envelope and identity field included: ${detail}`,
+    );
+});
+
+test("round92: a purchase names the shop, the map it happened on and the counter tile", () => {
+  for (const detail of ROUND92_PURCHASES) {
+    assert.equal(
+      judgeStardewCompletionEvidence("shop_purchase", {
+        state: "succeeded",
+        reasonCode: "item_purchased",
+        evidence: { detail },
+      }).accepted,
+      true,
+      `the purse moved and the seeds arrived, so the purchase happened: ${detail}`,
+    );
+    // THE WHERE IS IN THE RECEIPT, and `owner_tile` alone was never it: `4,17` is a tile in Pierre's shop and a tile on
+    // the Farm, which is why this run's day 3 could not be judged.
+    assert.match(detail, /(?:^|;)location=SeedShop;/, "the map the purchase happened on is on the receipt");
+  }
+});
+
 test("shop_purchase: a tool upgrade is its OWN terminal, and the upgrade facts decide it", () => {
   // The second half of the same action. A tool upgrade is bought through the same route and never enters the pack: the
   // engine charges, `Tool.actionWhenPurchased` records `Farmer.toolBeingUpgraded`/`daysLeftForToolUpgrade` and removes the
@@ -1797,6 +1921,8 @@ test("shop_purchase: a tool upgrade is its OWN terminal, and the upgrade facts d
   // acceptible from a shop that is not the upgrade counter.
   const upgrade: readonly (readonly [string, string])[] = [
     ["shop", "ClintUpgrade"],
+    // The blacksmith's interior, which is the map the counter and the actor are on.
+    ["location", "Blacksmith"],
     ["owner", "Clint"],
     ["entry", "npc_owner"],
     ["item", "(T)SteelHoe"],

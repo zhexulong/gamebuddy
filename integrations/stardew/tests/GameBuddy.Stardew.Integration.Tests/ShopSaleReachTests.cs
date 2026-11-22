@@ -361,6 +361,16 @@ public sealed class ShopSaleReachTests : IDisposable
                 "the corpus carries the NPC-run kind, which is the one round92 asked about")
             .And.Contain(detail => detail.Contains(";distance_required=1;distance=", StringComparison.Ordinal),
                 "and the tile kind too, because a token only one shape can produce would not tell the two apart");
+
+        // AND EVERY ONE OF THEM NAMES THE MAP IT HAPPENED ON. `owner_tile` is a coordinate - `4,17` is a tile in Pierre's
+        // shop and a tile on the Farm - so a purchase that named the counter and never the map said nothing about where
+        // it happened, which is why `round92`'s day-3 `town_market` purpose could not be decided from its own receipts.
+        foreach (string detail in purchases)
+        {
+            detail.Should().MatchRegex(
+                "(?:^|;)location=[A-Za-z][A-Za-z0-9_-]*;",
+                $"{detail} has to name the map the purchase happened on, not only the counter tile it happened at");
+        }
     }
 
     /// <summary>
@@ -481,6 +491,7 @@ public sealed class ShopSaleReachTests : IDisposable
     private static string Receipt(int stockBefore, int stockAfter) =>
         ExecutionManager.ShopPurchaseReceipt(new ExecutionManager.ShopPurchaseReceiptFacts(
             ShopId: "SeedShop",
+            Location: "SeedShop",
             OwnerName: "Pierre",
             TileOpened: false,
             ItemId: "(O)472",
@@ -618,6 +629,9 @@ public sealed class ShopSaleReachTests : IDisposable
         string? upgradedTool = consumeOnPurchase ? goods.QualifiedItemId : null;
         var facts = new ExecutionManager.ShopPurchaseReceiptFacts(
             ShopId: shopId,
+            // The map the actor stood on. This suite has no world, so the receipt carries the shop's own interior - the
+            // name the game gives the map Pierre's counter stands in.
+            Location: "SeedShop",
             OwnerName: ownerName,
             TileOpened: tileOpened,
             ItemId: "(O)472",
