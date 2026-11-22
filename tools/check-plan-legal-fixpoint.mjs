@@ -153,12 +153,22 @@ export const PRE_BATCH_FIX_REVISION = "6d6fde6033c881c3aba48bd8b3567b8fdb461f72"
  * The world a pair is compiled against: the minimum `compilePlanScript` requires, and nothing a pair could be about.
  * `tile` is where the actor stands (unused by an ordering rule), `enabledActionIds` is the vocabulary the compiler
  * checks the snapshot is usable against.
+ *
+ * `location` AND the two exit tables ARE that minimum for a transition: this gate writes every integer argument as `0`,
+ * so `enter_exit` is written at `(0,0)` - and a compiler that asks whether the tile a transition names is a way out of
+ * the map it stands on (`plan_script_door_not_on_this_map`) can only call that pair writable if this world publishes
+ * `(0,0)` as one. A fixture with no exit table made every `enter_exit` pair unwritable, which the gate reports as
+ * `plan_population_unwritable` and reads the tree as a tree where the action cannot be planned at all.
  */
 export function pairSnapshot(actionIds) {
   return Object.freeze({
     revision: 1,
-    mapId: "plan_fixpoint_fixture",
+    location: "plan_fixpoint_fixture",
     tile: Object.freeze({ x: 5, y: 5 }),
+    warps: Object.freeze([
+      Object.freeze({ sourceX: 0, sourceY: 0, targetLocation: "plan_fixpoint_elsewhere", targetX: 1, targetY: 1 }),
+    ]),
+    doorTargets: Object.freeze([]),
     enabledActionIds: Object.freeze([...actionIds]),
   });
 }

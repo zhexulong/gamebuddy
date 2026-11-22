@@ -389,6 +389,10 @@ export const WITHHELD_TILE_SPELLINGS = Object.freeze({
     reason:
       "where a warp ITEM would send her, on another map - the row is a backpack item (`slot`, `qualifiedItemId`), so its place is the pack, not the destination tile.",
   },
+  block: {
+    reason:
+      "the connected strip a soil row belongs to (`blockX`/`blockY`/`blockW`/`blockH`) - a SHAPE around the tile, not a second place for the row: the row's own place is `x`/`y`, and printing the strip's north-west corner as its coordinate would move every tile of the ground to the corner of it. The line prints the box ONCE per strip (`块 3×20@(62,17)`), which is why these four fields are declared in `READER_ROW_FIELDS` rather than read as a placement pair.",
+  },
   ownerTile: {
     reason:
       "the tile the shop's keeper stands on: a real place in this map, and the row carries no `x`/`y` at all, so the line prints only `共 N 格，都没有可读的坐标` today. Placing the shop at its owner's tile is the next unit.",
@@ -415,7 +419,7 @@ export const WITHHELD_TILE_SPELLINGS = Object.freeze({
  * than infer, and which the "dropped" count must not be confused with - a handle or a state the line never promised is
  * not a drop.
  */
-export const READER_ROW_FIELDS = Object.freeze(["kind", "displayName", "w", "h"]);
+export const READER_ROW_FIELDS = Object.freeze(["kind", "displayName", "w", "h", "blockX", "blockY", "blockW", "blockH"]);
 
 /** The families the per-turn line claims to print as rows: its label table minus the ones it declines, with reasons. */
 export function claimedFamilies(source) {
