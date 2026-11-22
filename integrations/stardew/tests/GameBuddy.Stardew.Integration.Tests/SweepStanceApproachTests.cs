@@ -145,7 +145,7 @@ public sealed class SweepStanceApproachTests
         int leg = source.IndexOf("private LocalExecutionReceipt TryBeginToolApproach(", StringComparison.Ordinal);
         leg.Should().BeGreaterThanOrEqualTo(0, "the approach leg is the one place a stand tile is chosen");
         string body = source.Substring(leg, Math.Min(3000, source.Length - leg));
-        int read = body.IndexOf("FarmhandActionCatalog.ApproachOf(actionId)", StringComparison.Ordinal);
+        int read = body.IndexOf("ApproachStance stance = DeclaredStance(actionId);", StringComparison.Ordinal);
         int select = body.IndexOf("SelectToolApproachTile(", StringComparison.Ordinal);
 
         read.Should().BeGreaterThanOrEqualTo(0, "the ring comes from the row, not from an adjacency written beside it");
@@ -153,6 +153,14 @@ public sealed class SweepStanceApproachTests
         body.Substring(select, Math.Min(400, body.Length - select)).Should().Contain(
             "stance",
             "and the search is handed it - a declaration neither half reads is a precondition only the refusal knows");
+
+        // ...AND THE ONE MEMBER THAT ANSWERS "what ring does this row declare" ASKS THE CATALOGUE, so a second spelling of
+        // the lookup cannot agree with the leg today and disagree with it the first time either one moves.
+        int helper = source.IndexOf("private static ApproachStance DeclaredStance(string actionId)", StringComparison.Ordinal);
+        helper.Should().BeGreaterThanOrEqualTo(0, "the rows' rings are read through one member");
+        source.Substring(helper, Math.Min(200, source.Length - helper)).Should().Contain(
+            "FarmhandActionCatalog.ApproachOf(actionId)",
+            "that member reads the catalogue, which is the only place a row's stance is written");
     }
 
     /// <summary>The tile a receipt's <c>stand_at=</c> names.</summary>

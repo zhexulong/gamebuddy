@@ -352,8 +352,13 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// `measured` is the refusal as a reading - how many free footprints there were and why the first few were refused -
-    /// so "there is nowhere to put it" is a measurement an operator can act on rather than a missing animal.
+    /// `measured` is the refusal as a reading - how many free footprints there were, why the first few were refused, and
+    /// WHICH rule refused the footprint of the first few origins that had none - so "there is nowhere to put it" is a
+    /// measurement an operator can act on rather than a missing animal. The two halves are different questions and both
+    /// are needed: `rejected` means the ground was there and the day would not survive the building, `blocked` means the
+    /// ground itself was not on offer, naming the tile and the gate (`off_map`, `object`, `terrain_feature`, `building`,
+    /// `not_placeable`). A bare `free_footprints=0` distinguishes neither, which is what made round93's refusal
+    /// answerable only by re-reading this file.
     /// </para>
     /// </summary>
     private bool TryFindNativeLocalPlaySessionAnimalSite(
@@ -375,6 +380,7 @@ public sealed partial class ModEntry
         }
         int freeFootprints = 0;
         List<string> rejected = new();
+        List<string> blocked = new();
         foreach (Point candidate in PlaySessionFixturePlacement.PlaceableCandidates(
             Enumerable.Range(0, back.LayerWidth)
                 .SelectMany(x => Enumerable.Range(0, back.LayerHeight).Select(y => new Point(x, y))),
@@ -383,23 +389,32 @@ public sealed partial class ModEntry
             building.tileX.Value = candidate.X;
             building.tileY.Value = candidate.Y;
             List<Vector2> footprint = new();
-            bool free = true;
-            for (int offsetX = 0; offsetX < building.tilesWide.Value && free; offsetX++)
+            string? blocker = null;
+            for (int offsetX = 0; offsetX < building.tilesWide.Value && blocker is null; offsetX++)
             {
-                for (int offsetY = 0; offsetY < building.tilesHigh.Value && free; offsetY++)
+                for (int offsetY = 0; offsetY < building.tilesHigh.Value && blocker is null; offsetY++)
                 {
                     Vector2 tile = new(candidate.X + offsetX, candidate.Y + offsetY);
-                    free = farm.isTileOnMap(tile)
-                        && !farm.objects.ContainsKey(tile)
-                        && !farm.terrainFeatures.ContainsKey(tile)
-                        && !farm.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y))
-                        && farm.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true);
-                    if (free)
+                    // WHICH gate said no, on WHICH tile. A count of free footprints cannot answer this: measured
+                    // `round93` (2026-11-22), the refusal was `free_footprints=0;rejected=none`, and that reads the
+                    // same whether the farm has no room or one of these five rules refuses every tile in the world.
+                    blocker = !farm.isTileOnMap(tile) ? $"{tile.X},{tile.Y}:off_map"
+                        : farm.objects.ContainsKey(tile) ? $"{tile.X},{tile.Y}:object"
+                        : farm.terrainFeatures.ContainsKey(tile) ? $"{tile.X},{tile.Y}:terrain_feature"
+                        : farm.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y)) ? $"{tile.X},{tile.Y}:building"
+                        : !farm.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true) ? $"{tile.X},{tile.Y}:not_placeable"
+                        : null;
+                    if (blocker is null)
                         footprint.Add(tile);
                 }
             }
-            if (!free)
+            if (blocker is not null)
+            {
+                // Bounded for the same reason `rejected` is: a farm has thousands of candidate origins and the
+                // reason only has to be readable.
+                if (blocked.Count < 8) blocked.Add($"{candidate.X},{candidate.Y}@{blocker}");
                 continue;
+            }
             // The candidate order excludes the actor's own ring, but a footprint is several tiles wide: a building
             // whose ORIGIN is two tiles away can still cover the tile the session starts on.
             if (footprint.Contains(startTile))
@@ -427,7 +442,8 @@ public sealed partial class ModEntry
             site = new Vector2(candidate.X, candidate.Y);
             return true;
         }
-        measured = $"free_footprints={freeFootprints};rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))}";
+        measured = $"free_footprints={freeFootprints};rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))};"
+            + $"blocked={(blocked.Count == 0 ? "none" : string.Join("|", blocked))}";
         return false;
     }
 }

@@ -779,6 +779,26 @@ public sealed partial class ModEntry : Mod
             // middle of a field takes one.
             PlaySessionDoorComponentFloor = Math.Max(PlaySessionMinimumComponentTiles, beforeOpened * 9 / 10);
         }
+        // THE DAY'S ONE STRUCTURE IS SITED BEFORE THE DAY'S PROPS, and the order is part of the Given rather than a
+        // preference. `tend_the_animals` names three farm-animal actions, so the world must carry an animal house with
+        // an animal that can supply what the day's third step collects (see `ModEntry.Fixtures.PlaySessionAnimal.cs`).
+        //
+        // It has to be FIRST because a building is the one thing here that needs a FOOTPRINT - seven by four tiles of
+        // ground with nothing on it and a door approach the start can walk to - while every prop loop below is ordered
+        // nearest-the-start-first (`PlaySessionFixturePlacement`), so those props spend exactly the open ground around
+        // the crossroads the house has to use. Measured `round93` (2026-11-22, the day the coop became a barn): with
+        // this Given last, the search found `free_footprints=0` on a farm whose props had already taken that pocket, and
+        // a run that never arms measures nothing. The barn needs ten tiles more than the coop it replaced, which is the
+        // whole difference between a 6x3 footprint the props left room for and a 7x4 one they did not.
+        //
+        // Nothing else about it moves: the house is measured against the same world (the dirt the fixture has spread,
+        // the door, the shipping bin, the start tile) and with the same predicate as before, so a farm that genuinely
+        // cannot host it still refuses BY NAME (`fixture_native_local_play_session_animal_site_missing`) rather than
+        // quietly dropping the animal half the rotation still asks for.
+        InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
+        // The hay belongs to that house and travels in the pack rather than on the ground, so it is placed with the
+        // animal: the two are one `animals_pets` Given and nothing may arm half of it.
+        InstallNativeLocalPlaySessionHayGiven(player);
         Vector2? standingTile = null;
         // The prop counts come from the ground, not from a literal. The walkable piece around the start is the
         // budget: on the multi-day farm it is 123 tiles, not the 5200-tile map, and every literal count tried
@@ -958,25 +978,6 @@ public sealed partial class ModEntry : Mod
             plantedCrops += 1;
         }
         // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the\n        // world is then missing the family the crops task needs. It used to demand exactly four, which was true\n        // only while the budget happened to divide to four - measured 2026-10-28, after trees and forage began\n        // taking their share, the division produced three and this refused a world that had every prop it needed.\n        if (plantedCrops <= 0)\n            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
-
-        // THE ANIMAL HALF OF THE DAY. `tend_the_animals` names three farm-animal actions and this world had no animal
-        // at all (measured 2026-11-09), so a play session could never reach one. One animal house, one animal, placed
-        // where the crossroads can walk to its door - and one animal rather than a stocked house, because
-        // `DiscoverFarmAnimalPetTargets` filters the engine's own `wasPet` marker and "the animal I touched left the
-        // family" is only unambiguous when the family holds exactly one member. It is a BARN with a milking animal
-        // because the day's third step (`collect_animal_product`) addresses tool-collected produce only, which no coop
-        // animal can supply (see `ModEntry.Fixtures.PlaySessionAnimal.cs`).
-        //
-        // It is on again, and what it took was the SITE SEARCH measuring the engine instead of a simulation: the search's
-        // own doc comment in `ModEntry.Fixtures.PlaySessionAnimal.cs` records the runs that died refusing
-        // `home_unreachable:what=field` after a search had already certified the site. A world with an animal it cannot
-        // place is a refusal by name (`fixture_native_local_play_session_animal_site_missing`), never a quietly animal-less
-        // world that the rotation still hands `tend_the_animals`.
-        InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
-        // THE HAY HALF OF THE DAY. The house and its one animal are what the trough belongs to; the hay in the pack is
-        // what makes a trough a published target at all (`DiscoverFeedTroughTargets` requires an owned `(O)178`
-        // stack), so the two Givens only mean something together.
-        InstallNativeLocalPlaySessionHayGiven(player);
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");

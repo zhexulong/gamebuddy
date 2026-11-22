@@ -187,7 +187,13 @@ public sealed class TileTargetRequestSeamTests
         seam.Should().Contain("GameLocation location = Game1.player.currentLocation;");
         seam.Should().Contain("TileTargetGate answer = gate(location);", "the target is resolved against the actor's own location");
         seam.Should().Contain("if (answer.Settlement is not null || answer.Refusal is not null)", "the gate's own answer is published before anything is walked to");
-        seam.Should().Contain("if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))", "the reach test reads the action's own predicate, or the native radius when it declares none");
+        seam.Should().Contain(
+            "if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y)",
+            "the reach test reads the action's own predicate, or the native radius when it declares none");
+        seam.Should().Contain(
+            "|| StandsOutsideADeclaredRing(actionId, Game1.player, answer.X, answer.Y))",
+            "and it reads the ring the action's own row declares, which the native radius does not answer for a swing that"
+                + " must be faced or a charged tool use (`sweep_needs_cardinal_stance`, `charge_needs_cardinal_stance`)");
         seam.Should().Contain(
             "return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);",
             "the approach leg takes the admitted execution, the action's own wire identity, the resolved anchor, the tiles the"
@@ -199,6 +205,7 @@ public sealed class TileTargetRequestSeamTests
         int admission = seam.IndexOf("this.AdmitExecution(", StringComparison.Ordinal);
         int resolver = seam.IndexOf("TileTargetGate answer = gate(location);", StringComparison.Ordinal);
         int reach = seam.IndexOf("!(inReach ?? IsTileWithinNativeReach)(", StringComparison.Ordinal);
+        int declaredRing = seam.IndexOf("StandsOutsideADeclaredRing(", StringComparison.Ordinal);
         int approach = seam.IndexOf("TryBeginToolApproach(", StringComparison.Ordinal);
         int execute = seam.LastIndexOf("return execute(", StringComparison.Ordinal);
         authorization.Should().BeGreaterThan(identity, "authorization answers for a request whose identity is already minted");
@@ -208,7 +215,10 @@ public sealed class TileTargetRequestSeamTests
                 + "admission would have named");
         resolver.Should().BeGreaterThan(admission, "no target is resolved for a request the admission refused");
         reach.Should().BeGreaterThan(resolver, "the reach test follows the target it measured");
-        approach.Should().BeGreaterThan(reach, "the approach leg starts only for a target out of reach");
+        declaredRing.Should().BeGreaterThan(
+            reach,
+            "the declared ring is asked beside the reach, about the same tile the seam just resolved");
+        approach.Should().BeGreaterThan(declaredRing, "the approach leg starts only for a target out of reach, or beside it");
         execute.Should().BeGreaterThan(approach, "the in-reach branch runs the body directly");
     }
 

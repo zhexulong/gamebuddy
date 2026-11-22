@@ -71,12 +71,16 @@ public sealed class CropApproachWiringTests
             System.IO.File.ReadAllText(RepositoryFile("integrations/stardew/farmhandexecutioncontroller.tiletargetrequest.cs")),
             "private LocalExecutionReceipt RequestLocalTileTarget(");
 
-        int reach = seam.IndexOf("if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))", System.StringComparison.Ordinal);
+        int reach = seam.IndexOf("if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y)", StringComparison.Ordinal);
         reach.Should().BeGreaterThan(0, "the seam tests the action's own reach predicate, or the native radius when it names none");
 
-        int branchEnd = seam.IndexOf(';', reach);
+        int branchEnd = seam.IndexOf(';', seam.IndexOf("TryBeginToolApproach(", reach, StringComparison.Ordinal));
         string falseBranch = seam[reach..branchEnd];
 
+        falseBranch.Should().Contain(
+            "StandsOutsideADeclaredRing(",
+            "a stand tile the action's row leaves out of its ring is walked to as well - the native radius admits a diagonal"
+                + " and the swing does not");
         falseBranch.Should().Contain("TryBeginToolApproach", "an out-of-range target is walked to, not refused");
         falseBranch.Should().NotContain("target_out_of_range", "a target the actor can walk to is not unavailable");
         falseBranch.Should().NotContain("ExecutionState.Rejected", "the false branch dispatches a walk; it does not end the request");

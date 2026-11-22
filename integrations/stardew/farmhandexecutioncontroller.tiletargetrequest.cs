@@ -121,7 +121,13 @@ internal sealed partial class ExecutionManager
         TileTargetGate answer = gate(location);
         if (answer.Settlement is not null || answer.Refusal is not null)
             return this.RememberTileTargetAnswer(requestId, executionId, answer);
-        if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y))
+        // TWO REASONS TO WALK, and only one of them is a radius. The action's own reach says she is too far from the tile;
+        // the ring its row declares says she is beside it on a tile it cannot be worked from - a diagonal for a swing that
+        // must be faced and for every charged tool use (`sweep_needs_cardinal_stance`, `charge_needs_cardinal_stance`,
+        // both of which arrived AFTER a walk in `round92`). Both are read from the catalogue, so no request half has to
+        // restate the geometry its own row already states.
+        if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y)
+            || StandsOutsideADeclaredRing(actionId, Game1.player, answer.X, answer.Y))
             return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);
         return execute(executionId, requestId);
     }

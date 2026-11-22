@@ -11,35 +11,48 @@ namespace GameBuddy.Stardew;
 internal sealed partial class ExecutionManager
 {
     /// <summary>
-    /// The reach every tool family but a stance-constrained swing hands the seam: the body stands somewhere on the target's
+    /// The reach every tool family but a stance-constrained one hands the seam: the body stands somewhere on the target's
     /// eight-neighbour ring, which is <see cref="ApproachStance.Any"/> said by the ring's owner
     /// (<see cref="ApproachTileSelector.StandsWithin"/>: Chebyshev-1 and never the tile under her feet).
     ///
     /// <para>
     /// IT IS A DELEGATION RATHER THAN A RADIUS, because a second copy of "which tiles are beside this" is how the reach
     /// and the stand-tile search came to disagree - `round92`: the reach admitted a diagonal and the swing refused it.
-    /// A row that restricts its stance hands the seam its own ring instead (<see cref="IsTileWithinDeclaredStance"/>) and
-    /// both then read the same predicate.
     /// </para>
     /// </summary>
     private static bool IsTileWithinToolReach(Farmer player, int targetX, int targetY) =>
         ApproachTileSelector.StandsWithin((targetX, targetY), ((int)player.Tile.X, (int)player.Tile.Y), ApproachStance.Any);
 
     /// <summary>
-    /// The reach an action with a declared stance hands the seam: the tile the body stands on is inside the ring its OWN
-    /// row declares, read from the catalogue so the answer cannot drift from the one the approach leg selects with.
+    /// The ring this action's OWN row declares, read from the catalogue so no caller can drift from the one the approach
+    /// leg selects its stand tile with; <see cref="ApproachStance.Any"/> for a row that declares no stance.
+    /// </summary>
+    private static ApproachStance DeclaredStance(string actionId) =>
+        FarmhandActionCatalog.ApproachOf(actionId)?.Stance ?? ApproachStance.Any;
+
+    /// <summary>
+    /// Whether the body already stands inside the ring its action's row declares - <see cref="ApproachStance.Any"/> meaning
+    /// the eight neighbours, which is the ring every tool family works from.
+    /// </summary>
+    private static bool StandsInDeclaredRing(string actionId, Farmer player, int targetX, int targetY) =>
+        ApproachTileSelector.StandsWithin((targetX, targetY), ((int)player.Tile.X, (int)player.Tile.Y), DeclaredStance(actionId));
+
+    /// <summary>
+    /// Whether the body stands OUTSIDE a ring its row declares, which is the one question the seam asks beside the action's
+    /// own native reach. A row that declares no stance restricts nothing and answers false: the reach it named is then the
+    /// whole constraint.
     ///
     /// <para>
-    /// It also decides WHETHER TO WALK. Standing diagonally is inside the native radius and outside a cardinal stance, so
-    /// without this a request from a diagonal goes straight to the swing and the swing refuses - `round92`'s three
-    /// `sweep_needs_cardinal_stance`, each after the plan had already committed to that tile.
+    /// THE TWO QUESTIONS ARE NOT THE SAME ONE for a stance-constrained action. `sweep_scythe` and the charged tool family
+    /// admit from a diagonal by the native radius and then refuse it (`sweep_needs_cardinal_stance`,
+    /// `charge_needs_cardinal_stance`), so "she is within one tile" and "she is where this action can be worked from"
+    /// have different answers and a request can be walked to a tile the body then refuses - measured `round92`, three such
+    /// refusals in one plan. The ring is read from the row here, so the walk is chosen before the action is asked.
     /// </para>
     /// </summary>
-    private static Func<Farmer, int, int, bool> IsTileWithinDeclaredStance(string actionId) =>
-        (player, targetX, targetY) => ApproachTileSelector.StandsWithin(
-            (targetX, targetY),
-            ((int)player.Tile.X, (int)player.Tile.Y),
-            FarmhandActionCatalog.ApproachOf(actionId)?.Stance ?? ApproachStance.Any);
+    private static bool StandsOutsideADeclaredRing(string actionId, Farmer player, int targetX, int targetY) =>
+        ApproachStanceWords.Name(DeclaredStance(actionId)) is not null
+        && !StandsInDeclaredRing(actionId, player, targetX, targetY);
 
     public LocalExecutionReceipt RequestLocalChopTreeSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
         this.RequestLocalTileTarget(
@@ -583,7 +596,11 @@ internal sealed partial class ExecutionManager
         // four `soil_already_tilled` refusals of `round80` were each paid for with a walk first.
         if (AnswerTilledSoil(location, targetX, targetY) is { Settlement: not null } soil)
             return this.RememberTileTargetAnswer(requestId, executionId, soil);
-        if (!IsTileWithinChebyshevRadius(Game1.player, targetX, targetY, 1) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
+        // THE RING, NOT A RADIUS. A diagonal is inside the native Chebyshev-1 radius and outside a charged use's cardinal
+        // ring (`Tool.tilesAffected` aims along the facing, Tool.cs:919), so asking the radius here admitted a request the
+        // body then refused with `charge_needs_cardinal_stance`. The ring is the row's own declaration, the same one the
+        // stand-tile search below reads.
+        if (!StandsInDeclaredRing("till_soil", Game1.player, targetX, targetY) || IsToolTargetUnderActor(Game1.player, targetX, targetY))
         {
             if (DescribeSoilRefusal(location, targetX, targetY) is { } soilRefusal)
             {
@@ -1486,11 +1503,13 @@ internal sealed partial class ExecutionManager
             "sweep_scythe", requestId, targetX, targetY, $"sweep_scythe_{targetX}_{targetY}", requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             authorize: null,
+            // The native radius is the whole distance a scythe swing needs; WHICH tile inside it she may stand on is the
+            // row's declared stance, asked by the seam for every action that declares one.
+            inReach: IsTileWithinNativeReach,
             gate: _ =>
                 ResolveDeclaredTool(Game1.player.Items, "sweep_scythe").RefusalCode is { } toolRefusal
                     ? new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "sweep_scythe", toolRefusal))
                     : null,
-            inReach: IsTileWithinDeclaredStance("sweep_scythe"),
             execute: (executionId, admittedRequestId) => this.ExecuteSweepScythe(executionId, admittedRequestId, targetX, targetY));
 
     private LocalExecutionReceipt ExecuteSweepScythe(string executionId, string requestId, int targetX, int targetY)
@@ -1792,7 +1811,7 @@ internal sealed partial class ExecutionManager
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
         // THE STAND TILE IS CHOSEN FOR THE ACTION THAT WILL STAND THERE, so the ring comes from the action's own row. A row
         // that declares nothing is `Any` and gets the eight neighbours it always had.
-        ApproachStance stance = FarmhandActionCatalog.ApproachOf(actionId)?.Stance ?? ApproachStance.Any;
+        ApproachStance stance = DeclaredStance(actionId);
         Func<(int X, int Y), bool> isStandable = tile =>
             StardewBodyController.IsStandableTile(location, Game1.player, new Vector2(tile.X, tile.Y))
             && !IsWarpBufferTile(location, tile);
@@ -1926,10 +1945,19 @@ internal sealed partial class ExecutionManager
             return;
         }
 
-        if (!IsTileWithinChebyshevRadius(Game1.player, specification.TargetX, specification.TargetY, 1))
+        bool inNativeReach = IsTileWithinChebyshevRadius(Game1.player, specification.TargetX, specification.TargetY, 1);
+        // AND THE RING THE ACTION DECLARES, which the native radius does not answer: a swing that must be faced and a
+        // charged tool use are worked from a cardinal neighbour only, and a walk that ends one tile away on a diagonal
+        // arrives inside the radius the engine admits from and outside the ring the body can work from. The row is where
+        // that ring is written, so the arrival reads it rather than restating an adjacency the action has already refused
+        // to work from (`sweep_needs_cardinal_stance`, `charge_needs_cardinal_stance`).
+        string? stanceRefusal = StandsOutsideADeclaredRing(specification.ActionId, Game1.player, specification.TargetX, specification.TargetY)
+            ? ApproachStanceWords.Refusal(DeclaredStance(specification.ActionId))
+            : null;
+        if (!inNativeReach || stanceRefusal is not null)
         {
             this.revision++;
-            LocalExecutionReceipt short_ = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, "target_out_of_reach", this.revision,
+            LocalExecutionReceipt short_ = new(specification.ExecutionId, specification.RequestId, ExecutionState.Rejected, stanceRefusal ?? "target_out_of_reach", this.revision,
                 $"target={specification.TargetX},{specification.TargetY};distance={ChebyshevDistance(Game1.player, specification.TargetX, specification.TargetY).ToString(CultureInfo.InvariantCulture)};reach=1;approach=did_not_arrive");
             this.ledger.Remember(short_);
             this.AddTrace(short_);

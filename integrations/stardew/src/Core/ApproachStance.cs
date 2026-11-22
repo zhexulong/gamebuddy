@@ -30,7 +30,11 @@ public enum ApproachStance
     /// </summary>
     Any = 0,
 
-    /// <summary>The four orthogonal neighbours only: the tiles a swing can be faced from (<see cref="SwingFacing.For"/>).</summary>
+    /// <summary>
+    /// The four orthogonal neighbours only: the tiles a swing can be faced from (<see cref="SwingFacing.For"/>), and the
+    /// tiles a CHARGED tool use can be aimed from - `Tool.tilesAffected` orients its rectangle along the facing
+    /// (`Tool.cs:919`), so a target on a diagonal is on no axis the tool can point down.
+    /// </summary>
     Cardinal = 1,
 }
 
@@ -76,4 +80,12 @@ public static class ApproachStanceWords
         ApproachStance.Cardinal => "diagonal_only",
         _ => null,
     };
+
+    /// <summary>
+    /// The whole refusal a body outside this stance owes, from the two words above: <c>no_cardinal_stance:diagonal_only</c>,
+    /// or null when the stance restricts nothing. A reader that has to state both halves itself is a second spelling of
+    /// the pair, which is how one of them comes to be renamed without the other.
+    /// </summary>
+    public static string? Refusal(ApproachStance stance) =>
+        StanceRefusalCode(stance) is { } code ? $"{code}:{OutsideNeighbour(stance)}" : null;
 }

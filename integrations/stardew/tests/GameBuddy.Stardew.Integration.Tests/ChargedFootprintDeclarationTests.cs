@@ -1,5 +1,6 @@
 using System.Globalization;
 using FluentAssertions;
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Policy;
 using Xunit;
 
@@ -56,6 +57,36 @@ public sealed class ChargedFootprintDeclarationTests
                 FarmhandChargedFootprintDeclaration.NonDestructive,
                 $"charged_footprint_unchecked:{registration.ActionId}: a footprint that is not pre-checked states the one reason the gate accepts, with its engine citation");
         }
+    }
+
+    /// <summary>
+    /// A CHARGE ABOVE ZERO IS AIMED BY THE FACING, so the body must stand on one of the four axes - and the row must SAY
+    /// so: <c>Tool.tilesAffected</c> builds its rectangle from <c>who.FacingDirection</c> (<c>Tool.cs:919</c>), a diagonal
+    /// tile is on no axis a tool can point down, and the body refuses that with <c>charge_needs_cardinal_stance</c>.
+    ///
+    /// <para>
+    /// WHY THIS IS A GATE AND NOT A ONE-OFF EDIT. `till_soil` admitted a request from any of the eight neighbours and
+    /// refused the diagonal inside its own body, so the companion learned the geometry only by being refused after a walk -
+    /// the class `round92` recorded for `sweep_scythe`, repeated one tool family over. The population is the catalogue's own
+    /// <c>charge</c> rows, so the next charged action fails here by name instead of in a live run.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryActionThatAcceptsAChargeDeclaresTheCardinalStanceItsFootprintNeeds()
+    {
+        List<FarmhandActionRegistration> charged = Charged();
+        charged.Should().NotBeEmpty("charged_stance_undeclared:none: the population is the catalogue's own `charge` rows");
+
+        List<string> undeclared = charged
+            .Where(registration => registration.Descriptor!.Approach is not { Stance: ApproachStance.Cardinal })
+            .Select(registration => registration.ActionId)
+            .ToList();
+
+        undeclared.Should().BeEmpty(
+            "charged_stance_undeclared: one charged use aims its rectangle along the facing (Tool.cs:919), so the tile it is\n"
+            + "aimed at must be a cardinal neighbour and the row must declare `SelfWalked(..., ApproachStance.Cardinal)` - "
+            + "otherwise the request is admitted from a diagonal and refused after the walk: "
+            + string.Join(", ", undeclared));
     }
 
     [Fact]

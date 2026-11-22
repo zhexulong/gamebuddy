@@ -241,6 +241,42 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
+    public void TheAnimalHouseIsSitedBeforeThePropsSpendTheGround()
+    {
+        // THE INVARIANT: the play-session world sites its one BUILDING before it places any prop. A barn is a 7x4
+        // footprint of ground with nothing on it, and the prop search is ordered nearest-the-start-first, so a house
+        // sited after the props competes for exactly the pocket they have already spent.
+        //
+        // Measured round93 (2026-11-22, SMAPI log `GameBuddy`):
+        // `fixture_native_local_play_session_animal_site_missing:start=56,11;free_footprints=0;rejected=none` - the
+        // coop had fitted in what the props left, the barn that replaced it needs ten tiles more, and the launcher
+        // waited out its pipe timeout on a world that could never arm. No compiler can state "this Given runs before
+        // those loops", so the order is read out of the initializer's own body.
+        string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
+        int animal = body.IndexOf("InstallNativeLocalPlaySessionAnimalGiven(", StringComparison.Ordinal);
+        int firstProp = body.IndexOf("FindNativeLocalPlaySessionSpot(", StringComparison.Ordinal);
+        animal.Should().BeGreaterThanOrEqualTo(0, "the play-session world must carry the animal Given at all");
+        firstProp.Should().BeGreaterThanOrEqualTo(0, "the props are placed by that search");
+        animal.Should().BeLessThan(
+            firstProp,
+            "a barn needs a 7x4 footprint and the props are placed nearest-the-start-first, so a house sited after them "
+                + "competes for the pocket they have already spent (round93: free_footprints=0)");
+    }
+
+    [Fact]
+    public void AWorldWithNoFreeFootprintSaysWhichGateRefusedIt()
+    {
+        // `free_footprints=0` is not an answer to anything: it reads the same whether the farm has no room left or one
+        // of the five rules refuses every tile in the world. round93's refusal was exactly that line, and its cause
+        // could only be found by re-reading this search. Each gate that can refuse a footprint tile is therefore named
+        // with the tile it refused, so the next run answers it in one line.
+        string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
+        foreach (string gate in new[] { "off_map", "object", "terrain_feature", "building", "not_placeable" })
+            search.Should().Contain($":{gate}", $"the site search must name the {gate} gate that refused a tile");
+        search.Should().Contain("blocked=", "the refusal publishes the blocked reasons, not only the free count");
+    }
+
+    [Fact]
     public void MultiDayGivenIsAppliedBeforeThePlaySessionAffordances()
     {
         // Order matters: the multi-day Given warps the actor home and pins the clock, and it refuses by
