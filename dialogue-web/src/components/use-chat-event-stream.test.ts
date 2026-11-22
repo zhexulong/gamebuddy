@@ -4,16 +4,22 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type { ChatSnapshotPair } from "../chat-snapshot-pair";
 import type {
   ComposedReferenceGameBrowserApi,
   ComposedReferenceGameBrowserRootV1,
 } from "../composed-reference-game-browser-api";
 import { messages } from "../i18n";
-import type { BrowserEventV1, ReferencePipelineApi, TavernStateSnapshotV1 } from "../reference-pipeline-api";
+import type {
+  BrowserEventV1,
+  BrowserMessageV1,
+  BrowserTurnV1,
+  ReferencePipelineApi,
+  TavernStateSnapshotV1,
+} from "../reference-pipeline-api";
 import { ReferencePipelineSessionError, createReferencePipelineSession } from "../reference-pipeline-session";
 import type { ReadyView, ViewState } from "./composed-reference-game-view";
 import { startChatEventStream } from "./use-chat-event-stream";
+import type { ComposedPreviewV1 } from "./use-composed-bootstrap";
 
 /**
  * The live cursor, driven through its own lifecycle function.
@@ -38,7 +44,12 @@ const EPOCH = "epoch-1";
 const CURSOR = "cursor-1";
 
 /** The smallest snapshot a session accepts, with the live cursor the stream arms from. */
-function snapshot(epoch = EPOCH, cursor = CURSOR): TavernStateSnapshotV1 {
+function snapshot(
+  epoch = EPOCH,
+  cursor = CURSOR,
+  turn: BrowserTurnV1 | null = null,
+  transcript: readonly BrowserMessageV1[] = [],
+): TavernStateSnapshotV1 {
   return {
     apiVersion: 1,
     build: { browserContract: "tavern_browser_api/v1", profileId: "gamebuddy.chat-core.reference-pipeline" },
@@ -50,9 +61,9 @@ function snapshot(epoch = EPOCH, cursor = CURSOR): TavernStateSnapshotV1 {
     chat: {
       companion: { name: "Mira", handle: "mira" },
       title: null,
-      transcript: [],
+      transcript: [...transcript],
       draft: { revision: 1, present: false },
-      turn: null,
+      turn,
       worldInfo: null,
     },
     memory: { readAvailable: true, mutationAvailable: true, projectionRevision: null },
@@ -85,6 +96,54 @@ function ready(state: TavernStateSnapshotV1): ReadyView {
 
 type Timer = { delay: number; fire: () => void; cleared: boolean };
 
+const TURN_HANDLE = "turn-1";
+const REPLY_HANDLE = "reply-1";
+const HALF_REPLY = "The kettle is on,";
+const REPLY = "The kettle is on, and the porch is quiet.";
+
+/** The turn the Host projects for one reply being written: one handle, one state. */
+function turnIn(state: BrowserTurnV1["state"]): BrowserTurnV1 {
+  return { handle: TURN_HANDLE, state, projectionRevision: 1, canCancel: true };
+}
+
+/** The reply `message.committed` publishes, and the transcript row the read that follows carries. */
+function committedReply(): BrowserMessageV1 {
+  return { handle: REPLY_HANDLE, role: "companion", text: REPLY, locale: "und", order: 1, revision: 1 };
+}
+
+function deltaFrame(sequence: number, delta: string): BrowserEventV1 {
+  return {
+    apiVersion: 1,
+    epoch: EPOCH,
+    sequence,
+    selectionGeneration: 1,
+    eventType: "companion.delta",
+    payload: { turnHandle: TURN_HANDLE, delta },
+  };
+}
+
+function committedFrame(sequence: number): BrowserEventV1 {
+  return {
+    apiVersion: 1,
+    epoch: EPOCH,
+    sequence,
+    selectionGeneration: 1,
+    eventType: "message.committed",
+    payload: committedReply(),
+  };
+}
+
+function turnFrame(sequence: number, state: BrowserTurnV1["state"]): BrowserEventV1 {
+  return {
+    apiVersion: 1,
+    epoch: EPOCH,
+    sequence,
+    selectionGeneration: 1,
+    eventType: "turn.state_changed",
+    payload: turnIn(state),
+  };
+}
+
 type OpenedOptions = Readonly<{
   cursor?: string;
   onEvent(event: BrowserEventV1, lastEventId: string): void;
@@ -110,6 +169,9 @@ function harness(view: ViewState) {
   const sources: OpenedSource[] = [];
   const timers: Timer[] = [];
   const reads = { count: 0 };
+  // The streaming preview, as the shell holds it: one cell the stream writes through the setter's
+  // own two shapes, so a test reads exactly what the player would be watching.
+  const previewCell: { current: ComposedPreviewV1 | null } = { current: null };
   let answer: () => Promise<ComposedReferenceGameBrowserRootV1> = () =>
     Promise.resolve(view.kind === "ready" ? view.root : root(snapshot()));
 
@@ -163,7 +225,9 @@ function harness(view: ViewState) {
     streamLiveRef,
     streamFailedRef,
     turnKeyRef,
-    setPreview: () => undefined,
+    setPreview: (next) => {
+      previewCell.current = typeof next === "function" ? next(previewCell.current) : next;
+    },
     setStreamNotice: (notice) => {
       notices.push(notice);
     },
@@ -185,6 +249,8 @@ function harness(view: ViewState) {
     sources,
     timers,
     reads,
+    /** The reply the player is watching right now, or null when no preview stands. */
+    preview: () => previewCell.current,
     answer: (next: () => Promise<ComposedReferenceGameBrowserRootV1>) => {
       answer = next;
     },
@@ -318,6 +384,112 @@ test("a view with no live cursor arms nothing at all", () => {
   assert.deepEqual(h.sources, []);
   assert.deepEqual(h.notices, []);
   assert.equal(h.streamLiveRef.current, false);
+  h.stop();
+});
+
+/**
+ * The streaming preview: the only copy of the words on screen until the reply is durable.
+ *
+ * A reply is not durable until `message.committed`, and the row that shows it only exists once the
+ * read carrying it has landed - so the preview may be spent only by a fact that replaces it (the
+ * read that carries the committed row) or by a turn that is no longer owed to the transcript. Three
+ * separate paths spend it, and they are held apart below; the fourth test is the other half of the
+ * rule, because a fix that simply never spends would pass the defect's own test.
+ *
+ * What each test names is what a player would have seen, not what the state cell holds.
+ */
+
+test("a committed frame holds the reply on screen until the read that carries its row lands", async () => {
+  const h = harness(ready(snapshot()));
+  // The reply streams: the preview is the only copy of these words.
+  h.sources[0].options.onEvent(deltaFrame(1, REPLY), "cursor-2");
+  await settle();
+  assert.deepEqual(h.preview(), { turnHandle: TURN_HANDLE, text: REPLY });
+
+  // The commit is durable and the row that shows it is in the read below, which this test keeps open.
+  let land: () => void = () => undefined;
+  h.answer(
+    () =>
+      new Promise((resolve) => {
+        land = () => resolve(root(snapshot(EPOCH, "cursor-3", null, [committedReply()])));
+      }),
+  );
+  h.sources[0].options.onEvent(committedFrame(2), "cursor-3");
+  await settle();
+  assert.equal(
+    h.preview()?.text,
+    REPLY,
+    "the reply vanished between the committed frame and the read that carries its row",
+  );
+
+  land();
+  await settle();
+  assert.equal(h.preview(), null, "the committed row replaced the preview, so the preview is spent");
+  h.stop();
+});
+
+test("a stream blip mid-turn keeps the words already on screen", async () => {
+  const h = harness(ready(snapshot()));
+  h.sources[0].options.onEvent(deltaFrame(1, HALF_REPLY), "cursor-2");
+  await settle();
+  assert.equal(h.preview()?.text, HALF_REPLY);
+
+  // The link drops while the turn is open. Nothing about this reply is durable and no row anywhere
+  // carries these words, so the Host still holds them: a reconnect is not a disappearance.
+  h.answer(() => Promise.resolve(root(snapshot(EPOCH, "cursor-3", turnIn("running")))));
+  h.sources[0].options.onError(new Event("error"));
+  assert.equal(h.preview()?.text, HALF_REPLY, "the half-written reply vanished when the link dropped");
+
+  await settle();
+  assert.equal(h.preview()?.text, HALF_REPLY, "the recovery read threw away the only copy of the half-written reply");
+  // ...and the read really did land, so what kept the words was the rule rather than a read that
+  // never happened.
+  assert.equal(h.committed.length, 1);
+  h.stop();
+});
+
+test("a recovery read that finds no open turn spends the reply that was never committed", async () => {
+  for (const [label, settled] of [
+    ["cancelled", turnIn("cancelled")],
+    ["gone", null],
+  ] as const) {
+    const h = harness(ready(snapshot()));
+    h.sources[0].options.onEvent(deltaFrame(1, HALF_REPLY), "cursor-2");
+    await settle();
+
+    // The turn ended while the link was down: a cancelled turn commits no reply, so its partial text
+    // is owed to nothing and a reply the Host may not have kept must not stand on screen.
+    h.answer(() => Promise.resolve(root(snapshot(EPOCH, "cursor-3", settled))));
+    h.sources[0].options.onError(new Event("error"));
+    await settle();
+
+    assert.equal(h.preview(), null, `a turn that is ${label} owes the transcript nothing`);
+    h.stop();
+  }
+});
+
+test("a turn state change spends the preview only when that turn is over", async () => {
+  const h = harness(ready(snapshot()));
+  h.sources[0].options.onEvent(deltaFrame(1, HALF_REPLY), "cursor-2");
+  await settle();
+  // The read every state frame triggers is held open, so what the assertions below see is the
+  // frame's own decision rather than a read's.
+  h.answer(() => new Promise(() => undefined));
+
+  // The Host publishes the turn's admission too; that frame replaces no words.
+  h.sources[0].options.onEvent(turnFrame(2, "queued"), "cursor-3");
+  await settle();
+  assert.equal(
+    h.preview()?.text,
+    HALF_REPLY,
+    "a state change that leaves the turn open emptied the reply being written",
+  );
+
+  // Cancelled: this partial reply is not owed to the transcript, so it goes at once - not on the
+  // read that follows, and not when some later delta arrives.
+  h.sources[0].options.onEvent(turnFrame(3, "cancelled"), "cursor-4");
+  await settle();
+  assert.equal(h.preview(), null, "a cancelled turn's partial reply stayed on screen");
   h.stop();
 });
 

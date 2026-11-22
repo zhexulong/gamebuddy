@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { type ChatSnapshotPair, chatHalfPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import { chatHalfPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
@@ -33,6 +33,7 @@ import {
   liveTurn,
   type OptimisticSend,
   pendingOptimisticMessage,
+  previewStillOwed,
   stopAvailable,
   submitAvailable,
   terminalTurnNotice,
@@ -441,7 +442,8 @@ export function ComposedReferenceGameApp() {
    * every reread caller gets it, not in each handler.
    *
    * The streaming preview is spent only when the read no longer describes the turn
-   * it belongs to. That is the state a reread always means - the authoritative
+   * it belongs to (`previewStillOwed`, which the stream's own reads share). That is the state a reread
+   * always means - the authoritative
    * transcript now carries the reply - but it is not what a read taken *while* a
    * turn streams means: choosing another surface mid-reply rereads this shell too,
    * and dropping the preview there would erase the text the player was watching
@@ -486,11 +488,7 @@ export function ComposedReferenceGameApp() {
       });
       return;
     }
-    const runningTurn =
-      root.chat.chat.turn === null || terminalTurn(root.chat.chat.turn) ? null : root.chat.chat.turn.handle;
-    setPreview((existing) =>
-      existing !== null && runningTurn !== null && existing.turnHandle === runningTurn ? existing : null,
-    );
+    setPreview((existing) => previewStillOwed(existing, root.chat.chat.turn));
     const session = current.session.applySnapshot(root.chat);
     commit({
       ...current,

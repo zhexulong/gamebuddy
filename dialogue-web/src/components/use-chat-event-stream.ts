@@ -2,21 +2,22 @@ import { type Dispatch, type RefObject, type SetStateAction, useEffect, useState
 import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   type ComposedReferenceGameBrowserApi,
-  type ComposedReferenceGameBrowserRootV1,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
 import { type Locale, messages } from "../i18n";
 import {
   type BrowserEventV1,
+  type BrowserTurnV1,
   type ReferencePipelineApi,
   TavernProblemError,
   TavernProtocolError,
 } from "../reference-pipeline-api";
 import { createReferencePipelineSession, ReferencePipelineSessionError } from "../reference-pipeline-session";
 import { createSerialDrain, type SerialDrain } from "../serial-drain";
-import { observeTurnEvent } from "./turn-timings";
+import { previewStillOwed } from "./composed-chat-shell-state";
 import type { ViewState } from "./composed-reference-game-view";
+import { observeTurnEvent } from "./turn-timings";
 import { type ComposedPreviewV1, terminalTurn } from "./use-composed-bootstrap";
 
 /**
@@ -131,7 +132,6 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
     setStreamNotice,
     commit,
     commitChatProblem,
-    eventStreamEpoch,
   } = input;
   if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return () => undefined;
   let disposed = false;
@@ -195,10 +195,11 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
         cursor = root.chat.eventStream.cursor;
         session = session.resetEventCheckpoint();
       }
-      setPreview(null);
-      // The recovery read is authoritative too, so a preview a committed frame was holding is
-      // spent by it - the same rule `reconcile` applies to its own answer.
-      spendHeldPreview();
+      // The recovery read is authoritative about the TURN, not about the words: a reconnect that
+      // finds the same turn still open has replaced nothing, and the reply on screen is still the
+      // only copy of it. This used to spend the preview unconditionally, which made a stream blip
+      // erase a half-written reply (`settlePreview` owns the rule now).
+      settlePreview(root.chat.chat.turn);
       // The stream handler's own settle rule: an authoritative read that sees a
       // terminal turn spends the pending submission record. A stream that keeps
       // failing reconnects and re-suspends the poll within milliseconds of each
@@ -294,6 +295,23 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
     window.clearTimeout(previewHandoffTimer);
     previewHandoffTimer = null;
   };
+  /**
+   * A read or a frame landed: the reply on screen is either replaced by what it carries, or kept.
+   *
+   * `turn` is the turn that landing reports. A committed frame's own read is the one landing that
+   * spends regardless of it: its message is durable and the row showing it is in the answer
+   * (`spendHeldPreview`, whose budget that frame armed). Every other landing is the shell's one rule,
+   * `previewStillOwed`: the words stay while the turn that wrote them is still open, and go with a turn
+   * that is over - a cancelled turn's partial reply is not owed to the transcript.
+   */
+  const settlePreview = (turn: BrowserTurnV1 | null): void => {
+    if (previewHandoffTimer !== null) {
+      spendHeldPreview();
+      setPreview(null);
+      return;
+    }
+    setPreview((existing) => previewStillOwed(existing, turn));
+  };
   const reconcile = async (): Promise<void> => {
     if (reconciling) {
       pendingReconcile = true;
@@ -313,8 +331,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
           // authority with a cursor of its own; its answer supersedes this one.
           if (disposed || recovering || latest.kind !== "ready" || root.chat.chat === null) return;
           const session = checkpoint.applySnapshot(root.chat);
-          setPreview(null);
-          spendHeldPreview();
+          settlePreview(root.chat.chat.turn);
           // The authoritative turn is settled, so a pending record for it is spent
           // - the same rule the fallback poll applies to the turns it settles. The
           // stream is the live channel and the poll is suspended underneath it, so
@@ -368,9 +385,13 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
           // held for that one handoff instead of vanishing here (see `holdPreviewUntilReconcile`).
           holdPreviewUntilReconcile();
         } else if (event.eventType === "turn.state_changed") {
-          setPreview(null);
           /* The mark mapping lives in `turn-timings`: it is a fact about the contract's state union. */
-          if (observeTurnEvent(event, turnKeyRef.current, null).terminal) turnKeyRef.current = null;
+          const settled = observeTurnEvent(event, turnKeyRef.current, null).terminal;
+          // The same rule a read applies, from the frame's own turn: a state change that leaves this
+          // turn open replaces no words, and one that ends it - completed, cancelled, failed - takes
+          // the partial reply with it, because a settled turn owes the transcript nothing.
+          settlePreview(event.payload);
+          if (settled) turnKeyRef.current = null;
         }
         // Not awaited: the pass owns the reads, so a frame that arrives while it
         // runs still validates its own position here and then marks it pending.

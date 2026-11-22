@@ -6,7 +6,7 @@ import type { BrowserTurnV1 } from "../reference-pipeline-api";
 import type { AppBarProps } from "./AppBar";
 import type { ViewState } from "./composed-reference-game-view";
 import { turnFailureText } from "./turn-failure-text";
-import { isTerminalTurnState } from "./use-composed-bootstrap";
+import { isTerminalTurnState, type ComposedPreviewV1 } from "./use-composed-bootstrap";
 
 /**
  * The facts the composed shell reads out of its committed view, as functions.
@@ -165,4 +165,27 @@ export function liveTurn(view: ViewState): BrowserTurnV1 | null {
   if (view.kind !== "ready") return null;
   const turn = view.session.snapshot.chat?.turn ?? null;
   return turn !== null && !isTerminalTurnState(turn.state) ? turn : null;
+}
+
+/**
+ * The reply a landed authority still owes, or null when the preview is spent.
+ *
+ * The words a reply streams into are not durable until `message.committed`, and the transcript row that
+ * replaces them exists only once a read carrying it has landed - so the preview is the only copy on
+ * screen until then, and exactly two facts may remove it: the row arriving, or the turn that was
+ * writing it ending (a cancelled or failed turn commits no reply, so its partial text is owed to
+ * nothing). A read that finds the SAME turn still open carries neither. It is a reconnect, a stream
+ * blip, or a look at another surface and back - dropping the preview there erased the text the player
+ * was watching until the next delta rebuilt it from nothing, which is the defect this answers.
+ *
+ * `turn` is the turn the authority that landed reports (a read's snapshot, or a `turn.state_changed`
+ * frame), so a preview whose own turn the authority no longer names - a different turn, or none at all
+ * - is not owed either: those words belong to a turn nothing is writing any more.
+ */
+export function previewStillOwed(
+  existing: ComposedPreviewV1 | null,
+  turn: BrowserTurnV1 | null,
+): ComposedPreviewV1 | null {
+  if (existing === null || turn === null || isTerminalTurnState(turn.state)) return null;
+  return existing.turnHandle === turn.handle ? existing : null;
 }
