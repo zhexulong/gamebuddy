@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4878, largest ExecutionManager at 28168 lines / 937 members across 53 partial(s).",
-  "revision": "5095b512",
+  "revision": "5b10e0d2",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -823,7 +823,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3984,
+      "line": 4005,
       "value": 59
     },
     {
@@ -831,7 +831,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3145,
+      "line": 3166,
       "value": 49
     },
     {
@@ -839,7 +839,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3277,
+      "line": 3298,
       "value": 64
     },
     {
@@ -847,7 +847,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3462,
+      "line": 3483,
       "value": 47
     },
     {
@@ -855,7 +855,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4158,
+      "line": 4179,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -864,7 +864,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2548,
+      "line": 2569,
       "value": 44
     },
     {
@@ -1325,9 +1325,9 @@
       "parts": 1,
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
-      "line": 501,
-      "lines": 1304,
-      "methods": 40,
+      "line": 634,
+      "lines": 1571,
+      "methods": 53,
       "reason": "OWED BY A FILE IN FLIGHT (2026-11-22): `integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs` gains 13 action definitions and 267 lines in the worktree of the effects landing, which is uncommitted. This record therefore stays at HEAD's 40 methods / 1,304 lines and the gate reports it as `class_size_record_stale` until that file lands; the commit that brings it in re-records this row with `--update` and states the arithmetic. The previous arithmetic: 1083 -> 1124 lines and 30 -> 31 methods at the same single part: `c2e1a2fc` added `Charged(FarmhandActionDescriptor,string?)`, and the rest is catalogue rows and the comments that moved with them (`88d9d9d2`, `55e4a27e`, `7e0ee6e1`). Class complexity is 9, so these lines are declarations, not branches."
     },
     {
