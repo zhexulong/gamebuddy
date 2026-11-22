@@ -271,11 +271,12 @@ export function GameStatePanel({
   cabinLaunchWait,
   handlers,
 }: GameStatePanelProps) {
-  // The companion is in the farm once the Host publishes an attachment for it.
-  // While it is not, the surface's job is "here is how we get going": the same
-  // lifecycle controls, presented inside the three-step guide's affordances
-  // (never a second set of them).
-  const companionInFarm = game !== null && game.game.attachment.status === "attached";
+  // Whether the companion is in the farm is the phase's own flag, not a second look at the
+  // projection: an attachment that outlived its world is still `attached` while the phase is
+  // `ended_attempt_ready`, whose step is the activation that releases it - drawn by the getting-going
+  // guide this flag chooses. While it is not the companion's farm, the surface's job is "here is how
+  // we get going": the same lifecycle controls, inside the three-step guide (never a second set).
+  const companionInFarm = session.controls.companionInFarm;
   /**
    * The one staging action this phase names, or `null` when the staging step is
    * behind the player.

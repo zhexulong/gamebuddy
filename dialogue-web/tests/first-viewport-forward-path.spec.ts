@@ -639,29 +639,74 @@ type StateUnderTest = Readonly<{
 }>;
 
 /**
- * The Game surface's states: the product's own phase list, each with the projection it declares.
+ * The Game surface's states: the product's own phase list, each with the projection it declares,
+ * plus the one shape a phase's single declared fixture cannot also be.
  *
  * `deriveGameSessionControls` is the real derivation the panel reads, so the step asserted here is
  * the one the surface itself would offer - not a second opinion about the same projection.
  */
 function gameStates(surface: Surface): readonly StateUnderTest[] {
-  return GAME_SESSION_PHASES.map((phase) => {
-    const input = GAME_SESSION_INPUTS[phase];
-    const controls = deriveGameSessionControls(input);
-    const step = controls.forwardActions[0];
-    if (step === undefined) throw new Error(`game phase ${phase} declares no forward action`);
-    if (!(step in GAME_STEP_CONTROL))
-      throw new Error(
-        `game phase ${phase} offers "${step}", which this gate has no control for - declare its control in ` +
-          "GAME_STEP_CONTROL (or null when it is not a control on this page)",
-      );
-    return {
-      surface,
-      state: { id: phase, game: input.game === null ? null : input.game.game, submit: "available" },
-      declaredControlTestId: GAME_STEP_CONTROL[step] ?? null,
-      declaredStatementTestId: GAME_STEP_CONTROL[step] === null ? (GAME_STEP_STATEMENT[step] ?? null) : null,
-    };
-  });
+  const declared = GAME_SESSION_PHASES.map((phase) => stepOf(surface, phase, GAME_SESSION_INPUTS[phase]));
+  return [...declared, attachmentOutlivedTheWorld(surface)];
+}
+
+/**
+ * The measured cycle, as a state of its own: the Host watched the game end while this browser still
+ * held its attachment (`instance=crashed`, `playerHostExitCode=1`, `attachment=attached`,
+ * `connectionStatus=stopped`, 2026-11-22). The phase was `attached_stopped`, whose steps are
+ * Disconnect and Endgame - so the first viewport withheld the one press that settles the ended
+ * attempt and releases the attachment, and the player had to panic-disconnect the game to start
+ * another one.
+ *
+ * `ended_attempt_ready` is the phase this shape belongs to and `GAME_SESSION_INPUTS` declares it
+ * with no attachment; the two attachment facts the cycle published are the only thing added here, so
+ * the step is still the module's declaration and not a second opinion about this projection.
+ */
+function attachmentOutlivedTheWorld(surface: Surface): StateUnderTest {
+  const declared = GAME_SESSION_INPUTS.ended_attempt_ready.game;
+  if (declared === null) throw new Error("GAME_SESSION_INPUTS.ended_attempt_ready publishes no Game projection");
+  const game = {
+    ...declared.game,
+    instance: { ...declared.game.instance, status: "crashed" as const, playerHostExitCode: 1 },
+    attachment: { status: "attached" as const, generation: 1 },
+    connectionStatus: "stopped" as const,
+  };
+  const input = {
+    ready: true,
+    game: { ...declared, game },
+    resumeFailureSurface: false,
+    resumeAttemptFailed: false,
+  };
+  const phase = deriveGameSessionControls(input).phase;
+  if (phase !== "ended_attempt_ready")
+    throw new Error(
+      `the measured cycle (crashed, exit code 1, attachment attached, connection stopped) derives ${phase}: an ` +
+        "attachment that outlived its world must not own the phase of an attempt the Host watched end - activation is " +
+        "the press that settles that attempt and releases the attachment",
+    );
+  return stepOf(surface, "ended_attempt_ready+attachment_held", input);
+}
+
+/** One phase's fixture, as the state this gate measures and the control its declaration names. */
+function stepOf(
+  surface: Surface,
+  id: string,
+  input: Parameters<typeof deriveGameSessionControls>[0],
+): StateUnderTest {
+  const controls = deriveGameSessionControls(input);
+  const step = controls.forwardActions[0];
+  if (step === undefined) throw new Error(`game phase ${id} declares no forward action`);
+  if (!(step in GAME_STEP_CONTROL))
+    throw new Error(
+      `game phase ${id} offers "${step}", which this gate has no control for - declare its control in ` +
+        "GAME_STEP_CONTROL (or null when it is not a control on this page)",
+    );
+  return {
+    surface,
+    state: { id, game: input.game === null ? null : input.game.game, submit: "available" },
+    declaredControlTestId: GAME_STEP_CONTROL[step] ?? null,
+    declaredStatementTestId: GAME_STEP_CONTROL[step] === null ? (GAME_STEP_STATEMENT[step] ?? null) : null,
+  };
 }
 
 /** The conversation's states: the availability values the contract declares for an operation. */

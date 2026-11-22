@@ -24,6 +24,10 @@ import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-refere
  *   tells apart: an attempt the Host watched end (it has the report, so the next
  *   activation hands it back and stages the next instance) and one whose outcome nobody
  *   knows (the coordinator's launch quarantine, which no press in this process can leave).
+ *   The first of the two leads the derivation even while this browser still holds its
+ *   attachment: an attachment that outlived its world is a true fact, and it must not own the
+ *   phase, because the activation it would withhold is the very press that releases it
+ *   (`settleEndedAttempt`).
  *
  * What separates the first two shapes is the expected generation, not
  * `prerequisites`: that flag turns `met` as soon as the Host holds a ready
@@ -212,12 +216,16 @@ export type GameSessionPhase =
    */
   | "launch_failed"
   /**
-   * No attachment and the game ended with a Host that holds the ending: the Guardian reported the
-   * process exiting (with any code, the OS's normal-termination 0 included) or the player ended the
-   * game themselves. The attempt is over, and the surface offers the step a first run starts
-   * with - activation, which is the press that hands the ended attempt back and stages the next
-   * instance (`settleEndedAttempt`, then the reservation that takes the durable registration's next
-   * number).
+   * The game ended with a Host that holds the ending: the Guardian reported the process exiting (with
+   * any code, the OS's normal-termination 0 included) or the player ended the game themselves. The
+   * attempt is over, and the surface offers the step a first run starts with - activation, which is the
+   * press that hands the ended attempt back and stages the next instance (`settleEndedAttempt`, then the
+   * reservation that takes the durable registration's next number).
+   *
+   * This browser's attachment may still be latched (`attachment: attached`, `connectionStatus:
+   * stopped`) while the phase is this one: nothing has released it yet, and the press above is what
+   * does (`settleEndedAttempt` clears the attachment generation). So the attachment is not offered as a
+   * step here - there is no session left to let go of, and the world it belonged to is gone.
    *
    * The crash and the quit are two events and one step, so they are two readings of the instance
    * row ("Ended (exit code 86)" beside "Ended (exit code 0)") and one phase: whichever way the
@@ -307,6 +315,16 @@ export type GameSessionControls = Readonly<{
   createAvailable: boolean;
   reopenAvailable: boolean;
   /**
+   * Whether the companion is in the player's farm, i.e. the phase is one a live attachment leads.
+   *
+   * `GameStatePanel` draws the in-farm affordances, and the cabin handoff with them, instead of the
+   * getting-going guide exactly while this holds. The panel read `attachment.status` itself until an
+   * attachment that outlived its world put it in the in-farm shape over a game the Host had already
+   * watched end; the attachment is a true fact there and the phase is `ended_attempt_ready`, so the
+   * phase is what the surface reads.
+   */
+  companionInFarm: boolean;
+  /**
    * Every step this state offers, in reading order. Never empty: `AGENTS.md`'s
    * zero-forward-path rule is why that is an invariant here rather than a hope,
    * and the gate fails by name on the phase that breaks it. `terminal` is the one
@@ -348,6 +366,14 @@ export type GameSessionControls = Readonly<{
 
 const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "disconnected"]);
 
+/** The flags a phase sets beyond the ones `build` derives from the phase itself. */
+type GameSessionControlFlags = Partial<
+  Omit<
+    GameSessionControls,
+    "phase" | "forwardActions" | "waitingForGame" | "restartRequired" | "rereadAvailable" | "companionInFarm"
+  >
+>;
+
 /**
  * The session-and-recovery half of the Game surface, derived once.
  *
@@ -380,10 +406,9 @@ export function deriveGameSessionControls(
 ): GameSessionControls {
   const build = (
     phase: GameSessionPhase,
-    flags: Partial<
-      Omit<GameSessionControls, "phase" | "forwardActions" | "waitingForGame" | "restartRequired" | "rereadAvailable">
-    >,
+    flags: GameSessionControlFlags,
     forwardActions: readonly GameSessionForwardAction[],
+    companionInFarm = false,
   ): GameSessionControls =>
     Object.freeze({
       phase,
@@ -397,6 +422,7 @@ export function deriveGameSessionControls(
       reopenAvailable: false,
       installationRequired: false,
       ...flags,
+      companionInFarm,
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
       restartRequired: phase === "launch_failed",
@@ -407,12 +433,29 @@ export function deriveGameSessionControls(
   if (!view.ready || view.game === null) return build("no_projection", {}, ["terminal"]);
   const { instance, attachment, connectionStatus, actionAuthority } = view.game.game;
 
-  // A live attachment leads, exactly as the surface has always read it: the
+  // An attempt with a published ending leads, attachment or not.
+  //
+  // The attachment outliving its world is a true fact and this phase does not deny it. It is not what
+  // decides the step, because activation is the press that both settles the attempt and releases the
+  // attachment (`settleEndedAttempt` clears the attachment generation). Leading with the attachment
+  // instead turned that into the dead end: the panel withheld the one press that frees it and offered
+  // only the disconnect, so a player whose game had already gone had to panic-disconnect it before the
+  // product would start another one.
+  if (attemptEndedWithKnownOutcome(instance)) return build("ended_attempt_ready", {}, ["activate"]);
+
+  // Otherwise a live attachment leads, exactly as the surface has always read it: the
   // routine session controls settle it whatever the instance row says beside it.
   if (attachment.status === "attached" && attachment.generation > 0) {
+    // Every phase in this block is the in-farm state - the block's own condition is the fact - so the
+    // flag is set once here rather than at each of the shapes below.
+    const inFarm = (
+      phase: GameSessionPhase,
+      flags: GameSessionControlFlags,
+      forwardActions: readonly GameSessionForwardAction[],
+    ): GameSessionControls => build(phase, flags, forwardActions, true);
     if (connectionStatus === "connected_idle") {
       const reopenAvailable = actionAuthority === "paused";
-      return build(
+      return inFarm(
         reopenAvailable ? "attached_actions_paused" : "attached_connected",
         { stopAvailable: true, disconnectAvailable: true, endgameAvailable: true, reopenAvailable },
         reopenAvailable ? ["reopen", "stop", "disconnect", "endgame"] : ["stop", "disconnect", "endgame"],
@@ -420,7 +463,7 @@ export function deriveGameSessionControls(
     }
     if (RESUMABLE_CONNECTION_STATUSES.has(connectionStatus)) {
       if (view.resumeAttemptFailed)
-        return build(
+        return inFarm(
           "attached_resume_failed",
           {
             disconnectAvailable: true,
@@ -438,16 +481,16 @@ export function deriveGameSessionControls(
         // new game are not, because both handlers refuse with no attempt in hand
         // (`handleGameResumeCancel`, `handleGameCreate`) - offering them would be
         // controls that do nothing.
-        return build(
+        return inFarm(
           "attached_unsettled",
           { disconnectAvailable: true, endgameAvailable: true, retryResumeAvailable: true },
           ["retry_resume", "disconnect", "endgame"],
         );
-      return build("attached_resumable", { disconnectAvailable: true, endgameAvailable: true, resumeAvailable: true }, [
-        "resume",
-        "disconnect",
-        "endgame",
-      ]);
+      return inFarm(
+        "attached_resumable",
+        { disconnectAvailable: true, endgameAvailable: true, resumeAvailable: true },
+        ["resume", "disconnect", "endgame"],
+      );
     }
     const phase: GameSessionPhase =
       connectionStatus === "stopping"
@@ -459,7 +502,7 @@ export function deriveGameSessionControls(
             : connectionStatus === "reconnecting"
               ? "attached_reconnecting"
               : "attached_unconnected";
-    return build(phase, { disconnectAvailable: true, endgameAvailable: true }, ["disconnect", "endgame"]);
+    return inFarm(phase, { disconnectAvailable: true, endgameAvailable: true }, ["disconnect", "endgame"]);
   }
 
   // No attachment: what the Player Host instance is doing decides the step, and
@@ -469,10 +512,6 @@ export function deriveGameSessionControls(
   // control (`attemptEndedWithKnownOutcome` states why the two are not the same word).
   if (instance.status === "crashed" && instance.playerHostExitCode === undefined)
     return build("launch_failed", {}, ["restart_gamebuddy"]);
-  // The attempt ended and the Host holds the ending. The step is the one a first attempt
-  // starts with, because that is the press that hands the ended attempt back and stages the
-  // next instance; the instance row keeps stating the ending itself.
-  if (attemptEndedWithKnownOutcome(instance)) return build("ended_attempt_ready", {}, ["activate"]);
   if (instance.status === "launching") return build("launching", {}, ["wait_for_game"]);
   // Before any lifecycle control is considered: the Host has not read the game, so
   // there is no installation standing, staged attempt or expected generation for those

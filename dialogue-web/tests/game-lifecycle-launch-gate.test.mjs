@@ -1055,6 +1055,95 @@ test("after a crash the surface offers the game again, and the Host's next attem
 });
 
 /**
+ * A world the Host watched end while this browser still held its attachment.
+ *
+ * Measured cycle (2026-11-22): `instance=crashed`, `playerHostExitCode=1`, `attachment=attached`,
+ * `connectionStatus=stopped` - and the panel's only steps were Disconnect and Endgame. Activation,
+ * the one press that hands the ended attempt back and releases the attachment, was withheld, so the
+ * player had to panic-disconnect the game before the product would let them start again.
+ *
+ * The attachment outliving the world is a true fact and the phases below do not deny it. It is not
+ * what decides the step: `settleEndedAttempt` clears the attachment generation itself
+ * (`stardew-production-lifecycle-coordinator.internal.ts:3089`), and the press that runs the settle
+ * is activation - so an attempt with a published ending owes the player that press, attachment or
+ * not. `companionInFarm` is the flag that carries the same fact to the panel, which draws the
+ * in-farm affordances instead of the getting-going guide exactly while the phase says it holds.
+ */
+test("an attachment that outlived its world does not own the phase: activation is the step that releases it", async (t) => {
+  const idleFacadeView = await facadeViewFor("idle");
+  // The attachment the measured cycle left latched: still `attached` at generation 1, with the
+  // connection the game's death stopped.
+  const latched = Object.freeze({ status: "attached", generation: 1, connectionStatus: "stopped" });
+  const endings = Object.freeze([
+    Object.freeze({ status: "failed", playerHostExitCode: 1, why: "the game crashed (the measured cycle)" }),
+    Object.freeze({ status: "failed", playerHostExitCode: 0, why: "the player quit the game" }),
+    Object.freeze({ status: "ended", playerHostExitCode: null, why: "the player ended the game" }),
+  ]);
+  const controlsOf = (game) =>
+    deriveGameSessionControls({ ready: true, game, resumeFailureSurface: false, resumeAttemptFailed: false });
+
+  for (const ending of endings) {
+    const gameState = await readState(
+      idleFacadeView,
+      { status: ending.status, generation: 0, playerHostExitCode: ending.playerHostExitCode },
+      "registered",
+      latched,
+    );
+    assert.equal(gameState.game.attachment.status, "attached", `${ending.why}: the attachment really is still held`);
+    assert.equal(gameState.game.attachment.generation, 1);
+    assert.equal(gameState.game.connectionStatus, "stopped");
+    const controls = controlsOf(gameState);
+    t.diagnostic(
+      `${ending.why} + attachment held: instance ${gameState.game.instance.status} -> ` +
+        `${controls.phase}/${controls.forwardActions.join("+")}`,
+    );
+    assert.equal(
+      controls.phase,
+      "ended_attempt_ready",
+      `${ending.why}: the Host holds the ending, so it owns the phase - not the attachment it outlived`,
+    );
+    assert.deepEqual([...controls.forwardActions], ["activate"], `${ending.why}: the press that settles and releases`);
+    assert.equal(controls.companionInFarm, false, "the world is gone: the panel draws the guide, not the in-farm shapes");
+    // The press is really offered: `handleLifecycleActivate` re-derives this same availability, so a phase
+    // whose flag withheld it would be a button whose handler returns early.
+    assert.equal(clientControls(gameState).activationAvailable, true, `${ending.why}: activation is a press, not a name`);
+    assert.equal(controls.disconnectAvailable, false, "nothing is left to let go of: the settle releases the attachment");
+    assert.equal(controls.endgameAvailable, false, "the game already ended: there is nothing left to end");
+  }
+
+  // The flag and the declared phase population are one authority: the in-farm phases are exactly the
+  // ones the product declares with a live attachment. A tenth attached phase added without the flag
+  // fails here by name instead of drawing the guide over a farm the companion is in.
+  const declaredInFarm = GAME_SESSION_PHASES.filter(
+    (phase) => GAME_SESSION_INPUTS[phase].game?.game.attachment.status === "attached",
+  );
+  assert.ok(declaredInFarm.length > 0, "the population still contains in-farm phases");
+  assert.deepEqual(
+    GAME_SESSION_PHASES.filter((phase) => deriveGameSessionControls(GAME_SESSION_INPUTS[phase]).companionInFarm).sort(),
+    [...declaredInFarm].sort(),
+    `companionInFarm is true exactly in the phases whose declared projection holds an attachment (${declaredInFarm.length})`,
+  );
+
+  // The shape that keeps today's answer, and has to: a launch refusal whose outcome nobody knows. No
+  // attachment is latched there - the launch never attached - and no press in this Host reaches it, so
+  // the step stays the one named off the page.
+  const unknown = await readState(
+    idleFacadeView,
+    { status: "failed", generation: 0, playerHostExitCode: null },
+    "registered",
+  );
+  const unknownControls = controlsOf(unknown);
+  assert.deepEqual([...unknownControls.forwardActions], ["restart_gamebuddy"], "the quarantine keeps its one step");
+  assert.equal(unknownControls.phase, "launch_failed");
+  assert.equal(unknownControls.restartRequired, true);
+  assert.equal(unknownControls.companionInFarm, false);
+  t.diagnostic(
+    `attachment-after-the-world: ${endings.length} ending(s) -> ended_attempt_ready/activate · ` +
+      `quarantined -> ${unknownControls.phase}/${unknownControls.forwardActions.join("+")}`,
+  );
+});
+
+/**
  * A launch refused behind an ended attempt is the ending, not an uncertain result.
  *
  * Measured defect: the coordinator kept a reported exit under the launch-quarantine name, so the
