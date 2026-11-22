@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The falsifier for `tools/check-publint.mjs`.
+ * The falsifier for `gates/arch/check-publint.mjs`.
  *
  * The gate exists for one defect: it printed "publint exited null but every failure maps to a known vendor baseline gap;
  * non-blocking here" and exited 0 having read no publint message at all, because `spawnSync("bun", …)` with
@@ -9,10 +9,10 @@
  *
  * red-proof: inject  the tolerance branch restored to `blocked.length === 0 && activeGaps.length > 0`, so an exit no
  *   parsed message explains is excused unseen -> `✖ an unexplained non-zero exit is a failure, not a tolerated gap`,
- *   `'passed' !== 'failed'`, exit 1 (tools/check-publint.test.mjs)
+ *   `'passed' !== 'failed'`, exit 1 (gates/arch/check-publint.test.mjs)
  * red-proof: history  with only npm's `bun` shims installed, the shipped `spawnSync("bun", …)` default run printed
  *   `publint exited null but every failure maps to a known vendor baseline gap` at exit 0 having read no message
- *   (tools/check-publint.mjs); it now prints `publint_not_measured:executable_unresolvable:bun - no file this process can spawn` at exit 2
+ *   (gates/arch/check-publint.mjs); it now prints `publint_not_measured:executable_unresolvable:bun - no file this process can spawn` at exit 2
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
