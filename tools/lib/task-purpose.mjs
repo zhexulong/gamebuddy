@@ -4,8 +4,8 @@
  * Three levels are decided in this product, and they are not interchangeable:
  *
  *   1. ACTION POSTCONDITION - did this one action do what it promised? Decided by the Mod's receipt and, on the
- *      Host side, by `IntegrationActionCatalog.hasCompletionEvidence`: the per-action evidence parser in
- *      `host/src/stardew-game-integration-adapter.ts`, gated one rule per action by
+ *      Host side, by `judgeStardewCompletionEvidence`: the per-action evidence parser in
+ *      `host/src/stardew-completion-contracts.ts`, gated one rule per action by
  *      `host/src/stardew-completion-evidence-coverage.test.ts`. A receipt whose state is `succeeded` but whose
  *      detail does not parse as THAT action's own postcondition is evidence of nothing, and this module refuses it.
  *
@@ -53,7 +53,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { STARDEW_GAME_INTEGRATION_ADAPTER } from "../../host/dist-test/stardew-game-integration-adapter.js";
+import { judgeStardewCompletionEvidence } from "../../host/dist-test/stardew-completion-contracts.js";
 
 import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
 import { bestWindow, largestFilledRectangle, windowHoldsAll } from "./tile-patch.mjs";
@@ -690,9 +690,18 @@ export function readScheduledJudgement(scheduled = []) {
  * The admitted evidence a purpose may read: one entry per receipt that is BOTH a success state AND its own
  * action's postcondition, as the Host decides that question.
  *
- * A `succeeded` receipt with no evidence, or with evidence that does not parse as the action it names, is moved to
- * `refused` instead of being counted. That list is what lets a caller say "the receipt existed and proved nothing"
- * rather than "the run did nothing", and it is the reason a refused receipt can only ever produce `unproven`.
+ * THREE ANSWERS, NOT TWO. A `succeeded` receipt is admitted, unfinished or refused, and the difference between the last
+ * two is the difference between "the action did what one dispatch does and the postcondition is further on" and "this
+ * receipt proves nothing at all". The Host is the one that decides which, and it says so in its own words
+ * (`before_its_postcondition:<reasonCode>`, `host/src/stardew-completion-contracts.ts`); this module does not re-decide
+ * it.
+ *
+ * WHY THE THIRD LIST EXISTS. Measured 2026-11-22 (`round90`, day 1 `mine_delve`): four `break_rock` receipts came back
+ * `succeeded` with `removed=false;durability_after=1` - one hit of two on a stone that was still standing - and this
+ * module filed all four as `succeeded_receipt_without_its_own_postcondition`, which reads as "the Host cannot read
+ * this" about receipts it reads in full. One label for three facts teaches the next reader that four honest swings were
+ * a contract hole. The reading a caller gets is `succeeded_before_its_postcondition:<actionId>:<warrant>`, and it blocks
+ * nothing: the swing landed, and the purpose that wants the stone gone simply has not got there yet.
  *
  * The admitted entry keeps the receipt it admitted, so a criterion about tiles reads the SAME evidence the Host just
  * validated instead of re-deciding admission: one authority per fact, even when the fact is "this receipt proves a
@@ -700,6 +709,7 @@ export function readScheduledJudgement(scheduled = []) {
  */
 export function purposeReceipts(receipts) {
   const admitted = [];
+  const unfinished = [];
   const refused = [];
   for (const receipt of receipts ?? []) {
     if (receipt === null || typeof receipt !== "object") continue;
@@ -708,19 +718,33 @@ export function purposeReceipts(receipts) {
     // Only a success state is a candidate. A failure or an in-flight state is not evidence of anything, and it is
     // not "refused" either - there is nothing to refuse.
     if (receipt.state !== "succeeded") continue;
-    if (
-      STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence(actionId, {
-        state: receipt.state,
-        reasonCode: typeof receipt.reasonCode === "string" ? receipt.reasonCode : "",
-        evidence: receipt.evidence,
-      }) !== true
-    ) {
-      refused.push(Object.freeze({ actionId, reasonCode: "succeeded_receipt_without_its_own_postcondition" }));
+    const verdict = judgeStardewCompletionEvidence(actionId, {
+      state: receipt.state,
+      reasonCode: typeof receipt.reasonCode === "string" ? receipt.reasonCode : "",
+      evidence: receipt.evidence,
+    });
+    if (verdict.accepted === true) {
+      admitted.push(Object.freeze({ actionId, receipt }));
       continue;
     }
-    admitted.push(Object.freeze({ actionId, receipt }));
+    const BEFORE_ITS_POSTCONDITION = "before_its_postcondition:";
+    if (typeof verdict.refusal === "string" && verdict.refusal.startsWith(BEFORE_ITS_POSTCONDITION)) {
+      unfinished.push(
+        Object.freeze({
+          actionId,
+          reasonCode: "succeeded_before_its_postcondition",
+          warrant: verdict.refusal.slice(BEFORE_ITS_POSTCONDITION.length),
+        }),
+      );
+      continue;
+    }
+    refused.push(Object.freeze({ actionId, reasonCode: "succeeded_receipt_without_its_own_postcondition" }));
   }
-  return Object.freeze({ admitted: Object.freeze(admitted), refused: Object.freeze(refused) });
+  return Object.freeze({
+    admitted: Object.freeze(admitted),
+    unfinished: Object.freeze(unfinished),
+    refused: Object.freeze(refused),
+  });
 }
 
 /** The first receipt, at or after `from`, that satisfies this step without reusing an already-consumed one. */
@@ -1139,11 +1163,14 @@ function judgePatch(entry, admitted, refused, observations) {
  */
 export function judgeTaskPurpose(taskId, receipts, observations = null) {
   const entry = TASK_PURPOSE_CRITERIA[taskId];
-  const { admitted, refused } = purposeReceipts(receipts);
+  const { admitted, unfinished, refused } = purposeReceipts(receipts);
   const common = Object.freeze({
     taskId,
     admittedActionIds: Object.freeze([...new Set(admitted.map((receipt) => receipt.actionId))].sort()),
     refusedReceipts: refused,
+    // THE SWINGS THAT LANDED AND DID NOT FINISH. Reported beside the refusals and NOT blocking: a purpose that wanted
+    // the stone gone has simply not got there, which is `not_achieved` and not "this run cannot tell".
+    unfinishedReceipts: unfinished,
   });
   if (entry === undefined) {
     return Object.freeze({

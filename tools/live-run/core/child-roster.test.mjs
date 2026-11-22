@@ -87,14 +87,14 @@ test("the ordering comes from the exit instants, not from the order the rows wer
   ];
   assert.equal(firstToLeave(rows), "host:code=7");
   assert.equal(firstToLeave([...rows].reverse()), "host:code=7", "a reader cannot reorder the run by reordering the rows");
-  // Two children leaving on the same instant: the one that STARTED first is the one that left first.
-  assert.equal(
-    firstToLeave([
-      { role: "game", pid: 9, startedAtMs: 0, exit: { code: 0, signal: null, atMs: 5 } },
-      { role: "host", pid: 8, startedAtMs: 1, exit: { code: 0, signal: null, atMs: 5 } },
-    ]),
-    "game:code=0",
-  );
+  // Two children leaving on the same instant: the one that STARTED first is the one that left first, whichever order
+  // the rows are written in.
+  const tie = [
+    { role: "game", pid: 9, startedAtMs: 0, exit: { code: 0, signal: null, atMs: 5 } },
+    { role: "host", pid: 8, startedAtMs: 1, exit: { code: 0, signal: null, atMs: 5 } },
+  ];
+  assert.equal(firstToLeave(tie), "game:code=0");
+  assert.equal(firstToLeave([...tie].reverse()), "game:code=0");
   // A signal is an ending, and it is not a code: nothing here may collapse into `code:0`.
   assert.equal(
     firstToLeave([{ role: "host", pid: 1, startedAtMs: 0, exit: { code: null, signal: "SIGTERM", atMs: 1 } }]),

@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, writeFileSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { bridgePipeNameFor } from "./lib/stardew-bridge-pipe.mjs";
 import { dirname, join, resolve } from "node:path";
 import { launchStardewLiveRun, normalizeLiveRunWindowMode } from "./lib/stardew-live-run.mjs";
 import { listStardewProcessIds } from "./lib/windows-process-tree.mjs";
+import { firstToLeaveLine, openChildRoster, writeChildRecord } from "./live-run/core/child-roster.mjs";
 import { judgeRunnerExit } from "./live-run/game/ladder-runner-exit.mjs";
 
 // One-shot orchestrator for the ladder live run.
@@ -56,8 +57,13 @@ const runnerLog = createWriteStream(logPath, { flags: "w" });
 const laneLogPath = process.env.GAMEBUDDY_LADDER_SMAPI_LOG ?? join(dirname(logPath), "_ladder-smapi-console.log");
 
 let game = null;
+// EVERY CHILD THIS PROCESS STARTS GETS A ROW, with the exit its own handle reports (`live-run/core/child-roster.mjs`).
+// Measured `round90`: this record named only the game - the one process it could name - so the Host's exit (the pipe's
+// client, which left first) was nowhere, and `bridge_disconnected` could not be attributed to anything.
+const childRoster = openChildRoster();
 try {
   // 1. Launch the single SMAPI process and wait for the Mod's pipe to listen.
+  const gameStartedAtMs = Date.now();
   game = await launchStardewLiveRun({
     gamePath: GAME_PATH,
     modsPath: MODS_PATH,
@@ -66,6 +72,7 @@ try {
     timeoutMs: 150_000,
     logPath: laneLogPath,
   });
+  childRoster.started({ role: "game", pid: game.pid, startedAtMs: gameStartedAtMs });
   console.error(
     "SMAPI_LAUNCHED",
     JSON.stringify({ pid: game.pid, windowMode: game.windowMode, laneLog: game.laneLogPath }),
@@ -78,14 +85,17 @@ try {
   // where the process disappears while the harness is still waiting.
   void game.exitObserved.then((exit) => {
     console.error("SMAPI_EXIT", JSON.stringify(exit));
+    childRoster.ended({ pid: game.pid, code: exit.code, signal: exit.signal, atMs: exit.atMs });
   });
 
   // 2. Now run the ladder runner against the live bridge.
+  const hostStartedAtMs = Date.now();
   const runner = spawn(process.execPath, ["tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs"], {
     cwd: process.cwd(),
     env: { ...process.env, GAMEBUDDY_STARDEW_LANE_LOG_PATH: laneLogPath },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (Number.isInteger(runner.pid)) childRoster.started({ role: "host", pid: runner.pid, startedAtMs: hostStartedAtMs });
   let runnerStdout = "";
   runner.stdout.setEncoding("utf8");
   runner.stderr.setEncoding("utf8");
@@ -95,7 +105,16 @@ try {
   });
   runner.stderr.on("data", (c) => runnerLog.write(c));
 
-  const runnerExit = await new Promise((resolvePromise) => runner.once("close", resolvePromise));
+  const runnerExit = await new Promise((resolvePromise) =>
+    runner.once("close", (code, signal) => {
+      // The Host's own exit, from the handle that owned it. Round90 is the case this exists for: the Host left first and
+      // nothing recorded it, so the run's ending read as the game's kill.
+      if (Number.isInteger(runner.pid)) {
+        childRoster.ended({ pid: runner.pid, code, signal, atMs: Date.now() });
+      }
+      resolvePromise(code);
+    }),
+  );
   console.error("RUNNER_EXIT", runnerExit);
   // Also reported at the end, because the eager line above only fires while this process is still alive to print it.
   console.error("SMAPI_EXIT_AT_END", JSON.stringify(game?.exit ?? null));
@@ -117,29 +136,28 @@ try {
   // reads as an unrelated failure.
   const survivors = listStardewProcessIds();
   console.error("PROCESS_RECLAMATION", JSON.stringify({ outcome: reclamation?.outcome ?? "no_launch", survivors }));
-  // …and the same facts as a RECORD, because this process launched the game and is the only one that knows its pid and
-  // how it ended. The launcher completes the run's reclamation account with what it reads here; until this file existed,
-  // "which process was reaped, and with what exit" was knowable and never written anywhere (measured 2026-11-09,
-  // `round40`: `reclamation.steps: []` on a run that had reaped its game cleanly).
+  // …and the same facts as a RECORD, because this process holds the handles of the children it started and is the only
+  // one that knows their pids and how each of them ended. The launcher merges its own child into this file and completes
+  // the run's reclamation account from it. Until the file carried more than one row, "which process was reaped, and with
+  // what exit" was knowable for the game alone (measured 2026-11-09, `round40`: `reclamation.steps: []`; 2026-11-22,
+  // `round90`: the Host's exit was in no artifact at all).
   const recordPath = process.env.GAMEBUDDY_PROCESS_RECLAMATION_FILE;
   if (typeof recordPath === "string" && recordPath.length > 0) {
     try {
-      writeFileSync(
-        recordPath,
-        `${JSON.stringify(
-          {
-            pid: game?.pid ?? null,
-            windowMode: WINDOW_MODE,
-            closeOutcome: reclamation?.outcome ?? "no_launch",
-            exit: game?.exit ?? null,
-            survivors,
-            atMs: Date.now(),
-          },
-          null,
-          2,
-        )}\n`,
-        "utf8",
-      );
+      const recorded = writeChildRecord({
+        path: recordPath,
+        children: childRoster.record().children,
+        // A launch that never returned a pid is named rather than published as "this run started nothing": the launch
+        // kills the process it spawned before it throws, and an empty roster would hide that.
+        state: game === null ? "partial:game_launch_unobserved" : "measured",
+        fields: {
+          windowMode: WINDOW_MODE,
+          closeOutcome: reclamation?.outcome ?? "no_launch",
+          survivors,
+          atMs: Date.now(),
+        },
+      });
+      console.error("FIRST_TO_LEAVE", firstToLeaveLine(recorded.firstToLeave));
     } catch (error) {
       console.error("PROCESS_RECLAMATION_NOT_RECORDED", String(error?.message ?? error).slice(0, 200));
     }

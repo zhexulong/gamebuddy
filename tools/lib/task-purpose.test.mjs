@@ -67,8 +67,10 @@ const ENTERED_MINE = receipt("enter_mine", {
   reasonCode: "mine_entered",
   evidence: { detail: "level=11;tile=6,6;from_level=10" },
 });
-// The mine's OWN exit ladder: `use_mine_ladder`'s `mine_left` terminal, in the two-key and five-key shapes the Host's
-// rule admits (here the five: the question the level asked, the answer given, the ladder tile and where she came out).
+// The mine's OWN exit ladder: `use_mine_ladder`'s `mine_left` terminal, in the two shapes the Host's rule admits - the
+// five-key synchronous one (the question the level asked, the answer given, the ladder tile and where she came out) and
+// the four-key asynchronous one, where the engine's own warp settles it and the receipt carries the decision beside the
+// `expected`/`actual` pair. Here the synchronous one.
 const LEFT_BY_LADDER = receipt("use_mine_ladder", {
   reasonCode: "mine_left",
   evidence: { detail: "from=mine_shaft_11;question=ExitMine;response=Leave;ladder=6,7;actual=Farm:64,15" },
@@ -2206,4 +2208,83 @@ test("water_and_harvest: a day with no watering and no harvest is not the day", 
   const judged = judgeTaskPurpose("water_and_harvest", [ROUND88_WALK[0]]);
   assert.equal(judged.state, "not_achieved");
   assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+});
+
+/**
+ * ROUND90'S MINE DAY: four swings that landed and did not finish, plus the exit ladder.
+ *
+ * `2026-11-22T06-04-54-555Z-multiday_routine`, day 1 `mine_delve`, published its `refusedReceipts` with five rows: four
+ * `break_rock` and one `use_mine_ladder`, all `succeeded_receipt_without_its_own_postcondition`. Two different facts
+ * were under one label.
+ *
+ * THE FOUR. `removed=false;durability_after=1` on a rock with `durability_before=2` is the Mod saying the swing landed
+ * and the stone is still standing - one `Pickaxe.DoFunction` only subtracts durability and returns early while the
+ * remainder is positive. The Host reads that warrant exactly and refuses the completion, which is right: reading it
+ * would let "something was broken" be satisfied by a stone nobody broke. What was wrong is the label, and this asserts
+ * the reading that replaces it.
+ *
+ * THE ONE. `expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave` is the asynchronous `mine_left` shape
+ * the Host's row could not read, so the day's one real completion of the five was refused. It is admitted here, which is
+ * the receipt-level half of the same fix.
+ *
+ * AND THE VERDICT DOES NOT BLOCK EITHER WAY. A swing that landed is not "this run cannot tell": the purpose wanted the
+ * stone gone and the stone is still there, which is `not_achieved`.
+ */
+test("round90 day 1: a swing that landed without finishing is a reading, not an unreadable receipt", () => {
+  const damaged = (target, staminaBefore) =>
+    receipt("break_rock", {
+      reasonCode: "rock_source_damaged",
+      evidence: {
+        detail: `target=${target};tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=${staminaBefore};stamina_after=${staminaBefore - 2};stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe`,
+      },
+    });
+  const day = [
+    damaged("rock_source_106b777ed23d3048", 270),
+    damaged("rock_source_3203471156868548", 266),
+    damaged("rock_source_d04d702803fab9d2", 244),
+    damaged("rock_source_d4a0eef106584bcd", 216),
+    receipt("use_mine_ladder", {
+      reasonCode: "mine_left",
+      evidence: { detail: "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave" },
+    }),
+  ];
+
+  const judged = judgeTaskPurpose("mine_delve", day);
+  assert.deepEqual(
+    judged.refusedReceipts,
+    [],
+    "a receipt that names what one dispatch did is not a receipt nobody can read: `round90` filed four of these as if " +
+      "the contract had failed to parse them",
+  );
+  assert.deepEqual(
+    judged.unfinishedReceipts,
+    day.slice(0, 4).map(() => ({
+      actionId: "break_rock",
+      reasonCode: "succeeded_before_its_postcondition",
+      warrant: "rock_source_damaged",
+    })),
+    "the reading is `succeeded_before_its_postcondition:<actionId>:<warrant>`, one per swing, in the order the swings " +
+      "went in",
+  );
+  assert.deepEqual(
+    judged.admittedActionIds,
+    ["use_mine_ladder"],
+    "the exit ladder is the one completion of the five, and it is admitted",
+  );
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "the stone the day wanted broken is still standing, so the purpose has not got there - which is a verdict, not a " +
+      "refusal to judge",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+
+  // THE FALSIFIER: take the warrant out of one of them and it is a receipt with no postcondition again, which is the
+  // fact the old label was right about.
+  const withoutWarrant = [...day.slice(0, 3), receipt("break_rock", { reasonCode: "rock_source_damaged", evidence: null }), day[4]];
+  assert.deepEqual(
+    judgeTaskPurpose("mine_delve", withoutWarrant).refusedReceipts,
+    [{ actionId: "break_rock", reasonCode: "succeeded_receipt_without_its_own_postcondition" }],
+    "a succeeded rock receipt carrying no evidence at all is still a receipt the contract cannot read",
+  );
 });
