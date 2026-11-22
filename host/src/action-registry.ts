@@ -109,7 +109,7 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
   actionAdapter(
     "shop_purchase",
     "Buy from a shop",
-    "Buy goods from a shop whose owner is standing within reach. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. It does not walk: move into reach first, or the call is refused with shop_counter_out_of_reach.",
+    "Buy goods from a shop this room offers. The Mod reads the shop, its owner eligibility and its stock from the game's own content data, and the purchase runs through the game's shop menu. A counter that IS a tile has to be reached first; a counter an eligible owner NPC runs opens from anywhere in that room, and the receipt states which of the two forms it bought through. The action does not walk.",
     ["shop"],
   ),
   actionAdapter(

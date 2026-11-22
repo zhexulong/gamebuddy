@@ -125,6 +125,10 @@ internal sealed partial class ExecutionManager
     /// the Host's shop_purchase completion rule reads this detail as an exact key set
     /// (host/src/stardew-completion-contracts.ts:4655-4704), so an extra token on the ordinary path is a producer bug
     /// there rather than a fact - see <see cref="ShopToolUpgradeEvidence"/> for the same constraint stated on a field.
+    /// THE DISTANCE TRIPLE IS NOT AN EXCEPTION TO THAT RULE BUT AN APPLICATION OF IT: the Host's rule declares
+    /// <c>distance_required</c>/<c>distance</c>/<c>why</c> as its declared-optional keys
+    /// (<c>declaredCompletionEvidence</c>'s fourth argument), so the ordinary path may carry them and nothing reads them
+    /// as an unknown field.
     /// </para>
     /// <para>
     /// THE TWO STOCK FIELDS ARE NULLABLE BECAUSE A MISSING READING IS NOT A COUNT: the handler resolves the stock entry
@@ -149,6 +153,8 @@ internal sealed partial class ExecutionManager
         int? StockAfter,
         int CounterX,
         int CounterY,
+        int ActorX,
+        int ActorY,
         bool MenuClosed,
         IReadOnlyList<string> Clicks,
         IReadOnlyList<string> Drops,
@@ -182,6 +188,10 @@ internal sealed partial class ExecutionManager
     /// `;` - an entry that embedded the separator split into fields the Host cannot read (`drop0:empty_slot=0` is not a
     /// key). They are also FOLDED to the count and the one entry that names the outcome, because one entry per unit
     /// bought made the whole detail grow with the quantity (<see cref="ShopPurchaseTraceField"/>).</item>
+    /// <item><c>entry=</c> is the counter FORM, and <c>distance_required=</c> beside it is the distance gate that form
+    /// has: <c>none</c> with <c>why=engine_has_no_gate_for_npc_counters</c> for a counter an NPC runs, and the engine's
+    /// own click radius with the measured <c>distance=</c> for a counter that IS a tile
+    /// (<see cref="ShopPurchaseDistanceEvidence"/>).</item>
     /// </list>
     /// <para>
     /// <c>money_before</c>, <c>money_after</c>, <c>gained</c> and <c>tool_upgraded</c> are also the four fields the
@@ -193,7 +203,9 @@ internal sealed partial class ExecutionManager
     {
         int gained = facts.OwnedAfter - facts.OwnedBefore;
         string entryKind = facts.TileOpened ? "tile_action" : "npc_owner";
-        return $"shop={facts.ShopId};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};item={facts.ItemId};"
+        return $"shop={facts.ShopId};owner={ShopOwnerToken(facts.OwnerName)};entry={entryKind};"
+            + $"{ShopPurchaseDistanceEvidence(facts.TileOpened, facts.CounterX, facts.CounterY, facts.ActorX, facts.ActorY)};"
+            + $"item={facts.ItemId};"
             + $"requested={facts.Requested};purchased={facts.Purchased};unit_price={facts.UnitPrice};"
             + $"money_before={facts.CurrencyBefore};money_after={facts.CurrencyAfter};"
             + $"owned_before={facts.OwnedBefore};owned_after={facts.OwnedAfter};gained={gained};"
@@ -209,6 +221,54 @@ internal sealed partial class ExecutionManager
                 facts.RequiredToolAfter,
                 facts.PurchaseDialogue);
     }
+
+    /// <summary>
+    /// Which distance gate the counter FORM this purchase went through actually has, and how far the body was when
+    /// there was one.
+    ///
+    /// <para>
+    /// AN NPC-RUN COUNTER HAS NO SUCH GATE ANYWHERE IN THE ENGINE. <c>Utility.TryOpenShopMenu(shopId, location,
+    /// ownerArea, maxOwnerY, forceOpen, playOpenSound, showClosedMessage)</c> (Utility.cs:4230-4324) searches the room's
+    /// characters for an NPC one of the eligible owner entries names (:4243-4268) and opens the menu once it finds one
+    /// (:4318-4321); no line of that path measures the player. The two positional parameters it DOES take are gates on
+    /// the OWNER's tile - the documentation says so in as many words, "This is used for shops that only work if the NPC
+    /// is behind the counter" (Utility.cs:4225) - and the purchase path passes <c>ownerArea: null, maxOwnerY: null</c>,
+    /// so neither is applied here either.
+    /// </para>
+    /// <para>
+    /// A COUNTER THAT IS A TILE DOES HAVE ONE: <c>Utility.tileWithinRadiusOfPlayer(tile, 1, player)</c> is what
+    /// <c>Game1</c> applies to a tile before it calls <c>GameLocation.checkAction</c> (Game1.cs:11509 and :11637), and
+    /// this action refuses through that same gate (<see cref="ShopCounterReachRefusal"/>). The receipt states the
+    /// engine's radius beside the measured gap, so a reader can tell <c>distance=0</c> - she stood at the counter - from
+    /// <c>distance=1</c>, she stood beside it.
+    /// </para>
+    /// <para>
+    /// WHY IT IS ON THE RECEIPT. Measured round92: a completed purchase read as
+    /// <c>shop=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=12;purchased=12;unit_price=20;
+    /// money_before=500;money_after=260</c>, and a watcher asked "she bought seeds at the door without going to Pierre,
+    /// why?". Nothing in that text could answer it: <c>owner_tile</c> says where the counter is, never whether reaching
+    /// it was required, so "she did not need to" and "a distance gate was skipped" were the same receipt. This token is
+    /// that answer, and it is the engine's rather than a rule invented here - the decision was to SAY which gate exists,
+    /// not to add one the engine does not have.
+    /// </para>
+    /// </summary>
+    internal static string ShopPurchaseDistanceEvidence(bool tileOpened, int counterX, int counterY, int actorX, int actorY) =>
+        tileOpened
+            ? $"distance_required={NativeInteractionRadius};distance={ShopCounterDistance(counterX, counterY, actorX, actorY)}"
+            : "distance_required=none;why=engine_has_no_gate_for_npc_counters";
+
+    /// <summary>
+    /// How far the body was from the counter tile, in the engine's own metric.
+    ///
+    /// <para>
+    /// <c>Utility.tileWithinRadiusOfPlayer</c> tests EACH axis against the radius (Utility.cs:4100-4109), so the metric
+    /// is the larger of the two deltas and never their sum. The number is stated rather than only the verdict so a reader
+    /// can check the gate, and the two cannot disagree: this is the radius or less exactly when the engine admits the
+    /// tile.
+    /// </para>
+    /// </summary>
+    private static int ShopCounterDistance(int counterX, int counterY, int actorX, int actorY) =>
+        Math.Max(Math.Abs(counterX - actorX), Math.Abs(counterY - actorY));
 
     /// <summary>
     /// One stock reading as the wire states it: a count when the counter really counts, the game's own word where it

@@ -157,7 +157,7 @@ public sealed class ShopCounterReachTests
             "no gap was measured against any gate, so none is stated: a `distance=0` here would be a number invented for "
                 + "a gate the engine does not have");
 
-        string tileCounter = Receipt(tileOpened: true, OwnerX, OwnerY, ActorX + 1, ActorY);
+        string tileCounter = Receipt(tileOpened: true, OwnerX, OwnerY, OwnerX + 1, OwnerY);
         tileCounter.Should().Contain(
             "entry=tile_action;distance_required=1;distance=1",
             "a counter that IS a tile is gated by the engine's own click radius, and the receipt states the gap it "
@@ -240,6 +240,8 @@ public sealed class ShopCounterReachTests
             StockAfter: 999 - requested,
             CounterX: counterX,
             CounterY: counterY,
+            ActorX: actorX,
+            ActorY: actorY,
             MenuClosed: true,
             Clicks: new[] { "click11:row=0|cursor=0|held_after=(O)472" },
             Drops: new[] { "drop11:slot=0|held=(O)472->none" },

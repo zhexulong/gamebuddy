@@ -985,6 +985,10 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["shop", "SeedShop"],
       ["owner", "Pierre"],
       ["entry", "npc_owner"],
+      // WHICH DISTANCE GATE THIS COUNTER FORM HAS. `round92`'s receipt named an NPC-run counter and stated nothing
+      // about distance, so a watcher read a legal purchase as one that had skipped a walk to Pierre.
+      ["distance_required", "none"],
+      ["why", "engine_has_no_gate_for_npc_counters"],
       ["item", "(O)472"],
       ["requested", "1"],
       ["purchased", "1"],
@@ -1692,11 +1696,84 @@ test("shop_purchase: the shapes that made it unreadable are REFUSED, and the rea
     "a tile-opened shop has no owner and spells it `none`",
   );
 
+  // BOTH ENTRY KINDS ARE REAL, and each one states the distance gate IT has - so the shape that proves the kind is the
+  // whole shape, not the word alone: a tile counter is the form the engine gates by distance, and an NPC-run counter is
+  // the form it does not (`distance_required=1` on the NPC shape above is refused, which is the same clause).
   assert.equal(
-    completionEvidence("shop_purchase", "item_purchased", detail(withField("entry", "tile_action"))),
+    completionEvidence(
+      "shop_purchase",
+      "item_purchased",
+      detail([
+        ...fields.filter(([key]) => !["owner", "entry", "distance_required", "why", "distance"].includes(key)),
+        ["owner", "none"] as const,
+        ["entry", "tile_action"] as const,
+        ["distance_required", "1"] as const,
+        ["distance", "1"] as const,
+      ]),
+    ),
     true,
     "both entry kinds are real: the counter tile and an NPC owner",
   );
+});
+
+test("shop_purchase: the receipt says which distance gate its counter form has, and never the wrong one", () => {
+  // `round92`'s finding, pinned where the Host reads it. The two forms do not share a gate: an NPC-run counter is
+  // opened from anywhere in the room (`Utility.TryOpenShopMenu(shopId, location, ...)`, Utility.cs:4243-4321, which
+  // measures no player) while a counter that IS a tile is gated by `Utility.tileWithinRadiusOfPlayer(tile, 1, player)`
+  // before `GameLocation.checkAction` (Game1.cs:11509, :11637). So the receipt carries ONE of the two shapes and never
+  // both, and the contradictions below are what makes the clause a reading rather than a key it merely tolerates.
+  const shopPurchase = completionFixtures.shop_purchase;
+  assert.ok(shopPurchase !== undefined, "the shop_purchase fixture must exist");
+  const fields = shopPurchase.fields;
+  const purchase = (overrides: Readonly<Record<string, string | null>>) =>
+    detail([
+      ...fields.filter(([key]) => !(key in overrides)),
+      ...Object.entries(overrides)
+        .filter(([, value]) => value !== null)
+        .map(([key, value]) => [key, value as string] as const),
+    ]);
+
+  assert.equal(
+    completionEvidence("shop_purchase", "item_purchased", purchase({})),
+    true,
+    "round92's shape: the counter an NPC runs says it has no distance gate, and names why once",
+  );
+  assert.equal(
+    completionEvidence("shop_purchase", "item_purchased", purchase({ distance_required: null, why: null })),
+    true,
+    "a receipt minted before the fact was published is still a real purchase: the field is optional, not absent evidence",
+  );
+  assert.equal(
+    completionEvidence(
+      "shop_purchase",
+      "item_purchased",
+      purchase({ owner: "none", entry: "tile_action", distance_required: "1", distance: "1", why: null }),
+    ),
+    true,
+    "a counter that is a tile states the engine's radius beside the gap it measured against it",
+  );
+
+  const refusals: readonly (readonly [string, Readonly<Record<string, string | null>>])[] = [
+    ["an NPC-run counter has no distance gate, so it cannot claim one", { distance_required: "1", distance: "1" }],
+    ["the absence needs its reason", { why: null }],
+    ["and that reason has one spelling, the producer's", { why: "no_gate" }],
+    ["a gate that was not applied measures nothing, so no gap is stated", { distance: "0" }],
+    ["the radius stated is the engine's own", { distance_required: "0", why: null }],
+    [
+      "a counter that IS a tile has a gate, so it cannot claim none",
+      { owner: "none", entry: "tile_action", distance_required: "none" },
+    ],
+    [
+      "and it states the gap it was gated at",
+      { owner: "none", entry: "tile_action", distance_required: "1", why: null },
+    ],
+    [
+      "a gap outside the radius is a purchase the engine would have refused",
+      { owner: "none", entry: "tile_action", distance_required: "1", distance: "2", why: null },
+    ],
+  ];
+  for (const [because, overrides] of refusals)
+    assert.equal(completionEvidence("shop_purchase", "item_purchased", purchase(overrides)), false, because);
 });
 
 test("shop_purchase: a receipt that spent nothing and gained nothing is not a purchase", () => {
@@ -1787,6 +1864,31 @@ test("shop_purchase: a tool upgrade is its OWN terminal, and the upgrade facts d
     completionEvidence("shop_purchase", "item_purchased", detail(upgrade)),
     false,
     "the ordinary terminal refuses the upgrade fields: the two shapes do not blur",
+  );
+
+  // THE UPGRADE TERMINAL RIDES THE SAME RECEIPT, so it carries the same distance triple and the same clause reads it:
+  // the blacksmith's counter is run by Clint, who is an NPC like Pierre.
+  assert.equal(
+    completionEvidence(
+      "shop_purchase",
+      "tool_upgrade_purchased",
+      detail([
+        ...upgrade,
+        ["distance_required", "none"] as const,
+        ["why", "engine_has_no_gate_for_npc_counters"] as const,
+      ]),
+    ),
+    true,
+    "a receipt that states its counter form has no distance gate completes the upgrade too",
+  );
+  assert.equal(
+    completionEvidence(
+      "shop_purchase",
+      "tool_upgrade_purchased",
+      detail([...upgrade, ["distance_required", "1"] as const, ["distance", "1"] as const]),
+    ),
+    false,
+    "and an NPC-run upgrade counter cannot claim a distance it was never gated by",
   );
 });
 
@@ -1932,12 +2034,20 @@ test("scythe_crop: the dead-crop clear branch completes, and a harvest shape cla
  */
 test("use_mine_ladder: the asynchronous exit names the decision beside the arrival, and the bare pair is not it", () => {
   assert.equal(
-    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave"),
+    completionEvidence(
+      "use_mine_ladder",
+      "mine_left",
+      "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave",
+    ),
     true,
     "round90's receipt: the answer was driven and the engine landed her on the map the exit leads to",
   );
   assert.equal(
-    completionEvidence("use_mine_ladder", "mine_left", "from=UndergroundMine1:1;question=ExitMine;response=Leave;ladder=10,3;actual=Mine:23,8"),
+    completionEvidence(
+      "use_mine_ladder",
+      "mine_left",
+      "from=UndergroundMine1:1;question=ExitMine;response=Leave;ladder=10,3;actual=Mine:23,8",
+    ),
     true,
     "the synchronous shape - the answer performed the warp in the same call - stays read",
   );
@@ -1947,12 +2057,20 @@ test("use_mine_ladder: the asynchronous exit names the decision beside the arriv
     "no producer mints this pair for this action, so a receipt carrying it claims a success nothing writes",
   );
   assert.equal(
-    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Do nothing"),
+    completionEvidence(
+      "use_mine_ladder",
+      "mine_left",
+      "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Do nothing",
+    ),
     false,
     "the level offers two responses and only Leave leaves; staying is not an exit",
   );
   assert.equal(
-    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=UndergroundMine1:23,8;question=ExitMine;response=Leave"),
+    completionEvidence(
+      "use_mine_ladder",
+      "mine_left",
+      "expected=Mine:23,8;actual=UndergroundMine1:23,8;question=ExitMine;response=Leave",
+    ),
     false,
     "the postcondition is the LOCATION she came out on - the tile belongs to the engine's own warp and agrees on neither side",
   );

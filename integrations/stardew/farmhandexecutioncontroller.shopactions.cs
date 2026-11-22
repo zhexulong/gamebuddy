@@ -1585,6 +1585,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 : null,
             CounterX: target.CounterX,
             CounterY: target.CounterY,
+            ActorX: actor.TilePoint.X,
+            ActorY: actor.TilePoint.Y,
             MenuClosed: menuClosed,
             Clicks: clickDiagnostics,
             Drops: dropDiagnostics,

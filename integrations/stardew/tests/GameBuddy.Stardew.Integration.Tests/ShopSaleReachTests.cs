@@ -335,6 +335,32 @@ public sealed class ShopSaleReachTests : IDisposable
                 FarmhandExecutionJournal.MaximumReceiptEvidenceLength,
                 $"{scenario} has to be a receipt the journal accepts and the Host can read");
         }
+
+        // AND EVERY RECEIPT OF A COMPLETED PURCHASE SAYS WHICH DISTANCE GATE ITS COUNTER FORM HAS. `round92`'s purchase
+        // named an NPC-run counter and stated nothing about distance, so a watcher read a legal purchase as one that
+        // had skipped a walk to Pierre. The two readings are exclusive and which one a receipt carries is the counter
+        // FORM's - an NPC-run counter has no player-distance gate in the engine, a counter that is a tile has the click
+        // radius - so a receipt stating neither is back to the shape the question was asked of. The refusal evidence in
+        // this corpus carries no `entry=` at all: it names no counter form, because no trade happened.
+        List<string> purchases = receipts
+            .Select(receipt => receipt.Detail)
+            .Where(entry => entry.Contains(";entry=", StringComparison.Ordinal))
+            .ToList();
+        purchases.Should().NotBeEmpty(
+            "the corpus has to carry receipts of a completed purchase, or this assertion proves nothing either way");
+        foreach (string detail in purchases)
+        {
+            detail.Should().MatchRegex(
+                "entry=(?:npc_owner;distance_required=none;why=engine_has_no_gate_for_npc_counters|"
+                + "tile_action;distance_required=1;distance=[01]);",
+                $"{detail} states the distance gate of the counter form it bought through, and names the other side of "
+                    + "the question when there is none");
+        }
+
+        purchases.Should().Contain(detail => detail.Contains(";why=engine_has_no_gate_for_npc_counters;", StringComparison.Ordinal),
+                "the corpus carries the NPC-run kind, which is the one round92 asked about")
+            .And.Contain(detail => detail.Contains(";distance_required=1;distance=", StringComparison.Ordinal),
+                "and the tile kind too, because a token only one shape can produce would not tell the two apart");
     }
 
     /// <summary>
@@ -469,6 +495,8 @@ public sealed class ShopSaleReachTests : IDisposable
             StockAfter: stockAfter,
             CounterX: 5,
             CounterY: 16,
+            ActorX: 5,
+            ActorY: 16,
             MenuClosed: true,
             Clicks: new[] { "click0:row=0|cursor=0|held_after=(O)472" },
             Drops: new[] { "drop0:slot=0|held=(O)472->none" },
@@ -497,6 +525,11 @@ public sealed class ShopSaleReachTests : IDisposable
             Purchase("bag_absorbs_thirty_six_units", Bag(12), money: 5000, quantity: 36),
             Purchase("tool_upgrade_needs_no_room", FullBag(), money: 5000, price: 5000,
                 shopId: "ClintUpgrade", consumeOnPurchase: true, requiredToolId: "(T)CopperHoe"),
+            // A COUNTER WHOSE OWN TILE IS THE SHOP is the OTHER entry form, and the only one the engine gates by
+            // distance (`Utility.tileWithinRadiusOfPlayer`, Game1.cs:11509). The corpus carries it so a reader of the
+            // receipts can compare the two distance facts: this one states the radius and the measured gap, the
+            // NPC-run ones above say the engine has no such gate for them.
+            Purchase("tile_counter_stall", Bag(12), money: 500, ownerName: string.Empty, tileOpened: true),
         };
         return produced;
     }
@@ -513,7 +546,9 @@ public sealed class ShopSaleReachTests : IDisposable
         int price = Price,
         string shopId = "SeedShop",
         bool consumeOnPurchase = false,
-        string? requiredToolId = null)
+        string? requiredToolId = null,
+        string ownerName = "Pierre",
+        bool tileOpened = false)
     {
         using var shop = new ShopView(shopId, saleCount: 1, Rows, bag);
         Farmer player = BindPlayer(money);
@@ -583,8 +618,8 @@ public sealed class ShopSaleReachTests : IDisposable
         string? upgradedTool = consumeOnPurchase ? goods.QualifiedItemId : null;
         var facts = new ExecutionManager.ShopPurchaseReceiptFacts(
             ShopId: shopId,
-            OwnerName: "Pierre",
-            TileOpened: false,
+            OwnerName: ownerName,
+            TileOpened: tileOpened,
             ItemId: "(O)472",
             Requested: quantity,
             Purchased: purchasable,
@@ -597,6 +632,8 @@ public sealed class ShopSaleReachTests : IDisposable
             StockAfter: shop.Menu.itemPriceAndStock[sale].Stock,
             CounterX: 5,
             CounterY: 16,
+            ActorX: 5,
+            ActorY: 16,
             MenuClosed: true,
             Clicks: clicks,
             Drops: drops,

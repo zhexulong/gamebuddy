@@ -1775,7 +1775,7 @@ const DECLARED_ACTION_TOOL_PRESENTATION: Readonly<
   shop_purchase: Object.freeze({
     label: "Buy from a shop",
     description:
-      "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Move into reach of the shop first; the action does not walk.",
+      "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Only a counter whose own TILE is the shop has to be reached before it can be used; a counter an eligible owner NPC runs opens from anywhere in that room, so no walk is required for it. The action never walks.",
   }),
   select_mine_elevator_floor: Object.freeze({
     label: "Use the Mine Elevator",

@@ -2291,6 +2291,52 @@ function hasDecimalOwnerIdEvidenceValue(value: string | undefined): value is str
 const TOOL_UPGRADE_SHOP_ID = "ClintUpgrade";
 
 /**
+ * The distance gate the counter FORM a purchase went through actually has, read off the receipt when it states one.
+ *
+ * <p>
+ * `entry` already names the form, and the two forms do not share a gate. `npc_owner` means an eligible owner entry ran
+ * the counter: `Utility.TryOpenShopMenu(shopId, location, ownerArea, maxOwnerY, forceOpen, …)` searches the room's
+ * characters for an NPC one of those entries names (`Utility.cs:4243-4268`) and opens the menu once it finds one
+ * (`:4318-4321`); no line of that path measures the player, so from the far end of the room the counter opens. Its two
+ * positional parameters gate the OWNER's tile and not the actor's, and the purchase path passes `null` for both. A
+ * `tile_action` counter is the other kind: it IS a tile, which `Game1` gates with
+ * `Utility.tileWithinRadiusOfPlayer(tile, 1, player)` before `GameLocation.checkAction` (`Game1.cs:11509`, `:11637`),
+ * so the receipt states that radius beside the gap it measured - and a gap outside it would describe a purchase the
+ * engine refuses.
+ * </p>
+ * <p>
+ * WHY IT IS OPTIONAL AND NOT REQUIRED. `round92` is the first receipt that states it, and every purchase recorded
+ * before that in `host/src/test-fixtures/stardew-live-receipts.json` is a real run's real receipt; a rule that required
+ * this field would file those as unproven to prefer a newer one, which is the defect
+ * `stardew-live-receipt-parity.test.ts` exists to catch. Present-and-contradictory IS refused, and that is where the
+ * fact has teeth: an NPC counter claiming a required distance, a tile counter claiming none, a gated form stating no
+ * gap, an ungated form stating one, and a radius that is not the engine's are each refused.
+ * </p>
+ */
+function hasShopPurchaseDistanceEvidence(e: Readonly<Record<string, string>>): boolean {
+  const required = e.distance_required;
+  if (required === undefined) return true;
+  if (required === "none")
+    return e.entry === "npc_owner" && e.why === ENGINE_HAS_NO_GATE_FOR_NPC_COUNTERS && e.distance === undefined;
+  if (required !== String(NATIVE_INTERACTION_RADIUS)) return false;
+  const distance = integerEvidenceValue(e.distance);
+  return (
+    e.entry === "tile_action" &&
+    e.why === undefined &&
+    distance !== null &&
+    distance >= 0 &&
+    distance <= NATIVE_INTERACTION_RADIUS
+  );
+}
+
+/**
+ * The one spelling of "this counter kind has no distance gate", stated by the producer as `why=`. A single constant
+ * because the Mod's token and this rule's reading of it are the same fact: a second copy of the string is a copy that
+ * can drift.
+ */
+const ENGINE_HAS_NO_GATE_FOR_NPC_COUNTERS = "engine_has_no_gate_for_npc_counters";
+
+/**
  * `shop_purchase`'s SECOND terminal: the same action, the same route through `ShopMenu`, and the opposite shape.
  *
  * <para>
@@ -2303,7 +2349,8 @@ const TOOL_UPGRADE_SHOP_ID = "ClintUpgrade";
  * </para>
  * <para>
  * Evidence literal: farmhandexecutioncontroller.shopactions.cs `ShopToolUpgradeEvidence` - the ordinary detail plus
- * tool_upgraded;days_left;required_tool;required_before;required_after;purchase_dialogue.
+ * tool_upgraded;days_left;required_tool;required_before;required_after;purchase_dialogue, and the same
+ * distance_required/distance/why triple the ordinary terminal carries.
  * </para>
  */
 function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
@@ -2359,7 +2406,9 @@ function hasShopToolUpgradeCompletionEvidence(detail: string): boolean {
         (integerEvidenceValue(e.gained) ?? 1) &&
       e.menu_closed === "true" &&
       (e.purchase_dialogue === "closed" || e.purchase_dialogue === "none") &&
-      hasTileEvidenceValue(e.owner_tile),
+      hasTileEvidenceValue(e.owner_tile) &&
+      hasShopPurchaseDistanceEvidence(e),
+    ["distance_required", "distance", "why"],
   );
 }
 
@@ -4763,8 +4812,9 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
 
     // Evidence literal: farmhandexecutioncontroller.shopactions.cs - the terminal is minted only when the trade
     // moved BOTH sides (`moneyAfter < moneyBefore && gained > 0`), and the receipt carries:
-    // shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;
-    // gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops.
+    // shop;owner;entry;distance_required;item;requested;purchased;unit_price;money_before;money_after;owned_before;
+    // owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops, plus `distance=` for a counter
+    // that is a tile and `why=` for one an NPC runs.
     //
     // The rule restates the Mod's OWN success condition from the evidence instead of trusting the code: money
     // went down, goods went up, and the menu really closed. `owner` is `none` when the shop is entered through
@@ -4833,7 +4883,12 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           (integerEvidenceValue(e.owned_after) ?? 0) > (integerEvidenceValue(e.owned_before) ?? 0) &&
           (integerEvidenceValue(e.gained) ?? 0) > 0 &&
           e.menu_closed === "true" &&
-          hasTileEvidenceValue(e.owner_tile),
+          hasTileEvidenceValue(e.owner_tile) &&
+          // WHICH DISTANCE GATE THE COUNTER FORM HAS. `round92`'s receipt named an NPC-run counter and could not say
+          // whether reaching it was required, so a watcher read a legal purchase as one that skipped a walk. The
+          // producer states it, and this clause refuses a receipt that states a gate the form does not have.
+          hasShopPurchaseDistanceEvidence(e),
+        ["distance_required", "distance", "why"],
       )
     );
   },
