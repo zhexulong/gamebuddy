@@ -67,12 +67,19 @@
  * handed to an assertion stays out of scope too - `assert.throws(() => ...)` takes the code under test, not an
  * assertion's own expression.
  *
- * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-16, this tree):
+ * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-22, this tree):
  *
- *   examined 1112 · sites 39 · findings 0 · baseline 32 entries · unread 0
- *   residual by shape: 0 declaration_site · 19 call_result · 20 unresolved
- *   residual by verdict: 19 derivable-now · 13 not-a-population · 0 needs-a-decision
- *   set aside: 1137 test-built · 4 not-members
+ *   examined 1243 · sites 39 · findings 0 · baseline 31 entries · unread 0
+ *   residual by shape: 0 declaration_site · 19 call_result · 19 unresolved
+ *   residual by verdict: 18 derivable-now · 13 not-a-population · 0 needs-a-decision
+ *   set aside: 1268 test-built · 4 not-members
+ *
+ * WHY THE POPULATION IS BIGGER THAN ITS 2026-11-16 READING (1112 files). The gate scripts' own tests moved from
+ * `tools/` to `gates/`, and `POPULATION_SCOPE` still named `tools` alone: this gate had stopped reading 131 files and
+ * reported `examined 1103`, while the five baseline rows that named those tests went `..._baseline_stale`. That is a
+ * green reading over a population that had silently shrunk, so the scope gained `gates` and the rows moved with the
+ * files. The same move made one assertion visible that the truncated population could not see
+ * (`gates/product/check-persona-prose.test.mjs`), and it was fixed by naming the commit rather than counting it.
  *
  * Each shape is closeable, and each failure message says which one it is:
  *
@@ -177,11 +184,15 @@ const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 /**
  * The directories whose tests can freeze a population, and the suffix that makes a file one of them.
  * `under` narrows a directory whose tests live in a `tests/` segment (`integrations/<integration>/tests`).
+ *
+ * `gates` is here because the gate scripts' tests live there: leaving it out did not make the gate green, it made the
+ * reading cover 131 fewer files and turned the baseline rows naming them stale.
  */
 export const POPULATION_SCOPE = Object.freeze([
   { directory: "host/src", suffix: ".test.ts" },
   { directory: "dialogue-web/tests", suffix: ".ts" },
   { directory: "tools", suffix: ".test.mjs" },
+  { directory: "gates", suffix: ".test.mjs" },
   { directory: "integrations", suffix: ".mjs", under: "tests" },
 ]);
 

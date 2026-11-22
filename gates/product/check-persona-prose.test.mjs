@@ -318,7 +318,10 @@ test("the two parsers that read git's own output hold on the real shipped docume
 
   // `%x01`-separated `git log` records, one per commit, in order, with the message that decides the marker.
   const commits = historyOf(repositoryRoot, "796f701a^..796f701a");
-  assert.equal(commits.length, 1);
+  assert.deepEqual(
+    commits.map((commit) => commit.sha.slice(0, 8)),
+    ["796f701a"],
+  );
   assert.match(commits[0].sha, /^796f701a[0-9a-f]*$/u);
   assert.equal(commits[0].parent.startsWith("52c8173d"), true);
   assert.match(commits[0].message, /^fix\(tavern\): she can cook over a campfire/mu);

@@ -229,7 +229,7 @@
       "reason": "[derivable-now] `silent` is the test's own `ACCOUNTED` table filtered by a `SILENT:` prefix; `deepEqual(silent.map(([signature]) => signature), [\"...currentSnapshot\"])` names the one silent bump site the assertion is about."
     },
     {
-      "file": "tools/check-crash-report-containment.test.mjs",
+      "file": "gates/data/check-crash-report-containment.test.mjs",
       "authority": "reports(cwd)",
       "literal": "1",
       "shape": "call_result",
@@ -238,7 +238,7 @@
       "reason": "[not-a-population] `reports` is a local arrow over `readdirSync(directory)` - a directory listing of a throwaway root a spawned child wrote into, whose report file name carries the child's pid and a timestamp. The set is the child's, and no member list can be named for it."
     },
     {
-      "file": "tools/check-crash-report-containment.test.mjs",
+      "file": "gates/data/check-crash-report-containment.test.mjs",
       "authority": "reports(elsewhere)",
       "literal": "0",
       "shape": "call_result",
@@ -247,7 +247,7 @@
       "reason": "[not-a-population] the same listing, asserting nothing landed in the contained directory."
     },
     {
-      "file": "tools/check-crash-report-containment.test.mjs",
+      "file": "gates/data/check-crash-report-containment.test.mjs",
       "authority": "reports(cwd)",
       "literal": "0",
       "shape": "call_result",
@@ -256,7 +256,7 @@
       "reason": "[not-a-population] the same listing after the contained child ran: nothing inside the tree."
     },
     {
-      "file": "tools/check-crash-report-containment.test.mjs",
+      "file": "gates/data/check-crash-report-containment.test.mjs",
       "authority": "reports(elsewhere)",
       "literal": "1",
       "shape": "call_result",
@@ -265,12 +265,12 @@
       "reason": "[not-a-population] the same listing: exactly one report in the contained directory, whose name the child chose."
     },
     {
-      "file": "tools/check-credential-export-isolation.test.mjs",
+      "file": "gates/product/check-credential-export-isolation.test.mjs",
       "authority": "credentials",
       "literal": "2",
       "shape": "unresolved",
       "sites": 1,
-      "line": 540,
+      "line": 542,
       "reason": "[not-a-population] `credentialPopulation(root)` reads the throwaway tree this test just wrote from its own `fixture({})`; the two credentials are the fixture's, and the walk lost the fixture because it arrives as a parameter."
     },
     {
