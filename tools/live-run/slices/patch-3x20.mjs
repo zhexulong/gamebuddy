@@ -72,9 +72,8 @@ import {
   describeSlicePlan,
   finishSlice,
   observeReadyWorld,
-  parseSliceArguments,
-  planSlice,
   runSliceWorld,
+  startSlice,
   USAGE_COMMON,
 } from "./harness.mjs";
 
@@ -137,7 +136,9 @@ export function classifyTile(row, clearers) {
   if (row.tillable === true) return { usable: true, kind: NOTHING_TO_CLEAR };
   if (row.hoed === true) return { usable: true, kind: "hoed" };
   if (row.occupantKind === "none") return { usable: false, kind: "unfarmable_ground" };
-  return clearers.has(row.occupantKind) ? { usable: true, kind: row.occupantKind } : { usable: false, kind: row.occupantKind };
+  return clearers.has(row.occupantKind)
+    ? { usable: true, kind: row.occupantKind }
+    : { usable: false, kind: row.occupantKind };
 }
 
 /** Every tile of a rectangle, in reading order, so two runs of this slice work the same ground in the same order. */
@@ -167,7 +168,12 @@ export function connectedBlocks(usable) {
       const key = pending.pop();
       region.push(key);
       const [x, y] = key.split(",").map(Number);
-      for (const neighbour of [`${String(x + 1)},${String(y)}`, `${String(x - 1)},${String(y)}`, `${String(x)},${String(y + 1)}`, `${String(x)},${String(y - 1)}`])
+      for (const neighbour of [
+        `${String(x + 1)},${String(y)}`,
+        `${String(x - 1)},${String(y)}`,
+        `${String(x)},${String(y + 1)}`,
+        `${String(x)},${String(y - 1)}`,
+      ])
         if (remaining.has(neighbour)) {
           remaining.delete(neighbour);
           pending.push(neighbour);
@@ -234,7 +240,8 @@ export function measureFarm(rows, clearers) {
 export function chooseStrip(measured, actorTile) {
   if (measured.holding.length === 0) return Object.freeze({ ok: false });
   const nearest = [...measured.holding].sort(
-    (left, right) => chebyshev(actorTile, left.block) - chebyshev(actorTile, right.block) || right.block.area - left.block.area,
+    (left, right) =>
+      chebyshev(actorTile, left.block) - chebyshev(actorTile, right.block) || right.block.area - left.block.area,
   )[0];
   return Object.freeze({ ok: true, strip: nearest.rectangle, block: nearest.block });
 }
@@ -261,8 +268,7 @@ export function occupantCounts(measured, strip) {
 /** The measurement as the two lines a reader gets, whatever the chain then does. */
 export function describeAccounting(measured, choice) {
   const blocks = `blocks ${String(measured.blocks.length)} · blocks_holding_${String(WIDTH)}x${String(LENGTH)} ${String(measured.holding.length)} · best ${largestBlock(measured.blocks)}`;
-  if (choice.ok !== true)
-    return `${blocks} · occupants=none: no block holds the shape, so nothing was picked`;
+  if (choice.ok !== true) return `${blocks} · occupants=none: no block holds the shape, so nothing was picked`;
   const counts = occupantCounts(measured, choice.strip)
     .map(([kind, count]) => `${kind}:${String(count)}`)
     .join(",");
@@ -539,7 +545,9 @@ export async function measurePatch({ client, receipts, budgetMs }) {
   const counts = occupantCounts(measured, strip);
   const offered = new Set(visibleActionIds(client, modules));
   const clear = clearPlan(measured, strip, clearers, offered);
-  const clearTiles = clear.plan.reduce((total, entry) => total + entry.tiles.length, 0) + clear.unaddressable.reduce((total, entry) => total + entry.count, 0);
+  const clearTiles =
+    clear.plan.reduce((total, entry) => total + entry.tiles.length, 0) +
+    clear.unaddressable.reduce((total, entry) => total + entry.count, 0);
   const unaddressable = clear.unaddressable.map((entry) => `${entry.kind}:${String(entry.count)}`).join(",");
   process.stderr.write(
     `[slice] ${NAME} strip=${String(strip.x)},${String(strip.y)} wxh=${String(strip.w)}x${String(strip.h)} · clear=${String(clearTiles)} tiles · till=${String(TILES)} · plant=${String(TILES)} · water=${String(TILES)} · occupants=${counts.map(([kind, count]) => `${kind}:${String(count)}`).join(",")}${unaddressable === "" ? "" : ` · this policy clears no ${unaddressable}`}\n`,
@@ -607,7 +615,11 @@ export async function measurePatch({ client, receipts, budgetMs }) {
     accounting: describeAccounting(measured, choice),
     strip: { x: strip.x, y: strip.y, w: strip.w, h: strip.h, block: choice.block, blocks: measured.blocks },
     stripOccupants: counts,
-    clear: { tiles: clearTiles, plan: clear.plan.map((entry) => ({ action: entry.action, tiles: entry.tiles.length })), unaddressable: clear.unaddressable },
+    clear: {
+      tiles: clearTiles,
+      plan: clear.plan.map((entry) => ({ action: entry.action, tiles: entry.tiles.length })),
+      unaddressable: clear.unaddressable,
+    },
     steps,
     after: { status: after.status, rows: after.rows },
     complete: after.rows.length === TILES && after.rows.every((row) => row.hoed && row.crop && row.watered),
@@ -722,26 +734,21 @@ function largestBlock(blocks) {
 }
 
 async function main(argv) {
-  let options;
-  try {
-    options = parseSliceArguments(argv, { budgetMs: DEFAULT_BUDGET_MS });
-  } catch (error) {
-    process.stderr.write(`${String(error?.message ?? error)}\n\n${USAGE}\n`);
-    process.exitCode = 2;
-    return;
-  }
-  if (options.help) {
-    process.stdout.write(`${USAGE}\n`);
-    return;
-  }
-  let plan;
-  try {
-    plan = await planSlice({ scenarioKey: SCENARIO, options });
-  } catch (error) {
-    finishSlice({ name: NAME, status: "blocked", detail: String(error?.message ?? error), facts: {} });
-    return;
-  }
-  const calls = ["travel", "scan", "clear", ...CHAIN.filter((step) => step !== "clear").map((step) => `${step}x${String(TILES)}`)];
+  const started = await startSlice({
+    name: NAME,
+    argv,
+    usage: USAGE,
+    scenarioKey: SCENARIO,
+    budgetMs: DEFAULT_BUDGET_MS,
+  });
+  if (started === null) return;
+  const { options, plan } = started;
+  const calls = [
+    "travel",
+    "scan",
+    "clear",
+    ...CHAIN.filter((step) => step !== "clear").map((step) => `${step}x${String(TILES)}`),
+  ];
   if (options.dryRun) {
     process.stdout.write(`${JSON.stringify(describeSlicePlan({ name: NAME, plan, calls }), null, 2)}\n`);
     return;

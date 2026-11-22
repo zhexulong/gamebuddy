@@ -631,6 +631,20 @@ export function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Release the session a run holds, once: a bridge that is already gone owes no unsubscribe, so a failed close is the
+ * one error a teardown swallows rather than replacing the failure that sent it here.
+ */
+export async function closeSession(stage) {
+  if (stage.session === null) return;
+  try {
+    await stage.session.close();
+  } catch (_error) {
+    /* a bridge that is already gone owes no unsubscribe */
+  }
+  stage.session = null;
+}
+
 function validateSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== "object" || !Number.isSafeInteger(snapshot.revision))
     throw new NativeSmokeHarnessError("invalid_native_snapshot");

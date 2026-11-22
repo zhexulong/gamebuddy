@@ -128,6 +128,7 @@ import {
   validateNativeLocalPlayerFixturePreparation,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
+  closeSession,
   connectNativeLocalClient,
   observeFresh,
   TERMINAL_STATES,
@@ -1197,16 +1198,6 @@ export function releaseFixture(plan) {
     backupName: plan.backupName,
     evidenceDir: join(plan.fixtureRoot, "logs"),
   });
-}
-
-async function closeSession(stage) {
-  if (stage.session === null) return;
-  try {
-    await stage.session.close();
-  } catch (_error) {
-    /* a bridge that is already gone owes no unsubscribe */
-  }
-  stage.session = null;
 }
 
 /**

@@ -95,6 +95,7 @@ import {
   validateNativeLocalPlayerFixturePreparation,
 } from "./lib/stardew-native-local-player-fixture.mjs";
 import {
+  closeSession,
   connectNativeLocalClient,
   observeFresh,
   TERMINAL_STATES,
@@ -979,16 +980,6 @@ export function refusalNote(reasonCode) {
   if (reasonCode.startsWith("live_action_working_save_present:"))
     return "not measured: an earlier run left this working save behind, and the game would load that world instead of the fixture's. Nothing was mutated and no game was launched. Clear it with `node tools/live-action.mjs --recover` (which refuses while a game is running)";
   return undefined;
-}
-
-async function closeSession(stage) {
-  if (stage.session === null) return;
-  try {
-    await stage.session.close();
-  } catch (_error) {
-    /* a bridge that is already gone owes no unsubscribe */
-  }
-  stage.session = null;
 }
 
 /**

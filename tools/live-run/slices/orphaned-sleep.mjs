@@ -36,9 +36,8 @@ import {
   describeSlicePlan,
   finishSlice,
   observeReadyWorld,
-  parseSliceArguments,
-  planSlice,
   runSliceWorld,
+  startSlice,
   USAGE_COMMON,
 } from "./harness.mjs";
 
@@ -171,25 +170,16 @@ export function judgeOrphanedSleep(measured) {
 }
 
 async function main(argv) {
-  let options;
-  try {
-    options = parseSliceArguments(argv, { budgetMs: 60_000, subjectFlags: ["--door"] });
-  } catch (error) {
-    process.stderr.write(`${String(error?.message ?? error)}\n\n${USAGE}\n`);
-    process.exitCode = 2;
-    return;
-  }
-  if (options.help) {
-    process.stdout.write(`${USAGE}\n`);
-    return;
-  }
-  let plan;
-  try {
-    plan = await planSlice({ scenarioKey: SCENARIO, options });
-  } catch (error) {
-    finishSlice({ name: NAME, status: "blocked", detail: String(error?.message ?? error), facts: {} });
-    return;
-  }
+  const started = await startSlice({
+    name: NAME,
+    argv,
+    usage: USAGE,
+    scenarioKey: SCENARIO,
+    budgetMs: 60_000,
+    subjectFlags: ["--door"],
+  });
+  if (started === null) return;
+  const { options, plan } = started;
   const calls = ["enter_exit", "sleep"];
   if (options.dryRun) {
     process.stdout.write(`${JSON.stringify(describeSlicePlan({ name: NAME, plan, calls }), null, 2)}\n`);

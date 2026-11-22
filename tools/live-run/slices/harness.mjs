@@ -40,7 +40,12 @@ import {
   prepareNativeLocalPlayerFixture,
   validateNativeLocalPlayerFixturePreparation,
 } from "../../lib/stardew-native-local-player-fixture.mjs";
-import { connectNativeLocalClient, delay, observeFresh } from "../../lib/stardew-native-smoke-harness-v1.mjs";
+import {
+  closeSession,
+  connectNativeLocalClient,
+  delay,
+  observeFresh,
+} from "../../lib/stardew-native-smoke-harness-v1.mjs";
 import { listStardewProcessIds } from "../../lib/windows-process-tree.mjs";
 import {
   describeSaveAt,
@@ -244,6 +249,34 @@ export async function planSlice({ scenarioKey, options, env = process.env, roots
   });
 }
 
+/**
+ * The prologue every slice's `main` opens with: read the arguments, answer `--help`, plan the scenario - each refusal
+ * rendered the one way a slice reports it, so a slice states only what it does after the world is planned.
+ *
+ * `null` means the run is over: the usage was answered, or the argument/plan refusal was already printed as this
+ * slice's terminal. Returning `null` rather than calling `process.exit` keeps the caller's own `await` shape.
+ */
+export async function startSlice({ name, argv, usage, scenarioKey, budgetMs, subjectFlags }) {
+  let options;
+  try {
+    options = parseSliceArguments(argv, { budgetMs, subjectFlags });
+  } catch (error) {
+    process.stderr.write(`${String(error?.message ?? error)}\n\n${usage}\n`);
+    process.exitCode = 2;
+    return null;
+  }
+  if (options.help) {
+    process.stdout.write(`${usage}\n`);
+    return null;
+  }
+  try {
+    return { options, plan: await planSlice({ scenarioKey, options }) };
+  } catch (error) {
+    finishSlice({ name, status: "blocked", detail: String(error?.message ?? error), facts: { detail: error?.detail } });
+    return null;
+  }
+}
+
 /** What `--dry-run` prints: the world this slice would arm and the calls it would make. */
 export function describeSlicePlan({ name, plan, calls }) {
   return {
@@ -341,16 +374,6 @@ export async function runSliceWorld({ plan, body }) {
     restore = await teardown({ plan, stage, trap });
   }
   return Object.freeze({ result, failure, restore, config, elapsedMs: Date.now() - startedAt });
-}
-
-async function closeSession(stage) {
-  if (stage.session === null) return;
-  try {
-    await stage.session.close();
-  } catch (_error) {
-    /* a bridge that is already gone owes no unsubscribe */
-  }
-  stage.session = null;
 }
 
 /**
