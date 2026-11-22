@@ -27,6 +27,12 @@ export function rootFromArgv(argv, fallback) {
   return index >= 0 && typeof argv[index + 1] === "string" ? resolve(argv[index + 1]) : fallback;
 }
 
+/** The value after `flag` on the command line, or `null` when the flag is absent or carries no value. */
+export function optionFromArgv(argv, flag) {
+  const index = argv.indexOf(flag);
+  return index < 0 || index + 1 >= argv.length ? null : argv[index + 1];
+}
+
 /**
  * The source with its comments removed: a line comment, a block comment - text a reader wrote for a person, never a value
  * a gate may read as one. Newlines survive, so a line number read off the result is the line number of the file.
@@ -40,17 +46,24 @@ export function withoutComments(source) {
 }
 
 /**
- * The text from the `{` at `open` to its matching `}`, inclusive, or `null` when the braces do not close. Every caller
- * here starts from a declaration it found by name and needs the body under it; one brace scan answers all of them.
+ * The index of the `}` matching the `{` at `open`, or -1 when the braces do not close. Every caller here starts from a
+ * declaration it found by name and needs the extent of the body under it; one brace scan answers all of them, whether the
+ * caller wants the slice, the closing offset or the block's contents.
  */
-export function bracesFrom(source, open) {
+export function braceEnd(source, open) {
   let depth = 0;
   for (let index = open; index < source.length; index += 1) {
     if (source[index] === "{") depth += 1;
     else if (source[index] === "}") {
       depth -= 1;
-      if (depth === 0) return source.slice(open, index + 1);
+      if (depth === 0) return index;
     }
   }
-  return null;
+  return -1;
+}
+
+/** The text from the `{` at `open` to its matching `}`, inclusive, or `null` when the braces do not close. */
+export function bracesFrom(source, open) {
+  const end = braceEnd(source, open);
+  return end < 0 ? null : source.slice(open, end + 1);
 }

@@ -34,7 +34,12 @@ export const gateDeclaration = {
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { analyzeSilence, MAX_SILENT_STRETCH_MS, OBSERVABLE_EVENT_INTERVAL_MS } from "../../tools/lib/latency-silence.mjs";
+import {
+  analyzeSilence,
+  MAX_SILENT_STRETCH_MS,
+  OBSERVABLE_EVENT_INTERVAL_MS,
+} from "../../tools/lib/latency-silence.mjs";
+import { optionFromArgv } from "../../tools/lib/gate-preamble.mjs";
 
 const checks = [];
 const checkStatus = (status) => {
@@ -306,12 +311,7 @@ function runDirChecks(runDir) {
   };
 }
 
-function parseOption(name) {
-  const index = process.argv.indexOf(name);
-  return index < 0 || index + 1 >= process.argv.length ? null : process.argv[index + 1];
-}
-
-const runDir = parseOption("--run-dir");
+const runDir = optionFromArgv(process.argv, "--run-dir");
 const measurement = runDir === null ? rulesChecks() : runDirChecks(runDir);
 
 const failed = checks.filter((entry) => entry.status === "failed");

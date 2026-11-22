@@ -28,6 +28,7 @@ export const gateDeclaration = {
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { readEvidenceBundle } from "../../tools/lib/evidence-bundle.mjs";
+import { optionFromArgv } from "../../tools/lib/gate-preamble.mjs";
 import {
   assessMultiDayBaseline,
   BASELINE_SCOPE_NOTES,
@@ -540,12 +541,7 @@ function readTimeline(runDir) {
   return facts;
 }
 
-function parseOption(name) {
-  const index = process.argv.indexOf(name);
-  return index < 0 || index + 1 >= process.argv.length ? null : process.argv[index + 1];
-}
-
-const runDir = parseOption("--run-dir");
+const runDir = optionFromArgv(process.argv, "--run-dir");
 if (runDir === null) fixtureChecks();
 else {
   if (existsSync(join(runDir, "manifest.json"))) {

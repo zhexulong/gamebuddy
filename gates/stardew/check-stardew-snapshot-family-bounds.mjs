@@ -53,6 +53,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { braceEnd } from "../../tools/lib/gate-preamble.mjs";
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -178,15 +179,8 @@ export function balancedParentheses(text, startIndex) {
 function braceBlock(text, startIndex) {
   const open = text.indexOf("{", startIndex);
   if (open < 0) return null;
-  let depth = 0;
-  for (let index = open; index < text.length; index += 1) {
-    if (text[index] === "{") depth += 1;
-    else if (text[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return { inner: text.slice(open + 1, index), end: index };
-    }
-  }
-  return null;
+  const end = braceEnd(text, open);
+  return end < 0 ? null : { inner: text.slice(open + 1, end), end };
 }
 
 /**

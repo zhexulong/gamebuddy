@@ -63,6 +63,7 @@ export const gateDeclaration = {
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { braceEnd } from "../../tools/lib/gate-preamble.mjs";
 import { cleanOutputLines } from "../../tools/lib/subprocess-output.mjs";
 import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
@@ -147,18 +148,8 @@ export function handlersIn(text) {
     const name = `RequestLocal${text.slice(nameStart, paren).trim()}`;
     // Brace-match from the opening brace of the method body.
     const open = text.indexOf("{", paren);
-    let depth = 0;
-    let end = open;
-    for (let index = open; index < text.length; index += 1) {
-      if (text[index] === "{") depth += 1;
-      else if (text[index] === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          end = index;
-          break;
-        }
-      }
-    }
+    const matched = braceEnd(text, open);
+    const end = matched < 0 ? open : matched;
     found.push({ name, body: text.slice(lineStart, end + 1) });
     cursor = end + 1;
   }

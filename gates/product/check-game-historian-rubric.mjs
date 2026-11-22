@@ -34,6 +34,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { checkHistorianRubric, identifyHistorianPrompt, readCompartments } from "../../tools/lib/historian-rubric.mjs";
+import { optionFromArgv } from "../../tools/lib/gate-preamble.mjs";
 
 const checks = [];
 const check = (id, ok, detail) =>
@@ -147,12 +148,7 @@ function judgeRuntimeRoot(runtimeRoot, label) {
   });
 }
 
-function parseOption(name) {
-  const index = process.argv.indexOf(name);
-  return index < 0 || index + 1 >= process.argv.length ? null : process.argv[index + 1];
-}
-
-const runDir = parseOption("--run-dir");
+const runDir = optionFromArgv(process.argv, "--run-dir");
 const all = process.argv.includes("--all");
 /** What this run examined: the rubric obligations exercised offline, or the runs judged under `--run-dir`. */
 let examined = 0;

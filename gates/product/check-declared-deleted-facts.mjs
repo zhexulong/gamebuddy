@@ -96,6 +96,7 @@ export const gateDeclaration = {
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { braceEnd } from "../../tools/lib/gate-preamble.mjs";
 
 const GATE_ID = "declared-deleted-facts";
 const DOC_PATH = "design/fact-authority.md";
@@ -467,7 +468,7 @@ function readTable(text, name) {
   const at = text.indexOf(`export const ${name}`);
   if (at < 0) return new Map();
   const open = text.indexOf("{", at);
-  const close = open < 0 ? -1 : matchingBrace(text, open);
+  const close = open < 0 ? -1 : braceEnd(text, open);
   if (close < 0) return new Map();
   const rows = new Map();
   for (const match of text.slice(open, close).matchAll(/(?:^|\n)\s{2}([a-z0-9_]+):/gu))
@@ -480,19 +481,9 @@ function readTable(text, name) {
  *
  * The first version searched for `\n});`, which skipped past `IN_FLIGHT_RECEIPT_PROGRESS_STATES = Object.freeze({});`
  * and closed over the next 2,200 characters - so `succeeded` and `refused`, the settlement outcomes, were read as held
- * receipt progress states and the gate reported four survivors where the run holds two.
+ * receipt progress states and the gate reported four survivors where the run holds two. The scan itself is
+ * `tools/lib/gate-preamble.mjs`'s, which three gates were spelling by hand.
  */
-function matchingBrace(text, open) {
-  let depth = 0;
-  for (let index = open; index < text.length; index += 1) {
-    if (text[index] === "{") depth += 1;
-    else if (text[index] === "}") {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return -1;
-}
 
 /** The body of `buildFactTurnConsequence`, where the consequence of every shape is assigned. */
 function builderBody(text) {
