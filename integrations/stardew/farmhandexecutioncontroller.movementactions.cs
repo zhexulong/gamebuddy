@@ -718,12 +718,8 @@ internal sealed partial class ExecutionManager
     public LocalExecutionReceipt RequestLocalMinecartRide(
         string requestId, int sourceX, int sourceY, long requestedDeadlineMs, string expectedTargetId)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (this.BeginGuardedLocalExecution(requestId, out _, out string executionId, out long nowMs) is LocalExecutionReceipt guardRefusal)
+            return guardRefusal;
         // Shared mechanical admission (identity → actionability → deadline →
         // body exclusivity) in the one authority, in that same order: the
         // refusal now NAMES the hold (actor_held_by_modal / cutscene_active /
@@ -801,12 +797,8 @@ internal sealed partial class ExecutionManager
 
     private LocalExecutionReceipt RequestLocalDoorTransition(string requestId, int sourceX, int sourceY, long requestedDeadlineMs, bool isDoor)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (this.BeginGuardedLocalExecution(requestId, out _, out string executionId, out long nowMs) is LocalExecutionReceipt guardRefusal)
+            return guardRefusal;
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is { } admissionRefusal)
             return admissionRefusal;
 

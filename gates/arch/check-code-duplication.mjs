@@ -79,6 +79,15 @@
  * `--write-baseline` stays refused, which is why the ratchet reads `new 5` rather than `new 0` - the baseline is not
  * allowed to record them, and recording them would be recording the residue of a refactor as debt.
  *
+ * THAT SEAM LANDED (2026-11-23). It is `BeginGuardedLocalExecution` in `farmhandexecutioncontroller.cs`: the begin, the
+ * scope-bound actor refusal and the `world_not_ready` refusal in one call, with the bound actor handed back because
+ * `RequestLocalPickupItem` settles the magnet with it. Seven call sites use it and the three groups that held their copies
+ * (`18082b2d8aae`, `72fc77528444`, `ebd20901d6dd`) left the population, so their declaration entries were deleted rather
+ * than lowered: a group's identity is the matched text, and folding that text leaves no site for a count to fall to. The
+ * three near-copies stayed inline and say why - `RequestLocalUseItem` asks only for the player, `RequestLocalFeedAnimal`
+ * binds the location its body then uses, `RequestLocalShipItem` asks for the farm - so the seam is not a flag trying to
+ * be four checks.
+ *
  * THE UNIT: THE FLOOR OF THE LANGUAGE IS NOT DEBT, AND COUNTING IT WAS THE DEFECT. Measured 2026-11-15 at `0dce992a`:
  * `clone groups 291 · duplication 286 · new 47 · grown 4` sat red for hours and every lane answered it with "predates
  * this lane", which the gate accepted because the finding named no owner. The unit was wrong underneath that: the

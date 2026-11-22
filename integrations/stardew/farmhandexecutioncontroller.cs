@@ -569,6 +569,29 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt existing
             ? existing
             : this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, profile);
+
+    /// <summary>
+    /// The guard-first preamble: identity, the scope-bound actor and a ready world, refused in that order BEFORE the
+    /// action's own checks. A returned receipt is the answer (an idempotent replay or one of the two refusals);
+    /// <c>null</c> means the action reads the world, and <paramref name="actor"/> is the actor the proof bound. Admission
+    /// is NOT here, because <see cref="AdmitLocalExecution"/> covers the actions whose checks come after it.
+    /// </summary>
+    private LocalExecutionReceipt? BeginGuardedLocalExecution(
+        string requestId,
+        out Farmer actor,
+        out string executionId,
+        out long nowMs)
+    {
+        actor = default!;
+        if (this.BeginLocalExecution(requestId, out executionId, out nowMs) is LocalExecutionReceipt replay) return replay;
+        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
+        actor = boundActor;
+        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        return null;
+    }
+
     private LocalExecutionReceipt? AdmitExecution(
         string requestId,
         string executionId,

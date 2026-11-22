@@ -983,12 +983,8 @@ internal sealed partial class ExecutionManager
 
     public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
     {
-        if (this.BeginLocalExecution(requestId, out string executionId, out long nowMs) is LocalExecutionReceipt replay) return replay;
-        if (!this.TryGetBoundActor(out Farmer? boundActor, out string scopeReason) || boundActor is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, scopeReason, null);
-
-        if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
+        if (this.BeginGuardedLocalExecution(requestId, out _, out string executionId, out long nowMs) is LocalExecutionReceipt guardRefusal)
+            return guardRefusal;
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.Physical) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool)

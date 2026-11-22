@@ -3,32 +3,11 @@
   "note": "Groups tools/check-code-duplication.mjs reads as STRUCTURAL duplication whose fix is owned by a lane this one may not edit. An entry is a HOLD WITH AN OWNER, not a claim that the copies should exist: it names the group by the hash of the text, the site count it was declared at, the lane that owns the fix, and why that fix is not here. Nothing writes this file but a hand editing it - the gate only reads it - and the gate fails an entry whose group GREW (a declaration never buys a new copy), whose group SHRANK, and whose group left the population (the fix landed: delete the entry). The declared groups stay in the census as duplication and are printed one per run, so the door cannot hide what walked through it. Do not declare a group this repository can fix here; that is what the rule and the baseline are for.",
   "declarations": [
     {
-      "hash": "18082b2d8aae",
-      "sites": 3,
-      "tokens": 109,
-      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
-      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
-    },
-    {
-      "hash": "72fc77528444",
-      "sites": 4,
-      "tokens": 128,
-      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
-      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
-    },
-    {
       "hash": "b0f8d2962c80",
       "sites": 5,
       "tokens": 48,
       "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
       "reason": "the per-action body at `(state, reasonCode) = PostconditionVerdict(succeeded, \"clump_broken\", \"postcondition_no...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
-    },
-    {
-      "hash": "ebd20901d6dd",
-      "sites": 3,
-      "tokens": 94,
-      "owner": "receipt-store extraction (integrations/stardew/farmhandexecutioncontroller.*.cs)",
-      "reason": "the per-action body at `public LocalExecutionReceipt RequestLocalClearDebris(string requestId, int slot, int ta...` re-spells the guard-first admission preamble the controller seam owes; those partials are held by the receipt-store extraction, so no other lane may fold it"
     },
     {
       "hash": "6b4320dbe568",
