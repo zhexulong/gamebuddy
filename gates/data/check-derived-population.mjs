@@ -69,7 +69,7 @@
  *
  * THE RESIDUAL IS RECORDED, NOT SILENCED (measured 2026-11-22, this tree):
  *
- *   examined 1243 · sites 39 · findings 0 · baseline 31 entries · unread 0
+ *   examined 1243 · sites 38 · findings 0 · baseline 31 entries · unread 0
  *   residual by shape: 0 declaration_site · 19 call_result · 19 unresolved
  *   residual by verdict: 18 derivable-now · 13 not-a-population · 0 needs-a-decision
  *   set aside: 1268 test-built · 4 not-members
