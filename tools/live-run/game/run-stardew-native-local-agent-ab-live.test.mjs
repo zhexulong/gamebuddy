@@ -424,7 +424,9 @@ test("the run asks the companion questions and publishes the verdict", () => {
   // session, because `await runAgentTurn(...)` does not return until the turn settles and a turn can last the whole day.
   // Player text already steers into a running turn, so the assertion is about WHERE the submit happens, not about the
   // transport.
-  assert.match(RUNNER_SOURCE, /deliverDialogueGatesForDay\(day, tools\)/);
+  // `dayScope` is handed over with the boundary because the gate's HOUR is only comparable on its own day: the day scope
+  // is what says whether the world has already left it (`round89`).
+  assert.match(RUNNER_SOURCE, /deliverDialogueGatesForDay\(day, tools, dayScope\)/);
   assert.doesNotMatch(
     RUNNER_SOURCE,
     /await runAgentTurn\(gate\.prompt/,
@@ -488,7 +490,7 @@ test("the scheduled gates are delivered from ground truth the run observed, and 
   assert.match(RUNNER_SURFACE_SOURCE, /function readModLogSource\(candidate\)/u);
   assert.match(RUNNER_SURFACE_SOURCE, /writeFileSync\(join\(runDir, "mod-log\.txt"\), text, "utf8"\)/u);
   // 5. A gate is CLAIMED before the admission is awaited, so two turns cannot both speak the same line.
-  const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day, tools)");
+  const deliverStart = RUNNER_SOURCE.indexOf("async function deliverDialogueGatesForDay(day, tools, dayScope = null)");
   const deliverBody = RUNNER_SOURCE.slice(
     deliverStart,
     RUNNER_SOURCE.indexOf("\nasync function runAgentTurn", deliverStart),

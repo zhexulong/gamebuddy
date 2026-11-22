@@ -412,8 +412,25 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
             this.Monitor.Log(deepest.ToString(), LogLevel.Warn);
         }
         this.Monitor.Log(
-            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};tx={outbound.Admitted}/{outbound.Drained}/{outbound.Refused};peak={outbound.Peak};txgen={outbound.Generation};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}",
+            $"[DEBUG-native-local-heartbeat] location={player?.currentLocation?.NameOrUniqueName ?? "none"};tile={player?.TilePoint.X ?? -1},{player?.TilePoint.Y ?? -1};can_move={player?.CanMove.ToString() ?? "n/a"};navigate={(navigateBusy ? "busy" : "idle")};bridge={(bridgeConnected ? "connected" : "none")};rx={inbound.Read}/{inbound.Enqueued};tx={outbound.Admitted}/{outbound.Drained}/{outbound.Refused};peak={outbound.Peak};txgen={outbound.Generation};last={(inbound.LastType ?? "none")};phase={this.tickWatchdogPhaseForReport()};bodyphase={StardewBodyController.LastPhase};bodyticks={StardewBodyController.EnteredTicks};frame={Game1.ticks};managedMB={managedMb};wsMB={workingSetMb};threads={self.Threads.Count};gc={GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)};{BodyHoldReport()}",
             LogLevel.Trace);
+    }
+
+    /// <summary>
+    /// The declared body hold and how many `CanMove` writes the probe has seen, in the heartbeat's own line.
+    ///
+    /// <para>
+    /// The COUNTS are the point. A probe that observes nothing and a body nothing ever takes produce the same silence, and
+    /// the engine-loop probe's first run wrote `frames=0` for its whole life without this distinction - so `declared`,
+    /// `attributed`, `undeclared` and `refused` are published beside the hold they describe.
+    /// </para>
+    /// </summary>
+    private static string BodyHoldReport()
+    {
+        BodyHoldFact hold = BodyHold.DescribeBodyHold();
+        BodyHoldCounts counts = BodyHold.Counts;
+        return $"body_hold={(hold.IsFree ? "free" : $"{hold.Holder}/{hold.State.ToString().ToLowerInvariant()}")}"
+            + $";hold_writes={counts.Declared}/{counts.Attributed}/{counts.Undeclared}/{counts.Refused}";
     }
 
     /// <summary>Content-free bridge liveness used only by the diagnostic heartbeat.</summary>

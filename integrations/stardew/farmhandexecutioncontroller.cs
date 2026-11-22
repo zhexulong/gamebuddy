@@ -3416,12 +3416,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         string canonicalDestinationIdentity = nextPlan.Resolution.Binding?.CanonicalDestinationIdentity ?? nextLeg.TargetLocation;
-        Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
-        if (approachTarget is null)
+        NavigationTransitionLeg? approachLeg = this.SelectApproachableLeg(coordinator, nextLeg, out Vector2 approachTile, out string routeEvidence);
+        if (approachLeg is null)
         {
-            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}");
+            this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{routeEvidence}");
             return;
         }
+        nextLeg = approachLeg;
+        Vector2 approachTarget = approachTile;
 
         long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((navigation.DeadlineMs - nowMs) * 60d / 1000d));
@@ -3432,13 +3434,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             canonicalDestinationIdentity,
             nextPlan.View.CurrentSourceLocation ?? "unknown",
             nextLeg,
-            approachTarget.Value,
+            approachTarget,
             navigation.DeadlineMs,
             LocalNavigatePhase.Approaching);
         LocalMoveSpec approach = new(
             navigation.ExecutionId,
             navigation.RequestId,
-            approachTarget.Value,
+            approachTarget,
             AllowAdjacentArrival: true,
             this.revision,
             this.tick + deadlineTicks,
@@ -3462,7 +3464,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // The deferred window ended when the leg it was waiting for was armed: it belongs to the warp that produced it,
         // and a window left open across a healthy leg would bound the NEXT warp by the previous one's clock.
         this.slots.ClearWarpReplan();
-        this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Running, "navigation_multi_hop_leg_armed", "navigation=multi_hop;phase=approaching");
+        this.RememberTerminal(navigation.RequestId, navigation.ExecutionId, ExecutionState.Running, "navigation_multi_hop_leg_armed", $"navigation=multi_hop;phase=approaching{routeEvidence}");
     }
 
     private static bool IsNavigationCompletedEvidence(string? evidence) =>
@@ -3532,6 +3534,100 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Bush and a transient occupant were both reported as `approach=unavailable`).
         return StardewBodyController.IsStandableTile(location, actor, entry) ? entry : ring.Approach;
     }
+
+    /// <summary>
+    /// The leg whose approach the body can actually walk, trying this execution's OTHER published routes when the first
+    /// one's approach is blocked - or <c>null</c> with every route it refused named.
+    ///
+    /// <para>
+    /// MEASURED `round89`, twice in one run (day 1 and day 3): the planner answers ONE next edge - the shortest route it
+    /// can see - and when that edge's approach is blocked the action settled `navigation_approach_unavailable` with
+    /// `never_retry=true`. The world was not the reason. `Backwoods`' east exit is entered from the tile its own map puts
+    /// a Bush on (`entry_blocked_by:large:Bush@49,10`), a Bush is a wall for a farmer and no published action clears one,
+    /// and `Backwoods -> BusStop -> Town -> Mountain` was in the same topology the whole time. A refusal that ends the
+    /// attempt while a route exists is the shape this repository forbids everywhere else: a reachable state with no
+    /// admissible action.
+    /// </para>
+    ///
+    /// <para>
+    /// THE BLOCKED LEG IS NOT A WORLD FACT AND IS NOT REMOVED FROM THE WORLD. It is recorded on the execution
+    /// (<see cref="AcceptedNavigationExecution.ExcludeBlockedLeg"/>) and the plan is re-asked with it refused, so what
+    /// the retry answers is still the planner's own shortest route over the world's own topology - never a route list
+    /// written here. The loop is bounded by the topology: every pass refuses one more leg and the planner cannot answer
+    /// with a refused one.
+    /// </para>
+    /// </summary>
+    /// <param name="approachTarget">The tile to walk to, when a leg was found.</param>
+    /// <param name="routeEvidence">
+    /// Empty when the first leg's approach was walkable; otherwise the fact that this call re-planned (on success) or the
+    /// approach ring, entry cell and every refused route with the retry's own answer (on exhaustion).
+    /// </param>
+    private NavigationTransitionLeg? SelectApproachableLeg(
+        AcceptedNavigationExecution coordinator,
+        NavigationTransitionLeg firstLeg,
+        out Vector2 approachTarget,
+        out string routeEvidence)
+    {
+        List<string> refused = new();
+        StardewBodyController.CardinalRing? ring = null;
+        NavigationTransitionLeg? leg = firstLeg;
+        while (leg is not null)
+        {
+            Vector2? target = this.SelectSafeApproachTarget(leg, out ring);
+            if (target is not null)
+            {
+                approachTarget = target.Value;
+                routeEvidence = refused.Count == 0
+                    ? string.Empty
+                    : $";route_replanned=true;routes_considered={refused.Count + 1};refused={string.Join(",", refused)}";
+                return leg;
+            }
+
+            refused.Add($"{leg.TargetLocation}@{leg.SourceX},{leg.SourceY}");
+            coordinator.ExcludeBlockedLeg(leg);
+
+            NavigationPlan retry;
+            try
+            {
+                retry = coordinator.PlanNextRouteLeg();
+            }
+            catch
+            {
+                approachTarget = default;
+                routeEvidence = DescribeExhaustedRoutes(refused, ring, leg, "decision_unavailable");
+                return null;
+            }
+            if (retry.IsTerminal)
+            {
+                approachTarget = default;
+                routeEvidence = DescribeExhaustedRoutes(refused, ring, leg, retry.Outcome.TerminalReasonCode ?? "no_route");
+                return null;
+            }
+            leg = retry.Outcome.NextLeg;
+        }
+
+        approachTarget = default;
+        routeEvidence = DescribeExhaustedRoutes(refused, ring, null, "transition=none");
+        return null;
+    }
+
+    /// <summary>
+    /// The evidence of a navigation that has now tried every route the published topology holds: the approach ring it
+    /// stood in front of, that leg's own entry cell, and every refused route with the retry's answer - which is what
+    /// makes a settlement's `never_retry=true` a fact rather than a shrug.
+    ///
+    /// <para>
+    /// `retry=destination_unreachable` is the honest form of "there is no other way": the planner was asked again with
+    /// the refused legs excluded and answered from the same topology, so the routes named here are the ones this
+    /// execution refused and the refusal is the planner's own sentence about the rest.
+    /// </para>
+    /// </summary>
+    private static string DescribeExhaustedRoutes(
+        List<string> refused,
+        StardewBodyController.CardinalRing? ring,
+        NavigationTransitionLeg? lastLeg,
+        string retryAnswer) =>
+        $"{DescribeApproachRing(ring)}{(lastLeg is null ? string.Empty : DescribeTransitionEntry(lastLeg))};routes_considered={refused.Count};refused={string.Join(",", refused)};retry={retryAnswer}";
 
     /// <summary>
     /// The cell a transition is entered FROM, derived from the transition's own data - or <c>null</c> when the

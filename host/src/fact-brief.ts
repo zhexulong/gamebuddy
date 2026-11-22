@@ -290,6 +290,7 @@ export function composeFactBrief(input: FactBriefInput): string {
     provedPackCounts(input.events),
     provedGoneTargets(input.events),
     input.inFlightTiles,
+    publishedSceneWords(input.events),
   );
   if (state !== "") blocks.push(state);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
@@ -374,6 +375,7 @@ export function composeWorldState(
   provedPack: ReadonlyMap<string, number> = NO_PACK_FRESHNESS.proved,
   provedGone: ReadonlySet<string> = NO_TARGET_FRESHNESS.gone,
   inFlightTiles: ReadonlySet<string> = NO_TARGET_FRESHNESS.inFlight,
+  sceneWordsPublished: boolean | undefined = undefined,
 ): string {
   if (reading === undefined) return block("world-state", NOTHING_OBSERVED);
   const world = reading.snapshot;
@@ -409,6 +411,8 @@ export function composeWorldState(
   const lines: string[] = [worldStateHeader(reading)];
   const paragraph = parts.join("；");
   if (paragraph !== "") lines.push(paragraph);
+  const scene = sceneContentLine(world, sceneWordsPublished);
+  if (scene !== "") lines.push(scene);
   lines.push(...composeNearbyTargets(world, targetFreshness));
   // THE ADDRESS GOES LAST, UNDER ITS OWN HEAD. A reader who wants an id or a slot reads this line; a reader who wants the
   // world reads the paragraph above it, and the two never share a line - which is what stops a sentence from having a
@@ -425,6 +429,71 @@ function worldStateHeader(reading: WorldStateReading): string {
   return reading.ageTurns === 0
     ? `世界（revision ${String(reading.revision)}，刚刚更新）`
     : `世界（revision ${String(reading.revision)}，本轮无新观察）`;
+}
+
+/**
+ * THE LINE THAT NAMES A SCENE HOLD'S CONTENT AS UNPUBLISHED, and the whole string the model reads when it is.
+ *
+ * <p>
+ * MEASURED (a live run, day 1 12:30): the vanilla Community Center event fired - `event_up=true`,
+ * `Warping to CommunityCenter` - `express_emote` was refused `cutscene_active`, and `<world-state>` said
+ * `身体: 忙 · 持有: event · 可由指令接管: 否 · 下一步: 下一回合` and nothing else about the scene. She filled the silence
+ * with Lewis's own dialogue and his plan to sell the center to JOJA: one of the 59 lines that run said, and the one
+ * `companion_interaction_gate` refused as `unobserved_event`. THE HOLD WORD INVITED EXACTLY THE INVENTION THE GATE THEN
+ * PUNISHED - the same shape as the `narrate rather than act` guidance that was deleted for it.
+ * </p>
+ *
+ * <p>
+ * WHY THE LINE STATES THE PUBLICATION AND NOT THE SCENE. The scene's identity and its lines ARE readable inside the Mod
+ * (`Game1.CurrentEvent`, its `actors`, and the box's page through `DialogueBox.getCurrentString`), and its words already
+ * reach her as facts of their own: `modal_presented.text` is the page the box shows at the mount,
+ * `npc_dialogue_presented.pages` is the transcript the pager reached. What the wire does not carry is the event's own
+ * identity and the script it has not shown yet - so the block says what it can answer about them. It says the content
+ * is NOT PUBLISHED, and in the other direction it says nothing at all: the words are the facts block's, and a second
+ * copy here would be one fact in two spellings.
+ * </p>
+ */
+const SCENE_CONTENT_UNPUBLISHED = "过场: 内容未发布（谁在场、说了什么、在演什么，都没有发布）";
+
+/** The wire's `actorDispositionKind` for "the engine is running a scene" (`WorldModel.KindForWire`). */
+const SCENE_HOLD_KIND = "event";
+
+/**
+ * The block's line for a body held by a scene, or `""` when this composition has nothing to say about its content.
+ *
+ * `event` is the wire's kind for four engine causes - a cutscene, a minigame, the day transition and a control freeze
+ * (`WorldModel.EventHoldDriver`) - and the snapshot names none of them, so this line cannot name the cause either. What
+ * it can answer is the question the model actually got wrong: has anything about this scene been published.
+ *
+ * `undefined` IS NOT `false`. The claim is about a DELIVERY - which words it carried - and a block composed from a
+ * snapshot alone (`stardew_observe`'s answer, `game-tools.ts`) has no delivery to speak about: it would answer
+ * `内容未发布` in a turn whose own message already quoted the box, one statement contradicting the other inside one turn.
+ * So a caller that cannot answer makes no claim, and the per-turn block - the one the model plans from - always can.
+ */
+function sceneContentLine(world: Snapshot, sceneWordsPublished: boolean | undefined): string {
+  if (world.actorDispositionKind !== SCENE_HOLD_KIND) return "";
+  return sceneWordsPublished === false ? SCENE_CONTENT_UNPUBLISHED : "";
+}
+
+/**
+ * Whether this delivery published any of the words the scene on screen is saying.
+ *
+ * THE SCENE'S WORDS ARRIVE AS FACTS, never on the snapshot: the box's page at its mount (`modal_presented.text`) and the
+ * paged-through transcript (`npc_dialogue_presented.pages`). So `<world-state>` may say the content is unpublished only
+ * while neither is in the delivery - and a null page or an empty one is not words, which is why both halves are trimmed
+ * rather than tested for presence.
+ */
+function publishedSceneWords(events: readonly WorldFact[]): boolean {
+  return events.some((fact) => {
+    if (fact.semanticKind === "modal_presented")
+      return typeof fact.payload.text === "string" && fact.payload.text.trim() !== "";
+    if (fact.semanticKind === "npc_dialogue_presented")
+      return (
+        Array.isArray(fact.payload.pages) &&
+        fact.payload.pages.some((page) => typeof page === "string" && page.trim() !== "")
+      );
+    return false;
+  });
 }
 
 /**

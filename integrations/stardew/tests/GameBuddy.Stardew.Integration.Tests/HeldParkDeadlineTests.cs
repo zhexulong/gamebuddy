@@ -144,7 +144,7 @@ public sealed class HeldParkDeadlineTests
     private static (string HoldCode, string HoldEvidence) ArrivalHold(Farmer actor)
     {
         ActorWorldFacts facts = WorldModel.ReadFacts(actor);
-        return WorldModel.DescribeHeldBody(WorldModel.Classify(facts), facts, actor.CanMove);
+        return WorldModel.DescribeHeldBody(WorldModel.Classify(facts), facts, actor.CanMove, BodyHoldFact.Free);
     }
 
     private static ParkedHold Park(string suffix, bool canMove, bool usingTool)

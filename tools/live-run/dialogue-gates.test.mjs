@@ -617,6 +617,185 @@ test("a gate with no reply is not_exercised, never a pass", () => {
     verdict.findings.every((finding) => finding.state === "not_exercised"),
     true,
   );
+  assert.equal(verdict.blocksSessionVerdict, false, "published beside the session verdict, never folded into it");
+});
+
+// `round87b` (`.live-runs/game-ladder/2026-11-21T13-38-15-600Z-multiday_routine`): three of four gates read
+// `not_exercised` beside `gate_day_not_reached:1/2:at_day_3`, on a run whose own day counter had passed day 1 and day 2.
+// The day the code named had been reached, so the code was about a window that closed - not about a run too short.
+test("a gate whose day has passed says the window closed, and a gate still ahead says the run was too short", () => {
+  const passed = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 3, nowMs: 5_000 });
+  assert.equal(
+    passed.find((plan) => plan.gate.id === "turn-initiative-split").reason,
+    "gate_day_passed:1:at_day_3",
+    "day 1 was reached; what stopped the line was the boundary, not the run's length",
+  );
+  assert.equal(
+    passed.find((plan) => plan.gate.id === "turn-weekly-report-refused").reason,
+    "gate_day_passed:2:at_day_3",
+  );
+  const ahead = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, nowMs: 5_000 });
+  assert.equal(
+    ahead.find((plan) => plan.gate.id === "turn-weekly-report-refused").reason,
+    "gate_day_not_reached:2:at_day_1",
+    "a day still ahead is a fact about a three-day run, and it keeps its own spelling",
+  );
+});
+
+test("a gate the boundary never offered is `missed` and names the day and hour it needed", () => {
+  const verdict = assessDialogueGates({
+    replies: {},
+    context: {},
+    deliveries: {
+      "turn-initiative-split": { state: "not_delivered", day: 3, atMs: 5_000, reason: "gate_day_passed:1:at_day_3" },
+      // The day's own last boundary came at 06:20 and the gate declares 12:00, so the window closed the same way.
+      "turn-yesterday-honesty": {
+        state: "not_delivered",
+        day: 2,
+        atMs: 5_000,
+        reason: "gate_not_yet_due:1200:at_0618",
+      },
+    },
+  });
+  const missed = findingFor(verdict, "turn-initiative-split");
+  assert.equal(missed.state, "missed");
+  assert.equal(missed.day, 1, "the day the gate needs travels with the finding");
+  assert.equal(missed.atGameTime, "1200");
+  assert.equal(missed.reason, "gate_day_passed:1:at_day_3");
+  assert.equal(findingFor(verdict, "turn-yesterday-honesty").state, "missed");
+  assert.equal(verdict.missed, 2);
+  assert.equal(
+    verdict.notExercised,
+    2,
+    "the obstacle gate has no day to miss, and the weekly report has no record to read",
+  );
+  assert.equal(verdict.failed, 0, "a gate nobody offered is not a companion failure, and it is not a pass either");
+  assert.match(verdict.reading, /gates 4 · passed 0 · failed 0 · not_judgeable 0 · missed 2 · not_exercised 2/u);
+});
+
+test("a gate with no delivery record at all is an absence, not a missed window", () => {
+  const verdict = assessDialogueGates({ replies: {}, context: {}, deliveries: {} });
+  assert.equal(verdict.missed, 0);
+  assert.equal(verdict.notExercised, 4);
+  assert.equal(findingFor(verdict, "turn-initiative-split").reason, "no_delivery_boundary_reached");
+});
+
+// `round89` (`.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine`) is the same absence as `round87b` one day
+// later, and the artifact said less: three gates missed on `gate_day_passed:1/2:at_day_3`, on a run whose own day 1 held
+// ONE delivery boundary. The day-1 boundary runs when the day's only turn settles, and that turn dispatched `sleep` - so
+// the clock it compared was the NEXT morning's, and 06:20 < 12:00 read as "not yet due" for a window that was behind.
+const ROUND89_DELIVERIES = Object.freeze({
+  "turn-initiative-split": { state: "not_delivered", day: 3, atMs: 1_795_294_893_851, reason: "gate_day_passed:1:at_day_3" },
+  "turn-yesterday-honesty": { state: "not_delivered", day: 3, atMs: 1_795_294_893_851, reason: "gate_day_passed:2:at_day_3" },
+  "turn-weekly-report-refused": {
+    state: "not_delivered",
+    day: 3,
+    atMs: 1_795_294_893_851,
+    reason: "gate_day_passed:2:at_day_3",
+  },
+});
+const ROUND89_BOUNDARIES = Object.freeze({ 1: 1, 2: 1, 3: 1 });
+
+test("the three numbers a missed gate needs: its own day, the run's last day, and the turns held on that day", () => {
+  const verdict = assessDialogueGates({
+    replies: {},
+    context: {},
+    deliveries: ROUND89_DELIVERIES,
+    runDay: 3,
+    boundariesByDay: ROUND89_BOUNDARIES,
+  });
+  const missed = findingFor(verdict, "turn-initiative-split");
+  assert.equal(missed.state, "missed", "the status is unchanged: the numbers are the answer, not a new state");
+  assert.deepEqual(missed.window, { gateDay: 1, runDay: 3, turnsHeldOnThatDay: 1 });
+  assert.equal(
+    missed.cause,
+    "undelivered:the_decision_on_its_own_day_was_overwritten_by_a_later_one",
+    "the comparison is not what blocked it: this artifact lost the day-1 decision, and day 1 held exactly one boundary",
+  );
+  assert.equal(findingFor(verdict, "turn-yesterday-honesty").window.turnsHeldOnThatDay, 1);
+  assert.equal(findingFor(verdict, "turn-weekly-report-refused").window.gateDay, 2);
+});
+
+test("a day comparison that rejects its own day is named as the comparison, not as an undelivered window", () => {
+  const verdict = assessDialogueGates({
+    replies: {},
+    context: {},
+    deliveries: {
+      "turn-initiative-split": { state: "not_delivered", day: 1, atMs: 5_000, reason: "gate_day_passed:1:at_day_1" },
+    },
+    runDay: 1,
+    boundariesByDay: { 1: 4 },
+  });
+  assert.equal(
+    findingFor(verdict, "turn-initiative-split").cause,
+    "comparison:the_day_passed_on_its_own_day",
+    "a gate cannot have passed on the day it names, so the comparison is what decided",
+  );
+});
+
+test("a day that held no delivery boundary says that, instead of blaming the hour", () => {
+  const verdict = assessDialogueGates({
+    replies: {},
+    context: {},
+    deliveries: ROUND89_DELIVERIES,
+    runDay: 3,
+    boundariesByDay: { 2: 1, 3: 1 },
+  });
+  assert.equal(
+    findingFor(verdict, "turn-initiative-split").cause,
+    "undelivered:the_gates_day_held_no_delivery_boundary",
+  );
+  assert.equal(findingFor(verdict, "turn-initiative-split").window.turnsHeldOnThatDay, 0);
+});
+
+test("the hour is not compared on a day the world has already left, and the gate is not delivered either way", () => {
+  // The window is BEHIND, not ahead: a clock past the declared hour must not turn the gate into a delivery, and the
+  // reason must not claim the hour has not come.
+  for (const gameTime of [620, 1200, 2100]) {
+    const plan = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime, dayIsOver: true, nowMs: 5_000 }).find(
+      (entry) => entry.gate.id === "turn-initiative-split",
+    );
+    assert.equal(plan.deliver, false, `a gate declared for day 1 must not fire after that day ended (clock ${gameTime})`);
+    assert.equal(plan.reason, "gate_day_over_before_its_hour:1200:at_day_1");
+  }
+  const stillRunning = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: 620, dayIsOver: false }).find(
+    (entry) => entry.gate.id === "turn-initiative-split",
+  );
+  assert.equal(stillRunning.reason, "gate_not_yet_due:1200:at_0620", "the same clock on the day itself is genuinely early");
+  const worldUnread = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, { day: 1, gameTime: 620, dayIsOver: null }).find(
+    (entry) => entry.gate.id === "turn-initiative-split",
+  );
+  assert.equal(worldUnread.reason, "gate_not_yet_due:1200:at_0620", "an unread world is not a day that ended");
+});
+
+// The same finding over `round89`'s own bundle: the gates it missed, the day each names, the boundaries each of those days
+// held, and the fact that the last day reached was 3. Skipped on a machine that no longer holds the run.
+test("round89's own bundle carries the three numbers this finding prints", () => {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const path = join(root, ".live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine/result.json");
+  if (!existsSync(path)) return;
+  const bundle = JSON.parse(readFileSync(path, "utf8"));
+  const deliveries = Object.fromEntries(bundle.dialogueGateDelivery.map((entry) => [entry.id, entry]));
+  const boundariesByDay = {};
+  for (const turn of bundle.sessionTurns) boundariesByDay[turn.day] = (boundariesByDay[turn.day] ?? 0) + 1;
+  const runDay = Math.max(...bundle.sessionTurns.map((turn) => turn.day));
+  const verdict = assessDialogueGates({ replies: {}, context: {}, deliveries, runDay, boundariesByDay });
+  const missed = verdict.findings.filter((finding) => finding.state === "missed");
+  assert.equal(missed.length, 3, "the run's own record has three missed gates");
+  assert.deepEqual(
+    missed.map((finding) => [finding.id, finding.window]),
+    [
+      ["turn-initiative-split", { gateDay: 1, runDay: 3, turnsHeldOnThatDay: 1 }],
+      ["turn-yesterday-honesty", { gateDay: 2, runDay: 3, turnsHeldOnThatDay: 1 }],
+      ["turn-weekly-report-refused", { gateDay: 2, runDay: 3, turnsHeldOnThatDay: 1 }],
+    ],
+  );
+  for (const finding of missed)
+    assert.match(
+      finding.cause,
+      /^(undelivered|comparison):/u,
+      `${finding.id} must say which of the two absences it is, not only that it was missed`,
+    );
 });
 
 test("supplying yesterday's record lets the honesty gate judge the answer", () => {

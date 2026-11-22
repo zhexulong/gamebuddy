@@ -381,6 +381,84 @@ public sealed class NavigationExecutionManagerTests
         harness.Manager.CancelActiveForFixture("teardown").ReasonCode.Should().Be("no_active_execution");
     }
 
+    /// <summary>
+    /// THE LIVE FAILURE, `round89` days 1 and 3: `Backwoods`' east exit to the Mountain is entered from the tile its own
+    /// map puts a Bush on (`entry_blocked_by:large:Bush@49,10`), and `navigate_to_destination` settled
+    /// `navigation_approach_unavailable` with `never_retry=true` while `Backwoods -> BusStop -> Town -> Mountain` was
+    /// published the whole time.
+    ///
+    /// <para>
+    /// RED BEFORE THE FIX: `Rejected`/`navigation_approach_unavailable`, nothing armed, and the second route never asked
+    /// for. The assertion is about the OTHER route, never about the bush: the world is what it is, and what the execution
+    /// owes it is one more question to the planner before it gives up.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void BlockedApproach_WithAnotherPublishedRoute_ArmsThatRouteAndDoesNotSettle()
+    {
+        var harness = new ManagerHarness(
+            View(true, true, "Backwoods", at: false, new[] { MountainEastExit, BackwoodsBusStop }),
+            evaluateCandidate: BlockedBackwoodsEastExit,
+            topologySources: BackwoodsTopology());
+
+        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_route", Label("Mine"), Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Accepted);
+        receipt.ReasonCode.Should().Be("accepted");
+        receipt.Evidence.Should().Contain("route_replanned=true");
+        receipt.Evidence.Should().Contain($"refused={MountainEastExit.TargetLocation}@{MountainEastExit.SourceX},{MountainEastExit.SourceY}");
+        harness.Armed.Should().ContainSingle();
+        harness.Armed[0].TargetTile.Should().Be(new Vector2(49, 30), "the BusStop exit's west face is the walkable way out");
+        harness.Manager.IsBodySettled.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The same refusal ONE LEG LATER, which is the shape the live receipt actually had
+    /// (`phase=multi_hop;approach=unavailable;never_retry=true...`): a blocked approach on a later leg must re-plan too
+    /// rather than settle the whole action.
+    /// </summary>
+    [Fact]
+    public void BlockedApproach_OnALaterLeg_ArmsTheOtherRouteInsteadOfSettling()
+    {
+        var harness = new ManagerHarness(
+            View(true, true, "Farm", at: false, new[] { FarmToBackwoods }),
+            evaluateCandidate: BlockedBackwoodsEastExit,
+            topologySources: FarmToBackwoodsTopology());
+
+        harness.Manager.RequestNavigate("req_hop", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.CompleteWarp("Farm", "Backwoods", 40, 0);
+
+        LocalExecutionReceipt receipt = harness.Stored("req_hop");
+        receipt.State.Should().Be(ExecutionState.Running);
+        receipt.ReasonCode.Should().Be("navigation_multi_hop_leg_armed");
+        receipt.Evidence.Should().Contain("route_replanned=true");
+        harness.Armed.Should().HaveCount(2);
+        harness.Armed[1].TargetTile.Should().Be(new Vector2(49, 30));
+    }
+
+    /// <summary>
+    /// ③ `never_retry=true` has to be EARNED. With no second route in the published topology the settlement names the
+    /// route it refused and the planner's own answer to the retry, so "there is no other way" is a measured fact rather
+    /// than a shrug - which is exactly what the live receipt could not say.
+    /// </summary>
+    [Fact]
+    public void OnlyPublishedRouteBlocked_SettlesNeverRetryAndNamesTheRefusedRoute()
+    {
+        var harness = new ManagerHarness(NotAtFarm(), evaluateCandidate: _ => false);
+
+        LocalExecutionReceipt receipt = harness.Manager.RequestNavigate("req_only", Label("Mine"), Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("navigation_approach_unavailable");
+        receipt.Evidence.Should().Contain("never_retry=true");
+        receipt.Evidence.Should().Contain("routes_considered=1");
+        receipt.Evidence.Should().Contain($"refused={MineLeg.TargetLocation}@{MineLeg.SourceX},{MineLeg.SourceY}");
+        receipt.Evidence.Should().Contain("retry=destination_unreachable");
+        harness.Armed.Should().BeEmpty();
+    }
+
     [Fact]
     public void SafeApproach_ImpassableOccupiedCandidateSkipped_SafeAlternateChosen()
     {
@@ -1105,11 +1183,52 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
 
     private static NavigationWorldView NotAtFarm() => View(true, true, "Farm", at: false, new[] { MineLeg });
 
+    private static readonly NavigationTransitionLeg MountainEastExit = new("Mountain", 50, 10, 30, 31, IsDoor: false);
+    private static readonly NavigationTransitionLeg BackwoodsBusStop = new("BusStop", 50, 30, 11, 8, IsDoor: false);
+    private static readonly NavigationTransitionLeg FarmToBackwoods = new("Backwoods", 40, -1, 49, 30, IsDoor: false);
+
+    /// <summary>
+    /// The four faces of the Backwoods' east exit `(50,10)`, exactly as the live world has them: `(49,10)` holds the map's
+    /// own Bush (`entry_blocked_by:large:Bush@49,10`) and the other three are off-map, so no body can stand on any of them.
+    /// </summary>
+    private static bool BlockedBackwoodsEastExit(Vector2 tile) =>
+        tile != new Vector2(49, 10)
+        && tile != new Vector2(51, 10)
+        && tile != new Vector2(50, 9)
+        && tile != new Vector2(50, 11);
+
+    /// <summary>
+    /// The TWO ways out of the Backwoods the world publishes: the east edge onto the Mountain, and the BusStop road that
+    /// reaches the Mountain through Town. Both are warp legs of the same topology the production source builds from the
+    /// map - nothing here is invented to make a retry possible.
+    /// </summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<NavigationTransitionLeg>> BackwoodsTopology() =>
+        new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+        {
+            ["Backwoods"] = new[] { MountainEastExit, BackwoodsBusStop },
+            ["BusStop"] = new[] { new NavigationTransitionLeg("Town", 11, 8, 60, 60, IsDoor: false) },
+            ["Town"] = new[] { new NavigationTransitionLeg("Mountain", 79, -1, 30, 31, IsDoor: false) },
+            ["Mountain"] = new[] { new NavigationTransitionLeg("Mine", 31, 20, 4, 4, IsDoor: false) },
+            ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+        };
+
+    /// <summary>The same topology entered from the Farm, so the blocked leg is the SECOND one the execution plans.</summary>
+    private static IReadOnlyDictionary<string, IReadOnlyList<NavigationTransitionLeg>> FarmToBackwoodsTopology() =>
+        new Dictionary<string, IReadOnlyList<NavigationTransitionLeg>>(StringComparer.Ordinal)
+        {
+            ["Farm"] = new[] { FarmToBackwoods },
+            ["Backwoods"] = new[] { MountainEastExit, BackwoodsBusStop },
+            ["BusStop"] = new[] { new NavigationTransitionLeg("Town", 11, 8, 60, 60, IsDoor: false) },
+            ["Town"] = new[] { new NavigationTransitionLeg("Mountain", 79, -1, 30, 31, IsDoor: false) },
+            ["Mountain"] = new[] { new NavigationTransitionLeg("Mine", 31, 20, 4, 4, IsDoor: false) },
+            ["Mine"] = Array.Empty<NavigationTransitionLeg>(),
+        };
+
     /// <summary>
     /// The hold these fixtures publish for a body the game has not described further, in <see cref="WorldModel"/>'s own
     /// words rather than a second copy of them.
     /// </summary>
-    private static readonly string NotActionableHold = WorldModel.DescribeHeldBody(default, canMove: false).Evidence;
+    private static readonly string NotActionableHold = WorldModel.DescribeHeldBody(default, canMove: false, hold: BodyHoldFact.Free).Evidence;
 
     private static NavigationWorldView View(bool live, bool actionable, string source, bool at, IReadOnlyList<NavigationTransitionLeg> legs)
         => new(live, actionable ? null : NotActionableHold, source, 0, 0, at, legs, BoundaryExcludesDestination: false, DestinationTemporarilyUnavailable: false, TransitionAmbiguousOrUnknown: false, UncorrelatedTransition: false);
@@ -1120,13 +1239,46 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
         private readonly NavigationWorldView normal;
         private NavigationWorldView? destination;
         internal MutableWorldSource(NavigationWorldView normal) => this.normal = normal;
+        internal string? CurrentSourceLocation => (this.destination ?? this.normal).CurrentSourceLocation;
         internal void MoveToDestination() => this.destination = View(true, true, "Mine", at: true, Array.Empty<NavigationTransitionLeg>());
-        internal void ObserveLocation(string location, bool atDestination) =>
-            this.destination = View(true, true, location, atDestination, Array.Empty<NavigationTransitionLeg>());
+        internal void ObserveLocation(string location, bool atDestination, IReadOnlyList<NavigationTransitionLeg>? legs = null) =>
+            this.destination = View(true, true, location, atDestination, legs ?? Array.Empty<NavigationTransitionLeg>());
         public NavigationWorldView CurrentView(NavigationDestinationBinding binding) => this.destination ?? this.normal;
     }
+    /// <summary>Connectivity source that serves one declared topology, keyed on the source the world most recently read.</summary>
+    private sealed class FixedTopologyConnectivitySource : INavigationConnectivitySource
+    {
+        private readonly MutableWorldSource world;
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<NavigationTransitionLeg>> sources;
 
-    /// <summary>Connectivity source that derives a topology from the MutableWorldSource's current view.</summary>
+        internal FixedTopologyConnectivitySource(
+            MutableWorldSource world,
+            IReadOnlyDictionary<string, IReadOnlyList<NavigationTransitionLeg>> sources)
+        {
+            this.world = world;
+            this.sources = sources;
+        }
+
+        public bool TryCreateCurrentOrdinaryWarpTopology(
+            NavigationDestinationBinding acceptedBinding,
+            out NavigationOrdinaryWarpTopology? topology,
+            out string reasonCode)
+        {
+            string? current = this.world.CurrentSourceLocation;
+            if (current is null || !this.sources.ContainsKey(current))
+            {
+                topology = null;
+                reasonCode = "source_not_in_topology";
+                return false;
+            }
+            topology = new NavigationOrdinaryWarpTopology(
+                current,
+                this.sources.Select(kvp => new NavigationOrdinaryWarpLegs(kvp.Key, kvp.Value)).ToArray());
+            reasonCode = "accepted";
+            return true;
+        }
+    }
+
     private sealed class MutableConnectivitySource : INavigationConnectivitySource
     {
         private readonly MutableWorldSource world;
@@ -1173,7 +1325,8 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
             bool withRuntime = true,
             Func<Vector2, bool>? evaluateCandidate = null,
             NavigationReferenceStore? customRefStore = null,
-            DerivedDestinationSet? customSet = null)
+            DerivedDestinationSet? customSet = null,
+            IReadOnlyDictionary<string, IReadOnlyList<NavigationTransitionLeg>>? topologySources = null)
         {
             this.Manager = new ExecutionManager(new DummyMonitor(), Surface());
             this.Source = new MutableWorldSource(initial);
@@ -1182,7 +1335,9 @@ harness.Manager.UsesRealApproachNative.Should().BeFalse();
             var set = customSet ?? new DerivedDestinationSet("generation_01", new NavigationSourceNode("root", null, null, null, Array.Empty<NavigationSourceNode>()), destinations);
             if (withRuntime)
             {
-                var connectivity = new MutableConnectivitySource(this.Source, initial.CurrentSourceLocation ?? "Farm");
+                INavigationConnectivitySource connectivity = topologySources is null
+                    ? new MutableConnectivitySource(this.Source, initial.CurrentSourceLocation ?? "Farm")
+                    : new FixedTopologyConnectivitySource(this.Source, topologySources);
                 this.Manager.SetNavigationRuntimeFactory(() => new NavigationRuntimeSnapshot(references, "runtime_01", Scope, () => set, this.Source, connectivity));
             }
             this.Manager.SetNavigationApproachNative(new NavigationApproachNative(

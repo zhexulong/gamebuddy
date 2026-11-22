@@ -298,8 +298,16 @@ test("the runner records, per turn, whether that turn submitted a sleep", () => 
   );
   assert.match(
     RUNNER_SOURCE,
-    /const sleepPromises = sleepPromisesNotTaken\(\{ turns: sessionTurns \}\);/u,
+    /const sleepPromises = sleepPromisesNotTaken\(\{\s*turns: attributeTurnSpeech\(sessionTurns, presentationPieces\),/u,
     "the reading is taken from the turn stream, with its population printed",
+  );
+  // AND THE TURN STREAM IT IS HANDED CARRIES THE LINES THE PRESENTATION PORT COMMITTED FOR THAT TURN, not a slice taken
+  // when the turn's await returned: `round87b` recorded `spokenLines: []` for a day whose window held nineteen bubbles, so
+  // a promise made that day was invisible to this reading (`./turn-speech.mjs`).
+  assert.match(
+    RUNNER_SOURCE,
+    /sessionTurns: attributeTurnSpeech\(sessionTurns, presentationPieces\),/u,
+    "the bundle publishes the attributed turns, so the lines are checkable in the artifact",
   );
   assert.match(
     RUNNER_SOURCE,

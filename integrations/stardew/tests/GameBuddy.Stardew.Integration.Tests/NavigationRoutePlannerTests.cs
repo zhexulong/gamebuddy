@@ -1,6 +1,7 @@
 using FluentAssertions;
 using GameBuddy.Stardew.Navigation;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace GameBuddy.Stardew.Integration.Tests;
 
@@ -8,6 +9,52 @@ public sealed class NavigationRoutePlannerTests
 {
     private static readonly NavigationDestinationBinding Mine =
         new("stardew", "Mine", "generation_01", 1);
+
+    private readonly ITestOutputHelper output;
+
+    public NavigationRoutePlannerTests(ITestOutputHelper output) => this.output = output;
+
+    /// <summary>
+    /// ① MEASUREMENT, `round89`: how many routes does one plan consider before it settles, and which one does it take?
+    ///
+    /// <para>
+    /// The answer the live run gave: ONE. `Backwoods` published two ways to the Mountain - its east edge, and
+    /// `BusStop -> Town -> Mountain` - the east edge's entry cell holds a Bush (`entry_blocked_by:large:Bush@49,10`),
+    /// and the action settled `navigation_approach_unavailable` with `never_retry=true` without the second route ever
+    /// being asked for. So "it did not try" and "it tried and all failed" were the same receipt, and this test is the
+    /// reading that tells them apart: the planner's first answer, then its answer once that edge is refused.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Plan_BlockedEdge_AnswersTheOtherPublishedRoute()
+    {
+        NavigationTransitionLeg eastExit = Leg("Mountain", 50, 10, 30, 31);
+        NavigationTransitionLeg busStop = Leg("BusStop", 50, 30, 11, 8);
+        NavigationOrdinaryWarpTopology topology = Topology("Backwoods",
+            Source("Backwoods", eastExit, busStop),
+            Source("BusStop", Leg("Town", 11, 8, 60, 60)),
+            Source("Town", Leg("Mountain", 79, -1, 30, 31)),
+            Source("Mountain", Leg("Mine", 31, 20, 4, 4)),
+            Source("Mine"));
+        var planner = new NavigationRoutePlanner();
+
+        NavigationRoutePlanResult first = planner.Plan(topology, "Backwoods", Mine);
+        this.output.WriteLine(
+            $"plan 1 of N: routes published from Backwoods=2; planner answered {first.Kind} {first.NextLeg?.TargetLocation}@{first.NextLeg?.SourceX},{first.NextLeg?.SourceY}");
+        first.Kind.Should().Be(NavigationRoutePlanKind.NextEdge);
+        first.NextLeg.Should().Be(eastExit);
+
+        NavigationRoutePlanResult second = planner.Plan(topology, "Backwoods", Mine, leg => leg != eastExit);
+        this.output.WriteLine(
+            $"plan 2 of N: refusing {eastExit.TargetLocation}@{eastExit.SourceX},{eastExit.SourceY}, planner answered {second.Kind} {second.NextLeg?.TargetLocation}@{second.NextLeg?.SourceX},{second.NextLeg?.SourceY}");
+        second.Kind.Should().Be(NavigationRoutePlanKind.NextEdge);
+        second.NextLeg.Should().Be(busStop, "the other published route is the answer once the east edge is refused");
+
+        NavigationRoutePlanResult none = planner.Plan(topology, "Backwoods", Mine, leg => leg != eastExit && leg != busStop);
+        none.Kind.Should().Be(NavigationRoutePlanKind.Terminal);
+        none.ReasonCode.Should().Be("destination_unreachable");
+        none.NextLeg.Should().BeNull();
+    }
 
     [Fact]
     public void Plan_FarmToMineViaMountain_ReturnsFirstFarmToMountainEdgeOnly()

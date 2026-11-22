@@ -250,8 +250,12 @@ test("the action cadence is split into exec, think and idle, stamped honestly", 
   assert.match(SOURCE, /settledAtMs: Date\.now\(\),/);
   // Both channels feed the cadence: a run whose work all went through Body Programs has an empty `actionTrace` and a
   // full `programRows`, and reading only the flat trace is how "measured: 0" was published for 379 executions.
-  assert.match(SOURCE, /actionCadence: summarizeActionCadence\(actionTrace, programRows\),/);
+  assert.match(SOURCE, /actionCadence: publishCadence\(summarizeActionCadence\(actionTrace, programRows\)\),/);
   assert.match(SOURCE, /import \{ summarizeActionCadence \} from "\.\.\/\.\.\/lib\/action-cadence\.mjs";/);
+  // AND `thinkMs` IS ONLY PUBLISHED WHEN A DISPATCH GAP CAN BE THE MODEL DECIDING. On a program-path run the gap holds
+  // the programs, the turns and the harness's waits: `round87b` published `thinkMs.sum 1345.4 s` and it was read as
+  // "22.4 minutes of thinking" beside 468.5 s of acting, so the field now says `not_measured` when it cannot answer.
+  assert.match(SOURCE, /import \{ publishCadence \} from "\.\/action-cadence-reading\.mjs";/);
 });
 
 test("both result paths carry the run window, so the tail is measurable even when the bundle is refused", () => {

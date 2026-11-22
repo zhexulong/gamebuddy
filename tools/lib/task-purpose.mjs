@@ -322,13 +322,38 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       ],
     },
   ),
-  // Ordered, because the two facts are one piece of ground: the seed goes into the soil the harvest emptied.
+  // THE DAY AFTER A HARVEST DAY OWES THE GROUND, NOT THE HARVEST.
+  //
+  // Measured (`round89`, `.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine`, day 2): she bought fifteen
+  // parsnip seeds at the SeedShop, sowed all fifteen into the plot the cauliflowers had left, watered all fifteen - and
+  // the day answered `not_achieved`, because this row read `[harvest_crop, plant_seed]` and nothing was ripe. She had
+  // brought in all three cauliflowers on DAY 1, to pay for copper, so the harvest half had already happened one day early
+  // and the row graded a step the day could not have owed.
+  //
+  // THE WINDOW IS THE DAY, and that is what makes this a criterion fix rather than a run-window fix. `judgeTaskPurpose` is
+  // handed the receipts ONE DAY's dispatches minted (`receiptsSince(factsBefore)` in the runner, for the day's verdict and
+  // for its wake alike), so a harvest that happened yesterday is not a fact this verdict can see - and widening it to the
+  // run would make `decideDayWake`'s `objectiveMet` true at her first watering, because the harvest was already banked.
+  // Ending a day early is a wake defect, and this row is not allowed to buy one. So the harvest leaves the step list and
+  // the purpose says what the day still owed: the ground a crop came off was replanted and watered.
+  //
+  // `plant_seed` STAYS A STEP, and not because the day is graded on the sowing alone: `taskSowsSeed`
+  // (`tools/lib/seed-shortage.mjs`) reads this row to decide whether a planting day is handed its seed supply at all, so a
+  // criterion that dropped the sowing would silently stop handing a `water_and_harvest` day its seeds. `harvest_crop`
+  // stays in `DAILY_TASK_ACTION_HINTS`, where the day's own reach is declared: the harvest is still work such a day does,
+  // it is just not the work that decides it. What that costs is written in the row's own `because`.
   water_and_harvest: criterion(
-    "a crop was brought in and the ground it left was then planted",
-    [step("harvest_crop"), step("plant_seed")],
+    "the ground a crop came off was replanted and watered",
+    [step("plant_seed"), step("water_crop")],
     {
       because:
-        "`plant_seed` fills the soil `harvest_crop` emptied, so a sowing before the harvest is a different piece of ground",
+        "`plant_seed` refills the ground `harvest_crop` emptied and `water_crop` proves the tile it turned wet, so the " +
+        "sowing has to come first - and NOTHING IS BROUGHT IN BY THIS ROW: a day that plants and waters and harvests " +
+        "nothing passes, because the harvest such a day follows already happened in a day of its own. The cost of that, " +
+        "written here so it is not discovered later: with the harvest gone the watering is the only half that can fail a " +
+        "day which does its sowing, so an idle day is caught by the sowing and a dry one by the water. If that ever reads " +
+        "as too weak, the answer is another step the day can actually owe in its own receipts - never the run window, " +
+        "which would end the day at her first watering.",
     },
   ),
   forage_and_trees: criterion(

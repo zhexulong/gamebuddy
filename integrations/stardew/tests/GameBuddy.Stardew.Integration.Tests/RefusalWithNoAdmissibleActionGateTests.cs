@@ -100,15 +100,52 @@ public sealed class RefusalWithNoAdmissibleActionGateTests
     [Fact]
     public void TheShapeRound83WasRefusedInNowNamesItsHolderAndEnds()
     {
-        string now = WorldModel.DescribeHeldBody(default, canMove: false).Evidence;
+        string now = WorldModel.DescribeHeldBody(default, canMove: false, hold: BodyHoldFact.Free).Evidence;
         this.output.WriteLine($"before: {Round83Evidence}");
         this.output.WriteLine($"after:  destination=Farm;actionable=false;{now}");
 
         now.Should().Contain("held_by=stalled_with_no_holder:CanMove");
-        now.Should().Contain("admissible_actions=none");
+        now.Should().Contain($"defect={WorldModel.HoldWithoutOwnerDefect}");
         now.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
         now.Should().NotContain("unknown_holder");
         now.Should().NotContain("observe_again");
+    }
+
+    /// <summary>
+    /// `admissible_actions=none` is a MEASUREMENT - "nothing at all can be done" - and only a DECLARED hold may publish
+    /// it: each declared state names its holder and a step that ends it. The body the authority does not know about
+    /// publishes the defect instead, so the field can never be reached from a hold nobody declared.
+    /// </summary>
+    [Fact]
+    public void TheNoneClaimIsReachableOnlyFromADeclaredHold()
+    {
+        ActorDisposition idle = WorldModel.Classify(Facts());
+        BodyHoldFact[] declared =
+        {
+            new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + NativeBodyPauseMs),
+            new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() - NativeBodyPauseMs),
+            new(BodyHoldState.HeldOpen, BodyHold.HolderForSite("Farmer.animateOnce"), BodyHold.UndeclaredWriterReason, null),
+        };
+
+        this.output.WriteLine($"codes 1 · declared shapes {declared.Length} · examined {declared.Length + 1}");
+        foreach (BodyHoldFact hold in declared)
+        {
+            string evidence = WorldModel.DescribeHeldBody(idle, Facts(), canMove: false, hold).Evidence;
+            this.output.WriteLine($"declared {hold.State} -> {evidence}");
+            evidence.Should().Contain($"held_by={hold.Holder}");
+            evidence.Should().Contain("admissible_actions=none");
+            evidence.Should().NotContain("defect=", "a declared hold is not the absence");
+            WorldModel.NextStepEndsTheHold(FieldOf(evidence, "next_step") ?? string.Empty).Should().BeTrue(
+                $"every declared state has to offer a step that ends it: {evidence}");
+        }
+
+        string undeclared = WorldModel.DescribeHeldBody(idle, Facts(), canMove: false, BodyHoldFact.Free).Evidence;
+        this.output.WriteLine($"undeclared -> {undeclared}");
+        undeclared.Should().Contain($"held_by={WorldModel.StalledHolderPrefix}{WorldModel.UnnamedHolderEngineFact}");
+        undeclared.Should().Contain($"defect={WorldModel.HoldWithoutOwnerDefect}");
+        undeclared.Should().NotContain(
+            "admissible_actions=none",
+            "the absence is named as itself; nothing measured that nothing is admissible");
     }
 
     /// <summary>
@@ -145,14 +182,14 @@ public sealed class RefusalWithNoAdmissibleActionGateTests
         var shapes = new List<(string, string)>();
         foreach (ActorDispositionKind kind in Enum.GetValues<ActorDispositionKind>())
         {
-            foreach ((string shape, ActorWorldFacts facts, int bodyPauseRemainingMs) in FixturesOf(kind))
+            foreach ((string shape, ActorWorldFacts facts, BodyHoldFact hold) in FixturesOf(kind))
             {
                 WorldModel.Classify(facts).Kind.Should().Be(
                     kind,
                     $"the {shape} fixture has to be a {kind} hold, or this gate examines another kind under its name");
                 shapes.Add((
                     WorldModel.HoldReasonCode(kind),
-                    WorldModel.DescribeHeldBody(facts, canMove: false, bodyPauseRemainingMs: bodyPauseRemainingMs).Evidence));
+                    WorldModel.DescribeHeldBody(facts, canMove: false, hold).Evidence));
             }
         }
 
@@ -161,25 +198,31 @@ public sealed class RefusalWithNoAdmissibleActionGateTests
 
     /// <summary>
     /// The facts that produce one kind, and for <see cref="ActorDispositionKind.Idle"/> both shapes of the one flag the
-    /// closed set cannot name: a native countdown still running, and nothing running at all.
+    /// closed set cannot name: a declared body timer, and nothing declared at all.
     /// </summary>
-    private static (string Shape, ActorWorldFacts Facts, int BodyPauseRemainingMs)[] FixturesOf(
-        ActorDispositionKind kind) => kind switch
+    private static (string Shape, ActorWorldFacts Facts, BodyHoldFact Hold)[] FixturesOf(ActorDispositionKind kind) => kind switch
         {
-            ActorDispositionKind.Event => new[] { ("cutscene", Facts(eventUp: true), 0) },
-            ActorDispositionKind.Modal => new[] { ("menu", Facts(menuType: "GameMenu"), 0) },
-            ActorDispositionKind.PassOut => new[] { ("faint", Facts(stamina: PassOutStaminaBelowFloor), 0) },
-            ActorDispositionKind.Transient => new[] { ("warp", Facts(warping: true), 0) },
+            ActorDispositionKind.Event => new[] { ("cutscene", Facts(eventUp: true), BodyHoldFact.Free) },
+            ActorDispositionKind.Modal => new[] { ("menu", Facts(menuType: "GameMenu"), BodyHoldFact.Free) },
+            ActorDispositionKind.PassOut => new[] { ("faint", Facts(stamina: PassOutStaminaBelowFloor), BodyHoldFact.Free) },
+            ActorDispositionKind.Transient => new[] { ("warp", Facts(warping: true), BodyHoldFact.Free) },
             ActorDispositionKind.Idle => new[]
             {
-                ("body_pause", Facts(), NativeBodyPauseMs),
-                ("stalled", Facts(), 0),
+                ("body_pause", Facts(), DeclaredBodyPause()),
+                ("undeclared", Facts(), BodyHoldFact.Free),
             },
             _ => throw new ArgumentOutOfRangeException(
                 nameof(kind),
                 kind,
                 "a kind Classify can return has no facts here, so this gate would examine it under no shape at all"),
         };
+
+    /// <summary>
+    /// The emote's declared timer: the 200 ms window `performPlayerEmote` writes into `Farmer.noMovementPause`
+    /// (Farmer.cs:2505), declared as the holder <see cref="BodyHold"/> records for it.
+    /// </summary>
+    private static BodyHoldFact DeclaredBodyPause() =>
+        new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + NativeBodyPauseMs);
 
     /// <summary>
     /// One <c>key=value</c> field of an evidence sentence, read the way the wire reads it: split on <c>;</c> and then on

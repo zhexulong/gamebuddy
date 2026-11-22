@@ -40,6 +40,7 @@ import { bodyHoldLeakLines, summarizeBodyHoldLeak } from "../lib/body-hold-leak.
 // The two self-record readings: what she said (the turn record against the run's own progress record) and what
 // `actionCadence.thinkMs` can answer. Their refutation lives beside this tool rather than inside it.
 import { selfRecordLines } from "./analysis/self-record.mjs";
+import { readDeliveredBubbles } from "./game/turn-speech.mjs";
 
 const LADDER = ".live-runs/game-ladder";
 
@@ -1627,6 +1628,25 @@ record(
   `${modLogRead.path ?? modLogPath} (mod side) + result.json bridgeDisconnections (host side), whole run`,
 );
 
+// 1b. A BUBBLE THE PLAYER READ IS ONE UTTERANCE, and one delivered bubble reached the player as `b 十五包防风草种子到手，
+// 兜里还剩七百六。…` (`round89`). The producer is the provider's own text part (`game/turn-speech.mjs` says why), so nothing
+// downstream could have repaired it - but the verdict can REFUSE it by name instead of counting it as a line she spoke.
+// The population is `presentation.pieces`, the pieces the presentation port committed, and the rule is the one the
+// assembler applies, so a bundle written before `refusedBubbles` existed is still read by the same authority.
+const deliveredBubbles = Array.isArray(result.presentation?.pieces) ? result.presentation.pieces : null;
+const refusedDelivery = deliveredBubbles === null ? null : readDeliveredBubbles(deliveredBubbles);
+record(
+  "1b delivered bubble text",
+  refusedDelivery === null ? "NOT EXERCISED" : refusedDelivery.refused.length > 0 ? "FAIL" : "PASS",
+  refusedDelivery === null
+    ? "not measured: result.json presentation.pieces is absent, so no delivered bubble can be read"
+    : `examined ${String(refusedDelivery.examined)} delivered bubble(s) · refused ${String(refusedDelivery.refused.length)}` +
+        (refusedDelivery.refused.length === 0
+          ? ""
+          : ` · ${refusedDelivery.refused.map((bubble) => `#${String(bubble.index)} ${bubble.code}`).join(" · ")}`),
+  "result.json presentation.pieces (text + locale), the same rule game/turn-speech.mjs applies to the turn's own record",
+);
+
 // Everything the MODEL saw about the environment lives in the run's own record, not in the bound session: the block
 // is delivered inside an assembled request and never persisted. Reading it from the Mod log answered "not exercised"
 // from an absence that only meant "wrong file" - the same class of mistake this report exists to prevent.
@@ -1833,7 +1853,7 @@ const selfRecord = selfRecordLines({ runDir, result, efficiency: efficiency.repo
 // The verdict read that run as a bridge story, because nothing compared an execution's END with the hold published after
 // it. The population is the Mod's own slot table and its own `ExecutionState`, so a new slot row or a new terminal state
 // joins the reading without an edit here.
-const bodyHold = summarizeBodyHoldLeak({ result, modLogText: modLogRead.text });
+const bodyHold = summarizeBodyHoldLeak({ result, modLogText: modLogRead.text, startedAtMs: runStartedAtMs });
 
 const width = Math.max(...rows.map((row) => row.name.length));
 process.stdout.write(`run   ${runDir}\n`);
@@ -1877,7 +1897,11 @@ else if (
   readings.failed() ||
   standstill.gate === "failed" ||
   selfRecord.gate === "disagree" ||
-  bodyHold.gate === "blocked"
+  bodyHold.gate === "blocked" ||
+  // A delivered bubble whose own text is a fragment is a measured delivery defect: the player read model debris in front
+  // of her words, and the row above names the bubble. It fails the verdict only when it was measured - an absent
+  // `presentation.pieces` is `NOT EXERCISED` and stays a refused reading below.
+  (refusedDelivery !== null && refusedDelivery.refused.length > 0)
 )
   process.exitCode = 1;
 // A residual NOBODY MEASURED is a refused reading, in the same code a blocked ending already uses: the partition prints

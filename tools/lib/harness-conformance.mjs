@@ -1383,8 +1383,8 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason:
       "prints `ceiling sites examined 103 · from a declaration 103 · from a name list 0`, so its reading is lines and not " +
       "a `{gate, checks[]}` report; its falsifier suite is tools/check-deadline-ceiling-declaration.test.mjs, run by " +
-      '`test:deadline-ceiling-declaration`, which plants the pre-fix `action === "navigate_to_destination" || action === ' +
-      '"sleep"` name list and asserts the finding it produces',
+      "`test:deadline-ceiling-declaration`, which plants the pre-fix `action === \"navigate_to_destination\" || action === " +
+      "\"sleep\"` name list and asserts the finding it produces",
   },
   {
     gate: "check-declared-deleted-facts.mjs",

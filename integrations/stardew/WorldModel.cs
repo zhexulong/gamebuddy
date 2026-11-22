@@ -455,8 +455,8 @@ internal static class WorldModel
     /// NOT the sentence a refusal publishes. A refusal owes its reader WHO holds her and what ends it, and this block
     /// cannot say that: MEASURED `round86`, a producer that published this block alone sent `move_to_tile` back
     /// sixteen times on `transient_kind=movement_lock;retry_window_ms=2000` while the game clock stood still. The
-    /// sentence is <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> and it is
-    /// the only door out of this file.
+    /// sentence is <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, BodyHoldFact, bool?)"/>
+    /// and it is the only door out of this file.
     /// </para>
     ///
     /// <paramref name="modalIsQuestion"/> decides dismiss-versus-answer and is supplied by the caller
@@ -505,12 +505,10 @@ internal static class WorldModel
     /// </para>
     ///
     /// <para>
-    /// The holder has two shapes and the facts tell them apart. A native countdown is RUNNING:
-    /// `Farmer.noMovementPause` writes `CanMove = false` at Farmer.cs:7588 and clears it at :7592, and `Classify`
-    /// cannot see it because it declares no hold of its own - so waiting is honest there and the sentence publishes
-    /// what is left of it. Nothing is running: that is a named dead end (<see cref="StalledHolderPrefix"/>), because
-    /// nothing in this Mod ends it, and the step it publishes ends the attempt instead of asking for the reading that
-    /// was just refused.
+    /// THE HOLDER IS NOW A DECLARED STATE, not a guess about the flag. <paramref name="hold"/> is
+    /// <see cref="BodyHold.DescribeBodyHold"/>, whose states are `free` / `held(holder, endsAt)` / `held-open(holder)`;
+    /// the shapes the closed set of facts cannot name - a native body timer still running, and `CanMove` taken by a site
+    /// nobody declared - are answered from it. <see cref="DescribeCanMoveHold"/> publishes what each state earns.
     /// </para>
     ///
     /// <para>
@@ -522,52 +520,94 @@ internal static class WorldModel
     /// The classification of <paramref name="facts"/>, taken rather than recomputed: a caller that has already asked
     /// does not ask twice, and every shape this Mod can mint can be examined without a game.
     /// </param>
-    /// <param name="bodyPauseRemainingMs">
-    /// What is left of <c>Farmer.noMovementPause</c>, read from the live farmer by
-    /// <see cref="DescribeCurrentHeldBody"/>. It is a probe rather than an <see cref="ActorWorldFacts"/> member
-    /// because that record is the closed set of holds the Mod can NAME, and this countdown raises none of them while it
-    /// writes <c>CanMove = false</c>.
+    /// <param name="hold">
+    /// The declared hold, read from the live ledger by <see cref="DescribeCurrentHeldBody"/>. It is taken rather than
+    /// looked up here because a caller examining a shape must be able to STATE the shape it examines, and because
+    /// <see cref="ActorWorldFacts"/> is the closed set of holds the fact FLAGS can name - a body timer declares none of
+    /// them while it writes <c>CanMove = false</c>.
     /// </param>
     internal static (string ReasonCode, string Evidence) DescribeHeldBody(
         in ActorDisposition disposition,
         in ActorWorldFacts facts,
         bool canMove,
-        bool? modalIsQuestion = null,
-        int bodyPauseRemainingMs = 0)
+        BodyHoldFact hold,
+        bool? modalIsQuestion = null)
     {
         // THE CODE FOLLOWS THE HOLD, NOT THE ENUM. A named kind keeps its own code; the `CanMove` tail - a body that is
         // held and cannot act while no named kind explains it - reports as the transient lock it is, which is the code
         // `round86`'s refusals already carried. It is NOT `player_not_actionable`: that is the Idle shrug the naming
-        // wave removed, and the Idle entry of `HoldReasonCode` stays unreachable from a refusal. WHICH of the two
-        // shapes it is, is the evidence's job and not the code's.
+        // wave removed, and the Idle entry of `HoldReasonCode` stays unreachable from a refusal. WHICH of the shapes it
+        // is, is the evidence's job and not the code's.
         string code = HoldReasonCode(
             disposition.Kind != ActorDispositionKind.Idle ? disposition.Kind : ActorDispositionKind.Transient);
-        bool boundedBodyPause = disposition.Kind == ActorDispositionKind.Idle && !canMove && bodyPauseRemainingMs > 0;
-        string holder = disposition.Kind != ActorDispositionKind.Idle
-            ? HoldReasonCode(disposition.Kind)
-            : boundedBodyPause ? BodyPauseHolder : $"{StalledHolderPrefix}{UnnamedHolderEngineFact}";
-        string countermeasure = boundedBodyPause
-            ? $";body_pause_remaining_ms={bodyPauseRemainingMs};admissible_actions=none;next_step={WaitForRetryWindowStep}"
-            : HoldCountermeasure(disposition.Kind);
-        return (code, $"held_by={holder};{DescribeBodyHold(disposition, facts, canMove, modalIsQuestion)}{countermeasure}");
+        string factsBlock = DescribeBodyHold(disposition, facts, canMove, modalIsQuestion);
+        if (disposition.Kind != ActorDispositionKind.Idle)
+            return (code, $"held_by={HoldReasonCode(disposition.Kind)};{factsBlock}{HoldCountermeasure(disposition.Kind)}");
+
+        if (!canMove)
+        {
+            (string holder, string countermeasure) = DescribeCanMoveHold(hold);
+            return (code, $"held_by={holder};{factsBlock}{countermeasure}");
+        }
+
+        // The engine's flag is UP and no hold is declared: she is free, and the sentence says so rather than naming a
+        // holder a caller could wait out.
+        return (code, $"held_by={FreeBodyHolder};{factsBlock}");
     }
 
     /// <summary>
-    /// <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> for a caller that
-    /// holds the facts and nothing live.
+    /// The holder and the countermeasure for the ONE shape the closed set of facts cannot name: <c>CanMove</c> is false
+    /// and <see cref="Classify"/> says Idle.
+    ///
+    /// <para>
+    /// A declared bounded hold publishes what is left of its own window and the wait that window earns. Past that window
+    /// it publishes the OVERRUN and the step that ends the attempt, because waiting again would promise a window that has
+    /// already been and gone. An open-ended hold publishes that it does not know when it ends - the one honest thing it
+    /// can say - and the step that ends the attempt. And a body the authority does not know about publishes
+    /// <c>defect=hold_without_owner</c> and NO <c>admissible_actions=none</c>: that field claims the measurement "nothing
+    /// can be done", which nothing here made, so the absence is named instead of being dressed as an answer.
+    /// </para>
+    /// </summary>
+    private static (string Holder, string Countermeasure) DescribeCanMoveHold(BodyHoldFact hold)
+    {
+        long now = BodyHold.NowMs();
+        string holder = hold.Holder ?? UnnamedHolderEngineFact;
+        (string Holder, string Countermeasure) unheld =
+            ($"{StalledHolderPrefix}{UnnamedHolderEngineFact}", $";defect={HoldWithoutOwnerDefect};next_step={ReportTheStalledBodyStep}");
+        // A switch EXPRESSION with one unguarded arm per state, not a switch statement with a `default`: a
+        // statement's `default` is the only thing standing between the ledger and a state nobody taught this
+        // method about, and C# reports a non-exhaustive statement as `CS0161` wherever it sits rather than at
+        // the member that moved. `Free` here is a body the ledger declared nothing for - the shape named
+        // `hold_without_owner` - and a `Held` with no window cannot be minted by `TryHold`, so it is reported
+        // as the same absence instead of being waited out on a window no hold has.
+        return hold.State switch
+        {
+            BodyHoldState.Held when hold.RemainingMs(now) is long remaining && remaining > 0 =>
+                (holder, $";hold_reason={hold.Reason};body_pause_remaining_ms={remaining};admissible_actions=none;next_step={WaitForRetryWindowStep}"),
+            BodyHoldState.Held when hold.RemainingMs(now) is long overrun =>
+                (holder, $";hold_reason={hold.Reason};overrun_ms={-overrun};admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+            BodyHoldState.HeldOpen =>
+                (holder, $";hold_reason={hold.Reason};ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+            BodyHoldState.Held => unheld,
+            BodyHoldState.Free => unheld,
+        };
+    }
+
+    /// <summary>
+    /// <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, BodyHoldFact, bool?)"/> for a caller that
+    /// holds the facts, the flag and the declared hold, and nothing live.
     /// </summary>
     internal static (string ReasonCode, string Evidence) DescribeHeldBody(
         in ActorWorldFacts facts,
         bool canMove,
-        bool? modalIsQuestion = null,
-        int bodyPauseRemainingMs = 0)
-        => DescribeHeldBody(Classify(facts), facts, canMove, modalIsQuestion, bodyPauseRemainingMs);
+        BodyHoldFact hold,
+        bool? modalIsQuestion = null)
+        => DescribeHeldBody(Classify(facts), facts, canMove, hold, modalIsQuestion);
 
     /// <summary>
-    /// The live held body, with the two probes only a live farmer answers: the mounted modal (a cutscene's own dialogue
-    /// box is reachable no other way, and guessing `is_question` would tell the caller to dismiss a box that is waiting
-    /// for an answer) and the native body countdown
-    /// <see cref="DescribeHeldBody(in ActorDisposition, in ActorWorldFacts, bool, bool?, int)"/> takes.
+    /// The live held body, with the two facts only a live farmer has: the mounted modal (a cutscene's own dialogue box is
+    /// reachable no other way, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an
+    /// answer) and the declared hold <see cref="BodyHold"/> has recorded.
     /// </summary>
     internal static (string ReasonCode, string Evidence) DescribeCurrentHeldBody(Farmer? player)
     {
@@ -576,8 +616,8 @@ internal static class WorldModel
             Classify(facts),
             facts,
             player?.CanMove ?? false,
-            LiveModalQuestion(),
-            player?.noMovementPause ?? 0);
+            BodyHold.DescribeBodyHold(),
+            LiveModalQuestion());
     }
 
     /// <summary>
@@ -594,10 +634,11 @@ internal static class WorldModel
         Game1.activeClickableMenu is DialogueBox dialogue ? dialogue.isQuestion : null;
 
     /// <summary>
-    /// The `<see cref="StalledHolderPrefix"/>` code and the engine field that reported the hold, for the one hold the
-    /// closed set has no member for and no countdown is running: <c>CanMove=false</c> with no event, menu, faint,
-    /// animation or body pause that produced it. A named dead end, because nothing here can end it - the alternative
-    /// (`unknown_holder`, then "observe again") read as a shrug and looped.
+    /// The `<see cref="StalledHolderPrefix"/>` code and the engine field that reported the hold, for a body the authority
+    /// has no declared hold for: a named absence, kept because an absence that is named is honest and an invented holder
+    /// is not. The step beside it (<see cref="ReportTheStalledBodyStep"/>) ends the attempt instead of asking for the
+    /// reading that was just refused - `unknown_holder` plus "observe again" was that shrug, and `round83` looped on it
+    /// for seven minutes of a stopped clock.
     /// </summary>
     internal const string StalledHolderPrefix = "stalled_with_no_holder:";
     internal const string UnnamedHolderEngineFact = "CanMove";
@@ -610,12 +651,20 @@ internal static class WorldModel
     internal const string UnnamedTransientKind = "unnamed";
 
     /// <summary>
-    /// The holder word for the one native countdown that takes the body without declaring a hold:
-    /// <c>Farmer.noMovementPause</c> writes <c>CanMove = false</c> at Farmer.cs:7588 and clears it again at :7592. Its
-    /// three setters are the emote (Farmer.cs:2505), the pool entrance (GameLocation.cs:3819) and the emote selector
-    /// (EmoteSelector.cs:228), which is why an `express_emote` can leave the body flagged with nothing else up.
+    /// The defect word for a body the authority does not know about: <c>CanMove</c> is false and
+    /// <see cref="BodyHold"/> declared no hold at all. It is reachable only from a write the probe could not see - the
+    /// native site that writes the backing field directly (<c>Farmer.cs:4065</c>), a caller the runtime inlined, or a
+    /// flag that was already down before the process observed it - and it is named rather than dressed as a hold: a
+    /// holder invented here would be a fact nothing measured. `RefusalWithNoAdmissibleActionGateTests` holds the other
+    /// half: this shape publishes no <c>admissible_actions=none</c>, because that field claims a measurement.
     /// </summary>
-    internal const string BodyPauseHolder = "body_pause:noMovementPause";
+    internal const string HoldWithoutOwnerDefect = "hold_without_owner";
+
+    /// <summary>
+    /// The holder word for a body with nothing holding it: the engine's own flag is up and the ledger declared no hold.
+    /// It exists so the free state is SPELLED rather than being reported as one of the holds.
+    /// </summary>
+    internal const string FreeBodyHolder = "none";
 
     /// <summary>What CLEARS a body hold, as the closed set of `next_step=` words the evidence publishes.</summary>
     internal const string WaitForRetryWindowStep = "wait_for_retry_window";

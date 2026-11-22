@@ -1439,11 +1439,13 @@ internal sealed partial class ExecutionManager
                 NavigationNextStep.Describe("destination_access_indeterminate", "phase=approved;transition=none;commit=never_armed"));
         }
 
-        Vector2? approachTarget = this.SelectSafeApproachTarget(nextLeg, out StardewBodyController.CardinalRing? approachRing);
-        if (approachTarget is null)
+        NavigationTransitionLeg? approachLeg = this.SelectApproachableLeg(coordinator, nextLeg, out Vector2 approachTile, out string routeEvidence);
+        if (approachLeg is null)
         {
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", NavigationNextStep.Describe("navigation_approach_unavailable", $"phase=approved;approach=unavailable{DescribeApproachRing(approachRing)}{DescribeTransitionEntry(nextLeg)}"));
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "navigation_approach_unavailable", NavigationNextStep.Describe("navigation_approach_unavailable", $"phase=approved;approach=unavailable{routeEvidence};never_retry=true"));
         }
+        nextLeg = approachLeg;
+        Vector2 approachTarget = approachTile;
 
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((deadlineMs - nowMs) * 60d / 1000d));
         string canonicalDestinationIdentity = plan.Resolution.Binding?.CanonicalDestinationIdentity ?? nextLeg.TargetLocation;
@@ -1454,13 +1456,13 @@ internal sealed partial class ExecutionManager
             canonicalDestinationIdentity,
             plan.View.CurrentSourceLocation ?? "unknown",
             nextLeg,
-            approachTarget.Value,
+            approachTarget,
             deadlineMs,
             LocalNavigatePhase.Approaching);
         LocalMoveSpec approach = new(
             executionId,
             requestId,
-            approachTarget.Value,
+            approachTarget,
             AllowAdjacentArrival: true,
             this.revision,
             this.tick + deadlineTicks,
@@ -1477,7 +1479,7 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, reasonCode ?? "approach_unavailable", approachEvidence ?? "phase=approaching;arm=failed", hint: approachHint);
         }
 
-        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", "navigation=accepted;phase=approaching");
+        return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted", $"navigation=accepted;phase=approaching{routeEvidence}");
     }
 
     private static readonly Dictionary<string, int> DirectionMap = new(StringComparer.Ordinal)

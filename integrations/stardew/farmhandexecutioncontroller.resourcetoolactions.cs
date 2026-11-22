@@ -622,13 +622,21 @@ internal sealed partial class ExecutionManager
     /// refusal named the state correctly (`before=HoeDirt`) and called it a failure, so a plan node that asked for a row
     /// a previous node had already tilled spent itself learning that the world agreed with it.
     /// </para>
+    ///
+    /// <para>
+    /// AND IT SAYS WHERE THE TILE IS, in the `location` field every other tile-bearing receipt of this family writes
+    /// (<see cref="ExecuteTillSoil"/>, whose `location` comes from the same <c>NameOrUniqueName</c>). A coordinate alone is
+    /// not a tile: `62,18` exists on the Farm and on the Mountain. MEASURED `round87b`: thirty of these settlements settled
+    /// day 1, and the patch criterion counted none of them - every one named `target=62,18` and no map - so a day that
+    /// tilled thirty tiles reported `tilled 0`.
+    /// </para>
     /// </summary>
     private static TileTargetGate AnswerTilledSoil(GameLocation location, int targetX, int targetY) =>
         location.GetHoeDirtAtTile(new Vector2(targetX, targetY)) is { } dirt
             ? TileTargetGate.Settled(
                 ExecutionState.Succeeded,
                 SoilAlreadyTilled,
-                $"target={targetX},{targetY};before={DescribeSoilFeature(dirt)}",
+                $"location={location.NameOrUniqueName};target={targetX},{targetY};before={DescribeSoilFeature(dirt)}",
                 TileTargetSettledBy.EngineFlag("hoedirt", "present"))
             : TileTargetGate.Resolved(targetX, targetY);
 

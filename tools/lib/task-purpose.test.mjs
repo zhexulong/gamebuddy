@@ -44,7 +44,9 @@ import {
  *            contract does not carry - turns `a_criterion_asks_for_a_fact_the_product_does_not_publish` red, naming the
  *            criterion and the fact; and answering a gap entry `unproven` turns
  *            `a_day_task_whose_criterion_decides_nothing_is_not_reported_either_way` red, naming the day and its
- *            missing fact (tools/lib/task-purpose.test.mjs)
+ *            missing fact; restoring `water_and_harvest` to `[harvest_crop, plant_seed]` turns `round89 day 2` red
+ *            (`not_achieved`), because that day's harvest happened in a day of its own and no receipt set handed to a
+ *            day's verdict can see it (tools/lib/task-purpose.test.mjs)
  */
 
 const ROTATION = [...DAILY_TASK_ROTATION];
@@ -1985,4 +1987,223 @@ test("a_fish_from_the_water: a walk after the catch is not the water she fished"
     "not_achieved",
     "`fish_here` casts where she stands, so the movement has to come first - arriving afterwards is another trip",
   );
+});
+
+/**
+ * `round89`'s day 2, and the two halves a day after a HARVEST day still owes.
+ *
+ * <p>
+ * MEASURED (`round89`, day 2, `water_and_harvest`, read out of the run's own
+ * `.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine/timeline.jsonl`): she bought
+ * fifteen parsnip seeds at the SeedShop (`idx 152`, `requested=15;purchased=15;owned_before=0;owned_after=15;gained=15`,
+ * 1060g -> 760g), a `plan_96_1583c2fe5f0be265` body sowed `n01`..`n15` into the plot the cauliflowers had left (pack
+ * 15 -> 0), and she watered fifteen tiles (`idx 175`..`189`) - and the day answered `not_achieved`, because the criterion
+ * read `[harvest_crop, plant_seed]` and nothing was ripe. She had brought in all three cauliflowers on DAY 1 (`idx 99`
+ * ..`101`, then two `ship_item`), to pay for copper, so the harvest half had already happened one day early and the row
+ * graded a step that day could not have owed.
+ * </p>
+ * <p>
+ * THE WINDOW IS THE DAY, and that is what makes this a criterion fix rather than a run-window fix: `judgeTaskPurpose` is
+ * handed the receipts a day's own dispatches minted (`receiptsSince(factsBefore)` - day 2 is `idx 118`..`214` here, and
+ * holds 0 `harvest_crop`), so a harvest from yesterday is not a fact this verdict can see. Reading it from the run would
+ * make `decideDayWake` (`objectiveMet: purpose.state === "achieved"`) end the day at her first watering, because the
+ * harvest was already banked - a wake defect bought with one criterion.
+ * </p>
+ * <p>
+ * THE 17-FOR-15 APPEARS IN THIS FILE AS A NUMBER, because it is the COMPOSER's count and not the criterion's: `n16` and
+ * `n17` of the same body were answered `seed_not_owned_in_pack` (`item=(O)472;named_slot=6`, `state: rejected`), so the
+ * excess starts at the sixteenth planting node and the pack it overshot held fifteen. The criterion is indifferent to
+ * them by construction - `purposeReceipts` admits only a `succeeded` receipt carrying its own postcondition, so a
+ * rejected node is neither a sowing nor a refusal - and a day whose body overshot the pack is still the day.
+ * </p>
+ * <p>
+ * THE THREE HARVESTS BELOW ARE THE RUN'S OWN, verbatim from `idx 99`..`101`: the same tiles, the same opaque targets, and
+ * a pack census rising `none` -> `0:1` -> `0:2` -> `0:3`. That census is part of `crop_harvested`'s postcondition, and
+ * `quality_counts_before=` EMPTY is the shape that refuses itself (`ROUND38_REFUSED`), so the fixture writes the census
+ * the producer actually writes.
+ * </p>
+ */
+
+const HARVESTED = Object.freeze([
+  [
+    "location=Farm",
+    "target=crop_5481d34df6f60c18",
+    "tile=58,14",
+    "crop=474",
+    "item=(O)190",
+    "native_path_return=true",
+    "native_accepted=true",
+    "regrows=false",
+    "phase_before=5",
+    "phase_after=none",
+    "day_of_phase_before=0",
+    "day_of_phase_after=none",
+    "regrow_advanced=false",
+    "inventory_before=0",
+    "inventory_after=1",
+    "inventory_gained=true",
+    "crop_present_after=false",
+    "harvest_quality=0",
+    "quality_counts_before=none",
+    "quality_counts_after=0:1",
+  ],
+  [
+    "location=Farm",
+    "target=crop_a8695598a1975c1e",
+    "tile=59,12",
+    "crop=474",
+    "item=(O)190",
+    "native_path_return=true",
+    "native_accepted=true",
+    "regrows=false",
+    "phase_before=5",
+    "phase_after=none",
+    "day_of_phase_before=0",
+    "day_of_phase_after=none",
+    "regrow_advanced=false",
+    "inventory_before=1",
+    "inventory_after=2",
+    "inventory_gained=true",
+    "crop_present_after=false",
+    "harvest_quality=0",
+    "quality_counts_before=0:1",
+    "quality_counts_after=0:2",
+  ],
+  [
+    "location=Farm",
+    "target=crop_2a7e1fd59d0206a0",
+    "tile=60,9",
+    "crop=474",
+    "item=(O)190",
+    "native_path_return=true",
+    "native_accepted=true",
+    "regrows=false",
+    "phase_before=5",
+    "phase_after=none",
+    "day_of_phase_before=0",
+    "day_of_phase_after=none",
+    "regrow_advanced=false",
+    "inventory_before=2",
+    "inventory_after=3",
+    "inventory_gained=true",
+    "crop_present_after=false",
+    "harvest_quality=0",
+    "quality_counts_before=0:2",
+    "quality_counts_after=0:3",
+  ],
+].map((fields) => receipt("harvest_crop", { reasonCode: "crop_harvested", evidence: { detail: fields.join(";") } })));
+
+/** The fifteen tiles `plan_96` sowed, in its node order - `n01` first, `n15` last. */
+const ROUND89_SOWN_TILES = Object.freeze([
+  [64, 18],
+  [63, 18],
+  [62, 18],
+  [62, 20],
+  [61, 20],
+  [60, 18],
+  [65, 18],
+  [66, 18],
+  [66, 19],
+  [65, 19],
+  [64, 19],
+  [65, 20],
+  [66, 20],
+  [67, 20],
+  [67, 18],
+]);
+
+/** The same fifteen tiles in the order she watered them, which is neither the sowing's order nor its reverse. */
+const ROUND89_WATERED_TILES = Object.freeze([
+  [66, 18],
+  [65, 18],
+  [64, 18],
+  [63, 18],
+  [62, 18],
+  [60, 18],
+  [61, 20],
+  [62, 20],
+  [64, 19],
+  [65, 19],
+  [66, 19],
+  [67, 18],
+  [67, 20],
+  [66, 20],
+  [65, 20],
+]);
+
+const ROUND89_SOWN = Object.freeze(ROUND89_SOWN_TILES.map(([x, y]) => PLANTED(x, y)));
+const ROUND89_WATERED = Object.freeze(ROUND89_WATERED_TILES.map(([x, y]) => WATERED(x, y)));
+
+/** `plan_96`'s last two planting nodes, verbatim: past the fifteen seeds the pack held, and REJECTED rather than failed. */
+const ROUND89_OVER_THE_PACK = Object.freeze([
+  Object.freeze({
+    actionId: "plant_seed",
+    state: "rejected",
+    reasonCode: "seed_not_owned_in_pack",
+    evidence: { detail: "item=(O)472;named_slot=6" },
+  }),
+  Object.freeze({
+    actionId: "plant_seed",
+    state: "rejected",
+    reasonCode: "seed_not_owned_in_pack",
+    evidence: { detail: "item=(O)472;named_slot=6" },
+  }),
+]);
+
+test("round89 day 2: fifteen parsnips sown and watered are the day, and the harvest was yesterday", () => {
+  const judged = judgeTaskPurpose("water_and_harvest", [
+    ...ROUND89_SOWN,
+    ...ROUND89_OVER_THE_PACK,
+    ...ROUND89_WATERED,
+  ]);
+  assert.equal(
+    judged.state,
+    "achieved",
+    "she bought fifteen seeds, sowed every one into the plot the cauliflowers left and watered every one; a day that " +
+      "brings nothing in because nothing was ripe is not a day that failed",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_achieved");
+  assert.deepEqual(
+    judged.admittedActionIds,
+    ["plant_seed", "water_crop"],
+    "the two halves the day owes are the sowing and the watering; the harvest is not one of them",
+  );
+  assert.deepEqual(
+    judged.refusedReceipts,
+    [],
+    "the two rejected planting nodes are evidence of nothing, so a body that overshot the pack leaves the day readable",
+  );
+});
+
+test("water_and_harvest: the plot sown and left dry is half the day", () => {
+  const judged = judgeTaskPurpose("water_and_harvest", [...ROUND89_SOWN]);
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "the watering is the half the day cannot skip: fifteen seeds in dry soil is not the plot brought back",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+});
+
+test("water_and_harvest: a crop brought in and no ground replanted is not the day", () => {
+  // Day 1's own receipts: three cauliflowers, admitted, and no ground put back into use. The harvest is what emptied the
+  // plot, not a half of this criterion - so a run that only brings in a crop has not replanted anything.
+  const judged = judgeTaskPurpose("water_and_harvest", [...HARVESTED]);
+  assert.deepEqual(
+    judged.admittedActionIds,
+    ["harvest_crop"],
+    "the harvest receipts are real and admitted; the point is that admitting them decides nothing here",
+  );
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "a crop brought in leaves the ground empty, and this day is about the ground being refilled and watered",
+  );
+});
+
+test("water_and_harvest: a day with no watering and no harvest is not the day", () => {
+  // The floor: an idle day's own movements decide nothing, so the row cannot be satisfied by having been present.
+  const judged = judgeTaskPurpose("water_and_harvest", [ROUND88_WALK[0]]);
+  assert.equal(judged.state, "not_achieved");
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
 });

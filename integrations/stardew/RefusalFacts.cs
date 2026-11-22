@@ -96,7 +96,7 @@ internal static class RefusalFacts
         Row(NavigateToDestination, "destination_selector_invalid", "the selector names no destination this generation publishes: a label no row declares, a blank spelling, or a handle that is not a `dr1_` one"),
         Forwarded(NavigateToDestination, "destination_selector_ambiguous", "more than one destination declares the requested spelling, so no single one was bound", "integrations/stardew/navigation/acceptednavigationexecution.cs", "Resolve"),
         Forwarded(NavigateToDestination, "destination_selector_stale", "the ref handle is no longer usable, and the store names which condition refused it: its own five-minute lifetime passed, or the runtime, scope or destination generation it was issued under is not the current one", "integrations/stardew/navigation/acceptednavigationexecution.cs", "MapRefFailure"),
-        Row(NavigateToDestination, "navigation_approach_unavailable", "no standable tile beside the first leg's transition entry exists"),
+        Row(NavigateToDestination, "navigation_approach_unavailable", "no route the published topology holds has a standable tile beside its transition entry, and the evidence names every route it refused"),
         Row(NavigateToDestination, "navigation_multi_hop_arm_failed", "the next leg of the route could not be armed, so the route stops here"),
         Row(NavigateToDestination, "approach_unavailable", "the approach arm to the first leg failed and named no code of its own"),
         Forwarded(NavigateToDestination, "body_owned", "another execution owns the body when the request arrives", "ExecutionAdmission.cs", "Describe"),

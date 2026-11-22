@@ -763,14 +763,6 @@ const DECISION_SITES = [
       "the refusal names the station precondition (`active_object_held;station=cookout_kit`) as its own code instead of the hold vocabulary's",
   },
   {
-    file: "integrations/stardew/farmhandexecutioncontroller.modalactions.cs",
-    verdict: "second_spelling_owed",
-    what: "a failed actor/location binding is refused as `player_not_actionable` (line 546) with `actor=...;location=...`, which is an identity guard rather than a hold",
-    owner: "stardew-integration",
-    closesWhen:
-      "the identity guard answers with the execution-scope code it already has (`execution_scope_mismatch`) rather than the hold word",
-  },
-  {
     file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
     verdict: "not_a_decision",
     what: "the two matches (lines 480, 636) are comments describing the `player_menu_open` / `player_event_active` / `player_cannot_move` guards this code replaced; nothing decides anything",

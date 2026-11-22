@@ -63,6 +63,9 @@ public sealed class TransientRefusalNamesItsHolderTests
     /// <summary>200 ms, the value `express_emote` writes into `Farmer.noMovementPause` (Farmer.cs:2505).</summary>
     private const int NativeBodyPauseMs = 200;
 
+    /// <summary>The holder-word family of the three declared native body timers (<see cref="BodyHold"/>).</summary>
+    private const string BodyPauseHolderPrefix = "body_pause:";
+
     /// <summary>
     /// The transient kinds `Classify` mints, in its own words: every branch that returns a
     /// <see cref="ActorDispositionKind.Transient"/> names its cause as the fourth constructor argument.
@@ -127,35 +130,37 @@ public sealed class TransientRefusalNamesItsHolderTests
     }
 
     /// <summary>
-    /// The shape the rule must NOT flatten: `Farmer.noMovementPause` is a countdown that really is running, so waiting is
-    /// honest and what is left of it travels with the sentence.
+    /// The shape the rule must NOT flatten: a DECLARED timer with time still on it, so waiting is honest and what is left
+    /// travels with the sentence. `Farmer.noMovementPause` is the engine's countdown; `body_pause:<site>` is the holder
+    /// the probe declared when that site wrote it.
     /// </summary>
     [Fact]
-    public void TheNativeCountdownShapeStaysGreen()
+    public void TheDeclaredTimerShapeStaysGreen()
     {
         (string code, string evidence) = WorldModel.DescribeHeldBody(
-            ActorDisposition.Idle, default, canMove: false, bodyPauseRemainingMs: NativeBodyPauseMs);
+            ActorDisposition.Idle, default, canMove: false, hold: DeclaredBodyPause());
 
         this.output.WriteLine($"{Gate}: body_pause -> {code} :: {evidence}");
 
         code.Should().Be("transient_busy", "round86's code is what callers already handle; the HOLDER was what was missing");
-        evidence.Should().Contain($"held_by={WorldModel.BodyPauseHolder}");
-        evidence.Should().Contain($"body_pause_remaining_ms={NativeBodyPauseMs}");
+        evidence.Should().Contain($"held_by={BodyHold.EmoteHolder}");
+        evidence.Should().Contain("body_pause_remaining_ms=");
         Judge(new[] { (code, evidence) }, NamedTransientKinds()).Should().BeEmpty();
     }
 
     /// <summary>
-    /// And the shape that has nothing running: a named dead end that ends the attempt, and no window at all - a window is
-    /// only honest where a timer will honour it.
+    /// And the shape that names no holder but the absence: a named defect that ends the attempt, and no window at all - a
+    /// window is only honest where a timer will honour it.
     /// </summary>
     [Fact]
-    public void TheDeadEndShapeStaysGreenAndPromisesNoWindow()
+    public void TheUndeclaredShapeStaysGreenAndPromisesNoWindow()
     {
-        (string code, string evidence) = WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false);
+        (string code, string evidence) = WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false, hold: BodyHoldFact.Free);
 
         this.output.WriteLine($"{Gate}: stalled -> {code} :: {evidence}");
 
         evidence.Should().Contain($"held_by={WorldModel.StalledHolderPrefix}{WorldModel.UnnamedHolderEngineFact}");
+        evidence.Should().Contain($"defect={WorldModel.HoldWithoutOwnerDefect}");
         evidence.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
         evidence.Should().NotContain("retry_window_ms", "nothing is running, so nothing will honour a window");
         evidence.Should().NotContain("movement_lock");
@@ -171,14 +176,21 @@ public sealed class TransientRefusalNamesItsHolderTests
     {
         var shapes = new List<(string, string)>();
         foreach (string kind in kinds)
-            shapes.Add(WorldModel.DescribeHeldBody(new ActorDisposition(ActorDispositionKind.Transient, null, false, kind), default, canMove: false));
+            shapes.Add(WorldModel.DescribeHeldBody(new ActorDisposition(ActorDispositionKind.Transient, null, false, kind), default, canMove: false, hold: BodyHoldFact.Free));
 
         // The tail: `Classify` says Idle and the engine says the body cannot move. `ProjectAdmissionDisposition` calls that
-        // a transient, which is why both of its shapes belong to this population.
-        shapes.Add(WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false));
-        shapes.Add(WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false, bodyPauseRemainingMs: NativeBodyPauseMs));
+        // a transient, which is why both of its shapes belong to this population: a declared timer, and no declaration.
+        shapes.Add(WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false, hold: BodyHoldFact.Free));
+        shapes.Add(WorldModel.DescribeHeldBody(ActorDisposition.Idle, default, canMove: false, hold: DeclaredBodyPause()));
         return shapes;
     }
+
+    /// <summary>
+    /// The emote's declared timer: the holder `performPlayerEmote` writes (Farmer.cs:2505), with the 200 ms window its own
+    /// site declares. Stated here rather than read from the live ledger, so the gate examines a shape it can name.
+    /// </summary>
+    private static BodyHoldFact DeclaredBodyPause() =>
+        new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + NativeBodyPauseMs);
 
     /// <summary>
     /// One transient refusal's sentence, judged: it names a holder, in the vocabulary the Mod can actually report, and a
@@ -200,13 +212,18 @@ public sealed class TransientRefusalNamesItsHolderTests
                 findings.Add($"{code}: transient_kind={kind} is a bucket, and no branch of Classify mints it: {evidence}");
             if (string.IsNullOrEmpty(heldBy))
                 findings.Add($"{code}: no `held_by=`, so the sentence names no holder: {evidence}");
-            else if (heldBy == WorldModel.BodyPauseHolder)
+            else if (heldBy.StartsWith(BodyPauseHolderPrefix, StringComparison.Ordinal))
             {
                 if (FieldOf(evidence, "body_pause_remaining_ms") is null or "0")
                     findings.Add($"{code}: held_by={heldBy} publishes no remainder, so its window is a guess: {evidence}");
             }
             else if (heldBy != stalled && kind is null)
                 findings.Add($"{code}: held_by={heldBy} names a code rather than a holder, and no transient_kind says which: {evidence}");
+
+            if (heldBy == stalled && FieldOf(evidence, "defect") is null)
+                findings.Add($"{code}: held_by={heldBy} names an absence without naming the defect: {evidence}");
+            if (heldBy != stalled && FieldOf(evidence, "defect") is not null)
+                findings.Add($"{code}: held_by={heldBy} is a declared hold and the sentence calls it a defect: {evidence}");
 
             if (step is null || !WorldModel.NextStepEndsTheHold(step))
                 findings.Add($"{code}: next_step={step ?? "<none>"} is not a step that ends the hold: {evidence}");

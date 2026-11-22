@@ -207,7 +207,7 @@ public sealed class NavigationExecutionCoordinatorTests
     /// The hold these fixtures publish for a body the game has not described further, in <see cref="WorldModel"/>'s own
     /// words rather than a second copy of them.
     /// </summary>
-    private static readonly string NotActionableHold = WorldModel.DescribeHeldBody(default, canMove: false).Evidence;
+    private static readonly string NotActionableHold = WorldModel.DescribeHeldBody(default, canMove: false, hold: BodyHoldFact.Free).Evidence;
 
     private static NavigationWorldView View(
         bool live,

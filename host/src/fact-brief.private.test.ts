@@ -334,6 +334,59 @@ test("the stale note states how old the reading is, and states no order beside i
   assertReportsWithoutInstructing(note, "the world-state stale note");
 });
 
+test("the scene holding the body says whether its content was published at all", () => {
+  // MEASURED (a live run, day 1 12:30): the vanilla Community Center event fired (`event_up=true`,
+  // `Warping to CommunityCenter`), `express_emote` was refused `cutscene_active`, and the block she read said only
+  // `身体: 忙 · 持有: event`. Nothing named the scene, so she invented its content - "about Lewis dragging me to that
+  // broken center, and I heard him say he'd sell it to JOJA" - and `companion_interaction_gate` refused that line as
+  // `unobserved_event`. A hold word that names no content is an invitation to write it.
+  const held = { ...world, actionable: false, actorDispositionKind: "event" } as Snapshot;
+  const reading = { snapshot: held, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 };
+
+  // NOTHING PUBLISHED: the block says so, in the words the guard below reads. `未发布` is about the delivery, not about
+  // the world - the alternative is the model filling the silence with a scene the Mod never read.
+  const silent = composeFactBrief({ inputs: [], snapshot: reading, events: [], locale: "zh-CN" });
+  const note = /^过场: [^\n]*$/mu.exec(silent)?.[0] ?? "";
+  assert.match(note, /^过场: 内容未发布/u, `the scene is named, and its content as unpublished: ${silent}`);
+  assertReportsWithoutInstructing(note, "the scene-content note");
+
+  // PUBLISHED: the same fixture with the box's own words carries them, and the block does not deny them. The words are
+  // the Mod's (`modal_presented.text` is `DialogueBox.getCurrentString()` at the mount; `npc_dialogue_presented.pages`
+  // is the transcript), so the state block must not restate them - it only stops claiming they are missing.
+  const spoken = composeFactBrief({
+    inputs: [],
+    snapshot: reading,
+    events: [
+      fact({
+        kind: "world_fact",
+        eventId: "dialogue_lewis",
+        semanticKind: "npc_dialogue_presented",
+        payload: { speaker: "Lewis", pages: ["这里曾经是这个镇子的骄傲。"], choices: [] },
+      }),
+    ],
+    locale: "zh-CN",
+  });
+  assert.ok(spoken.includes("这里曾经是这个镇子的骄傲。"), `the published line reaches her: ${spoken}`);
+  assert.equal(
+    spoken.includes("内容未发布"),
+    false,
+    `a delivery that published the words must not also say they are unpublished: ${spoken}`,
+  );
+
+  // AND A FREE BODY SAYS NOTHING ABOUT A SCENE: the note is the hold's, not every block's.
+  const free = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
+  assert.equal(free.includes("内容未发布"), false, `no hold, no scene note: ${free}`);
+
+  // AND A BLOCK THAT IS NOT A DELIVERY MAKES NO CLAIM: `stardew_observe`'s answer is composed from a snapshot alone, so
+  // it has no delivery to speak about and must not deny the words the turn's own message quoted.
+  const observed = composeWorldState({ snapshot: held, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
+  assert.equal(
+    observed.includes("内容未发布"),
+    false,
+    `a snapshot-only block claims nothing about what was published: ${observed}`,
+  );
+});
+
 test("the world block names the objects she acts on, with their tiles", () => {
   const text = composeWorldState({ snapshot: world, revision: 1205, ageTurns: 0, ageMs: 0, contentAgeMs: 0 });
   assert.match(text, /手持: 锄头/u, "the held tool is said in words");

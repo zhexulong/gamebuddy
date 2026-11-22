@@ -173,6 +173,8 @@ import { writeInputManifest } from "../core/input-manifest.mjs";
 import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 import { openRunProgress } from "../core/run-progress.mjs";
+import { attributeTurnSpeech, bubbleFragment } from "./turn-speech.mjs";
+import { publishCadence } from "./action-cadence-reading.mjs";
 // memory_covenant: the covenant FACT is planted through the
 // real management surface under the product continuity, then the Game runtime on
 // the SAME root/continuity must render it into m[0] — the Agent reads the rule
@@ -1396,6 +1398,9 @@ const dialogueReplies = new Map();
 // A claimed entry carries `state: "delivered"` with the moment, the refusal it was spoken against and what the admission
 // path answered (`accepted`, or `refused:<code>`).
 const dialogueDelivery = new Map();
+// How many delivery boundaries the run held on each of its own days. `unattemptedFinding` prints the gate's own day
+// beside it, so "the day was reached" and "the day offered a window" stop reading the same in `result.json`.
+const gateBoundariesByDay = new Map();
 // EVERY player line the harness submitted, in order, with the clock it was submitted at and what the admission path
 // answered. It exists because the day-note reading is judged against what ARRIVED, and "the Host accepted it" and "she
 // was told" came apart in round49: one player message reached the session and it was not the day's note. `channel`
@@ -2106,15 +2111,28 @@ function dialogueGateContext(gate) {
  * that knows which hour it is. Until it was passed, `turn-initiative-split` (`atGameTime: "1200"`) was due from the first
  * tick of day 1 and fired at 06:20 (round49).
  */
-async function deliverDialogueGatesForDay(day, tools) {
+async function deliverDialogueGatesForDay(day, tools, dayScope = null) {
+  // HOW MANY BOUNDARIES THIS RUN'S DAY HELD, counted where the boundaries are taken. A miss on a day that held one
+  // boundary is a different defect from a miss on a day that held twelve, and `unattemptedFinding` prints the number
+  // because `round89` left a reader with a code (`gate_day_passed:1:at_day_3`) and no way to tell which had happened.
+  gateBoundariesByDay.set(day, (gateBoundariesByDay.get(day) ?? 0) + 1);
   // A refusal is the obstacle gate's only ground truth, and the boundary is where that gate is decided on: re-read it
   // here so the age judged is the age now, not the age at the last in-turn sample.
   sampleRefusalEvidence();
   const boundaryClock = readWorldClock();
   const gameTime = boundaryClock.unknown === true ? null : boundaryClock.timeOfDay;
+  // WHETHER THE HOUR BELOW STILL BELONGS TO THIS RUN DAY. A day whose only turn dispatched `sleep` settles after the
+  // night, so this boundary's clock is the NEXT morning: compared on the minute alone, a gate declared for 12:00 on the
+  // day that just ended read "not yet due" (`round89`). `null` is a world nobody read, which is not "not over".
+  const worldDayNow = client.state?.snapshot?.dayOfMonth ?? null;
+  const dayIsOver =
+    Number.isInteger(dayScope?.dayOfMonth) && Number.isInteger(worldDayNow)
+      ? worldDayNow !== dayScope.dayOfMonth
+      : null;
   const plans = planGateDeliveries(SCHEDULED_DIALOGUE_GATES, {
     day,
     gameTime,
+    dayIsOver,
     lastRefusalAtMs: refusalSample.atMs,
     refusalReadError: refusalSample.readError,
     receiptMarkers: refusalSample.markers,
@@ -2124,7 +2142,12 @@ async function deliverDialogueGatesForDay(day, tools) {
   for (const plan of plans) {
     const gate = plan.gate;
     if (plan.deliver !== true) {
-      if (plan.reason !== "already_delivered")
+      // A DECISION ON THE GATE'S OWN DAY IS THE ONE THAT CLOSED ITS WINDOW, and a later day must not overwrite it:
+      // `round89` kept only `gate_day_passed:1:at_day_3` from the day-3 boundary while the day-1 boundary's own reason -
+      // the fact that explains the miss - was gone from the artifact.
+      const previous = dialogueDelivery.get(gate.id);
+      const decidedOnTheGatesOwnDay = previous !== undefined && previous.day === gate.trigger.day;
+      if (plan.reason !== "already_delivered" && !decidedOnTheGatesOwnDay)
         dialogueDelivery.set(
           gate.id,
           Object.freeze({ state: "not_delivered", day, atMs: Date.now(), reason: plan.reason }),
@@ -2193,11 +2216,31 @@ async function deliverDialogueGatesForDay(day, tools) {
     // applied per bubble now instead of to the sum.
     const spoken = presentationPieces
       .slice(piecesBefore)
-      .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")))
-      .map((text) => text.replace(/\s+/gu, " ").trim())
-      .filter((text) => text.length > 0);
-    dialogueDelivery.set(gate.id, Object.freeze({ ...claimed, admission: "accepted" }));
-    dialogueReplies.set(gate.id, spoken);
+      .map((piece) => {
+        const text = typeof piece === "string" ? piece : (piece?.text ?? "");
+        return Object.freeze({
+          text,
+          code: bubbleFragment(text, typeof piece === "string" ? null : (piece?.locale ?? null)),
+        });
+      })
+      .filter((bubble) => bubble.text.trim().length > 0);
+    // A BUBBLE THAT CARRIES A FRAGMENT IS NOT AN ANSWER TO THE PLAYER, and the gate must not read it as one: the same
+    // rule the turn's own record applies (`./turn-speech.mjs`) refuses it here, and the refusal travels with the delivery
+    // so `result.json` says which bubble was withheld instead of the gate judging `b 十五包…` as her reply (`round89`).
+    const refusedBubbles = spoken
+      .filter((bubble) => bubble.code !== null)
+      .map((bubble) => bubble.code);
+    dialogueDelivery.set(
+      gate.id,
+      Object.freeze({ ...claimed, admission: "accepted", ...(refusedBubbles.length > 0 ? { refusedBubbles } : {}) }),
+    );
+    dialogueReplies.set(
+      gate.id,
+      spoken
+        .filter((bubble) => bubble.code === null)
+        .map((bubble) => bubble.text.replace(/\s+/gu, " ").trim())
+        .filter((text) => text.length > 0),
+    );
   }
 }
 
@@ -4525,11 +4568,10 @@ try {
               trace: actionTrace,
               submissions: programSubmissions,
             });
-            // What THIS turn said, sliced by index so a line cannot be attributed to another turn.
-            const spokenThisTurn = presentationPieces
-              .slice(spokenBefore)
-              .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
-              .filter((text) => text.length > 0);
+            // What THIS turn said is read from the pieces THAT TURN COMMITTED, closed at the next turn's start
+            // (`./turn-speech.mjs`): the window's start is recorded here and the lines are attributed once the turns are
+            // complete, because a slice taken when this await returned was a slice of array position at a moment, and the
+            // speech for the day arrives after the turn settles (`round87b`: nineteen bubbles on day 3, `spokenLines: []`).
             sessionTurns.push(
               Object.freeze({
                 goalIndex: day - 1,
@@ -4537,9 +4579,7 @@ try {
                 turn: walked.turn,
                 day,
                 sleepSubmitted,
-                // The turn's lines, kept APART: joining them was how a turn of fifteen short bubbles became one
-                // 120-code-point "utterance" the gate then failed.
-                spokenLines: Object.freeze(spokenThisTurn),
+                spokenFromIndex: spokenBefore,
               }),
             );
             // A turn that never settled will not settle differently for the next one; the reason is already recorded.
@@ -4569,7 +4609,7 @@ try {
             // not arrived, a gate whose admission was refused, and a gate whose scheduler threw. Measured 2026-11-04: a
             // seventeen-minute run crossed a night and its session contained ZERO of the four prompts, with nothing anywhere
             // saying which of the three it was.
-            void deliverDialogueGatesForDay(day, tools).catch((error) => {
+            void deliverDialogueGatesForDay(day, tools, dayScope).catch((error) => {
               dialogueDelivery.set(
                 "schedule",
                 Object.freeze({
@@ -4759,7 +4799,12 @@ try {
     // menu she never reached. The promise is the cause, and this is the one place that can see it: the turn stream,
     // where what she SAID and what she DISPATCHED sit in the same record. It is passed to the assessment rather than
     // judged beside it, so the run's account cannot publish the consequence without the cause it measured.
-    const sleepPromises = sleepPromisesNotTaken({ turns: sessionTurns });
+    // THE TURN STREAM'S LINES, closed at the next turn's start (`./turn-speech.mjs`). The promise reading asks what she
+    // SAID and what she DISPATCHED in the same record, and a line she spoke after the turn's await returned is still
+    // that turn's: `round87b` had 24 bubbles on day 3 and an empty `spokenLines`, so a promise made that day was invisible.
+    const sleepPromises = sleepPromisesNotTaken({
+      turns: attributeTurnSpeech(sessionTurns, presentationPieces),
+    });
     console.error(
       "MULTIDAY_SLEEP_PROMISES",
       JSON.stringify({
@@ -4880,12 +4925,7 @@ try {
           trace: actionTrace,
           submissions: programSubmissions,
         }),
-        spokenLines: Object.freeze(
-          presentationPieces
-            .slice(firstSpokenBefore)
-            .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
-            .filter((text) => text.length > 0),
-        ),
+        spokenFromIndex: firstSpokenBefore,
       }),
     );
     // A self-directed scenario keeps playing: each extra goal is delivered as a NEW player turn
@@ -4906,12 +4946,7 @@ try {
               trace: actionTrace,
               submissions: programSubmissions,
             }),
-            spokenLines: Object.freeze(
-              presentationPieces
-                .slice(spokenBefore)
-                .map((piece) => (typeof piece === "string" ? piece : (piece?.text ?? "")).trim())
-                .filter((text) => text.length > 0),
-            ),
+            spokenFromIndex: spokenBefore,
           }),
         );
       }
@@ -5149,10 +5184,23 @@ try {
   // ground truth IT needs (`dialogueGateContext`): yesterday's night record for the gate that speaks on the morning
   // after, and the refusal the run had in hand when the obstacle gate spoke. A fact the run could not observe makes
   // that gate `not_judgeable` with the missing fact named - never a pass, and never a charge against her.
+  // THE LAST DAY THE RUN REACHED, from the day records themselves rather than from a loop variable the assessment cannot
+  // see: the gate findings print it beside the gate's own day, so "day 1 missed on day 3" is a readable sentence.
+  const lastDayReached = dayStarts.length === 0 ? null : dayStarts.at(-1).day;
   const dialogueGates = assessDialogueGates({
     replies: Object.fromEntries(dialogueReplies),
     context: dialogueGateContext,
+    // WHAT HAPPENED AT EACH BOUNDARY, so an unasked gate is one of two absences and not one blur. `round87b` reported
+    // three gates `not_exercised` beside `gate_day_not_reached:1/2:at_day_3`: the days had been reached, the window had
+    // closed unoffered, and nothing in the artifact could say which of the two had happened.
+    deliveries: Object.fromEntries(dialogueDelivery),
+    // THE TWO NUMBERS THAT ANSWER "WAS IT EVER OFFERED": the last day the run reached, and how many boundaries it held
+    // on each of its own days. `round89` left three missed gates on a day-3 run whose day 1 held ONE boundary - the same
+    // number for every gate, and the one that makes the miss the harness's rhythm rather than a day the run never saw.
+    runDay: lastDayReached,
+    boundariesByDay: Object.fromEntries(gateBoundariesByDay),
   });
+  console.error("DIALOGUE_GATES", dialogueGates.reading);
   // Whether the run reads as a companion or as a screensaver, from the same artifacts this result describes: the fact
   // log in memory (the timeline is written from it) and the one session record bound to THIS run's surface session. The
   // gate is published beside the mechanical verdict rather than folded into it - a run whose actions are all green and
@@ -5539,7 +5587,10 @@ try {
     // that armed a different world (a scenario-resolution bug did exactly that) is
     // otherwise invisible in the artifact.
     configuredFixtureScenario,
-    sessionTurns,
+    // The turns with their speech attributed (`./turn-speech.mjs`), from the same pieces the promise reading above takes:
+    // each line is read over a closed window `spokenFromIndex`..`spokenToIndex`, so the bundle and the reading cannot
+    // name two different things she said.
+    sessionTurns: attributeTurnSpeech(sessionTurns, presentationPieces),
     // How the SESSION ended, separately from how the actions went: `completed`,
     // `turn_timeout`, `turn_unsettled` or `no_turns`, with the per-turn errors. A
     // reader must be able to tell a finished play session from one the harness cut
@@ -6188,8 +6239,10 @@ async function buildRunResult({
     executionTrace,
     // The run's own cadence, split into the three spans that a single "gap" number conflated: the game doing the
     // work, the agent deciding, and the dispatch-to-dispatch total. Published for EVERY scenario, because "the
-    // companion feels laggy" is a question about all of them.
-    actionCadence: summarizeActionCadence(actionTrace, programRows),
+    // companion feels laggy" is a question about all of them. `thinkMs` is published only when a dispatch gap can be
+    // the model deciding (`./action-cadence-reading.mjs`): on a program-path run the gap holds the programs, the turns
+    // and the harness's waits, and `round87b` read 1345.4 s of it as "thinking" beside 468.5 s of acting.
+    actionCadence: publishCadence(summarizeActionCadence(actionTrace, programRows)),
     // What the run tried and what it achieved, read from its own dispatch trace. A crashed run reads the same
     // trace, so "it did nothing" and "the artifact forgot" can never be the same answer.
     attemptedActionIds: dispatched.attempted,

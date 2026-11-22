@@ -24,6 +24,7 @@ internal sealed class AcceptedNavigationExecution
 {
     private readonly NavigationRuntimeSnapshot runtime;
     private readonly NavigationDestinationResolution? acceptedResolution;
+    private readonly HashSet<NavigationTransitionLeg> blockedLegs = new();
     private long observationSequence;
 
     /// <summary>
@@ -75,6 +76,18 @@ internal sealed class AcceptedNavigationExecution
 
     internal bool HasAcceptedDestination => this.acceptedResolution?.Binding is not null
         && this.acceptedResolution.FailureReason is null;
+
+    /// <summary>
+    /// Records a leg whose approach the body cannot take, so the next plan looks for another PUBLISHED route.
+    ///
+    /// <para>
+    /// The leg is not removed from the world, and the topology is not edited: this is a fact about this execution's
+    /// attempts, so it lives with the execution and dies with it. Bounded by the topology's own edge count - every
+    /// call removes one leg from what <see cref="PlanNextRouteLeg"/> may cross, so the caller's retry loop can only
+    /// run as many times as there are legs to refuse.
+    /// </para>
+    /// </summary>
+    internal void ExcludeBlockedLeg(NavigationTransitionLeg leg) => this.blockedLegs.Add(leg);
 
     /// <summary>
     /// Re-resolves the passed selector and decides the next exclusive outcome on
@@ -132,7 +145,7 @@ internal sealed class AcceptedNavigationExecution
                 $"destination={resolution.DisplayLabel ?? "destination"};topology={reason}"));
 
         NavigationRoutePlanResult route = new NavigationRoutePlanner().Plan(
-            topology!, view.CurrentSourceLocation!, binding);
+            topology!, view.CurrentSourceLocation!, binding, leg => !this.blockedLegs.Contains(leg));
         NavigationOutcome outcome = route.Kind switch
         {
             NavigationRoutePlanKind.Arrived => new NavigationOutcome(

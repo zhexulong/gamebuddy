@@ -116,6 +116,23 @@ export function readRunProgressFile({ dir, file = RUN_PROGRESS_FILE } = {}) {
   }
   const withTurn = entries.filter((entry) => Number.isInteger(entry?.turn));
   const openers = entries.filter((entry) => entry?.event === "run_opened").map((entry) => entry?.pid ?? null);
+  // HOW MANY PIECES EACH TURN'S WINDOW HELD, in the order the record wrote them: a `presented` line belongs to the window
+  // of the last `turn_started` before it. This is the witness the runner's `sessionTurns[].spokenLines` is a reading OF,
+  // and until it was read here nothing compared the two: `round87b` recorded `spokenLines: []` for a day-3 turn whose own
+  // window held nineteen bubbles, and both numbers sat in the run directory saying different things.
+  const presentedByTurn = [];
+  let presented = 0;
+  let presentedBeforeFirstTurn = 0;
+  for (const entry of entries) {
+    if (entry?.event === "turn_started") {
+      presentedByTurn.push({ turn: entry?.turn ?? null, presented: 0 });
+      continue;
+    }
+    if (entry?.event !== "presented") continue;
+    presented += 1;
+    if (presentedByTurn.length === 0) presentedBeforeFirstTurn += 1;
+    else presentedByTurn[presentedByTurn.length - 1].presented += 1;
+  }
   return {
     path: path.split(sep).join("/"),
     lines: entries.length + unparsable,
@@ -126,6 +143,11 @@ export function readRunProgressFile({ dir, file = RUN_PROGRESS_FILE } = {}) {
     openedBy: openers,
     last: entries.length === 0 ? null : entries[entries.length - 1],
     lastTurn: withTurn.length === 0 ? null : withTurn[withTurn.length - 1].turn,
+    // The pieces the run itself saw land, and which turn's window each fell in. `presentedBeforeFirstTurn` is the
+    // launch window, which belongs to no turn of this record and is counted apart rather than folded into the first one.
+    presented,
+    presentedByTurn: Object.freeze(presentedByTurn.map((window) => Object.freeze(window))),
+    presentedBeforeFirstTurn,
   };
 }
 

@@ -11,7 +11,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { openRunProgress, RUN_PROGRESS_FILE, readNewestRunProgress } from "./run-progress.mjs";
+import { openRunProgress, RUN_PROGRESS_FILE, readNewestRunProgress, readRunProgressFile } from "./run-progress.mjs";
 
 function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), "run-progress-"));
@@ -120,6 +120,42 @@ test("the newest run's record is chosen by when it was written, not by its name"
   const reading = readNewestRunProgress({ root });
   assert.equal(reading.last.turn, 9, "the entry read is the one from the run that just happened");
   assert.equal(reading.lines, 2);
+});
+
+test("each presented piece is counted in the window of the turn that was open when it landed", (t) => {
+  // The reading `round87b` needed: its day-3 turn recorded no lines while nineteen bubbles landed after that turn's own
+  // `turn_started`. The record is the witness - one line per commit, in order - so the count has to come from it.
+  const area = tempDir();
+  t.after(() => area.remove());
+  const progress = openRunProgress({ dir: area.dir });
+  progress.record({ event: "presented", index: 0 });
+  progress.record({ event: "turn_started", turn: 0, reason: "day_start" });
+  progress.record({ event: "presented", index: 1 });
+  progress.record({ event: "presented", index: 2 });
+  progress.record({ event: "turn_started", turn: 1, reason: "day_start" });
+  progress.record({ event: "presented", index: 3 });
+  progress.close();
+
+  const record = readRunProgressFile({ dir: area.dir });
+  assert.equal(record.presented, 4, "every committed piece is on the record");
+  assert.equal(record.presentedBeforeFirstTurn, 1, "the launch bubble belongs to no turn of this record, and says so");
+  assert.deepEqual(
+    record.presentedByTurn.map((window) => [window.turn, window.presented]),
+    [
+      [0, 2],
+      [1, 1],
+    ],
+    "a piece falls in the window of the last turn_started before it",
+  );
+
+  // A record with no turns at all still counts its pieces: "no turn" is not "nothing was presented".
+  const empty = openRunProgress({ dir: join(area.dir, "no-turns") });
+  empty.record({ event: "presented", index: 0 });
+  empty.close();
+  const noTurns = readRunProgressFile({ dir: join(area.dir, "no-turns") });
+  assert.equal(noTurns.presented, 1);
+  assert.deepEqual(noTurns.presentedByTurn, []);
+  assert.equal(noTurns.presentedBeforeFirstTurn, 1);
 });
 
 test("a root with no record answers null, never an empty record", (t) => {

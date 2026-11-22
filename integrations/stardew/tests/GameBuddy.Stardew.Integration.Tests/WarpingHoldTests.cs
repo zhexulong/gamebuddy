@@ -169,7 +169,7 @@ public sealed class WarpingHoldTests
             // The refusal says WAIT, not retry: the same `transient_busy` vocabulary the animation fact publishes, with
             // the window the engine's own fade actually takes.
             (string reasonCode, string evidence) =
-                WorldModel.DescribeHeldBody(held, WorldModel.ReadFacts(actor), canMove: false);
+                WorldModel.DescribeHeldBody(held, WorldModel.ReadFacts(actor), canMove: false, hold: BodyHoldFact.Free);
             reasonCode.Should().Be("transient_busy");
             evidence.Should().Contain("transient_kind=warping");
             evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");

@@ -23,6 +23,8 @@ import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { createGameClock } from "./game-clock.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+import { attributeTurnSpeech } from "./turn-speech.mjs";
+import { publishCadence } from "./action-cadence-reading.mjs";
 
 // The support the runner's own assertions read: the sources they compare against, the extractors that evaluate a
 // declaration on its own, and the fixtures a scenario needs. Declarations only - nothing here asserts anything, so the
@@ -488,6 +490,12 @@ export const instrumentGlobals = Object.freeze({
     return clock;
   })(),
   factLog: [],
+  // THE TWO READINGS THE RUNNER PUBLISHES FROM ITS OWN RECORDS, as the real modules: which lines a turn spoke
+  // (`./turn-speech.mjs`, closed at the next turn's start) and whether `thinkMs` can answer the thinking question
+  // (`./action-cadence-reading.mjs`). A double here would let a fixture publish a `spokenLines` or a `thinkMs` the
+  // runner could never produce, which is exactly the shape this pair was written to stop.
+  attributeTurnSpeech,
+  publishCadence,
 });
 
 /** The globals `buildRunResult` reads besides the ones a test supplies, kept in one place for the reason tests below. */

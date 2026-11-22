@@ -30,6 +30,19 @@
     <None Include="$(GamePath)\smapi-internal\*.dll" CopyToOutputDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
+  <!--
+    Harmony is what the Mod itself patches through, and `tools/live-run`'s gates for it can only be honest if they can
+    install the same patch: `BodyHoldProbeTests` patches the engine's own `Farmer.CanMove` setter in this process and
+    checks that a fourth site is named. SMAPI ships `0Harmony.dll` beside the game, so the reference is that copy - the
+    same assembly the Mod's `EnableHarmony` wires at runtime, not a second version of it.
+  -->
+  <ItemGroup Condition="Exists('$(GamePath)\smapi-internal\0Harmony.dll')">
+    <Reference Include="0Harmony">
+      <HintPath>$(GamePath)\smapi-internal\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\GameBuddy.Stardew.csproj" />
     <ProjectReference Include="..\..\src\Core\GameBuddy.Stardew.Core.csproj" />

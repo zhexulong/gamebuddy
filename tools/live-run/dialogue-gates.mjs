@@ -520,6 +520,7 @@ export function obstacleGateIsDue(gate, { lastRefusalAtMs }, nowMs) {
  * `atGameTime` is a LOWER BOUND rather than an equality because the runner cannot pre-empt a turn at exactly the minute:
  * "not before its hour" is the interval it can honour. A clock nobody read cannot be compared, and an uncompared clock
  * is reported as unmeasured instead of being rounded into "due".
+ * `dayIsOver` is the third axis, and the one whose absence made the second one lie: see the branch below.
  */
 export function planGateDeliveries(
   gates,
@@ -527,6 +528,8 @@ export function planGateDeliveries(
     day,
     // The world clock at this delivery boundary, in the Mod's `HHMM`. `null` is a clock that could not be read.
     gameTime = null,
+    // Whether the WORLD has already rolled past the run day this boundary is attributed to. `null` is a world nobody read.
+    dayIsOver = null,
     lastRefusalAtMs = null,
     refusalReadError = null,
     receiptMarkers = null,
@@ -554,9 +557,26 @@ export function planGateDeliveries(
       if (receiptMarkers === 0) return { gate, deliver: false, reason: "refusal_evidence_absent_from_mod_log" };
       return { gate, deliver: false, reason: "no_refusal_recorded_in_this_run" };
     }
-    if (gate.trigger.day !== day)
+    // TWO FACTS ON ONE AXIS, and they are not the same finding. A day still AHEAD is a fact about the run's length - a
+    // day-5 gate cannot be exercised by a three-day run, and saying so is the honest answer. A day BEHIND was reached,
+    // offered a window, and never given the line: that is the harness's, and it must not be spelled as a precondition
+    // that never happened. Measured 2026-11-21 (`round87b`): a day-1 gate, a three-day run, and the artifact read
+    // `gate_day_not_reached:1:at_day_3` - the day had been reached twice over.
+    if (gate.trigger.day > day)
       return { gate, deliver: false, reason: `gate_day_not_reached:${String(gate.trigger.day)}:at_day_${String(day)}` };
+    if (gate.trigger.day < day)
+      return { gate, deliver: false, reason: `gate_day_passed:${String(gate.trigger.day)}:at_day_${String(day)}` };
     const declared = gameClockMinutes(gate.trigger.atGameTime);
+    // THE HOUR IS ONLY MEANINGFUL ON THE DAY IT BELONGS TO. A boundary runs when a turn settles, and a day whose only
+    // turn dispatched `sleep` settles after the night: its clock is then the NEXT morning, and comparing that minute to a
+    // gate declared for the day just ended calls a window that is behind `not yet due` (measured 2026-11-21, `round89`: a
+    // day-1 gate at 12:00 read `at_0620`). The window is behind, not ahead, so it is neither delivered nor called ahead.
+    if (dayIsOver === true && declared !== null)
+      return {
+        gate,
+        deliver: false,
+        reason: `gate_day_over_before_its_hour:${String(gate.trigger.atGameTime)}:at_day_${String(day)}`,
+      };
     if (declared !== null) {
       const now = gameClockMinutes(gameTime);
       if (now === null)
@@ -573,15 +593,102 @@ export function planGateDeliveries(
 }
 
 /**
+ * A scheduled gate nobody answered, and WHICH KIND of absence it is.
+ *
+ * <p>
+ * `not_exercised` used to stand for every unasked gate alike, and the two cases it folded are answered by different
+ * owners. A gate whose day is still ahead measured nothing because the run was too short - a fact about a three-day run
+ * and not about her. A gate whose day came and went was never offered while it was due: the delivery boundary ran before
+ * its declared hour and the next one ran on a later day (`round87b`: three of four gates, on a run that reached day 3),
+ * and the recorded reason said `gate_day_not_reached` about the day it had passed. That second absence is the harness's,
+ * so it carries its own state, `missed`, and the day and hour it needed travel with both.
+ * </p>
+ * <p>
+ * The DAY is on every unattempted finding because "which day does this gate need" was answerable only from the module's
+ * source until now, and the ROTATION's reach is the whole question: one delivery boundary per day cannot offer a gate
+ * declared at 12:00 when that boundary falls at 06:20, and a run that prints only `not_exercised` looks like a gate
+ * nobody wrote.
+ * </p>
+ * <p>
+ * THE THREE NUMBERS, and one of them was missing every time this was argued: `window.gateDay` (the day the gate names),
+ * `window.runDay` (the last day the run reached) and `window.turnsHeldOnThatDay` (how many delivery boundaries the run
+ * held on the gate's OWN day - the population that could have offered it). A miss with one boundary is a different
+ * defect from a miss with twelve, and neither is readable from a code alone. `cause` says WHICH of the two absences it
+ * is, because a status change is not an answer: `comparison:...` when the day comparison rejected a window on its own
+ * day (a gate cannot have passed on the day it names - `round88`), and `undelivered:...` when the window existed and
+ * closed without the line. The measured run (`round89`, two days past a day-1 gate) is the second, and the shape it
+ * reported - `gate_day_passed:1:at_day_3` - was the day-3 boundary overwriting the day-1 decision.
+ * </p>
+ */
+function unattemptedFinding(gate, delivery, { runDay = null, boundariesByDay = null } = {}) {
+  const day = Number.isInteger(gate.trigger?.day) ? gate.trigger.day : null;
+  const atGameTime = gate.trigger?.atGameTime ?? null;
+  const reason = typeof delivery?.reason === "string" ? delivery.reason : "no_delivery_boundary_reached";
+  const decidedOnDay = Number.isInteger(delivery?.day) ? delivery.day : null;
+  const turnsHeldOnThatDay =
+    day === null || boundariesByDay === null ? null : Number.isInteger(boundariesByDay[day]) ? boundariesByDay[day] : 0;
+  // The day it asked for is behind the clock the plan was taken at, or the day's own boundary came before the declared
+  // hour and closed: either way the window existed and closed without the line being offered.
+  const missed =
+    reason.startsWith("gate_day_passed:") ||
+    reason.startsWith("gate_day_over_before_its_hour:") ||
+    (reason.startsWith("gate_not_yet_due:") && day !== null && decidedOnDay === day);
+  return {
+    id: gate.id,
+    day,
+    atGameTime,
+    state: missed ? "missed" : "not_exercised",
+    reason,
+    window: { gateDay: day, runDay, turnsHeldOnThatDay },
+    cause: absenceCause({ reason, gateDay: day, decidedOnDay, turnsHeldOnThatDay }),
+  };
+}
+
+/**
+ * WHY a window the run held was not offered, in the two answers that own different fixes.
+ *
+ * <p>
+ * `comparison:...` means the schedule's own day comparison rejected the window it was given. The only proof of that is a
+ * `gate_day_passed` recorded FOR THE GATE'S OWN DAY: a gate cannot have passed on the day it names, so the comparison,
+ * not the run, is what decided. `undelivered:...` means the window existed and closed without the line, and the suffix
+ * names the fact that closed it - no boundary on that day, the only boundary before the declared hour, a boundary whose
+ * clock could not be read, the world already past the day, an admission that refused the line, or a decision this
+ * artifact no longer holds because a later day overwrote it.
+ * </p>
+ */
+function absenceCause({ reason, gateDay, decidedOnDay, turnsHeldOnThatDay }) {
+  const code = String(reason ?? "");
+  if (code.startsWith("refused:")) return `undelivered:admission_refused:${code.slice("refused:".length)}`;
+  if (gateDay !== null && decidedOnDay === gateDay) {
+    if (code.startsWith("gate_day_passed:")) return "comparison:the_day_passed_on_its_own_day";
+    if (code.startsWith("gate_day_over_before_its_hour:"))
+      return "undelivered:the_world_was_past_the_gates_day_before_its_hour";
+    if (code.startsWith("gate_not_yet_due:"))
+      return "undelivered:the_only_boundary_came_before_the_declared_hour";
+    if (code.startsWith("gate_clock_not_measured:")) return "undelivered:the_boundary_could_not_read_the_clock";
+  }
+  if (turnsHeldOnThatDay === 0) return "undelivered:the_gates_day_held_no_delivery_boundary";
+  if (turnsHeldOnThatDay === null) return "undelivered:turns_held_on_that_day_not_measured";
+  if (gateDay !== null && decidedOnDay !== null && decidedOnDay !== gateDay)
+    return "undelivered:the_decision_on_its_own_day_was_overwritten_by_a_later_one";
+  return `undelivered:${code}`;
+}
+
+/**
  * Evaluate every gate that has a reply recorded, and report the failures with their codes.
  *
- * A gate with no reply is `not_exercised`, never a pass: the run may simply not have reached that moment, and collapsing
- * "did not happen" into "worked" is how a gate stops meaning anything.
+ * A gate with no reply is never a pass, and it is one of TWO absences: the day may still be ahead of the run (a fact
+ * about a three-day run), or the day may have come and gone without the line being offered (the harness's). Collapsing
+ * "did not happen" into "worked" is how a gate stops meaning anything; collapsing the second absence into the first is
+ * how the harness's miss reads as a run that never reached the day. `unattemptedFinding` keeps them apart.
  *
  * `context` is the ground truth the gates judge against. It may be one object shared by every gate, or a function of
  * the gate - which is how a run answers a question about "yesterday" without the module having to know which gate asks
  * it: the caller reads the gate's own trigger and supplies the record for the day that trigger names. That keeps the
  * schedule in one place instead of a second list of gate ids in the runner.
+ *
+ * `deliveries` is the runner's own record of what happened at each delivery boundary, keyed by gate id. It is what turns
+ * an unattempted gate from a bare absence into a finding: see `unattemptedFinding`.
  *
  * The returned `vocabulary` is `assessObstacleVocabulary`'s reading of every token the run handed the gates that read an
  * obstacle - `handed in H · published P · recognised R · unmapped U` - so a word this module cannot read is published
@@ -590,7 +697,7 @@ export function planGateDeliveries(
  * and the handed-in one is the wiring gap named. A caller with only the refusal it handed a gate still gets the
  * judgement and the `unmapped:` word; it just cannot print the run's own count.
  */
-export function assessDialogueGates({ replies, context, facts = null }) {
+export function assessDialogueGates({ replies, context, facts = null, deliveries = null, runDay = null, boundariesByDay = null }) {
   const contextFor = typeof context === "function" ? context : () => context ?? {};
   const findings = [];
   // The context is read once per gate that has a reply, in schedule order, because it is asked in schedule order: the
@@ -600,7 +707,7 @@ export function assessDialogueGates({ replies, context, facts = null }) {
   for (const gate of SCHEDULED_DIALOGUE_GATES) {
     const reply = replies?.[gate.id];
     if (reply === undefined) {
-      findings.push({ id: gate.id, state: "not_exercised", reason: "no_reply_recorded" });
+      findings.push(unattemptedFinding(gate, deliveries?.[gate.id] ?? null, { runDay, boundariesByDay }));
       continue;
     }
     const gateContext = contextFor(gate) ?? {};
@@ -652,7 +759,25 @@ export function assessDialogueGates({ replies, context, facts = null }) {
     tokens: [...contexts.values()].map((gateContext) => vocabularyToken(gateContext.refusal?.code ?? null)),
     publishedTokens: facts === null || facts === undefined ? null : obstacleTokensFromFacts(facts),
   });
-  return { findings, failed: findings.filter((finding) => finding.state === "failed").length, vocabulary };
+  // THE STATES ARE COUNTED BESIDE EACH OTHER, and the one thing a reader must not have to infer is whether an absence
+  // blocks anything: `dialogueGates` is published beside the session verdict and never folded into it (`blocksSessionVerdict`
+  // says so in the artifact), so a run can reach `completed` with a gate `missed`. That is a reporting gap of the
+  // instrument, not a licence to read the gate as exercised.
+  const countOfState = (state) => findings.filter((finding) => finding.state === state).length;
+  const missed = countOfState("missed");
+  const notExercised = countOfState("not_exercised");
+  return {
+    findings,
+    failed: countOfState("failed"),
+    missed,
+    notExercised,
+    blocksSessionVerdict: false,
+    reading:
+      `gates ${String(findings.length)} · passed ${String(countOfState("passed"))} · failed ${String(countOfState("failed"))} ` +
+      `· not_judgeable ${String(countOfState("not_judgeable"))} · missed ${String(missed)} ` +
+      `· not_exercised ${String(notExercised)}`,
+    vocabulary,
+  };
 }
 
 /**

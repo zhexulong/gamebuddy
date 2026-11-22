@@ -181,6 +181,14 @@ public sealed partial class ModEntry : Mod
         // helping to debug. Its first placement was inside the native-chat ingress block, which is guarded, and the
         // counter then honestly read zero because nothing had been patched.
         EngineLoopProbe.TryInstall(new Harmony(this.ModManifest.UniqueID + ".engine-loop"), this.Monitor);
+        // The body-hold probe: a Harmony postfix on the engine's own `Farmer.CanMove` setter, so a write nobody declared
+        // arrives with a frame on it instead of as an absence. MEASURED `round88`: five minutes of stopped game clock were
+        // reported 29 times as `held_by=stalled_with_no_holder:CanMove`, and nothing in any artifact named the writer.
+        string? bodyHoldFailure = BodyHoldProbe.TryInstall(
+            new Harmony(this.ModManifest.UniqueID + ".body-hold"),
+            line => this.Monitor.Log(line, LogLevel.Warn));
+        if (bodyHoldFailure is not null)
+            this.Monitor.Log($"GameBuddy body-hold probe not installed: {bodyHoldFailure}", LogLevel.Warn);
         this.salientEventHooks = new StardewSalientEventHooks(
             helper.Events,
             this.salientEventFilter,

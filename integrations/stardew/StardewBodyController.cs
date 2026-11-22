@@ -3004,7 +3004,7 @@ internal sealed class StardewBodyController
             ActorDispositionKind.Modal => LocalDispositionKind.Modal,
             ActorDispositionKind.PassOut => LocalDispositionKind.PassOut,
             ActorDispositionKind.Transient => LocalDispositionKind.Transient,
-            _ => LocalDispositionKind.Idle,
+            ActorDispositionKind.Idle => LocalDispositionKind.Idle,
         };
         // Any remaining movement lock (knockback, warp transition, an animation the facts cannot name)
         // stays non-Idle exactly as the pre-convergence !CanMove check decided.

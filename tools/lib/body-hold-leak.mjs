@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { ANIMATION_CLASS } from "./action-pace.mjs";
+import { MAX_SILENT_STRETCH_MS } from "./latency-silence.mjs";
 import { readStardewActionIds } from "./stardew-published-action-registry.mjs";
 
 /**
@@ -31,11 +32,21 @@ import { readStardewActionIds } from "./stardew-published-action-registry.mjs";
  * avoids.
  * </p>
  * <p>
- * WHAT IT CANNOT READ, stated rather than left to be discovered. A `[body-hold]` line carries no timestamp of its own, so
- * it can name a writer but never place one in time; the Travel and ToolApproach slots carry their action id in the spec
- * (`travel.Action`, `approach.ActionId`), so an end of one of those actions is outside this population by construction
- * rather than because it is clean; and nothing publishes slot occupancy, so a stall with no non-Succeeded end before it
- * is `not_measured` instead of attributed to a guess. These are printed with every reading.
+ * WHAT IT CANNOT READ, stated rather than left to be discovered. A `[body-hold]` line is placed in time only by a clock
+ * on it or beside it - the probe writes `game_ms` (the engine's elapsed game time) and `wall_ms` (the receipt stream's
+ * clock) from this build on, an older line only by its `[hh:mm:ss]` log prefix (a local wall clock with no date, read
+ * against the run's `startedAtMs` and good to ±1 s) or by a same-site line in the same log that carries one; a line
+ * with none of those is reported unplaced rather than guessed. The Travel and ToolApproach slots carry their action id in
+ * the spec (`travel.Action`, `approach.ActionId`), so an end of one of those actions is outside this population by
+ * construction rather than because it is clean; and nothing publishes slot occupancy, so a stall with no non-Succeeded
+ * end before it is `not_measured` instead of attributed to a guess. These are printed with every reading.
+ * </p>
+ * <p>
+ * MEASURED `round89` (2026-11-21T20-38-52-354Z): 14 `[body-hold] unattributed` lines named seven frames - the body the
+ * engine took through `performWarpFarmer`, `Crop.harvest`, `FishingRod.tickUpdate` - and not one carried a clock, so the
+ * verdict could name the writer and not place it. The clocks on the line are that run's other half; its own seven
+ * prefixed lines are still placed, through the log's `[hh:mm:ss]` and their untimed console copies, which is what the
+ * placement rows below are.
  * </p>
  */
 
@@ -71,12 +82,29 @@ const USING_TOOL_BOUND_SOURCE =
 /** The two wire words that are a SUCCESS. Every other terminal state is a non-Succeeded end. */
 const SUCCEEDED_STATES = Object.freeze(["succeeded", "partially_succeeded"]);
 
+/**
+ * How far a write may sit from the receipt that places it: the product's own silence ceiling
+ * (`MAX_SILENT_STRETCH_MS`), because a receipt is an observable settlement and no run may go longer than that without
+ * one. Derived rather than restated - a second copy of 10 s is a bound that drifts while both copies look right.
+ */
+export const PROBE_JOIN_WINDOW_MS = MAX_SILENT_STRETCH_MS;
+
+/** The probe's own clocks on the line, as `BodyHold.ClockField` writes them: elapsed game ms, and the receipt clock. */
+const PROBE_GAME_MS = /;game_ms=(\d+|none);/u;
+const PROBE_WALL_MS = /;wall_ms=(\d+);/u;
+/** SMAPI's own line prefix on the Mod log's file source: `[04:39:36 WARN  GameBuddy]`. Local time, no date, no zone. */
+const LOG_STAMP = /^\[(\d{2}):(\d{2}):(\d{2})\s/u;
+
 const STALLED_HOLD = /held_by=stalled_with_no_holder:([A-Za-z0-9_]+)/u;
 // The tool flag as the Mod publishes it when it settles beside the body: `farmhandexecutioncontroller.fishingactions.cs`
 // writes `can_move=…|using_tool=…`, and the one shape that reports it up is the one this limb exists for.
 const USING_TOOL_UP = /(?:using_tool|UsingTool)=(?:true|True)\b/u;
 const HELD_BY = /held_by=/u;
 const PROBE_SITE = /\[body-hold\]\s+unattributed\s+site=([^;\s]+)/u;
+
+const DAY_MS = 86_400_000;
+/** The granule of every real zone offset, and so of the search that recovers one from a local stamp. */
+const OFFSET_STEP_MS = 15 * 60_000;
 
 const fail = (code) => {
   throw new Error(`body_hold_leak_${code}`);
@@ -150,7 +178,7 @@ export function readNonSucceededStates({ path = EXECUTION_STATE_PATH } = {}) {
     fail(
       `execution_states_unreadable:${path}: declared=${declared.length} wire=${wire.size} unsettled=${unsettled.size}`,
     );
-  const nonSucceeded = [...wire.values()].filter((word) => !unsettled.has(word) && !SUCCEEDED_STATES.includes(word));
+  const nonSucceeded = [...wire.values()].filter((word) => !(unsettled.has(word) || SUCCEEDED_STATES.includes(word)));
   return Object.freeze({
     path,
     wireWords: Object.freeze([...wire.values()]),
@@ -165,15 +193,203 @@ const actionOf = (receipt) => String(receipt?.worldFactPayload?.actionId ?? "");
 const atMsOf = (receipt) => (Number.isFinite(receipt?.atMs) ? receipt.atMs : null);
 const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : "an unreported time");
 
-/** The `[body-hold] unattributed` lines a run's Mod log carries, in log order. */
+/** The `[hh:mm:ss]` SMAPI stamps a log line with, as text and as milliseconds since local midnight. */
+function stampOfLine(line) {
+  const stamp = LOG_STAMP.exec(line);
+  return stamp === null
+    ? null
+    : {
+        text: `${stamp[1]}:${stamp[2]}:${stamp[3]}`,
+        ms: Number(stamp[1]) * 3_600_000 + Number(stamp[2]) * 60_000 + Number(stamp[3]) * 1_000,
+      };
+}
+
+/**
+ * The `[body-hold] unattributed` lines a run's Mod log carries, in log order, with whatever clock each line has.
+ *
+ * <p>
+ * A line from this build names the writer AND the two clocks it was written with; a line from before that names the
+ * writer alone and has only the `[hh:mm:ss]` SMAPI gives its file source, which the launcher's console capture does not
+ * stamp at all. `game_ms=none` is read as no clock rather than 0, because outside a game there is no engine clock and 0
+ * would place the write at the engine's first millisecond.
+ * </p>
+ */
 export function readProbeLines(modLogText) {
   if (typeof modLogText !== "string") return null;
   const lines = [];
   for (const line of modLogText.split("\n")) {
     const site = PROBE_SITE.exec(line)?.[1];
-    if (site !== undefined) lines.push(site);
+    if (site === undefined) continue;
+    const gameMs = PROBE_GAME_MS.exec(line)?.[1];
+    const wallMs = PROBE_WALL_MS.exec(line)?.[1];
+    const stamp = stampOfLine(line);
+    lines.push(
+      Object.freeze({
+        site,
+        gameMs: gameMs === undefined || gameMs === "none" ? null : Number(gameMs),
+        wallMs: wallMs === undefined ? null : Number(wallMs),
+        logStamp: stamp === null ? null : stamp.text,
+        logStampMs: stamp === null ? null : stamp.ms,
+      }),
+    );
   }
   return Object.freeze(lines);
+}
+
+/**
+ * The log's own first clock: the `[hh:mm:ss]` prefix of its first stamped line, which for this Mod log is SMAPI's
+ * session banner. That second is the session's first, and it is what the zone offset below is recovered from.
+ */
+export function readLogSessionStart(modLogText) {
+  if (typeof modLogText !== "string") return null;
+  for (const line of modLogText.split("\n")) {
+    const stamp = stampOfLine(line);
+    if (stamp === null) continue;
+    return Object.freeze({ logStamp: stamp.text, logStampMs: stamp.ms });
+  }
+  return null;
+}
+
+/**
+ * The log's `[hh:mm:ss]` prefix is local time with no date and no zone, so it can only be read against the run's own
+ * start: the prefix on the log's first stamped line is the session's first second, and the whole-hour-plus-quarter
+ * offset that puts it nearest `startedAtMs` is the one the machine was on. Quarter-hours because that is the granule
+ * every real zone offset has, and the residual is printed beside the reading - a first stamp further than half a step
+ * from the run's start is not this run's start, and no placement is derived from it.
+ */
+function logClockAnchor({ sessionStartStamp, startedAtMs }) {
+  if (!Number.isFinite(startedAtMs) || sessionStartStamp === null) return null;
+  let best = null;
+  for (let offsetMs = -12 * 3_600_000; offsetMs <= 14 * 3_600_000; offsetMs += OFFSET_STEP_MS) {
+    const localDayStart = Math.floor((startedAtMs + offsetMs) / DAY_MS) * DAY_MS;
+    const epoch = localDayStart + sessionStartStamp.logStampMs - offsetMs;
+    const residualMs = Math.abs(epoch - startedAtMs);
+    if (best === null || residualMs < best.residualMs) best = { offsetMs, localDayStart, epoch, residualMs };
+  }
+  if (best.residualMs >= OFFSET_STEP_MS / 2) return null;
+  const sign = best.offsetMs < 0 ? "-" : "+";
+  const hours = String(Math.floor(Math.abs(best.offsetMs) / 3_600_000)).padStart(2, "0");
+  const minutes = String(Math.floor((Math.abs(best.offsetMs) % 3_600_000) / 60_000)).padStart(2, "0");
+  return Object.freeze({
+    ...best,
+    text:
+      `log prefixes read as ${sign}${hours}:${minutes} against this run's startedAtMs ${iso(startedAtMs)}` +
+      ` - the log's first stamp ${sessionStartStamp.logStamp} sits ${String(best.residualMs)} ms from it`,
+  });
+}
+
+/** The instant a line's own `[hh:mm:ss]` names, on the anchor's day - plus one when the session crossed local midnight. */
+function stampInstant(anchor, line) {
+  const epoch = anchor.localDayStart + line.logStampMs - anchor.offsetMs;
+  return epoch < anchor.epoch - 12 * 3_600_000 ? epoch + DAY_MS : epoch;
+}
+
+/** A distance between a write and the receipt beside it: milliseconds while they are close, seconds once they are not. */
+const signed = (ms) =>
+  `${ms < 0 ? "-" : "+"}${Math.abs(ms) < PROBE_JOIN_WINDOW_MS ? `${String(Math.abs(ms))} ms` : `${(Math.abs(ms) / 1_000).toFixed(1)} s`}`;
+
+/**
+ * Where each `[body-hold]` line sits in time, and the receipt nearest that instant.
+ *
+ * <p>
+ * Three clocks, in the order the artifacts earn them. `wall_ms` is the receipt stream's own clock, so the join is exact.
+ * An older line has only its `[hh:mm:ss]` prefix, read through the anchor above and printed with its ±1 s resolution. A
+ * line with neither - the launcher's console capture stamps nothing - is placed by its own site's timed copy, which is
+ * one write and not two because the Mod logs a site once per session while the log holds that session's sources.
+ * </p>
+ * <p>
+ * A write further from every receipt than the product's own silence budget lands in a window the bridge did not speak
+ * in; that is printed as the fact it is (`no receipt within 10 s`) rather than stretched into a placement.
+ * </p>
+ */
+export function placeProbeLines({ lines = [], receipts = [], startedAtMs = null, sessionStartStamp = null } = {}) {
+  const anchor = logClockAnchor({ sessionStartStamp, startedAtMs });
+  const stampedByTheLog = lines.some((line) => line.logStampMs !== null);
+  const times = receipts
+    .filter((receipt) => Number.isFinite(receipt?.atMs))
+    .map((receipt) => ({ atMs: receipt.atMs, reasonCode: String(receipt.reasonCode ?? "unknown_reason") }));
+
+  const nearestOf = (atMs) => {
+    let best = null;
+    for (const receipt of times)
+      if (best === null || Math.abs(receipt.atMs - atMs) < Math.abs(best.atMs - atMs)) best = receipt;
+    return best;
+  };
+  const joinText = (atMs) => {
+    const nearest = nearestOf(atMs);
+    if (nearest === null) return { text: "no receipt in this run to join", within: false };
+    // The sign is read from the receipt to the write: `+1250 ms` is a write 1250 ms AFTER the receipt it is placed
+    // beside, `-189 ms` one just before it.
+    const delta = atMs - nearest.atMs;
+    return Math.abs(delta) <= PROBE_JOIN_WINDOW_MS
+      ? { text: `nearest receipt ${nearest.reasonCode} ${signed(delta)}`, within: true }
+      : {
+          text: `no receipt within ${String(PROBE_JOIN_WINDOW_MS / 1_000)} s (nearest ${nearest.reasonCode} ${signed(delta)})`,
+          within: false,
+        };
+  };
+  /** The clock the line itself carries, or null when it carries none. */
+  const ownClock = (line) => {
+    if (Number.isFinite(line.wallMs))
+      return {
+        atMs: line.wallMs,
+        clock: line.gameMs === null ? `no engine clock, wall ${iso(line.wallMs)}` : `game_ms=${String(line.gameMs)}`,
+      };
+    if (line.logStampMs !== null && anchor !== null)
+      return { atMs: stampInstant(anchor, line), clock: `${line.logStamp} (log prefix, ±1 s)` };
+    return null;
+  };
+
+  const owned = lines.map(ownClock);
+  const placements = lines.map((line, index) => {
+    const own = owned[index];
+    if (own !== null) {
+      const joined = joinText(own.atMs);
+      return Object.freeze({
+        site: line.site,
+        ...own,
+        join: joined.text,
+        withinWindow: joined.within,
+        untimedCopy: false,
+      });
+    }
+    const twinIndex = owned.findIndex((candidate, other) => candidate !== null && lines[other].site === line.site);
+    if (twinIndex >= 0) {
+      const twin = lines[twinIndex];
+      const twinStamp = twin.logStamp ?? `wall ${iso(twin.wallMs)}`;
+      const joined = joinText(owned[twinIndex].atMs);
+      return Object.freeze({
+        site: line.site,
+        atMs: owned[twinIndex].atMs,
+        clock: `no clock on the line (untimed copy: its same-site copy at ${twinStamp} places the write)`,
+        join: joined.text,
+        withinWindow: joined.within,
+        untimedCopy: true,
+      });
+    }
+    return Object.freeze({
+      site: line.site,
+      atMs: null,
+      clock: "no clock on the line",
+      join: "no receipt within any window - the line carries nothing to place it",
+      withinWindow: false,
+      untimedCopy: false,
+    });
+  });
+
+  return Object.freeze({
+    placements: Object.freeze(placements),
+    // The anchor is a fact about HOW a prefix was read, so it is printed only when a prefix was actually read: a run whose
+    // lines all carry `wall_ms` needs no zone, and one with no prefix at all has nothing to anchor.
+    anchor: stampedByTheLog ? anchor : null,
+    clockedByTheLog: stampedByTheLog && anchor === null,
+    placed: placements.filter((placement) => placement.withinWindow).length,
+    // A write whose nearest receipt is further than the window is placed in TIME and not in a WINDOW: both are printed,
+    // and neither is the same fact as a line that carries no clock at all.
+    outsideWindow: placements.filter((placement) => placement.atMs !== null && !placement.withinWindow).length,
+    untimedCopies: placements.filter((placement) => placement.untimedCopy).length,
+    unplaced: placements.filter((placement) => placement.atMs === null).length,
+  });
 }
 
 /**
@@ -195,7 +411,7 @@ function endedExecutions({ receipts, slotActions, nonSucceeded, unsettled }) {
     const atMs = atMsOf(receipt);
     if (state === "") continue;
     if (!nonSucceeded.includes(state)) {
-      if (!unsettled.includes(state) && !SUCCEEDED_STATES.includes(state)) unknownStates.add(state);
+      if (!(unsettled.includes(state) || SUCCEEDED_STATES.includes(state))) unknownStates.add(state);
       continue;
     }
     const actionId = actionOf(receipt);
@@ -240,6 +456,7 @@ function usingToolReadings(receipts) {
 export function summarizeBodyHoldLeak({
   result,
   modLogText = null,
+  startedAtMs = null,
   slotsPath = SLOTS_PATH,
   statePath = EXECUTION_STATE_PATH,
 } = {}) {
@@ -259,8 +476,22 @@ export function summarizeBodyHoldLeak({
   const facts = Array.isArray(result?.bridgeFacts) ? result.bridgeFacts : null;
   const receipts = facts === null ? null : facts.filter((fact) => fact?.type === "execution_receipt");
   const probeLines = readProbeLines(modLogText);
+  const placing = placeProbeLines({
+    lines: probeLines ?? [],
+    receipts: receipts ?? [],
+    startedAtMs,
+    sessionStartStamp: readLogSessionStart(modLogText),
+  });
   const limits = Object.freeze([
-    `a [body-hold] line carries no timestamp, so a writer can be named there but never placed in time (this run: ${probeLines === null ? "no mod-log.txt at all" : `${String(probeLines.length)} line(s)`})`,
+    `a [body-hold] line is placed only by a clock on it or beside it - game_ms+wall_ms on a line from this build, a [hh:mm:ss] prefix read against this run's startedAtMs (±1 s), or a same-site line that carries one - so any other line stays unplaced rather than guessed (this run: ${
+      probeLines === null
+        ? "no mod-log.txt at all"
+        : `${
+            receipts === null
+              ? `${String(probeLines.length)} line(s), no receipt stream to join`
+              : `${String(placing.placed)} of ${String(probeLines.length)} line(s) placed`
+          }`
+    })`,
     ...(slots.specCarried.length === 0
       ? []
       : [
@@ -286,6 +517,12 @@ export function summarizeBodyHoldLeak({
       unattributed: Object.freeze([]),
       usingTool: 0,
       probeLines: probeLines ?? Object.freeze([]),
+      placements: Object.freeze([]),
+      placedLines: 0,
+      outsideWindowLines: 0,
+      untimedCopies: 0,
+      unplacedLines: 0,
+      clockAnchor: null,
       unknownStates: Object.freeze([]),
       unmounted: Object.freeze(unmounted),
       limits,
@@ -368,15 +605,15 @@ export function summarizeBodyHoldLeak({
     leakFor(owner).usingTool += 1;
   }
 
-  // THE PROBE LINE IS THE WRITER'S NAME, not a second signal: it cannot be placed in time, so it only says WHO took the
-  // flag. A run whose log carried none answers `none_logged`; a run with no log at all answers `no_mod_log`, because
-  // "there was nothing to read" and "nothing was written" are not the same fact.
+  // THE PROBE LINE IS THE WRITER'S NAME, AND ITS OWN CLOCK IS WHERE IT HAPPENED. A run whose log carried none answers
+  // `none_logged`; a run with no log at all answers `no_mod_log`, because "there was nothing to read" and "nothing was
+  // written" are not the same fact. The placements below are the other half: each line joined to the receipt nearest it.
   const writer =
     probeLines === null
       ? Object.freeze({ state: "no_mod_log", site: null, lines: null })
       : probeLines.length === 0
         ? Object.freeze({ state: "none_logged", site: null, lines: 0 })
-        : Object.freeze({ state: "logged", site: probeLines[probeLines.length - 1], lines: probeLines.length });
+        : Object.freeze({ state: "logged", site: probeLines[probeLines.length - 1].site, lines: probeLines.length });
 
   const gate = leaks.length > 0 ? "blocked" : unattributed.length > 0 ? "not_measured" : "clear";
 
@@ -397,6 +634,13 @@ export function summarizeBodyHoldLeak({
     unattributed: Object.freeze(unattributed),
     usingTool,
     probeLines: probeLines ?? Object.freeze([]),
+    placements: placing.placements,
+    placedLines: placing.placed,
+    outsideWindowLines: placing.outsideWindow,
+    untimedCopies: placing.untimedCopies,
+    unplacedLines: placing.unplaced,
+    clockAnchor: placing.anchor,
+    clockedByTheLogUnreadable: placing.clockedByTheLog,
     unknownStates,
     unmounted: Object.freeze(unmounted),
     limits,
@@ -442,6 +686,20 @@ export function bodyHoldLeakLines(report) {
       ` · using_tool=true x${String(report.usingTool)} (bound ${String(report.boundMs)} ms)` +
       ` · [body-hold] unattributed x${String(report.probeLines.length)}`,
   );
+  for (const placement of report.placements)
+    push(`${statusLabel("placement")}[body-hold] writer=${placement.site} at ${placement.clock} -> ${placement.join}`);
+  if (report.placements.length > 0)
+    push(
+      `${statusLabel("placed")}${String(report.placedLines)} of ${String(report.placements.length)} [body-hold] unattributed line(s) placed` +
+        ` · ${String(report.untimedCopies)} untimed copy(ies) placed by a same-site line` +
+        ` · ${String(report.outsideWindowLines)} with no receipt within ${String(PROBE_JOIN_WINDOW_MS / 1_000)} s` +
+        ` · ${String(report.unplacedLines)} with no clock and no twin`,
+    );
+  if (report.clockAnchor !== null) push(`${statusLabel("anchor")}${report.clockAnchor.text}`);
+  else if (report.clockedByTheLogUnreadable)
+    push(
+      `${statusLabel("anchor")}none - mod-log.txt carries [hh:mm:ss] prefixes but the run published no startedAtMs to read them against, so those lines are unplaced rather than guessed at`,
+    );
   push(`${statusLabel("bound")}${String(report.boundMs)} ms <- ${report.boundSource}`);
   push(
     `${label("population")}slot-holding actions ${String(report.slots.actionIds.length)} · of ${String(

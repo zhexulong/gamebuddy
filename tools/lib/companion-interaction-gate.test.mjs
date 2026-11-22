@@ -87,6 +87,20 @@ test("rejects Magic Context's §N§ prompt self-tag leaking into player speech",
   assert.equal(clean.metrics.selfTag, false);
 });
 
+test("rejects an invented cutscene line, which is what a hold that names no content invites", () => {
+  // MEASURED (a live run, day 1 12:30): the vanilla Community Center event fired, `express_emote` was refused
+  // `cutscene_active`, and the block she read said only `身体: 忙 · 持有: event` - no Lewis, no line, nothing about
+  // what was happening. She answered with Lewis's dialogue and his JOJA plan: 1 of 59 lines in that run, and the one
+  // the gate refused. This is the case the gate exists for, so the assertion pins it: fixing the block
+  // (`fact-brief.ts`'s scene-content note) must not make a fabrication of that shape passable.
+  const invented = "好嘛，刘易斯又把我拽去看他那间破中心，我都听见他说要卖给 JOJA 了。";
+  const unpublished = assessCompanionInteraction(invented, []);
+  assert.equal(unpublished.passed, false);
+  assert.deepEqual(unpublished.reasons, ["unobserved_event"]);
+  // The same words are acceptable when the game really showed them: the verdict is the evidence, not the wording.
+  assert.equal(assessCompanionInteraction(invented, ["npc_dialogue"]).passed, true);
+});
+
 test("does not flag a player-directed line that mentions no NPC reaction", () => {
   const line = "（满意）花椰菜收好了，你想现在送去给乔迪，还是先回屋歇会儿？";
   const result = assessCompanionInteraction(line, []);

@@ -844,11 +844,11 @@ test("a run that never ended is read from its log, and its own missing Mod log i
         "a PASS from a rolling SMAPI window over every run on the machine is the false clean this row exists to prevent",
       );
       assert.match(output, /^work\s+3 executions keyed on the executionId/mu);
-      assert.match(output, /^    settled\s+succeeded 2, rejected 1 {2}<- live-runner\.log execution_receipt states/mu);
-      assert.match(output, /^    actions\s+move_to_tile 2, navigate_to_destination 1$/mu);
+      assert.match(output, /^ {4}settled\s+succeeded 2, rejected 1 {2}<- live-runner\.log execution_receipt states/mu);
+      assert.match(output, /^ {4}actions\s+move_to_tile 2, navigate_to_destination 1$/mu);
       assert.match(
         output,
-        /^    bundle\s+not_measured: this run has published no result\.json/mu,
+        /^ {4}bundle\s+not_measured: this run has published no result\.json/mu,
         "what the run had done is not what it did: the bundle line says which of the two this is",
       );
       assert.match(
@@ -875,7 +875,7 @@ test("a finished run prints the bundle count and the log count side by side, nev
       const output = runVerdict(runDir, { extraArgs: ["--log-dir", logs] });
       assert.match(
         output,
-        /^    bundle\s+result\.json records 2 executions in 2 programmes; 0 of them published no receipt/mu,
+        /^ {4}bundle\s+result\.json records 2 executions in 2 programmes; 0 of them published no receipt/mu,
       );
       assert.match(output, /two readings of one run, never summed/u);
       assert.match(
@@ -956,6 +956,62 @@ test("the speech reading is not_measured, never a pass, when only one side of th
       const output = runVerdict(runDir);
       assert.match(output, /^speech {14}not_measured$/mu);
       assert.match(output, /this run directory does not hold both sides/u);
+    },
+  ));
+
+// `round89`'s eighteenth bubble, verbatim from that run's `presentation.pieces`: the provider's own stray `b` in front of
+// her line. The verdict refuses it by name, and the turn record's two populations add back up to the run's own presented
+// count, so a refused bubble is not a line the run lost.
+const ROUND89_FRAGMENT_BUBBLE = "b 十五包防风草种子到手，兜里还剩七百六。回农场把它们都点进地里去。";
+
+test("a delivered bubble that carries a fragment is refused by name, and the speech population still adds up", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      sessionTurns: [
+        { goalIndex: 0, day: 1, spokenLines: ["一", "二"] },
+        {
+          goalIndex: 1,
+          day: 2,
+          spokenLines: ["三"],
+          refusedBubbles: [{ index: 3, code: "bubble_carried_a_fragment:b 十五包防风草种子到手，兜里还剩七百六" }],
+        },
+        { goalIndex: 2, day: 3, spokenLines: ["四"] },
+      ],
+      presentation: {
+        pieceCount: 5,
+        pieces: [
+          { index: 0, text: "一", locale: "zh-CN" },
+          { index: 1, text: "二", locale: "zh-CN" },
+          { index: 2, text: "三", locale: "zh-CN" },
+          { index: 3, text: ROUND89_FRAGMENT_BUBBLE, locale: "zh-CN" },
+          { index: 4, text: "四", locale: "zh-CN" },
+        ],
+      },
+      progress: [
+        { event: "turn_started", turn: 0, reason: "day_start" },
+        { event: "presented", index: 0 },
+        { event: "presented", index: 1 },
+        { event: "turn_started", turn: 1, reason: "day_start" },
+        { event: "presented", index: 2 },
+        { event: "presented", index: 3 },
+        { event: "turn_started", turn: 2, reason: "day_start" },
+        { event: "presented", index: 4 },
+      ],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^1b delivered bubble text +FAIL +examined 5 delivered bubble\(s\) · refused 1 · #3 bubble_carried_a_fragment:b 十五包防风草种子到手，兜里还剩七百六$/mu,
+      );
+      assert.match(
+        output,
+        /^speech {14}5 of 5 lines {2}AGREE/mu,
+        "a refused bubble is counted with the lines it was refused beside, not dropped from the population",
+      );
+      assert.match(output, /^ {2}refused +bubble_carried_a_fragment:b 十五包防风草种子到手，兜里还剩七百六 {2}<- result\.json sessionTurns\[\]\.refusedBubbles/mu);
     },
   ));
 
@@ -1128,6 +1184,138 @@ test("a [body-hold] line in the Mod log is the writer the first screen names", (
     },
   ));
 
+// ---------------------------------------------------------------------------------------------------------------
+// A WRITER NAMED BUT NOT PLACED IN TIME.
+//
+// Measured `round89` (2026-11-21T20-38-52-354Z): 14 `[body-hold] unattributed` lines named seven frames and no line
+// carried a clock, so the verdict could say `FishingRod.tickUpdate` and not when - which leaves the writer unjoinable to
+// the receipt that would explain it. The fixtures below are that log's three shapes: a line carrying the probe's own
+// clocks, an older line carrying only its `[hh:mm:ss]` prefix, and an untimed console copy of a write whose file copy is
+// stamped.
+const PROBE_INSTALL_LINE =
+  "[GameBuddy] GameBuddy body-hold probe installed on 4 site(s): Farmer.CanMove(set),body_pause:emote,body_pause:pool_entrance,body_pause:emote_selector.";
+const probeLine = ({ site, gameMs = null, wallMs = null, frames = "Farmer.Update<Game1.UpdateCharacters" }) =>
+  `[GameBuddy] [body-hold] unattributed site=${site};declared=native:${site};open_ended=true` +
+  `${gameMs === null ? "" : `;game_ms=${String(gameMs)}`}${wallMs === null ? "" : `;wall_ms=${String(wallMs)}`}` +
+  `;frames=${frames}`;
+
+test("a [body-hold] line carrying the probe's own clocks is placed against the nearest receipt", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      bridgeFacts: [expiredCast(), ...stalledReceipts(2)],
+      modLog: [
+        PROBE_INSTALL_LINE,
+        probeLine({ site: "FishingRod.tickUpdate", gameMs: 12_345_678, wallMs: ROUND88_ENDED_AT + 1_250 }),
+      ].join("\n"),
+    }),
+    (runDir) => {
+      const block = bodyHoldBlock(runVerdict(runDir));
+      assert.match(
+        block,
+        /^ {4}placement {9}\[body-hold\] writer=FishingRod\.tickUpdate at game_ms=12345678 -> nearest receipt fish_here_catch_window_deadline_expired \+1250 ms$/mu,
+        "the line's own clock places it, and the row names the receipt it lands beside",
+      );
+      assert.match(block, /^ {4}placed {12}1 of 1 \[body-hold\] unattributed line\(s\) placed/mu);
+    },
+  ));
+
+test("a [body-hold] line with only its log prefix is placed by the run's own start", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      // The run's clock. The prefix carries local time with no date and no zone, so the only reading of it is against
+      // this instant: the log's first stamp is the session's own first second, and the offset that puts it nearest here
+      // is the one the machine was on.
+      startedAtMs: START,
+      bridgeFacts: [
+        modReceipt({
+          atMs: START + 7_627,
+          actionId: "cut_weeds",
+          state: "succeeded",
+          reasonCode: "weeds_cut",
+          detail: "tile=1,2",
+        }),
+      ],
+      modLog: [
+        "[09:00:00 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 build 24356 on Windows 11",
+        "[09:00:08 WARN  GameBuddy] " +
+          probeLine({ site: "Crop.harvest", frames: "Crop.harvest<HoeDirt.performUseAction" }),
+      ].join("\n"),
+    }),
+    (runDir) => {
+      const block = bodyHoldBlock(runVerdict(runDir));
+      assert.match(
+        block,
+        /^ {4}placement {9}\[body-hold\] writer=Crop\.harvest at 09:00:08 \(log prefix, ±1 s\) -> nearest receipt weeds_cut \+373 ms$/mu,
+        "an older line is placed by the only clock it has, and the row says how coarse that clock is",
+      );
+    },
+  ));
+
+test("a [body-hold] line farther than the tree's longest silence from any receipt says so", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      bridgeFacts: [
+        modReceipt({
+          atMs: START + 68_000,
+          actionId: "cut_weeds",
+          state: "succeeded",
+          reasonCode: "weeds_cut",
+          detail: "tile=1,2",
+        }),
+      ],
+      modLog: probeLine({ site: "Game1.UpdateOther", gameMs: 900, wallMs: START + 8_000 }),
+    }),
+    (runDir) => {
+      const block = bodyHoldBlock(runVerdict(runDir));
+      assert.match(
+        block,
+        /writer=Game1\.UpdateOther at game_ms=900 -> no receipt within 10 s \(nearest weeds_cut -60\.0 s\)/u,
+        "a write into a window the bridge did not speak in is a fact, not a placement: it names the bound it missed",
+      );
+    },
+  ));
+
+test("a [body-hold] line with no clock is placed by its own site's timed copy in the same log", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: null,
+      startedAtMs: START,
+      bridgeFacts: [
+        modReceipt({
+          atMs: START + 59_073,
+          actionId: "cut_weeds",
+          state: "succeeded",
+          reasonCode: "weeds_cut",
+          detail: "tile=1,2",
+        }),
+      ],
+      // `round89`'s two sources: the launcher's console capture, which stamps nothing, and the SMAPI file, which stamps
+      // every line. The Mod logs a site once per session, so the two rows for one site are one write.
+      modLog: [
+        "[SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 build 24356 on Windows 11",
+        probeLine({ site: "Farmer.Update" }),
+        "[09:00:59 INFO  SMAPI] SMAPI 4.5.2 with Stardew Valley 1.6.15 build 24356 on Windows 11",
+        "[09:00:59 WARN  GameBuddy] " + probeLine({ site: "Farmer.Update" }),
+      ].join("\n"),
+    }),
+    (runDir) => {
+      const block = bodyHoldBlock(runVerdict(runDir));
+      assert.match(
+        block,
+        /writer=Farmer\.Update at no clock on the line \(untimed copy: its same-site copy at 09:00:59 places the write\) -> nearest receipt weeds_cut -73 ms/u,
+        "the untimed copy is not left unplaced while the log beside it carries the clock for the same write",
+      );
+      assert.match(block, /^ {4}placed {12}2 of 2 \[body-hold\] unattributed line\(s\) placed/mu);
+    },
+  ));
+
 test("a tool still up at its own settlement is a leak past the tree's longest declared swing", () =>
   withFixture(
     () => ({
@@ -1245,18 +1433,33 @@ test("the non-Succeeded population is the Mod's own enum minus its own non-termi
   );
 });
 
-test("the [body-hold] lines are read as sites, and a log with none is an empty population rather than a pass", () => {
+test("the [body-hold] lines are read as sites with the clocks they carry, and a log with none is an empty population rather than a pass", () => {
   assert.deepEqual(readProbeLines(null), null, "no log at all is not the same fact as a log with no line");
   assert.deepEqual(readProbeLines(""), []);
+  const read = readProbeLines(
+    [
+      "[GameBuddy] [body-hold] declared holder=body_pause:emote;reason=native_body_timer;pause_ms=200",
+      "[GameBuddy] [body-hold] unattributed site=Foo.Bar;declared=native:Foo.Bar;open_ended=true;frames=a<b",
+      `[09:00:08 WARN  GameBuddy] [body-hold] unattributed site=Baz.Qux;declared=native:Baz.Qux;open_ended=true;game_ms=4137;wall_ms=${String(START)};frames=c<d`,
+    ].join("\n"),
+  );
   assert.deepEqual(
-    readProbeLines(
-      [
-        "[GameBuddy] [body-hold] declared holder=body_pause:emote;reason=native_body_timer;pause_ms=200",
-        "[GameBuddy] [body-hold] unattributed site=Foo.Bar;declared=native:Foo.Bar;open_ended=true;frames=a<b",
-      ].join("\n"),
-    ),
-    ["Foo.Bar"],
+    read.map((line) => line.site),
+    ["Foo.Bar", "Baz.Qux"],
     "only the unattributed line names a writer; the declared ones are the holds this Mod already knew",
+  );
+  assert.deepEqual(
+    read.map(({ gameMs, wallMs, logStamp }) => [gameMs, wallMs, logStamp]),
+    [
+      [null, null, null],
+      [4_137, START, "09:00:08"],
+    ],
+    "a line from before the probe carried a clock is null, not 0 - and `game_ms=none` is the same absence",
+  );
+  assert.equal(
+    readProbeLines("[GameBuddy] [body-hold] unattributed site=A.B;game_ms=none;wall_ms=7")[0].gameMs,
+    null,
+    "a write outside a game names its clock as absent rather than placing it at the engine's first millisecond",
   );
   assert.equal(
     USING_TOOL_BOUND_MS,

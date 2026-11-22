@@ -60,7 +60,7 @@ public sealed class NavigationHoldEvidenceTests
     {
         ActorWorldFacts facts = Facts(eventUp: true, menuType: "DialogueBox", dialogueUp: true);
 
-        string hold = WorldModel.DescribeHeldBody(facts, canMove: false, modalIsQuestion: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(facts, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: false).Evidence;
 
         hold.Should().Contain("held_by=cutscene_active");
         hold.Should().Contain("dialogue_box=true");
@@ -78,7 +78,7 @@ public sealed class NavigationHoldEvidenceTests
     [Fact]
     public void ACutsceneWithNothingOnScreen_SaysWaitedIsAllThatIsLeft()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(eventUp: true), canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(Facts(eventUp: true), canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         hold.Should().Contain("held_by=cutscene_active");
         hold.Should().Contain("admissible_actions=none");
@@ -90,7 +90,7 @@ public sealed class NavigationHoldEvidenceTests
     [Fact]
     public void AMountedMenuHold_NamesTheMenuAndTheFamilyThatClosesIt()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(menuType: "GameMenu"), canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(Facts(menuType: "GameMenu"), canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         hold.Should().Contain("held_by=actor_held_by_modal");
         hold.Should().Contain("modal_type=GameMenu");
@@ -103,16 +103,19 @@ public sealed class NavigationHoldEvidenceTests
     }
 
     [Fact]
-    public void AFlagWithNothingRunningIsANamedDeadEndRatherThanAShrugThatLoops()
+    public void AFlagWithNothingDeclaredIsANamedDefectRatherThanAShrugThatLoops()
     {
-        // No event, no menu, no faint, no animation, no countdown: the closed vocabulary has no name for this, and the
+        // No event, no menu, no faint, no animation, no declared hold: the closed vocabulary has no name for this, and the
         // one engine field that reported the hold is `Farmer.CanMove`. round83 read this shape twice as
         // `unknown_holder:CanMove;...;next_step=observe_again` and then did exactly that for seven minutes.
-        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         hold.Should().Contain("held_by=stalled_with_no_holder:CanMove");
         hold.Should().Contain("can_move=false");
-        hold.Should().Contain("admissible_actions=none");
+        hold.Should().Contain($"defect={WorldModel.HoldWithoutOwnerDefect}");
+        hold.Should().NotContain(
+            "admissible_actions=none",
+            "that field claims the measurement 'nothing can be done', and a hold nobody declared made no measurement");
         hold.Should().Contain(
             $"next_step={WorldModel.ReportTheStalledBodyStep}",
             "nothing in this Mod ends a hold the facts cannot name, so the one step left ends the attempt");
@@ -124,34 +127,38 @@ public sealed class NavigationHoldEvidenceTests
     }
 
     /// <summary>
-    /// The one native countdown that writes `CanMove = false` while declaring no hold of its own is read rather than
-    /// guessed: `Farmer.noMovementPause` (Farmer.cs:7586-7593), which `express_emote` raises for 200 ms.
+    /// The native body timer is now a DECLARED holder: `performPlayerEmote` writes `Farmer.noMovementPause` (Farmer.cs:2505)
+    /// and the probe declares the hold with the window that site wrote, so the sentence names the site rather than the
+    /// field the engine happens to read.
     /// </summary>
     [Fact]
-    public void ANativeBodyPauseNamesTheCountdownAndTheWindowThatClearsIt()
+    public void ANativeBodyTimerNamesTheSiteThatDeclaredItAndTheWindowThatClearsIt()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: false, bodyPauseRemainingMs: 200).Evidence;
+        BodyHoldFact declared = new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + BodyHold.EmoteMs);
+        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: false, hold: declared).Evidence;
 
-        hold.Should().Contain("held_by=body_pause:noMovementPause");
-        hold.Should().Contain("body_pause_remaining_ms=200");
+        hold.Should().Contain($"held_by={BodyHold.EmoteHolder}");
+        hold.Should().Contain("body_pause_remaining_ms=");
         hold.Should().Contain("admissible_actions=none");
         hold.Should().Contain($"next_step={WorldModel.WaitForRetryWindowStep}");
 
         NavigationOutcome outcome = Decide(hold);
         outcome.TerminalReasonCode.Should().Be("destination_locked");
-        outcome.Evidence.Should().Contain("held_by=body_pause:noMovementPause");
+        outcome.Evidence.Should().Contain($"held_by={BodyHold.EmoteHolder}");
     }
 
     /// <summary>
-    /// The countdown is a live probe and not a disposition fact: `noMovementPause` is only ever consulted when the flag
-    /// is actually down, so a farmer who can move is never reported as paused.
+    /// A hold is a hold on a body that CANNOT move: a timer the engine has already released, or a declared hold left
+    /// behind, does not hold an actor whose own flag is up.
     /// </summary>
     [Fact]
-    public void ABodyPauseDoesNotHoldAnActorWhoCanMove()
+    public void ADeclaredHoldDoesNotHoldAnActorWhoCanMove()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: true, bodyPauseRemainingMs: 200).Evidence;
+        BodyHoldFact declared = new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + BodyHold.EmoteMs);
+        string hold = WorldModel.DescribeHeldBody(Facts(), canMove: true, hold: declared).Evidence;
 
-        hold.Should().NotContain("held_by=body_pause", "a pause that has elapsed while the flag is up is not a hold");
+        hold.Should().Contain($"held_by={WorldModel.FreeBodyHolder}", "the engine's own flag decides whether she is held");
+        hold.Should().NotContain($"held_by={BodyHold.EmoteHolder}");
     }
 
     /// <summary>
@@ -166,7 +173,7 @@ public sealed class NavigationHoldEvidenceTests
     public void EveryHoldKeepsTheCodeAndTheTerminalState(bool eventUp, string? menuType, bool dialogueUp)
     {
         ActorWorldFacts facts = Facts(eventUp: eventUp, menuType: menuType, dialogueUp: dialogueUp);
-        string hold = WorldModel.DescribeHeldBody(facts, canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(facts, canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         NavigationOutcome outcome = Decide(hold);
 
@@ -184,7 +191,7 @@ public sealed class NavigationHoldEvidenceTests
     [Fact]
     public void ASingleAnimationHoldSaysToWaitForTheWindowRatherThanToRetry()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(selfAnimation: true), canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(Facts(selfAnimation: true), canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         hold.Should().Contain("held_by=transient_busy");
         hold.Should().Contain("transient_kind=selfAnimation");
@@ -204,7 +211,7 @@ public sealed class NavigationHoldEvidenceTests
     [Fact]
     public void AWarpHoldSaysToWaitForTheWindowRatherThanToRetry()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(warping: true), canMove: false).Evidence;
+        string hold = WorldModel.DescribeHeldBody(Facts(warping: true), canMove: false, hold: BodyHoldFact.Free).Evidence;
 
         hold.Should().Contain("held_by=transient_busy");
         hold.Should().Contain("transient_kind=warping");

@@ -85,10 +85,20 @@ internal sealed class NavigationRoutePlanner
     /// native transport metadata remains private and they never enter the
     /// ordinary-leg collection.
     /// </summary>
+    /// <param name="isTraversable">
+    /// Which legs this call may cross, or <c>null</c> for all of them. The one caller that passes it is a navigation
+    /// whose approach to a leg was BLOCKED: the leg is not gone from the world, so the topology itself must not be
+    /// edited - the plan is re-asked while refusing to cross the legs already proven unwalkable, which is how a second
+    /// published route becomes reachable without a second planner and without a route list outside this file. Measured
+    /// `round89`: `Backwoods -> Mountain`'s east edge is entered from a tile a Bush occupies
+    /// (`entry_blocked_by:large:Bush@49,10`), and `Backwoods -> BusStop -> Town -> Mountain` was in the same topology
+    /// and never asked for, so one blocked face settled the whole action `never_retry`.
+    /// </param>
     internal NavigationRoutePlanResult Plan(
         NavigationOrdinaryWarpTopology? topology,
         string currentSourceIdentity,
-        NavigationDestinationBinding destination)
+        NavigationDestinationBinding destination,
+        Func<NavigationTransitionLeg, bool>? isTraversable = null)
     {
         if (topology is null || topology.Sources is null)
             return NavigationRoutePlanResult.Terminal("route_topology_invalid");
@@ -141,7 +151,7 @@ internal sealed class NavigationRoutePlanner
         if (topologySource == destinationIdentity)
             return NavigationRoutePlanResult.Arrived();
 
-        return Search(sources, topologySource, destinationIdentity);
+        return Search(sources, topologySource, destinationIdentity, isTraversable);
     }
 
     private static bool IsValidVirtualLeg(
@@ -165,7 +175,8 @@ internal sealed class NavigationRoutePlanner
     private static NavigationRoutePlanResult Search(
         Dictionary<string, NavigationOrdinaryWarpLegs> sources,
         string sourceIdentity,
-        string destinationIdentity)
+        string destinationIdentity,
+        Func<NavigationTransitionLeg, bool>? isTraversable)
     {
         var visited = new HashSet<string>(StringComparer.Ordinal)
         {
@@ -182,6 +193,8 @@ internal sealed class NavigationRoutePlanner
 
             foreach (NavigationTransitionLeg leg in node.OutgoingOrdinaryLegs)
             {
+                if (isTraversable is not null && !isTraversable(leg))
+                    continue;
                 string target = leg.TargetLocation;
                 if (!visited.Add(target))
                     continue;

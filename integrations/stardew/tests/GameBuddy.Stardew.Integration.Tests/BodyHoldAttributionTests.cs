@@ -97,17 +97,17 @@ public sealed class BodyHoldAttributionTests
         disposition.Kind.Should().Be(ActorDispositionKind.Modal);
         disposition.ModalType.Should().Be("DialogueBox");
 
-        string informational = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, modalIsQuestion: false).Evidence;
+        string informational = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: false).Evidence;
         informational.Should().Contain("modal_type=DialogueBox");
         informational.Should().Contain("is_question=false");
         informational.Should().Contain("can_move=false");
 
-        string question = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, modalIsQuestion: true).Evidence;
+        string question = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: true).Evidence;
         question.Should().Contain("is_question=true");
 
         // Unknown must read as unknown rather than as "not a question", which would tell the Agent to dismiss
         // a dialogue that is waiting for an answer.
-        string unknown = WorldModel.DescribeHeldBody(disposition, facts, canMove: false).Evidence;
+        string unknown = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free).Evidence;
         unknown.Should().Contain("is_question=unknown");
     }
 
@@ -127,7 +127,7 @@ public sealed class BodyHoldAttributionTests
         ActorDisposition cutscene = WorldModel.Classify(withBox);
         cutscene.Kind.Should().Be(ActorDispositionKind.Event);
 
-        string informational = WorldModel.DescribeHeldBody(cutscene, withBox, canMove: false, modalIsQuestion: false).Evidence;
+        string informational = WorldModel.DescribeHeldBody(cutscene, withBox, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: false).Evidence;
         informational.Should().Contain("event_up=true");
         informational.Should().Contain("dialogue_box=true");
         informational.Should().Contain("is_question=false");
@@ -135,12 +135,12 @@ public sealed class BodyHoldAttributionTests
         // cannot name an action the handler would refuse: a close for an informational box, an answer for a question.
         informational.Should().Contain("admissible_actions=dismiss_modal;");
 
-        string question = WorldModel.DescribeHeldBody(cutscene, withBox, canMove: false, modalIsQuestion: true).Evidence;
+        string question = WorldModel.DescribeHeldBody(cutscene, withBox, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: true).Evidence;
         question.Should().Contain("is_question=true");
         question.Should().Contain("admissible_actions=answer_dialogue;");
 
         ActorWorldFacts withoutBox = Facts(eventUp: true);
-        string bare = WorldModel.DescribeHeldBody(WorldModel.Classify(withoutBox), withoutBox, canMove: false).Evidence;
+        string bare = WorldModel.DescribeHeldBody(WorldModel.Classify(withoutBox), withoutBox, canMove: false, hold: BodyHoldFact.Free).Evidence;
         bare.Should().Contain("dialogue_box=false");
         bare.Should().Contain("admissible_actions=none");
         bare.Should().Contain(
@@ -164,7 +164,7 @@ public sealed class BodyHoldAttributionTests
     {
         ActorWorldFacts menuOnScreen = Facts(eventUp: true, menuType: "ShopMenu");
         string heldByAMenu = WorldModel.DescribeHeldBody(
-            WorldModel.Classify(menuOnScreen), menuOnScreen, canMove: false, modalIsQuestion: null).Evidence;
+            WorldModel.Classify(menuOnScreen), menuOnScreen, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: null).Evidence;
         heldByAMenu.Should().Contain("dialogue_box=false", "a ShopMenu is not a box answer_dialogue can answer");
         heldByAMenu.Should().Contain("admissible_actions=none;next_step=wait_for_event_to_advance");
 
@@ -173,20 +173,20 @@ public sealed class BodyHoldAttributionTests
         // `Game1.activeClickableMenu` (`Game1.cs:9539-9545`), which is the object both handlers read.
         ActorWorldFacts eventBox = Facts(eventUp: true, menuType: "DialogueBox", dialogueUp: false);
         string question = WorldModel.DescribeHeldBody(
-            WorldModel.Classify(eventBox), eventBox, canMove: false, modalIsQuestion: true).Evidence;
+            WorldModel.Classify(eventBox), eventBox, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: true).Evidence;
         question.Should().Contain("dialogue_box=true");
         question.Should().Contain(
             "admissible_actions=answer_dialogue;can_move=false",
             "a question box is answered, and dismiss_modal refuses the same box by name");
 
         string informational = WorldModel.DescribeHeldBody(
-            WorldModel.Classify(eventBox), eventBox, canMove: false, modalIsQuestion: false).Evidence;
+            WorldModel.Classify(eventBox), eventBox, canMove: false, hold: BodyHoldFact.Free, modalIsQuestion: false).Evidence;
         informational.Should().Contain("dialogue_box=true");
         informational.Should().Contain(
             "admissible_actions=dismiss_modal;can_move=false",
             "an informational box is closed by the native close, and answer_dialogue refuses it by name");
 
-        string unread = WorldModel.DescribeHeldBody(WorldModel.Classify(eventBox), eventBox, canMove: false).Evidence;
+        string unread = WorldModel.DescribeHeldBody(WorldModel.Classify(eventBox), eventBox, canMove: false, hold: BodyHoldFact.Free).Evidence;
         unread.Should().Contain("is_question=unknown");
         unread.Should().Contain(
             "admissible_actions=answer_dialogue,dismiss_modal;can_move=false",
@@ -225,7 +225,7 @@ public sealed class BodyHoldAttributionTests
         disposition.Kind.Should().Be(ActorDispositionKind.Transient);
         disposition.TransientKind.Should().Be("toolAnimation");
 
-        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: true).Evidence;
+        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: true, hold: BodyHoldFact.Free).Evidence;
         evidence.Should().Contain("transient_kind=toolAnimation");
         // The number the Agent is told to wait must be the number the body loop waits (WIA 4.4, <=2000ms), or
         // "retry after 2000 ms" would walk straight back into a live lock.
@@ -238,40 +238,69 @@ public sealed class BodyHoldAttributionTests
     /// <summary>
     /// MEASURED `round86`: `move_to_tile` was refused sixteen times with
     /// <c>transient_kind=movement_lock;retry_window_ms=2000;can_move=false</c> while the game clock stood at day 7 16:40
-    /// for four minutes, and the caller re-sent on the window the sentence had promised.
+    /// for four minutes, and the caller re-sent on the window the sentence had promised. MEASURED `round88`: five minutes
+    /// of the same stopped clock reported 29 times as <c>held_by=stalled_with_no_holder:CanMove</c>, because nothing
+    /// declared the write.
     ///
     /// <para>
-    /// The shape is `Classify` saying Idle while `CanMove` is false - a knockback, the `NetMutex`-deferred upgrade at
-    /// ParrotUpgradePerch.cs:797, or the native countdown that declares no hold of its own. Its holder was never missing:
-    /// it is either a timer that is really running or nothing at all, and the sentence now says which, plus what ends it.
-    /// `movement_lock` - a name that read like a native lock with a window - is gone, and the retry window is published
-    /// only for the shape that has one.
+    /// The shape is `Classify` saying Idle while `CanMove` is false. What the sentence says is now the DECLARED hold
+    /// (<see cref="BodyHold"/>): a bounded hold publishes what is left of its own window and the wait that earns; past
+    /// that window it publishes the overrun, because waiting again would promise a window that is gone; an open-ended
+    /// hold says it does not know when it ends; and a body the authority never saw is named as the defect it is, with no
+    /// <c>admissible_actions=none</c> - the absence is honest, an invented holder is not.
     /// </para>
     /// </summary>
     [Fact]
-    public void AMovementLockTheFactsCannotNameNamesItsHolderOrTheDeadEnd()
+    public void ACanMoveHoldPublishesTheDeclaredHolderAndNoGuessAtOne()
     {
         ActorWorldFacts facts = Facts();
         ActorDisposition movementLock = WorldModel.Classify(facts);
         movementLock.Kind.Should().Be(ActorDispositionKind.Idle, "the `!CanMove` tail is what makes this a hold");
         movementLock.TransientKind.Should().BeNull();
 
-        // Nothing is running: a named dead end, and no window is claimed for it.
-        (string stalledCode, string stalled) = WorldModel.DescribeHeldBody(movementLock, facts, canMove: false);
+        // No declared hold: a named dead end, no window claimed, and no claim that nothing at all is admissible.
+        (string stalledCode, string stalled) = WorldModel.DescribeHeldBody(movementLock, facts, canMove: false, hold: BodyHoldFact.Free);
         stalledCode.Should().Be("transient_busy", "the code round86's refusals carried; the HOLDER was what was missing");
         stalled.Should().Contain($"held_by={WorldModel.StalledHolderPrefix}{WorldModel.UnnamedHolderEngineFact}");
-        stalled.Should().Contain("admissible_actions=none");
+        stalled.Should().Contain($"defect={WorldModel.HoldWithoutOwnerDefect}");
+        stalled.Should().NotContain("admissible_actions=none", "that field claims a measurement nothing here made");
         stalled.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
         stalled.Should().NotContain("retry_window_ms", "no timer is running, so no window may be promised");
         stalled.Should().NotContain("movement_lock");
 
-        // A native countdown IS running (`Farmer.noMovementPause`), so waiting is honest and its remainder is published.
-        (string pauseCode, string pause) = WorldModel.DescribeHeldBody(movementLock, facts, canMove: false, bodyPauseRemainingMs: 200);
+        // A declared timer with a window still to run: waiting is honest and what is left of it is published.
+        BodyHoldFact emote = new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() + BodyHold.EmoteMs);
+        (string pauseCode, string pause) = WorldModel.DescribeHeldBody(movementLock, facts, canMove: false, hold: emote);
         pauseCode.Should().Be("transient_busy");
-        pause.Should().Contain($"held_by={WorldModel.BodyPauseHolder}");
-        pause.Should().Contain("body_pause_remaining_ms=200");
+        pause.Should().Contain($"held_by={BodyHold.EmoteHolder}");
+        pause.Should().Contain("body_pause_remaining_ms=");
         pause.Should().Contain($"next_step={WorldModel.WaitForRetryWindowStep}");
         pause.Should().NotContain("movement_lock");
+    }
+
+    /// <summary>
+    /// The two shapes a DECLARED hold can turn into, both of which must still offer a way forward: a bounded window that
+    /// passed with the flag still down, and an open-ended hold that declared it does not know when it ends.
+    /// </summary>
+    [Fact]
+    public void AnOverrunOrOpenEndedHoldStillNamesAForwardStep()
+    {
+        ActorDisposition idle = WorldModel.Classify(Facts());
+
+        BodyHoldFact overrun = new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() - 1_000);
+        string expired = WorldModel.DescribeHeldBody(idle, Facts(), canMove: false, hold: overrun).Evidence;
+        expired.Should().Contain($"held_by={BodyHold.EmoteHolder}");
+        expired.Should().Contain("overrun_ms=");
+        expired.Should().NotContain("body_pause_remaining_ms", "nothing is left of a window that has passed");
+        expired.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
+        WorldModel.NextStepEndsTheHold(WorldModel.ReportTheStalledBodyStep).Should().BeTrue();
+
+        BodyHoldFact openEnded = new(BodyHoldState.HeldOpen, BodyHold.HolderForSite("Farmer.animateOnce"), BodyHold.UndeclaredWriterReason, null);
+        string open = WorldModel.DescribeHeldBody(idle, Facts(), canMove: false, hold: openEnded).Evidence;
+        open.Should().Contain($"held_by={BodyHold.HolderForSite("Farmer.animateOnce")}");
+        open.Should().Contain("ends_at=none");
+        open.Should().Contain("admissible_actions=none");
+        open.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
     }
 
     [Fact]
@@ -285,7 +314,7 @@ public sealed class BodyHoldAttributionTests
         disposition.Kind.Should().Be(ActorDispositionKind.Transient);
         disposition.TransientKind.Should().Be("selfAnimation");
 
-        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false).Evidence;
+        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free).Evidence;
         evidence.Should().Contain("transient_kind=selfAnimation");
         evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
         evidence.Should().Contain("can_move=false");
@@ -302,7 +331,7 @@ public sealed class BodyHoldAttributionTests
         disposition.Kind.Should().Be(ActorDispositionKind.Transient);
         disposition.TransientKind.Should().Be("warping");
 
-        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false).Evidence;
+        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free).Evidence;
         evidence.Should().Contain("transient_kind=warping");
         evidence.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
         evidence.Should().Contain("can_move=false");
@@ -324,7 +353,7 @@ public sealed class BodyHoldAttributionTests
         ActorDisposition disposition = WorldModel.Classify(facts);
         disposition.Kind.Should().Be(ActorDispositionKind.PassOut);
 
-        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false).Evidence;
+        string evidence = WorldModel.DescribeHeldBody(disposition, facts, canMove: false, hold: BodyHoldFact.Free).Evidence;
         // Stamina is written with the invariant culture so a locale with a decimal comma cannot produce an
         // evidence string the Host's parsers split wrongly.
         evidence.Should().Contain("stamina=-16");

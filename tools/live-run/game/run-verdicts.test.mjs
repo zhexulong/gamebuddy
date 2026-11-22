@@ -199,7 +199,10 @@ test("a clause that can fail reaches the reason code, over every clause the real
   assert.deepEqual(
     coverage.verdict.failedClauses,
     [
-      { id: "interaction_value:player_or_day_rate", reasonCode: "fewer_remarks_than_one_per_five_minutes" },
+      {
+        id: "interaction_value:player_or_day_rate",
+        reasonCode: "fewer_player_or_day_remarks_than_one_per_five_minutes",
+      },
       { id: "interaction_value:player_agency", reasonCode: "every_player_input_went_unanswered" },
       { id: "interaction_value:obstacle_with_plan", reasonCode: "obstacle_narrated_without_a_next_plan" },
       { id: "interaction_value:no_step_reports", reasonCode: "bare_step_reports" },
@@ -207,7 +210,7 @@ test("a clause that can fail reaches the reason code, over every clause the real
     "every objecting clause reaches `failedClauses`, with the code its own gate wrote",
   );
   assert.equal(coverage.verdict.state, "blocked");
-  assert.equal(coverage.verdict.reasonCode, "fewer_remarks_than_one_per_five_minutes");
+  assert.equal(coverage.verdict.reasonCode, "fewer_player_or_day_remarks_than_one_per_five_minutes");
   assert.equal(coverage.verdict.failedClause, "interaction_value:player_or_day_rate");
 });
 

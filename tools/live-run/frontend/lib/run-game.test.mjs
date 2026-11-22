@@ -236,7 +236,7 @@ test("the cleanup line names the Stardew process it examined and did not claim, 
       examined: record.examined,
       unclaimed: record.unclaimed,
     });
-    assert.equal(lines.length, 1, "nothing was claimed, so there is no second identity to report");
+    assert.deepEqual(lines.slice(1), [], "nothing was claimed, so there is no second identity to report");
     assert.match(
       lines[0],
       /^RUN-GAME-CLEANUP: no game this run started \(examined \d+ processes by image name; 1 other Stardew process from this installation is not this run's: 28328\(StardewModdingAPI\.exe\)\)$/u,
@@ -289,7 +289,7 @@ test("the cleanup line's claimed population is the ledger's game entries", () =>
       [38372, 40100],
       "and that population is this run's loader and its client, not the sibling lane's game",
     );
-    assert.equal(lines.length, 2, "a claimed identity and an observed one are two lines, never one sentence");
+    assert.deepEqual(lines.slice(2), [], "a claimed identity and an observed one are two lines, never one sentence");
     assert.match(
       lines[1],
       /^RUN-GAME-CLEANUP: observed but not claimed: 1 other Stardew process from this installation is not this run's: 28328\(StardewModdingAPI\.exe\) - not this run's to claim or end$/u,

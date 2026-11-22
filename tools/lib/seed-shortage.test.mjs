@@ -13,8 +13,12 @@
  *     contains-check and fail here;
  *   - the three states that must not read alike (`not measured` / `no seed held` / `holds it, nobody sells it`) are
  *     asserted against each other, because "is walking to town worth it" is answered differently by each;
- *   - an unpublished count is asserted to say `seed_count_unknown` and NOT `0`: a zero derived from an absence is the
+ *   - an unpublished count is asserted to say it was never counted and NOT `0`: a zero derived from an absence is the
  *     defect class this month keeps paying for;
+ *   - EVERY fact is asserted to carry no machine token - no `affordability_unknown`, no `price=`, no `时段=`, no
+ *     snake_case code - because the sentence is read by her, and a token is a fact she cannot use (`round89`);
+ *   - an unread wallet and a read one are asserted against each other, because `snapshot.money` is on the wire now and
+ *     the line must carry the number instead of the gap (`host/src/fact-brief.ts` `readOwnMoney`);
  *   - the absence of an imperative is asserted directly, because a fact that says "go buy" is the instruction this
  *     design exists to avoid.
  */
@@ -53,7 +57,9 @@ test("a sixty-tile task with two seeds hands over the shortage once, with its so
   assert.equal(fact.tiles, TILES);
   assert.equal(fact.held, 2);
   assert.equal(fact.shortfall, 58);
-  for (const fragment of ["任务 60 格", "手上 2 颗", "差 58 颗", "affordability_unknown"])
+  // This world publishes no balance, so the affordability half is the named gap - in her words, which is what the
+  // `round89` test below asserts the wallet-observed half of.
+  for (const fragment of ["任务 60 格", "手上 2 颗", "差 58 颗", "兜里的钱没看过"])
     assert.ok(fact.text.includes(fragment), `the fact states "${fragment}": ${fact.text}`);
 });
 
@@ -63,7 +69,7 @@ test("the shop, the price and the window in the fact are the row's own, not the 
     parsnip.shopId,
     parsnip.shopDisplayName,
     parsnip.ownerName,
-    `price=${String(parsnip.price)}`,
+    `一颗 ${String(parsnip.price)} 金币`,
     parsnip.hoursCondition,
   ])
     assert.ok(fact.text.includes(fragment), `the fact carries the row's own "${fragment}": ${fact.text}`);
@@ -81,8 +87,8 @@ test("the shop, the price and the window in the fact are the row's own, not the 
   });
   const other = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([joja]), locale: "zh" });
   assert.ok(other.text.includes("JojaMart"), other.text);
-  assert.ok(other.text.includes("price=25"), other.text);
-  assert.ok(!other.text.includes("price=20"), `nothing of the first world survives: ${other.text}`);
+  assert.ok(other.text.includes("一颗 25 金币"), other.text);
+  assert.ok(!other.text.includes("一颗 20 金币"), `nothing of the first world survives: ${other.text}`);
   assert.ok(other.text.includes("TIME 900 2300"), other.text);
 });
 
@@ -139,11 +145,11 @@ test("a criterion that plants carries the supply even though it declares no tile
   assert.equal(fact.shortfall, null, "no shape, no shortfall: the number would be ours, not the task's");
   assert.equal(fact.held, 2);
   for (const fragment of [
-    "格数未声明",
+    "任务没说几格",
     "手上 2 颗",
     parsnip.shopId,
-    `price=${String(parsnip.price)}`,
-    "affordability_unknown",
+    `一颗 ${String(parsnip.price)} 金币`,
+    "兜里的钱没看过",
   ])
     assert.ok(fact.text.includes(fragment), `the fact states "${fragment}": ${fact.text}`);
   assert.ok(!fact.text.includes("差 "), `there is no shortfall to state: ${fact.text}`);
@@ -155,7 +161,7 @@ test("a planting criterion with no seed held is a supply fact, not a shortage of
 
   assert.equal(fact.reasonCode, "no_known_supply");
   assert.ok(fact.text.includes("手上没有可种的种子"), fact.text);
-  assert.ok(fact.text.includes("affordability_unknown"), fact.text);
+  assert.ok(fact.text.includes("兜里的钱没看过"), fact.text);
   assert.ok(!/差 \d/u.test(fact.text), `no shortfall is invented for a task with no declared shape: ${fact.text}`);
 });
 
@@ -190,8 +196,9 @@ test("round67's row: 80g at a shut SeedShop, and the fact says where, when and a
   const fact = seedShortageFact({ taskId: "clear_and_cultivate", snapshot: snapshotWith([round67]), locale: "zh" });
 
   assert.notEqual(fact, null, "this is the run whose day composed nothing");
-  for (const fragment of ["SeedShop", "price=80", "money", "时段=TIME 0000 1659", "现在=关门", "手上 2 颗"])
+  for (const fragment of ["SeedShop", "一颗 80 金币", "开门时间 TIME 0000 1659", "现在关着门", "手上 2 颗"])
     assert.ok(fact.text.includes(fragment), `round67's own value "${fragment}": ${fact.text}`);
+  assert.doesNotMatch(fact.text, /price=|时段=|affordability_unknown/u, `no machine token: ${fact.text}`);
   assert.equal(fact.seedQualifiedItemId, "(O)470");
   assert.equal(fact.held, 2);
 });
@@ -205,7 +212,7 @@ test("a seed she holds that no shop stocks answers no_known_supply with the item
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([unsold]), locale: "zh" });
 
   assert.equal(fact.reasonCode, "no_known_supply:(O)745");
-  assert.ok(fact.text.includes("no_known_supply:(O)745"), fact.text);
+  assert.match(fact.text, /镇上没查到有店卖 .*\(O\)745/u, fact.text);
   assert.equal(fact.held, 1);
 });
 
@@ -213,8 +220,9 @@ test("a measured world where she holds no plantable seed is a different answer f
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([]), locale: "zh" });
 
   assert.equal(fact.reasonCode, "no_known_supply");
-  assert.ok(fact.text.includes("no_known_supply"), fact.text);
-  assert.ok(!fact.text.includes("no_known_supply:"), `there is no item to name: ${fact.text}`);
+  assert.ok(fact.text.includes("手上没有可种的种子"), fact.text);
+  assert.ok(fact.text.includes("卖点: 手上没有种子"), `the supply half says why it cannot be named: ${fact.text}`);
+  assert.ok(!fact.text.includes("no_known_supply"), `the state is not a word she reads: ${fact.text}`);
   assert.ok(fact.text.includes("任务 60 格"), fact.text);
 });
 
@@ -222,48 +230,171 @@ test("a world that never looked is named, and is not an empty world", () => {
   const fact = seedShortageFact({ taskId: TASK, snapshot: Object.freeze({}), locale: "zh" });
 
   assert.equal(fact.reasonCode, "seed_supply_not_measured");
-  assert.ok(fact.text.includes("seed_supply_not_measured"), fact.text);
+  assert.ok(fact.text.includes("还没查过镇上有谁卖种子"), fact.text);
+  assert.ok(!fact.text.includes("seed_supply_not_measured"), `a code is not a sentence she reads: ${fact.text}`);
   assert.ok(!fact.text.includes("no_known_supply"), "not measured is not 'nothing there': " + fact.text);
 });
 
 /**
- * THE MONEY FIELD IS NOT OURS TO INVENT, SO ITS ABSENCE MUST BE STATED EVERY TIME.
+ * THE WALLET IS ON THE WIRE, AND A TOKEN IS NOT A WORD SHE CAN USE.
  *
  * <p>
- * The projection publishes no balance at all (`host/src/protocol.ts` has no money field), and `round67`'s session is
- * what that costs: she priced copper at 75 g and concluded 「I have little money」 with nothing to read. An absent
- * number is our gap, not a "she can afford it" - so every fact this module composes ends by naming the gap, including
- * the one that could not measure the supply.
+ * Measured `round89`: the day prompt carried two of this module's lines and both ended `affordability_unknown` beside
+ * `price=80 money 时段=未声明`, while `snapshot.money` held the balance the whole time. `price=80 money` is a machine's
+ * report of a shop row and `affordability_unknown` is a machine's report of its own gap: neither is a fact she can use.
+ * The line carries the number and prices the shortage against it.
  * </p>
  */
-test("every fact names affordability as unmeasured, including the one that never looked", () => {
+test("round89's two lines carry the wallet and lose the machine tokens", () => {
+  const row = Object.freeze({
+    qualifiedItemId: "(O)472",
+    displayName: "Parsnip Seeds",
+    heldCount: 2,
+    shopId: "SeedShop",
+    ownerName: "Pierre",
+    price: 80,
+    currency: 0,
+    openNow: true,
+  });
+  const snapshot = Object.freeze({ seedSupplyTargets: [row], money: 500 });
+  const lines = [TASK, "till_and_sow"].map((taskId) => seedShortageFact({ taskId, snapshot, locale: "zh" }));
+
+  assert.equal(lines[0].reasonCode, "seed_shortage", "the first line is the shortage");
+  assert.equal(lines[1].reasonCode, "seed_supply", "the second is a planting day that declares no tile count");
+  for (const fact of lines) {
+    assert.ok(!fact.text.includes("affordability_unknown"), `the gap is not hers to read: ${fact.text}`);
+    assert.ok(fact.text.includes("兜里 500 金币"), `the balance the wire published: ${fact.text}`);
+    assert.doesNotMatch(fact.text, /price=|时段=|\bmoney\b/u, `no machine token in her sentence: ${fact.text}`);
+  }
+  // 58 missing seeds at 80 gold is 4640 against 500 in the purse: the shortage is PRICED, not shrugged at.
+  assert.ok(lines[0].text.includes("要 4640 金币"), lines[0].text);
+  assert.ok(lines[0].text.includes("还差 4140"), lines[0].text);
+  // And the line she reads is the composed prompt, not the module's object.
+  const prompt = dayPromptWithFact("门前横着开一条长地，三格宽、二十格长，清出来种上。", lines[0], "zh");
+  assert.ok(prompt.includes("兜里 500 金币"), prompt);
+  assert.ok(!prompt.includes("affordability_unknown"), prompt);
+});
+
+/**
+ * AN UNREAD WALLET IS OUR GAP, AND SAYING SO IN WORDS IS NOT A SHRUG.
+ *
+ * <p>
+ * `round67` is what an absent balance cost: she priced copper at 75 g and concluded 「I have little money」 with nothing
+ * to read. So the fact says the cost cannot be worked out - and it says it in words, because the sentence is hers.
+ * `host/src/fact-brief.ts`'s `readOwnMoney` is the one spelling of "is the wallet observed"; this module asks the same
+ * question of the same snapshot field.
+ * </p>
+ */
+test("with no wallet on the wire the shortage says in words that it cannot be priced", () => {
+  const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([parsnip]), locale: "zh" });
+
+  assert.ok(!fact.text.includes("affordability_unknown"), `a code is not a sentence: ${fact.text}`);
+  assert.ok(fact.text.includes("兜里的钱没看过"), fact.text);
+  assert.ok(!/兜里 \d/u.test(fact.text), `no balance is invented from an absence: ${fact.text}`);
+  assert.ok(!fact.text.includes("还差"), `no deficit is claimed: ${fact.text}`);
+  assert.ok(!/颗要 \d+/u.test(fact.text), `nor a cost the wallet was needed to compare: ${fact.text}`);
+});
+
+/**
+ * WHAT COUNTS AS A BALANCE IS `readOwnMoney`'s RULE, AND ITS BOUNDARIES ARE WHERE A MIRROR DRIFTS.
+ *
+ * <p>
+ * The tools layer may not import Host production sources (`.dependency-cruiser.tools.cjs`), so the rule - a safe,
+ * non-negative integer - is restated in the module. Each boundary is pinned here, because a mirrored predicate that is
+ * never tested from its own edges is two opinions waiting to disagree: a string, a negative, a fraction, a value past
+ * the safe range and `NaN` are all an UNREAD wallet, never "she has none".
+ * </p>
+ */
+test("a balance that is not a non-negative safe integer reads as an unread wallet", () => {
+  for (const money of ["500", -1, 1.5, null, Number.MAX_SAFE_INTEGER + 2, Number.NaN]) {
+    const fact = seedShortageFact({
+      taskId: TASK,
+      snapshot: Object.freeze({ seedSupplyTargets: [parsnip], money }),
+      locale: "zh",
+    });
+    assert.ok(fact.text.includes("兜里的钱没看过"), `${String(money)} is not a balance: ${fact.text}`);
+  }
+  const empty = seedShortageFact({
+    taskId: TASK,
+    snapshot: Object.freeze({ seedSupplyTargets: [parsnip], money: 0 }),
+    locale: "zh",
+  });
+  assert.ok(empty.text.includes("兜里 0 金币"), `zero is a balance, and it is not an absence: ${empty.text}`);
+});
+
+/**
+ * A PRICE IN AN UNSTATED CURRENCY IS NOT A GOLD PRICE.
+ *
+ * <p>
+ * `currency` is optional on the row (`protocol.ts`), and comparing a number that may not be gold with a gold balance
+ * would be a comparison of two different things. The price is still the row's own number; what it is counted in is
+ * simply not said.
+ * </p>
+ */
+test("a row that does not say what its shop charges in names no currency and is not compared with the purse", () => {
+  const unclear = Object.freeze({ ...parsnip, currency: undefined });
+  const bare = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([unclear]), locale: "zh" });
+
+  assert.ok(bare.text.includes("一颗 20"), bare.text);
+  assert.ok(!bare.text.includes("金币"), `no currency is invented for a price that names none: ${bare.text}`);
+
+  const priced = seedShortageFact({
+    taskId: TASK,
+    snapshot: Object.freeze({ seedSupplyTargets: [unclear], money: 500 }),
+    locale: "zh",
+  });
+  assert.ok(!priced.text.includes("还差"), `a price in an unstated currency is not compared with gold: ${priced.text}`);
+  assert.ok(priced.text.includes("兜里 500 金币"), `the purse is still a fact about the world: ${priced.text}`);
+});
+
+/**
+ * THE DEFECT CLASS, NOT THE INSTANCE: no fact this module composes may put a machine token in the sentence she reads.
+ *
+ * <p>
+ * The population is every world shape and both locales, so a clause added later is covered without editing this test.
+ * `hoursCondition` is the row's own string and is printed verbatim, so the worlds here carry the game's ordinary
+ * `TIME 900 2100` rather than a condition full of its own delimiters.
+ * </p>
+ */
+test("no fact this module composes carries a machine token", () => {
   const worlds = {
-    measured: snapshotWith([parsnip]),
+    shortage: snapshotWith([parsnip]),
+    priced: Object.freeze({ seedSupplyTargets: [parsnip], money: 500 }),
     empty: snapshotWith([]),
     unmeasured: Object.freeze({}),
     unsold: snapshotWith([Object.freeze({ ...parsnip, shopId: undefined, price: undefined })]),
+    uncounted: snapshotWith([Object.freeze({ ...parsnip, heldCount: undefined })]),
+    closed: snapshotWith([Object.freeze({ ...parsnip, openNow: false })]),
+    undeclaredHours: snapshotWith([Object.freeze({ ...parsnip, hoursCondition: undefined })]),
+    unanswerableOpen: snapshotWith([Object.freeze({ ...parsnip, openNow: undefined })]),
   };
-  for (const taskId of [TASK, "till_and_sow"])
-    for (const [label, snapshot] of Object.entries(worlds)) {
-      const fact = seedShortageFact({ taskId, snapshot, locale: "zh" });
-      if (fact === null) continue;
-      assert.ok(
-        fact.text.includes("affordability_unknown"),
-        `the ${label} fact must name the money gap rather than stay silent: ${fact.text}`,
-      );
-      assert.ok(
-        !/affordab[^_]*[:=]\s*(true|yes|measured)/iu.test(fact.text),
-        `and it must never claim the question was answered: ${fact.text}`,
-      );
-    }
+  let examined = 0;
+  for (const locale of ["zh", "en"])
+    for (const taskId of [TASK, "till_and_sow"])
+      for (const [label, snapshot] of Object.entries(worlds)) {
+        const fact = seedShortageFact({ taskId, snapshot, locale });
+        if (fact === null) continue;
+        examined += 1;
+        assert.doesNotMatch(
+          fact.text,
+          /[a-z]+_[a-z]+/u,
+          `a snake_case code reached her sentence (${label}/${locale}): ${fact.text}`,
+        );
+        assert.doesNotMatch(
+          fact.text,
+          /(?:^|[\s(（;,])[a-z]+=/u,
+          `a machine assignment reached her sentence (${label}/${locale}): ${fact.text}`,
+        );
+      }
+  assert.ok(examined >= 10, `the population must not be empty: examined ${String(examined)}`);
 });
 
-test("an unpublished seed count says seed_count_unknown instead of zero", () => {
+test("an unpublished seed count says it was never counted instead of zero", () => {
   const uncounted = Object.freeze({ ...parsnip, heldCount: undefined });
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([uncounted]), locale: "zh" });
 
   assert.equal(fact.held, null, "a count nobody published is not a count of zero");
-  assert.ok(fact.text.includes("seed_count_unknown"), fact.text);
+  assert.ok(fact.text.includes("手上多少颗没数过"), fact.text);
   assert.ok(!/手上 0/u.test(fact.text), `the fact must not claim she holds none: ${fact.text}`);
   // The supply half is still a fact about the world, and it is still worth stating.
   assert.ok(fact.text.includes(parsnip.shopId), fact.text);
@@ -273,23 +404,23 @@ test("a shop the game says is shut at this hour says so, with the hours that exp
   const closed = Object.freeze({ ...parsnip, openNow: false });
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([closed]), locale: "zh" });
 
-  assert.ok(fact.text.includes("现在=关门"), fact.text);
-  assert.ok(fact.text.includes("时段=TIME 900 2100"), `closed without the window is unexplainable: ${fact.text}`);
+  assert.ok(fact.text.includes("现在关着门"), fact.text);
+  assert.ok(fact.text.includes("开门时间 TIME 900 2100"), `closed without the window is unexplainable: ${fact.text}`);
 });
 
 test("an unanswerable open-now is not 'closed'", () => {
   const unknown = Object.freeze({ ...parsnip, openNow: undefined, openNowReason: "owner_condition_unreadable" });
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([unknown]), locale: "zh" });
 
-  assert.ok(fact.text.includes("现在=未测(owner_condition_unreadable)"), fact.text);
-  assert.ok(!fact.text.includes("现在=关门"), `an unasked question is not a shut shop: ${fact.text}`);
+  assert.ok(fact.text.includes("现在开不开不知道"), fact.text);
+  assert.ok(!fact.text.includes("现在关着门"), `an unasked question is not a shut shop: ${fact.text}`);
 });
 
 test("a shop whose row declares a different price than the menu charges states both", () => {
   const disagreed = Object.freeze({ ...parsnip, price: 24, declaredPrice: 20 });
   const fact = seedShortageFact({ taskId: TASK, snapshot: snapshotWith([disagreed]), locale: "zh" });
 
-  assert.ok(fact.text.includes("price=24"), fact.text);
+  assert.ok(fact.text.includes("一颗 24 金币"), fact.text);
   assert.ok(fact.text.includes("标价 20"), `the declared number is named rather than dropped: ${fact.text}`);
 });
 
@@ -317,7 +448,7 @@ test("an open shop is preferred over a closed one, and the cheapest over the dea
   });
 
   assert.ok(fact.text.includes("JojaMart"), `a shop she can walk into now outranks a cheaper shut one: ${fact.text}`);
-  assert.ok(fact.text.includes("现在=营业"), fact.text);
+  assert.ok(fact.text.includes("现在开着门"), fact.text);
 });
 
 test("the fact never exceeds its character budget, however many shops the world names", () => {
