@@ -295,7 +295,7 @@ export function composeFactBrief(input: FactBriefInput): string {
   if (state !== "") blocks.push(state);
   const settlements = input.events.filter((fact) => fact.semanticKind === PROGRAM_SETTLED);
   const facts = input.events.filter((fact) => fact.semanticKind !== PROGRAM_SETTLED);
-  const factBlock = composeWorldFacts(facts);
+  const factBlock = composeWorldFacts(facts, worldBeside(input.snapshot, facts));
   if (factBlock !== "") blocks.push(factBlock);
   const resultBlock = composeExecutionResult(settlements, input.snapshot);
   if (resultBlock !== "") blocks.push(resultBlock);
@@ -1068,17 +1068,74 @@ export const HELD_WORLD_ZH: Readonly<Record<HeldWorldDeclaration, string>> = Obj
   blocksTimePass: "时间停住了",
 });
 
-/** `<world-facts>`: one line per event, the oldest first, the remainder counted, and every address on one line at the end. */
-function composeWorldFacts(events: readonly WorldFact[]): string {
-  const rendered = events.map(factLine).filter((entry): entry is FactRendering => entry !== null);
+/**
+ * `<world-facts>`: one line per event, the oldest first, the remainder counted, and every address on one line at the end.
+ *
+ * <p>
+ * EVERY LINE SAYS WHICH WORLD IT BELONGS TO, and that is the half `round91` was missing. MEASURED 2026-11-20 (`round91`):
+ * `plan_423` failed `door_out_of_range ... actor=9,9` inside the FarmHouse at revision 473 with no presentation lease, so
+ * the pump carried it; 130 ms before it was handed over `enter_exit` completed into the Farm at `64,15` at revision 481,
+ * and the carried refusal arrived behind it as `<world-facts>` with no `<world-state>` - a steer states no reading
+ * (`round77`). Her own thinking, from the session: "the earlier plan said enter_exit succeeded to Farm 64,15, but then
+ * this new fact says she is at 9,9 near door 3,12... Confusing hybrid", and she planned a walk back to a door in a room
+ * she had left.
+ * </p>
+ *
+ * <p>
+ * A FACT'S REVISION IS PART OF WHAT MAKES IT TRUE, so a line that is late says so in its own line: `at_revision=<r>` is
+ * the world the fact was minted in, and `stale_because=revision <W>` names the newer world it reads beside. A line at that
+ * newer world says `current` instead, so a fact with no `<world-state>` beside it can never be read as if it were. Both
+ * are spelled with the revision `<world-state>` itself states, so the two blocks are joined by one number rather than by a
+ * second vocabulary.
+ * </p>
+ *
+ * <p>
+ * A FACT THAT STATES NO REVISION GETS NO MARK, and that is not an absence standing in for an answer: `revision` 0 is what
+ * the pump writes for the facts IT mints (`takeCarriedBacklogFact` and its neighbours - statements about the Host's own
+ * ledger, not about the world), so there is no world claim to qualify. Every fact the Mod publishes carries its revision,
+ * which is why the defect this renders for is one no producer can state its way out of.
+ * </p>
+ */
+function composeWorldFacts(events: readonly WorldFact[], world: number | undefined): string {
+  const rendered = events.flatMap((fact) => {
+    const rendering = factLine(fact);
+    return rendering === null ? [] : [{ fact, rendering }];
+  });
   if (rendered.length === 0) return "";
   const shown = rendered.slice(0, MAX_WORLD_FACT_LINES);
   const rest = rendered.length - shown.length;
-  const lines = shown.map((entry) => entry.narration);
+  const lines = shown.map((entry) => `${entry.rendering.narration}${worldMark(entry.fact.revision, world)}`);
   if (rest > 0) lines.push(`其余 ${rest} 条未列出`);
-  const addresses = shown.map((entry) => entry.address).filter((address): address is string => address !== null);
+  const addresses = shown
+    .map((entry) => entry.rendering.address)
+    .filter((address): address is string => address !== null);
   if (addresses.length > 0) lines.push(`${ADDRESSABLE_FACTS_HEAD}${addresses.join("；")}`);
   return block("world-facts", lines.join("\n"));
+}
+
+/**
+ * The world a `<world-facts>` block reads beside: the reading the delivery states, or - for a delivery that states no
+ * reading at all, which is every steer after `round77` - the newest revision among the facts themselves.
+ *
+ * The reading is asked first because it is the one a reader can see: a batch states its revision under `<world-state>`, and
+ * a fact that disagrees with that stated world is the fact this whole rendering exists for. A reading that states no world
+ * (`revision` 0, before the first observation) falls back to the block's own newest fact, so two late facts beside each
+ * other still order themselves correctly.
+ */
+function worldBeside(reading: WorldStateReading | undefined, facts: readonly WorldFact[]): number | undefined {
+  if (reading !== undefined && Number.isFinite(reading.revision) && reading.revision > 0) return reading.revision;
+  const stated = facts.map((fact) => fact.revision).filter((revision) => Number.isFinite(revision) && revision > 0);
+  return stated.length === 0 ? undefined : Math.max(...stated);
+}
+
+/**
+ * Which world one `<world-facts>` line belongs to: `current` for the world it reads beside, the fact's own revision and the
+ * newer world for a line that is late, and nothing at all for a fact whose producer stated no world.
+ */
+function worldMark(revision: number, world: number | undefined): string {
+  if (!Number.isFinite(revision) || revision <= 0) return "";
+  if (world === undefined || revision >= world) return " ·current";
+  return ` ·at_revision=${String(revision)};stale_because=revision ${String(world)}`;
 }
 
 function factLine(fact: WorldFact): FactRendering | null {

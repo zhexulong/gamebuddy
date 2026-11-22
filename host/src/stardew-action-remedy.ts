@@ -394,11 +394,79 @@ const REFUSAL_ANSWERS: readonly RefusalAnswer[] = Object.freeze([
       "Read the world as it is now and make the same request again from it.",
   }),
   Object.freeze({
-    codes: Object.freeze(["navigation_commit_body_still_owned", "door_gate_refused"]),
+    codes: Object.freeze(["navigation_commit_body_still_owned"]),
     action: null,
     guidance: () =>
-      "The walk reached the door and the game's own gate did not open: something still holds the body or the door. Wait for that to clear, " +
+      "The walk reached the door and the game's own gate did not open: something still holds the body. Wait for that to clear, " +
       "then make the same request again - retrying now answers the same hold.",
+  }),
+  /**
+   * A DOOR THE GAME'S OWN GATE SHUT, with the state the Mod now publishes beside it (`map=`, `door_tile=`, `door_at_tile=`,
+   * and for a door the clock shuts `opens_at=` / `closes_at=` / `now=` - `ExecutionManager.DescribeDoorAtTile`).
+   *
+   * <p>
+   * THIS WAS ONE SENTENCE WITH THE BODY HOLD ABOVE, and the cost was a measured minute: `round91` read eight door refusals
+   * in one window - the door shut by the clock and the answer "wait for that to clear" - so the only reading it left open
+   * was to ask the same door again, which it did, six times. A clock is not a hold: it has an hour, and the hour is the
+   * instruction.
+   * </p>
+   */
+  Object.freeze({
+    codes: Object.freeze(["door_gate_refused"]),
+    action: null,
+    guidance: (detail: string | null) => {
+      const state = evidenceField(detail, "door_at_tile");
+      const door = evidenceField(detail, "door_tile");
+      const at = door === null ? "that door" : `the door at (${door})`;
+      const opens = evidenceField(detail, "opens_at");
+      const closes = evidenceField(detail, "closes_at");
+      const now = evidenceField(detail, "now");
+      const clock =
+        state === "locked_by_hours" && opens !== null
+          ? `${at} is shut by the game's own clock: it opens at ${opens}${closes === null ? "" : ` and shuts again at ${closes}`}` +
+            `${now === null ? "" : `, and the clock now reads ${now}`}. Nothing she can dispatch opens it before then`
+          : state === "locked_by_hours"
+            ? `${at} is shut by the game's own clock, and the map does not declare its hours`
+            : `The game's own gate refused ${at} - the dialogue beside this line is the game's words for why - and the tile itself is ${state ?? "declared"}`;
+      return (
+        `${clock}. Wait for the gate's own condition to clear, then make the same request again: the hour and the gate are ` +
+        `the game's, and re-asking now answers the same refusal.${repeatedRefusalClause(detail)}`
+      );
+    },
+  }),
+  /**
+   * A DOOR THAT IS NOT WHERE THE REQUEST LOOKED FOR IT. The Mod enumerates this map's exits and now publishes WHICH map that
+   * list is (`map=`), the tile the request named (`door_tile=`) and whether this map declares a door on it (`door_at_tile=`).
+   *
+   * <p>
+   * `round91` read `door_not_available ... you=7,18;nearest=28,15;distance=21` six times and the line could not say whether
+   * the tile was doorless or the door was shut, so the sentence she needs - walk to the door this map DOES publish, or stop
+   * asking for this tile - had to be guessed. `measured round85`'s sibling - `travel` at a tile that holds a door
+   * `location.warps` never held - is the other half of the same confusion and stays a refusal for `travel`.
+   * </p>
+   */
+  Object.freeze({
+    codes: Object.freeze(["door_not_available"]),
+    action: null,
+    guidance: (detail: string | null) => {
+      const map = evidenceField(detail, "map");
+      const door = evidenceField(detail, "door_tile");
+      const where = map === null || map === "unknown" ? "the map she is on" : map;
+      const named = door === null ? "the tile that request named" : `(${door})`;
+      const state = evidenceField(detail, "door_at_tile");
+      const nearest = evidenceField(detail, "nearest");
+      const doorItDoesPublish =
+        nearest === null
+          ? "This map publishes no exit at all, so leaving it is not a step she can take from here"
+          : `The nearest transition ${where} publishes is (${nearest}), and the list beside this line names the others`;
+      return (
+        (state === "declared"
+          ? `${where} does declare a door at ${named}, and the engine resolves no destination from it`
+          : `There is no door of ${where} on ${named}`) +
+        `. ${doorItDoesPublish}: walk to one of those as a step of its own before asking for the transition, or name a ` +
+        `threshold the world block lists.${repeatedRefusalClause(detail)}`
+      );
+    },
   }),
   Object.freeze({
     codes: Object.freeze(["navigation_scope_unavailable"]),
@@ -452,6 +520,26 @@ export function evidenceField(detail: string | null, key: string): string | null
     if (at > 0 && part.slice(0, at) === key) return part.slice(at + 1);
   }
   return null;
+}
+
+/**
+ * The one clause a refusal that has just come back IDENTICAL adds, from the count the Mod publishes
+ * (`same_refusal_as_before=<n>`, `ExecutionManager.NoteRepeatedRefusal`): how many identical answers came before this one.
+ *
+ * <p>
+ * MEASURED `round91`: eight door refusals in one window, `door_out_of_range` twice with the same actor and distance and
+ * `door_not_available` six times, every one word for word its predecessor - and nothing in the delivery said the world had
+ * not moved. The companion stood at a closed door for over a minute asking it again. The count is the fact that makes the
+ * repetition visible; the sentence is the instruction that stops it.
+ * </p>
+ */
+function repeatedRefusalClause(detail: string | null): string {
+  const repeated = evidenceField(detail, "same_refusal_as_before");
+  if (repeated === null || !/^\d+$/u.test(repeated)) return "";
+  return (
+    ` This exact answer has already come back ${repeated} time(s) with nothing in the world changing between them, so ` +
+    `asking again reads the same: do something else first, or wait for the world to move.`
+  );
 }
 
 /**

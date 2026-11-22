@@ -152,9 +152,15 @@ export type ModelVisibleField = keyof typeof MODEL_FIELD_CEILINGS;
 export const DECISION_FIELD_RANK = Object.freeze([
   "blocker_occupant",
   "clears_with",
+  // The hour a shut door opens (`door_gate_refused`): the same category as `clears_with` - what makes the way usable -
+  // and measured `round91`, the one fact the answer to that refusal needed and did not have.
+  "opens_at",
   "clear_step",
   "blocker_target",
   "blocked_by",
+  // Whether the tile is a door of THIS map at all (`door_not_available`, `door_gate_refused`), which is the fact that
+  // separates "the door is not here" from "it is here and shut".
+  "door_at_tile",
   "reason",
   "state",
   "target",

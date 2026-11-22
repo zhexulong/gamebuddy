@@ -995,6 +995,26 @@ function autoWalkNote(compiled: CompiledPlan): Readonly<Record<string, unknown>>
 }
 
 /**
+ * THE SEED COUNTS THIS PLAN COULD NOT READ, so a plan that plants more than the pack shows says so instead of passing
+ * silently.
+ *
+ * <p>
+ * The other half of the bound `planSeedCounts` applies: with the pack published, a plan that plants more seed than it
+ * holds is refused by name (`plan_script_exceeds_the_seeds_held`); with the pack NOT published there is no count to compare
+ * against, so nothing is refused - and this list is what keeps that from reading as a plan the harness checked. Silent when
+ * it is empty, for the same reason `layoutFactsNote` is.
+ * </p>
+ */
+function heldSeedsNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (compiled.status === "refused" || compiled.heldSeedsUnmeasuredCount === 0) return {};
+  return Object.freeze({
+    heldSeedsUnmeasured: compiled.heldSeedsUnmeasured,
+    heldSeedsUnmeasuredCount: compiled.heldSeedsUnmeasuredCount,
+    heldSeedsUnmeasuredTruncated: compiled.heldSeedsUnmeasuredCount > compiled.heldSeedsUnmeasured.length,
+  });
+}
+
+/**
  * The difference between the plan she wrote and the program that runs, on a plan that HAS a program.
  *
  * <p>
@@ -1048,6 +1068,7 @@ function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknow
       ? {}
       : { noStepNeeded: compiled.noStepNeeded, noStepNeededCount: compiled.noStepNeededCount }),
     ...planReadingsNote(compiled),
+    ...heldSeedsNote(compiled),
   });
 }
 

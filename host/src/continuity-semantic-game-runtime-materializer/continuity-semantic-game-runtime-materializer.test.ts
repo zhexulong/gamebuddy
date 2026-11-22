@@ -1394,6 +1394,11 @@ test("the plan tool hands its compiled program to the one submission path a mode
   assert.match(source, /boundFromSnapshot: compiled\.boundFromSnapshot,/u);
   assert.match(source, /boundFromSnapshotCount: compiled\.boundFromSnapshotCount,/u);
   assert.match(source, /readingsUnmeasured: compiled\.readingsUnmeasured,/u);
+  // AND THE COUNT A PLAN'S OWN SIZE RESTS ON, from the same producer: `heldSeedsUnmeasured` is the compiler's answer for a
+  // pack the snapshot never published - there is no count to bound a planting plan by, and the answer says so rather than
+  // reading as a plan the harness measured.
+  assert.match(source, /\.\.\.heldSeedsNote\(compiled\),/u);
+  assert.match(source, /heldSeedsUnmeasured: compiled\.heldSeedsUnmeasured,/u);
   // THE STATE THE ANSWER IS IN, beside the account, from the compiler's own field: `planStatus` is what distinguishes a
   // plan that ran all of it from one that ran the part that compiled, and an answer that omits it is read as a success.
   assert.match(source, /planStatus: compiled\.status,/u);

@@ -33,6 +33,61 @@ test("every named hold gets a countermeasure, and none of them is the same text"
   );
 });
 
+test("a door the clock shuts names the hour it opens, and is not read as a body hold", () => {
+  // round91: `door_gate_refused` shared one sentence with `navigation_commit_body_still_owned` - "wait for that to clear" -
+  // for a door that opens at a stated hour, and the run spent the next minute asking the same door.
+  const shut = remedyForRefusal(
+    "door_gate_refused",
+    "source=9,12;gate=refused;entry=perform_action;map=SeedShop;door_tile=9,12;door_at_tile=locked_by_hours;" +
+      "opens_at=900;closes_at=1900;now=1730;dialogue=It's not open right now.",
+  );
+  assert.equal(shut?.action, null, "no tool opens a door the game's own clock has shut");
+  assert.match(shut?.guidance ?? "", /opens at 900/, "the hour it opens is the instruction");
+  assert.match(shut?.guidance ?? "", /1900/);
+  assert.match(shut?.guidance ?? "", /1730/, "beside the clock the reader is holding");
+  assert.doesNotMatch(shut?.guidance ?? "", /something still holds the body/, "a clock is not a body hold");
+  assert.notEqual(
+    shut?.guidance,
+    remedyForRefusal("navigation_commit_body_still_owned", null)?.guidance,
+    "the two facts were one sentence, which is why the minute was spent re-asking",
+  );
+  // The other shade of the same code: a door whose hours the map does not declare still says which door it was.
+  const gated = remedyForRefusal(
+    "door_gate_refused",
+    "source=9,12;gate=refused;entry=perform_action;map=CommunityCenter;door_tile=9,12;door_at_tile=declared;dialogue=It's locked.",
+  );
+  assert.match(gated?.guidance ?? "", /\(9,12\)/, "the door is named, so the reader knows which one was refused");
+  assert.match(gated?.guidance ?? "", /dialogue/, "and that the game's own words say why");
+});
+
+test("a door that is not on this map says so, and a repeated refusal says how often it has come back", () => {
+  const absent = remedyForRefusal(
+    "door_not_available",
+    "source=7,18;warps=10;you=7,18;nearest=28,15;distance=21;doors=28,15->Greenhouse;map=Town;door_tile=7,18;door_at_tile=absent",
+  );
+  assert.equal(absent?.action, null, "nothing can be dispatched at a door that is not there");
+  assert.match(absent?.guidance ?? "", /Town/, "the map's doors were the ones enumerated, and it says whose they were");
+  assert.match(absent?.guidance ?? "", /no door of Town/, "doorless and shut are different sentences");
+  assert.match(absent?.guidance ?? "", /\(28,15\)/, "the transition this map does publish is the way out");
+
+  // The same map, a door it DOES declare: the other sentence.
+  const declared = remedyForRefusal(
+    "door_not_available",
+    "source=7,18;warps=10;nearest=28,15;map=Town;door_tile=7,18;door_at_tile=declared",
+  );
+  assert.match(declared?.guidance ?? "", /does declare a door/, "a door that leads nowhere is not a doorless tile");
+  assert.notEqual(declared?.guidance, absent?.guidance);
+
+  // AND THE MINUTE. The Mod counts identical answers; the sentence must say the repetition out loud.
+  const repeated = remedyForRefusal(
+    "door_not_available",
+    "source=7,18;warps=10;nearest=28,15;map=Town;door_tile=7,18;door_at_tile=absent;same_refusal_as_before=7",
+  );
+  assert.match(repeated?.guidance ?? "", /7 time\(s\)/, "the count travels into the sentence");
+  assert.match(repeated?.guidance ?? "", /do something else/, "and so does the instruction it exists for");
+  assert.doesNotMatch(absent?.guidance ?? "", /time\(s\)/, "a first refusal is a new fact and says nothing about repeats");
+});
+
 test("a modal points at the plan step that matches whether an answer is owed", () => {
   const question = remedyForRefusal("actor_held_by_modal", "modal_type=DialogueBox;is_question=true;can_move=false");
   assert.equal(question?.action, "stardew_plan_work");

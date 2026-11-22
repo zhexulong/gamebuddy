@@ -450,6 +450,18 @@ type RunnablePlan = Readonly<{
   /** Every resolved-after reading, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
   resolvedAfterCount: number;
   /**
+   * The seed counts this plan needed and the snapshot did not publish, one per seed it plants, spelled
+   * `unmeasured=plant_seed.<item>;family_not_published=inventoryItemFacts`.
+   *
+   * Present for the same reason `readingsUnmeasured` is, from the plan's own side: with the pack unpublished there is no
+   * count to compare the planting steps against, so this compiler bounds nothing - and says so, because a plan that plants
+   * seventeen of a seed it holds fifteen of is the plan this list is the only warning for. Bounded;
+   * `heldSeedsUnmeasuredCount` is the population.
+   */
+  heldSeedsUnmeasured: readonly string[];
+  /** Every seed count this plan could not read, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  heldSeedsUnmeasuredCount: number;
+  /**
    * Layout facts this plan's own nodes depend on that the snapshot it was compiled against does not carry, one per
    * `layout_facts_absent:call <n>:<fact>`. Bounded; `layoutFactsAbsentCount` is the population, and a list that had
    * to be cut ends in one `layout_facts_absent_over_ceiling:<count>:<ceiling>` row naming the ceiling and the
@@ -552,6 +564,35 @@ function planNodeId(prefix: string, position: number): string {
  * way, where the transition's own refusal would only say the body is far from a tile it named correctly.
  */
 const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["enter_exit", "travel"]);
+
+/**
+ * The one transition whose source tile must be a way out of the map she is standing on, and whose tables are checked.
+ *
+ * IT IS A NAME AND NOT A FAMILY, which is the whole reason the check below did not exist: `enter_exit` declares
+ * `targetFamily: "warps"`, and the family pass (`bindSnapshotReadings`) only reads arguments the surface marks as
+ * READINGS - while a transition's `x`/`y` is her own intention, the tile she believes the door is at. So the declared
+ * family was never applied to the coordinate, and `protocol.ts` accepts any tile `>= -1` on both axes: a door tile of
+ * another map compiled, and the body walked to it before the Mod answered `door_not_available` (`round91`).
+ */
+const ENTER_EXIT_ACTION_ID = "enter_exit";
+
+/**
+ * The snapshot families whose rows are ways OUT of the map the actor stands on, in the order the Mod resolves them, each
+ * beside the word a refusal calls it by.
+ *
+ * <p>
+ * BOTH TABLES, BECAUSE NEITHER IS A SUPERSET OF THE OTHER. `enter_exit` resolves a transition source through the door
+ * table first and the warp table as its fallback (`ExecutionManager.RequestLocalDoorTransition`, pinned by
+ * `TransitionTileIsResolvableSourceShapeTests`), and `DiscoverDoorTargets` publishes both of them: `warps` is the map's
+ * own `Warp` property, and `doorTargets` adds every Buildings-layer door the engine's `updateDoors` built beside each
+ * building's human door - a farmhouse door is in `doorTargets` and in no warp list. A check against `warps` alone
+ * would therefore refuse a door the Mod enters, which is the `round19`/`round42` defect from the other side.
+ * </p>
+ */
+const PLAN_EXIT_FAMILY_IDS: readonly Readonly<{ family: string; label: string }>[] = Object.freeze([
+  Object.freeze({ family: "warps", label: "warps" }),
+  Object.freeze({ family: "doorTargets", label: "doors" }),
+]);
 
 /**
  * The actions that rebuild the world under a plan, so a plan must END at one.
@@ -1294,8 +1335,8 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     "The script is ordinary JavaScript over `snapshot` and `builder`: `for`, `if`, `.filter`, `.sort` run; timers,\n" +
     "randomness, the network and eval are refused by name.\n" +
     "// In order:\n" +
-    "builder.move_to_tile({ x: 10, y: 20 });\n" +
-    "builder.enter_exit({ x: 10, y: 20 });\n" +
+    "const door = (snapshot.warps ?? [])[0];\n" +
+    "if (door) builder.enter_exit({ x: door.sourceX, y: door.sourceY });\n" +
     "// A BATCH IS A LOOP: twenty tiles in ONE call are twenty actions for one turn, and the `if` is what leaves out\n" +
     "// the tiles you do not mean to touch:\n" +
     "for (const soil of snapshot.soilTiles) {\n" +
@@ -1398,15 +1439,89 @@ const MAX_REPORTED_LAYOUT_FACTS_ABSENT = 8;
 
 /** One node's tile: the arguments every tile-addressed action declares, or undefined for a loop with no single tile. */
 function nodeTile(node: PlanNode): Readonly<{ x: number; y: number }> | undefined {
-  const argument = (name: string): number | undefined => {
-    const declared = (node.arguments as Readonly<Record<string, { canonicalValue?: unknown }>>)[name];
-    if (declared === undefined || typeof declared.canonicalValue !== "string") return undefined;
-    const value = Number.parseInt(declared.canonicalValue, 10);
+  const integer = (name: string): number | undefined => {
+    const text = nodeArgumentText(node, name);
+    if (text === undefined) return undefined;
+    const value = Number.parseInt(text, 10);
     return Number.isSafeInteger(value) ? value : undefined;
   };
-  const x = argument("x");
-  const y = argument("y");
+  const x = integer("x");
+  const y = integer("y");
   return x === undefined || y === undefined ? undefined : { x, y };
+}
+
+/** One node argument's canonical text, or `undefined` when the node does not carry it as one. */
+function nodeArgumentText(node: PlanNode, name: string): string | undefined {
+  const declared = (node.arguments as Readonly<Record<string, { canonicalValue?: unknown }>>)[name];
+  return declared !== undefined && typeof declared.canonicalValue === "string" ? declared.canonicalValue : undefined;
+}
+
+/**
+ * The seed this plan plants more of than it will hold, or `null` when every planting step has a seed behind it.
+ *
+ * <p>
+ * MEASURED `round89`, `plan_96`: the pack held fifteen parsnip seeds and `inventory_after` went 15 -> 0, while the plan
+ * carried SEVENTEEN `plant_seed` nodes - so `n16` and `n17` answered `seed_not_owned_in_pack`, two dispatches bought for
+ * steps that could not do anything. The count and the program are one reading: the pack is `inventoryItemFacts`, summed
+ * over the slots that hold the item, which is the same pack the Mod re-resolves `slot` from on the game thread. A plan
+ * that asks for more than that is therefore a fact about the PLAN, answered before a node exists.
+ * </p>
+ *
+ * <p>
+ * THE PLAN ANSWERS FOR WHAT IT BUYS ITSELF. Fifteen bought seeds and fifteen plantings is executable with an empty pack,
+ * and `seedSupplyTargets` exists to teach exactly that shape - so the units this plan's own `shop_purchase` nodes add are
+ * counted with the pack's, and `held` in the refusal is what the plan WILL have rather than what the snapshot showed. In
+ * which order she wrote the purchase and the plantings is hers, and a planting written before its purchase fails on its
+ * own, by name.
+ * </p>
+ *
+ * <p>
+ * AN UNPUBLISHED PACK IS NOT ZERO. `inventoryItemFacts` absent means the snapshot published no pack at all (an older Mod,
+ * or a world that measured nothing), so nothing is compared and NOTHING IS BOUND: the plan compiles exactly as it would
+ * have and the count is named per seed (`heldSeedsUnmeasured`) instead of being invented as a refusal. A published family
+ * carrying no row for the item IS a zero - that is the snapshot saying she does not hold it.
+ * </p>
+ */
+function planSeedCounts(
+  nodes: readonly PlanNode[],
+  snapshot: Snapshot,
+): Readonly<{ refusal: string | null; unmeasured: readonly string[] }> {
+  const planted = new Map<string, number>();
+  const bought = new Map<string, number>();
+  for (const node of nodes) {
+    const item = nodeArgumentText(node, "expectedQualifiedItemId");
+    if (item === undefined) continue;
+    if (node.actionId === "plant_seed") planted.set(item, (planted.get(item) ?? 0) + 1);
+    if (node.actionId !== "shop_purchase") continue;
+    const quantityText = nodeArgumentText(node, "quantity");
+    const quantity = quantityText !== undefined && /^\d+$/u.test(quantityText) ? Number(quantityText) : 0;
+    if (Number.isSafeInteger(quantity) && quantity > 0) bought.set(item, (bought.get(item) ?? 0) + quantity);
+  }
+  if (planted.size === 0) return Object.freeze({ refusal: null, unmeasured: Object.freeze([]) });
+  const pack = planSnapshotRows(snapshot, "inventoryItemFacts");
+  if (!pack.measured)
+    return Object.freeze({
+      refusal: null,
+      unmeasured: Object.freeze(
+        [...planted.keys()].map((item) => `unmeasured=plant_seed.${item};family_not_published=inventoryItemFacts`),
+      ),
+    });
+  const held = new Map<string, number>();
+  for (const row of pack.rows) {
+    const item = planRowValue(row.qualifiedItemId);
+    const stack = row.stack;
+    if (item === undefined || typeof stack !== "number" || !isNonNegativeSafeInteger(stack)) continue;
+    held.set(item, (held.get(item) ?? 0) + stack);
+  }
+  for (const [item, planned] of planted) {
+    const available = (held.get(item) ?? 0) + (bought.get(item) ?? 0);
+    if (planned > available)
+      return Object.freeze({
+        refusal: `plan_script_exceeds_the_seeds_held:${item}:planned=${String(planned)}:held=${String(available)}`,
+        unmeasured: Object.freeze([]),
+      });
+  }
+  return Object.freeze({ refusal: null, unmeasured: Object.freeze([]) });
 }
 
 /**
@@ -1558,6 +1673,12 @@ export function compilePlanScript(
     const first = state.rejected[0]!;
     return refused(first.reasonCode, scriptSource, snapshotRevision, state.requirement, first.missingArguments, state);
   }
+  // A WALK TO THE TILE A REFUSED TRANSITION NAMED IS NOT DISPATCHED. The refusal of ONE call does not stop the others -
+  // that doctrine is right for a typo and wrong for this shape, where her own next call says the walk had a purpose that
+  // does not exist (`planWalkToRefusedExit`).
+  const walkedToARefusedExit = planWalkToRefusedExit(state);
+  if (walkedToARefusedExit !== null)
+    return refused(walkedToARefusedExit, scriptSource, snapshotRevision, undefined, undefined, state);
   // A plan is only meaningful against a revision: an accepted plan whose revision is unknown could not be
   // replayed and could not answer idempotency, so that is a refusal rather than a plan with a null revision.
   if (snapshotRevision === null)
@@ -1598,6 +1719,13 @@ export function compilePlanScript(
       undefined,
       state,
     );
+  // A PLAN MAY NOT PLANT MORE SEED THAN IT WILL HOLD, and the surplus is answered HERE, from the same nodes that are about
+  // to be submitted: `round89`'s seventeen plantings against fifteen seeds spent two dispatches to learn
+  // `seed_not_owned_in_pack` twice. Read after the pack-and-order passes because the steps that are judged are the ones
+  // that would run; see `planSeedCounts` for the count, the plan's own purchase, and the unmeasured case.
+  const seeds = planSeedCounts(ordered.nodes, snapshot);
+  if (seeds.refusal !== null)
+    return refused(seeds.refusal, scriptSource, snapshotRevision, undefined, undefined, state);
   // THE RULE THAT USED TO STAND HERE - ONE REFUSED CALL VOIDS THE BATCH - answered a real forgery and cost the calls that
   // were correct. The forgery is measured: at `3d249ff1`, `builder.talk_to_npc(...); builder.shop_purchase(...)` answered
   // `ok: true` and carried ONE node, the purchase refused and the plan submitted without it; round40 is the same shape
@@ -1642,6 +1770,8 @@ export function compilePlanScript(
     readingsUnmeasuredCount: state.readingsUnmeasured.length,
     resolvedAfter: Object.freeze(state.resolvedAfter.slice(0, MAX_REPORTED_PLAN_READINGS)),
     resolvedAfterCount: state.resolvedAfter.length,
+    heldSeedsUnmeasured: Object.freeze(seeds.unmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
+    heldSeedsUnmeasuredCount: seeds.unmeasured.length,
     layoutFactsAbsent: layout.absent,
     layoutFactsAbsentCount: layout.count,
     ...planCallAccount(state),
@@ -1746,6 +1876,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     rejected: [],
     rejectedCount: 0,
     acceptedSteps: [],
+    refusedExits: [],
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
@@ -1926,6 +2057,14 @@ type PlanScriptState = {
    * as steps that do not exist.
    */
   acceptedSteps: number[];
+  /**
+   * The transition sources this compile REFUSED because they are not ways out of the map she stands on, each with the
+   * line its own call was answered with, in the order the calls were written.
+   *
+   * Kept because that refusal is not only one call's: a script that WALKS to the tile it cannot leave through is one
+   * mistake written twice, and the walk is a node that would dispatch (`planWalkToRefusedExit`).
+   */
+  refusedExits: PlanRefusedExit[];
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
@@ -2964,6 +3103,129 @@ function planTargetRowRefusal(
   return rule(named, family.rows, canonical, state, snapshot);
 }
 
+/**
+ * A transition source this compile refused, and the line its own call was answered with.
+ *
+ * The line travels BESIDE the tile because a second call can name the same tile: `planWalkToRefusedExit` refuses the
+ * whole program when the script also walks there, and it answers with the same sentence rather than with a second
+ * spelling of it.
+ */
+type PlanRefusedExit = Readonly<{ tile: string; reasonCode: string }>;
+
+/**
+ * What the snapshot published about this map's ways out: every SOURCE tile, and the rows each table carried.
+ *
+ * <p>
+ * A SET OF TILES, NOT A COUNT. A count says the map has exits; it cannot say whether (3,12) is one of them, which is the
+ * only question a plan asks. The tile is read off `sourceX`/`sourceY` and never off `targetX`/`targetY`: the target pair
+ * is the arrival tile on the DESTINATION map (`ROW_TILE_FIELD_PAIRS` states the same rule for every reader), so reading
+ * it would place another map's tile in this one - the very confusion this check refuses.
+ * </p>
+ * <p>
+ * A TABLE THE SNAPSHOT DOES NOT CARRY IS `null`, NOT ZERO: `warps` is published by every Mod that has a world ready and
+ * `doorTargets` is published exactly when `enter_exit` is advertised, so an absent table means "not measured" and the
+ * refusal says `unmeasured` rather than claiming the map has no doors. The distinction is `planSnapshotRows`', which is
+ * why this reads it instead of `Array.isArray` on the snapshot field.
+ * </p>
+ */
+type PlanExitTables = Readonly<{
+  /** Every SOURCE tile the snapshot published as a way out of this map, spelled `x,y`. */
+  tiles: ReadonlySet<string>;
+  /** The rows each exit table published, in `PLAN_EXIT_FAMILY_IDS` order: its count, or `null` for a table it did not carry. */
+  counts: readonly Readonly<{ label: string; count: number | null }>[];
+}>;
+
+function planExitTables(snapshot: Snapshot): PlanExitTables {
+  const tiles = new Set<string>();
+  const counts: Readonly<{ label: string; count: number | null }>[] = [];
+  for (const { family, label } of PLAN_EXIT_FAMILY_IDS) {
+    const published = planSnapshotRows(snapshot, family);
+    counts.push(Object.freeze({ label, count: published.measured ? published.rows.length : null }));
+    if (!published.measured) continue;
+    for (const row of published.rows) {
+      const x = planRowValue(row.sourceX);
+      const y = planRowValue(row.sourceY);
+      if (x !== undefined && y !== undefined) tiles.add(`${x},${y}`);
+    }
+  }
+  return Object.freeze({ tiles, counts: Object.freeze(counts) });
+}
+
+/**
+ * The line a transition is answered with when the tile it names is not a way out of the map she stands on.
+ *
+ * <p>
+ * `round91` (day 7, `plan_481`) is the measurement: she stood on `Farm 64,15`, the snapshot published `location: "Farm"`
+ * with the farm's own exits in `warps` and nothing at `3,12`, and the plan walked twenty seconds - `(42,16)`, `(15,10)`,
+ * `(7,18)` - before `n02 enter_exit(3,12)` answered `door_not_available`. `3,12` is a tile of the FarmHOUSE, and no
+ * layer had ever said so, so the walk was paid for a door that was never on her map.
+ * </p>
+ * <p>
+ * The line names the three facts a correction is written from: the tile she wrote, the map it was measured against, and
+ * what each exit table published - a count, or `unmeasured` for a table the snapshot did not carry, because "this map
+ * has no doors" and "nobody measured them" are different answers and only one of them is the world's.
+ * </p>
+ */
+function planDoorNotOnThisMapReason(
+  tile: Readonly<{ x: string; y: string }>,
+  snapshot: Snapshot,
+  tables: PlanExitTables,
+): string {
+  const counts = tables.counts
+    .map((entry) => `${entry.label}=${entry.count === null ? "unmeasured" : String(entry.count)}`)
+    .join(":");
+  return `plan_script_door_not_on_this_map:${tile.x}:${tile.y}:map=${planRowValue(snapshot.location) ?? "unmeasured"}:${counts}`;
+}
+
+/**
+ * Whether this call's tile is a way out of the map she stands on, or the refusal to answer it with.
+ *
+ * Only `enter_exit` asks this: `travel` resolves the warp table alone and answers `warp_not_available` at a door tile by
+ * the action surface's own declaration, so the two actions do not share an exit population. `move_to_tile` cannot ask it
+ * at all - a tile of the map is a legal place to stand - which is what `planWalkToRefusedExit` answers instead.
+ */
+function planExitTileRefusal(
+  action: PublishedPlanAction,
+  canonical: Readonly<Record<string, PlanArgument>>,
+  snapshot: Snapshot,
+): PlanRefusedExit | null {
+  if (action.actionId !== ENTER_EXIT_ACTION_ID) return null;
+  const x = planIntentionText(canonical, "x");
+  const y = planIntentionText(canonical, "y");
+  if (x === undefined || y === undefined) return null;
+  const exits = planExitTables(snapshot);
+  if (exits.tiles.has(`${x},${y}`)) return null;
+  return Object.freeze({ tile: `${x},${y}`, reasonCode: planDoorNotOnThisMapReason({ x, y }, snapshot, exits) });
+}
+
+/**
+ * A WALK TO THE TILE THIS SCRIPT'S OWN TRANSITION WAS REFUSED FOR IS THE SAME MISTAKE WEARING A WALK.
+ *
+ * <p>
+ * ONE REFUSED CALL DOES NOT STOP THE OTHERS, which is the doctrine this compiler is built on: a typo must not cost a
+ * batch. Its other half was missing. `round91`'s `plan_481` was `move_to_tile({3,12}); enter_exit({3,12})`, so the walk
+ * was a legal node and only the transition was refused - the answer would have been `partial`, and the one node it ran
+ * would have been the twenty-second walk to a tile nothing can leave through.
+ * </p>
+ * <p>
+ * The walk cannot be refused where it is written: a tile of the map is a legal place to stand, and whether this walk is
+ * a mistake depends on her OWN next call. So it is answered once the script is done, and the plan is refused whole with
+ * the line the transition already carried - nothing dispatches, and the correction is the tile, not the walk. A walk no
+ * call tries to leave through still compiles: that is a plan with a step in it.
+ * </p>
+ */
+function planWalkToRefusedExit(state: PlanScriptState): string | null {
+  if (state.refusedExits.length === 0) return null;
+  for (const node of state.nodes) {
+    if (node.actionId !== MOVE_TO_TILE_ACTION_ID) continue;
+    const tile = tileKeyOf(node.arguments);
+    if (tile === null) continue;
+    const refused = state.refusedExits.find((candidate) => candidate.tile === tile);
+    if (refused !== undefined) return refused.reasonCode;
+  }
+  return null;
+}
+
 function emitPlanNode(
   action: PublishedPlanAction,
   arguments_: unknown,
@@ -3074,6 +3336,13 @@ function emitPlanNode(
   // missing argument is answered first, because no row can fix a call she did not finish writing.
   const rowRefusal = planTargetRowRefusal(action, canonical, snapshot, state);
   if (rowRefusal !== null) rejectPlanCall(rowRefusal, state, requirement);
+  // AND WHETHER THE TILE A TRANSITION NAMES IS A WAY OUT OF THE MAP SHE IS ON - the question every other layer left
+  // unasked, because a transition's coordinates are intentions and its declared family is never applied to them.
+  const refusedExit = planExitTileRefusal(action, canonical, snapshot);
+  if (refusedExit !== null) {
+    state.refusedExits.push(refusedExit);
+    rejectPlanCall(refusedExit.reasonCode, state, requirement);
+  }
   // A transition is written as the walk plus the door: the walk is the compiler's because the Mod refuses the door
   // on distance alone, and the node the author wrote still runs in the order the author wrote it.
   //

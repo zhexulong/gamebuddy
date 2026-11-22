@@ -670,8 +670,11 @@ test("every plan example carries the arguments the wire requires of it", () => {
   }
 
   // Zero population is BLOCKED, never green: a description whose examples the parser no longer recognises must fail here
-  // rather than agree with itself. `charge` is named because it is the argument this gate was written for.
-  assert.ok(examined.length >= 4, `expected the rendered examples to be walked, examined ${examined.join(", ")}`);
+  // rather than agree with itself. `charge` is named because it is the argument this gate was written for. THE FLOOR IS
+  // THREE BECAUSE THE RECIPE PRINTS THREE: the transition example is one derived call (`snapshot.warps` row, because a
+  // door tile is one the snapshot published and a literal one is a coordinate she remembers - refused since `round91`),
+  // and the walk to it is the compiler's rather than an example's, so the pair that used to be two calls is one.
+  assert.ok(examined.length >= 3, `expected the rendered examples to be walked, examined ${examined.join(", ")}`);
   assert.ok(
     examples.some((example) => example.names.includes("charge")),
     "blocked: no rendered example carries a charge, so the parser is not reading the examples it exists for",

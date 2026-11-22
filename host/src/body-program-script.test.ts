@@ -152,6 +152,18 @@ const crop = (targetId: string, x: number, y: number) => ({
   displayName: "Parsnip",
 });
 
+/**
+ * One row of an EXIT table - `warps` or `doorTargets` - as the Mod publishes it: the SOURCE tile on the map the actor
+ * stands on, and where the transition leads. Both families accept this shape (`isWarp` in `protocol.ts`).
+ */
+const exitRow = (sourceX: number, sourceY: number, targetLocation: string) => ({
+  sourceX,
+  sourceY,
+  targetLocation,
+  targetX: 40,
+  targetY: 12,
+});
+
 function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPlan {
   return compilePlanScript({ script }, { snapshot: snapshot(overrides), actions: ACTIONS });
 }
@@ -459,13 +471,89 @@ test("each tile's planting consumes that tile's tilling, and only that tile's", 
 });
 
 /**
+ * ROUND89, `plan_96`: fifteen seeds in the pack and SEVENTEEN planting nodes.
+ *
+ * <p>
+ * `inventory_after` went 15 -> 0, the plan carried seventeen `plant_seed` nodes, and `n16` and `n17` answered
+ * `seed_not_owned_in_pack` - two dispatches bought from a count the plan could read for free. The count and the program
+ * are one reading (`inventoryItemFacts`, summed over the slots that hold the seed, which is the pack the Mod re-resolves
+ * `slot` from at execution), so a plan that asks for more is a fact about the PLAN - and the compiler is where it is
+ * answered, before a node is written.
+ * </p>
+ */
+test("a plan that plants more seed than the pack holds is refused, naming what it plans and what it holds", () => {
+  const pack = [{ slot: 11, qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", stack: 15 }];
+  const over = compile(plantingSteps(17), { enabledActionIds: ["plant_seed"], inventoryItemFacts: pack });
+  assert.equal(over.status, "refused", "seventeen plantings against fifteen seeds is not a program");
+  assert.equal(refusalOf(over), "plan_script_exceeds_the_seeds_held:(O)472:planned=17:held=15");
+  // AND NOTHING WAS WRITTEN: the program that would have carried the two surplus steps does not exist, which is the
+  // difference between this refusal and two nodes the world has to answer `seed_not_owned_in_pack` one at a time.
+  assert.equal(
+    over.status === "refused" ? over.acceptedStepsCount : -1,
+    17,
+    "every call is still accounted for, by the position she wrote it",
+  );
+  // The same pack and a plan that fits it compiles clean - the bound is the count, not a margin under it.
+  const fits = compile(plantingSteps(15), { enabledActionIds: ["plant_seed"], inventoryItemFacts: pack });
+  assert.equal(fits.status, "compiled");
+  assert.equal(nodesOf(fits).length, 15);
+});
+
+/**
+ * THE OTHER TWO ANSWERS, because "the pack was not published" and "the pack holds none of this seed" are different
+ * facts and only one of them may bound a plan.
+ */
+test("an unpublished pack bounds nothing and is named, and a measured empty one is a real zero", () => {
+  const absent = compile(plantingSteps(17), { enabledActionIds: ["plant_seed"] });
+  assert.equal(absent.status, "compiled", "no count was published, so no count is invented");
+  assert.equal(nodesOf(absent).length, 17);
+  assert.deepEqual(
+    absent.heldSeedsUnmeasured,
+    ["unmeasured=plant_seed.(O)472;family_not_published=inventoryItemFacts"],
+    "the plan says which count it could not read instead of guessing one",
+  );
+  // MEASURED, AND HOLDING NONE: the snapshot says she holds no such seed, so one planting is already one too many.
+  const empty = compile('builder.plant_seed({ x: 60, y: 18, expectedQualifiedItemId: "(O)472" });', {
+    enabledActionIds: ["plant_seed"],
+    inventoryItemFacts: [],
+  });
+  assert.equal(refusalOf(empty), "plan_script_exceeds_the_seeds_held:(O)472:planned=1:held=0");
+});
+
+/**
+ * THE PLAN ANSWERS FOR WHAT IT BUYS ITSELF: buying fifteen seeds and planting fifteen is executable with nothing in the
+ * pack, and it is the shape `seedSupplyTargets` exists to teach.
+ */
+test("a plan that buys its own seed is bounded by what it will hold, not by what the pack shows", () => {
+  const buyFifteen =
+    'builder.shop_purchase({ expectedTargetId: "shop_pierre", expectedQualifiedItemId: "(O)472", quantity: 15 });\n';
+  const buys = compile(buyFifteen + plantingSteps(15), {
+    enabledActionIds: ["plant_seed", "shop_purchase"],
+    inventoryItemFacts: [],
+  });
+  assert.equal(buys.status, "compiled");
+  assert.equal(nodesOf(buys).length, 16, "the purchase and the fifteen plantings are all in the program");
+  // One planting past what it buys is still refused, and `held` is what the plan will have rather than `0`.
+  const short = compile(buyFifteen + plantingSteps(16), {
+    enabledActionIds: ["plant_seed", "shop_purchase"],
+    inventoryItemFacts: [],
+  });
+  assert.equal(refusalOf(short), "plan_script_exceeds_the_seeds_held:(O)472:planned=16:held=15");
+});
+
+/** `tiles` planting steps, at consecutive columns of one row: round89's plan in the shape the compiler reads. */
+function plantingSteps(tiles: number): string {
+  return `for (let x = 60; x < ${String(60 + tiles)}; x += 1) builder.plant_seed({ x, y: 18, expectedQualifiedItemId: "(O)472" });`;
+}
+
+/**
  * A door is entered from BESIDE it: the Mod refuses a transition whose source tile is more than one tile from the actor
  * (`door_out_of_range` / `warp_out_of_range`, `farmhandexecutioncontroller.movementactions.cs:478`). A plan that names
  * only the door is therefore refused one submit later, so the compiler writes the walk itself - with the door's own
  * coordinates, which `move_to_tile` accepts as an adjacency target instead of a tile to stand on.
  */
 test("a transition gets a walk to its own tile prepended, and its own node is otherwise unchanged", () => {
-  const result = compile("builder.enter_exit({ x: 3, y: 12 });");
+  const result = compile("builder.enter_exit({ x: 3, y: 12 });", { warps: [exitRow(3, 12, "Town")] });
   const nodes = nodesOf(result);
   assert.deepEqual(
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
@@ -496,7 +584,11 @@ test("a transition gets a walk to its own tile prepended, and its own node is ot
 });
 
 test("a transition the script already walked to gets no second walk", () => {
-  const nodes = nodesOf(compile("builder.move_to_tile({ x: 3, y: 12 });\nbuilder.enter_exit({ x: 3, y: 12 });"));
+  const nodes = nodesOf(
+    compile("builder.move_to_tile({ x: 3, y: 12 });\nbuilder.enter_exit({ x: 3, y: 12 });", {
+      warps: [exitRow(3, 12, "Town")],
+    }),
+  );
   assert.deepEqual(
     nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [
@@ -562,7 +654,9 @@ test("round89 plan_12: an edge exit's source is outside the grid, so no walk is 
 });
 
 test("round89 plan_75: the step before the door already stands beside it, so no second walk is written", () => {
-  const result = compile("builder.move_to_tile({ x: 3, y: 11 });\nbuilder.enter_exit({ x: 3, y: 12 });");
+  const result = compile("builder.move_to_tile({ x: 3, y: 11 });\nbuilder.enter_exit({ x: 3, y: 12 });", {
+    warps: [exitRow(3, 12, "Town")],
+  });
   const nodes = nodesOf(result);
   assert.deepEqual(
     nodes.map((node) => [node.nodeId, node.actionId]),
@@ -582,7 +676,9 @@ test("round89 plan_75: the step before the door already stands beside it, so no 
  * to say what is wrong, exactly as before.
  */
 test("a step two tiles from the door is not beside it, and the walk is still written", () => {
-  const result = compile("builder.move_to_tile({ x: 3, y: 10 });\nbuilder.enter_exit({ x: 3, y: 12 });");
+  const result = compile("builder.move_to_tile({ x: 3, y: 10 });\nbuilder.enter_exit({ x: 3, y: 12 });", {
+    warps: [exitRow(3, 12, "Town")],
+  });
   assert.deepEqual(
     nodesOf(result).map((node) => [node.nodeId, node.actionId]),
     [
@@ -595,6 +691,100 @@ test("a step two tiles from the door is not beside it, and the walk is still wri
     x: { type: "integer", canonicalValue: "3" },
     y: { type: "integer", canonicalValue: "12" },
   });
+});
+
+/**
+ * A DOOR TILE IS A COORDINATE THAT MUST BELONG TO THE MAP SHE IS ON, and `round91` paid twenty seconds to learn it.
+ *
+ * <p>
+ * Measured 2026-11-21 (`round91`, day 7, `plan_481`): she stood on `Farm 64,15`, the snapshot published `location:
+ * "Farm"` with the farm's own exits and nothing at `3,12`, and the plan walked via `(42,16)` and `(15,10)` to `(7,18)`
+ * before `n02 enter_exit(3,12)` answered `door_not_available`. `3,12` is the FarmHouse's own exit tile - the door of
+ * ANOTHER map - and every layer had accepted it: `enter_exit` names no reading, so `a5f5355b`'s family check (which
+ * guards arguments the surface marks as readings) never looked at the coordinate, and `protocol.ts` validates a door
+ * tile only as `x >= -1 && y >= -1`.
+ * </p>
+ *
+ * <p>
+ * The two readings are the same fact from both sides. A tile the snapshot does not publish as a way out of this map is
+ * refused BY NAME at compile with zero nodes dispatched - and the script above is the case that matters, because the
+ * walk to that tile was a legal node: answering it `partial` would have dispatched exactly the twenty-second approach
+ * the refusal exists to save. A tile the map DOES publish compiles untouched (the next case).
+ * </p>
+ */
+test("round91 plan_481: a door tile of another map is refused at compile, naming the map and what it published", () => {
+  const result = compile("builder.move_to_tile({ x: 3, y: 12 });\nbuilder.enter_exit({ x: 3, y: 12 });", {
+    location: "Farm",
+    warps: [exitRow(64, 15, "FarmHouse")],
+    doorTargets: [exitRow(64, 14, "FarmHouse")],
+  });
+
+  assert.equal(
+    refusalOf(result),
+    "plan_script_door_not_on_this_map:3:12:map=Farm:warps=1:doors=1",
+    "the line names the tile she wrote, the map it was measured against, and what each exit table published",
+  );
+  assert.equal("program" in result, false, "nothing is dispatched - neither the walk nor the door");
+  assert.deepEqual(
+    rejectionsOf(result).map((call) => [call.call, call.actionId]),
+    [[2, "enter_exit"]],
+    "the transition is the refused call, by the position she wrote it",
+  );
+});
+
+/**
+ * The green reading, from BOTH tables: `warps` is the map's own `Warp` property and `doorTargets` is where a building's
+ * human door appears, so a check against either table alone would refuse a door the Mod enters.
+ */
+test("a door this map publishes compiles, whichever table holds it", () => {
+  for (const exits of [
+    { warps: [exitRow(3, 12, "Town")], doorTargets: [] },
+    { warps: [exitRow(64, 15, "FarmHouse")], doorTargets: [exitRow(3, 12, "Farm")] },
+  ]) {
+    const result = compile("builder.enter_exit({ x: 3, y: 12 });", { location: "Farm", ...exits });
+    assert.deepEqual(
+      nodesOf(result).map((node) => [node.nodeId, node.actionId]),
+      [
+        ["auto_walk_01", "move_to_tile"],
+        ["n02", "enter_exit"],
+      ],
+      `exits published as ${JSON.stringify(exits)}`,
+    );
+  }
+});
+
+/**
+ * A walk to a tile NO call leaves through is still a walk: the pairing rule refuses the mistake, not the coordinate.
+ * This is the boundary the case above must not swallow, and it is why the walk cannot be refused where it is written.
+ */
+test("a walk to a tile nothing tries to leave through still compiles", () => {
+  const nodes = nodesOf(
+    compile("builder.move_to_tile({ x: 3, y: 12 });", {
+      location: "Farm",
+      warps: [exitRow(64, 15, "FarmHouse")],
+      doorTargets: [],
+    }),
+  );
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId]),
+    [["n01", "move_to_tile"]],
+  );
+});
+
+/**
+ * A snapshot that publishes no exit table cannot answer, and the three zeroes are told apart: an ABSENT table is
+ * `unmeasured`, a published empty one is a count, and neither is accepted - a tile nothing measured is not a door this
+ * compiler may send her to.
+ */
+test("a snapshot with no exit table says unmeasured, and a published empty one says zero", () => {
+  assert.equal(
+    refusalOf(compile("builder.enter_exit({ x: 3, y: 12 });", { location: "Farm" })),
+    "plan_script_door_not_on_this_map:3:12:map=Farm:warps=unmeasured:doors=unmeasured",
+  );
+  assert.equal(
+    refusalOf(compile("builder.enter_exit({ x: 3, y: 12 });", { location: "Farm", warps: [], doorTargets: [] })),
+    "plan_script_door_not_on_this_map:3:12:map=Farm:warps=0:doors=0",
+  );
 });
 
 test("a plan with no transition is exactly the plan the script wrote", () => {
@@ -1097,12 +1287,16 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
   assert.ok(pairs.length > 20, `the pair population is a real population, not ${pairs.length} pairs`);
   const expiredCode = (result: CompiledPlan): string | null =>
     result.status === "refused" && result.reasonCode.startsWith("plan_script_timeout") ? result.reasonCode : null;
+  // THE WORLD THESE PLAIN VALUES NEED. `probeValue` writes `12` for every integer argument, so a pair that names a door
+  // names `(12,12)`; a snapshot that publishes no exit there would make every `*->enter_exit` pair a dead end for a
+  // reason that is about this fixture rather than about the pair. One published exit, and nothing else.
+  const pairWorld = { warps: [exitRow(12, 12, "Town")], doorTargets: [] };
   const deadEnds: string[] = [];
   const notMeasured: string[] = [];
   let asWritten = 0;
   let repaired = 0;
   for (const [yieldingId, dependentId] of pairs) {
-    const pair = compile(`${builderCall(yieldingId)}\n${builderCall(dependentId)}`);
+    const pair = compile(`${builderCall(yieldingId)}\n${builderCall(dependentId)}`, pairWorld);
     const pairExpired = expiredCode(pair);
     if (pairExpired !== null) {
       notMeasured.push(`${yieldingId}->${dependentId}: ${pairExpired}`);
@@ -1117,7 +1311,7 @@ test("every body-yielding pair either compiles or names a remedy that fixes it",
       deadEnds.push(`${yieldingId}->${dependentId}: refused with no remedy (${pair.reasonCode})`);
       continue;
     }
-    const remedy = compile(`${builderCall(yieldingId)}\n${builderCall(named)}\n${builderCall(dependentId)}`);
+    const remedy = compile(`${builderCall(yieldingId)}\n${builderCall(named)}\n${builderCall(dependentId)}`, pairWorld);
     const remedyExpired = expiredCode(remedy);
     if (remedyExpired !== null) {
       notMeasured.push(`${yieldingId}->${dependentId}:${named}: ${remedyExpired}`);
