@@ -374,7 +374,7 @@ export const DEFAULT_COMPANION_PRESET: DefaultCompanionPreset = Object.freeze({
     },
     {
       label: "Alternate 1",
-      text: "游戏里下雨了，今天不用给地浇水！正好，咱俩上河边甩两杆还是镇上逛一圈？",
+      text: "先歇会儿？上河边甩两杆还是去镇上逛一圈，你挑。",
     },
     {
       label: "Alternate 2",
