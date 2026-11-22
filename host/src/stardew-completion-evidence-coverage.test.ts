@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
-import { STARDEW_COMPLETION_CONTRACTS } from "./stardew-completion-contracts.js";
+import { judgeStardewCompletionEvidence, STARDEW_COMPLETION_CONTRACTS } from "./stardew-completion-contracts.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -1914,5 +1914,92 @@ test("scythe_crop: the dead-crop clear branch completes, and a harvest shape cla
     completionEvidence("scythe_crop", "scythe_crops_harvested", detail(cleared)),
     false,
     "the harvest terminal cannot be minted from the clear branch's shape",
+  );
+});
+
+/**
+ * `use_mine_ladder`'s TWO arms, and the one that used to be admitted without a producer.
+ *
+ * `round90` (`2026-11-22T06-04-54-555Z-multiday_routine`, index 107) is the asynchronous shape:
+ * `expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave`. `transportactions.cs:431` answers
+ * `mine_exit_pending` and arms the travel slot, and when the engine's warp lands `movementactions.cs:1321-1326`
+ * appends the decision to the travel pair. The row read neither that shape nor the bare pair's absence: it admitted a
+ * two-key `expected;actual` that no producer mints for this action (both arms above write the decision), so the
+ * permissive branch could only ever admit a receipt nothing writes.
+ *
+ * THE FIRST ASSERTION IS THE ONE THAT FAILS IF THE ASYNCHRONOUS ARM IS REMOVED; the four after it are the arm's own
+ * boundaries - the decision is part of the claim, and the arrival location is the postcondition, not its tile.
+ */
+test("use_mine_ladder: the asynchronous exit names the decision beside the arrival, and the bare pair is not it", () => {
+  assert.equal(
+    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave"),
+    true,
+    "round90's receipt: the answer was driven and the engine landed her on the map the exit leads to",
+  );
+  assert.equal(
+    completionEvidence("use_mine_ladder", "mine_left", "from=UndergroundMine1:1;question=ExitMine;response=Leave;ladder=10,3;actual=Mine:23,8"),
+    true,
+    "the synchronous shape - the answer performed the warp in the same call - stays read",
+  );
+  assert.equal(
+    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=Mine:23,8"),
+    false,
+    "no producer mints this pair for this action, so a receipt carrying it claims a success nothing writes",
+  );
+  assert.equal(
+    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Do nothing"),
+    false,
+    "the level offers two responses and only Leave leaves; staying is not an exit",
+  );
+  assert.equal(
+    completionEvidence("use_mine_ladder", "mine_left", "expected=Mine:23,8;actual=UndergroundMine1:23,8;question=ExitMine;response=Leave"),
+    false,
+    "the postcondition is the LOCATION she came out on - the tile belongs to the engine's own warp and agrees on neither side",
+  );
+});
+
+/**
+ * `break_rock`'s ONE SWING, read twice: as the source transformed, and as the swing that landed on a stone still
+ * standing.
+ *
+ * `resourcetoolactions.cs` grades the dispatch with `RockSourceSwing.MadeProgress` and names it
+ * `removed ? "rock_source_broken" : "rock_source_damaged"`. Only the first is this action's declared postcondition
+ * (`Finishes` over `rockSourceTargets`), and the second is declared unfinished rather than unreadable - the difference
+ * `round90` paid for, when four of these came back `succeeded` and were reported as receipts the contract could not
+ * read.
+ *
+ * THE FALSIFIERS ARE THE WARRANT'S OWN TWO HALVES: take away `removed=false` and the receipt is
+ * `rock_source_damaged`'s shape no longer, so it is unreadable again; take away the durability drop and the swing is
+ * not a swing.
+ */
+test("break_rock: a swing that landed with the stone still standing is a reading, and it is not the completion", () => {
+  const damaged =
+    "target=rock_source_106b777ed23d3048;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe";
+  const verdictOf = (detail: string) =>
+    judgeStardewCompletionEvidence("break_rock", {
+      state: "succeeded",
+      reasonCode: "rock_source_damaged",
+      evidence: { detail },
+    });
+
+  assert.equal(
+    completionEvidence("break_rock", "rock_source_damaged", damaged),
+    false,
+    "the stone is still in the layer, so this is not the transition `break_rock` is declared to reach",
+  );
+  assert.deepEqual(
+    verdictOf(damaged),
+    { accepted: false, refusal: "before_its_postcondition:rock_source_damaged" },
+    "and it is not unreadable either: the receipt names one hit of two, which is a reading of its own",
+  );
+  assert.equal(
+    verdictOf(damaged.replace("removed=false", "removed=true")).refusal,
+    "evidence_does_not_hold:rock_source_damaged",
+    "without the warrant the same terminal is a receipt the contract cannot read, which is what the old label said of all four",
+  );
+  assert.equal(
+    verdictOf(damaged.replace("durability_after=1", "durability_after=2")).refusal,
+    "evidence_does_not_hold:rock_source_damaged",
+    "a swing that left the durability where it was made no progress, and `MadeProgress` would have refused it",
   );
 });

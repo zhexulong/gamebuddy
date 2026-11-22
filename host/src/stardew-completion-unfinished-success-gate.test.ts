@@ -185,27 +185,40 @@ function contractArms(contracts: string): Map<string, string> {
   return arms;
 }
 
-/** The action whose handler chain reaches `member`, or the reason this gate cannot name one. */
+/**
+ * The action whose request handler reaches `member`, read as the LAST contract action id named before the call.
+ *
+ * <para>
+ * Both producer spellings are one shape under this rule. A dispatch arm states the id immediately beside the call
+ * (`"pan_ore" => this.executions.RequestLocalPanOre(`,
+ * `integrations/stardew/Handlers/ResourceToolActionHandler.cs`), and a request method names the id it serves in the same
+ * member that hands the work on (`RequestLocalBreakRockSource` calls `ResolveDeclaredTool(..., "break_rock")` and then
+ * `this.ExecuteBreakRock(`). Reading the NEAREST PRECEDING id inside the caller covers both, and a caller whose nearest
+ * id is not the action is exactly what the disagreement check below catches - not something a window size can fix: an
+ * arm window that may cross a newline attributed `pan_ore` to `color_placed_object`, whose arm stands one line above.
+ * </para>
+ */
 function actionOf(
   member: Member,
   members: readonly Member[],
   rowIds: ReadonlySet<string>,
-  sources: readonly { file: string; text: string }[],
 ): { actionId: string } | { blocked: string } {
-  // 1. THE DISPATCH ARM that routes one action to a member calling this one.
-  const armed = new Set<string>();
-  const arm = new RegExp(`"(?<action>[a-z][a-z0-9_]*)"\\s*=>[^;]{0,200}?\\b${member.name}\\s*\\(`, "gu");
-  for (const source of sources) for (const match of source.text.matchAll(arm)) if (rowIds.has(match[1] as string)) armed.add(match[1] as string);
-  if (armed.size === 1) return { actionId: [...armed][0] as string };
-  // 2. THE MEMBERS THAT CALL IT, when exactly one contract action id is named beside the call.
-  const callers = new Set<string>();
-  for (const caller of members)
-    if (caller.name !== member.name && caller.text.includes(`${member.name}(`))
-      for (const match of caller.text.matchAll(/"([a-z][a-z0-9_]*)"/gu)) if (rowIds.has(match[1] as string)) callers.add(match[1] as string);
-  return callers.size === 1
-    ? { actionId: [...callers][0] as string }
+  const candidates = new Set<string>();
+  for (const caller of members) {
+    if (caller.name === member.name) continue;
+    const call = caller.text.indexOf(`${member.name}(`);
+    if (call < 0) continue;
+    let nearest: string | undefined;
+    for (const literal of caller.text.slice(0, call).matchAll(/"([a-z][a-z0-9_]*)"/gu))
+      if (rowIds.has(literal[1] as string)) nearest = literal[1] as string;
+    if (nearest !== undefined) candidates.add(nearest);
+  }
+  return candidates.size === 1
+    ? { actionId: [...candidates][0] as string }
     : {
-        blocked: `${member.file}:${member.name} is reached by ${[...armed].sort().join(", ") || "no dispatch arm"} and names ${[...callers].sort().join(", ") || "no contract action"}`,
+        blocked: `${member.file}:${member.name} is reached with ${
+          [...candidates].sort().join(", ") || "no contract action"
+        } as the nearest action id before the call`,
       };
 }
 
@@ -271,7 +284,7 @@ function measure(
         blocked.push(`${site} PostconditionVerdict stands in no member this gate can read`);
         continue;
       }
-      const action = actionOf(member, members, rowIds, sources);
+      const action = actionOf(member, members, rowIds);
       if ("blocked" in action) {
         blocked.push(`${site} ${action.blocked}`);
         continue;
@@ -325,9 +338,12 @@ test("every_succeeded_verdict_the_mod_can_mint_is_read_or_a_named_not_yet:<actio
       .filter((finding) => finding.startsWith("unfinished_success_with_no_reading:"))
       .map((finding) => finding.slice("unfinished_success_with_no_reading:".length, finding.indexOf(" ("))),
   );
-  const declared = census.mints.filter((mint) => unread.has(`${mint.actionId}:${mint.reasonCode}`));
+  const declared = census.mints.filter(
+    (mint) =>
+      (STARDEW_UNFINISHED_SUCCESSES as unknown as Declarations)[mint.actionId]?.[mint.reasonCode] !== undefined,
+  );
   process.stdout.write(
-    `codes examined ${String(census.mints.length)} · read ${String(census.mints.length - declared.length)} · declared ${String(declared.length)} · forwarding ${String(census.forwarding)}\n`,
+    `codes examined ${String(census.mints.length)} · read ${String(census.mints.length - declared.length - unread.size)} · declared ${String(declared.length)} · unread ${String(unread.size)} · forwarding ${String(census.forwarding)}\n`,
   );
   process.stdout.write(`sites blocked ${String(census.blocked.length)}\n`);
   for (const mint of [...census.mints].sort((left, right) =>
