@@ -1,5 +1,5 @@
-import { SNAPSHOT_KEYS } from "./protocol.js";
 import type { BodyProgramStatusResult, DataQueryResult, Snapshot } from "./protocol.js";
+import { SNAPSHOT_KEYS } from "./protocol.js";
 
 /**
  * Answers to questions the companion can already ask of the state it holds.
@@ -288,14 +288,25 @@ function targetIdOf(row: Readonly<Record<string, unknown>>): string | null {
   return null;
 }
 
-function tileOf(row: Readonly<Record<string, unknown>>): Readonly<{ x: number; y: number }> | null {
-  const { x, y } = row;
+function tilePair(x: unknown, y: unknown): Readonly<{ x: number; y: number }> | null {
   return typeof x === "number" && Number.isFinite(x) && typeof y === "number" && Number.isFinite(y) ? { x, y } : null;
 }
 
 /**
- * The one row of a family a caller should act on first: nearest by Chebyshev distance, because the walk to a diagonal
- * neighbour is one step and its Euclidean length is not.
+ * A row's tile, in the two spellings the wire publishes it in.
+ *
+ * `x`/`y` is almost every family's. `ownerTileX`/`ownerTileY` is a shop counter's, and it is the COUNTER's own tile - the
+ * Mod publishes `counter.CounterX/CounterY` there, the same pair its `targetId@x,y` counter token spells - which is the
+ * tile a caller must stand beside. Read here and nowhere else, because its absence was measurable: after `round90` the
+ * shop group answered `tiles: null` for nine counters that all publish a tile, so the answer named a walk to nowhere and
+ * the one id it did carry was the only thing a caller could pass.
+ */
+function tileOf(row: Readonly<Record<string, unknown>>): Readonly<{ x: number; y: number }> | null {
+  return tilePair(row.x, row.y) ?? tilePair(row.ownerTileX, row.ownerTileY);
+}
+
+/**
+ * One row's address, which is what a caller dispatches with: the id the action takes, and the walk to it.
  *
  * A family whose rows publish no tile (a recipe, a tool slot) has no distance; those rows sort after the locatable ones
  * rather than pretending a distance of 0, and the answer says `tiles: null` instead of omitting the field.
@@ -307,6 +318,121 @@ type AffordanceNearest = Readonly<{
   tiles: number | null;
 }>;
 
+function addressOf(
+  row: Readonly<Record<string, unknown>>,
+  actor: Readonly<{ x: number; y: number }>,
+): AffordanceNearest {
+  const targetId = targetIdOf(row);
+  const at = tileOf(row);
+  return at === null
+    ? { targetId, x: null, y: null, tiles: null }
+    : { targetId, x: at.x, y: at.y, tiles: Math.max(Math.abs(at.x - actor.x), Math.abs(at.y - actor.y)) };
+}
+
+/** A counted row with its address: the two things a group orders once and reports per kind. */
+type AddressedRow = Readonly<{ row: Readonly<Record<string, unknown>>; at: AffordanceNearest }>;
+
+/**
+ * The family whose rows are shop COUNTERS, and the one family this module shapes past its `nearest`.
+ *
+ * <p>
+ * `shop_purchase` resolves a counter's opaque `targetId` (`shop_<16 hex>`), and a row's `shopId` is not that value: a shop
+ * has one counter per owner who can run it, and only some of them may be open today. Measured `round90`: `shopTargets`
+ * published nine counters, two `shop_purchase` calls passed `SeedShop` - the shop id every counter's row carries beside it -
+ * and both were refused `shop_target_is_a_shop_id_not_a_counter`. The refusal was right and the answer before it named the
+ * shop: a count, an opaque id, and no tile at all (see `tileOf`).
+ * </p>
+ * <p>
+ * Naming the counters is also the only way `stockPrices` reaches a caller: a price belongs to a counter, so an answer that
+ * elides the counters hides the prices the wire just gained.
+ * </p>
+ */
+const SHOP_COUNTER_FAMILY = "shopTargets";
+
+/**
+ * Counters one group names before `countersOmitted` starts counting.
+ *
+ * Ordered nearest first, so the bound keeps the counters a caller can act on soonest rather than an arbitrary prefix, and
+ * the nearest counter - the one `nearest` already reports - is always in the answer.
+ */
+export const MAX_AFFORDANCE_COUNTERS = 3;
+
+/**
+ * Stock rows one counter names before it stops. The counter's own `stockCount` stays the total, so a bounded list is never
+ * read as the whole menu.
+ */
+export const MAX_COUNTER_SELLS = 4;
+
+/** One thing a counter sells, and the number the menu charges for one unit of it (`null` when it published no price). */
+type AffordanceCounterSell = Readonly<{ qualifiedItemId: string; price: number | null }>;
+
+/**
+ * One shop counter in the shape `shop_purchase` takes it: the id to pass, the tile to walk to, whether the body can trade
+ * without walking, and what it sells.
+ *
+ * `shopId` and `ownerName` are carried so a caller can recognise WHICH shop a counter belongs to - they are names, never
+ * the value the action resolves - and every other member is read from the row the Mod published for that counter.
+ */
+type AffordanceCounter = Readonly<{
+  targetId: string | null;
+  shopId: string | null;
+  ownerName: string | null;
+  x: number | null;
+  y: number | null;
+  tiles: number | null;
+  ownerInReach: boolean | null;
+  /** How many rows the menu holds. Read, not counted: `sells` is bounded and this is the total. */
+  stockCount: number | null;
+  sells: readonly AffordanceCounterSell[];
+}>;
+
+/** A row's non-empty string member, or null: an empty string is not a name. */
+function textOf(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+/**
+ * What one counter sells, joined to what the menu charges by item id - never by list position.
+ *
+ * The two lists are published side by side for exactly this join, and a price paired to an id by position is an identity
+ * keyed on position. A named id with no published price answers `price: null`: NOT MEASURED, which is neither `0` nor
+ * "free".
+ */
+function sellsOf(row: Readonly<Record<string, unknown>>): readonly AffordanceCounterSell[] {
+  const ids = Array.isArray(row.stockItemIds)
+    ? row.stockItemIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
+  const prices = new Map<string, number>();
+  if (Array.isArray(row.stockPrices)) {
+    for (const entry of row.stockPrices) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const { qualifiedItemId, price } = entry as Record<string, unknown>;
+      if (typeof qualifiedItemId === "string" && typeof price === "number" && !prices.has(qualifiedItemId))
+        prices.set(qualifiedItemId, price);
+    }
+  }
+  return ids
+    .slice(0, MAX_COUNTER_SELLS)
+    .map((qualifiedItemId) => ({ qualifiedItemId, price: prices.get(qualifiedItemId) ?? null }));
+}
+
+function counterOf(row: Readonly<Record<string, unknown>>, at: AffordanceNearest): AffordanceCounter {
+  return {
+    targetId: at.targetId,
+    shopId: textOf(row.shopId),
+    ownerName: textOf(row.ownerName),
+    x: at.x,
+    y: at.y,
+    tiles: at.tiles,
+    ownerInReach: typeof row.ownerInReach === "boolean" ? row.ownerInReach : null,
+    stockCount:
+      typeof row.stockCount === "number" && Number.isSafeInteger(row.stockCount) && row.stockCount >= 0
+        ? row.stockCount
+        : null,
+    sells: sellsOf(row),
+  };
+}
+
 type AffordanceGroup = Readonly<{
   kind: string;
   family: string;
@@ -316,25 +442,11 @@ type AffordanceGroup = Readonly<{
   /** Every action that consumes this family, in surface order: `machineTargets` has three. */
   actions: readonly string[];
   nearest: AffordanceNearest;
+  /** `SHOP_COUNTER_FAMILY` only: the counters this group counts, nearest first. Absent for every other family. */
+  counters?: readonly AffordanceCounter[];
+  /** `SHOP_COUNTER_FAMILY` only: the counters `MAX_AFFORDANCE_COUNTERS` left out. */
+  countersOmitted?: number;
 }>;
-
-function nearestOf(
-  rows: readonly Readonly<Record<string, unknown>>[],
-  actor: Readonly<{ x: number; y: number }>,
-): AffordanceNearest {
-  let best: AffordanceNearest | null = null;
-  for (const row of rows) {
-    const at = tileOf(row);
-    const targetId = targetIdOf(row);
-    const candidate: AffordanceNearest =
-      at === null
-        ? { targetId, x: null, y: null, tiles: null }
-        : { targetId, x: at.x, y: at.y, tiles: Math.max(Math.abs(at.x - actor.x), Math.abs(at.y - actor.y)) };
-    if (best === null || closer(candidate, best)) best = candidate;
-  }
-  if (best === null) throw new Error("nearestOf requires at least one row");
-  return best;
-}
 
 /** Whether `candidate` is the row to act on before `incumbent`: locatable first, then nearer, then the smaller id. */
 function closer(candidate: AffordanceNearest, incumbent: AffordanceNearest): boolean {
@@ -342,6 +454,26 @@ function closer(candidate: AffordanceNearest, incumbent: AffordanceNearest): boo
   const incumbentTiles = incumbent.tiles === null ? Number.POSITIVE_INFINITY : incumbent.tiles;
   if (candTiles !== incumbentTiles) return candTiles < incumbentTiles;
   return (candidate.targetId ?? "") < (incumbent.targetId ?? "");
+}
+
+/** `closer` as the comparator every group's rows are sorted by, so the nearest row is `[0]` and one order is used twice. */
+function compareAddress(left: AddressedRow, right: AddressedRow): number {
+  if (closer(left.at, right.at)) return -1;
+  return closer(right.at, left.at) ? 1 : 0;
+}
+
+/**
+ * Which empty this is, in words - because the three are three different facts.
+ *
+ * `declaredFamilies` is how many target families the live surface publishes, `measuredFamilies` how many of them this
+ * snapshot actually carries. A caller that reads "no target of any published action is in this snapshot" over a frame that
+ * measured two of seventy concludes there is no shop in the world, when the truth is that nobody looked.
+ */
+function emptyAnswerReason(declaredFamilies: number, measuredFamilies: number): string {
+  if (declaredFamilies === 0) return "no published action declares a target family on this surface";
+  if (measuredFamilies === 0)
+    return `this snapshot carries none of the ${String(declaredFamilies)} target ${declaredFamilies === 1 ? "family" : "families"} the surface declares: nothing here was measured, so stardew_observe before acting`;
+  return "no target of any published action is in this snapshot";
 }
 
 /**
@@ -357,8 +489,14 @@ function closer(candidate: AffordanceNearest, incumbent: AffordanceNearest): boo
  * <p>
  * The population is derived twice over and neither half is a list in this file: the KINDS are the `targetFamily` values the
  * live surface publishes, and the ACTION beside each is the one whose descriptor declares it (a family with several
- * consumers, like `machineTargets`, names all of them). A family with no target in the snapshot is absent rather than
- * reported with 0 - the answer is about this moment, and `stardew_observe` is the answer about what the world holds.
+ * consumers, like `machineTargets`, names all of them). A family the snapshot carries with no row in view is absent rather
+ * than reported with 0 - the answer is about this moment, and `stardew_observe` is the answer about what the world holds.
+ * </p>
+ * <p>
+ * A family the surface declares and the snapshot does NOT carry is a different fact and is not passed over in silence:
+ * `notMeasured` names it. Measured `round90`: the shop question was asked in a snapshot that published no `shopTargets`,
+ * the answer said nothing about shops at all, and the sentence that stood in for it - "no target of any published action" -
+ * is a claim about the WORLD where the truth was that nothing had been measured.
  * </p>
  * <p>
  * A caller must still read the row before it acts: `count` is the number of targets of that family IN VIEW, not the
@@ -376,22 +514,40 @@ function affordances(snapshot: Snapshot, surface: readonly AffordanceAction[]): 
   }
   const fields = snapshot as unknown as Record<string, unknown>;
   const groups: AffordanceGroup[] = [];
+  const notMeasured: string[] = [];
   for (const [family, actions] of consumers) {
     const value = fields[family];
-    // Not carried this frame, or nothing of that kind in view: both absent. "We did not look" and "there is nothing"
-    // are the same statement about THIS moment, and neither is a group with a count of zero.
-    if (!Array.isArray(value) || value.length === 0) continue;
+    // Declared by the surface and absent from this frame: NOT MEASURED. It is never a group with a count of zero, and it
+    // is not silence either - a caller told only "nothing actionable here" goes looking in the wrong place.
+    if (!Array.isArray(value)) {
+      notMeasured.push(family);
+      continue;
+    }
+    // Carried this frame with nothing of that kind in view: measured emptiness. Absent, because a group of zero is a row
+    // about a kind that has no row.
+    if (value.length === 0) continue;
     const rows = value.filter(
       (row): row is Readonly<Record<string, unknown>> => typeof row === "object" && row !== null && !Array.isArray(row),
     );
     if (rows.length === 0) continue;
+    // One ordering for every family: the nearest row first, then by id, so `nearest` and a bounded `counters` list are the
+    // same measurement rather than two sortings that could disagree about which counter is closest.
+    const addressed = rows
+      .map((row): AddressedRow => ({ row, at: addressOf(row, snapshot.tile) }))
+      .sort(compareAddress);
     groups.push({
       kind: kindOf(family),
       family,
       count: value.length,
       action: actions[0]!,
       actions: [...actions],
-      nearest: nearestOf(rows, snapshot.tile),
+      nearest: addressed[0]!.at,
+      ...(family === SHOP_COUNTER_FAMILY
+        ? {
+            counters: addressed.slice(0, MAX_AFFORDANCE_COUNTERS).map(({ row, at }) => counterOf(row, at)),
+            countersOmitted: Math.max(0, addressed.length - MAX_AFFORDANCE_COUNTERS),
+          }
+        : {}),
     });
   }
   // Count first, then name: the deterministic ordering that makes two runs on one farm answer the same bytes.
@@ -399,6 +555,7 @@ function affordances(snapshot: Snapshot, surface: readonly AffordanceAction[]): 
     right.count !== left.count ? right.count - left.count : left.kind.localeCompare(right.kind),
   );
   const bounded = bound(groups, MAX_AFFORDANCE_GROUPS);
+  const boundedNotMeasured = bound([...notMeasured].sort((left, right) => left.localeCompare(right)));
   return {
     subject: "affordances",
     source: sourceOf(snapshot, "affordances"),
@@ -408,12 +565,13 @@ function affordances(snapshot: Snapshot, surface: readonly AffordanceAction[]): 
       actionable: snapshot.actionable,
       groups: bounded.rows,
       omitted: bounded.omitted,
+      // The declared families this snapshot does not carry, so "not looked" and "there is nothing" stay different
+      // answers. Bounded like the groups, and `notMeasuredOmitted` counts what the bound dropped.
+      notMeasured: boundedNotMeasured.rows,
+      notMeasuredOmitted: boundedNotMeasured.omitted,
       ...(groups.length === 0
         ? {
-            nothing_actionable_here:
-              surface.length === 0
-                ? "no published action declares a target family on this surface"
-                : "no target of any published action is in this snapshot",
+            nothing_actionable_here: emptyAnswerReason(consumers.size, consumers.size - notMeasured.length),
           }
         : {}),
     },

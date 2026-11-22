@@ -515,7 +515,11 @@ test("the launcher completes the account with the two steps only it can measure,
   assert.match(launcher, /GAMEBUDDY_PROCESS_RECLAMATION_FILE: processReclamationPath,/u);
   assert.match(launcher, /run_reclamation_step_missing:/u, "the gate names the step, not just a boolean");
   assert.match(launcher, /missingReclamationSteps\(stamped\.record\)/u, "the gate reads the record it wrote");
-  assert.match(launcher, /exitReason: reclamationExitReason\(game\)/u, "how the game ended is a fact of the account");
+  assert.match(
+    launcher,
+    /firstToLeave: record\?\.firstToLeave \?\? null,/u,
+    "who left first is a fact of the account, beside the steps",
+  );
   // A restore that refused is a fact the artifact owes: the stamp happens BEFORE the throw, never instead of it.
   const restoreAt = launcher.indexOf("const fixtureRestore = { ok: true, error: null };");
   assert.ok(restoreAt > 0, "the restore's outcome must be measured");
@@ -525,11 +529,10 @@ test("the launcher completes the account with the two steps only it can measure,
         launcher.indexOf("stampReclamationAccount(fixtureRestore);"),
     "the account is written before the launcher refuses",
   );
-  // …and the orchestrator, which alone knows the game's pid and how it ended, hands that over as a record.
+  // …and the orchestrator, which alone holds the game's and the Host's handles, hands over one row per child.
   const orchestrator = readFileSync(new URL("../../_ladder-live-orchestrator.mjs", import.meta.url), "utf8");
   assert.match(orchestrator, /GAMEBUDDY_PROCESS_RECLAMATION_FILE/u);
-  assert.match(orchestrator, /pid: game\?\.pid \?\? null,/u);
-  assert.match(orchestrator, /exit: game\?\.exit \?\? null,/u);
+  assert.match(orchestrator, /children: childRoster\.record\(\)\.children,/u);
 });
 
 // ── The input a run was handed, written beside the result ───────────────────────────────────────────────────────────

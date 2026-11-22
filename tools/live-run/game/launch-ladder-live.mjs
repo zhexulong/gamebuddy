@@ -37,11 +37,11 @@ import {
   killedReasonCode,
   launcherReclamationSteps,
   missingReclamationSteps,
-  reclamationExitReason,
   restoreFixtureTransaction as restoreFixtureTransactionSteps,
   stampReclamation,
   writeKilledRunRecord,
 } from "../../lib/live-run-teardown.mjs";
+import { firstToLeaveLine, mergeChildren, openChildRoster, readChildRecord, writeChildRecord } from "../core/child-roster.mjs";
 import { EVIDENCE_BUNDLE_FILES } from "../../lib/evidence-bundle.mjs";
 import { judgeResultFreshness, supersedePreviousResult } from "../core/result-freshness.mjs";
 import { waitForFixtureRootFree } from "../core/fixture-wait.mjs";
@@ -292,6 +292,10 @@ const KILL_SETTLE_MS = 60_000;
 const startedAtMs = Date.now();
 let takeoverWatch = null;
 let childSettled = null;
+// EVERY CHILD THIS PROCESS STARTS GETS A ROW, beside the game's and the host's (`stampChildRecord`). Measured
+// 2026-11-22 (`round90`): the record named one process - the game, killed - so a `bridge_disconnected` could not be told
+// apart from "the Host crashed"; the ordering was knowable from the handles and written nowhere.
+const childRoster = openChildRoster();
 // THE RUN'S ENDING, owned by the process that outlives the child.
 //
 // Every fact below is watched HERE and nowhere else: the orchestrator's pid and exit, the signal that interrupted this
@@ -596,16 +600,18 @@ childSettled = new Promise((resolve) => {
   });
   markPhase("orchestrator_spawned");
   closureFacts.childPid = Number.isInteger(child.pid) ? child.pid : null;
+  if (Number.isInteger(child.pid)) childRoster.started({ role: "orchestrator", pid: child.pid, startedAtMs: launchedAtMs });
   // stdio is inherited now (the orchestrator and SMAPI need a real console), so there
   // are no pipes to collect. The orchestrator writes its own diagnostics to the
   // terminal and to its runner log; nothing here fabricates a stdout artefact from a
   // stream it does not own.
   const stdout = "";
-  child.on("close", (code) => {
+  child.on("close", (code, signal) => {
     exitCode = code;
     // The child's exit is the fact the closure is made of; it is recorded here, where it is observed, rather than
     // re-derived at the end from something that could have moved.
     closureFacts.exitCode = Number.isInteger(code) ? code : null;
+    if (Number.isInteger(child.pid)) childRoster.ended({ pid: child.pid, code, signal, atMs: Date.now() });
     clearInterval(takeoverWatch);
     fs.writeFileSync(path.join(repo, "tools", `_${scenario}${suffix}-stdout.json`), stdout);
     if (takenOver) {
@@ -630,6 +636,7 @@ console.log("live runner exit:", exitCode, takenOver ? "(INVALID: fixture taken 
 // The child's own exit code IS this process's exit code. It was captured above and used only for a console line, so a
 // launcher whose runner ended in failure still exited 0 - and whoever invoked the ladder read that as a pass.
 process.exitCode = exitCode ?? 1;
+stampChildRecord();
 // The second half of the stale-bundle rule: a bundle written before this launch is not this attempt's answer, whatever
 // it says, and it must not receive this attempt's teardown account either.
 const freshness = judgeResultFreshness({ resultPath, launchedAtMs });
@@ -643,12 +650,33 @@ if (takenOver) {
   throw new Error("fixture_taken_over_mid_run");
 }
 
-/** The orchestrator's own reading of the game it launched, or a null rather than a fabricated zero. */
-function readProcessReclamation() {
+/**
+ * Put every child this run started in the record, with the ordering derived from their exits.
+ *
+ * The orchestrator wrote the game's row and the host's (it holds those handles); this process merges its own and names
+ * the absence when there was no record to merge - a missing half must not read as a short roster. Measured 2026-11-22
+ * (`round90`): the file held the game alone, so "the Host left first" - the only reading that makes a
+ * `bridge_disconnected` attributable - was in no artifact at all.
+ */
+function stampChildRecord() {
+  const prior = readChildRecord({ path: processReclamationPath });
   try {
-    return JSON.parse(fs.readFileSync(processReclamationPath, "utf8"));
-  } catch {
-    return null;
+    const record = writeChildRecord({
+      path: processReclamationPath,
+      children: mergeChildren(prior?.children ?? [], childRoster.record().children),
+      // The orchestrator's own fields (the reaper's outcome, the survivors, the window mode) survive the merge; the
+      // derived keys are overwritten by this write, never trusted from the document, and `atMs` is the instant this
+      // snapshot was taken.
+      fields: { ...(prior ?? {}), atMs: Date.now() },
+      state: prior === null ? "partial:orchestrator_record_absent" : "measured",
+    });
+    console.log(
+      "FIRST_TO_LEAVE",
+      firstToLeaveLine(record.firstToLeave),
+      JSON.stringify({ children: record.children.length, state: record.childrenState }),
+    );
+  } catch (error) {
+    console.error("PROCESS_RECLAMATION_NOT_RECORDED", String(error?.message ?? error).slice(0, 200));
   }
 }
 
@@ -676,24 +704,26 @@ function stampReclamationAccount(fixtureRestore) {
     return null;
   }
   const runDir = typeof document?.bundle?.runDir === "string" ? document.bundle.runDir : null;
-  const game = readProcessReclamation();
+  const record = readChildRecord({ path: processReclamationPath });
   const stamped = stampReclamation({
     paths: [resultPath, runDir === null ? null : path.join(runDir, EVIDENCE_BUNDLE_FILES.manifest)],
     steps: launcherReclamationSteps({
-      game,
+      record,
       // Read AFTER the fixture is released: this is the zero-survivor assertion as much as it is a field, and a game this
       // run started that is still alive is the run's ending rather than a line in a list of problems.
       survivors: liveGameProcesses(),
       fixtureRestore,
     }),
-    exitReason: reclamationExitReason(game),
+    firstToLeave: record?.firstToLeave ?? null,
   });
   const missing = missingReclamationSteps(stamped.record);
   console.log(
     "RECLAMATION",
     JSON.stringify({
       state: stamped.record?.state ?? null,
-      game: game === null ? "unobserved" : { pid: game.pid ?? null, closeOutcome: game.closeOutcome ?? null },
+      firstToLeave: stamped.record?.firstToLeave ?? null,
+      children: (record?.children ?? []).map((child) => `${child.role}:${child.pid}`),
+      closeOutcome: record?.closeOutcome ?? null,
       steps: (stamped.record?.steps ?? []).map((entry) => `${entry.step}:${entry.state}`),
       missing,
     }),

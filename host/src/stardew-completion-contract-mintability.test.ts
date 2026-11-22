@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   hasStardewCompletionEvidence,
+  judgeStardewCompletionEvidence,
   STARDEW_COMPLETION_CONTRACTS,
   STARDEW_SETTLEMENT_ENVELOPE_FIELDS,
 } from "./stardew-completion-contracts.js";
@@ -65,9 +66,10 @@ type MintedShape = Readonly<{
   from: string;
   /**
    * What this tree declares the terminal to be: `completion` when the action's own descriptor says it is the
-   * postcondition, `no-op` when the terminal says there was nothing to do.
+   * postcondition, `no-op` when the terminal says there was nothing to do, and `before-postcondition` when the receipt
+   * names why the action did what one dispatch does and the postcondition is still ahead of it.
    */
-  answers: "completion" | "no-op";
+  answers: "completion" | "no-op" | "before-postcondition";
 }>;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -146,18 +148,23 @@ const ROUND77_DAY_TWO: readonly MintedShape[] = [
  * the Mod actually wrote and not with a trimmed copy of it. Three distinct shapes are here - the engine's own soil flag,
  * and the two `consumes` families - and the duplicated tiles are kept as separate dispatches, because a reading that
  * de-duplicated them would report one `soil_already_tilled` where the run paid for thirty-one.
+ *
+ * THE MAP IS PART OF THE TILE. `round81`'s two `till_soil` settlements carried no `location` - the one tile-bearing
+ * `till_soil` shape that did not - and `round87b` measured what that cost: thirty settled tiles on day 1, every one
+ * admitted, and the patch criterion counting `tilled 0`, because `62,18` is a tile on the Farm and on the Mountain. The
+ * row now requires the field, so the two details below carry the `location` the producer was amended to write.
  */
 const ROUND81_SETTLEMENTS: readonly MintedShape[] = [
   [
     "till_soil",
     "soil_already_tilled",
-    "target=69,20;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
+    "location=Farm;target=69,20;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
     17,
   ],
   [
     "till_soil",
     "soil_already_tilled",
-    "target=68,18;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
+    "location=Farm;target=68,18;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
     19,
   ],
   [
@@ -178,6 +185,69 @@ const ROUND81_SETTLEMENTS: readonly MintedShape[] = [
   detail: detail as string,
   from: `2026-11-20T07-30-03-036Z-multiday_routine timeline index ${String(index)}`,
   answers: "completion" as const,
+}));
+
+/**
+ * ROUND90'S MINE DAY, receipt for receipt: the five `succeeded` terminals the day's purpose filed as
+ * `succeeded_receipt_without_its_own_postcondition`.
+ *
+ * `2026-11-22T06-04-54-555Z-multiday_routine`, day 1 `mine_delve`, whose `refusedReceipts` carried exactly these five rows.
+ * They are TWO different facts under one label, which is why they are witnessed here separately:
+ *
+ *   - the `use_mine_ladder` receipt is a real success the row could not read - the asynchronous `mine_left` shape, which
+ *     `movementactions.cs:1321-1326` mints by appending the exit decision to the travel pair. Its `answers` is
+ *     `completion` because it IS the action's postcondition;
+ *   - the four `break_rock` receipts are honest swings whose own warrant says the stone is still standing
+ *     (`removed=false;durability_after=1` - one hit of two), so `answers` is `before-postcondition`: the row must refuse
+ *     them AND `STARDEW_UNFINISHED_SUCCESSES` must name them. Reading them as the postcondition would let "something was
+ *     broken" be satisfied by a stone nobody broke.
+ *
+ * The details are the wire's own text, including the `chore=` and `steps=`/`folded=` the settlement envelope appends, so
+ * each row is driven with the receipt the Mod actually wrote. All four damaged receipts are kept: the run paid for four
+ * swings and a fixture that kept one would report one.
+ */
+const ROUND90_MINE_DAY: readonly MintedShape[] = [
+  [
+    "use_mine_ladder",
+    "mine_left",
+    "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave;steps=1;folded=mine_exit_pending@from=UndergroundMine1:1,question=ExitMine,response=Leave,ladder=10,3,target=Mine:23,8,still_in=UndergroundMine1",
+    107,
+    "completion",
+  ],
+  [
+    "break_rock",
+    "rock_source_damaged",
+    "target=rock_source_106b777ed23d3048;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets",
+    40,
+    "before-postcondition",
+  ],
+  [
+    "break_rock",
+    "rock_source_damaged",
+    "target=rock_source_3203471156868548;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=266;stamina_after=264;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_3203471156868548,tile=13,6,distance=3,reach=1,approach=adjacent,stand_at=12,5|tool_approach_completed@tile=12,5,target=12,5,arrival=exact,path=stardew_native",
+    42,
+    "before-postcondition",
+  ],
+  [
+    "break_rock",
+    "rock_source_damaged",
+    "target=rock_source_d04d702803fab9d2;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)670;durability_before=2;durability_after=1;removed=false;stamina_before=244;stamina_after=242;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets",
+    53,
+    "before-postcondition",
+  ],
+  [
+    "break_rock",
+    "rock_source_damaged",
+    "target=rock_source_d4a0eef106584bcd;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=216;stamina_after=214;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_d4a0eef106584bcd,tile=2,6,distance=2,reach=1,approach=adjacent,stand_at=3,7|tool_approach_completed@tile=3,7,target=3,7,arrival=exact,path=stardew_native",
+    72,
+    "before-postcondition",
+  ],
+].map(([actionId, reasonCode, detail, index, answers]) => ({
+  actionId: actionId as string,
+  reasonCode: reasonCode as string,
+  detail: detail as string,
+  from: `2026-11-22T06-04-54-555Z-multiday_routine timeline index ${String(index)}`,
+  answers: answers as MintedShape["answers"],
 }));
 
 /** Whether the Host's row for this action calls this receipt a completion. */
@@ -203,8 +273,8 @@ function evidenceKeys(detail: string): string[] {
 
 test("a_completion_contract_names_what_the_action_answers:<action>", () => {
   const rows = Object.keys(STARDEW_COMPLETION_CONTRACTS);
-  const witnesses = [...recordedCorpus(), ...ROUND77_DAY_TWO, ...ROUND81_SETTLEMENTS].sort((left, right) =>
-    left.actionId.localeCompare(right.actionId),
+  const witnesses = [...recordedCorpus(), ...ROUND77_DAY_TWO, ...ROUND81_SETTLEMENTS, ...ROUND90_MINE_DAY].sort(
+    (left, right) => left.actionId.localeCompare(right.actionId),
   );
 
   const findings: string[] = [];
@@ -219,6 +289,24 @@ test("a_completion_contract_names_what_the_action_answers:<action>", () => {
       if (reads(actionId, shape))
         findings.push(
           `no_op_claimed_a_completion:${actionId}:${shape.reasonCode} (${shape.detail}; ${shape.from}) - a terminal that says there was nothing to do is not the action's postcondition`,
+        );
+    }
+    // THE HONEST "NOT YET", and both halves are asserted because either one alone is the defect round90 measured.
+    // Read as a completion, a stone nobody broke would satisfy "something was broken"; refused as unreadable, four
+    // honest swings are an accusation against a contract that reads them in full.
+    for (const shape of shapes.filter((candidate) => candidate.answers === "before-postcondition")) {
+      const verdict = judgeStardewCompletionEvidence(actionId, {
+        state: "succeeded",
+        reasonCode: shape.reasonCode,
+        evidence: { detail: shape.detail },
+      });
+      if (verdict.accepted)
+        findings.push(
+          `unfinished_success_read_as_completion:${actionId}:${shape.reasonCode} (${shape.from}) - this receipt names that the work is still ahead of it, so reading it as the postcondition reports a change the world did not make`,
+        );
+      else if (verdict.refusal !== `before_its_postcondition:${shape.reasonCode}`)
+        findings.push(
+          `unfinished_success_not_named:${actionId}:${shape.reasonCode}:${String(verdict.refusal)} (${shape.from}) - the receipt says what one dispatch did and why it is not the end of the work, and the Host filed it as unreadable`,
         );
     }
     if (completions.length === 0) {

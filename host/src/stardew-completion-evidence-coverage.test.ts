@@ -1494,9 +1494,13 @@ test("dismiss_modal: a settlement that found nothing is read only when it names 
  * yet. The settle code is the Mod's SECOND way to say the action is done - the world already says so - and the warrant is
  * the whole content of that claim: `engine_flag:` is the engine's own finished state, `consumes:` is the catalogue's
  * declaration that this action's success takes the addressed row out of the world.
+ *
+ * `till_soil`'s shape carries the `location` the run's own receipt for it did not: `round87b` measured the omission -
+ * thirty settled tiles on day 1, every one admitted, and the patch criterion counting `tilled 0` because a coordinate
+ * with no map is not a tile.
  */
 const SETTLED_TARGETS: readonly (readonly [string, string, string, string])[] = [
-  ["till_soil", "soil_already_tilled", "target=69,20;before=HoeDirt", "engine_flag:hoedirt=present"],
+  ["till_soil", "soil_already_tilled", "location=Farm;target=69,20;before=HoeDirt", "engine_flag:hoedirt=present"],
   ["cut_weeds", "weed_target_gone", "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none", "consumes:weedTargets"],
   [
     "break_rock",
@@ -1504,7 +1508,12 @@ const SETTLED_TARGETS: readonly (readonly [string, string, string, string])[] = 
     "target=rock_source_9a2b9a1dfa8a045b;named_tile=76,28;tile=none",
     "consumes:rockSourceTargets",
   ],
-  ["chop_tree", "tree_chop_source_gone", "target=tree_chopped0;named_tile=70,26;tile=none", "consumes:treeChopSourceTargets"],
+  [
+    "chop_tree",
+    "tree_chop_source_gone",
+    "target=tree_chopped0;named_tile=70,26;tile=none",
+    "consumes:treeChopSourceTargets",
+  ],
 ];
 
 test("a settled target is the request's outcome only when the receipt names the warrant that makes it one", () => {
@@ -1534,6 +1543,19 @@ test("a settled target is the request's outcome only when the receipt names the 
     );
   }
 
+  // A TILE WITHOUT A MAP IS NOT A TILE. `round87b`'s thirty settlements named `target=62,18` and no `location`, and the
+  // patch criterion counted none of them as tilled - the coordinate is the same on the Farm and on the Mountain, so the
+  // receipt has to say which map it is on before the tile is a tile.
+  assert.equal(
+    completionEvidence(
+      "till_soil",
+      "soil_already_tilled",
+      "target=62,18;before=HoeDirt;settled_by=engine_flag:hoedirt=present",
+    ),
+    false,
+    "a settlement that names the tile but not the map it is on is not the settled tile",
+  );
+
   // `chop_tree`'s OTHER site: the same identity standing there FELLED, which is the tree rule's own postcondition
   // (`stump_after === "true"`), so a stump the request named is the felling it asked for.
   assert.equal(
@@ -1557,7 +1579,11 @@ test("a settled target is the request's outcome only when the receipt names the 
 
   // ONE CODE, ONE ACTION. A settled code is the outcome of the action that minted it and of no other.
   assert.equal(
-    completionEvidence("break_rock", "weed_target_gone", "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none;settled_by=consumes:weedTargets"),
+    completionEvidence(
+      "break_rock",
+      "weed_target_gone",
+      "target=weed_54f7c4ad3be682f4;named_tile=76,31;tile=none;settled_by=consumes:weedTargets",
+    ),
     false,
     "a weed settlement is not a rock's completion",
   );

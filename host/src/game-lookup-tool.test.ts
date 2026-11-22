@@ -5,9 +5,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
-import { MAX_AFFORDANCE_GROUPS, LOOKUP_SUBJECTS } from "./game-lookup.js";
-import { createStardewObservationTools } from "./game-tools.js";
 import type { StardewBridgeConnection } from "./game-connection.js";
+import { LOOKUP_SUBJECTS, MAX_AFFORDANCE_GROUPS } from "./game-lookup.js";
+import { createStardewObservationTools } from "./game-tools.js";
 import type { ActionRegistration, Snapshot } from "./protocol.js";
 
 const scope = {
@@ -394,8 +394,10 @@ function busyFarm(): Snapshot {
   };
 }
 
-/** The live capability set and registrations for every action the catalogued surface declares a target family for. */
-function liveSurface(): { registrations: readonly ActionRegistration[]; capabilities: readonly string[] } {
+/** The live capability set and registrations for every action the catalogued surface declares a target family for. */ function liveSurface(): {
+  registrations: readonly ActionRegistration[];
+  capabilities: readonly string[];
+} {
   const registrations = registrationsFromCatalog(CATALOG);
   return { registrations, capabilities: registrations.map((entry) => entry.actionId) };
 }
@@ -463,6 +465,88 @@ test("nothing in view answers nothing_actionable_here rather than silence", asyn
   assert.match(body.answer.nothing_actionable_here, /target/u);
 });
 
+/**
+ * The room `round90` stood in: nine counters published, Pierre's seed counter among them.
+ *
+ * Every counter publishes its tile as `ownerTileX`/`ownerTileY`, its stock ids and the price the menu charges for each -
+ * the three facts the answer has to carry for `shop_purchase` to be callable at all.
+ */
+function shopRoom(): Snapshot {
+  const { chests: _chests, chestsSummary: _summary, cropTargets: _crops, ...bare } = snapshot;
+  return {
+    ...bare,
+    location: "SeedShop",
+    tile: { x: 4, y: 12 },
+    shopTargets: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((index) => ({
+      targetId: `shop_${String(index).padStart(16, "0")}`,
+      shopId: index === 0 ? "SeedShop" : `Shop${String(index)}`,
+      ownerName: index === 0 ? "Pierre" : "Robin",
+      location: "SeedShop",
+      ownerTileX: 3 + index,
+      ownerTileY: 11,
+      ownerInReach: index === 0,
+      stockCount: 2,
+      stockItemIds: ["(O)472", "(O)378"],
+      stockPrices: [
+        { qualifiedItemId: "(O)472", price: 50 },
+        { qualifiedItemId: "(O)378", price: 80 },
+      ],
+    })),
+  };
+}
+
+test("the shop answer reaches the model with a counter id, its tile and its price", async () => {
+  const { body } = await affordances(shopRoom());
+  const groups = body.answer.groups as readonly Record<string, any>[];
+  const shop = groups.find((group) => group.family === "shopTargets");
+  assert.ok(
+    shop !== undefined,
+    `nine published counters must produce a shop group: ${JSON.stringify(groups).slice(0, 400)}`,
+  );
+  assert.equal(shop.action, "shop_purchase");
+  const nearest = (shop.counters as readonly Record<string, any>[])[0];
+  // The id the action resolves, spelled the way the refusal spells it - and the tile to walk to, which the answer used to
+  // report as null for a family that publishes one.
+  assert.match(String(nearest?.targetId), /^shop_[0-9a-f]{16}$/u);
+  assert.equal(nearest?.targetId, shop.nearest.targetId);
+  assert.deepEqual({ x: nearest?.x, y: nearest?.y, tiles: nearest?.tiles }, { x: 3, y: 11, tiles: 1 });
+  assert.deepEqual(nearest?.sells, [
+    { qualifiedItemId: "(O)472", price: 50 },
+    { qualifiedItemId: "(O)378", price: 80 },
+  ]);
+  // The shop id travels BESIDE the counter, as a name to recognise it by - `SeedShop` is not what a caller passes.
+  assert.equal(nearest?.shopId, "SeedShop");
+  // And it stays a question: naming the counters must not turn a lookup into a second observation.
+  const { text } = await affordances(shopRoom());
+  const bytes = Buffer.byteLength(text, "utf8");
+  assert.ok(bytes <= 2560, `the shop answer is ${String(bytes)} bytes; a question has to stay question-sized`);
+});
+
+test("a room that published no counters says so, instead of leaving the shop question unanswerable", async () => {
+  // The frame the Mod sends when `shop_purchase` is advertised and no counter is published: every family the catalogue
+  // declares is carried, measured-empty, EXCEPT `shopTargets`. This is the world the answer used to pass over in silence.
+  const { body } = await affordances(advertisedWorldWithoutShops());
+  assert.deepEqual(
+    body.answer.notMeasured,
+    ["shopTargets"],
+    `an unpublished family must be named, and only the unpublished one: ${JSON.stringify(body.answer.notMeasured)}`,
+  );
+  assert.equal(body.answer.notMeasuredOmitted, 0);
+  assert.equal(
+    (body.answer.groups as readonly Record<string, any>[]).some((group) => group.family === "shopTargets"),
+    false,
+    "a family that was not published has no group, and no count of 0",
+  );
+});
+
+/** Every target family the Mod's catalogue declares, carried and measured-empty, minus `shopTargets`. */
+function advertisedWorldWithoutShops(): Snapshot {
+  const families = new Set(CATALOG.map((action) => action.targetFamily).filter((family) => family !== undefined));
+  const measured: Record<string, unknown> = {};
+  for (const family of families) if (family !== "shopTargets") measured[family] = [];
+  return { ...snapshot, ...measured } as Snapshot;
+}
+
 test("the answer is bounded, and every kind it dropped is counted", async () => {
   const farm = busyFarm();
   const declaredFamilies = new Set(CATALOG.map((action) => action.targetFamily).filter(Boolean));
@@ -496,7 +580,7 @@ function groupsNamingUncallableActions(
 ) {
   return groups
     .flatMap((group) => (group.actions as readonly string[]).map((action) => ({ kind: group.kind, action })))
-    .filter((entry) => !declared.has(entry.action) || !mounted.has(entry.action));
+    .filter((entry) => !(declared.has(entry.action) && mounted.has(entry.action)));
 }
 
 test("every action an affordance names is declared by the surface and mounted by the Host", async () => {

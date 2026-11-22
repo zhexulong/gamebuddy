@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-
-import { MAX_AFFORDANCE_GROUPS, MAX_LOOKUP_ROWS, LOOKUP_SUBJECTS, lookUp, noSnapshot } from "./game-lookup.js";
 import type { AffordanceAction } from "./game-lookup.js";
+import {
+  LOOKUP_SUBJECTS,
+  lookUp,
+  MAX_AFFORDANCE_COUNTERS,
+  MAX_AFFORDANCE_GROUPS,
+  MAX_LOOKUP_ROWS,
+  noSnapshot,
+} from "./game-lookup.js";
 import type { Snapshot } from "./protocol.js";
 
 const base: Snapshot = {
@@ -212,6 +218,36 @@ function farmWith(targets: Readonly<Record<string, unknown>>): Snapshot {
   return { ...base, ...targets, tile: { x: 40, y: 10 } };
 }
 
+/** `shop_purchase`'s own declaration: the one surface entry a shop question needs. */
+const SHOP_SURFACE: readonly AffordanceAction[] = Object.freeze([
+  { actionId: "shop_purchase", targetFamily: "shopTargets" },
+]);
+
+/**
+ * The nine counters a shop room publishes, in the shape the Mod sends them - including the two facts the answer has to
+ * carry: the counter's own tile (`ownerTileX`/`ownerTileY`) and what the menu charges for one unit.
+ *
+ * The actor stands on (40,10), so the third counter is the nearest one and the first two tie with it; the id breaks that tie.
+ */
+function shopCounters(): readonly Readonly<Record<string, unknown>>[] {
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8].map((index) => ({
+    targetId: `shop_${String(index).padStart(16, "0")}`,
+    shopId: index === 2 ? "SeedShop" : `Shop${String(index)}`,
+    ownerName: index === 2 ? "Pierre" : "Robin",
+    location: "SeedShop",
+    // The counter's own tile: the third counter is one step from the actor on (40,10), and the rest recede by id.
+    ownerTileX: index === 2 ? 40 : 42 + index,
+    ownerTileY: 11,
+    ownerInReach: index === 2,
+    stockCount: 3,
+    stockItemIds: ["(O)472", "(O)378"],
+    stockPrices: [
+      { qualifiedItemId: "(O)472", price: 40 },
+      { qualifiedItemId: "(O)378", price: 75 },
+    ],
+  }));
+}
+
 function groupsOf(answer: ReturnType<typeof lookUp>): readonly Record<string, any>[] {
   assert.ok("answer" in answer, `affordances must answer, got ${JSON.stringify(answer)}`);
   return answer.answer.groups as readonly Record<string, any>[];
@@ -284,7 +320,10 @@ test("a kind the surface does not declare is absent even when the snapshot carri
   );
   assert.deepEqual(groupsOf(answer), []);
   assert.ok("answer" in answer);
-  assert.match(String(answer.answer.nothing_actionable_here), /is in this snapshot/u);
+  // The one family the surface declares (`rockSourceTargets`) is not in this snapshot at all, so the answer names that
+  // instead of claiming the world holds no rock.
+  assert.deepEqual(answer.answer.notMeasured, ["rockSourceTargets"]);
+  assert.match(String(answer.answer.nothing_actionable_here), /nothing here was measured/u);
 });
 
 test("a new family arrives with a name, with no edit to the module", () => {
@@ -341,11 +380,141 @@ test("a family whose rows carry no tile still reports its count, with the distan
   assert.deepEqual(recipe?.nearest, { targetId: "recipe_0", x: null, y: null, tiles: null });
 });
 
+/**
+ * A SHOP ANSWER MUST NAME THE COUNTER, NOT THE SHOP.
+ *
+ * Measured `round90`: `shopTargets` published nine counters, the group answered `{kind:"shop", count:9, nearest:{…}}` with
+ * `x`/`y`/`tiles` all null, and the two `shop_purchase` calls that followed passed `SeedShop` - the `shopId` the row carries
+ * beside every counter - and were refused `shop_target_is_a_shop_id_not_a_counter`. The refusal was right; the answer that
+ * invited the name was the defect, and it also hid the `stockPrices` the wire had just gained.
+ */
+test("a shop answer names every counter it counts, with the tile to walk to and what each sells", () => {
+  const answer = lookUp(farmWith({ shopTargets: shopCounters() }), "affordances", "", SHOP_SURFACE);
+  const shop = groupsOf(answer)[0];
+  assert.equal(shop?.kind, "shop");
+  assert.equal(shop?.count, 9, "the count is the rows the wire published");
+  // The counter's own tile: published as `ownerTileX`/`ownerTileY`, and the walk to it is a walk a caller can make.
+  assert.deepEqual(shop?.nearest, { targetId: "shop_0000000000000002", x: 40, y: 11, tiles: 1 });
+  const counters = shop?.counters as readonly Record<string, any>[];
+  assert.equal(counters.length, MAX_AFFORDANCE_COUNTERS, "the counters are bounded, nearest first");
+  assert.equal(counters[0]?.targetId, shop?.nearest.targetId, "the nearest counter is the one `nearest` reports");
+  assert.deepEqual({ x: counters[0]?.x, y: counters[0]?.y, tiles: counters[0]?.tiles }, { x: 40, y: 11, tiles: 1 });
+  // Every counter is the id the action resolves. The shop id is a name beside it and is never what a caller passes.
+  for (const counter of counters)
+    assert.match(
+      String(counter.targetId),
+      /^shop_[0-9a-f]{16}$/u,
+      "a counter id is the `shop_<16 hex>` the wire mints",
+    );
+  assert.deepEqual(
+    counters.map((counter) => counter.shopId),
+    ["SeedShop", "Shop0", "Shop1"],
+    "the shop id is carried so a caller can tell WHICH counter it is, nearest first",
+  );
+  assert.equal(counters[0]?.ownerName, "Pierre");
+  assert.equal(counters[0]?.ownerInReach, true, "whether the body can trade without walking is the row's own fact");
+  // The price reaches the answer, joined to its item by id: this is the family `stockPrices` was added for.
+  assert.deepEqual(counters[0]?.sells, [
+    { qualifiedItemId: "(O)472", price: 40 },
+    { qualifiedItemId: "(O)378", price: 75 },
+  ]);
+  assert.equal(
+    counters[0]?.stockCount,
+    3,
+    "the menu's whole size is read, so a bounded `sells` is not read as the stock",
+  );
+  assert.equal(shop?.countersOmitted, 9 - MAX_AFFORDANCE_COUNTERS, "the counters the bound dropped are counted");
+});
+
+test("a counter that published no price for an item says so instead of printing free", () => {
+  const [counter] = shopCounters();
+  const answer = lookUp(
+    farmWith({ shopTargets: [{ ...counter, stockPrices: [{ qualifiedItemId: "(O)472", price: 40 }] }] }),
+    "affordances",
+    "",
+    SHOP_SURFACE,
+  );
+  const sells = (groupsOf(answer)[0]?.counters as readonly Record<string, any>[])[0]?.sells;
+  assert.deepEqual(sells, [
+    { qualifiedItemId: "(O)472", price: 40 },
+    { qualifiedItemId: "(O)378", price: null },
+  ]);
+  // A price the counter does not name is dropped rather than attached to the id beside it: the join is by id, not by
+  // position.
+  const unstocked = lookUp(
+    farmWith({ shopTargets: [{ ...counter, stockPrices: [{ qualifiedItemId: "(O)999", price: 7 }] }] }),
+    "affordances",
+    "",
+    SHOP_SURFACE,
+  );
+  assert.deepEqual(
+    (groupsOf(unstocked)[0]?.counters as readonly Record<string, any>[])[0]?.sells.map(
+      (row: { price: unknown }) => row.price,
+    ),
+    [null, null],
+  );
+});
+
+/**
+ * THE SECOND ZERO: a family the surface declares and the snapshot does not carry is NOT MEASURED.
+ *
+ * The answer used to say nothing about the family at all, and the sentence it left behind - "no target of any published
+ * action is in this snapshot" - claims the world holds none, which is a fact nobody measured. A caller has to be able to
+ * tell "no shop counter here" from "the counters were never published, go and observe".
+ */
+test("a family the snapshot does not publish is named as not measured, never as a count of zero", () => {
+  const answer = lookUp(base, "affordances", "", SHOP_SURFACE);
+  assert.ok("answer" in answer);
+  const body = answer.answer as Record<string, any>;
+  assert.deepEqual(body.groups, [], "a family that was not published has no group, and no count of 0");
+  assert.deepEqual(body.notMeasured, ["shopTargets"]);
+  assert.equal(body.notMeasuredOmitted, 0);
+  assert.match(
+    String(body.nothing_actionable_here),
+    /was measured|observe/u,
+    "the empty answer must not claim the world holds no shop counter",
+  );
+});
+
+test("a published family with no row in view is measured emptiness, and is not reported as unpublished", () => {
+  const answer = lookUp(farmWith({ shopTargets: [] }), "affordances", "", SHOP_SURFACE);
+  assert.ok("answer" in answer);
+  const body = answer.answer as Record<string, any>;
+  assert.deepEqual(body.groups, [], "measured emptiness is absent rather than a group of zero");
+  assert.deepEqual(body.notMeasured, [], "this frame DID publish `shopTargets`: the difference is the whole point");
+  assert.match(String(body.nothing_actionable_here), /no target of any published action/u);
+});
+
+test("a family the snapshot does publish is never named as unpublished", () => {
+  const answer = lookUp(
+    farmWith({ weedTargets: [{ targetId: "weed_0", x: 40, y: 9, health: 1 }], shopTargets: [] }),
+    "affordances",
+    "",
+    [...AFFORDANCE_SURFACE, { actionId: "shop_purchase", targetFamily: "shopTargets" }],
+  );
+  assert.ok("answer" in answer);
+  const body = answer.answer as Record<string, any>;
+  assert.deepEqual(
+    body.notMeasured,
+    ["farmAnimalPetTargets", "machineTargets", "rockSourceTargets"],
+    "every declared family this snapshot does not carry, in one deterministic order - weeds and shops ARE carried",
+  );
+  assert.equal(body.groups[0]?.family, "weedTargets");
+});
+
 test("an empty answer names which empty it is, and the two empties are different sentences", () => {
+  // Not one of the four families this surface declares is in `base` at all, so this is the NOT-MEASURED empty: a sentence
+  // claiming the world holds no weed would be a claim about a world nobody looked at.
   const noTargets = lookUp(base, "affordances", "", AFFORDANCE_SURFACE);
   assert.ok("answer" in noTargets);
   assert.deepEqual(noTargets.answer.groups, []);
-  assert.match(String(noTargets.answer.nothing_actionable_here), /is in this snapshot/u);
+  assert.match(String(noTargets.answer.nothing_actionable_here), /nothing here was measured/u);
+  assert.deepEqual(noTargets.answer.notMeasured, [
+    "farmAnimalPetTargets",
+    "machineTargets",
+    "rockSourceTargets",
+    "weedTargets",
+  ]);
   const noSurface = lookUp(farmWith({ weedTargets: [{ targetId: "weed_0", x: 40, y: 9, health: 1 }] }), "affordances");
   assert.ok("answer" in noSurface);
   assert.deepEqual(noSurface.answer.groups, []);

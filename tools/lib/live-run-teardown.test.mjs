@@ -17,7 +17,6 @@ import {
   launcherReclamationSteps,
   missingReclamationSteps,
   RECLAMATION_STATES,
-  reclamationExitReason,
   reclamationRecord,
   reclamationStep,
   restoreFixtureTransaction,
@@ -317,12 +316,34 @@ test("the account is extended by the process that measured the next step, and st
 });
 
 // The launcher's half of the same account: the game tree it owns to reap and the fixture transaction it holds. Measured
-// 2026-11-09 (`round40`): both were clean and neither was written down.
-const GAME_RECORD = { pid: 4321, closeOutcome: "killed", exit: { code: 0, signal: null }, survivors: [] };
+// 2026-11-09 (`round40`): both were clean and neither was written down. The game is a ROW in the run's children record,
+// beside the host's - measured 2026-11-22 (`round90`), where the record held this one process and nothing said who left
+// first.
+const CHILD_RECORD = {
+  children: [
+    {
+      role: "game",
+      pid: 4321,
+      startedAtMs: 1_000,
+      exit: { code: 0, signal: null, atMs: 9_000 },
+      survivedTeardown: false,
+    },
+    {
+      role: "host",
+      pid: 5321,
+      startedAtMs: 1_100,
+      exit: { code: 1, signal: null, atMs: 8_000 },
+      survivedTeardown: false,
+    },
+  ],
+  firstToLeave: "host:code=1",
+  closeOutcome: "killed",
+  survivors: [],
+};
 
 test("the launcher's steps say what it reaped and by which pid, and what it restored", () => {
   const clean = launcherReclamationSteps({
-    game: GAME_RECORD,
+    record: CHILD_RECORD,
     survivors: [],
     fixtureRestore: { ok: true, error: null },
   });
@@ -331,31 +352,43 @@ test("the launcher's steps say what it reaped and by which pid, and what it rest
     ["process_reap:ok", "fixture_restore:ok"],
   );
   assert.deepEqual(clean[0].pids, [4321], "the exact process this run launched, by its own pid");
-  assert.equal(clean[0].detail, "game_exit:code:0");
-  assert.equal(reclamationExitReason(GAME_RECORD), "game_exit:code:0");
-  assert.equal(reclamationExitReason({ pid: 1, exit: { code: null, signal: "SIGKILL" } }), "game_exit:signal:SIGKILL");
-  assert.equal(reclamationExitReason(null), null, "nobody observed the exit, and that is not a code");
+  assert.equal(clean[0].detail, "game:code=0", "how the game ended is its own row, in the one spelling");
 
   // A survivor is a failed step that NAMES the process still alive - never a pid filed under what was reaped.
   const survivor = launcherReclamationSteps({
-    game: GAME_RECORD,
+    record: CHILD_RECORD,
     survivors: [999],
     fixtureRestore: { ok: true, error: null },
   });
   assert.equal(survivor[0].state, "failed");
-  assert.equal(survivor[0].detail, "game_exit:code:0:survivors:999");
+  assert.equal(survivor[0].detail, "game:code=0:survivors:999");
   assert.deepEqual(survivor[0].pids, [4321]);
 
   // A restore that refused is the failure, with its own message, and it outranks nothing: both facts are published.
   const notRestored = launcherReclamationSteps({
-    game: null,
+    record: null,
     survivors: [],
     fixtureRestore: { ok: false, error: "native_local_fixture_restore_failed" },
   });
-  assert.equal(notRestored[0].detail, "game_exit:unreported", "a game nobody watched is named, not assumed ended");
+  assert.equal(notRestored[0].detail, "game:unobserved", "a game no record holds is named, not assumed ended");
   assert.equal(notRestored[1].state, "failed");
   assert.equal(notRestored[1].detail, "native_local_fixture_restore_failed");
   assert.equal(reclamationRecord({ steps: notRestored }).state, "failed");
+
+  // A row whose handle never reported an exit is `unknown`, and never `code=0`.
+  const unobservedExit = launcherReclamationSteps({
+    record: { children: [{ role: "game", pid: 4321, startedAtMs: 1_000, exit: { code: null, signal: null, atMs: null } }] },
+    survivors: [],
+    fixtureRestore: { ok: true, error: null },
+  });
+  assert.equal(unobservedExit[0].detail, "game:unknown");
+
+  // The ordering travels beside the steps, so the account a round reader opens says who left first.
+  assert.equal(
+    reclamationRecord({ steps: clean, firstToLeave: CHILD_RECORD.firstToLeave }).firstToLeave,
+    "host:code=1",
+  );
+  assert.equal(reclamationRecord({ steps: clean }).firstToLeave, null, "unobserved is null, not a fabricated order");
 });
 
 // THE ENDING, FOR THE EXITS NO `finally` REACHES.

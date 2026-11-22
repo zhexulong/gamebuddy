@@ -104,13 +104,26 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
  * All three prove the same declared/reached level; none is admitted with a foreign shape.
  */
 /**
- * `use_mine_ladder`'s two real completions.
+ * `use_mine_ladder`'s two real completions, and BOTH of them name the decision that drove the ladder.
  *
  * <para>
- * The synchronous one is the answer itself: the game's `ExitMine_Leave` response performs the warp inside
- * `GameLocation.answerDialogueAction`, so the receipt states which question was asked and which response settled it
- * beside where the actor ended up. The asynchronous one is the shared travel receipt, whose evidence is the
- * expected/actual destination pair because the landing tile belongs to the game's own warp.
+ * THE SYNCHRONOUS ONE is the answer itself: the game's `ExitMine_Leave` response performs the warp inside
+ * `GameLocation.answerDialogueAction`, so `transportactions.cs:426-427` states which question was asked, which
+ * response settled it, the ladder it was asked at and where the actor ended up.
+ * </para>
+ * <para>
+ * THE ASYNCHRONOUS ONE is the same answer settled by the engine's warp later: `transportactions.cs:431` answers
+ * `mine_exit_pending` and arms the travel slot, and when the warp completes `movementactions.cs:1321-1326` publishes
+ * the travel pair WITH the decision that drove it -
+ * `expected=<loc>:<x>,<y>;actual=<loc>:<x>,<y>;question=ExitMine;response=Leave`. The destination LOCATION is the
+ * postcondition and its tile is not: `movementactions.cs:1275` grades this action on `locationMatches` alone, because
+ * the engine's own warp picks where the actor lands.
+ * </para>
+ * <para>
+ * THERE IS NO THIRD SHAPE, and this rule used to admit one. A bare `expected;actual` pair was read as well, and no
+ * producer mints that for this action - each arm above appends the decision, so the permissive branch could only ever
+ * have admitted a receipt nothing writes. Measured `round90` (2026-11-22, `mine_delve`): the asynchronous receipt below
+ * was refused as `succeeded_receipt_without_its_own_postcondition` while the shape that cannot arrive was admitted.
  * </para>
  */
 function hasMineExitCompletionEvidence(detail: string): boolean {
@@ -132,8 +145,16 @@ function hasMineExitCompletionEvidence(detail: string): boolean {
       hasTileEvidenceValue(evidence.ladder) &&
       hasOpaqueEvidenceValue(evidence.actual)
     );
-  if (keys.length === 2 && "expected" in evidence && "actual" in evidence)
+  if (
+    keys.length === 4 &&
+    "expected" in evidence &&
+    "actual" in evidence &&
+    "question" in evidence &&
+    "response" in evidence
+  )
     return (
+      evidence.question === "ExitMine" &&
+      evidence.response === "Leave" &&
       hasOpaqueEvidenceValue(evidence.expected) &&
       hasOpaqueEvidenceValue(evidence.actual) &&
       evidence.expected.split(":")[0] === evidence.actual.split(":")[0]
@@ -884,8 +905,14 @@ function hasTillSoilCompletionEvidence(detail: string): boolean {
 function hasTilledSoilSettlementCompletionEvidence(detail: string, settledBy: string): boolean {
   return declaredCompletionEvidence(
     detail,
-    ["target", "before", "settled_by"],
+    ["location", "target", "before", "settled_by"],
     (evidence) =>
+      // A TILE WITHOUT A MAP IS NOT A TILE: `62,18` exists on the Farm and on the Mountain, so the coordinate this
+      // family addresses means nothing until the receipt says which map it is on. Every other tile-bearing receipt of
+      // `till_soil` writes `location` (`evidence["location"] = specification.Location`); the settlement was the one
+      // shape that did not, and `round87b`'s thirty settled tiles were counted as none.
+      hasBoundedNonemptyEvidenceValue(evidence.location) &&
+      evidence.location !== "none" &&
       // `target` is the TILE, not an opaque id: the seam prints the request's own `x,y` for this family
       // (`$"target={targetX},{targetY};before={DescribeSoilFeature(dirt)}"`, resourcetoolactions.cs:631).
       hasTileEvidenceValue(evidence.target) &&
@@ -1155,49 +1182,104 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
   );
 }
 
-function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
+/**
+ * The receipt-detail keys `break_rock`'s ONE swing publishes, declared once for both of its succeeded terminals.
+ *
+ * The Mod states its own copy in `ToolActionEvidence.BreakRockSource`, and
+ * `DeclaredToolSelectionTests.EveryToolActionStillPublishesExactlyTheEvidenceKeysTheHostPins` compares the two.
+ */
+const BREAK_ROCK_SOURCE_EVIDENCE_KEYS = Object.freeze([
+  "target",
+  "tool",
+  "tool_selected",
+  "slot",
+  "tool_before",
+  "slot_before",
+  "qualified_item_id",
+  "durability_before",
+  "durability_after",
+  "removed",
+  "stamina_before",
+  "stamina_after",
+  "stamina_delta",
+  "expected_stamina_cost",
+  "tool_restored",
+]);
+
+/**
+ * The one swing `break_rock` performs, read once for both of its succeeded terminals - and the durability it started
+ * from, because that number is what decides whether the rock left the layer.
+ *
+ * `null` when the detail is not this action's swing at all, so neither reading below can mistake another action's
+ * receipt for one of these.
+ */
+function readBreakRockSourceSwing(
+  detail: string,
+): Readonly<{ evidence: Readonly<Record<string, string>>; durabilityBefore: number }> | null {
   const evidence = evidenceFields(detail);
-  if (evidence === null) return false;
-  const expectedKeys = [
-    "target",
-    "tool",
-    "tool_selected",
-    "slot",
-    "tool_before",
-    "slot_before",
-    "qualified_item_id",
-    "durability_before",
-    "durability_after",
-    "removed",
-    "stamina_before",
-    "stamina_after",
-    "stamina_delta",
-    "expected_stamina_cost",
-    "tool_restored",
-  ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (evidence === null) return null;
+  if (
+    Object.keys(evidence).length !== BREAK_ROCK_SOURCE_EVIDENCE_KEYS.length ||
+    !BREAK_ROCK_SOURCE_EVIDENCE_KEYS.every((key) => key in evidence)
+  )
+    return null;
   const durabilityBefore = integerEvidenceValue(evidence.durability_before);
-  return (
-    hasOpaqueIdEvidenceValue(evidence.target) &&
-    evidence.tool === "pickaxe" &&
-    hasToolSelectionEvidence(evidence, "pickaxe") &&
+  if (
+    !hasOpaqueIdEvidenceValue(evidence.target) ||
+    evidence.tool !== "pickaxe" ||
+    !hasToolSelectionEvidence(evidence, "pickaxe") ||
     // The rock the swing landed on is the NATIVE breakable-stone category
     // (`Category == -999 && Name == "Stone"`, Object.cs:6082), not `(O)2`: the mine's ore
     // nodes are 751/290/764/765/95 and the mountain's are 668/670/75/76/77, and all of
     // them are that category. Pinning one id refused every real rock that was not the
     // plain farm stone.
-    hasBoundedNonemptyEvidenceValue(evidence.qualified_item_id) &&
-    durabilityBefore !== null &&
-    durabilityBefore >= 1 &&
-    // SOURCE TRANSFORMATION, not "the swing landed": the rock must have LEFT the layer. A swing that only lowers
-    // durability is a real, succeeded dispatch - the Mod reports it as `rock_source_damaged` - but this rule is the
-    // completion boundary, so it asks the same question the tree rule asks (`stump_after === "true"`). What
-    // durability_before may be is the rock's whole population (1-25), no longer just the one-swing value 1.
-    evidence.durability_after === "removed" &&
-    evidence.removed === "true" &&
-    hasStaminaConservationEvidence(evidence)
-  );
+    !hasBoundedNonemptyEvidenceValue(evidence.qualified_item_id) ||
+    durabilityBefore === null ||
+    durabilityBefore < 1 ||
+    !hasStaminaConservationEvidence(evidence)
+  )
+    return null;
+  return { evidence, durabilityBefore };
+}
+
+function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
+  const swing = readBreakRockSourceSwing(detail);
+  // SOURCE TRANSFORMATION, not "the swing landed": the rock must have LEFT the layer. A swing that only lowers
+  // durability is a real, succeeded dispatch - the Mod reports it as `rock_source_damaged` - but this rule is the
+  // completion boundary, so it asks the same question the tree rule asks (`stump_after === "true"`). What
+  // durability_before may be is the rock's whole population (1-25), no longer just the one-swing value 1.
+  return swing !== null && swing.evidence.durability_after === "removed" && swing.evidence.removed === "true";
+}
+
+/**
+ * `rock_source_damaged`: the swing LANDED and the stone is still standing.
+ *
+ * <para>
+ * This is the producer's own second arm, not a contract opinion: `resourcetoolactions.cs:392-393` grades one dispatch
+ * with `RockSourceSwing.MadeProgress(before, after)` and then names it
+ * `removed ? "rock_source_broken" : "rock_source_damaged"`, because one `Pickaxe.DoFunction` only subtracts
+ * `upgradeLevel + 1 + additionalPower` from `MinutesUntilReady` and returns early while the remainder is positive
+ * (Pickaxe.cs:139-146). A mine node that takes two hits is therefore two dispatches and one stone.
+ * </para>
+ * <para>
+ * WHAT IT READS IS THE WARRANT THAT REFUSES IT: `removed=false` beside a durability that went DOWN. That pair says
+ * the swing happened (so the receipt is evidence) AND that `break_rock`'s declared postcondition - `Finishes` over
+ * `rockSourceTargets` - is not reached. It is deliberately NOT a completion: reading it as one would let "something
+ * was broken" be satisfied by a stone nobody broke, which is the fact `world-state-target-freshness.test.ts` pins
+ * ("a stone that was only DAMAGED is still standing").
+ * </para>
+ * <para>
+ * It is a reading rather than a silence because the two are different facts. Measured `round90` (`mine_delve`): four
+ * of these came back `state: succeeded` and `tools/lib/task-purpose.mjs` filed all four as
+ * `succeeded_receipt_without_its_own_postcondition` - a false accusation of the contract, for receipts that named
+ * exactly why they were not the end of the work.
+ * </para>
+ */
+function hasBreakRockSourceDamageEvidence(detail: string): boolean {
+  const swing = readBreakRockSourceSwing(detail);
+  if (swing === null || swing.evidence.removed !== "false") return false;
+  const durabilityAfter = integerEvidenceValue(swing.evidence.durability_after);
+  return durabilityAfter !== null && durabilityAfter < swing.durabilityBefore;
 }
 
 /**
@@ -5222,6 +5304,52 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
 } satisfies Record<ExecutionRequest["action"], CompletionContract>);
 
 /**
+ * THE SUCCESS THAT SAYS "NOT YET", declared per action and asked BEFORE the unreadable verdict.
+ *
+ * <para>
+ * `hasStardewCompletionEvidence` answers one question - did this action's declared postcondition hold - and its single
+ * `false` covers three different facts: a receipt carrying NO warrant at all, a receipt whose warrant says the world is
+ * in another state than the request asked for, and a receipt whose warrant says the action did what one dispatch does
+ * and the postcondition is further along. The third is an honest outcome rather than a hole in the contract, and
+ * `round90` measured what one label for three facts costs: four `break_rock` receipts
+ * (`removed=false;durability_after=1` - one hit of two) came back `succeeded`, the Host read them exactly, and
+ * `tools/lib/task-purpose.mjs` filed all four as `succeeded_receipt_without_its_own_postcondition` - an accusation that
+ * the contract cannot read a receipt it reads in full.
+ * </para>
+ * <para>
+ * SO THIS IS A SECOND DECLARATION, KEYED BY THE CODE THE PRODUCER MINTS, and each reading is that code's own warrant.
+ * `judgeStardewCompletionEvidence` answers `before_its_postcondition:<reasonCode>` for a receipt this table accepts, so
+ * a caller can say `succeeded_before_its_postcondition:<actionId>:<reasonCode>` instead. NOTHING HERE IS A COMPLETION:
+ * no entry changes what `hasStardewCompletionEvidence` admits.
+ * </para>
+ * <para>
+ * THE POPULATION IS THE PRODUCER'S, and it is kept that way by
+ * `stardew-completion-unfinished-success-gate.test.ts`: every succeeded reason code `PostconditionVerdict` can mint is
+ * either named by its action's row or declared here, and an entry no producer site still mints expires. A sixth code in
+ * this family fails there instead of being found by a live run.
+ * </para>
+ */
+export const STARDEW_UNFINISHED_SUCCESSES: Readonly<
+  Partial<Record<ExecutionRequest["action"], Readonly<Record<string, CompletionContract>>>>
+> = Object.freeze({
+  break_rock: Object.freeze({
+    /** `resourcetoolactions.cs:392-393`; see `hasBreakRockSourceDamageEvidence` for the two halves it reads. */
+    rock_source_damaged: (claim: CompletionClaim) => hasBreakRockSourceDamageEvidence(claim.detail),
+  }),
+});
+
+/**
+ * The reading this action declares for one of its succeeded-but-not-yet codes, or `undefined` when it declares none.
+ *
+ * The action id is the wire union, so a declaration filed under an id no action has is a compile error at its own call
+ * sites; `judgeStardewCompletionEvidence` narrows to it only after finding the id in `STARDEW_COMPLETION_CONTRACTS`.
+ */
+function unfinishedReading(actionId: ExecutionRequest["action"], reasonCode: string): CompletionContract | undefined {
+  const declared = STARDEW_UNFINISHED_SUCCESSES[actionId];
+  return declared === undefined ? undefined : declared[reasonCode];
+}
+
+/**
  * THE ONE BOUND ON ONE ACTION RECEIPT'S EVIDENCE, and it is the producer's own number.
  *
  * `FarmHandExecutionJournal` refuses to journal a receipt whose `Evidence` is longer than 4096 characters
@@ -5252,6 +5380,10 @@ export type CompletionEvidenceVerdict = Readonly<{ accepted: boolean; refusal: s
  * THE ROW IS ASKED FIRST, then the reader: `advance_day`'s real detail carries a duplicate key (its producer appends
  * its settlement block to a base list that already names `topology`, `SleepAndAdvanceDayLifecycle.cs:863-894`) and its
  * row reads field membership because of it, so a fold that parsed first would refuse a receipt that row accepts.
+ *
+ * AND WHEN THE ROW REFUSES, ONE MORE QUESTION IS ASKED: `STARDEW_UNFINISHED_SUCCESSES`. A receipt that names its own
+ * unfinishedness is not a receipt nobody can read, and the refusal says which it is - `before_its_postcondition:<code>`
+ * rather than a parse failure. This is the single place the two are told apart, so no caller re-decides it.
  */
 export function judgeStardewCompletionEvidence(
   actionId: string,
@@ -5270,6 +5402,9 @@ export function judgeStardewCompletionEvidence(
     return { accepted: false, refusal: `no_completion_contract:${actionId}` };
   const stripped = withoutSettlementEnvelope(detail);
   if (contract({ reasonCode: receipt.reasonCode, detail: stripped })) return { accepted: true, refusal: null };
+  const declared = unfinishedReading(actionId as ExecutionRequest["action"], receipt.reasonCode);
+  if (declared !== undefined && declared({ reasonCode: receipt.reasonCode, detail: stripped }))
+    return { accepted: false, refusal: `before_its_postcondition:${receipt.reasonCode}` };
   const parse = parseStardewEvidenceDetail(stripped);
   return { accepted: false, refusal: parse.refusal ?? `evidence_does_not_hold:${receipt.reasonCode}` };
 }

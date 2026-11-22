@@ -20,6 +20,8 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
+import { childReading, childRow } from "../live-run/core/child-roster.mjs";
+
 /**
  * Each signal's own interrupt exit code, so a killed run is distinguishable from a failed one by exit status alone.
  */
@@ -188,7 +190,7 @@ export const RECLAMATION_REQUIRED_STEPS = Object.freeze([
 
 /**
  * One step, as the process that ran it saw it. `detail` carries the failure's own message or the fact that explains the
- * step (`game_exit:code:0`); `pids` carries exactly the processes this step reaped, never a pattern.
+ * step (`game:code=0`); `pids` carries exactly the processes this step reaped, never a pattern.
  */
 export function reclamationStep({ step, ok, detail = null, pids = [] }) {
   if (typeof step !== "string" || step.trim().length === 0) throw new Error("a reclamation step needs its name");
@@ -201,24 +203,32 @@ export function reclamationStep({ step, ok, detail = null, pids = [] }) {
   });
 }
 
-/** The record, derived from its steps. Nothing here is asserted: a state with no step behind it is not publishable. */
-export function reclamationRecord({ steps = [], exitReason = null } = {}) {
+/**
+ * The record, derived from its steps. Nothing here is asserted: a state with no step behind it is not publishable.
+ *
+ * `firstToLeave` is the one fact that makes a `bridge_disconnected` attributable - which child left first, and with what
+ * (`host:code=1`, `game:unknown`) - so it travels beside the steps rather than inside a step's prose. Null means no
+ * exit instant was observed by anyone, which is not "none left".
+ */
+export function reclamationRecord({ steps = [], exitReason = null, firstToLeave = null } = {}) {
   const state =
     steps.length === 0 ? "unobserved" : steps.some((entry) => entry.state === "failed") ? "failed" : "clean";
   return Object.freeze({
     state,
     exitReason: exitReason === null || exitReason === undefined ? null : String(exitReason),
+    firstToLeave: typeof firstToLeave === "string" && firstToLeave.length > 0 ? firstToLeave : null,
     steps: Object.freeze([...steps]),
     reflection: state === "clean" ? "completed" : state === "failed" ? "failed" : "skipped",
   });
 }
 
 /** Extend an existing account with steps this caller just measured. The outcome follows the merged steps. */
-function mergeReclamation(existing, { steps, exitReason }) {
+function mergeReclamation(existing, { steps, exitReason, firstToLeave }) {
   const kept = Array.isArray(existing?.steps) ? existing.steps : [];
   return reclamationRecord({
     steps: [...kept, ...steps],
     exitReason: exitReason ?? existing?.exitReason ?? null,
+    firstToLeave: firstToLeave ?? existing?.firstToLeave ?? null,
   });
 }
 
@@ -227,7 +237,7 @@ function mergeReclamation(existing, { steps, exitReason }) {
  * that published no result has no account to carry, and creating one would be the artifact lying about having run.
  * Returns the merged record from the last file written, so a caller can gate on the account it just published.
  */
-export function stampReclamation({ paths, steps = [], exitReason = undefined }) {
+export function stampReclamation({ paths, steps = [], exitReason = undefined, firstToLeave = undefined }) {
   const written = [];
   let record = null;
   for (const path of paths) {
@@ -238,7 +248,7 @@ export function stampReclamation({ paths, steps = [], exitReason = undefined }) 
     } catch {
       throw new Error(`run_reclamation_not_stamped:unreadable:${path}`);
     }
-    record = mergeReclamation(document?.reclamation, { steps, exitReason });
+    record = mergeReclamation(document?.reclamation, { steps, exitReason, firstToLeave });
     writeFileSync(path, `${JSON.stringify({ ...document, reclamation: record }, null, 2)}\n`, "utf8");
     written.push(path);
   }
@@ -260,13 +270,18 @@ export function missingReclamationSteps(record) {
 
 /**
  * The steps the LAUNCHER owes, and the values they carry: the game tree (which it does not launch, but does own to
- * reclaim) and the fixture transaction it holds. `game` is the orchestrator's own record, or null when it published none;
- * `survivors` is this process's own post-restore reading, because a zero-survivor assertion is a measurement, not an
- * inference from the record above it.
+ * reclaim) and the fixture transaction it holds. `record` is the children record the run's own processes wrote (see
+ * `live-run/core/child-roster.mjs`), or null when nothing published one; `survivors` is this process's own post-restore
+ * reading, because a zero-survivor assertion is a measurement, not an inference from the record above it.
+ *
+ * HOW THE GAME ENDED IS THE GAME'S OWN ROW, in the one spelling every child's row shares (`game:code=0`), or `game:unknown`
+ * when its handle never reported an exit, or `game:unobserved` when no row exists at all - a run whose game went to the
+ * record is not the same finding as one where nobody recorded it.
  */
-export function launcherReclamationSteps({ game, survivors, fixtureRestore }) {
+export function launcherReclamationSteps({ record, survivors, fixtureRestore }) {
   const running = Array.isArray(survivors) ? [...survivors] : [];
-  const exitDetail = reclamationExitReason(game) ?? "game_exit:unreported";
+  const game = childRow(record, "game");
+  const exitDetail = game === null ? "game:unobserved" : childReading(game);
   return Object.freeze([
     reclamationStep({
       step: "process_reap",
@@ -282,13 +297,4 @@ export function launcherReclamationSteps({ game, survivors, fixtureRestore }) {
       detail: fixtureRestore?.ok === true ? null : (fixtureRestore?.error ?? "restore_not_measured"),
     }),
   ]);
-}
-
-/** How the game process this run launched ended, in one spelling, or null when nobody observed it. */
-export function reclamationExitReason(game) {
-  const exit = game?.exit ?? null;
-  if (exit === null) return null;
-  if (Number.isInteger(exit.code)) return `game_exit:code:${exit.code}`;
-  if (typeof exit.signal === "string") return `game_exit:signal:${exit.signal}`;
-  return null;
 }
