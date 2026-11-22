@@ -73,11 +73,32 @@ export const DRIVERS = Object.freeze([
   { key: "w-game-launch", file: "w-game-launch.cjs", out: "w-game-launch.txt", requiresGame: true },
   // The states a player actually meets AFTER a launch, which "did it start" does not cover: the game dying under
   // a turn (driver X), the explicit endgame that must still settle in the session that saw the exit - invariant
-  // 506 (driver Y), and the surface disconnecting while the game keeps running (driver Z). Each launches its own
-  // game through the product's own controls and ends only what it started, so they run after every driver that
-  // reads a healthy mounted session; each one reports `not_measured: guardian_pipe_unreachable` on a machine with
-  // no guardian server, which is the prerequisite W already names.
-  { key: "x-game-death", file: "x-game-death.cjs", out: "x-game-death.txt", requiresGame: true },
-  { key: "y-game-endgame", file: "y-game-endgame.cjs", out: "y-game-endgame.txt", requiresGame: true },
-  { key: "z-game-disconnect", file: "z-game-disconnect.cjs", out: "z-game-disconnect.txt", requiresGame: true },
+  // 506 (driver Y), and the surface disconnecting while the game keeps running (driver Z).
+  //
+  // `ownWorld` IS THE ONE FACT THAT DECIDES WHICH DRIVERS SHARE A LAUNCH, and it is `true` here because the code
+  // cannot give these three a world between them. A state driver launches only when the lifecycle holds no
+  // instance (`capture/game-surface-states.cjs` `activateAndLaunch`), and the product draws neither the launch
+  // nor the activation control while one exists (`dialogue-web/src/game-lifecycle-controls.ts:93-101`); each of
+  // these three scenarios then ENDS or OCCUPIES that single world (x kills it, y ends it, z is measured on its
+  // staying up), and the product's own step out of a world it has ended is `restart_gamebuddy` - outside the
+  // surface (`game-lifecycle-controls.ts:426-430`). So one mounted Host carries one of them, whatever the roster
+  // order: the first driver after W takes W's world, and the rest arrive at what that driver's scenario left.
+  //
+  // The driver says so by name now (`world_not_owned_by_this_driver`, `capture/game-states-verdict.mjs`) instead
+  // of reporting the product defect `instance_status_never_running` for the run's own ordering - measured
+  // 2026-11-22, `.tmp/livenow-r28.log:5202,5264`. To measure one of them, give it its own mount:
+  //   node tools/live-run/frontend/run.mjs cleanup --out R
+  //   node tools/live-run/frontend/run.mjs launch  --out R
+  //   node tools/live-run/frontend/run.mjs capture --driver=<key> --force --out R
+  // Each one reports `not_measured: guardian_pipe_unreachable` on a machine with no guardian server, which is
+  // the prerequisite W already names.
+  { key: "x-game-death", file: "x-game-death.cjs", out: "x-game-death.txt", requiresGame: true, ownWorld: true },
+  { key: "y-game-endgame", file: "y-game-endgame.cjs", out: "y-game-endgame.txt", requiresGame: true, ownWorld: true },
+  {
+    key: "z-game-disconnect",
+    file: "z-game-disconnect.cjs",
+    out: "z-game-disconnect.txt",
+    requiresGame: true,
+    ownWorld: true,
+  },
 ]);

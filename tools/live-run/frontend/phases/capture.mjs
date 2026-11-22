@@ -75,6 +75,18 @@ async function main() {
     paths.captureLog,
     `\n===== capture invocation ${new Date().toISOString()} drivers=[${selected.map((d) => d.key).join(",")}] force=${force} =====\n`,
   );
+  /*
+   * One mounted Host carries one world, and these drivers' scenarios end or occupy it (the roster's `ownWorld`,
+   * derived here rather than restated). Said ONCE before the first of them runs, because the reading that
+   * follows - `world_not_owned_by_this_driver` from the second one onwards - is about this line and not about
+   * the product. Measured 2026-11-22 (`.tmp/livenow-r28.log:5202,5264`): the same ordering was reported as
+   * `blocked-by-product: instance_status_never_running`, which named the product for it.
+   */
+  const worldOwning = selected.filter((driver) => driver.ownWorld === true);
+  if (worldOwning.length > 1)
+    log(
+      `  WORLD: ${worldOwning.map((driver) => driver.key).join(",")} each need a world of their own, and this invocation gives them ONE mounted Host - the first to run takes it and ends or occupies it, so the rest report world_not_owned_by_this_driver (run each against its own \`launch\` to measure it)`,
+    );
 
   let failed = 0;
   let skippedByMarker = 0;

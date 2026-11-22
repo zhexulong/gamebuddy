@@ -480,6 +480,29 @@ test("an attachment that landed proves the instance-word gap, and says nothing a
   assert.match(reading.detail, /ownership=player_external/u);
 });
 
+test("a game that ENDED is not the instance-word gap, however attached it is", () => {
+  // The exact reading r28 produced for drivers y and z: `instance=crashed/attachment=attached`, the world
+  // driver x's own kill had just left. `crashed`/`stopped` are the words the instance word LEAVES FOR
+  // (`game-browser/game-browser-state-provider.ts:151-164`), and a crash keeps the attachment by design (it is
+  // the AI client runtime's session, `stardew-production-lifecycle-coordinator.internal.ts:1683-1691,2591`),
+  // so neither word is evidence about the projection. Reporting the gap here named the product for the
+  // harness's own ordering and sent the next reader to `stardew-role-lifecycle-projection.internal.ts`.
+  for (const instanceStatus of ["crashed", "stopped"])
+    assert.equal(
+      classifyChainStop({
+        state: { ok: true, instanceStatus, attachmentStatus: "attached" },
+        unchangedForMs: LAUNCH_PLATEAU_MS,
+      }),
+      null,
+      `instance=${instanceStatus}/attachment=attached is an ending, not a launch that never left launching`,
+    );
+  // The gap itself is untouched: an instance word that stayed at `launching` under an attachment still proves it.
+  assert.equal(
+    classifyChainStop({ state: { ok: true, instanceStatus: "launching", attachmentStatus: "attached" } }).gap,
+    PRODUCT_GAPS.instanceStatusNeverRunning,
+  );
+});
+
 test("a state this Mod cannot answer proves no gap, however fresh the file holding it", () => {
   const state = { ok: true, instanceStatus: "launching", attachmentStatus: "none" };
   // `awaiting_save` is not a state the Mod answers: `HostFarmhandProvisioner.HandleRequest` mints the manifest

@@ -573,6 +573,18 @@ export function chainStepsLine(chain) {
  * ever landed, so the attachment branches above say nothing, and the run's proof is the plateau itself -
  * a launch the Host admitted, an instance that exists, and nothing moving.
  *
+ * AN ENDING IS NOT THE GAP. The first branch used to read `instanceStatus !== "running"`, so a lifecycle
+ * that arrived at `crashed` or `stopped` - the two words the product publishes on purpose when a game ends
+ * (`game-browser/game-browser-state-provider.ts:151-164`) - proved the projection gap as well. It does not:
+ * the gap is the claim "the instance word never left `launching`", and `crashed`/`stopped` are the words it
+ * leaves FOR. Measured 2026-11-22 (`.tmp/livenow-r28.log:5202,5264`): drivers y and z were scored
+ * `blocked-by-product: instance_status_never_running` at `instance=crashed/attachment=attached`, which is the
+ * world driver x had just killed - the verdict sent the next reader to the projection when the finding was
+ * the harness. A crash also keeps `attachment=attached` by design (the attachment is the AI client's runtime
+ * session, `stardew-production-lifecycle-coordinator.internal.ts:1683-1691,2591`, and a player-host exit
+ * publishes only the instance fact, `:1461-1475`), so "attached while not running" is the ordinary shape of
+ * a game that ended and no evidence about the projection at all.
+ *
  * Anything else is `null`: no proof, no verdict, and the caller keeps reporting `failed`.
  */
 export function classifyChainStop({
@@ -584,7 +596,7 @@ export function classifyChainStop({
   plateauMs = LAUNCH_PLATEAU_MS,
 }) {
   const readable = state?.ok === true;
-  if (readable && state.attachmentStatus === "attached" && state.instanceStatus !== "running")
+  if (readable && state.attachmentStatus === "attached" && state.instanceStatus === "launching")
     return Object.freeze({
       verdict: VERDICTS.blockedByProduct,
       gap: PRODUCT_GAPS.instanceStatusNeverRunning,

@@ -505,6 +505,16 @@ const instanceKey = (state) =>
  * flight and nothing is attached. That is the gap the harness already has a word for - a GameBuddy-launched
  * Player Host is projected as `launching` for its whole life - and it is reported through the harness's
  * `blocked_by_product` path rather than as a failure or a pass.
+ *
+ * AN INSTANCE THAT ARRIVED ALREADY ENDED IS NEITHER, and it is the one shape of these three that belongs to
+ * the HARNESS rather than to the product. A state driver launches its world only when the lifecycle has
+ * nothing running (`activateAndLaunch`, `LIFECYCLE_SHAPES.instantiated` above); a world that was launched by
+ * an earlier driver and then ended by that driver's own scenario is therefore a world this driver did not
+ * launch and may not kill, end or disconnect from. Measured 2026-11-22 (`.tmp/livenow-r28.log:5202,5264`):
+ * drivers y and z arrived at the `instance=crashed/attachment=attached` driver x's kill had just left and
+ * were scored `blocked-by-product: instance_status_never_running` - a product verdict for the harness's own
+ * ordering, which sends the next reader to the projection when the finding is here. The reading below names
+ * the world it found and the runner step that gives the driver its own.
  */
 async function settleInFlightInstance({ page, say, record, budget, state }) {
   const began = Date.now();
@@ -528,6 +538,21 @@ async function settleInFlightInstance({ page, say, record, budget, state }) {
     say(`the instance this driver found had already finished its launch: ${describeGameState(current)}`);
     return { kind: "ready", state: current };
   }
+  /*
+   * The world ended before this driver acted. `crashed` and `stopped` are the product's own words for a game
+   * that ENDED (`host/src/game-browser/game-browser-state-provider.ts:151-164`), so there is no launch in
+   * flight to wait for and no gap to prove: the driver needs a world of its own, and it arrived after one
+   * was consumed. `playerHostExitCode` is cited when the Host published it, because it is the fact that says
+   * the ending was observed rather than guessed.
+   */
+  if (current.instanceStatus === "crashed" || current.instanceStatus === "stopped")
+    return {
+      kind: "not_measured",
+      reason: NOT_MEASURED_REASONS.worldNotOwnedByThisDriver,
+      detail: `this driver needs a world it launched itself, and the lifecycle already held one that had ended: ${describeGameState(current)}${
+        current.playerHostExitCode === undefined ? "" : ` with the player host's exit code ${String(current.playerHostExitCode)}`
+      }. Nothing here is a product fault and nothing was measured: a world an earlier driver's scenario ended is not this driver's to kill, end or disconnect from, and the product draws no launch control while an instance exists, so this driver launched nothing. It needs its own mounted Host - \`node tools/live-run/frontend/run.mjs cleanup\`, then \`launch\`, then \`capture --driver=<this driver>\` in that order (\`tools/live-run/frontend/phases/drivers.mjs\` \`ownWorld\`)`,
+    };
   const gap = classifyChainStop({ state: current, unchangedForMs, plateauMs: budget.plateauMs });
   if (gap !== null) {
     say(`the instance stopped at a gap the product owns: ${blockedByProductLine(gap.gap, gap.detail)}`);

@@ -231,6 +231,16 @@ export const NOT_MEASURED_REASONS = Object.freeze({
   gameSurfaceAbsent: "no_game_surface",
   endgameControlAbsent: "endgame_control_absent",
   disconnectControlAbsent: "disconnect_control_absent",
+  /*
+   * The driver arrived at a world that had already ended. It is a prerequisite of the HARNESS rather than of
+   * the machine: a state driver launches its own world only when the lifecycle holds no instance, and the
+   * product draws no launch control while one exists (`dialogue-web/src/game-lifecycle-controls.ts:93-101`),
+   * so a world an earlier driver's scenario ended leaves this driver nothing to act on. Measured 2026-11-22
+   * (`.tmp/livenow-r28.log:5202,5264`): drivers y and z reported this as `blocked-by-product:
+   * instance_status_never_running` at `instance=crashed/attachment=attached`, which named the product for the
+   * ordering of the run. It is its own word so the report cannot make that mistake again.
+   */
+  worldNotOwnedByThisDriver: "world_not_owned_by_this_driver",
 });
 
 /** `GAME-STATES <scenario>: measured|failed|not_measured ...` - one line per driver, with its own counts. */

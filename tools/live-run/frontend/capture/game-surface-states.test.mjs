@@ -269,6 +269,34 @@ test("a lifecycle the product has not activated is still activated through its o
   assert.equal(existsSync(join(RUN_WORLD.runRoot, "fixture-worlds", "GameBuddyFarm_451234657", "SaveGameInfo")), true);
 });
 
+test("a world that arrived already ended is the harness's, not the product's - and it says so by name", async () => {
+  // The r28 reading this replaces (`.tmp/livenow-r28.log:5195,5257`), both drivers, verbatim:
+  //   BLOCKED-BY-PRODUCT y-game-endgame: instance_status_never_running - this driver found an instance
+  //   already in flight at instance=crashed/attachment=attached, and it stayed there for 0ms ...
+  // That is driver x's own kill, reported as a product defect in the projection. A state driver launches its
+  // own world only when the lifecycle holds no instance, so a world an earlier scenario ended is one it never
+  // launched - a harness prerequisite, named here, and never the product's gap.
+  const page = scriptedGamePage({
+    state: {
+      ...INSTALLED,
+      instanceStatus: "crashed",
+      instanceGeneration: 0,
+      playerHostExitCode: 1,
+      attachmentStatus: "attached",
+      attachmentGeneration: 1,
+      connectionStatus: "stopped",
+    },
+  });
+  const { reading } = await drive(page);
+  assert.equal(reading.kind, "not_measured");
+  assert.equal(reading.reason, "world_not_owned_by_this_driver", "the harness's own word for it");
+  assert.equal(reading.gap, undefined, "and no gap, so the capture phase cannot count it as blocked-by-product");
+  assert.match(reading.detail, /instance=crashed\/attachment=attached/u, "the detail keeps the world it found");
+  assert.match(reading.detail, /exit code 1/u, "and the fact that the ending was observed");
+  assert.match(reading.detail, /capture --driver=/u, "and the runner step that gives this driver a world");
+  assert.deepEqual(page.pressed, [], "an ended world is not this driver's to press anything on");
+});
+
 test("a lifecycle with no generational activation and no control is still named as never activated", async () => {
   // The other direction: a state the product forbids nothing in, and no control drawn for it either. This
   // reading keeps its own name, so the gap above cannot quietly absorb the genuine failure.
