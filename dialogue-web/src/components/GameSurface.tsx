@@ -1,4 +1,4 @@
-import { Gamepad2, Users } from "lucide-react";
+import { Gamepad2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Messages } from "../i18n";
 import type { ManagementPipelineApi } from "../management-pipeline-api";
@@ -28,6 +28,7 @@ import {
   gameAttachmentRows,
   reduceGameAttachment,
 } from "./game-app-state";
+import { CompanionAvatar } from "./CompanionAvatar";
 import { GameDiagnosticsDisclosure } from "./GameDiagnosticsDisclosure";
 import { GamePlayerSettings } from "./GamePlayerSettings";
 import { GameStatePanel, type CabinViewState } from "./GameStatePanel";
@@ -94,6 +95,9 @@ export function GameSurface({
   game,
   csrfToken,
   labels,
+  companionHandle,
+  companionName,
+  companionDigest,
   readView,
   commit,
   isCancelled,
@@ -107,6 +111,21 @@ export function GameSurface({
   game: GameBrowserStateV1 | null;
   csrfToken: string;
   labels: Messages;
+  /**
+   * The mounted companion the situation card draws - the same handle the AppBar and the
+   * transcript draw her with.
+   *
+   * Her picture is a Chat-side fact: the Game projection publishes `companionName` and nothing
+   * else, and that field is `null` on every Host that has answered
+   * (`stardew-production-lifecycle-coordinator.internal.ts`), so a card that read only the
+   * projection could never draw her at all. The shell already holds the mounted companion's
+   * handle, name and picture digest, which is what makes this the one companion drawn in three
+   * places rather than a letter in one of them. `null` is a mount with no companion.
+   */
+  companionHandle: string | null;
+  companionName: string;
+  /** The digest of the picture the player last gave her, when the shell knows one. */
+  companionDigest?: string;
   readView: () => ViewState;
   commit: (next: ViewState) => void;
   isCancelled: () => boolean;
@@ -1529,7 +1548,6 @@ export function GameSurface({
     phase: sessionControls.phase,
     installationRequired: sessionControls.installationRequired,
     cabinAdmitted: cabinView.kind === "admitted",
-    companionName: game?.game.companionName ?? null,
   });
   if (!opened) return null;
 
@@ -1548,7 +1566,13 @@ export function GameSurface({
       {/* Who is waiting, where she is, and the one next thing to do. It leads the surface: every
           group below answers a question about the machinery, and this answers the question a player
           opens the page with. It is absent only when the Host published no projection at all. */}
-      {gameSituation !== null && <GameSituationCard situation={gameSituation} labels={labels} />}
+      {gameSituation !== null && (
+        <GameSituationCard
+          situation={gameSituation}
+          labels={labels}
+          companion={{ handle: companionHandle, name: companionName, digest: companionDigest }}
+        />
+      )}
       {/* The shell's arrival refresh could not be made, so the panel below is the projection it
           already held and this says so. It sits above the panel rather than inside it: the fact is
           about the read, not about any group's contents, and a status line inside the region would
@@ -1660,8 +1684,6 @@ type GameSituation = Readonly<{
   /** This surface's own cabin confirmation, stated only while she is on her way in. */
   movedIn: boolean;
   next: Readonly<{ kind: "action" | "text"; message: keyof Messages }>;
-  /** Her initial, or `null` when the Host published no companion name. */
-  monogram: string | null;
 }>;
 
 /**
@@ -1680,7 +1702,6 @@ function deriveGameSituation(
     phase: GameSessionPhase;
     installationRequired: boolean;
     cabinAdmitted: boolean;
-    companionName: string | null;
   }>,
 ): GameSituation | null {
   const facts = GAME_SITUATION_FACTS[view.phase];
@@ -1690,14 +1711,12 @@ function deriveGameSituation(
     next = { kind: "text", message: "gameSituationNextInstall" };
   else if ("action" in facts.next) next = { kind: "action", message: facts.next.action };
   else next = { kind: "text", message: facts.next.text };
-  const name = view.companionName?.trim() ?? "";
   return Object.freeze({
     phase: view.phase,
     where: facts.where,
     condition: facts.condition,
     movedIn: view.cabinAdmitted && facts.where !== "in_farm",
     next,
-    monogram: name === "" ? null : (Array.from(name)[0] ?? null),
   });
 }
 
@@ -1730,7 +1749,15 @@ const GAME_SITUATION_CONDITION_MESSAGE: Readonly<Record<GameSituationCondition, 
  * status says nothing about the connection. `data-situation` carries the where-fact so a journey
  * can ask which situation the card is in without reading the copy.
  */
-function GameSituationCard({ situation, labels }: { situation: GameSituation; labels: Messages }) {
+function GameSituationCard({
+  situation,
+  labels,
+  companion,
+}: {
+  situation: GameSituation;
+  labels: Messages;
+  companion: Readonly<{ handle: string | null; name: string; digest?: string }>;
+}) {
   let condition: keyof Messages | null = null;
   if (situation.movedIn) condition = "gameSituationMovedIn";
   else if (situation.condition !== null) condition = GAME_SITUATION_CONDITION_MESSAGE[situation.condition];
@@ -1741,9 +1768,12 @@ function GameSituationCard({ situation, labels }: { situation: GameSituation; la
       data-situation={situation.where}
       aria-label={labels.gameSituationAria}
     >
-      <span className="avatar game-situation-avatar" aria-hidden="true">
-        {situation.monogram ?? <Users size={18} aria-hidden="true" />}
-      </span>
+      <CompanionAvatar
+        handle={companion.handle}
+        name={companion.name}
+        className="game-situation-avatar"
+        digest={companion.digest}
+      />
       <div className="game-situation-body">
         <p className="game-situation-line" data-testid="game-situation-line">
           {labels[GAME_SITUATION_WHERE_MESSAGE[situation.where]]}

@@ -5,7 +5,7 @@
  * The defect family this is written against is the one that made this surface read like an
  * operations console: a player who opened Game met an installation panel, a three-step runbook and
  * a capability board, and nothing anywhere on the page said who was waiting, or that anyone was.
- * The card states three things - her monogram, where she is, and the one next step - and the
+ * The card states three things - her picture, where she is, and the one next step - and the
  * second of them is the one that can lie.
  *
  * WHAT IS ASSERTED, for every phase the product declares (`GAME_SESSION_PHASES`, each with its own
@@ -21,15 +21,21 @@
  *   2. one next step, and where it names a control it names one this surface really draws. The card
  *      does not draw a second button (one action, one control - `design/26` §1); it says the word
  *      the button says, so the check is that a control with that accessible name is on the page.
- *   3. a named companion's monogram is her initial; an unnamed one has no initial at all.
+ *   3. her plate is the SAME avatar the bar draws: the picture the Host serves for her, else her
+ *      initial, through the one `CompanionAvatar` - never a glyph that is nobody. The defect this
+ *      replaces: the card drew a monogram from the Game projection's `companionName`, which is
+ *      `null` on every Host that has ever answered, so the one surface that opens with her drew a
+ *      grey `Users` icon while the bar and the transcript beside it drew her face.
  *
  * red-proof: `deriveGameSituation` returning the `in_farm` clause for `pre_activation` (one entry of
  *            `GAME_SITUATION_FACTS`) -> `game / pre_activation: the card says "I'm on your farm"
- *            while the Host publishes no attachment` (dialogue-web/tests/game-situation-card.spec.ts)
+ *            while the Host publishes no attachment`; and the card's plate drawing a monogram instead
+ *            of `CompanionAvatar` -> `game / attached_connected: the card draws her as the bar draws
+ *            her` (both dialogue-web/tests/game-situation-card.spec.ts).
  */
 import { messages } from "../src/i18n";
 import { GAME_SESSION_INPUTS, GAME_SESSION_PHASES } from "../src/game-lifecycle-controls";
-import { type Page, expect, test } from "./frontend-coverage";
+import { type Locator, type Page, expect, test } from "./frontend-coverage";
 import { chat, csrfToken, expiresAtMs, jsonOk, token } from "./composed-reference-game-fixtures";
 
 const labels = messages("en");
@@ -47,6 +53,31 @@ function gameEnvelope(projection: unknown): unknown {
       };
 }
 
+/** A 1x1 PNG: the picture the avatar face answers with, as bytes a browser decodes. */
+const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==";
+
+/**
+ * What one avatar plate holds: her picture (and whether it decoded), her initial, or a glyph.
+ *
+ * The comparison is over this shape rather than over the element, because the two plates are
+ * different sizes by design (40 px on the card, 28 px in the bar) and the fact this file is about
+ * is what is DRAWN in them, not how big it is.
+ */
+async function readPlate(
+  locator: Locator,
+): Promise<{ image: string | null; text: string; glyph: string | null; decoded: boolean }> {
+  return await locator.evaluate((node) => {
+    const image = node.querySelector("img");
+    const glyph = node.querySelector("svg");
+    return {
+      image: image?.getAttribute("src") ?? null,
+      text: (node.textContent ?? "").trim(),
+      glyph: glyph === null ? null : "svg",
+      decoded: image === null ? false : image.naturalWidth > 0 && image.naturalHeight > 0,
+    };
+  });
+}
+
 /**
  * Mount the Game surface on one projection.
  *
@@ -54,8 +85,16 @@ function gameEnvelope(projection: unknown): unknown {
  * shell's mount read), the Game slice (`GameSurface`'s own reread), the cabin handoff, and the two
  * reads its siblings make beside it. Everything else the page answers with its own refusal, which
  * cannot reach the card - the card reads the projection and nothing else.
+ *
+ * `picture` is the avatar face behind her handle. It is ON by default because that is the state the
+ * product is in: `DEFAULT_COMPANION_PRESET` ships a picture, so a fresh install draws her face. The
+ * case with no picture is the other half of the same fact and says so by asking for it.
  */
-async function mountProjection(page: Page, projection: unknown): Promise<void> {
+async function mountProjection(
+  page: Page,
+  projection: unknown,
+  options: Readonly<{ picture?: boolean }> = {},
+): Promise<void> {
   const envelope = gameEnvelope(projection);
   const root = {
     apiVersion: 1,
@@ -66,6 +105,10 @@ async function mountProjection(page: Page, projection: unknown): Promise<void> {
     chat,
     game: envelope,
   };
+  if (options.picture !== false)
+    await page.route(`**/assets/companions/${chat.chat.companion.handle}/avatar.png`, (route) =>
+      route.fulfill({ status: 200, contentType: "image/png", body: Buffer.from(ONE_PIXEL_PNG, "base64") }),
+    );
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
   await page.route("**/api/composed-reference-game/v1/game", (route) => route.fulfill(jsonOk(envelope)));
@@ -154,23 +197,38 @@ for (const phase of GAME_SESSION_PHASES) {
       ).toContain(named);
     }
 
-    // An unnamed companion has no initial - the card does not invent a name.
-    const monogram = ((await card.locator(".game-situation-avatar").textContent()) ?? "").trim();
-    const publishedName = projection.companionName;
+    // Her plate is the bar's plate: the same element, the same picture, and never a glyph standing
+    // in for a companion the page already draws.
+    const cardPlate = await readPlate(card.locator(".game-situation-avatar"));
+    const barPlate = await readPlate(page.locator(".app-bar .avatar"));
     expect(
-      monogram,
-      `game / ${phase}: the Host published companionName ${JSON.stringify(publishedName)}, so the monogram is ` +
-        `either her initial or nothing at all`,
-    ).toBe(publishedName === null ? "" : Array.from(publishedName)[0]);
+      cardPlate,
+      `game / ${phase}: the card draws her as ${JSON.stringify(barPlate)}, and not as ` +
+        `${JSON.stringify(cardPlate)} - her picture is a fact this shell already holds`,
+    ).toEqual(barPlate);
+    expect(cardPlate.glyph, `game / ${phase}: the card's plate is her, not a glyph that is nobody`).toBeNull();
+    expect(
+      cardPlate.image,
+      `game / ${phase}: the Host serves her picture behind ${chat.chat.companion.handle}, so the card draws it`,
+    ).toBe(`/assets/companions/${chat.chat.companion.handle}/avatar.png`);
   });
 }
 
-test("the situation card shows her initial when the Host names the companion", async ({ page }) => {
+test("the situation card draws her initial only while the Host serves no picture", async ({ page }) => {
   const input = GAME_SESSION_INPUTS.attached_connected;
   if (input.game === null) throw new Error("GAME_SESSION_INPUTS.attached_connected publishes no Game projection");
-  await mountProjection(page, { ...input.game.game, companionName: "Amber" });
+  const companion = chat.chat.companion;
+
+  // No picture behind her handle - a companion nobody uploaded one for.
+  await mountProjection(
+    page,
+    { ...input.game.game, companionName: null },
+    { picture: false },
+  );
   const card = page.getByTestId("game-situation");
   await expect(card).toBeVisible();
-  await expect(card.locator(".game-situation-avatar")).toHaveText("A");
-  await expect(page.getByTestId("game-situation-line")).toHaveText(labels.gameSituationFarm);
+  expect(await readPlate(card.locator(".game-situation-avatar")), "the card is her monogram, as the bar's").toEqual(
+    await readPlate(page.locator(".app-bar .avatar")),
+  );
+  await expect(card.locator(".game-situation-avatar")).toHaveText(Array.from(companion.name)[0]!.toUpperCase());
 });

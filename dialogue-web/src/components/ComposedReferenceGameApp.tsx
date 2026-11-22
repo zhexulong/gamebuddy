@@ -1419,6 +1419,9 @@ export function ComposedReferenceGameApp() {
                   game={view.root.game ?? null}
                   csrfToken={view.session.snapshot.csrfToken}
                   labels={labels()}
+                  companionHandle={view.session.snapshot.chat.companion.handle}
+                  companionName={view.session.snapshot.chat.companion.name}
+                  companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
                   readView={() => viewRef.current}
                   commit={commit}
                   isCancelled={() => cancelledRef.current}
