@@ -54,6 +54,14 @@ type SurfaceAction = Readonly<{
   /** The snapshot family the action's targets come from, or the surface's silence - the plan compiler reads it too. */
   targetFamily?: string;
   postcondition?: Readonly<{ name?: string }>;
+  /**
+   * Where the actor must stand before this action can happen, as the surface declares it.
+   *
+   * Carried because the compiler reads it: how close the previous step already is to a transition's source decides
+   * whether a walk is needed at all (`enter_exit` declares `adjacent` one tile; `travel` declares nothing, so it walks
+   * itself). A fixture that drops it would publish `approach_requirement_undeclared` for an action the Mod declares.
+   */
+  approach?: Readonly<{ relation: string; withinTiles?: number }>;
 }>;
 
 const SURFACE = (
@@ -79,6 +87,7 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             // targets come from is what tells a piece of world (`soilTiles`, `machineTargets`) from a place to stand
             // (`move_to_tile` declares none), and the consumer rule in `body-program-script.ts` is built on it.
             ...(action.targetFamily === undefined ? {} : { targetFamily: action.targetFamily }),
+            ...(action.approach === undefined ? {} : { approach: action.approach }),
           },
         }),
   }),
@@ -242,6 +251,19 @@ function nodesOf(result: CompiledPlan): readonly PlanNode[] {
 function insertionsOf(result: CompiledPlan): Readonly<{ inserted: readonly string[]; count: number }> {
   if (result.status === "refused") assert.fail(`expected a plan beside the insertions, received ${result.reasonCode}`);
   return { inserted: result.inserted, count: result.insertedCount };
+}
+
+/**
+ * The walks this compiler could NOT write, one per transition, spelled `auto_walk_refused:<code>:<x>:<y>`.
+ *
+ * Read beside the program for the same reason `inserted` is: the program that runs is not the plan the author wrote, and
+ * a transition whose walk is missing has to say so rather than leave her reading a node list that disagrees with her
+ * script for no stated reason.
+ */
+function walkRefusalsOf(result: CompiledPlan): readonly string[] {
+  if (result.status === "refused")
+    assert.fail(`expected a plan beside its walk refusals, received ${result.reasonCode}`);
+  return result.autoWalkRefused;
 }
 
 /** The node ids the compiler MINTED, which is the population a run's inserted-node reading joins on. */
@@ -501,46 +523,78 @@ test("a walk to another tile does not stand in for the transition's own tile", (
 });
 
 /**
- * AN EDGE EXIT IS NAMED BY THE TILE OUTSIDE THE MAP, AND THE WALK GOES TO THE EDGE INSTEAD.
+ * THE WALK WRITTEN BEFORE A DOOR IS NEITHER INVENTED NOR WRITTEN TWICE, AND BOTH FAULTS WERE MEASURED.
  *
  * <p>
- * A map declares an edge exit's source outside the grid (`-1 53 BusStop` for the west edge), and `snapshot.warps[]`
- * publishes exactly that source, so an author copies `{ sourceX: -1, sourceY: 53 }`. Two things then have to be true at
- * once, and they are two different tiles: the transition's node carries `-1`, because that is the warp's identity and the
- * Mod resolves it by exact source match, while the prepended walk carries `0`, because `-1` is a boundary rather than a
- * cell and no `move_to_tile` accepts it.
+ * `round89` (`.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine`) failed the one node whose whole purpose
+ * is to hand the body back, twice, for two different reasons - and both were the compiler's:
  * </p>
+ * <ul>
+ * <li>`plan_12`: `enter_exit(40,-1)` on the Farm, an edge exit one tile OUTSIDE the grid (`snapshot.warps[]` publishes
+ * that source, so the coordinate was the author's copy of a real row). The walk was written to `(40,0)` - the off-map
+ * axis clamped to the map's first index - and the map answered
+ * `target_not_addressable;target_on_map=true;approaches=north:off_map,east:buildings_tile:blocked@41,0,south:buildings_tile:blocked@40,1,west:buildings_tile:blocked@39,0`.
+ * A clamped INDEX is not a cell a body can stand on, and this compiler holds no map geometry to ask which cell is.</li>
+ * <li>`plan_75`: `move_to_tile(3,11)` then `enter_exit(3,12)`. The author's own walk already stood beside the door -
+ * `enter_exit` declares `adjacent`, one tile - and the compiler wrote a SECOND walk, to the door's own tile, which was
+ * dispatched, never settled, and abandoned twelve minutes later by the journal heal (`journal_open_stale_dispatch`).</li>
+ * </ul>
  * <p>
- * The snapshot row is read through the same predicate the wire uses (`isWarp` -> `isWarpSourceCoordinate`), so this test
- * fails the moment the published source range and the compiled plan disagree.
+ * So the two rules these cases pin: a source outside the grid gets NO walk and a named refusal beside the program
+ * (`auto_walk_refused:<code>:<x>:<y>`), and a step that already satisfies the transition's DECLARED approach distance
+ * gets no walk at all.
  * </p>
  */
-test("an edge exit is travelled to from the map's own edge, and the walk never names the off-map tile", () => {
+test("round89 plan_12: an edge exit's source is outside the grid, so no walk is invented and the refusal is named", () => {
   const edgeWarps = [
-    { sourceX: -1, sourceY: 53, targetLocation: "BusStop", targetX: 20, targetY: 12, accessible: true },
+    { sourceX: 40, sourceY: -1, targetLocation: "Backwoods", targetX: 40, targetY: 64, accessible: true },
   ];
-  for (const [actionId, expected] of [
-    ["travel", { walkX: "0", walkY: "53", sourceX: "-1", sourceY: "53" }],
-    ["enter_exit", { walkX: "0", walkY: "53", sourceX: "-1", sourceY: "53" }],
-  ] as const) {
-    const nodes = nodesOf(compile(`builder.${actionId}({ x: -1, y: 53 });`, { warps: edgeWarps } as Partial<Snapshot>));
-    assert.deepEqual(
-      nodes.map((node) => node.actionId),
-      ["move_to_tile", actionId],
-      `${actionId} still gets the compiler's walk before the transition`,
-    );
-    assert.deepEqual(nodes[0]!.arguments, {
-      x: { type: "integer", canonicalValue: expected.walkX },
-      y: { type: "integer", canonicalValue: expected.walkY },
-    });
-    assert.deepEqual(nodes[1]!.arguments, {
-      x: { type: "integer", canonicalValue: expected.sourceX },
-      y: { type: "integer", canonicalValue: expected.sourceY },
-    });
-    // The plan the compiler produced is one the Mod's own request validator accepts end to end: the walk names an in-map
-    // tile and the transition names the warp's real source.
+  for (const actionId of ["enter_exit", "travel"] as const) {
+    const result = compile(`builder.${actionId}({ x: 40, y: -1 });`, { warps: edgeWarps } as Partial<Snapshot>);
+    const nodes = nodesOf(result);
+    // Her transition, alone: the ring of wall the clamp used to send the body to was not a step anybody wrote.
+    assert.deepEqual(nodes.map((node) => [node.nodeId, node.actionId]), [["n01", actionId]]);
+    assert.deepEqual(walkRefusalsOf(result), ["auto_walk_refused:target_off_map:40:-1"]);
+    assert.deepEqual(insertedNodeIdsOf(result), [], "nothing was inserted, so nothing can be refused in the program");
+    // The transition's own coordinate is the warp's real source, so the program is still one the Mod's validator accepts.
     assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
   }
+});
+
+test("round89 plan_75: the step before the door already stands beside it, so no second walk is written", () => {
+  const result = compile("builder.move_to_tile({ x: 3, y: 11 });\nbuilder.enter_exit({ x: 3, y: 12 });");
+  const nodes = nodesOf(result);
+  assert.deepEqual(
+    nodes.map((node) => [node.nodeId, node.actionId]),
+    [
+      ["n01", "move_to_tile"],
+      ["n02", "enter_exit"],
+    ],
+  );
+  assert.deepEqual(walkRefusalsOf(result), [], "the walk was not refused - it was not needed");
+  assert.deepEqual(insertedNodeIdsOf(result), []);
+});
+
+/**
+ * The other side of the same rule, because "no walk" must be the DECLARED distance and not "any earlier walk will do".
+ *
+ * `enter_exit` declares `adjacent` - one tile - so a step two tiles from the door leaves the door's own `door_out_of_range`
+ * to say what is wrong, exactly as before.
+ */
+test("a step two tiles from the door is not beside it, and the walk is still written", () => {
+  const result = compile("builder.move_to_tile({ x: 3, y: 10 });\nbuilder.enter_exit({ x: 3, y: 12 });");
+  assert.deepEqual(
+    nodesOf(result).map((node) => [node.nodeId, node.actionId]),
+    [
+      ["n01", "move_to_tile"],
+      ["auto_walk_02", "move_to_tile"],
+      ["n03", "enter_exit"],
+    ],
+  );
+  assert.deepEqual(nodesOf(result)[1]!.arguments, {
+    x: { type: "integer", canonicalValue: "3" },
+    y: { type: "integer", canonicalValue: "12" },
+  });
 });
 
 test("a plan with no transition is exactly the plan the script wrote", () => {

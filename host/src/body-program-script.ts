@@ -393,6 +393,26 @@ type RunnablePlan = Readonly<{
    */
   insertedNodeIds: readonly string[];
   /**
+   * The transitions this compiler could NOT write its walk for, one per transition, spelled
+   * `auto_walk_refused:<reasonCode>:<x>:<y>` - the transition's own source tile beside the reason.
+   *
+   * <p>
+   * The third answer beside a written node and a step that had nothing to do, and the one that did not exist when it was
+   * measured. `round89`'s `plan_12` (2026-11-21T20-38-52-354Z) sent `enter_exit(40,-1)` from the Farm; the walk was
+   * written to the clamped `(40,0)` and the map answered `target_not_addressable;target_on_map=true` with four walls
+   * around it. A clamped index is not a cell, and this compiler holds no map geometry to ask which neighbouring cell
+   * admits a body - so it writes NO step instead of an invented one, and says why here. Her transition then runs alone and
+   * any refusal of it is the world's answer to HER coordinate, which is the only node whose failure is hers to read.
+   * </p>
+   * <p>
+   * Reported beside the program and never inside it: no node exists for it, so nothing of the compiler's is left in the
+   * program to be refused or abandoned by the world. Bounded like `inserted`; `autoWalkRefusedCount` is the population.
+   * </p>
+   */
+  autoWalkRefused: readonly string[];
+  /** Every walk refusal, including the ones past `MAX_REPORTED_PLAN_INSERTIONS`. */
+  autoWalkRefusedCount: number;
+  /**
    * The arguments this compiler READ OUT OF THE SUBMIT-MOMENT SNAPSHOT rather than asking the author for, one per
    * binding, spelled `bound=<actionId>.<argument>;from=snapshot.<family>[].<field>`.
    *
@@ -1614,6 +1634,8 @@ export function compilePlanScript(
     ),
     insertedCount: state.inserted.length,
     insertedNodeIds: Object.freeze(state.insertedNodeIds.map(programNodeId)),
+    autoWalkRefused: Object.freeze(state.autoWalkRefused.slice(0, MAX_REPORTED_PLAN_INSERTIONS)),
+    autoWalkRefusedCount: state.autoWalkRefused.length,
     boundFromSnapshot: Object.freeze(state.boundFromSnapshot.slice(0, MAX_REPORTED_PLAN_READINGS)),
     boundFromSnapshotCount: state.boundFromSnapshot.length,
     readingsUnmeasured: Object.freeze(state.readingsUnmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
@@ -1727,6 +1749,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
+    autoWalkRefused: [],
     boundFromSnapshot: [],
     readingsUnmeasured: [],
     resolvedAfter: [],
@@ -1930,6 +1953,11 @@ type PlanScriptState = {
    * ids would make a long plan's refusals silently uncountable.
    */
   insertedNodeIds: string[];
+  /**
+   * The transitions whose walk this compiler could not write, in program order, each
+   * `auto_walk_refused:<reasonCode>:<x>:<y>`. Narrowed once, where the answer is built.
+   */
+  autoWalkRefused: string[];
   /**
    * The arguments this compiler read out of the submit-moment snapshot, in the order the calls were written, each
    * `<actionId>.<argument>` beside the path it was read from. Narrowed once, where the answer is built.
@@ -3062,7 +3090,13 @@ function emitPlanNode(
     state,
     planNodeId(PLAN_WALK_NODE_PREFIX, state.nodes.length + 1),
   );
-  if (approach !== null) state.nodes.push(approach);
+  if (approach.kind === "written") state.nodes.push(approach.node);
+  // A WALK THIS COMPILER CANNOT PLACE IS REPORTED, NOT WRITTEN: an invented coordinate becomes a node the world refuses,
+  // and a refused node the author never wrote is the shape `round89`'s `plan_12` measured. See `transitionApproachNode`.
+  if (approach.kind === "refused")
+    state.autoWalkRefused.push(
+      `auto_walk_refused:${approach.reasonCode}:${approach.tile.x}:${approach.tile.y}`,
+    );
   // EVERY NODE THE COMPILER WRITES IS ONE THE WIRE CARRIES, so the cap is checked against all of them: a program past
   // the bound would be refused as a malformed request instead of as a plan that is too long.
   const authorPosition = state.nodes.length + 1;
@@ -3073,9 +3107,9 @@ function emitPlanNode(
     state.inserted.push({ actionId: dismissal.actionId, nodeId: dismissalNodeId });
     state.insertedNodeIds.push(dismissalNodeId);
   }
-  if (approach !== null) {
-    state.inserted.push({ actionId: approach.actionId, nodeId: approach.nodeId });
-    state.insertedNodeIds.push(approach.nodeId);
+  if (approach.kind === "written") {
+    state.inserted.push({ actionId: approach.node.actionId, nodeId: approach.node.nodeId });
+    state.insertedNodeIds.push(approach.node.nodeId);
   }
   // TWO EDGES, TWO MEANINGS: THE ORDER A SCRIPT WROTE IS NOT A CHAIN OF CONSUMERS.
   //
@@ -3512,55 +3546,123 @@ function planPathOrderedProgram(
   return Object.freeze({ nodes: Object.freeze(nodes), renamed });
 }
 
+/** The first in-map tile index on either axis. Stardew tile space starts at (0,0); a negative index is outside the map. */
+const MAP_ORIGIN_TILE = 0;
+
 /**
- * The compiler's own walk to a transition's source tile, or `null` when the plan already reaches that tile.
+ * What became of the walk this compiler writes before a transition, which is three answers rather than two.
  *
- * The step carries the transition's OWN coordinates. `move_to_tile` is what makes that executable: it accepts a warp
+ * `written` is the ordinary case; `not_needed` is a step the plan already performs; `refused` is a walk this compiler
+ * cannot place, and it carries the reason its answer names instead of a node. The third state is not a failure of the
+ * plan: it is the compiler declining to invent a coordinate it cannot check (`round89`'s `plan_12`).
+ */
+type PlanWalk =
+  | Readonly<{ kind: "written"; node: PlanNode }>
+  | Readonly<{ kind: "not_needed" }>
+  | Readonly<{ kind: "refused"; reasonCode: string; tile: Readonly<{ x: string; y: string }> }>;
+
+/** No walk is written, and nothing is owed: either the action is no transition, or the plan already stands there. */
+const NO_WALK: PlanWalk = Object.freeze({ kind: "not_needed" });
+
+/**
+ * The compiler's own walk to a transition's source tile, or the reason it cannot write one.
+ *
+ * <p>
+ * THE STEP CARRIES THE TRANSITION'S OWN COORDINATES. `move_to_tile` is what makes that executable: it accepts a warp
  * tile as its target and, because the target is a warp the actor would trigger by stopping on it, arrives ADJACENT
  * instead of on top of it (`farmhandexecutioncontroller.movementactions.cs:62-63`, `nativeWarpTarget` ->
  * `adjacentArrival`) - which is exactly the relationship `enter_exit` gates on. The tile is also legal as an
  * `enter_exit` target by the Mod's own three-way warp rule (same file, `IsWarpBufferTile`).
- *
- * Nothing is prepended when the node immediately before already walks to that same tile: the author wrote the walk and
- * a second one would be a no-op submission. The id is `auto_walk_<position>` rather than `n<position>` so a journal
- * reader can tell which plan node the compiler wrote, while the author's own nodes keep the order, arguments and
- * relative position its script gave them. The position is passed in rather than derived here, because the dismissal
- * written after a body-yielding step occupies a position too and the whole program is numbered once.
+ * </p>
+ * <p>
+ * A SOURCE OUTSIDE THE GRID IS A BOUNDARY, NOT A CELL, so no walk is written for it. An edge exit's source is one tile
+ * outside the map (`-1 53 BusStop` for the west edge, `40 -1 Backwoods` for the north), and this used to be answered by
+ * clamping the off-map axis to the map's first index - a number that is in range and still not a place. Measured
+ * `round89` (`plan_12`, 2026-11-21T20-38-52-354Z): `enter_exit(40,-1)` from the Farm, the walk written to `(40,0)`, and
+ * the map answered `target_not_addressable;target_on_map=true` with `north:off_map` and three `buildings_tile:blocked`
+ * neighbours - the Farm's top row is wall. Which cell beside that boundary admits a body is the MAP's answer and nothing
+ * on the wire publishes it, so the honest move is to write no step at all: her transition then runs alone and any refusal
+ * is the world's answer to the coordinate she named. The refusal travels beside the program (`autoWalkRefused`), never as
+ * a node that could be refused or abandoned in her plan.
+ * </p>
+ * <p>
+ * A STEP THAT ALREADY STANDS BESIDE THE DOOR IS NOT WALKED TO TWICE. `enter_exit` declares `adjacent` - one tile
+ * (`FarmhandActionApproachRequirement.Adjacent`, so `approachRequirement.withinTiles` is `1`) - so a plan whose previous
+ * step already stands within that distance has done the work this node would do. Measured `round89` (`plan_75`):
+ * `move_to_tile(3,11)` then `enter_exit(3,12)`, a second walk written to the door's own tile, dispatched, never settled,
+ * and abandoned twelve minutes later by the journal heal. The distance is read from the SURFACE's declaration (a surface
+ * that states none falls back to `0`, the same tile, which is the rule this replaced); nothing here restates a radius.
+ * </p>
+ * <p>
+ * The id is `auto_walk_<position>` rather than `n<position>` so a journal reader can tell which plan node the compiler
+ * wrote, while the author's own nodes keep the order, arguments and relative position its script gave them. The position
+ * is passed in rather than derived here, because the dismissal written after a body-yielding step occupies a position too
+ * and the whole program is numbered once.
+ * </p>
  */
 function transitionApproachNode(
   action: PublishedPlanAction,
   canonical: Readonly<Record<string, PlanArgument>>,
   state: PlanScriptState,
   nodeId: string,
-): PlanNode | null {
-  if (!TRANSITION_SOURCE_PLAN_ACTION_IDS.includes(action.actionId)) return null;
+): PlanWalk {
+  if (!TRANSITION_SOURCE_PLAN_ACTION_IDS.includes(action.actionId)) return NO_WALK;
   const x = canonical.x;
   const y = canonical.y;
-  if (x?.type !== "integer" || y?.type !== "integer") return null;
-  const walkX = approachTileFor(x);
-  const walkY = approachTileFor(y);
+  if (x?.type !== "integer" || y?.type !== "integer") return NO_WALK;
+  const sourceX = Number(x.canonicalValue);
+  const sourceY = Number(y.canonicalValue);
+  if (sourceX < MAP_ORIGIN_TILE || sourceY < MAP_ORIGIN_TILE)
+    return Object.freeze({
+      kind: "refused",
+      // The Mod's own word for it (`RefusalFacts.MoveToTile`): the coordinate is not a tile of the map the actor stands
+      // on. No second spelling, so a companion that has seen the receipt recognises the reason.
+      reasonCode: "target_off_map",
+      tile: Object.freeze({ x: x.canonicalValue, y: y.canonicalValue }),
+    });
   const previous = state.nodes[state.nodes.length - 1];
-  const previousX = previous?.arguments.x;
-  const previousY = previous?.arguments.y;
-  if (
-    previous !== undefined &&
-    previous.actionId === MOVE_TO_TILE_ACTION_ID &&
-    previousX?.type === "integer" &&
-    previousY?.type === "integer" &&
-    previousX.canonicalValue === walkX.canonicalValue &&
-    previousY.canonicalValue === walkY.canonicalValue
-  )
-    return null;
+  if (previous !== undefined && planWalkReaches(previous, sourceX, sourceY, approachTilesOf(action))) return NO_WALK;
   return Object.freeze({
-    nodeId,
-    actionId: MOVE_TO_TILE_ACTION_ID,
-    arguments: Object.freeze({ x: walkX, y: walkY }),
-    // A walk consumes nothing: where the body stands is not a piece of world state another step produced (`move_to_tile`
-    // declares no target family), so a failed walk orders the step after it rather than skipping it.
-    dependsOn: Object.freeze([]),
-    ...(previous === undefined ? {} : { orderedAfter: Object.freeze([previous.nodeId]) }),
-    bindings: Object.freeze({}),
+    kind: "written",
+    node: Object.freeze({
+      nodeId,
+      actionId: MOVE_TO_TILE_ACTION_ID,
+      arguments: Object.freeze({ x, y }),
+      // A walk consumes nothing: where the body stands is not a piece of world state another step produced (`move_to_tile`
+      // declares no target family), so a failed walk orders the step after it rather than skipping it.
+      dependsOn: Object.freeze([]),
+      ...(previous === undefined ? {} : { orderedAfter: Object.freeze([previous.nodeId]) }),
+      bindings: Object.freeze({}),
+    }),
   });
+}
+
+/**
+ * How close a step must already stand to a transition's source for the walk to be unnecessary.
+ *
+ * The distance is the surface's (`approachRequirement.withinTiles`), and `0` when the surface states none - which is the
+ * same-tile rule this replaced, kept for the actions that declare no approach at all. Allowing a `null` distance to mean
+ * "anywhere will do" would turn an undeclared requirement into a claim the surface never made.
+ */
+function approachTilesOf(action: PublishedPlanAction): number {
+  const approach = action.approachRequirement;
+  return approach.declared && approach.withinTiles !== null ? approach.withinTiles : 0;
+}
+
+/** Whether a node already puts the body within `tiles` (Chebyshev) of the transition's source tile. */
+function planWalkReaches(
+  previous: PlanNode,
+  sourceX: number,
+  sourceY: number,
+  tiles: number,
+): boolean {
+  if (previous.actionId !== MOVE_TO_TILE_ACTION_ID) return false;
+  const x = previous.arguments.x;
+  const y = previous.arguments.y;
+  if (x?.type !== "integer" || y?.type !== "integer") return false;
+  return (
+    Math.max(Math.abs(Number(x.canonicalValue) - sourceX), Math.abs(Number(y.canonicalValue) - sourceY)) <= tiles
+  );
 }
 
 /** An integer plan argument: the whole-number wire value, canonicalized to its exact decimal spelling. */
@@ -3793,31 +3895,6 @@ function nodeIdPrefixOf(nodeId: string): string {
   for (const prefix of [PLAN_DISMISSAL_NODE_PREFIX, PLAN_WALK_NODE_PREFIX, PLAN_AUTHOR_NODE_PREFIX])
     if (nodeId.startsWith(prefix)) return prefix;
   return PLAN_AUTHOR_NODE_PREFIX;
-}
-
-type IntegerPlanArgument = Readonly<{ type: "integer"; canonicalValue: string }>;
-
-/** The first in-map tile index on either axis. Stardew tile space starts at (0,0); a negative index is outside the map. */
-const MAP_ORIGIN_TILE = 0;
-
-/**
- * The tile a body can WALK to in order to reach a transition's source tile.
- *
- * <p>
- * Usually the source itself. An edge exit is the exception: the map declares its source one tile outside the grid
- * (`-1 53 BusStop` for the west edge, `79 -1 Mountain` for the north), and that coordinate is a boundary event, not a
- * tile anyone occupies - the actor leaves through the map's own edge. Writing it into the prepended walk produced
- * `move_to_tile({ x: -1 })`, which is a request no `move_to_tile` accepts (`isTileCoordinate`) and no path can reach.
- * The transition's own gate is Chebyshev-1, so the edge tile on that axis is the cell that reaches the exit, and it is
- * the coordinate the plan must carry.
- * </p>
- */
-function approachTileFor(source: Readonly<{ canonicalValue: string }>): IntegerPlanArgument {
-  const coordinate = Number(source.canonicalValue);
-  return Object.freeze({
-    type: "integer" as const,
-    canonicalValue: String(Math.max(coordinate, MAP_ORIGIN_TILE)),
-  });
 }
 
 /** The canonical argument the Mod's own declaration asks for, or `undefined` when the script's value is not one. */

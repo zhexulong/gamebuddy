@@ -185,12 +185,19 @@ function contractArms(contracts: string): Map<string, string> {
   return arms;
 }
 
-/** The action whose request handler calls `member` and names that action's id, or the reason it cannot be named. */
+/** The action whose handler chain reaches `member`, or the reason this gate cannot name one. */
 function actionOf(
   member: Member,
   members: readonly Member[],
   rowIds: ReadonlySet<string>,
+  sources: readonly { file: string; text: string }[],
 ): { actionId: string } | { blocked: string } {
+  // 1. THE DISPATCH ARM that routes one action to a member calling this one.
+  const armed = new Set<string>();
+  const arm = new RegExp(`"(?<action>[a-z][a-z0-9_]*)"\\s*=>[^;]{0,200}?\\b${member.name}\\s*\\(`, "gu");
+  for (const source of sources) for (const match of source.text.matchAll(arm)) if (rowIds.has(match[1] as string)) armed.add(match[1] as string);
+  if (armed.size === 1) return { actionId: [...armed][0] as string };
+  // 2. THE MEMBERS THAT CALL IT, when exactly one contract action id is named beside the call.
   const callers = new Set<string>();
   for (const caller of members)
     if (caller.name !== member.name && caller.text.includes(`${member.name}(`))
@@ -198,16 +205,26 @@ function actionOf(
   return callers.size === 1
     ? { actionId: [...callers][0] as string }
     : {
-        blocked: `${member.file}:${member.name} is called by members naming ${
-          [...callers].sort().join(", ") || "no contract action"
-        }`,
+        blocked: `${member.file}:${member.name} is reached by ${[...armed].sort().join(", ") || "no dispatch arm"} and names ${[...callers].sort().join(", ") || "no contract action"}`,
       };
+}
+
+/** `file.cs:Member`, so a finding points at the site and not at a count. */
+function siteOf(file: string, member: Member | undefined): string {
+  const name = file.split(/[\\/]/u).pop() ?? file;
+  return `${name}:${member?.name ?? "<no member>"}`;
 }
 
 /** One succeeded code the producer can mint, with the site that mints it. */
 type Mint = Readonly<{ actionId: string; reasonCode: string; site: string }>;
 
-type Census = Readonly<{ mints: readonly Mint[]; blocked: readonly string[]; findings: readonly string[] }>;
+type Census = Readonly<{
+  mints: readonly Mint[];
+  blocked: readonly string[];
+  findings: readonly string[];
+  /** Sites that pass a variable through the vocabulary instead of minting a code. */
+  forwarding: number;
+}>;
 
 /** Whether this action's row NAMES this code, which is what makes the receipt that action's postcondition. */
 function rowNames(arms: ReadonlyMap<string, string>, actionId: string, reasonCode: string): boolean {
@@ -233,23 +250,28 @@ function measure(
   const blocked: string[] = [];
   const mints: Mint[] = [];
   const seen = new Set<string>();
+  // A site that passes a VARIABLE through is the vocabulary relaying its own answer, not a code the Mod mints; it is
+  // counted and printed rather than treated as unreadable, so the three zeroes stay apart.
+  let forwarding = 0;
 
   for (const source of sources) {
     for (const match of source.text.matchAll(/PostconditionVerdict\(/gu)) {
       const args = callArguments(source.text, match.index + match[0].length - 1);
       const member = memberAt(members, source.file, match.index);
-      const site = `${source.file}:${member?.name ?? "<no member>"}`;
+      // The declaration itself names the parameter, and the one-line relay above it passes that parameter on.
+      if (member?.name === "PostconditionVerdict") continue;
       const observed = args[1] ?? "";
       const codes = [...observed.matchAll(/"([a-z][a-z0-9_]*)"/gu)].map((literal) => literal[1] as string);
       if (codes.length === 0) {
-        blocked.push(`${site} PostconditionVerdict names no readable succeeded code: ${observed.slice(0, 120) || "<none>"}`);
+        forwarding += 1;
         continue;
       }
+      const site = siteOf(source.file, member);
       if (member === undefined) {
         blocked.push(`${site} PostconditionVerdict stands in no member this gate can read`);
         continue;
       }
-      const action = actionOf(member, members, rowIds);
+      const action = actionOf(member, members, rowIds, sources);
       if ("blocked" in action) {
         blocked.push(`${site} ${action.blocked}`);
         continue;
@@ -288,7 +310,7 @@ function measure(
             "written for",
         );
 
-  return { mints, blocked, findings };
+  return { mints, blocked, findings, forwarding };
 }
 
 /** The shipped reading, so the assertions below and the falsifiers read one census function. */
@@ -298,10 +320,14 @@ function shipped(): Census {
 
 test("every_succeeded_verdict_the_mod_can_mint_is_read_or_a_named_not_yet:<action>:<code>", () => {
   const census = shipped();
-
-  const read = census.mints.filter((mint) => !census.findings.some((finding) => finding.startsWith("unfinished_success_with_no_reading") && finding.includes(`:${mint.actionId}:${mint.reasonCode} `)));
+  const unread = new Set(
+    census.findings
+      .filter((finding) => finding.startsWith("unfinished_success_with_no_reading:"))
+      .map((finding) => finding.slice("unfinished_success_with_no_reading:".length, finding.indexOf(" ("))),
+  );
+  const declared = census.mints.filter((mint) => unread.has(`${mint.actionId}:${mint.reasonCode}`));
   process.stdout.write(
-    `codes examined ${String(census.mints.length)} · read ${String(read.length)} · declared ${String(census.mints.length - read.length)}\n`,
+    `codes examined ${String(census.mints.length)} · read ${String(census.mints.length - declared.length)} · declared ${String(declared.length)} · forwarding ${String(census.forwarding)}\n`,
   );
   process.stdout.write(`sites blocked ${String(census.blocked.length)}\n`);
   for (const mint of [...census.mints].sort((left, right) =>
@@ -363,7 +389,7 @@ test("TheGateIsRedOnRound90sDamagedSwing", () => {
   assert.deepEqual(
     doubled.findings,
     [
-      "unfinished_success_declared_and_read:break_rock:rock_source_broken (resourcetoolactions.cs:ExecuteBreakRock) - the row answers this code before the declaration is asked, so the declaration is a claim nothing checks",
+      "unfinished_success_declared_and_read:break_rock:rock_source_broken (farmhandexecutioncontroller.resourcetoolactions.cs:ExecuteBreakRock) - the row answers this code before the declaration is asked, so the declaration is a claim nothing checks",
     ],
     "a code the row already reads cannot also be declared unfinished",
   );
