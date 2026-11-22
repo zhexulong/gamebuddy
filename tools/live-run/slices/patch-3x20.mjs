@@ -36,12 +36,14 @@ import { parseReceiptFields } from "../../lib/stardew-receipt-evidence.mjs";
  * printed with its own counts before anything runs.
  *
  * THE CHAIN IS RUN, NOT ASSUMED. For the strip it picks the slice runs `clear -> till -> plant -> water`, one program
- * per verb against a fresh observation (a `water_crop` node compiled against bare ground is a node whose crop does not
- * exist yet), and asks the world after each step which tiles are still owed. A step that refuses is reported with the
- * compiler's or the Mod's own reason code: `live_program_script_not_compiled:<code>`,
- * `soil_not_diggable:<reason>`, `seed_not_owned_in_pack`, `watering_can_empty`. A refusal without a reason was itself a
- * defect here - the driver read a `compiled.ok` field the compiler has not had for months, so every script answered
- * `live_program_script_not_compiled:no_reason_code` and not one node was ever submitted.
+ * per verb against a fresh observation AND a fresh rectangle read of the strip (a `water_crop` node compiled against bare
+ * ground is a node whose crop does not exist yet, and a plan over tiles the surviving read does not cover is a plan the
+ * compiler refuses for a fact about the reading rather than about the ground), and asks the world after each step which
+ * tiles are still owed. A step that refuses is reported with the compiler's or the Mod's own reason code:
+ * `live_program_script_not_compiled:<code>`, `soil_not_diggable:<reason>`, `seed_not_owned_in_pack`,
+ * `watering_can_empty`. A refusal without a reason was itself a defect here - the driver read a `compiled.ok` field the
+ * compiler has not had for months, so every script answered `live_program_script_not_compiled:no_reason_code` and not
+ * one node was ever submitted.
  *
  * WHAT IT DOES NOT COVER, stated so nobody reads more into a green. (1) Whether the GROUND under an occupied tile is
  * diggable at all is not published per tile - the tile says `tillable: false` for both "a weed is in the way" and "this
@@ -450,7 +452,17 @@ export function reasonByTile(receipts, actionIds) {
   return reasons;
 }
 
-/** One step of the chain: compile against a fresh observation, submit, settle, then read the ground again. */
+/**
+ * One step of the chain: read the strip, compile against that fresh read and observation, submit, settle, then read the
+ * ground again.
+ *
+ * THE READ COMES FIRST, and it is the one the plan is written from. The compiler proves a tile outside the snapshot's
+ * six-tile window by the LAST rectangle this session read (`plan_script_target_outside_the_read` and the third answer
+ * beside it), and the whole-map scan that chose the strip is sixty reads old by the time a step compiles: its answer was
+ * replaced one block at a time. A step that compiled after the scan without reading the strip again asked the compiler
+ * about tiles nobody's surviving read covered, which is the count `read_covers=0` states - and that is the slice's own
+ * read travelling by a route the compiler cannot see, not the world refusing the strip.
+ */
 async function runStep({ session, modules, strip, step, script, actionIds, settleMs }) {
   const plan = {
     scenarioKey: SCENARIO,
@@ -460,6 +472,7 @@ async function runStep({ session, modules, strip, step, script, actionIds, settl
     scriptPath: null,
     settleMs,
   };
+  await readStrip(session.client, strip);
   const context = emptyContext();
   let refusalText = null;
   try {

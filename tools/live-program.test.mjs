@@ -38,13 +38,20 @@ import {
   emptyContext,
   parseLiveProgramArguments,
   planLiveProgram,
+  planTileRead,
   programFamilies,
   programVerdict,
   readProgramScript,
+  runOneProgram,
 } from "./live-program.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const HOST_STATUS_MODULE = join(repositoryRoot, "host", "dist-test", "program-status-wait.js");
+const HOST_SCRIPT_MODULE = join(repositoryRoot, "host", "dist-test", "body-program-script.js");
+const SURFACE_PATH = join(
+  repositoryRoot,
+  "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
+);
 const REQUIRES_HOST_BUILD = existsSync(HOST_STATUS_MODULE)
   ? false
   : "requires a built Host (host/dist-test); run `pnpm --dir host build:test`";
@@ -617,3 +624,125 @@ test("the package never touches stdout for anything but the block", () => {
   const teardown = readFileSync(new URL("./lib/live-run-teardown.mjs", import.meta.url), "utf8");
   assert.match(teardown, /process\.stderr\.write\("fixture transaction restored\\n"\);/u);
 });
+
+/**
+ * THE RECTANGLE THIS SESSION READ REACHES THE COMPILER, and this is the gate for that one fact.
+ *
+ * A family is displaced through the Mod's six-tile discovery radius, so a target past it is in NO family - and the
+ * compiler reads that silence as "measured, and empty" unless it is told what this session's own rectangle read found.
+ * Missing, a plan over a strip the session had just read tile by tile answered
+ * `plan_script_target_outside_the_read:...:read_covers=0`, the count whose meaning is "nobody read anything"; measured
+ * 2026-11-23, `patch-3x20` reported that as the world refusing the strip. The bridge already records every ANSWERED read
+ * on the connection's state (`local-stardew-bridge.ts` `rememberTileRead`), and `stardew_plan_work` hands it to the
+ * compiler as `readLiveTileRead(connection)`. What was missing was that same argument on this tool's compile.
+ *
+ * THE TWO ABSENCES STAY TWO CLAIMS, and that is what the three cases below are for: `read_covers=0` is a session that
+ * read nothing; `read_covers=9` is a read of ANOTHER rectangle, naming how many tiles it covered; and a read that does
+ * name the tile turns the refusal into the one that says the tile IS proved and this action's value is not the body's to
+ * mint. A slice that reported the second when the first is true would be worse than the old behaviour.
+ *
+ * RED PROOF: delete `tileRead: planTileRead(session.client)` from `runOneProgram` and the second and third cases answer
+ * `read_covers=0` like the first - the argument is the whole of the change.
+ */
+function registrationOf(actionId) {
+  const surface = JSON.parse(readFileSync(SURFACE_PATH, "utf8"));
+  const row = surface.actions.find((candidate) => candidate.actionId === actionId);
+  assert.ok(row, `${actionId} is a published action`);
+  return Object.freeze({
+    actionId: row.actionId,
+    familyId: "plan_family",
+    identityVersion: row.identityVersion ?? 1,
+    lifecycle: row.lifecycle,
+    kind: row.kind,
+    descriptor: {
+      argumentSchema: row.argumentSchema,
+      outputFacts: row.outputFacts ?? {},
+      ...(row.resourceTemplate === undefined ? {} : { resourceTemplate: row.resourceTemplate }),
+      ...(row.targetFamily === undefined ? {} : { targetFamily: row.targetFamily }),
+      ...(row.approach === undefined ? {} : { approach: row.approach }),
+    },
+  });
+}
+
+/** The world the compile is judged against: a Farm tile twenty tiles from the strip, and a family measured empty. */
+const FARM = Object.freeze({
+  revision: 11,
+  location: "Farm",
+  tile: Object.freeze({ x: 10, y: 10 }),
+  actionable: true,
+  activeExecution: null,
+  enabledActionIds: Object.freeze([]),
+  capabilities: Object.freeze([]),
+  weedTargets: Object.freeze([]),
+});
+
+const STRIP_TILE = "30,4";
+
+/** One connected session whose state carries `read` - or none at all, which is a session that never asked. */
+function sessionWith(read) {
+  return {
+    client: {
+      state: {
+        connected: true,
+        catalogRegistrations: Object.freeze([registrationOf("cut_weeds")]),
+        ...(read === null ? {} : { tileRead: read }),
+      },
+      observe: async () => FARM,
+    },
+    receipts: [],
+  };
+}
+
+/** One answered rectangle, as the bridge keeps it: the tiles it covered, and what stood on them. */
+function readOf({ x, y, w, h }) {
+  const rows = [];
+  for (let offsetY = 0; offsetY < h; offsetY += 1)
+    for (let offsetX = 0; offsetX < w; offsetX += 1)
+      rows.push(Object.freeze({ x: x + offsetX, y: y + offsetY, occupantKind: "weed" }));
+  return Object.freeze({ location: "Farm", revision: 11, x, y, w, h, reads: 1, rows: Object.freeze(rows) });
+}
+
+const PLAN = Object.freeze({
+  scenarioKey: "crop_research",
+  scenario: "native_crop_research_v1",
+  actions: Object.freeze(["cut_weeds"]),
+  script: `builder.cut_weeds({ x: 30, y: 4 });`,
+  scriptPath: null,
+  settleMs: 5_000,
+});
+
+async function compileRefusalOf(session, modules) {
+  try {
+    await runOneProgram({ plan: PLAN, session, modules, context: emptyContext() });
+  } catch (error) {
+    return String(error?.message ?? error);
+  }
+  assert.fail("this subject is a compile that refuses, and it accepted the script");
+}
+
+test(
+  "the compile is handed the rectangle this session recorded, so the two absences stay two claims",
+  { skip: REQUIRES_HOST_BUILD || !existsSync(HOST_SCRIPT_MODULE) },
+  async () => {
+    const modules = Object.freeze({ script: await import(pathToFileURL(HOST_SCRIPT_MODULE).href) });
+
+    assert.equal(planTileRead({ state: {} }), null, "a connection that never asked has no read to hand over");
+    assert.equal(planTileRead(sessionWith(readOf({ x: 30, y: 4, w: 3, h: 20 })).client).reads, 1);
+
+    assert.equal(
+      await compileRefusalOf(sessionWith(null), modules),
+      `live_program_script_not_compiled:plan_script_target_outside_the_read:weedTargets:${STRIP_TILE}:read_covers=0`,
+      "no read at all is the count 0, and that is the one claim the old behaviour could make",
+    );
+    assert.equal(
+      await compileRefusalOf(sessionWith(readOf({ x: 40, y: 40, w: 3, h: 3 })), modules),
+      `live_program_script_not_compiled:plan_script_target_outside_the_read:weedTargets:${STRIP_TILE}:read_covers=9`,
+      "a read of ANOTHER rectangle names the tiles it covered, never 0 - the two absences are not one word",
+    );
+    assert.equal(
+      await compileRefusalOf(sessionWith(readOf({ x: 30, y: 4, w: 3, h: 20 })), modules),
+      `live_program_script_not_compiled:plan_script_reading_outside_the_submitted_snapshot:cut_weeds.slot:weedTargets:${STRIP_TILE}`,
+      "the tile IS proved by the session's own read: what refuses now is the declaration that must copy a value",
+    );
+  },
+);

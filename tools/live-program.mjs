@@ -26,8 +26,8 @@
  *
  * THE SUBMISSION IS THE PRODUCT'S OWN. `stardew_plan_work` does four things the tool reproduces in order, and each is a
  * place a slice can stop with a name instead of a surprise:
- *   1. compile the script against THIS world's snapshot and THIS connection's plan vocabulary
- *      (`planActionsFromRegistrations` over the live registrations, which include the Mod's plan forms);
+ *   1. compile the script against THIS world's snapshot, the rectangle read THIS session recorded, and THIS connection's
+ *      plan vocabulary (`planActionsFromRegistrations` over the live registrations, which include the Mod's plan forms);
  *   2. refuse a form the attached Mod does not publish, BEFORE the wire (`for_each_execution_unavailable`);
  *   3. refuse nodes the live catalogue does not offer (`bodyProgramPreflightRefusal` - `row_action_not_enabled` is the
  *      Mod's own word for a loop whose row names an action the policy does not offer);
@@ -434,6 +434,23 @@ export function planVocabulary(client) {
 }
 
 /**
+ * The last rectangle THIS SESSION read, as the compiler needs it, from the connection's own state.
+ *
+ * THE SNAPSHOT CANNOT PROVE A TILE OUTSIDE ITS WINDOW. Every displaced family is published inside the Mod's six-tile
+ * discovery radius, so past it the snapshot holds no row for ANY tile - and the compiler reads that silence as "measured,
+ * and empty" unless it is told what this session's own rectangle read found. The bridge records every ANSWERED read on
+ * the connection's state (`local-stardew-bridge.ts` `rememberTileRead`), which is the one fact a compile cannot derive
+ * from the snapshot, and `stardew_plan_work` hands it over as `readLiveTileRead(connection)`. A caller that compiles
+ * without it compiles against a world it cannot see: a session that read a 3x20 strip tile by tile was answered
+ * `plan_script_target_outside_the_read:...:read_covers=0`, the refusal whose count means "nobody read anything".
+ *
+ * Absent is a session that never asked, and `null` is what the compiler's dependency is written for.
+ */
+export function planTileRead(client) {
+  return client?.state?.tileRead ?? null;
+}
+
+/**
  * The actions this connection OFFERS, in one spelling: the adapter's own projection over the live registrations and the
  * policy's enabled ids - the same call the Host's preflight and its admission validator both make. A second derivation
  * here (say, the snapshot's `capabilities`) would let the slice refuse a node the Mod would have admitted.
@@ -546,7 +563,10 @@ export async function runOneProgram({ plan, session, modules, context = emptyCon
     `[live-program] observed revision=${String(snapshotBefore.revision)} location=${String(snapshotBefore.location)} tile=${tileOf(snapshotBefore) ?? "?"} actionables=${String(snapshotBefore.actionable === true)}\n`,
   );
   const actions = modules.script.planActionsFromRegistrations(planVocabulary(session.client));
-  const compiled = modules.script.compilePlanScript({ script: plan.script }, { snapshot: snapshotBefore, actions });
+  const compiled = modules.script.compilePlanScript(
+    { script: plan.script },
+    { snapshot: snapshotBefore, actions, tileRead: planTileRead(session.client) },
+  );
   context.compiled = compiled;
   // `status` IS THE COMPILER'S ANSWER, and it has three values that are three different answers (`CompiledPlan`):
   // `compiled`, `partial`, `refused`. This line used to read `compiled.ok`, a boolean the compiler no longer has -
