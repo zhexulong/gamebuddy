@@ -1,6 +1,6 @@
 import type { IntegrationReceiptEvidence } from "./game-integration-adapter.js";
-import { isQualifiedItemId } from "./protocol-target-facts.js";
 import type { ExecutionRequest } from "./protocol.js";
+import { isQualifiedItemId } from "./protocol-target-facts.js";
 
 /**
  * THE COMPLETION CONTRACTS: what a `succeeded` receipt must prove before the Host records a typed transition.
@@ -86,7 +86,7 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
   const keys = Object.keys(evidence);
   const generatedFloor = keys.length === 3 && "level" in evidence;
   if (keys.length !== 2 && !generatedFloor) return false;
-  if (!("expected" in evidence) || !("actual" in evidence)) return false;
+  if (!("expected" in evidence && "actual" in evidence)) return false;
   if (generatedFloor && positiveIntegerEvidence(evidence.level) === null) return false;
   return (
     hasOpaqueEvidenceValue(evidence.expected) &&
@@ -129,6 +129,9 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
 function hasMineExitCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
+  // The union of the two shapes' fields: a receipt carrying anything else is refused BY NAME rather than by a count.
+  if (!hasOnlyDeclaredEvidenceFields(evidence, ["from", "question", "response", "ladder", "actual", "expected"]))
+    return false;
   const keys = Object.keys(evidence);
   if (
     keys.length === 5 &&
@@ -165,6 +168,8 @@ function hasMineExitCompletionEvidence(detail: string): boolean {
 function hasMineEntryCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
+  // The union of the three arrivals' fields, so a field no arrival knows is named instead of counted.
+  if (!hasOnlyDeclaredEvidenceFields(evidence, ["level", "tile", "from_level", "expected", "actual"])) return false;
   const keys = Object.keys(evidence);
   if (keys.length === 3 && "level" in evidence && "tile" in evidence && "from_level" in evidence)
     return (
@@ -377,8 +382,7 @@ function hasWateringToolCompletionEvidence(detail: string): boolean {
     "slot_before",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const before = integerEvidenceValue(evidence.water_before);
   const after = integerEvidenceValue(evidence.water_after);
   return (
@@ -523,6 +527,44 @@ function withoutSettlementEnvelope(detail: string): string {
 }
 
 /**
+ * THE IDENTITY A FURNITURE WRITE LEAVES STANDING, declared once for the four rows that publish it.
+ *
+ * ONE PRODUCER COMPOSES IT: `NamePlacedPieceAfterWrite` (`farmhandexecutioncontroller.worldobjectactions.cs`) is
+ * interpolated into `place_owned_object` and `remove_placed_item`, and into `rotate_furniture` and
+ * `put_item_in_fish_tank` (`farmhandexecutioncontroller.furnituredecorationactions.cs`). A row that listed the field
+ * itself was a second copy of that helper's declaration, so teaching one copy did not teach the others: `round92`
+ * added it to `remove_placed_item` and the three siblings went on refusing their own real successes (`round93`: one
+ * placement and two rotations, `succeeded_receipt_without_its_own_postcondition`). The name is checked against the
+ * producer in both directions by `stardew-live-receipt-parity.test.ts`, so a field the helper stops writing fails there
+ * instead of being required of nothing.
+ */
+export const STARDEW_PLACED_PIECE_IDENTITY_FIELDS: readonly string[] = Object.freeze(["placed_target"]);
+
+/**
+ * THE IDENTITY A FURNITURE PICKUP LEAVES IN THE PACK, declared once for the row that publishes it.
+ *
+ * `NameCarriedPieceAfterWrite` writes the two halves as one statement because they are one fact for the next request:
+ * `carried_slot` is where the game put the piece, `carried_target` is the placement identity that now exists for it.
+ * Measured 2026-11-19 (Turn 130-138): a pickup that named neither left the caller holding the pre-pickup id, and
+ * `place_owned_object` refused `place_owned_object_target_changed` four times over 66 seconds.
+ */
+export const STARDEW_CARRIED_PIECE_IDENTITY_FIELDS: readonly string[] = Object.freeze([
+  "carried_slot",
+  "carried_target",
+]);
+
+/**
+ * The fields the row being judged was not told about, for the judgement currently running.
+ *
+ * A row's `false` folds three facts together: a required field is absent, a field the row never declared is present, or
+ * the fields were read and the postcondition does not hold. Only the middle one is PRODUCER drift and only it has
+ * something to name, so `declaredCompletionEvidence` records it here and `judgeStardewCompletionEvidence` (the one
+ * caller, synchronous, never re-entered by a row) publishes it as `evidence_field_undeclared:<a,b,c>`. Acceptance never
+ * reads this: an accepting row leaves it empty and the judge clears it before every row.
+ */
+let undeclaredEvidenceInJudgement: readonly string[] = [];
+
+/**
  * One completion rule's evidence contract, declared as a SET rather than a key count.
  *
  * `required` ⊆ emitted ⊆ `required ∪ optional`. The count form this replaced
@@ -537,6 +579,11 @@ function withoutSettlementEnvelope(detail: string): string {
  * `CompletionEvidence`, and the short name drops most rows out of that gate while every one of them still reads
  * exactly as before (measured when the population was a switch: 34 contracts under `declaredEvidence`, 95 under
  * this name, key sets identical).
+ *
+ * AN UNDECLARED FIELD IS RECORDED, NEVER TOLERATED, because a row's `false` cannot say which of its facts refused the
+ * receipt. The count form a sibling rule used (`Object.keys(evidence).length === 7`) reported `7 != 14` for
+ * `round93`'s real forage pickup, which names no field at all. Here the fields nobody declared are kept for
+ * `judgeStardewCompletionEvidence` to publish as `evidence_field_undeclared:<a,b,c>`; acceptance never reads them.
  */
 function declaredCompletionEvidence(
   detail: string,
@@ -548,9 +595,44 @@ function declaredCompletionEvidence(
   if (evidence === null) return false;
   if (!required.every((key) => key in evidence)) return false;
   const declared = new Set([...required, ...optional]);
-  if (!Object.keys(evidence).every((key) => declared.has(key))) return false;
+  const undeclared = Object.keys(evidence).filter((key) => !declared.has(key));
+  if (undeclared.length > 0) {
+    undeclaredEvidenceInJudgement = undeclared;
+    return false;
+  }
   return validate(evidence);
 }
+/**
+ * One rule's key set, checked WITHOUT a count, and an unexpected field recorded by name.
+ *
+ * Twenty rules carried `Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in
+ * evidence)` inline. The length half says only THAT the receipt carries a field the rule never heard of - never WHICH
+ * one - so `round93`'s forage refusal read `7 != 14`, and repairing the producer meant diffing the Mod's handler against
+ * the rule's list by hand. The set half is the whole decision; the count is what turned a producer's extra field into an
+ * unreadable receipt, and dropping it changes no verdict: `expected ⊆ emitted ⊆ expected` is the same acceptance, minus
+ * the length comparison that could never name anything.
+ */
+function declaresEvidenceKeys(evidence: Readonly<Record<string, string>>, expected: readonly string[]): boolean {
+  return expected.every((key) => key in evidence) && hasOnlyDeclaredEvidenceFields(evidence, expected);
+}
+
+/**
+ * Whether every field the receipt carries is one this rule declares, and an unexpected field recorded by name.
+ *
+ * For the rules whose evidence grammar is several SHAPES rather than one key list (`enter_mine`'s three arrivals,
+ * `use_mine_ladder`'s two exits): each shape is checked as before, and this states the union those shapes may cover, so
+ * a field no shape knows is still refused BY NAME instead of by a key count.
+ */
+function hasOnlyDeclaredEvidenceFields(
+  evidence: Readonly<Record<string, string>>,
+  declared: readonly string[],
+): boolean {
+  const undeclared = Object.keys(evidence).filter((key) => !declared.includes(key));
+  if (undeclared.length === 0) return true;
+  undeclaredEvidenceInJudgement = undeclared;
+  return false;
+}
+
 function validSlot(value: string | undefined): boolean {
   const slot = integerEvidenceValue(value);
   return slot !== null && slot <= 36;
@@ -576,8 +658,7 @@ function hasNavigationCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["destination", "location", "arrived", "postcondition"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   return (
     hasOpaqueEvidenceValue(evidence.destination) &&
     hasOpaqueEvidenceValue(evidence.location) &&
@@ -969,7 +1050,7 @@ function hasScytheSweepArcEvidence(evidence: Readonly<Record<string, string>>): 
   if (arcTiles === null || arcSweepable === null || arcClear === null || tilesChanged === null) return false;
   // A swing that happened sampled a real arc, and the Mod refuses a request whose NAMED tile carries nothing the scythe
   // clears BEFORE swinging (`sweep_target_not_scythe_work`), so a success reporting either is describing a different swing.
-  if (!(arcTiles > 0) || !(arcSweepable > 0)) return false;
+  if (!(arcTiles > 0 && arcSweepable > 0)) return false;
   // The arc's counts partition it: a tile is sweepable, clear, or holding something a scythe does not cut.
   if (arcSweepable + arcClear > arcTiles) return false;
   // `changed` measures tiles the arc sampled and nothing else, and every one of them was sweepable before the swing.
@@ -1117,8 +1198,7 @@ function hasDigArtifactSpotCompletionEvidence(detail: string): boolean {
     "slot_before",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const slot = integerEvidenceValue(evidence.slot);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
@@ -1163,8 +1243,7 @@ function hasRefillWateringCanCompletionEvidence(detail: string): boolean {
     "slot_before",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const before = integerEvidenceValue(evidence.water_before);
   const after = integerEvidenceValue(evidence.water_after);
   const max = integerEvidenceValue(evidence.water_max);
@@ -1218,11 +1297,7 @@ function readBreakRockSourceSwing(
 ): Readonly<{ evidence: Readonly<Record<string, string>>; durabilityBefore: number }> | null {
   const evidence = evidenceFields(detail);
   if (evidence === null) return null;
-  if (
-    Object.keys(evidence).length !== BREAK_ROCK_SOURCE_EVIDENCE_KEYS.length ||
-    !BREAK_ROCK_SOURCE_EVIDENCE_KEYS.every((key) => key in evidence)
-  )
-    return null;
+  if (!declaresEvidenceKeys(evidence, BREAK_ROCK_SOURCE_EVIDENCE_KEYS)) return null;
   const durabilityBefore = integerEvidenceValue(evidence.durability_before);
   if (
     !hasOpaqueIdEvidenceValue(evidence.target) ||
@@ -1333,8 +1408,7 @@ function hasBreakResourceClumpCompletionEvidence(detail: string): boolean {
     "expected_stamina_cost",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const tool = evidence.tool;
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
@@ -1378,8 +1452,7 @@ function hasClearHoeDirtCompletionEvidence(detail: string): boolean {
     "slot_before",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const slot = integerEvidenceValue(evidence.slot);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
@@ -1417,8 +1490,7 @@ function hasWoodFenceCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
   const slot = integerEvidenceValue(evidence.slot);
@@ -1468,8 +1540,7 @@ function hasBaitCrabPotCompletionEvidence(detail: string): boolean {
     "actionable",
     "active_execution",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
   const slot = integerEvidenceValue(evidence.slot);
@@ -1547,8 +1618,7 @@ function hasChopTreeSourceCompletionEvidence(detail: string): boolean {
     "slot_before",
     "tool_restored",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   // The action fells the tree inside ONE request now, so `health_before` is whatever durability the live tree carried
   // (ten for a mature tree, not the fixture's one) and `swings` is the number of native hits that took it to the
   // engine's felled state (`stump = true; health = 5f`, Tree.cs:1489-1497). The completion boundary is still the world:
@@ -1579,8 +1649,7 @@ function hasDoorTransitionCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["expected", "actual"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   return warpPostconditionHolds(evidence);
 }
 
@@ -1591,8 +1660,7 @@ function hasMinecartRideCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
   const expectedKeys = ["expected", "actual", "network", "destination"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   if (!hasBoundedNonemptyEvidenceValue(evidence.network)) return false;
   if (!hasBoundedNonemptyEvidenceValue(evidence.destination)) return false;
   return warpPostconditionHolds(evidence);
@@ -1627,23 +1695,54 @@ function parseWarpDestination(value: string | undefined): { location: string; x:
   return { location, x, y };
 }
 
+/**
+ * `pickup_forage`'s ONE succeeded shape, key for key (`farmhandexecutioncontroller.gatheringactions.cs`,
+ * `ForagePickupPostcondition.Describe`).
+ *
+ * EVERY KEY IS DECLARED, AND THAT IS NOT THE SAME AS EVERY KEY BEING REQUIRED TO DECIDE. `container`,
+ * `action_handled`, `blocked_by`, `spawned`, `object_type`, `settle` and `read` are the producer's own account of the
+ * click: which collection the object came from, whether the engine handled it, which gate refused it, and WHEN the
+ * before/after pair was read (`read=after_the_settle;settle=game1.try_to_check_at` is the answer to "was this a race").
+ * They are declared so a real success is READABLE; the verdict is the four world facts below.
+ *
+ * THE COUNT FORM THAT REFUSED THIS ACTION'S OWN SUCCESS IS GONE. It compared `Object.keys(evidence).length` to a
+ * seven-key list, so `round93`'s real pickup - seven keys this rule reads plus those seven diagnostics - came back
+ * `7 != 14` with no field named, and the day's `forageTargets` chore proved nothing. The set lives in
+ * `declaredCompletionEvidence` now, which names the fields it was not told about instead of counting them.
+ */
 function hasPickupForageCompletionEvidence(detail: string): boolean {
-  const evidence = evidenceFields(detail);
-  if (evidence === null) return false;
-  const expectedKeys = ["location", "targetIdentity", "tile", "item", "removed", "inventory_before", "inventory_after"];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
-  const before = integerEvidenceValue(evidence.inventory_before);
-  const after = integerEvidenceValue(evidence.inventory_after);
-  return (
-    hasBoundedNonemptyEvidenceValue(evidence.location) &&
-    hasOpaqueIdEvidenceValue(evidence.targetIdentity) &&
-    hasTileEvidenceValue(evidence.tile) &&
-    hasOpaqueEvidenceValue(evidence.item) &&
-    evidence.removed === "true" &&
-    before !== null &&
-    after !== null &&
-    after === before + 1
+  return declaredCompletionEvidence(
+    detail,
+    [
+      "location",
+      "targetIdentity",
+      "tile",
+      "item",
+      "container",
+      "action_handled",
+      "blocked_by",
+      "spawned",
+      "object_type",
+      "removed",
+      "inventory_before",
+      "inventory_after",
+      "settle",
+      "read",
+    ],
+    (evidence) => {
+      const before = integerEvidenceValue(evidence.inventory_before);
+      const after = integerEvidenceValue(evidence.inventory_after);
+      return (
+        hasBoundedNonemptyEvidenceValue(evidence.location) &&
+        hasOpaqueIdEvidenceValue(evidence.targetIdentity) &&
+        hasTileEvidenceValue(evidence.tile) &&
+        hasOpaqueEvidenceValue(evidence.item) &&
+        evidence.removed === "true" &&
+        before !== null &&
+        after !== null &&
+        after === before + 1
+      );
+    },
   );
 }
 function hasPickupItemCompletionEvidence(detail: string): boolean {
@@ -1662,7 +1761,7 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
   ];
   // `reason` is the ONE optional key, and it exists only to explain `chunk_removed=false`.
   if (!expectedKeys.every((key) => key in evidence)) return false;
-  if (Object.keys(evidence).some((key) => key !== "reason" && !expectedKeys.includes(key))) return false;
+  if (!hasOnlyDeclaredEvidenceFields(evidence, [...expectedKeys, "reason"])) return false;
   const stack = integerEvidenceValue(evidence.stack);
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -1767,8 +1866,7 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     "quality_counts_before",
     "quality_counts_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const phaseBefore = integerEvidenceValue(evidence.phase_before);
   const dayOfPhaseBefore = integerEvidenceValue(evidence.day_of_phase_before);
   const before = integerEvidenceValue(evidence.inventory_before);
@@ -1777,11 +1875,13 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
   const censusAfter = parseQualityCensus(evidence.quality_counts_after);
   if (censusBefore === null || censusAfter === null) return false;
   if (
-    !hasBoundedNonemptyEvidenceValue(evidence.location) ||
-    !hasOpaqueIdEvidenceValue(evidence.target) ||
-    !hasTileEvidenceValue(evidence.tile) ||
-    !hasOpaqueEvidenceValue(evidence.crop) ||
-    !hasOpaqueEvidenceValue(evidence.item) ||
+    !(
+      hasBoundedNonemptyEvidenceValue(evidence.location) &&
+      hasOpaqueIdEvidenceValue(evidence.target) &&
+      hasTileEvidenceValue(evidence.tile) &&
+      hasOpaqueEvidenceValue(evidence.crop) &&
+      hasOpaqueEvidenceValue(evidence.item)
+    ) ||
     evidence.native_accepted !== "true" ||
     evidence.inventory_gained !== "true" ||
     before === null ||
@@ -1838,8 +1938,7 @@ function hasFertilizeTileCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
   return (
@@ -1875,8 +1974,7 @@ function hasPlaceCrabPotCompletionEvidence(detail: string): boolean {
     "inventory_before",
     "inventory_after",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const x = integerEvidenceValue(evidence.x);
   const y = integerEvidenceValue(evidence.y);
   const slot = integerEvidenceValue(evidence.slot);
@@ -1932,8 +2030,7 @@ function hasMachineInspectCompletionEvidence(detail: string): boolean {
     "held",
     "last_input",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const minutes = signedIntegerEvidenceValue(evidence.minutes_until_ready);
   return (
     hasBoundedNonemptyEvidenceValue(evidence.location) &&
@@ -1977,8 +2074,7 @@ function hasMachineLoadCompletionEvidence(detail: string): boolean {
     "expected_minutes_until_ready",
     "native_check_action",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const slot = integerEvidenceValue(evidence.slot);
   const stackBefore = integerEvidenceValue(evidence.input_stack_before);
   const stackAfter = integerEvidenceValue(evidence.input_stack_after);
@@ -2032,8 +2128,7 @@ function hasMachineCollectOutputCompletionEvidence(detail: string): boolean {
     "ready_after",
     "native_check_action",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const before = integerEvidenceValue(evidence.inventory_output_before);
   const after = integerEvidenceValue(evidence.inventory_output_after);
   const outputStack = positiveIntegerEvidence(evidence.output_stack);
@@ -2074,8 +2169,7 @@ function hasUseItemCompletionEvidence(detail: string): boolean {
     "health_after",
     "animation_complete",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const slot = integerEvidenceValue(evidence.slot);
   const stackBefore = integerEvidenceValue(evidence.stack_before);
   const stackAfter = integerEvidenceValue(evidence.stack_after);
@@ -2118,8 +2212,7 @@ function hasFeedAnimalCompletionEvidence(detail: string): boolean {
     "hay_after",
     "hay_consumed",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const slot = integerEvidenceValue(evidence.slot);
   const before = integerEvidenceValue(evidence.hay_before);
   const after = integerEvidenceValue(evidence.hay_after);
@@ -2159,8 +2252,7 @@ function hasCollectAnimalProductCompletionEvidence(detail: string): boolean {
     "stamina_delta",
     "expected_stamina_cost",
   ];
-  if (Object.keys(evidence).length !== expectedKeys.length || !expectedKeys.every((key) => key in evidence))
-    return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
   const produceStack = integerEvidenceValue(evidence.produce_stack);
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -2441,6 +2533,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "tile",
           "slot",
           "item",
+          ...STARDEW_PLACED_PIECE_IDENTITY_FIELDS,
           "terrain_feature",
           "terrain_feature_tapped",
           "native_placement",
@@ -2473,7 +2566,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // `none`. Measured `round92`: two real removals (`removed=true;tile_object_after=none`) were refused
     // `succeeded_receipt_without_its_own_postcondition` because this list omitted the field, so a success was refused
     // for an extra key it was right to publish. Reading it as a second emptiness clause would be one fact with two
-    // spellings - `tile_object_after=none` already states it.
+    // spellings - `tile_object_after=none` already states it. It comes from the helper's own declaration rather than
+    // a list here: the same helper composes `place_owned_object`, `rotate_furniture` and `put_item_in_fish_tank`.
     return (
       claim.reasonCode === "placed_item_removed" &&
       declaredCompletionEvidence(
@@ -2490,7 +2584,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "swings",
           "removed",
           "tile_object_after",
-          "placed_target",
+          ...STARDEW_PLACED_PIECE_IDENTITY_FIELDS,
           "drops",
           "drop_count",
           "stamina_before",
@@ -4914,8 +5008,8 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
   },
   move_placed_furniture: (claim) => {
     // Evidence literal: farmhandexecutioncontroller.worldobjectactions.cs RequestLocalMovePlacedFurniture —
-    // target;location;tile;item;native_stored;removed_from_furniture;carried;inventory_before;inventory_after;
-    // carried_tile;carried_rotation;carried_flipped;furniture_in_location.
+    // target;location;tile;item;native_stored;removed_from_furniture;carried;carried_slot;carried_target;
+    // inventory_before;inventory_after;carried_tile;carried_rotation;carried_flipped;furniture_in_location.
     //
     // The pickup is three native steps (`piece.performRemoveAction`, `location.furniture.Remove`,
     // `addItemToInventoryBool`) and the only answer any of them gives is the LAST one's bool, so the bool is not
@@ -4923,6 +5017,11 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // both halves from the reading. Furniture is not an object on a tile — it lives in `location.furniture`
     // (GameLocation.cs:452) — so the collection is the authority for the row leaving and the pack for it arriving,
     // and the piece must have left the tile the caller named.
+    //
+    // `carried_slot`/`carried_target` come from `NameCarriedPieceAfterWrite`, which the handler interpolates into its
+    // success detail; the row takes them from that helper's own declaration rather than listing them again. Measured
+    // `round93`: a real pickup carrying both was refused `succeeded_receipt_without_its_own_postcondition` while the
+    // identity it published is exactly what the next `place_owned_object` needs.
     return (
       claim.reasonCode === "placed_furniture_picked_up" &&
       declaredCompletionEvidence(
@@ -4935,6 +5034,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "native_stored",
           "removed_from_furniture",
           "carried",
+          ...STARDEW_CARRIED_PIECE_IDENTITY_FIELDS,
           "inventory_before",
           "inventory_after",
           "carried_tile",
@@ -4969,13 +5069,18 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
   rotate_furniture: (claim) => {
     // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs RequestLocalRotateFurniture —
     // target;tile;location;item;rotation_before;rotation_after;rotation_expected;rotations;flipped_before;
-    // flipped_after;footprint_before;footprint_after;placeable;turned;standing;furniture_in_location.
+    // flipped_after;footprint_before;footprint_after;placeable;turned;standing;furniture_in_location;placed_target.
     //
     // `Furniture.rotate()` returns void, and below two `rotations` it does nothing at all (Furniture.cs:1155), so
     // there is no native answer to read: the Mod's success is `turned && standing && holdsTheTurn`, all three read
     // AFTER the write and after the occupancy probe. The rule restates them: the piece's own `currentRotation`
     // moved, it still carries the value the native call produced (the probe re-reads `tileLocation` and cannot have
     // turned it back), and the piece is still in `location.furniture` on the tile it was named on.
+    //
+    // `placed_target` is the identity the turn leaves for whatever stands there (the same piece), so the next
+    // furniture request has an id to name; it is declared once (`STARDEW_PLACED_PIECE_IDENTITY_FIELDS`) because one
+    // helper composes it for four rows. Measured `round93`: both real rotations were refused
+    // `succeeded_receipt_without_its_own_postcondition` for it.
     return (
       claim.reasonCode === "furniture_rotated" &&
       declaredCompletionEvidence(
@@ -4997,6 +5102,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "turned",
           "standing",
           "furniture_in_location",
+          ...STARDEW_PLACED_PIECE_IDENTITY_FIELDS,
         ],
         (e) => {
           const before = integerEvidenceValue(e.rotation_before);
@@ -5111,14 +5217,19 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
   },
   put_item_in_fish_tank: (claim) => {
     // Evidence literal: farmhandexecutioncontroller.furnituredecorationactions.cs RequestLocalPutItemInFishTank —
-    // target;tile;location;item;slot;native_answered;held_items_before;held_items_after;last_held;carried_before;
-    // carried_after;mutex_locked_after.
+    // target;tile;location;item;slot;named_slot;native_answered;held_items_before;held_items_after;last_held;
+    // carried_before;carried_after;mutex_locked_after;placed_target.
     //
     // The tank's own `checkForAction` answers TRUE without depositing in two branches (a held mutex, :231-234, and
     // a full category, :237-241), so its bool is not completion. The Mod's success is read after the engine's own
     // `NetMutex.Update` settled the hand-off: the tank's `heldItems` grew by exactly one and the item at the end is
     // this one, and the pack lost exactly one. A deposit the engine took the item for without completing it is put
     // back and reported as `fish_tank_postcondition_not_observed`, never as this terminal.
+    //
+    // `placed_target` is the tank's identity for the NEXT request, composed by the same helper as the other three
+    // furniture rows (`STARDEW_PLACED_PIECE_IDENTITY_FIELDS`), so no action in this family can invalidate an identity
+    // in silence. `slot` is the live pack slot the deposit consumed and `named_slot` the index the request named; both
+    // are printed on every terminal of this handler, so both are declared here - the producer's own set, key for key.
     return (
       claim.reasonCode === "fish_tank_item_deposited" &&
       declaredCompletionEvidence(
@@ -5129,6 +5240,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "location",
           "item",
           "slot",
+          "named_slot",
           "native_answered",
           "held_items_before",
           "held_items_after",
@@ -5136,6 +5248,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
           "carried_before",
           "carried_after",
           "mutex_locked_after",
+          ...STARDEW_PLACED_PIECE_IDENTITY_FIELDS,
         ],
         (e) =>
           hasOpaqueIdEvidenceValue(e.target) &&
@@ -5459,6 +5572,10 @@ export type CompletionEvidenceVerdict = Readonly<{ accepted: boolean; refusal: s
  * AND WHEN THE ROW REFUSES, ONE MORE QUESTION IS ASKED: `STARDEW_UNFINISHED_SUCCESSES`. A receipt that names its own
  * unfinishedness is not a receipt nobody can read, and the refusal says which it is - `before_its_postcondition:<code>`
  * rather than a parse failure. This is the single place the two are told apart, so no caller re-decides it.
+ *
+ * AND A ROW THAT REFUSED A FIELD IT DOES NOT KNOW SAYS SO BY NAME: `declaredCompletionEvidence` leaves those fields in
+ * `undeclaredEvidenceInJudgement`, and they come back as `evidence_field_undeclared:<a,b,c>` - every one of them on one
+ * line, because a lane repairing a producer needs the whole list, not the first difference.
  */
 export function judgeStardewCompletionEvidence(
   actionId: string,
@@ -5476,10 +5593,13 @@ export function judgeStardewCompletionEvidence(
   if (contract === undefined || !Object.hasOwn(STARDEW_COMPLETION_CONTRACTS, actionId))
     return { accepted: false, refusal: `no_completion_contract:${actionId}` };
   const stripped = withoutSettlementEnvelope(detail);
+  undeclaredEvidenceInJudgement = [];
   if (contract({ reasonCode: receipt.reasonCode, detail: stripped })) return { accepted: true, refusal: null };
+  const undeclared = undeclaredEvidenceInJudgement;
   const declared = unfinishedReading(actionId as ExecutionRequest["action"], receipt.reasonCode);
   if (declared !== undefined && declared({ reasonCode: receipt.reasonCode, detail: stripped }))
     return { accepted: false, refusal: `before_its_postcondition:${receipt.reasonCode}` };
+  if (undeclared.length > 0) return { accepted: false, refusal: `evidence_field_undeclared:${undeclared.join(",")}` };
   const parse = parseStardewEvidenceDetail(stripped);
   return { accepted: false, refusal: parse.refusal ?? `evidence_does_not_hold:${receipt.reasonCode}` };
 }

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { STARDEW_ACTION_ADAPTERS } from "./action-registry.js";
-import { judgeStardewCompletionEvidence, STARDEW_COMPLETION_CONTRACTS } from "./stardew-completion-contracts.js";
+import {
+  judgeStardewCompletionEvidence,
+  STARDEW_COMPLETION_CONTRACTS,
+  STARDEW_UNFINISHED_SUCCESSES,
+} from "./stardew-completion-contracts.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
+import { modSourceDigest, parseReceiptCorpus } from "./stardew-receipt-corpus.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -1030,6 +1035,52 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
   // switch had no arm for any of them, so `hasStardewCompletionEvidence` fell to `default: return false` and every
   // real success they produced was recorded as zero typed transitions. The shapes are the Mod's own evidence literals,
   // key for key, with the before/after pairs those handlers read.
+  place_owned_object: {
+    reasonCode: "owned_object_placed",
+    // `round93`'s own placement, key for key (`.live-runs/game-ladder/2026-11-22T13-10-47-678Z-multiday_routine`,
+    // `timeline.jsonl`): the house plant the pickup above had just carried in, put down on `(4,7)`. `placed_target` is
+    // the identity the placement created - the id the next `move_placed_furniture` or `rotate_furniture` names - and
+    // `NamePlacedPieceAfterWrite` composes it for this row and its three siblings.
+    fields: [
+      ["target", "place_owned_object_eb24c77d28796987"],
+      ["location", "FarmHouse"],
+      ["tile", "4,7"],
+      ["slot", "17"],
+      ["item", "(F)1376"],
+      ["placed_target", "placed_furniture_05b3e8f1b1023e6e"],
+      ["terrain_feature", "none"],
+      ["terrain_feature_tapped", "none"],
+      ["native_placement", "true"],
+      ["object_present", "true"],
+      ["placed_qualified_item_id", "(F)1376"],
+      ["placed_type", "none"],
+      ["inventory_before", "1"],
+      ["inventory_after", "0"],
+    ],
+  },
+  pickup_forage: {
+    reasonCode: "forage_picked_up",
+    // `round93`'s own pickup, key for key: the daffodil at Farm `(57,12)` came off `location.objects` and the pack
+    // gained exactly one. `container`, `action_handled`, `blocked_by`, `spawned`, `object_type`, `settle` and `read`
+    // are the producer's account of the click (`ForagePickupPostcondition.Describe`), not conditions of the verdict -
+    // and the rule's old seven-key COUNT refused this receipt for writing them.
+    fields: [
+      ["location", "Farm"],
+      ["targetIdentity", "forage_8228ad84c3154eec"],
+      ["tile", "57,12"],
+      ["item", "(O)399"],
+      ["container", "location.objects"],
+      ["action_handled", "true"],
+      ["blocked_by", "none"],
+      ["spawned", "true"],
+      ["object_type", "Basic"],
+      ["removed", "true"],
+      ["inventory_before", "0"],
+      ["inventory_after", "1"],
+      ["settle", "game1.try_to_check_at"],
+      ["read", "after_the_settle"],
+    ],
+  },
   move_placed_furniture: {
     reasonCode: "placed_furniture_picked_up",
     fields: [
@@ -1040,6 +1091,10 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["native_stored", "true"],
       ["removed_from_furniture", "true"],
       ["carried", "true"],
+      // The two halves `NameCarriedPieceAfterWrite` composes, in the order the handler interpolates them. One helper
+      // writes both for every pickup, so the row takes them from its declaration instead of listing them again.
+      ["carried_slot", "17"],
+      ["carried_target", "place_owned_object_0123456789abcdef"],
       ["inventory_before", "0"],
       ["inventory_after", "1"],
       ["carried_tile", "12,7"],
@@ -1051,7 +1106,8 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
   rotate_furniture: {
     reasonCode: "furniture_rotated",
     // A two-rotation piece steps 0 -> 2 (`Furniture.rotate`, Furniture.cs:1153-1162), so the turn is visible in the
-    // piece's own `currentRotation` and the footprint swaps its axes.
+    // piece's own `currentRotation` and the footprint swaps its axes. `placed_target` is the identity the turn leaves
+    // standing, composed by `NamePlacedPieceAfterWrite` - the same helper that names the placement and the tank.
     fields: [
       ["target", "furniture_0123456789abcdef"],
       ["tile", "12,7"],
@@ -1069,6 +1125,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["turned", "true"],
       ["standing", "true"],
       ["furniture_in_location", "3"],
+      ["placed_target", "placed_furniture_0123456789abcdef"],
     ],
   },
   remove_placed_item: {
@@ -1132,6 +1189,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["location", "Farmhouse"],
       ["item", "(O)145"],
       ["slot", "6"],
+      ["named_slot", "6"],
       ["native_answered", "true"],
       ["held_items_before", "0"],
       ["held_items_after", "1"],
@@ -1139,6 +1197,7 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
       ["carried_before", "3"],
       ["carried_after", "2"],
       ["mutex_locked_after", "false"],
+      ["placed_target", "placed_furniture_0123456789abcdef"],
     ],
   },
   place_item_on_pedestal: {
@@ -1233,7 +1292,7 @@ test("every registered action has a row: nothing may fall through the fold", () 
   // `satisfies Record<ExecutionRequest["action"], CompletionContract>`, which makes a missing ACTION a compile error.
   const rows = new Set<string>(Object.keys(STARDEW_COMPLETION_CONTRACTS));
   const registered = new Set<string>(STARDEW_ACTION_ADAPTERS.map((entry) => entry.actionId));
-  const uncovered = [...registered].filter((id) => !rows.has(id) && !actionsWithoutCompletionRule.includes(id));
+  const uncovered = [...registered].filter((id) => !(rows.has(id) || actionsWithoutCompletionRule.includes(id)));
   const unknown = [...rows].filter((id) => !registered.has(id));
   assert.deepEqual(uncovered, [], "these actions would fall through the fold and lose their completion evidence");
   assert.deepEqual(unknown, [], "the table names actions that are not registered");
@@ -1383,9 +1442,99 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
 });
 
 /**
+ * Every Mod C# source, by file name.
+ *
+ * THE `…AfterWrite` HELPERS ARE NOT IN THE FILE THAT NAMES THEM. `NamePlacedPieceAfterWrite` is declared beside the
+ * object handlers in `worldobjectactions.cs` and interpolated by the rotation and fish-tank handlers in
+ * `furnituredecorationactions.cs` - so a reader that searched only the handler's own file found nothing and failed as
+ * blocked. One map, read once, so the helper is followed wherever it lives.
+ */
+const MOD_SOURCES: ReadonlyMap<string, string> = new Map(
+  readdirSync(join(ROOT, "integrations", "stardew"))
+    .filter((name) => name.endsWith(".cs"))
+    .map((name) => [name, readFileSync(join(ROOT, "integrations", "stardew", name), "utf8")] as const),
+);
+
+/**
+ * The `…AfterWrite` helpers the composed success details interpolate, and the fields each one's own declaration writes.
+ *
+ * ONE HOP, because that is the shape the producer uses: the evidence names the field, the helper composes its value. A
+ * reader that only walked the interpolated statement missed exactly the key that refused round92's real removals and
+ * round93's real placement, rotations and pickup. The helper's expression body is read up to the blank line that ends
+ * it, so BOTH arms of a ternary are read - `NameCarriedPieceAfterWrite` writes `carried_slot=-1;carried_target=none` for
+ * an empty pack and the composed pair otherwise, and a reader that took only the first `$"` literal would see one field
+ * where the producer writes two.
+ */
+function afterWriteFields(call: string): string[] {
+  let declaration = -1;
+  let owner = "";
+  for (const [name, source] of MOD_SOURCES) {
+    const at = source.indexOf(`internal static string ${call}(`);
+    if (at < 0) continue;
+    declaration = at;
+    owner = name;
+    break;
+  }
+  assert.ok(
+    declaration >= 0,
+    `blocked: ${call} is interpolated into a success detail and is declared in no Mod source`,
+  );
+  const source = MOD_SOURCES.get(owner) as string;
+  const end = source.indexOf("\n\n", declaration);
+  assert.ok(end > declaration, `blocked: ${call}'s declaration is no longer its own statement`);
+  return [
+    ...new Set(
+      [...source.slice(declaration, end).matchAll(/"((?:[^"\\]|\\.)*)"/gu)].flatMap((literal) =>
+        [...(literal[1] as string).matchAll(/(?:^|;)([A-Za-z][A-Za-z0-9_]*)=/gu)].map((match) => match[1] as string),
+      ),
+    ),
+  ];
+}
+
+/**
+ * The fields one handler's success detail names, read out of the Mod's own source.
+ *
+ * `body` locates the handler, and `from`/`to` bracket the statement that assembles the evidence inside it - the
+ * statement and the terminal that mints it must still be adjacent pieces, which is what makes this a reading of the
+ * producer rather than of a comment.
+ */
+function composedEvidenceFields(
+  source: string,
+  boundary: Readonly<{ body: string; from: string; to: string }>,
+): string[] {
+  const at = source.indexOf(boundary.body);
+  assert.ok(at >= 0, `blocked: ${boundary.body} is not where this reads the producer's success detail`);
+  const body = source.slice(at);
+  const from = body.indexOf(boundary.from);
+  assert.ok(from > 0, `blocked: ${boundary.body} no longer assembles its success evidence at ${boundary.from}`);
+  const to = body.indexOf(boundary.to, from);
+  assert.ok(
+    to > from,
+    `blocked: ${boundary.body}'s success evidence and the terminal that mints it are no longer adjacent pieces`,
+  );
+  const statement = body.slice(from, to);
+  const keys = new Set(
+    [...statement.matchAll(/"((?:[^"\\]|\\.)*)"/gu)].flatMap((literal) =>
+      [...(literal[1] as string).matchAll(/(?:^|;)([A-Za-z][A-Za-z0-9_]*)=/gu)].map((match) => match[1] as string),
+    ),
+  );
+  for (const call of new Set(
+    [...statement.matchAll(/\b(Name[A-Za-z]*AfterWrite)\s*\(/gu)].map((match) => match[1] as string),
+  ))
+    for (const field of afterWriteFields(call)) keys.add(field);
+  return [...keys];
+}
+
+/**
  * The actions whose success detail is composed OUTSIDE a `ToolActionEvidence` list, each with the reader that pulls its
- * field names out of the Mod's own source: an interpolated literal for `plant_seed` and `remove_placed_item`, a declared
- * array for `sweep_scythe`.
+ * field names out of the Mod's own source: an interpolated literal for `plant_seed`, a bracketed statement for the six
+ * furniture and forage details, a declared array for `sweep_scythe`.
+ *
+ * THE SIX ARE THE ONES A SHARED HELPER SERVES. `place_owned_object`, `remove_placed_item`, `rotate_furniture` and
+ * `put_item_in_fish_tank` all publish `placed_target` (`NamePlacedPieceAfterWrite`), and `move_placed_furniture`
+ * publishes `carried_slot`/`carried_target` (`NameCarriedPieceAfterWrite`) - so their fixtures are read from those
+ * helpers instead of being transcribed beside them. `pickup_forage` composes its own one shape
+ * (`ForagePickupPostcondition.Describe`) and has no helper to share.
  */
 const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
   actionId: string;
@@ -1415,49 +1564,74 @@ const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
         }
       }
       assert.ok(end > open, "blocked: the success evidence literal is unterminated");
-      return [...body.slice(open + 2, end).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu)].map((match) => match[1] as string);
+      return [...body.slice(open + 2, end).matchAll(/(?:^|;)([A-Za-z][A-Za-z0-9_]*)=/gu)].map(
+        (match) => match[1] as string,
+      );
     },
   },
   {
     actionId: "remove_placed_item",
     file: "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
-    read: (source) => {
-      const body = source.slice(source.indexOf("private LocalExecutionReceipt ExecuteRemovePlacedItem("));
-      const from = body.indexOf("string evidence =");
-      assert.ok(from > 0, "blocked: ExecuteRemovePlacedItem no longer assembles its success evidence in one statement");
-      const to = body.indexOf("return removed", from);
-      assert.ok(
-        to > from,
-        "blocked: the success evidence statement and the terminal that mints it are no longer adjacent pieces",
-      );
-      const statement = body.slice(from, to);
-      const keys = new Set(
-        [...statement.matchAll(/"((?:[^"\\]|\\.)*)"/gu)].flatMap((literal) =>
-          [...(literal[1] as string).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu)].map((match) => match[1] as string),
-        ),
-      );
-      // THE IDENTITY THE WRITE LEFT BEHIND COMES FROM A HELPER, and a reader that only walked the statement above would
-      // miss exactly the key that refused both of round92's real removals. So every `…AfterWrite` the statement
-      // interpolates is followed to its own literal - one hop, because that is the shape the producer uses: the evidence
-      // names the field, the helper composes its value.
-      for (const call of new Set(
-        [...statement.matchAll(/\b(Name[A-Za-z]*AfterWrite)\s*\(/gu)].map((match) => match[1] as string),
-      )) {
-        const declaration = source.indexOf(`internal static string ${call}(`);
-        assert.ok(declaration > 0, `blocked: ${call} is interpolated into the removal evidence and lives elsewhere now`);
-        const arrow = source.indexOf("=>", declaration);
-        const literal = arrow < 0 ? -1 : source.indexOf('$"', arrow);
-        assert.ok(literal > declaration, `blocked: ${call} no longer returns an interpolated literal`);
-        const close = source.indexOf(";", literal);
-        assert.ok(close > literal, `blocked: ${call}'s returned literal is unterminated`);
-        for (const match of source.slice(literal + 2, close).matchAll(/(?:^|;)([a-z][a-z0-9_]*)=/gu))
-          keys.add(match[1] as string);
-      }
-      return [...keys];
-    },
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "private LocalExecutionReceipt ExecuteRemovePlacedItem(",
+        from: "string evidence =",
+        to: "return removed",
+      }),
   },
   {
-    actionId: "sweep_scythe",    file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
+    actionId: "place_owned_object",
+    file: "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "private LocalExecutionReceipt ExecutePlaceOwnedObject(",
+        from: "string evidence =",
+        to: "return this.RememberTerminal",
+      }),
+  },
+  {
+    actionId: "move_placed_furniture",
+    file: "integrations/stardew/farmhandexecutioncontroller.worldobjectactions.cs",
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "private LocalExecutionReceipt ExecuteMovePlacedFurniture(",
+        from: "string evidence =",
+        to: "return gone && carried",
+      }),
+  },
+  {
+    actionId: "rotate_furniture",
+    file: "integrations/stardew/farmhandexecutioncontroller.furnituredecorationactions.cs",
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "private LocalExecutionReceipt ExecuteRotateFurniture(",
+        from: "string succeededEvidence =",
+        to: "return turned && standing",
+      }),
+  },
+  {
+    actionId: "put_item_in_fish_tank",
+    file: "integrations/stardew/farmhandexecutioncontroller.furnituredecorationactions.cs",
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "private LocalExecutionReceipt ExecutePutItemInFishTank(",
+        from: "string evidence =",
+        to: "return deposited && leftThePack",
+      }),
+  },
+  {
+    actionId: "pickup_forage",
+    file: "integrations/stardew/farmhandexecutioncontroller.gatheringactions.cs",
+    read: (source) =>
+      composedEvidenceFields(source, {
+        body: "internal string Describe(string location, string targetId, int tileX, int tileY, string qualifiedItemId)",
+        from: "=>",
+        to: "/// <summary>The gate in the vocabulary",
+      }),
+  },
+  {
+    actionId: "sweep_scythe",
+    file: "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
     read: (source) => {
       const at = source.indexOf("internal static readonly IReadOnlyList<string> SweepScythe = Array.AsReadOnly(new[]");
       assert.ok(at >= 0, "blocked: ToolActionEvidence.SweepScythe is no longer where this reads it");
@@ -1468,13 +1642,18 @@ const PRODUCER_EVIDENCE_SOURCES: readonly Readonly<{
   },
 ]);
 
-test("a_fixture_carries_the_producers_own_fields: the two inline-composed success details still match their fixtures", (t) => {
+test("a_fixture_carries_the_producers_own_fields: every composed success detail still matches its fixture", (t) => {
   // A FIXTURE IS ONLY A PRODUCER SHAPE WHILE IT CARRIES THE PRODUCER'S FIELDS, and a hand-written list cannot notice a
   // handler that grew one back. That is exactly how `round80` lost its planting and its sweep: two `seed_planted`
   // receipts carrying `slot`/`named_slot` and one `scythe_sweep_cut` carrying `after_occupant=none` were refused whole,
   // and this table had no shape for either action, so nothing compared a real success to its rule. So the field NAMES
   // are read from the Mod's source and compared to the fixture that claims the rule accepts them; the sweep's key set
   // is pinned on both sides by `DeclaredToolSelectionTests` as well, and what this adds is the FIXTURE's own honesty.
+  //
+  // IT IS ALSO WHERE THE SHARED HELPERS ARE READ. The four `placed_target` rows and the `carried_*` row publish fields
+  // a helper composes (`NamePlacedPieceAfterWrite`, `NameCarriedPieceAfterWrite`), and this comparison is what holds
+  // their fixtures - and through them the rows' key sets - to that helper's own declaration instead of to a copy of it
+  // written beside them.
   for (const source of PRODUCER_EVIDENCE_SOURCES) {
     const fixture = completionFixtures[source.actionId];
     assert.ok(fixture !== undefined, `blocked: ${source.actionId} has no fixture, so nothing was compared`);
@@ -1911,6 +2090,229 @@ test("round92: a purchase names the shop, the map it happened on and the counter
     // the Farm, which is why this run's day 3 could not be judged.
     assert.match(detail, /(?:^|;)location=SeedShop;/, "the map the purchase happened on is on the receipt");
   }
+});
+
+/**
+ * ROUND93'S OWN RECEIPTS, from
+ * `.live-runs/game-ladder/2026-11-22T13-10-47-678Z-multiday_routine` (`timeline.jsonl`, day 3 of the run).
+ *
+ * THE FIVE ARE THE RUN'S TEXT CHARACTER FOR CHARACTER, settlement envelope included (`chore`/`steps`/`folded`), and all
+ * five came back `succeeded` while the Host refused them: `pickup_forage` because its rule compared a key COUNT against
+ * seven names, and `place_owned_object`/`move_placed_furniture`/`rotate_furniture` because they published an identity
+ * one shared producer helper writes and their key lists did not declare. Every one of them was filed by
+ * `tools/lib/task-purpose.mjs` as `succeeded_receipt_without_its_own_postcondition`, so a day of real work - a plant
+ * carried, put down and turned twice, and a daffodil picked - proved nothing.
+ *
+ * THE FAMILY, NOT THE FOUR ACTIONS: `placed_target` is written by `NamePlacedPieceAfterWrite`, which serves four rows, so
+ * the repairs come from that helper's declaration (`STARDEW_PLACED_PIECE_IDENTITY_FIELDS`) and the `carried_*` pair from
+ * `NameCarriedPieceAfterWrite`.
+ */
+const ROUND93_RECEIPTS: readonly Readonly<{ actionId: string; reasonCode: string; detail: string }>[] = [
+  {
+    actionId: "pickup_forage",
+    reasonCode: "forage_picked_up",
+    detail:
+      "location=Farm;targetIdentity=forage_8228ad84c3154eec;tile=57,12;item=(O)399;container=location.objects;action_handled=true;blocked_by=none;spawned=true;object_type=Basic;removed=true;inventory_before=0;inventory_after=1;settle=game1.try_to_check_at;read=after_the_settle;chore=forageTargets;steps=2;folded=accepted@location=Farm,target=forage_8228ad84c3154eec,tile=57,12,distance=6,reach=1,approach=adjacent,stand_at=58,13|tool_approach_completed@tile=58,13,target=58,13,arrival=exact,path=stardew_native",
+  },
+  {
+    actionId: "move_placed_furniture",
+    reasonCode: "placed_furniture_picked_up",
+    detail:
+      "target=placed_furniture_1de65e7e4fcafcbb;location=FarmHouse;tile=1,10;item=(F)1376;native_stored=true;removed_from_furniture=true;carried=true;carried_slot=17;carried_target=place_owned_object_eb24c77d28796987;inventory_before=0;inventory_after=1;carried_tile=1,10;carried_rotation=0;carried_flipped=false;furniture_in_location=8;steps=2;folded=accepted@location=FarmHouse,target=placed_furniture_1de65e7e4fcafcbb,tile=1,10,distance=5,reach=1,approach=adjacent,stand_at=2,9|tool_approach_completed@tile=2,9,target=2,9,arrival=exact,path=stardew_native",
+  },
+  {
+    actionId: "place_owned_object",
+    reasonCode: "owned_object_placed",
+    detail:
+      "target=place_owned_object_eb24c77d28796987;location=FarmHouse;tile=4,7;slot=17;item=(F)1376;placed_target=placed_furniture_05b3e8f1b1023e6e;terrain_feature=none;terrain_feature_tapped=none;native_placement=true;object_present=true;placed_qualified_item_id=(F)1376;placed_type=none;inventory_before=1;inventory_after=0;steps=2;folded=accepted@location=FarmHouse,target=place_owned_object_eb24c77d28796987,tile=4,7,distance=2,reach=1,approach=adjacent,stand_at=3,8|tool_approach_completed@tile=3,8,target=3,8,arrival=exact,path=stardew_native",
+  },
+  {
+    actionId: "rotate_furniture",
+    reasonCode: "furniture_rotated",
+    detail:
+      "target=placed_furniture_9ec53fe272196daf;tile=6,8;location=FarmHouse;item=(F)1618;rotation_before=0;rotation_after=2;rotation_expected=2;rotations=2;flipped_before=false;flipped_after=false;footprint_before=6,8:3x2;footprint_after=6,8:2x3;placeable=true;turned=true;standing=true;furniture_in_location=9;placed_target=placed_furniture_9ec53fe272196daf;steps=2;folded=accepted@location=FarmHouse,target=placed_furniture_9ec53fe272196daf,tile=6,9,distance=3,reach=1,approach=adjacent,stand_at=5,10,anchor=6,8,reached=footprint|tool_approach_completed@tile=5,10,target=5,10,arrival=exact,path=stardew_native",
+  },
+  {
+    actionId: "rotate_furniture",
+    reasonCode: "furniture_rotated",
+    detail:
+      "target=placed_furniture_05f0887495de037c;tile=4,4;location=FarmHouse;item=(F)0;rotation_before=0;rotation_after=1;rotation_expected=1;rotations=4;flipped_before=false;flipped_after=false;footprint_before=4,4:1x1;footprint_after=4,4:1x1;placeable=true;turned=true;standing=true;furniture_in_location=9;placed_target=placed_furniture_05f0887495de037c;steps=2;folded=accepted@location=FarmHouse,target=placed_furniture_05f0887495de037c,tile=4,4,distance=6,reach=1,approach=adjacent,stand_at=4,5|tool_approach_completed@tile=4,5,target=4,5,arrival=exact,path=stardew_native",
+  },
+];
+
+test("round93: the four furniture and forage successes refused for their own extra keys now read as complete", () => {
+  for (const receipt of ROUND93_RECEIPTS)
+    assert.deepEqual(
+      judgeStardewCompletionEvidence(receipt.actionId, {
+        state: "succeeded",
+        reasonCode: receipt.reasonCode,
+        evidence: { detail: receipt.detail },
+      }),
+      { accepted: true, refusal: null },
+      `${receipt.actionId} succeeded in the world and says so: ${receipt.detail}`,
+    );
+});
+
+/**
+ * THE OTHER DIRECTION OF THE SAME CONTRACT: an unknown field still refuses, and the refusal NAMES every one of them.
+ *
+ * A repair that made these five readable by dropping the key check would turn acceptance into "I did not look", which is
+ * how `round73`'s `chore` rode along unread through 65 successes. So the population is the same five receipts, each
+ * carrying two fields no rule declares, and the expectation is one refusal naming both in the wire's order - a count
+ * (`7 != 14`) or a bare `evidence_does_not_hold` is what cost the lane a run. It also holds the diagnostic channel to
+ * its own boundary: a receipt after it (the round92 removals above) still gets its own answer.
+ */
+test("an undeclared evidence field refuses by NAME, every field on one line", () => {
+  for (const receipt of ROUND93_RECEIPTS)
+    assert.deepEqual(
+      judgeStardewCompletionEvidence(receipt.actionId, {
+        state: "succeeded",
+        reasonCode: receipt.reasonCode,
+        evidence: { detail: `${receipt.detail};undeclared_one=1;undeclared_two=2` },
+      }),
+      { accepted: false, refusal: "evidence_field_undeclared:undeclared_one,undeclared_two" },
+      `${receipt.actionId}: a field the row does not declare is a producer fact the Host would ignore`,
+    );
+  // AND NOTHING IS REMEMBERED BETWEEN RECEIPTS: the same action, judged with no unknown field, accepts again.
+  for (const receipt of ROUND93_RECEIPTS)
+    assert.equal(
+      judgeStardewCompletionEvidence(receipt.actionId, {
+        state: "succeeded",
+        reasonCode: receipt.reasonCode,
+        evidence: { detail: receipt.detail },
+      }).accepted,
+      true,
+      `${receipt.actionId}: the previous refusal's fields cannot outlive the receipt that carried them`,
+    );
+});
+
+/**
+ * THE HARVESTED CORPUS, and the three questions it is asked.
+ *
+ * WHY A CORPUS AND NOT A FIXTURE TABLE. Everything above is a shape somebody WROTE, and a shape written by the same
+ * hand as the rule shares that hand's beliefs: `round93` is the measurement - five `succeeded` receipts (`pickup_forage`,
+ * `place_owned_object`, `move_placed_furniture`, two `rotate_furniture`) carried fields their rows had never declared,
+ * the Mod's tests were green, this file's fixtures were green, and only a 35-minute live run reddened. So the population
+ * of the gates below is the Mod's OWN OUTPUT: `host/src/test-fixtures/stardew-receipts/corpus.json`, harvested by
+ * `tools/harvest-stardew-receipts.mjs` from the newest live run of each scenario. Nobody writes these entries.
+ *
+ * THE THREE QUESTIONS, one per test below:
+ *   1. is the corpus still describing the code that exists (its digest is re-derived here);
+ *   2. does every real receipt read as complete by its own action's row - and the failure names the run, the action and
+ *      the fields the row did not know;
+ *   3. does a row that accepted a real receipt REFUSE a field nobody declared - because a rule that tolerates unknowns
+ *      makes (2) prove nothing, which is how `chore` rode along unread through 65 successes.
+ */
+const RECEIPT_CORPUS = parseReceiptCorpus(
+  readFileSync(join(ROOT, "host", "src", "test-fixtures", "stardew-receipts", "corpus.json"), "utf8"),
+);
+
+/** The wire detail a harvested field set renders to, in the order the Mod wrote it. */
+function receiptDetail(evidence: Readonly<Record<string, string>>): string {
+  return Object.entries(evidence)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(";");
+}
+
+/** The rows that answer "succeeded, and not yet the postcondition" for a terminal, so it is not a completion. */
+const UNFINISHED_READINGS = STARDEW_UNFINISHED_SUCCESSES as Readonly<
+  Record<string, Readonly<Record<string, unknown>> | undefined>
+>;
+const isDeclaredUnfinished = (actionId: string, reasonCode: string): boolean =>
+  Object.hasOwn(UNFINISHED_READINGS, actionId) && Object.hasOwn(UNFINISHED_READINGS[actionId] ?? {}, reasonCode);
+
+/**
+ * ROWS THAT READ WHICH FIELDS ARE PRESENT BUT DECLARE NO KEY SET, each with the reason and the expiry.
+ *
+ * An entry here is DEBT, not approval: it says this row cannot yet refuse a field nobody declared, so question (3)
+ * cannot be asked of it. Every entry expires in both directions - a row that starts refusing an unknown field fails as
+ * `stale` below - so the list cannot outlive the work it names.
+ */
+const DECLARATION_DEBT: Readonly<Record<string, string>> = Object.freeze({
+  sleep:
+    "`advance_day`'s detail carries a duplicate key by construction (`SleepAndAdvanceDayLifecycle.cs:863-894` appends " +
+    "its settlement block to a base list that already names `topology`), so the row reads field membership and the " +
+    "shared key/value reader cannot be used until the producer stops publishing one field twice",
+});
+
+test("the_receipt_corpus_describes_the_mod_code_that_exists_now", (t) => {
+  const digest = modSourceDigest(
+    [...MOD_SOURCES].map(([name, source]) => ({ path: `integrations/stardew/${name}`, source })),
+  );
+  t.diagnostic(
+    `corpus runs ${String(RECEIPT_CORPUS.runs.length)} · receipt shapes ${String(RECEIPT_CORPUS.receipts.length)}`,
+  );
+  assert.ok(RECEIPT_CORPUS.receipts.length > 0, "blocked: an empty corpus agrees with every rule");
+  // A CORPUS THAT STOPS BEING RE-HARVESTED IS A GATE THAT STOPPED READING. This is the failure it prevents: the Mod adds
+  // a field, nobody re-runs the harvester, and every gate over the corpus keeps describing the previous producer.
+  assert.equal(
+    RECEIPT_CORPUS.modSourceDigest,
+    digest,
+    "the receipt corpus is STALE: the Mod's sources changed since it was harvested - re-run " +
+      "`node tools/harvest-stardew-receipts.mjs` (it needs live run artifacts, not a game) and commit the corpus",
+  );
+});
+
+test("every_field_a_real_receipt_carries_is_read_by_its_own_rows", (t) => {
+  const failures: string[] = [];
+  const examined: string[] = [];
+  for (const receipt of RECEIPT_CORPUS.receipts) {
+    if (isDeclaredUnfinished(receipt.actionId, receipt.reasonCode)) continue;
+    examined.push(`${receipt.actionId}/${receipt.reasonCode}`);
+    const verdict = judgeStardewCompletionEvidence(receipt.actionId, {
+      state: "succeeded",
+      reasonCode: receipt.reasonCode,
+      evidence: { detail: receiptDetail(receipt.evidence) },
+    });
+    if (!verdict.accepted)
+      failures.push(
+        `${receipt.run}: ${receipt.actionId}/${receipt.reasonCode} was refused (${String(verdict.refusal)}) carrying ` +
+          `[${Object.keys(receipt.evidence).join(",")}]`,
+      );
+  }
+  t.diagnostic(`real receipts examined ${String(examined.length)} · refused ${String(failures.length)}`);
+  assert.ok(examined.length > 0, "blocked: no harvested receipt carries a completion terminal, so nothing was judged");
+  assert.deepEqual(
+    failures,
+    [],
+    "the Host refuses a receipt the Mod really minted: the rule is narrower than its producer",
+  );
+});
+
+test("a_real_receipt_carrying_an_undeclared_field_is_refused_by_name", (t) => {
+  const failures: string[] = [];
+  const exemptions = new Set(Object.keys(DECLARATION_DEBT));
+  const stillDebt = new Set<string>();
+  let asked = 0;
+  for (const receipt of RECEIPT_CORPUS.receipts) {
+    if (isDeclaredUnfinished(receipt.actionId, receipt.reasonCode)) continue;
+    const verdict = judgeStardewCompletionEvidence(receipt.actionId, {
+      state: "succeeded",
+      reasonCode: receipt.reasonCode,
+      evidence: { detail: `${receiptDetail(receipt.evidence)};undeclared_probe=1` },
+    });
+    asked += 1;
+    if (verdict.refusal === "evidence_field_undeclared:undeclared_probe") continue;
+    if (exemptions.has(receipt.actionId)) {
+      stillDebt.add(receipt.actionId);
+      continue;
+    }
+    failures.push(
+      `${receipt.run}: ${receipt.actionId}/${receipt.reasonCode} accepted a field nobody declared ` +
+        `(${String(verdict.refusal ?? "accepted")}), so its own real receipt proves nothing about the fields it read`,
+    );
+  }
+  t.diagnostic(
+    `receipts probed ${String(asked)} · refused by name ${String(asked - failures.length - stillDebt.size)} · declared debt ${String(stillDebt.size)}`,
+  );
+  assert.deepEqual(failures, []);
+  // AN EXEMPTION MUST EXPIRE: a row that starts refusing an unknown field leaves this list, or the list outlives the
+  // work it names and a future reader believes the debt is still there.
+  assert.deepEqual(
+    [...exemptions].filter((actionId) => !stillDebt.has(actionId)),
+    [],
+    "a declared exemption no longer exempts anything: its row now refuses undeclared fields, so delete the entry",
+  );
 });
 
 test("shop_purchase: a tool upgrade is its OWN terminal, and the upgrade facts decide it", () => {

@@ -6,7 +6,6 @@
     "clear_cask",
     "dismiss_modal",
     "dress_mannequin",
-    "enter_mine",
     "express_emote",
     "load_building_chest",
     "mount_transport",
@@ -16,7 +15,6 @@
     "send_multiplayer_chat",
     "set_sign_display",
     "sleep",
-    "toggle_tool_light",
-    "use_mine_ladder"
+    "toggle_tool_light"
   ]
 }

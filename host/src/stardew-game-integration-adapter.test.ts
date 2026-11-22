@@ -9,19 +9,24 @@ import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-ada
 import { TEST_MOD_REGISTRATIONS } from "./stardew-test-fixtures.js";
 
 test("pickup_forage completion requires targetIdentity evidence", () => {
+  // THE PRODUCER'S OWN SHAPE, from `.live-runs/game-ladder/2026-11-22T13-10-47-678Z-multiday_routine`: the daffodil at
+  // Farm (57,12) came off `location.objects` and the pack gained exactly one. A seven-key fixture is a shape no handler
+  // mints - `ForagePickupPostcondition.Describe` always writes `container`, `action_handled`, `blocked_by`, `spawned`,
+  // `object_type`, `settle` and `read` beside the seven the verdict reads - and a rule that accepted the short shape was
+  // a rule that refused the real one.
   const receipt = {
     state: "succeeded",
     reasonCode: "forage_picked_up",
     evidence: {
       detail:
-        "location=Farm;targetIdentity=forage_01;tile=3,4;item=(O)398;removed=true;inventory_before=0;inventory_after=1",
+        "location=Farm;targetIdentity=forage_8228ad84c3154eec;tile=57,12;item=(O)399;container=location.objects;action_handled=true;blocked_by=none;spawned=true;object_type=Basic;removed=true;inventory_before=0;inventory_after=1;settle=game1.try_to_check_at;read=after_the_settle",
     },
   } as const;
   assert.equal(STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_forage", receipt), true);
   for (const malformed of [
-    receipt.evidence.detail.replace("targetIdentity=forage_01;", ""),
-    receipt.evidence.detail.replace("targetIdentity=forage_01", "targetIdentity=none"),
-    `${receipt.evidence.detail};targetIdentity=forage_01`,
+    receipt.evidence.detail.replace("targetIdentity=forage_8228ad84c3154eec;", ""),
+    receipt.evidence.detail.replace("targetIdentity=forage_8228ad84c3154eec", "targetIdentity=none"),
+    `${receipt.evidence.detail};targetIdentity=forage_8228ad84c3154eec`,
   ]) {
     assert.equal(
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_forage", {
@@ -721,10 +726,11 @@ test("a ride_minecart receipt names the ridden objective as well as the arrival 
 });
 
 test("pickup_forage completion evidence requires the contract tile, item, removal, and exact inventory delta", () => {
-  // The identity key is part of the contract since `6f2d75cb`, so this fixture must carry it too;
-  // without it the helper rejects the payload before reaching the clauses this test is about.
+  // The identity key and the seven engine-account keys (`container`, `action_handled`, `blocked_by`, `spawned`,
+  // `object_type`, `settle`, `read`) are part of the shape `ForagePickupPostcondition.Describe` writes, so this fixture
+  // carries them; without any one of them the helper rejects the payload before reaching the clauses this test is about.
   const valid =
-    "location=Forest;targetIdentity=forage_01;tile=12,9;item=(O)16;removed=true;inventory_before=0;inventory_after=1";
+    "location=Forest;targetIdentity=forage_01;tile=12,9;item=(O)16;container=location.objects;action_handled=true;blocked_by=none;spawned=true;object_type=Basic;removed=true;inventory_before=0;inventory_after=1;settle=game1.try_to_check_at;read=after_the_settle";
   const receipt = {
     state: "succeeded",
     reasonCode: "forage_picked_up",

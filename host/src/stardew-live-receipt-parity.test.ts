@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   hasStardewCompletionEvidence,
+  STARDEW_CARRIED_PIECE_IDENTITY_FIELDS,
   STARDEW_COMPLETION_CONTRACTS,
+  STARDEW_PLACED_PIECE_IDENTITY_FIELDS,
   STARDEW_SETTLEMENT_ENVELOPE_FIELDS,
 } from "./stardew-completion-contracts.js";
 
@@ -256,6 +258,50 @@ test("every settlement field the Mod mints is declared by the Host", (t) => {
     `seams ${String(seams.length)} · fields minted ${String(minted)} · declared ${String(minted - undeclared.length)} · undeclared ${String(undeclared.length)}`,
   );
   assert.deepEqual(undeclared, []);
+});
+
+/**
+ * THE TWO IDENTITY HELPERS ARE ONE PRODUCER FACT EACH, and the Host declares each of them ONCE.
+ *
+ * `NamePlacedPieceAfterWrite` serves four rows (`place_owned_object`, `remove_placed_item`, `rotate_furniture`,
+ * `put_item_in_fish_tank`) and `NameCarriedPieceAfterWrite` serves one (`move_placed_furniture`), so a key list written
+ * per row is four copies of one helper's declaration - and teaching one copy does not teach the others. Measured
+ * `round92` (the removal refused for `placed_target`) and `round93` (a placement, a pickup and two rotations refused for
+ * the same family), each pointing at a different copy.
+ *
+ * SO THE POPULATION IS THE HELPERS THEMSELVES, read out of the C# one hop from their own declaration, and the property is
+ * set equality in BOTH directions: a field the helper starts writing fails as undeclared, and a field the Host declares
+ * that no helper writes fails as stale - an exemption cannot outlive the thing it names.
+ */
+test("the placed and carried identity fields are the Mod's own helper declarations", (t) => {
+  const source = readFileSync(
+    join(ROOT, "integrations", "stardew", "farmhandexecutioncontroller.worldobjectactions.cs"),
+    "utf8",
+  );
+  /** Every `key=` inside the helper's own expression body, both arms of its ternary included. */
+  function helperFields(helper: string): string[] {
+    const text = windowAt(source, `internal static string ${helper}(`, 8);
+    const fields = new Set(
+      [...text.matchAll(/"((?:[^"\\]|\\.)*)"/gu)].flatMap((literal) =>
+        [...(literal[1] as string).matchAll(/(?:^|;)([A-Za-z][A-Za-z0-9_]*)=/gu)].map((match) => match[1] as string),
+      ),
+    );
+    assert.ok(fields.size > 0, `blocked: ${helper} no longer composes a field this gate could read`);
+    return [...fields].sort();
+  }
+  const declared = [
+    { helper: "NamePlacedPieceAfterWrite", host: STARDEW_PLACED_PIECE_IDENTITY_FIELDS },
+    { helper: "NameCarriedPieceAfterWrite", host: STARDEW_CARRIED_PIECE_IDENTITY_FIELDS },
+  ];
+  for (const row of declared)
+    assert.deepEqual(
+      [...row.host].sort(),
+      helperFields(row.helper),
+      `${row.helper} and the Host's declaration of it are one set of fields`,
+    );
+  t.diagnostic(
+    `helpers ${String(declared.length)} · fields declared ${String(declared.reduce((total, row) => total + row.host.length, 0))}`,
+  );
 });
 
 /**

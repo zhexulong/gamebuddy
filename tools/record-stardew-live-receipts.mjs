@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,7 +30,7 @@ const OUT = join(
 );
 
 /** `key=value;…` in the order the Mod wrote it: the wire detail back into the field set this corpus stores. */
-function fieldsOf(detail) {
+export function fieldsOf(detail) {
   const fields = {};
   for (const clause of detail.split(";")) {
     const separator = clause.indexOf("=");
@@ -41,7 +41,7 @@ function fieldsOf(detail) {
 }
 
 /** The dialogue batch's shape: one result line per dispatch, evidence on the trace or the result itself. */
-function fromLiveOut(dir) {
+export function fromLiveOut(dir) {
   const file = join(dir, "live.out.txt");
   if (!existsSync(file)) return [];
   const entries = [];
@@ -80,7 +80,7 @@ function fromLiveOut(dir) {
 }
 
 /** The game ladder's shape: one settled receipt per `execution_receipt` row of the run's timeline. */
-function fromTimeline(dir) {
+export function fromTimeline(dir) {
   const file = join(dir, "timeline.jsonl");
   if (!existsSync(file)) return [];
   const entries = [];
@@ -113,41 +113,45 @@ function fromTimeline(dir) {
   return entries;
 }
 
-const runDirectories = [BATCH, ...process.argv.slice(2)];
-const entries = [];
-for (const dir of runDirectories) {
-  if (!existsSync(dir)) {
-    console.error("no run directory at " + dir + " - set GAMEBUDDY_STARDEW_FIXTURE_ROOT or pass one");
+function main() {
+  const runDirectories = [BATCH, ...process.argv.slice(2)];
+  const entries = [];
+  for (const dir of runDirectories) {
+    if (!existsSync(dir)) {
+      console.error("no run directory at " + dir + " - set GAMEBUDDY_STARDEW_FIXTURE_ROOT or pass one");
+      process.exit(1);
+    }
+    // A batch directory holds one directory per scenario; a run directory IS one run.
+    const scenarios =
+      existsSync(join(dir, "live.out.txt")) || existsSync(join(dir, "timeline.jsonl"))
+        ? [dir]
+        : readdirSync(dir).map((name) => join(dir, name));
+    for (const scenario of scenarios) entries.push(...fromLiveOut(scenario), ...fromTimeline(scenario));
+  }
+
+  if (entries.length === 0) {
+    console.error("no terminal receipt found under " + runDirectories.join(", "));
     process.exit(1);
   }
-  // A batch directory holds one directory per scenario; a run directory IS one run.
-  const scenarios =
-    existsSync(join(dir, "live.out.txt")) || existsSync(join(dir, "timeline.jsonl"))
-      ? [dir]
-      : readdirSync(dir).map((name) => join(dir, name));
-  for (const scenario of scenarios) entries.push(...fromLiveOut(scenario), ...fromTimeline(scenario));
-}
 
-if (entries.length === 0) {
-  console.error("no terminal receipt found under " + runDirectories.join(", "));
-  process.exit(1);
-}
-
-const unique = new Map(entries.map((e) => [e.actionId + "|" + e.reasonCode, e]));
-const corpus = [...unique.values()].sort((a, b) => a.actionId.localeCompare(b.actionId));
-writeFileSync(
-  OUT,
-  JSON.stringify(
-    {
-      note: "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.",
-      receipts: corpus,
-    },
-    null,
-    2,
-  ) + "\n",
-);
-console.log("recorded " + corpus.length + " terminal receipt(s) to " + OUT.split(/[\\/]/u).slice(-2).join("/"));
-for (const e of corpus)
-  console.log(
-    "  " + e.actionId.padEnd(32) + e.reasonCode + "   (" + Object.keys(e.evidence).length + " evidence fields)",
+  const unique = new Map(entries.map((e) => [e.actionId + "|" + e.reasonCode, e]));
+  const corpus = [...unique.values()].sort((a, b) => a.actionId.localeCompare(b.actionId));
+  writeFileSync(
+    OUT,
+    JSON.stringify(
+      {
+        note: "Terminal receipts recorded from real live runs. Regenerate with tools/record-stardew-live-receipts.mjs.",
+        receipts: corpus,
+      },
+      null,
+      2,
+    ) + "\n",
   );
+  console.log("recorded " + corpus.length + " terminal receipt(s) to " + OUT.split(/[\\/]/u).slice(-2).join("/"));
+  for (const e of corpus)
+    console.log(
+      "  " + e.actionId.padEnd(32) + e.reasonCode + "   (" + Object.keys(e.evidence).length + " evidence fields)",
+    );
+}
+
+if (import.meta.main) main();
