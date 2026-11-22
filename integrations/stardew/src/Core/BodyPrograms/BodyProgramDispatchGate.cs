@@ -25,6 +25,22 @@ public enum BodyProgramModalKind
     /// points at a route the same box refuses.
     /// </summary>
     SleepPrompt,
+
+    /// <summary>
+    /// THE ENGINE'S LEVEL-UP MENU: a menu whose close takes a DECISION (a perk, and at a milestone a profession), so
+    /// the action that answers it is its OWNER - `respond_level_up` - and the dismissal this gate exists to name is a
+    /// route the menu's own handler refuses.
+    ///
+    /// <para>
+    /// It is its own kind because the unaudited kind is a different fact: an unaudited menu (a letter, a mod screen)
+    /// has nobody the product may dispatch, while this one has exactly one action. Folded together, a standing
+    /// `LevelUpMenu` was held with `next_step=observe_again` - a hold that names nothing - while the published answer
+    /// sat in the same catalog. Measured 2026-11-22 (`round93`): the planner's `dismiss_modal` was refused while she
+    /// was about to pass out, and no step named the answer.
+    /// </para>
+    /// </summary>
+    LevelUp,
+
     PlainDialogue,
     Shop,
     OperationMenu,
@@ -115,6 +131,9 @@ public static class BodyProgramDispatchGate
     /// <summary>The remedy for a plain box or an audited operation menu: their close is a pure cancel.</summary>
     public const string DismissModalRemedy = "dismiss_it=dismiss_modal";
 
+    /// <summary>The remedy for a level-up menu: the action that settles the level it is showing.</summary>
+    public static string LevelUpRemedy => "answer_it=" + FarmhandActionCatalog.LevelUpAnswerActionId;
+
     /// <summary>
     /// The hold against <paramref name="actionId"/>, or null when it may start.
     ///
@@ -136,6 +155,14 @@ public static class BodyProgramDispatchGate
             return string.Equals(actionId, FarmhandActionCatalog.DayCrossingActionId, StringComparison.Ordinal)
                 ? null
                 : new BodyProgramHold(modal.Kind, ModalHold(modal));
+        // THE LEVEL-UP MENU RELEASES ITS OWN ANSWER AND NOTHING ELSE. It is a menu whose close takes a decision, so the
+        // dismissal a mounted modal normally releases (`dismiss_modal`) is the ONE action its handler refuses
+        // (`ModalFamily.DecideDismissal`: `modal_type=LevelUpMenu;dismissible=false`). Admitting it here spent a node on
+        // that refusal; holding it without naming the answer left the caller with nothing to dispatch.
+        if (modal.Kind == BodyProgramModalKind.LevelUp)
+            return string.Equals(actionId, FarmhandActionCatalog.LevelUpAnswerActionId, StringComparison.Ordinal)
+                ? null
+                : new BodyProgramHold(modal.Kind, ModalHold(modal));
         // An open modal is the working precondition of the family that resolves it, and a hold against everything else.
         if (modal.IsMounted)
             return FarmhandActionCatalog.IsModalResolving(actionId) ? null : new BodyProgramHold(modal.Kind, ModalHold(modal));
@@ -155,6 +182,9 @@ public static class BodyProgramDispatchGate
         // The one kind whose remedy is an EXECUTION rather than a dismissal or an answer: the prompt is the night's own
         // precondition, so the action that crosses the night is the action that clears it.
         BodyProgramModalKind.SleepPrompt => "held_by=dialogue_box;" + SleepPromptRemedy,
+        // The owner of the level it is showing, derived from the catalog: `respond_level_up` is the only action that
+        // settles the entry `Farmer.newLevels` holds, and it is the only one this menu releases.
+        BodyProgramModalKind.LevelUp => "held_by=LevelUpMenu;" + LevelUpRemedy,
         BodyProgramModalKind.PlainDialogue => "held_by=dialogue_box;" + DismissModalRemedy,
         // The counter is the purchase's own state: `shop_purchase` opens it with `Utility.TryOpenShopMenu` and closes
         // whatever is still mounted on its way out, so a dismissal here would close a shop the transaction is

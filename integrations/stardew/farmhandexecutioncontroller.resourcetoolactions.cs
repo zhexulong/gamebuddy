@@ -59,9 +59,18 @@ internal sealed partial class ExecutionManager
             "chop_tree", requestId, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.General,
             gate: location =>
-                ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal
-                    ? TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot)))
-                    : AnswerTreeChopSource(location, targetX, targetY, expectedTargetId),
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "chop_tree").RefusalCode is { } toolRefusal)
+                    return TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusal, slot)));
+                if (string.IsNullOrWhiteSpace(expectedTargetId))
+                {
+                    if (!TryMintTileTargetAtExecution("chop_tree", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return TileTargetGate.Refused(unnamed);
+                    expectedTargetId = minted;
+                    return TileTargetGate.Resolved(targetX, targetY);
+                }
+                return AnswerTreeChopSource(location, targetX, targetY, expectedTargetId);
+            },
             execute: (executionId, admittedRequestId) => this.ExecuteChopTree(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
             authorize: null,
             inReach: IsTileWithinToolReach);
@@ -269,6 +278,13 @@ internal sealed partial class ExecutionManager
             {
                 if (ResolveDeclaredTool(Game1.player.Items, "break_rock").RefusalCode is { } toolRefusal)
                     return TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, $"slot={slot}"));
+                if (string.IsNullOrWhiteSpace(expectedTargetId))
+                {
+                    if (!TryMintTileTargetAtExecution("break_rock", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return TileTargetGate.Refused(unnamed);
+                    expectedTargetId = minted;
+                    return TileTargetGate.Resolved(targetX, targetY);
+                }
                 return AnswerRockSource(location, targetX, targetY, expectedTargetId);
             },
             execute: (executionId, admittedRequestId) => this.ExecuteBreakRock(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
@@ -1190,6 +1206,13 @@ internal sealed partial class ExecutionManager
             {
                 if (ResolveDeclaredTool(Game1.player.Items, "chop_stump").RefusalCode is { } toolRefusal)
                     return new TileTargetRefusal(toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_stump", toolRefusal, slot));
+                if (string.IsNullOrWhiteSpace(expectedTargetId))
+                {
+                    if (!TryMintTileTargetAtExecution("chop_stump", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return unnamed;
+                    expectedTargetId = minted;
+                    return (TileTargetRefusal?)null;
+                }
                 return DescribeTreeStumpRefusal(location, targetX, targetY, expectedTargetId);
             },
             inReach: IsTileWithinToolReach,
@@ -1285,9 +1308,18 @@ internal sealed partial class ExecutionManager
             "cut_weeds", requestId, expectedTargetId, requestedDeadlineMs,
             AdmissionActionabilityProfile.Physical,
             gate: location =>
-                ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal
-                    ? TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, $"slot={slot}"))
-                    : AnswerWeed(location, targetX, targetY, expectedTargetId),
+            {
+                if (ResolveDeclaredTool(Game1.player.Items, "cut_weeds").RefusalCode is { } toolRefusal)
+                    return TileTargetGate.Refused(new TileTargetRefusal(toolRefusal, $"slot={slot}"));
+                if (string.IsNullOrWhiteSpace(expectedTargetId))
+                {
+                    if (!TryMintTileTargetAtExecution("cut_weeds", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return TileTargetGate.Refused(unnamed);
+                    expectedTargetId = minted;
+                    return TileTargetGate.Resolved(targetX, targetY);
+                }
+                return AnswerWeed(location, targetX, targetY, expectedTargetId);
+            },
             execute: (executionId, admittedRequestId) => this.ExecuteCutWeeds(executionId, admittedRequestId, slot, targetX, targetY, expectedTargetId),
             authorize: null,
             inReach: IsTileWithinToolReach);
@@ -1360,6 +1392,13 @@ internal sealed partial class ExecutionManager
             {
                 if (ResolveDeclaredTool(Game1.player.Items, "cut_grass").RefusalCode is { } toolRefusal)
                     return new TileTargetRefusal(toolRefusal, $"slot={slot}");
+                if (string.IsNullOrWhiteSpace(expectedTargetId))
+                {
+                    if (!TryMintTileTargetAtExecution("cut_grass", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                        return unnamed;
+                    expectedTargetId = minted;
+                    return (TileTargetRefusal?)null;
+                }
                 return DescribeGrassRefusal(location, targetX, targetY, expectedTargetId);
             },
             inReach: IsTileWithinToolReach,

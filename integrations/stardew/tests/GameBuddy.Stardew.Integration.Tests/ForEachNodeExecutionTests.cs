@@ -923,8 +923,9 @@ public sealed class ForEachNodeExecutionTests
         internal void PlaceHoeDirt(int x, int y) => this.Farm.terrainFeatures[new Vector2(x, y)] = new HoeDirt();
 
         /// <summary>
-        /// A wall on one tile, which is what the engine's own obstruction layer is: `isTileLocationOpen` reads the
-        /// <c>Buildings</c> layer, so a diggable tile under one is ground the hoe admits and cannot reach.
+        /// A wall on one tile, which is what the engine's own obstruction layer is: `isTilePassable` (which
+        /// `Hoe.DoFunction` asks, Hoe.cs:106) reads the <c>Buildings</c> layer, so a diggable tile under one is ground
+        /// the hoe admits and cannot reach.
         /// </summary>
         internal void Wall(int x, int y) =>
             this.Farm.map.GetLayer("Buildings").Tiles[x, y] =

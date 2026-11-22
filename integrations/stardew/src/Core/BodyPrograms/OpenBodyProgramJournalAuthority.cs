@@ -357,12 +357,30 @@ public sealed class OpenBodyProgramJournalAuthority
         return BodyProgramExecutionOrigin.Standalone;
     }
 
+    /// <summary>Stable audit reason for a stop that reached a programme whose dispatch is unknown.</summary>
+    /// <remarks>
+    /// A stop of a programme in <see cref="BodyProgramState.RecoveryRequired"/> cannot settle its unknown node as
+    /// <c>Cancelled</c>: that is a claim about the world nobody can make. It is the abandon the recovery contract
+    /// already declares (<see cref="TryAbandonProgram"/>) - `Abandoned` nodes with their binding retained, no receipt,
+    /// no success - taken under the caller's own request instead of ten minutes later.
+    /// </remarks>
+    internal const string RecoveryStoppedReasonCode = "program_stopped_with_unknown_dispatch";
+
     public BodyProgramControllerResult<BodyProgramStatusSnapshot> TryStop(string programId, long stopEpoch)
     {
         if (!MayOperateOnPrograms) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.RecoveryRequired);
         if (!PolicyMatches(ObservePolicy(), this.state.PolicyIdentity)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.PolicyIdentityStale);
-        if (!TryProgram(programId, out BodyProgramJournalProgram? program)) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
-        if (stopEpoch <= program!.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
+        // Looked up WITHOUT `TryProgram`: that helper answers "is this program Active", and a programme whose dispatch is
+        // unknown is not - which is exactly the state a player's stop has to be able to end. Measured 2026-11-22
+        // (`round93`): a `navigate_to_destination` re-entry left `open_status=RecoveryRequired` for 627-829 s with the
+        // stop answering `NotFound`, so the only exit left was the journal-open stale sweep
+        // (`journal_open_stale_dispatch`, one further lifecycle watchdog later).
+        BodyProgramJournalProgram? program = this.state.Programs.SingleOrDefault(item => item.Program.ProgramId == programId);
+        if (program is null || program.State is not (BodyProgramState.Active or BodyProgramState.RecoveryRequired))
+            return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.NotFound);
+        if (stopEpoch <= program.StopEpoch) return BodyProgramControllerResult.Failure<BodyProgramStatusSnapshot>(BodyProgramControllerResultCode.InvalidInput);
+        if (program.State == BodyProgramState.RecoveryRequired)
+            return this.TryAbandonProgram(programId, RecoveryStoppedReasonCode);
         BodyProgramJournalProgram stopped = program with { State = BodyProgramState.Cancelled, StopEpoch = stopEpoch,
             Nodes = Array.AsReadOnly(program.Nodes.Select(node => BodyProgramGraphRules.IsTerminal(node.State) ? node : node with
             {

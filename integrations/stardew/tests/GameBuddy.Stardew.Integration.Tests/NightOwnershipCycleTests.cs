@@ -9,6 +9,7 @@ using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Netcode;
+using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Menus;
 using StardewValley.Network;
@@ -32,6 +33,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// the refusal names.
 /// </summary>
 // MIXED SHAPE AND BEHAVIOUR: the behaviour cases drive a night/ownership cycle through real execution, and the shape pin fixes the evidence strings that cycle publishes. Keep them together: the pin is the only thing that notices a renamed evidence key, and the behaviour cases are the only thing that shows the key is produced by a real cycle rather than a fixture.
+[Collection(HeadlessGameWorld.Collection)]
 public sealed class NightOwnershipCycleTests
 {
     private const string ScopePlayerId = "1001";
@@ -81,6 +83,32 @@ public sealed class NightOwnershipCycleTests
             "the standing-prompt exemption has to be read where the live clock is read");
         eligibility.Should().Contain(
             "bool ownSleepPrompt = NativeSleepPrompt.IsStanding(Game1.activeClickableMenu as DialogueBox);");
+    }
+
+    /// <summary>
+    /// THE WAIT ITSELF ASKS THAT DECISION, at the one place the night can still end on the reason rather than on a budget.
+    ///
+    /// <para>
+    /// The eligibility wait is read in `Step`, not in the gate that produces a reason: a live gate that answered
+    /// `not_home` and a wait that ignored the answer is exactly the 308 s the report measured.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheEligibilityWaitEndsTheNightOnAReasonWaitingCannotClear()
+    {
+        string step = MethodBody(
+            StripComments(ReadSource("integrations/stardew/SleepAndAdvanceDayLifecycle.cs")),
+            "private bool Step()");
+
+        step.Should().Contain(
+            "EligibilityWaitOutcome wait = DecideEligibilityWait(eligibilityReason, this.eligibilityWaitFrames, EligibilityFrameBudget);",
+            "a reason a wait cannot clear ends the night on the reason itself, through the one decision the matrix reads");
+        step.Should().Contain(
+            "if (wait == EligibilityWaitOutcome.TerminalOnReason)",
+            "and that decision is what the live wait branches on, not a second comparison beside it");
+        step.Should().Contain(
+            "this.Finish(",
+            "it ends through the one terminal every other outcome of this lifecycle ends through");
     }
 
     /// <summary>
@@ -158,6 +186,71 @@ public sealed class NightOwnershipCycleTests
         replaced.ReasonCode.Should().Be(ExecutionManager.SupersededNightThatHasNotBegun);
         replaced.Evidence.Should().Contain("owner_action=sleep").And.Contain("phase=approaching");
         replaced.State.IsTerminal().Should().BeTrue("an overwritten acceptance is exactly the state that hung a run");
+    }
+
+    /// <summary>
+    /// THE OUTDOOR `sleep` IS REFUSED WHERE THE REQUEST ARRIVES, not a few frames later and not after a wait.
+    ///
+    /// <para>
+    /// Measured 2026-11-22 (`round93`, `plan_463`): the compiler submitted `sleep()` alone from Town, this dispatch
+    /// answered `accepted` because the only location test lived in the lifecycle's eligibility gate, and the night then
+    /// reported `not_home` for 308 s - a condition no wait could change, because the walk home is a node of a DIFFERENT
+    /// programme and the submission path refuses one while this node has not settled
+    /// (`plan_action_not_composable_ahead`). The engine's 2:00 AM pass-out ended the run and she lost money.
+    /// </para>
+    ///
+    /// <para>
+    /// The assertion that matters is the FIRST one: `Rejected` on the receipt THIS CALL mints, which is what the bridge
+    /// answers with - so the companion reads a refusal in the turn it asked, and no night is created to wait for anything.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ARequestToSleepOutsideTheHouseIsAnsweredNotHomeInTheSameCall()
+    {
+        ExecutionManager manager = CreateManager();
+        LocalExecutionReceipt receipt;
+        using (NightRequestWorld.Create("Town"))
+            receipt = manager.RequestLocalAdvanceDay("req_night_outdoors", Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "the request is answered, not accepted and waited on");
+        receipt.ReasonCode.Should().Be(
+            SleepAndAdvanceDayLifecycle.NotHomeReason,
+            "the same name the projection states and the eligibility gate refuses from");
+        receipt.Evidence.Should().Be("location=Town", "the receipt says where she stood when it refused");
+        BodySlotSeeding.Peek(manager, "activeDayAdvance").Should().BeNull(
+            "nothing was started, so nothing can wait for the actor to come home");
+    }
+
+    /// <summary>
+    /// THE FALSIFIER: the wait is still a wait for every reason a wait can clear, and only the one that needs a WALK ends
+    /// the night on its own reason.
+    ///
+    /// <para>
+    /// Without this, "refuse reasons a wait cannot clear" could be widened to "refuse every reason" and nothing here
+    /// would notice - and the eligibility wait exists for exactly the reasons below: a menu the companion can dismiss, a
+    /// dialogue it can answer, a clock that resumes, a co-op partner who connects (`IsAwaitingEligibility`).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void OnlyTheReasonThatNeedsAWalkEndsTheNightOnItsOwnReason()
+    {
+        SleepAndAdvanceDayLifecycle.CannotBecomeEligibleByWaiting(SleepAndAdvanceDayLifecycle.NotHomeReason)
+            .Should().BeTrue("the actor cannot walk herself home, and no other programme may be composed while she waits");
+
+        foreach (string waiting in new[]
+                 {
+                     "already_new_day",
+                     "time_paused",
+                     "passed_out",
+                     "menu_open",
+                     "dialogue_up",
+                     "event_up",
+                     "awaiting_online_farmers:1/2",
+                 })
+        {
+            SleepAndAdvanceDayLifecycle.CannotBecomeEligibleByWaiting(waiting).Should().BeFalse(
+                $"`{waiting}` is a reason the companion can clear and come back to, which is what the eligibility wait is for");
+        }
     }
 
     /// <summary>
@@ -433,6 +526,67 @@ public sealed class NightOwnershipCycleTests
                 Game1.game1 = gameBefore;
                 gameBefore.instanceGameLocation = locationBefore!;
             }
+        }
+    }
+
+    /// <summary>
+    /// The world one night REQUEST is dispatched in: a real actor in a real location, and the two statics the dispatch
+    /// reads before it looks at anything else (`Context.IsWorldReady`, `Game1.player`).
+    ///
+    /// <para>
+    /// A whole run world - a map, a wallpaper collection, an admission journal - is NOT built here, and that is the point
+    /// rather than a saving: the fact under test is that the refusal is answered in the SAME CALL the request arrives in,
+    /// before admission, before a lifecycle exists. A fixture that satisfied admission could not tell this refusal apart
+    /// from the one the eligibility gate used to produce a few frames later.
+    /// </para>
+    ///
+    /// <para>
+    /// `Context.IsWorldReady` is not settable - SMAPI answers it from `PerScreen&lt;bool&gt;.States[Context.ScreenId]` - so
+    /// it is seeded through the type's own `SetValueForScreen` and cleared with `ResetAllScreens`, and every `Game1`
+    /// static the world writes is captured and restored (`HeadlessGameWorld.CaptureStatics`).
+    /// </para>
+    /// </summary>
+    private sealed class NightRequestWorld : IDisposable
+    {
+        private static readonly FieldInfo WorldReadyPerScreen = typeof(Context)
+            .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+            .GetGetMethod()!
+            .Module.ResolveField(BitConverter.ToInt32(typeof(Context)
+                .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
+                .GetGetMethod()!.GetMethodBody()!.GetILAsByteArray()!, 1))!;
+
+        private readonly Dictionary<string, object?> staticsBefore = HeadlessGameWorld.CaptureStatics();
+
+        private NightRequestWorld(GameLocation location)
+        {
+            var game = (Game1)RuntimeHelpers.GetUninitializedObject(typeof(Game1));
+            typeof(Game1).GetField("instanceGameLocation", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(game, location);
+            Game1.game1 = game;
+
+            Farmer actor = CreateActor(1001);
+            actor.currentLocation = location;
+            typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, actor);
+
+            WorldReadyPerScreen.GetValue(null)!.GetType()
+                .GetMethod("SetValueForScreen", new[] { typeof(int), typeof(bool) })!
+                .Invoke(WorldReadyPerScreen.GetValue(null), new object[] { Context.ScreenId, true });
+            Context.IsWorldReady.Should().BeTrue("the headless world must satisfy the readiness gate the dispatch reads");
+        }
+
+        internal static NightRequestWorld Create(string locationName)
+        {
+            var location = new GameLocation();
+            typeof(GameLocation).GetField("name", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                .SetValue(location, new NetString(locationName));
+            return new NightRequestWorld(location);
+        }
+
+        public void Dispose()
+        {
+            WorldReadyPerScreen.GetValue(null)!.GetType().GetMethod("ResetAllScreens")!
+                .Invoke(WorldReadyPerScreen.GetValue(null), null);
+            HeadlessGameWorld.RestoreStatics(this.staticsBefore);
         }
     }
 

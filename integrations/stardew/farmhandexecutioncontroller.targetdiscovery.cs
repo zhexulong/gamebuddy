@@ -761,14 +761,20 @@ internal sealed partial class ExecutionManager
         return result;
     }
 
-    private static IReadOnlyList<BridgeMannequinTarget> DiscoverMannequinTargets(Farmer player)
+    /// <summary>
+    /// The mannequins this observation publishes: the room the actor stands in, the discovery radius, and a tile a body
+    /// can stand beside. Internal because a fixture that places a mannequin must ask THIS answer rather than a second
+    /// copy of the two rules - a display target the wire does not carry is a target the day cannot name.
+    /// </summary>
+    internal static IReadOnlyList<BridgeMannequinTarget> DiscoverMannequinTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
         return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Mannequin && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
             .Select(pair => new BridgeMannequinTarget(BuildMannequinTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y)).ToArray() ?? Array.Empty<BridgeMannequinTarget>();
     }
 
-    private static IReadOnlyList<BridgeSignTarget> DiscoverSignTargets(Farmer player)
+    /// <summary>The signs this observation publishes, by the same rules as <see cref="DiscoverMannequinTargets"/>.</summary>
+    internal static IReadOnlyList<BridgeSignTarget> DiscoverSignTargets(Farmer player)
     {
         GameLocation? location = player.currentLocation;
         return location?.objects.Pairs.Where(pair => pair.Value is StardewValley.Objects.Sign && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)).Take(16)
@@ -1662,15 +1668,14 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The connected strips of farmable ground of ONE location, measured lazily and once per region.
+    /// The connected strips of ground a patch can be opened in, measured lazily and once per region.
     ///
     /// <para>
     /// A STRIP IS A SET OF TILES, so it can only be answered by a walk: two tiles are in the same strip when a cardinal
-    /// step reaches from one to the other through tiles the same family would publish. The membership question is the
-    /// family's own (`GetHoeDirtAtTile` present, or `IsTillableTile`) and is asked once per tile through
-    /// <see cref="IsFarmable"/>; the walk itself has no radius, because the answer it exists for - "how wide and how long
-    /// is this strip" - is exactly the fact a six-tile window cannot state: a 3x20 patch is 20 long and only 13 of it is
-    /// ever inside the window.
+    /// step reaches from one to the other through tiles that can become soil (see <see cref="IsFarmable"/>: ground the
+    /// Hoe admits for ever, under nothing or under an occupant some published action clears). The walk itself has no
+    /// radius, because the answer it exists for - "how wide and how long is this strip" - is exactly the fact a six-tile
+    /// window cannot state: a 3x20 patch is 20 long and only 13 of it is ever inside the window.
     /// </para>
     /// <para>
     /// NOTHING IS TRUNCATED AND NOTHING IS THEREFORE WITHHELD: the walk stops at the map's own edge or at ground that is
@@ -1722,9 +1727,22 @@ internal sealed partial class ExecutionManager
         }
 
         /// <summary>
-        /// Whether this tile belongs to the soil family at all: ground already under the Hoe, or ground the Hoe admits.
-        /// One engine read plus one call to the family's own predicate, and the answer is kept because a walk asks about
-        /// the same neighbour from several of its members.
+        /// Whether this tile belongs to the soil family at all: ground already under the Hoe, or ground that could carry
+        /// the Hoe once whatever stands on it is cleared.
+        ///
+        /// <para>
+        /// WHAT A STRIP IS A STRIP OF. It used to be "ground the Hoe admits right now", so the farm's field - one
+        /// rectangle with rocks, weeds, grass and twigs on it - answered as a scatter of small boxes: measured on the
+        /// `3x20` slice, the biggest was `28x19`, one row short of the shape, while the ground it sat in was the whole
+        /// field. A block is the ground a patch can be OPENED in, so the permanent half of the Hoe's admission is asked of
+        /// the tile (<see cref="ExecutionManager.DescribeSoilGroundRefusal"/>) and the occupant only has to be something
+        /// some published action takes away (`TileOccupantKind.UnclearableReason`, the vocabulary `Clears` declarations
+        /// are read against). A bush or a fruit tree is not that, and it still ends a block.
+        /// </para>
+        /// <para>
+        /// One engine read plus two calls to predicates that already exist, and the answer is kept because a walk asks
+        /// about the same neighbour from several of its members.
+        /// </para>
         /// </summary>
         private bool IsFarmable(int x, int y)
         {
@@ -1735,9 +1753,20 @@ internal sealed partial class ExecutionManager
                 return false;
             }
             bool answer = this.location.GetHoeDirtAtTile(new Vector2(x, y)) is not null
-                || IsTillableTile(this.location, x, y);
+                || (ExecutionManager.DescribeSoilGroundRefusal(this.location, x, y) is null
+                    && IsOccupantClearable(this.location, x, y));
             this.farmable[(x, y)] = answer;
             return answer;
+        }
+
+        /// <summary>
+        /// Whether what stands on this tile is nothing, or a kind some published action declares it clears.
+        /// </summary>
+        private static bool IsOccupantClearable(StardewValley.GameLocation location, int x, int y)
+        {
+            string kind = TileOccupancy.Of(location, x, y);
+            return string.Equals(kind, TileOccupantKind.None, StringComparison.Ordinal)
+                || TileOccupantKind.UnclearableReason(kind) is null;
         }
     }
 }

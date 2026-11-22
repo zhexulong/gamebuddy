@@ -26,11 +26,10 @@ namespace GameBuddy.Stardew;
 /// same three the clearing planner reads, which is why a tile is called `weed` by both or by neither.
 /// </para>
 /// <para>
-/// A ROW'S TARGET IDENTITY IS MINTED HERE, by the family the row's action declares and with the function that family's own
-/// discovery publishes its rows with (<see cref="ExecutionManager.BuildWeedTargetId"/>,
-/// <see cref="ExecutionManager.BuildCropTargetId"/>, <see cref="ExecutionManager.GroundItemTargetIdAt"/>, ...). That is the
-/// whole reason an action declaring <c>expectedTargetId</c> can run through a loop: the id comes from the LIVE tile at
-/// dispatch time, never from the observation the plan was written from, and never from a second hash here.
+/// A ROW'S TARGET IDENTITY IS NOT MINTED HERE: <see cref="TileTargetMint"/> owns that answer, because the executor needs
+/// the same one for a node its caller left unnamed (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>). The pass asks
+/// it for the row's family and takes the identity it names, so a loop's row and a single action's swing at the same tile
+/// are addressed by one function rather than by two that agree today.
 /// </para>
 /// <para>
 /// MEASURED 2026-11-11 (`round44`): a `for_each` over sixty `cut_weeds` rows refused every one as
@@ -44,55 +43,6 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
 {
-    /// <summary>The families whose identity this pass can mint, by the wire names their actions' descriptors declare.</summary>
-    internal const string CropTargetsFamily = "cropTargets";
-
-    internal const string HarvestTargetsFamily = "harvestTargets";
-
-    internal const string SeedTargetsFamily = "seedTargets";
-
-    internal const string WeedTargetsFamily = "weedTargets";
-
-    internal const string GrassTargetsFamily = "grassTargets";
-
-    internal const string RockSourceTargetsFamily = "rockSourceTargets";
-
-    internal const string TreeChopSourceTargetsFamily = "treeChopSourceTargets";
-
-    internal const string TreeStumpTargetsFamily = "treeStumpTargets";
-
-    internal const string DebrisTargetsFamily = "debrisTargets";
-
-    internal const string ItemTargetsFamily = "itemTargets";
-
-    internal const string ForageTargetsFamily = "forageTargets";
-
-    internal const string ScytheCropTargetsFamily = "scytheCropTargets";
-
-    /// <summary>
-    /// The families this pass can name a tile for, listed ONCE so <see cref="CanNameFamily"/> and
-    /// <see cref="TargetIdFor"/> cannot disagree about the set.
-    ///
-    /// `cropTargets` and `harvestTargets` publish the SAME identity for a crop tile - one function, one row - and
-    /// `seedTargets` publishes one per held stack and tile. Every other family here is one occupant of one tile, named by
-    /// the function its own discovery publishes rows with.
-    /// </summary>
-    private static readonly string[] MintedFamilyNames =
-    {
-        CropTargetsFamily,
-        HarvestTargetsFamily,
-        SeedTargetsFamily,
-        WeedTargetsFamily,
-        GrassTargetsFamily,
-        RockSourceTargetsFamily,
-        TreeChopSourceTargetsFamily,
-        TreeStumpTargetsFamily,
-        DebrisTargetsFamily,
-        ItemTargetsFamily,
-        ForageTargetsFamily,
-        ScytheCropTargetsFamily,
-    };
-
     /// <summary>A family whose rows are not map tiles at all: a station, a shop, a recipe, a person, a tool slot.</summary>
     internal const string NotATileRefusal = "row_target_family_not_a_tile";
 
@@ -177,13 +127,6 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         ["fenceGateTargets"] = ReaderAbsentRefusal,
     };
 
-    /// <summary>
-    /// The seed family's own row field, read from the row's `do`: a seed target is (tile, item), and the item is the
-    /// caller's declaration rather than anything the tile decides. The slot the row also carries is an argument of the
-    /// dispatch, not part of the identity - `plant_seed` re-resolves it against the live pack.
-    /// </summary>
-    private const string SeedItemArgument = "expectedQualifiedItemId";
-
     private readonly GameLocation farm;
     private readonly IReadOnlySet<string> enabledActionIds;
     private readonly Func<bool> stopRequested;
@@ -198,14 +141,14 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
         this.stopRequested = stopRequested;
     }
 
-    /// <summary>Every family this seam mints an identity for, so a gate can derive its population instead of listing it.</summary>
-    internal static IReadOnlyList<string> MintedFamilies => MintedFamilyNames;
+    /// <summary>Every family the mint names an identity for, so a gate can derive its population instead of listing it.</summary>
+    internal static IReadOnlyList<string> MintedFamilies => TileTargetMint.Families;
 
     /// <summary>Every family this seam states a reason for, so a gate can fail on an entry that outlived its fact.</summary>
     internal static IReadOnlyList<string> ReasonedFamilies => UnmintedFamilies.Keys.ToArray();
 
     /// <summary>
-    /// The reason <paramref name="family"/> is refused, or null when this seam mints it or has never examined it.
+    /// The reason <paramref name="family"/> is refused, or null when the mint names it or this seam has never examined it.
     ///
     /// A null for a family no table names is the UNEXAMINED gap rather than a statement about the family, which is why the
     /// drift gate fails on it instead of the row: a runtime refusal may only claim what a table decided.
@@ -223,101 +166,12 @@ internal sealed class FarmhandForEachFarmWorld : IFarmhandForEachWorld
     {
         // Off the map is not a row, exactly as `ReadRow` says: there is no tile there to name.
         if (!this.IsOnMap(x, y)) return null;
-        var tile = new Vector2(x, y);
-        switch (family)
-        {
-            // A crop tile is ONE target with ONE identity, published by `cropTargets` and `harvestTargets` alike and
-            // recomputed by `water_crop` and `harvest_crop` before they act. Whether the crop is ready, already watered or
-            // taken by a scythe is an ADMISSION the handler owns - it decides whether the action runs, not what the tile
-            // is called - so it is deliberately not restated here.
-            case CropTargetsFamily:
-            case HarvestTargetsFamily:
-                return this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? feature)
-                    && feature is HoeDirt { crop: not null } dirt
-                        ? ExecutionManager.BuildCropTargetId(this.farm, x, y, dirt.crop.netSeedIndex.Value, dirt.crop.indexOfHarvest.Value)
-                        : null;
-            // A seed target is (tile, item): the family publishes one row per held stack, and the slot it names is the
-            // position that stack happened to sit in when the row was minted - so `plant_seed` re-resolves it against the
-            // live pack by the item rather than trusting it. Whether the pack holds that seed at all is the handler's
-            // answer (`seed_not_owned_in_pack`), and whether the tile is plantable is its `seed_target_unavailable`.
-            case SeedTargetsFamily:
-                return declaredArguments is not null
-                    && declaredArguments.TryGetValue(SeedItemArgument, out string? qualifiedItemId)
-                    && !string.IsNullOrWhiteSpace(qualifiedItemId)
-                        ? ExecutionManager.BuildSeedTargetId(this.farm, x, y, qualifiedItemId)
-                        : null;
-            // THE OBJECT LAYER. Each of these families mints an id for the object standing on this tile, through the same
-            // function its discovery calls, and the predicate below is that discovery's own selection: a weed is the
-            // engine's weed, stone is the engine's breakable stone. What the action then decides about it (enough stamina,
-            // the right tool, the drop it produces) is admission, not identity.
-            case WeedTargetsFamily:
-                return this.farm.objects.TryGetValue(tile, out StardewValley.Object? weed) && weed is not null && weed.IsWeeds()
-                    ? ExecutionManager.BuildWeedTargetId(this.farm, x, y, weed)
-                    : null;
-            case RockSourceTargetsFamily:
-                return this.farm.objects.TryGetValue(tile, out StardewValley.Object? rock) && rock is not null && NativeItemPredicates.IsBreakableStone(rock)
-                    ? ExecutionManager.BuildRockSourceTargetId(this.farm, x, y, rock)
-                    : null;
-            case ForageTargetsFamily:
-                return this.farm.objects.TryGetValue(tile, out StardewValley.Object? forage) && forage is not null && forage.isForage()
-                    ? ExecutionManager.BuildForageTargetId(this.farm, x, y, forage)
-                    : null;
-            // A RESOURCE CLUMP is one entity anchored on one tile however many tiles its footprint covers, and its family
-            // publishes it on the anchor: a non-anchor footprint tile has no clump ROW, which is a different fact from a
-            // tile with nothing on it.
-            case DebrisTargetsFamily:
-                return ExecutionManager.DebrisTargetIdAt(this.farm, x, y);
-            // A GROUND CHUNK is not an occupant of the tile's three containers - it is `location.debris` - and `pickup_item`
-            // recomputes its identity from the chunk's own place in that list.
-            case ItemTargetsFamily:
-                return ExecutionManager.GroundItemTargetIdAt(this.farm, x, y);
-            // THE TERRAIN LAYER. A tree family names the tree by location, tile and species, never by its durability: the
-            // swing that fells it changes the health, and `TreeChopSourceExclusion` is the same admission its discovery
-            // filters with, so a not-grown, tapped, dead or already-felled tree has no row here (the felled phase is
-            // `treeStumpTargets`, its own family with its own id).
-            case TreeChopSourceTargetsFamily:
-                return this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? treeFeature)
-                    && treeFeature is Tree chopTree
-                    && ExecutionManager.TreeChopSourceExclusion(chopTree) is null
-                        ? ExecutionManager.BuildTreeChopSourceTargetId(this.farm, x, y, chopTree)
-                        : null;
-            case TreeStumpTargetsFamily:
-                return this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? stumpFeature)
-                    && stumpFeature is Tree { stump.Value: true } stump
-                        ? ExecutionManager.BuildTreeStumpTargetId(this.farm, x, y, stump)
-                        : null;
-            case GrassTargetsFamily:
-                return this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? grassFeature)
-                    && grassFeature is Grass grass
-                    && grass.numberOfWeeds.Value > 0
-                        ? ExecutionManager.BuildGrassTargetId(this.farm, x, y, grass)
-                        : null;
-            // The scythe family admits a dead crop as well as a ready one, and `ScytheCropTarget` is that ONE decision:
-            // restating it here would let the seam mint a row the action refuses.
-            case ScytheCropTargetsFamily:
-                if (!this.farm.terrainFeatures.TryGetValue(tile, out TerrainFeature? scytheFeature)
-                    || scytheFeature is not HoeDirt scytheDirt
-                    || scytheDirt.crop is null)
-                    return null;
-                StardewValley.Crop crop = scytheDirt.crop;
-                return ExecutionManager.ScytheCropTarget(
-                        hasCrop: true,
-                        forageCrop: crop.forageCrop.Value,
-                        readyForHarvest: scytheDirt.readyForHarvest(),
-                        harvestMethod: crop.GetHarvestMethod(),
-                        dead: crop.dead.Value,
-                        out _)
-                    ? ExecutionManager.BuildScytheCropTargetId(this.farm, x, y, crop)
-                    : null;
-            default:
-                // A family in `MintedFamilyNames` with no arm above: the drift `FarmhandForEachFamilyDriftTests` exists to
-                // catch. It answers null rather than guessing, and `CanNameFamily` is what makes the row say the family is
-                // known and the tile is bare.
-                return null;
-        }
+        // THE ONE MINT, asked for the row's own family: the identity a family's discovery publishes for this tile RIGHT NOW
+        // is `TileTargetMint`'s answer, and this pass takes it rather than restating the classification it is built on.
+        return TileTargetMint.AtExecution(this.farm, x, y, family, declaredArguments).TargetId;
     }
 
-    public bool CanNameFamily(string family) => MintedFamilyNames.Contains(family, StringComparer.Ordinal);
+    public bool CanNameFamily(string family) => TileTargetMint.CanName(family);
 
     public string? RowIdentityRefusalFor(string family) => StatedRefusal(family);
 

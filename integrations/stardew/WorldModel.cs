@@ -320,12 +320,29 @@ internal static class WorldModel
         // A counter belongs to `shop_purchase`, which opens it and closes it itself (see the refusal in
         // `RequestLocalDismissModal`) - so it is a kind of its own, not an operation menu this channel may close.
         ShopMenu => new BodyProgramModalFact(BodyProgramModalKind.Shop, menu.GetType().Name),
-        not null => new BodyProgramModalFact(
-            ExecutionManager.IsDismissibleOperationModalType(menu.GetType().Name) ? BodyProgramModalKind.OperationMenu : BodyProgramModalKind.Menu,
-            menu.GetType().Name),
+        not null => new BodyProgramModalFact(KindForMenuType(menu.GetType().Name), menu.GetType().Name),
         null when dialogueUp => new BodyProgramModalFact(BodyProgramModalKind.Menu, null),
         _ => BodyProgramModalFact.None,
     };
+
+    /// <summary>
+    /// The kind a NON-DIALOGUE menu of one type is, asked by the engine's own type name so a caller that holds only
+    /// the type (a declaration table, a hold's evidence) reads the same classification the live screen does.
+    ///
+    /// <para>
+    /// A DIALOGUE BOX IS NOT ANSWERED BY THIS. Which kind a box is depends on <c>isQuestion</c> and on whether it is
+    /// the engine's bed prompt (<see cref="NativeSleepPrompt"/>) - two facts the type name cannot carry, and
+    /// <see cref="MountedModal"/> reads them from the live object. This half is the menu half: the audited close-path
+    /// set decides the operation menus, the level-up menu is its own kind because its close takes a decision, and
+    /// everything else is a menu nobody the product can dispatch owns.
+    /// </para>
+    /// </summary>
+    internal static BodyProgramModalKind KindForMenuType(string menuTypeName) =>
+        ExecutionManager.IsDismissibleOperationModalType(menuTypeName)
+            ? BodyProgramModalKind.OperationMenu
+            : menuTypeName == nameof(LevelUpMenu)
+                ? BodyProgramModalKind.LevelUp
+                : BodyProgramModalKind.Menu;
 
     /// <summary>
     /// The event-acting family member that ANSWERS a question, whose sibling closes an informational box.    ///

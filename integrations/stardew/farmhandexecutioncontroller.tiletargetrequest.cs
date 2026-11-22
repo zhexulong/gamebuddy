@@ -1,3 +1,4 @@
+using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
 using StardewValley;
@@ -99,6 +100,83 @@ internal sealed partial class ExecutionManager
 
     /// <summary>One gate's answer that the request's own outcome already holds, ready to be minted as the terminal.</summary>
     private readonly record struct TileTargetSettlement(ExecutionState State, string ReasonCode, string Evidence);
+
+    /// <summary>
+    /// THE IDENTITY THE TILE HOLDS NOW, for a request that named none.
+    ///
+    /// <para>
+    /// A caller that sent <c>expectedTargetId</c> never asks this: the request names an identity and is answered exactly as
+    /// it always was. A caller that sent none - which the action's own row permits
+    /// (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>) - is answered by the LIVE tile, minted by the family that
+    /// row declares (<see cref="FarmhandActionCatalog.TargetFamilyOf"/>, so no handler restates it). That is what lets a
+    /// clearing node name its target when she swings rather than when she read.
+    /// </para>
+    ///
+    /// <para>
+    /// RESOLVED ONCE PER REQUEST, at the gate, before the walk - and the caller writes it back into the seam's own
+    /// <c>expectedTargetId</c>, so the approach leg, the executed body and the receipt all name ONE identity. A target minted
+    /// twice in one request is two targets, and a request that mints on arrival has named different things at its two ends.
+    /// </para>
+    /// </summary>
+    /// <returns>Whether the tile named a target; when it did not, <paramref name="refusal"/> is the answer owed.</returns>
+    private static bool TryMintTileTargetAtExecution(
+        string actionId,
+        GameLocation location,
+        int x,
+        int y,
+        out string targetId,
+        out TileTargetRefusal refusal)
+    {
+        TileTargetMintResolution mint = TileTargetMint.AtExecution(location, x, y, FarmhandActionCatalog.TargetFamilyOf(actionId) ?? string.Empty);
+        if (mint.Resolved)
+        {
+            targetId = mint.TargetId!;
+            refusal = default;
+            return true;
+        }
+        targetId = string.Empty;
+        refusal = DescribeTileTargetMintRefusal(actionId, x, y, mint);
+        return false;
+    }
+
+    /// <summary>
+    /// The refusal a resolve-at-execution request is owed, in the ONE code whose shape says which of the three facts stopped
+    /// it: nothing is there, something else is there, or the right thing is there and the action's own admission withheld it.
+    ///
+    /// <para>
+    /// THREE CODES BECAUSE THEY ARE THREE REPAIRS. `*_target_absent` sends the caller to look elsewhere, `*_target_changed`
+    /// sends it to re-observe a tile that moved under it, and `*_target_not_ready` sends it to wait for a tree to grow or a
+    /// crop to ripen - and the last one carries the clause the admission itself published, so a tapped tree says
+    /// `already_tapped` rather than "changed". What the tile carries is named in the SAME vocabulary a `for_each` row
+    /// publishes as `occupant` (<see cref="TileOccupantKind"/>), and what the action removes is joined from its own
+    /// <c>Clears</c> declaration, so neither side is a second list beside the catalogue.
+    /// </para>
+    /// </summary>
+    private static TileTargetRefusal DescribeTileTargetMintRefusal(string actionId, int x, int y, TileTargetMintResolution mint)
+    {
+        string expected = DeclaredOccupants(actionId);
+        return mint.Answer switch
+        {
+            TileTargetMintAnswer.Nothing => new TileTargetRefusal(
+                $"{actionId}_target_absent",
+                $"named_tile={x},{y};expected={expected};occupant={mint.OccupantKind}"),
+            TileTargetMintAnswer.OtherKind => new TileTargetRefusal(
+                $"{actionId}_target_changed:{expected}:{mint.OccupantKind}",
+                $"named_tile={x},{y};expected={expected};found={mint.OccupantKind}"),
+            _ => new TileTargetRefusal(
+                $"{actionId}_target_not_ready:{mint.OccupantKind}:{mint.Clause ?? TileTargetRefusalClause.TargetIdUnresolved}",
+                $"named_tile={x},{y};expected={expected};found={mint.OccupantKind};{TileTargetRefusalClause.Field}{mint.Clause ?? TileTargetRefusalClause.TargetIdUnresolved}"),
+        };
+    }
+
+    /// <summary>
+    /// The occupants the action's own <c>Clears</c> declaration names, joined for one code token: a single-occupant action
+    /// reads <c>weed</c> and a clump action reads its nine, so a refusal never restates a list the catalogue already holds.
+    /// </summary>
+    private static string DeclaredOccupants(string actionId) =>
+        FarmhandActionCatalog.ClearsOf(actionId) is { Occupants.Count: > 0 } clears
+            ? string.Join("+", clears.Occupants)
+            : TileOccupantKind.None;
 
     private LocalExecutionReceipt RequestLocalTileTarget(
         string actionId,

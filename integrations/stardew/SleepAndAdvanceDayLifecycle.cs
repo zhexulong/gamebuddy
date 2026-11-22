@@ -47,6 +47,61 @@ internal sealed class SleepAndAdvanceDayLifecycle
     private const string SleepReadyCheckId = "sleep";
 
     /// <summary>
+    /// The night's one durable precondition: the actor is not in the farmhouse or the cabin she sleeps in.
+    ///
+    /// <para>
+    /// ONE SPELLING, FOUR READERS. <see cref="HomeOf"/> is the declaration; the dispatch that receives the request
+    /// (<c>RequestLocalAdvanceDay</c>) refuses from it, the eligibility gate below refuses from it, the receipt maps THIS
+    /// name to <c>Rejected</c>, and the projection the companion reads (`snapshot-projection.ts` <c>sleepDayEndText</c>)
+    /// states the same refusal about the same field (<c>sleepAdmitsHere</c>).
+    /// </para>
+    /// <para>
+    /// A WAIT CANNOT CLEAR IT, and that is the difference between this reason and every other one below: a menu can be
+    /// closed, a dialogue answered, the clock resumed, another farmer connected - but the actor can only stop being
+    /// outdoors by WALKING, which is a step of a different programme, and no programme may be composed while this night's
+    /// node is still running (`plan_action_not_composable_ahead`). Measured 2026-11-22 (<c>round93</c>, <c>plan_463</c>):
+    /// <c>sleep()</c> submitted alone from Town reported <c>not_home</c> for 308 s, the <c>dismiss_modal</c> that could
+    /// have changed the screen was refused as a lookahead, and the engine's 2:00 AM pass-out ended the run.
+    /// </para>
+    /// </summary>
+    internal const string NotHomeReason = "not_home";
+
+    /// <summary>The gate's success value: the night is eligible, so this is the one row of the table that is not a hold.</summary>
+    internal const string EligibilityEntered = "ok";
+
+    /// <summary>
+    /// One reason <see cref="TryEnterEligibility"/> can refuse a night for, and WHO can clear it - the declaration the
+    /// eligibility wait is bounded by.
+    ///
+    /// <para>
+    /// THE POPULATION IS THIS TABLE, and its completeness is asserted rather than assumed: the reason literals the live
+    /// gate assigns are read and must all be members (<c>BodyStateReachabilityMatrixTests</c>). A refusal added to the
+    /// gate tomorrow joins the matrix without an edit here; one whose clearer is forgotten is a waiting state with no
+    /// end, which is exactly the 308 s `not_home` measured.
+    /// </para>
+    /// <para>
+    /// An empty <see cref="ClearedBy"/> is the whole distinction: a reason another turn can clear is a legitimately
+    /// bounded frame wait, and one nothing can clear is a terminal on its own reason.
+    /// </para>
+    /// </summary>
+    internal sealed record EligibilityReason(string Code, string ClearedBy, bool IsPrefix = false);
+
+    /// <summary>Every reason the eligibility gate can answer with, refusal or not. See <see cref="EligibilityReason"/>.</summary>
+    internal static readonly IReadOnlyList<EligibilityReason> EligibilityReasons = new[]
+    {
+        // The gate's own success value: the night is in, so it is the one row that is not a hold.
+        new EligibilityReason(EligibilityEntered, "the gate admitted the night"),
+        new EligibilityReason(NotHomeReason, string.Empty),
+        new EligibilityReason("already_new_day", "the day has already crossed, so this night is over"),
+        new EligibilityReason("time_paused", "the clock resumes when the box that paused it is dismissed"),
+        new EligibilityReason("passed_out", "the engine's own pass-out pipeline ends"),
+        new EligibilityReason("menu_open", "dismiss_modal closes an audited menu and answer_dialogue answers a box"),
+        new EligibilityReason("dialogue_up", "answer_dialogue answers the box"),
+        new EligibilityReason("event_up", "the cutscene ends on its own"),
+        new EligibilityReason("awaiting_online_farmers:", "another farmer connects", IsPrefix: true),
+    };
+
+    /// <summary>
     /// Frames to keep watching for the native save boundary before continuing.
     /// The day fact is the authority; a client observes the rollover over the
     /// network without saving locally at all, so this must never block.
@@ -59,7 +114,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
     /// eligible (actor passed out, menu open, wrong time) would otherwise spin
     /// forever and be misreported as a generic timeout.
     /// </summary>
-    private const int EligibilityFrameBudget = 36000;
+    internal const int EligibilityFrameBudget = 36000;
 
     /// <summary>
     /// Frames to keep waiting for the new day to truly begin (SMAPI DayStarted)
@@ -421,9 +476,31 @@ internal sealed class SleepAndAdvanceDayLifecycle
                     return false;
                 if (!this.TryEnterEligibility(out string eligibilityReason))
                 {
+                    // A REASON WAITING CANNOT CLEAR IS NOT A WAIT, AND IT IS NOT A 600 s BUDGET EITHER. The bound below
+                    // was the only thing standing between an outdoor `sleep` and the engine's own 2:00 AM pass-out: the
+                    // actor cannot walk herself home, the programme that would has been refused while this node runs, and
+                    // nothing else can change where she stands. So the night ends here, on the reason itself, and the
+                    // receipt says a fact rather than a duration - measured 2026-11-22 (`round93`): 308 s of `not_home`
+                    // that the pass-out, not the budget, finally ended.
+                    //
+                    // THE WAIT ASKS ONE DECISION (`DecideEligibilityWait`): the bound the matrix reads and the bound a
+                    // live frame spends are one answer rather than two spellings of it.
+                    this.eligibilityWaitFrames++;
+                    EligibilityWaitOutcome wait = DecideEligibilityWait(eligibilityReason, this.eligibilityWaitFrames, EligibilityFrameBudget);
+                    if (wait == EligibilityWaitOutcome.TerminalOnReason)
+                    {
+                        this.Finish(
+                            NotHomeReason,
+                            NotHomeReason,
+                            new Dictionary<string, object?>
+                            {
+                                ["topology"] = this.Topology(),
+                                ["eligibilityReason"] = eligibilityReason,
+                            });
+                        return true;
+                    }
                     // A lifecycle that never becomes eligible is indistinguishable
                     // from one that never ran. Report why, bounded, on the game log.
-                    this.eligibilityWaitFrames++;
                     if (eligibilityReason != this.lastEligibilityReason)
                     {
                         this.lastEligibilityReason = eligibilityReason;
@@ -439,7 +516,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
                     // "we never slept because the actor was passed out / a menu
                     // was open" is not a generic timeout and must not be reported
                     // as one.
-                    if (this.eligibilityWaitFrames >= EligibilityFrameBudget)
+                    if (wait == EligibilityWaitOutcome.BudgetExhausted)
                     {
                         this.Finish(
                             "blocked",
@@ -555,6 +632,57 @@ internal sealed class SleepAndAdvanceDayLifecycle
     internal static bool RefusesForPausedClock(bool timePasses, bool ownSleepPrompt) => !timePasses && !ownSleepPrompt;
 
     /// <summary>
+    /// What one frame of the eligibility wait decides: the night is in, the night ends on a reason no wait can clear, one
+    /// more frame is worth spending, or the frame budget is spent.
+    ///
+    /// <para>
+    /// THE BOUND AND THE OUTCOME ARE ONE CALL. `Step` asks this instead of comparing a counter to a constant, so the
+    /// matrix that asserts "a night that cannot become eligible leaves on its reason rather than on 36 000 frames" drives
+    /// the same decision the game thread makes. The terminal is named for the reason (`not_home`), never for the budget.
+    /// </para>
+    /// </summary>
+    internal enum EligibilityWaitOutcome
+    {
+        /// <summary>The reason is one no wait can clear: the night ends on it now.</summary>
+        TerminalOnReason,
+
+        /// <summary>Another frame of the wait is worth spending: something the companion can do clears the reason.</summary>
+        Waiting,
+
+        /// <summary>The frame budget is spent, so the night reports the reason it waited for as `never_eligible:`.</summary>
+        BudgetExhausted,
+    }
+
+    /// <summary>One frame of the eligibility wait. See <see cref="EligibilityWaitOutcome"/>.</summary>
+    internal static EligibilityWaitOutcome DecideEligibilityWait(string reason, int waitFrames, int budget) =>
+        CannotBecomeEligibleByWaiting(reason)
+            ? EligibilityWaitOutcome.TerminalOnReason
+            : waitFrames >= budget
+                ? EligibilityWaitOutcome.BudgetExhausted
+                : EligibilityWaitOutcome.Waiting;
+
+    /// <summary>
+    /// Whether an eligibility reason can only be cleared by the actor WALKING somewhere, so waiting for it is not a wait.
+    ///
+    /// <para>
+    /// The eligibility wait exists because a dispatched night that has not begun does not own the body, so the companion
+    /// can clear what stands in its way and come back (`IsAwaitingEligibility`). That remedy is real for a menu, a dialogue,
+    /// a paused clock and a missing co-op partner, and it is NOT real for the one reason about where she stands: the walk
+    /// home is a node of another programme, and the submission path refuses one while this node has not settled
+    /// (`planLookaheadRefusals`). A night that waited for it was measured at 308 s and ended by the 2:00 AM pass-out.
+    /// </para>
+    /// <para>
+    /// THE MEMBERSHIP IS THE DECLARATION'S: a row of <see cref="EligibilityReasons"/> with nobody to clear it. The terminal
+    /// this sends the night to is <see cref="NotHomeReason"/> itself, which the owning execution already projects as
+    /// `Rejected` - a second member would have to arrive with its own receipt state, so the predicate is derived from the
+    /// one table rather than restating the one name.
+    /// </para>
+    /// </summary>
+    internal static bool CannotBecomeEligibleByWaiting(string reason) =>
+        EligibilityReasons.Any(row => row.ClearedBy.Length == 0
+            && (row.IsPrefix ? reason.StartsWith(row.Code, StringComparison.Ordinal) : string.Equals(row.Code, reason, StringComparison.Ordinal)));
+
+    /// <summary>
     /// The room this night's own eligibility admits: the farmhouse, and the cabin the Farmhand lives in (a Cabin is a
     /// FarmHouse, so both answer here). Answers null outside them, which is the <c>not_home</c> refusal.
     ///
@@ -592,7 +720,7 @@ internal sealed class SleepAndAdvanceDayLifecycle
         if (Game1.eventUp) { reason = "event_up"; return false; }
         // Cabin derives from FarmHouse, so this admits the AI Farmhand's own
         // cabin as well as the host's farmhouse.
-        if (HomeOf(Game1.currentLocation) is null) { reason = "not_home"; return false; }
+        if (HomeOf(Game1.currentLocation) is null) { reason = NotHomeReason; return false; }
         // A co-op night must not be started alone, and this MUST hold before the
         // multiplayer branch is chosen: `Game1.IsMultiplayer` is
         // `otherFarmers.Count > 0`, so a host that sleeps while its partner is

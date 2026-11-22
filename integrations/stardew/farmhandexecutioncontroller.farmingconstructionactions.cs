@@ -994,6 +994,12 @@ internal sealed partial class ExecutionManager
         if (slot < 0 || slot >= Game1.player.Items.Count || Game1.player.Items[slot] is not Tool)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "tool_not_owned_in_slot", $"slot={slot}");
         StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (string.IsNullOrWhiteSpace(expectedTargetId))
+        {
+            if (!TryMintTileTargetAtExecution("clear_debris", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
+            expectedTargetId = minted;
+        }
         StardewValley.TerrainFeatures.ResourceClump? clump = FindDebrisTarget(location, targetX, targetY, expectedTargetId, out _);
         if (clump is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "debris_target_changed", $"target={targetX},{targetY}");
@@ -1190,6 +1196,12 @@ internal sealed partial class ExecutionManager
         if (this.AdmitLocalExecution(requestId, requestedDeadlineMs, AdmissionActionabilityProfile.Physical, out string executionId, out long nowMs) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
         StardewValley.GameLocation location = Game1.player.currentLocation;
+        if (string.IsNullOrWhiteSpace(expectedTargetId))
+        {
+            if (!TryMintTileTargetAtExecution("break_resource_clump", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
+            expectedTargetId = minted;
+        }
         if (!TryFindBreakableClump(location, targetX, targetY, expectedTargetId, out StardewValley.TerrainFeatures.ResourceClump? clump, out string toolKind, out int requiredUpgrade))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "clump_target_moved", DescribeClumpTargetRefusal(targetX, targetY));
         DeclaredToolResolution packTool = ResolveOwnedTool(Game1.player.Items, toolKind, requiredUpgrade);
@@ -1500,6 +1512,12 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
         if (ResolveDeclaredTool(Game1.player.Items, "scythe_crop").RefusalCode is { } toolRefusal)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusal, DescribeDeclaredToolRefusal(Game1.player.Items, "scythe_crop", toolRefusal, slot));
+        if (string.IsNullOrWhiteSpace(expectedTargetId))
+        {
+            if (!TryMintTileTargetAtExecution("scythe_crop", Game1.player.currentLocation, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
+            expectedTargetId = minted;
+        }
         if (!IsScytheTargetInRange(Game1.player, targetX, targetY))
         {
             return this.TryBeginToolApproach(

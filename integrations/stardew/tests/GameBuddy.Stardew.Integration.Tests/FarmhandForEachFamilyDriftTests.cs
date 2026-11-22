@@ -221,7 +221,7 @@ public sealed class FarmhandForEachFamilyDriftTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> PublisherThrows = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        [FarmhandForEachFarmWorld.HarvestTargetsFamily] =
+        [TileTargetMint.HarvestTargets] =
             "`DiscoverHarvestTargets` resolves the harvest item through `ItemRegistry.Create`, which reads the item "
             + "type-definition registry populated from Data/Objects at startup (measured: KeyNotFoundException \"No item type "
             + "definition found\"), and this process never loads it",
@@ -238,7 +238,7 @@ public sealed class FarmhandForEachFamilyDriftTests
     /// </summary>
     private static readonly IReadOnlyDictionary<string, string> PublisherPublishesNothing = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        [FarmhandForEachFarmWorld.SeedTargetsFamily] =
+        [TileTargetMint.SeedTargets] =
             "`DiscoverSeedTargets` admits a tile only where `HoeDirt.canPlantThisSeedHere` answers true, and that reads "
             + "Data/Crops, which this process never loads",
     };

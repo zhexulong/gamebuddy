@@ -421,8 +421,8 @@ public sealed class SoilTilePublicationTests
             var size = new xTile.Dimensions.Size(Width, Height);
             var tileSize = new xTile.Dimensions.Size(64, 64);
             map.AddLayer(new xTile.Layers.Layer("Back", map, size, tileSize));
-            // `GameLocation.isTileLocationOpen` requires it (`FrameworkExtensions.RequireLayer`, GameLocation.cs:7763):
-            // a farm map declares both, and the discovery asks the engine whether a tile is free before offering it.
+            // The engine's own hoe admission requires it (`GameLocation.isTilePassable`, GameLocation.cs:2898): a farm
+            // map declares both, and the Hoe asks the map whether the tile it aims at is walkable ground.
             map.AddLayer(new xTile.Layers.Layer("Buildings", map, size, tileSize));
             map.AddLayer(new xTile.Layers.Layer("Front", map, size, tileSize));
             // The farm's own outdoor sheet: `doesTileHaveProperty(x, y, "Diggable", "Back")` reads the Back layer,

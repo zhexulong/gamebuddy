@@ -251,13 +251,14 @@ public sealed record BridgeDoor(
 ///
 /// <para>
 /// <see cref="BlockX"/>/<see cref="BlockY"/>/<see cref="BlockW"/>/<see cref="BlockH"/> are the bounds of the CONNECTED
-/// strip this tile belongs to: the axis-aligned box of every tile reachable from it by a cardinal step over the same
-/// population this family publishes (`HoeDirt` present or `IsTillableTile`), measured over the whole map rather than
-/// over the discovery window. They exist because a task has a SHAPE and the family published only points: measured
-/// `round92`, she was asked for one 3-tile-wide, twenty-long strip and planted 34 times scattered across x 62..79,
-/// y 17..26 - "which rectangle should I open" was arithmetic she had to invent from a 13x13 grid, and the row that
-/// would have said `3x20` said nothing. The box is a measurement of the world, never a request: `till_soil` still
-/// admits one tile at a time, and a tile outside the six-tile window is in the box without being a row.
+/// strip this tile belongs to: the axis-aligned box of every tile reachable from it by a cardinal step over the ground a
+/// patch can be opened in - the permanent half of the Hoe's admission, under an occupant some published action clears -
+/// measured over the whole map rather than over the discovery window. They exist because a task has a SHAPE and the
+/// family published only points: measured `round92`, she was asked for one 3-tile-wide, twenty-long strip and planted 34
+/// times scattered across x 62..79, y 17..26 - "which rectangle should I open" was arithmetic she had to invent from a
+/// 13x13 grid, and the row that would have said `3x20` said nothing. The box therefore measures the GROUND and not this
+/// family's rows: a tile with a weed on it is inside the strip and is not a row, because a row is a tile a soil action
+/// addresses now. The box is a measurement of the world, never a request: `till_soil` still admits one tile at a time.
 /// </para>
 /// </summary>
 public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt, int BlockX, int BlockY, int BlockW, int BlockH);

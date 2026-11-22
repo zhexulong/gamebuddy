@@ -403,6 +403,66 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
+    public void TheWorldOffersSomethingToWearAndSomewhereInTheHouseToDisplayIt()
+    {
+        // THE DEFECT: `dress_and_display`'s criterion is `[equip_wearable, dress_mannequin | set_sign_display]`, and the
+        // world it was rotated into held nothing to wear and nowhere to display it. Measured `round93` (2026-11-22):
+        // `task_precondition_unmet:dress_and_display:pack:wearable`, with `mannequinTargets` and `signTargets` both empty.
+        // Neither half was a product gap and neither was a criterion problem - she was not unwilling, there was nothing.
+        string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
+        body.Should().Contain(
+            "InstallNativeLocalPlaySessionDressAndDisplayGiven(player);",
+            "the play-session world must give the day both halves, or the day measures the world");
+
+        // The Given's OWN file, not every fixture partial: other scenarios' Givens type their own item ids (`(H)0` for
+        // the mannequin scenario), and this assertion is about what THIS Given writes.
+        string given = File.ReadAllText(RepositorySourcePath(
+            Path.Combine("integrations", "stardew", "ModEntry.Fixtures.PlaySessionDressAndDisplay.cs")));
+        string wardrobe = InitializerBody("private void InstallNativeLocalPlaySessionWardrobeGiven(");
+
+        // ONE WEARABLE PER KIND THE CRITERION CAN SATISFY, so `equip_wearable` is a choice and something is left for
+        // the mannequin. The kinds are read out of the Given's own table rather than listed here, so a kind dropped from
+        // the world is a kind this sadly no longer covers. Four, and exactly these four: a ring is wearable but a mannequin
+        // cannot be dressed with one, so it would buy the equip half and not the display half.
+        var kinds = Regex.Matches(given, @"\(ItemTypeId: ""(?<type>\([HBSP]\))"", BodySlot: ""(?<slot>[a-z_]+)""\)")
+            .Cast<Match>()
+            .Select(match => $"{match.Groups["type"].Value}={match.Groups["slot"].Value}")
+            .ToArray();
+        kinds.Should().BeEquivalentTo(
+            new[] { "(H)=hat", "(B)=boots", "(S)=shirt", "(P)=pants" },
+            "the wardrobe stocks one wearable for each body slot the criterion's two actions can use");
+        given.Should().Contain(
+            "ItemRegistry.RequireTypeDefinition(itemTypeId)",
+            "which ids exist is the content's data, so they are RESOLVED - a hand-typed id here is a second authority");
+        given.Should().Contain(
+            "definition.CreateItem(data)",
+            "the item itself is built by the type's own definition, from the id that definition listed");
+        given.Should().Contain(
+            "ExecutionManager.IsWearableForBodySlot(candidate, bodySlot)",
+            "the candidate is admitted by the same predicate the action applies to the item it was handed");
+        // No wearable ITEM id is typed: the four type ids above are the sheet names, and the ids behind them are the data's.
+        foreach (string typedWearableId in new[] { "ItemRegistry.Create(\"(H)", "ItemRegistry.Create(\"(B)", "ItemRegistry.Create(\"(S)", "ItemRegistry.Create(\"(P)" })
+            given.Should().NotContain(typedWearableId, "a wearable id written here would rot the moment the game's data changed");
+        // Idempotent by the same admission: a pack that already holds a wearable in that body slot keeps what it holds.
+        wardrobe.Should().Contain("ExecutionManager.IsWearableForBodySlot(item, bodySlot)");
+
+        // THE DISPLAY TARGET IS CHOSEN BY ASKING THE PUBLISHER. A mannequin in a room the wire does not publish is a target
+        // the day cannot name, and re-deriving "in radius and addressable" here would be a second copy of that rule.
+        given.Should().Contain("ExecutionManager.DiscoverMannequinTargets(");
+        given.Should().Contain("ExecutionManager.DiscoverSignTargets(");
+        given.Should().Contain("player.currentLocation is not FarmHouse room", "the room is the actor's own, or nothing is published");
+        given.Should().Contain("fixture_native_local_play_session_display_target_missing");
+
+        // AND NEITHER HALF IS THE WORK. A wearable in the pack is available, not worn; an empty mannequin is a target, not
+        // a dressed result. The fixture performs no part of the day it makes possible, and it reads the target back off the
+        // room to prove that rather than trusting the constructor.
+        given.Should().Contain("IsEmptyDisplayTarget(", "a target that arrived dressed would be the day's result handed to her");
+        given.Should().NotContain("performObjectDropInAction(", "dressing the mannequin belongs to production");
+        given.Should().NotContain("checkForAction(", "setting the sign's display belongs to production");
+        given.Should().NotContain(".Equip(", "equipping the wearable belongs to production");
+    }
+
+    [Fact]
     public void TheArmTimeWalkabilityAsksWhatActuallyStopsAFarmer()
     {
         // THE DEFECT CLASS: two answers to "can the actor walk there". The arm-time rule counted ANY terrain feature

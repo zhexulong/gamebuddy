@@ -1219,7 +1219,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -1258,7 +1259,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -1485,7 +1487,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The slot must hold a tool this action can use, but it need not be `snapshot.currentToolSlot`: the handler takes the tool from the named slot directly."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -1516,7 +1519,8 @@
             "type": "integer"
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -1957,7 +1961,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -2036,7 +2041,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -2075,7 +2081,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},
@@ -2561,7 +2568,8 @@
             "description": "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot."
           },
           "expectedTargetId": {
-            "type": "string"
+            "type": "string",
+            "resolvedAtExecution": true
           }
         },
         "outputFacts": {},

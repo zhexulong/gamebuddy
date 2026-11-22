@@ -2238,6 +2238,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// map's `Diggable` alone while the action refused on the whole walk.
     /// </para>
     /// <para>
+    /// The clauses are the ENGINE's own, because that is the only way this answer and the Hoe's cannot disagree.
+    /// <c>Hoe.DoFunction</c> admits a tile when <c>GameLocation.doesTileHaveProperty(x, y, "Diggable", "Back")</c> is
+    /// not null (Hoe.cs:86) and <c>GameLocation.makeHoeDirt</c> adds the dirt, which re-asks the same property and adds
+    /// <c>!IsTileBlockedBy(tile, ~(Characters | Farmers))</c> (GameLocation.cs:13557). The engine has no single
+    /// predicate for "can be hoeed", so its two members are combined here and nowhere else: `isTilePassable` is asked
+    /// on its own only so a wall is NAMED as a wall, because `IsTileBlockedBy` folds the same reading into its answer.
+    /// </para>
+    /// <para>
+    /// The clause that used to stand in the engine's place was <c>isTileLocationOpen</c> (GameLocation.cs:7475): the
+    /// SPAWN-PLACEMENT question, whose own comment says it exists so items do not spawn behind high walls. It refuses a
+    /// tile carrying any <c>Front</c> or <c>AlwaysFront</c> tile - decoration drawn over ground - and the Hoe never asks
+    /// that, so open ground answered <c>map_blocked</c> and a row published <c>tillable:no</c> for it. The occupancy half
+    /// was narrow for the same reason: it walked <c>objects</c> and <c>terrainFeatures</c> only, so a boulder
+    /// (<c>resourceClumps</c>), a chair (<c>furniture</c>) or a large terrain feature was published as ground the Hoe
+    /// admits while <c>makeHoeDirt</c> refused it.
+    /// </para>
+    /// <para>
     /// The receipt used to say `soil_not_diggable` and nothing else, so a companion told "this ground is dead hard"
     /// read it as "wrong tile for now" and re-aimed. Measured 2026-11-09: four live refusals about ground that can
     /// never be hoed arrived as one `soil_not_diggable` and three `target_out_of_range` (with a distance attached).
@@ -2247,14 +2264,55 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </para>
     /// <para>
     /// The order is permanent facts before removable ones. Water, the map's own `Diggable` property and the engine's
-    /// `isTileLocationOpen` (a Buildings/Front obstruction - a greenhouse wall, a farmhouse, a wall) are what the tile
-    /// IS; an occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to
-    /// clear a chest off ground that could not be hoed anyway. `HoeDirt` is deliberately NOT an occupant: a tilled
-    /// tile has its own answer one gate earlier (`soil_already_tilled`), and naming it here would call the one state
-    /// the hoe exists for "blocked".
+    /// `isTilePassable` (Hoe.cs:106 - the map's Back and Buildings layers, a wall, a pond) are what the tile IS; an
+    /// occupant is only asked about ground that would otherwise be farmable, so a reader is never sent to clear a
+    /// chest off ground that could not be hoed anyway. `HoeDirt` is deliberately NOT an occupant: a tilled tile has
+    /// its own answer one gate earlier (`soil_already_tilled`), and naming it here would call the one state the hoe
+    /// exists for "blocked".
     /// </para>
     /// </summary>
     internal static string? DescribeSoilRefusal(StardewValley.GameLocation? location, int x, int y)
+    {
+        // THE GROUND FIRST, then whatever stands on it: the permanent clauses are this function's own head, written once
+        // in `DescribeSoilGroundRefusal` so "this ground can be farmed" and "this tile can be farmed now" cannot become
+        // two answers about one tile.
+        if (DescribeSoilGroundRefusal(location, x, y) is { } ground)
+            return ground;
+        Vector2 tile = new(x, y);
+        if (location!.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature))
+        {
+            if (feature is StardewValley.TerrainFeatures.HoeDirt)
+                return null;
+            return $"occupied:{DescribeOccupantKind(feature)}";
+        }
+        // `makeHoeDirt`'s last clause, asked as the engine asks it: one walk over every collection a tile can hold, so
+        // a family missing from a list here cannot be published as ground the Hoe admits.
+        if (location.IsTileBlockedBy(tile, HoeBlockedDirtMask))
+        {
+            string occupant = DescribeTileOccupant(location, x, y);
+            return occupant == "none" ? "occupied:blocked" : $"occupied:{occupant}";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Whether this tile's GROUND would admit the Hoe once whatever stands on it is gone - the permanent half of
+    /// <see cref="DescribeSoilRefusal"/>, and the answer a strip of ground is measured over.
+    ///
+    /// <para>
+    /// A TILE WITH A WEED ON IT IS NOT A TILE THE HOE REFUSES FOR EVER, and that difference is what a strip needs: the
+    /// farm is one field with rocks, weeds, grass and loose twigs on it, so a measurement that counted only bare ground
+    /// under-reported every patch by whatever stood on it. Measured on the `3x20` slice: the biggest bare-ground block
+    /// answered `28x19`, one row short of the strip, while the ground it was cut out of was the whole field.
+    /// </para>
+    /// <para>
+    /// The clauses are the engine's own and they are the ones nothing the actor can do removes: water, the map's
+    /// `Diggable` property on its Back layer (<c>Hoe.cs:86</c>), and the map's own passability (<c>Hoe.cs:106</c>). An
+    /// occupant is deliberately absent here - <see cref="DescribeSoilRefusal"/> asks that question next, and
+    /// <c>TileOccupantKind.UnclearableReason</c> decides whether an action can take the occupant away.
+    /// </para>
+    /// </summary>
+    internal static string? DescribeSoilGroundRefusal(StardewValley.GameLocation? location, int x, int y)
     {
         if (location is null)
             return "not_map_diggable";
@@ -2262,16 +2320,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return "water";
         if (location.doesTileHaveProperty(x, y, "Diggable", "Back") is null)
             return "not_map_diggable";
-        Vector2 tile = new(x, y);
-        if (!location.isTileLocationOpen(tile))
-            return "map_blocked";
-        if (location.objects.TryGetValue(tile, out StardewValley.Object? placed))
-            return $"occupied:{DescribeOccupantKind(placed)}";
-        if (location.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-            && feature is not StardewValley.TerrainFeatures.HoeDirt)
-            return $"occupied:{DescribeOccupantKind(feature)}";
-        return null;
+        return location.isTilePassable(new Vector2(x, y)) ? null : "impassable";
     }
+
+    /// <summary>
+    /// Everything `makeHoeDirt` counts as in the way, which is every collision kind except the ones a farmer reading
+    /// the ground is not: its own body (`Characters`) and other farmers (`Farmers`) standing on the tile.
+    /// </summary>
+    private const CollisionMask HoeBlockedDirtMask = ~(CollisionMask.Characters | CollisionMask.Farmers);
 
     /// <summary>
     /// The reason code one soil refusal carries: the action's word plus the predicate's own reason, so the token set

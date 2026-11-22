@@ -35,6 +35,14 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
+/// THE ANSWER HAS A THIRD CALLER SHAPE: one that names NO target. A request whose <c>expectedTargetId</c> is absent is not a
+/// request that named a moved target - the action's own row declares the identity resolved at execution
+/// (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>), the tile names it there and then, and what the tile says
+/// instead is the refusal, in one of three words: absent, changed kind, or not ready. The cases at the end of this file are
+/// that half, on the same headless world.
+/// </para>
+///
+/// <para>
 /// Every case drives the production handler (<see cref="ResourceToolActionHandler"/> /
 /// <see cref="FarmingActionHandler"/>) against the same headless world the target-family suite builds, and reads the
 /// target id from the REAL `Discover*` that publishes it - so the identity under test is the one a plan would have
@@ -193,6 +201,112 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
         receipt.ReasonCode.Should().Be("tree_chop_target_changed");
         receipt.Evidence.Should().Contain("tapped=true", "and the receipt says which precondition stopped it");
         receipt.Evidence.Should().NotContain("settled_by=", "nothing about this answer is the request's own outcome");
+    }
+
+    /// <summary>
+    /// A CLEARING SWING THE CALLER LEFT UNNAMED RESOLVES THE IDENTITY AND HANDS IT TO THE BODY.
+    ///
+    /// <para>
+    /// Measured `round44` and `round80`: a plan could address a tile only by naming an identity an observation had
+    /// published, so a node whose target its own earlier node created had nothing to name, and a node re-asking for a tile
+    /// the world had already moved past was refused for an identity nobody could have known. `chop_tree` therefore declares
+    /// its `expectedTargetId` resolved at execution, and this is the reading: no id in the request, a mature tree on the
+    /// tile, and the receipt naming the id `treeChopSourceTargets` publishes for that tile - printed by the EXECUTED body,
+    /// which is where the identity has to arrive for the swing to be aimed at anything.
+    /// </para>
+    /// <para>
+    /// WHY THE BODY IS STOPPED BY STAMINA RATHER THAN LET SWING. No clearing action's native terminal runs in this process:
+    /// `ResourceClump.destroy` and `Object.cutWeed` both reach `ItemRegistry.Create`, whose item-type definitions are loaded
+    /// from `Data/Objects` at startup (the same blocker `FarmhandForEachFamilyDriftTests` records for `DiscoverHarvestTargets`).
+    /// The stamina guard is the last precondition before the swing, so a body that reaches it has already resolved the
+    /// target - and its evidence carries the id, which is the fact this case is about.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AClearingSwingThatWasGivenNoTargetHandsTheBodyTheIdentityItsFamilyPublishes()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceTree(x: 3, y: 2);
+        string published = world.Rows("treeChopSourceTargets").Cast<BridgeTreeChopSourceTarget>().Single().TargetId;
+        world.Actor.Stamina = 0f;
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("chop_tree"), "chop_tree_unnamed", "chop_tree", 3, 2, expectedTargetId: null);
+
+        receipt.ReasonCode.Should().Be(
+            "insufficient_stamina",
+            "the request got past identity resolution and was stopped by the body's own precondition: {0}",
+            receipt.Evidence);
+        receipt.Evidence.Should().Contain(
+            $"target={published}",
+            "the executed body and its receipt name the id the family publishes for that tile, not an empty field");
+    }
+
+    /// <summary>
+    /// THE SAME SWING ON A TILE THAT NOW HOLDS A STONE SAYS WHAT IT FOUND, not that an identity it never sent changed.
+    ///
+    /// <para>
+    /// The code carries both kinds because that is the fact the caller needs: the action removes a <c>weed</c>, the tile
+    /// carries a <c>stone</c>, so the repair is to look at the tile rather than to re-read an observation. The words are
+    /// <see cref="TileOccupantKind"/>'s - the same vocabulary the row publishes as `occupant` and every `Clears`
+    /// declaration is written in - and the expected half is joined from that declaration, so neither side is a second list.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AClearingSwingGivenNoTargetNamesTheKindItFoundInstead()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceRock(x: 3, y: 2, durability: 1);
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("cut_weeds"), "cut_weed_unnamed_stone", "cut_weeds", 3, 2, expectedTargetId: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "a scythe swing and a stone are not the same work");
+        receipt.ReasonCode.Should().Be("cut_weeds_target_changed:weed:stone", "the action removes a weed; the tile carries a stone");
+        receipt.Evidence.Should().Contain("found=stone", "and the receipt names what it found, not only the code");
+    }
+
+    /// <summary>
+    /// A TILE WITH NOTHING ON IT IS A THIRD ANSWER: absent, never "changed", because nothing changed - she arrived at a
+    /// tile that holds nothing and there is no occupant for the action to withhold.
+    /// </summary>
+    [Fact]
+    public void AClearingSwingGivenNoTargetOnABareTileSaysTheTargetIsAbsent()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
+        world.StandAt(2, 2);
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("cut_weeds"), "cut_weed_unnamed_bare", "cut_weeds", 3, 2, expectedTargetId: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("cut_weeds_target_absent");
+        receipt.Evidence.Should().Contain("occupant=none", "the tile really is bare, and the receipt says so rather than only refusing");
+    }
+
+    /// <summary>
+    /// A TAPPED TREE IS THE RIGHT THING AND NOT TAKEABLE YET, which is neither of the other two answers and has its own
+    /// code: nothing changed, so calling it `changed` would make the receipt lie about the world - and the clause is the
+    /// one the family's own admission published (<c>DiscoveryExclusionReasons.AlreadyTapped</c>), read from
+    /// <see cref="ExecutionManager.TreeChopSourceExclusion"/> rather than invented here.
+    /// </summary>
+    [Fact]
+    public void ATreeThatIsTappedSaysItIsNotReadyForTheReasonItsOwnAdmissionGives()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(StardewValley.Tools.Axe), "(T)Axe", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceTree(x: 3, y: 2);
+        var tree = (StardewValley.TerrainFeatures.Tree)world.Farm.terrainFeatures[new Vector2(3, 2)];
+        tree.tapped.Value = true;
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("chop_tree"), "chop_tree_unnamed_tapped", "chop_tree", 3, 2, expectedTargetId: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected);
+        receipt.ReasonCode.Should().Be("chop_tree_target_not_ready:tree:already_tapped", "the tree is there and the tapper owns it");
+        receipt.Evidence.Should().Contain("already_tapped", "the clause travels in the receipt as well as in the code");
     }
 
     /// <summary>The request as the plan compiler emits it, through the handler the production router dispatches to.</summary>

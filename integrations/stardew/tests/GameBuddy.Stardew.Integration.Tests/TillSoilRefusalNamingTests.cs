@@ -236,6 +236,109 @@ public sealed class TillSoilRefusalNamingTests
             .Should().BeNull("a tilled tile is the hoe's own result, not an obstacle on it");
     }
 
+    /// <summary>
+    /// THE CLAUSE THAT WAS NOT THE HOE'S: a decoration on the Front layer is drawn over ground, and the Hoe never asks
+    /// about it.
+    ///
+    /// <para>
+    /// The field used to ask <c>isTileLocationOpen</c> (GameLocation.cs:7475) - the SPAWN-PLACEMENT question, which
+    /// refuses any tile carrying a <c>Front</c> or <c>AlwaysFront</c> tile - where <c>Hoe.DoFunction</c> asks
+    /// <c>isTilePassable</c> (Hoe.cs:106), which reads the Back and Buildings layers only. So open, untilled, passable
+    /// ground with something drawn over it answered `map_blocked` and `tillable:no`. The engine's own admission is the
+    /// authority here and it is asked directly: <c>makeHoeDirt</c> (GameLocation.cs:13557) adds the dirt.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void GroundAFrontTileIsDrawnOverIsStillGroundTheHoeTakes()
+    {
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.SetDiggable(13, 10);
+        harness.Decorate(13, 10);
+
+        harness.Location.makeHoeDirt(new Vector2(13, 10)).Should().BeTrue(
+            "the engine's own `makeHoeDirt` takes this tile, so `tillable:no` here is the answer the Hoe would not give");
+        harness.Location.terrainFeatures.Remove(new Vector2(13, 10));
+
+        ExecutionManager.DescribeSoilRefusal(harness.Location, 13, 10)
+            .Should().BeNull("a Front tile is decoration the Hoe never asks about");
+        ExecutionManager.IsTillableTile(harness.Location, 13, 10)
+            .Should().BeTrue("and the row must publish the Hoe's answer, not the spawn-placement one");
+    }
+
+    /// <summary>
+    /// A boulder is in the engine's occupancy walk and was not in this predicate's, so the row published `tillable:yes`
+    /// for ground the Hoe refuses while its own `occupant` field named the boulder beside it.
+    /// </summary>
+    [Fact]
+    public void ABoulderOnDiggableGroundIsGroundTheHoeRefuses()
+    {
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        harness.SetDiggable(13, 10);
+        harness.PlaceClump(13, 10);
+
+        harness.Location.makeHoeDirt(new Vector2(13, 10)).Should().BeFalse(
+            "`makeHoeDirt` ends in `!IsTileBlockedBy(tile, ~(Characters|Farmers))`, and a resource clump occupies the tile");
+        ExecutionManager.DescribeSoilRefusal(harness.Location, 13, 10)
+            .Should().Be("occupied:resourceclump", "the word is the engine's own type name, as every occupant is named");
+        ExecutionManager.IsTillableTile(harness.Location, 13, 10)
+            .Should().BeFalse("and the same tile is not ground the row may call tillable");
+    }
+
+    /// <summary>
+    /// THE AUTHORITY, ASKED ON EVERY TILE: the row's `tillable` is checked against what <c>makeHoeDirt</c> actually does
+    /// on the same world, so a second list of conditions written here cannot drift from the Hoe.
+    ///
+    /// <para>
+    /// The population is the harness's whole 20x20 map, not a list of shapes: the map carries ordinary diggable ground,
+    /// ground without the map's `Diggable` property, water, a Buildings-layer wall, a Front-layer decoration, tilled
+    /// soil, a placed object, a grass tuft and a boulder, and every tile of it is asked both ways. The engine's answer is
+    /// read by CALLING the engine - `makeHoeDirt` - and the dirt it adds is taken back out, because the question is a
+    /// reading and the world is not this test's to change.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryTileAnswersWhatTheEnginesOwnHoeAdmissionAnswers()
+    {
+        using TillSoilHarness harness = TillSoilHarness.Create();
+        for (int x = 4; x <= 8; x++)
+            for (int y = 4; y <= 8; y++)
+                harness.SetDiggable(x, y);
+        harness.SetNotDiggable(9, 4);
+        harness.SetNotDiggable(10, 4);
+        harness.SetWater(10, 4);
+        harness.SetDiggable(11, 4);
+        harness.Wall(11, 4);
+        harness.SetDiggable(12, 4);
+        harness.Decorate(12, 4);
+        harness.SetDiggable(13, 4);
+        harness.PlaceHoeDirt(13, 4);
+        harness.SetDiggable(14, 4);
+        harness.PlaceObject(14, 4, new StardewValley.Objects.Chest());
+        harness.SetDiggable(15, 4);
+        harness.PlaceGrass(15, 4);
+        harness.SetDiggable(16, 4);
+        harness.PlaceClump(16, 4);
+
+        var disagreements = new List<string>();
+        int examined = 0;
+        for (int y = 0; y < TillSoilHarness.Height; y++)
+            for (int x = 0; x < TillSoilHarness.Width; x++)
+            {
+                Vector2 tile = new(x, y);
+                bool engineAdmits = harness.Location.makeHoeDirt(tile);
+                if (engineAdmits)
+                    harness.Location.terrainFeatures.Remove(tile);
+                bool published = ExecutionManager.IsTillableTile(harness.Location, x, y);
+                examined++;
+                if (published != engineAdmits)
+                    disagreements.Add($"({x},{y}): the row says {published}, makeHoeDirt says {engineAdmits}");
+            }
+
+        examined.Should().Be(TillSoilHarness.Width * TillSoilHarness.Height, "every tile of the world is asked");
+        string.Join("; ", disagreements).Should().BeEmpty(
+            "the row and the Hoe answer one question; a disagreement is the row asking its own");
+    }
+
     [Fact]
     public void AnAlreadyTilledTile_IsTheOutcomeAndNamesTheStateThatWasActuallyThere()
     {
@@ -433,8 +536,8 @@ public sealed class TillSoilRefusalNamingTests
     /// </summary>
     internal sealed class TillSoilHarness : IDisposable
     {
-        private const int Width = 20;
-        private const int Height = 20;
+        internal const int Width = 20;
+        internal const int Height = 20;
 
         private static readonly FieldInfo WorldReadyPerScreen = typeof(Context)
             .GetProperty("IsWorldReady", BindingFlags.Public | BindingFlags.Static)!
@@ -446,9 +549,11 @@ public sealed class TillSoilRefusalNamingTests
         private readonly Game1? gameBefore;
         private readonly Farmer? playerBefore;
         private readonly object? worldStateBefore;
+        private readonly object? locationContextsBefore;
         private ExecutionManager executions;
         private xTile.Layers.Layer back = null!;
         private xTile.Layers.Layer buildings = null!;
+        private xTile.Layers.Layer front = null!;
         private xTile.Tiles.TileSheet sheet = null!;
 
         internal GameLocation Location = null!;
@@ -459,6 +564,9 @@ public sealed class TillSoilRefusalNamingTests
             this.playerBefore = Game1.player;
             this.worldStateBefore = typeof(Game1)
                 .GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
+                .GetValue(null);
+            this.locationContextsBefore = typeof(Game1)
+                .GetField("locationContextData", BindingFlags.Public | BindingFlags.Static)!
                 .GetValue(null);
             this.executions = null!;
             this.ResetManager();
@@ -471,6 +579,10 @@ public sealed class TillSoilRefusalNamingTests
                 Game1.game1 = (Game1)FormatterServices.GetUninitializedObject(typeof(Game1));
             var root = (NetRoot<NetWorldState>)FormatterServices.GetUninitializedObject(typeof(NetRoot<NetWorldState>));
             root.Value = new NetWorldState();
+            // `makeHoeDirt` asks the tile's weather while it builds the dirt (`IsRainingHere`), and a world state with no
+            // row for the location context GENERATES one - which reaches the content pipeline this runner has no content
+            // for. The harness states the valley's weather once instead: default, not raining.
+            root.Value.LocationWeather[StardewValley.LocationContexts.DefaultId] = new LocationWeather();
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!.SetValue(null, root);
             // `Object.isPassable` asks `IsFloorPathItem` (Object.cs:6075/:6082), which builds its lookup from
             // `Game1.floorPathData` (Flooring.cs:130) - a cache `Game1` fills at startup from `Data/FloorsAndPaths`. An
@@ -478,6 +590,14 @@ public sealed class TillSoilRefusalNamingTests
             // rectangle query reads collision on every tile it answers. Empty is the honest value: this world declares
             // no flooring, so no object is a floor path.
             Game1.floorPathData ??= new Dictionary<string, StardewValley.GameData.FloorsAndPaths.FloorPathData>(System.StringComparer.Ordinal);
+            // `GameLocation.makeHoeDirt` reads the weather of the tile's location context (`IsRainingHere`, which is
+            // `NetWorldState.GetWeatherForLocation(Game1.locationContextData[...])`). An uninitialized `Game1` leaves
+            // that table null, so the engine's own admission threw instead of answering; empty is the honest value: this
+            // world declares no location context, so its default weather is all it can have.
+            Game1.locationContextData ??= new Dictionary<string, StardewValley.GameData.LocationContexts.LocationContextData>(System.StringComparer.Ordinal);
+            Game1.locationContextData.TryAdd(
+                StardewValley.LocationContexts.DefaultId,
+                new StardewValley.GameData.LocationContexts.LocationContextData());
 
             var map = new xTile.Map();
             var size = new xTile.Dimensions.Size(Width, Height);
@@ -494,6 +614,7 @@ public sealed class TillSoilRefusalNamingTests
             harness.Location = location;
             harness.back = map.GetLayer("Back");
             harness.buildings = map.GetLayer("Buildings");
+            harness.front = map.GetLayer("Front");
             harness.sheet = sheet;
 
             var sprite = (FarmerSprite)FormatterServices.GetUninitializedObject(typeof(FarmerSprite));
@@ -567,6 +688,26 @@ public sealed class TillSoilRefusalNamingTests
         internal void PlaceObject(int x, int y, StardewValley.Object placed) =>
             this.Location.objects[new Vector2(x, y)] = placed;
 
+        /// <summary>
+        /// A tile on the <c>Front</c> layer: decoration DRAWN OVER the ground, which the Hoe never asks about and
+        /// <c>isTileLocationOpen</c> refused the ground for.
+        /// </summary>
+        internal void Decorate(int x, int y) =>
+            this.front.Tiles[x, y] = new xTile.Tiles.StaticTile(this.front, this.sheet, xTile.Tiles.BlendMode.Alpha, 0);
+
+        /// <summary>A boulder: the `resourceClumps` family, whose tiles the Hoe refuses and this pin's field missed.</summary>
+        internal void PlaceClump(int x, int y) =>
+            this.Location.resourceClumps.Add(
+                new StardewValley.TerrainFeatures.ResourceClump(600, 1, 1, new Vector2(x, y)));
+
+        /// <summary>A grass tuft, positioned as the engine positions one, so the Hoe's own occupancy walk sees it.</summary>
+        internal void PlaceGrass(int x, int y)
+        {
+            var grass = new StardewValley.TerrainFeatures.Grass(1, 1);
+            grass.Tile = new Vector2(x, y);
+            this.Location.terrainFeatures[new Vector2(x, y)] = grass;
+        }
+
         internal void PlaceHoeDirt(int x, int y)
         {
             var dirt = new StardewValley.TerrainFeatures.HoeDirt();
@@ -630,6 +771,8 @@ public sealed class TillSoilRefusalNamingTests
             typeof(Game1).GetField("_player", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, this.playerBefore);
             typeof(Game1).GetField("netWorldState", BindingFlags.Public | BindingFlags.Static)!
                 .SetValue(null, this.worldStateBefore);
+            typeof(Game1).GetField("locationContextData", BindingFlags.Public | BindingFlags.Static)!
+                .SetValue(null, this.locationContextsBefore);
             Game1.game1 = this.gameBefore!;
         }
     }

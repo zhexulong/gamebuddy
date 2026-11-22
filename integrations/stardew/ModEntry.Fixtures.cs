@@ -158,7 +158,7 @@ public sealed partial class ModEntry : Mod
         catch (Exception exception)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
-            this.Monitor.Log($"GameBuddy native-local-player fixture failed to request native save load: {exception.GetType().Name}.", LogLevel.Error);
+            this.Monitor.Log($"GameBuddy native-local-player fixture failed to request native save load: {FixtureSetupFailureDescription.Describe(exception)}.", LogLevel.Error);
         }
     }
 
@@ -272,7 +272,7 @@ public sealed partial class ModEntry : Mod
         catch (Exception exception)
         {
             this.nativeLocalPlayerFixtureBootstrapTerminal = true;
-            this.Monitor.Log($"GameBuddy native-local-player fixture bootstrap failed: {exception.GetType().Name}.", LogLevel.Error);
+            this.Monitor.Log($"GameBuddy native-local-player fixture bootstrap failed: {FixtureSetupFailureDescription.Describe(exception)}.", LogLevel.Error);
         }
     }
 
@@ -368,7 +368,7 @@ public sealed partial class ModEntry : Mod
         catch (Exception exception)
         {
             this.nativeLocalPlayerFixtureTerminal = true;
-            this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario={fixture.FixtureScenario}; error={DescribeNativeLocalFixtureSetupFailure(exception)}; exception_type={exception.GetType().Name}.", LogLevel.Error);
+            this.Monitor.Log($"GameBuddy native-local-player fixture setup failed: scenario={fixture.FixtureScenario}; error={FixtureSetupFailureDescription.Describe(exception)}; exception_type={exception.GetType().Name}.", LogLevel.Error);
         }
     }
 
@@ -719,6 +719,20 @@ public sealed partial class ModEntry : Mod
         if (!player.Items.OfType<StardewValley.Object>().Any(item => item.QualifiedItemId == cauliflowerSeedId && item.Stack > 0)
             && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 2)) is not null)
             throw new InvalidOperationException("fixture_native_local_play_session_seed_inventory_full");
+        // THE TWO HALVES OF `dress_and_display`, given while the actor is still in the room the day begins in.
+        //
+        // Measured `round93` (2026-11-22): the pack held tools, seeds, stone, copper and hay, the house held no mannequin
+        // and no sign, and that day could only answer `task_precondition_unmet:dress_and_display:pack:wearable` - she was
+        // not unwilling, there was nothing to wear. So the world now carries something to put on for each body slot the
+        // criterion can satisfy and one display target standing in the farmhouse (`ModEntry.Fixtures.PlaySessionDressAndDisplay.cs`).
+        //
+        // NEITHER HALF IS THE WORK: a wearable in the pack is available rather than worn, and an empty mannequin is a
+        // target rather than a dressed result. Nothing here equips an item or displays one - production alone does.
+        //
+        // It runs HERE, before the farm's props, because the display target belongs to the farmhouse: the actor is still
+        // in its bed at this point in the composed world, and the room it wakes in is what the day's first observation
+        // carries.
+        InstallNativeLocalPlaySessionDressAndDisplayGiven(player);
 
         // THE GROUND STARTS UNTILLED, and that is a rule about fixtures rather than a detail of this world: a Given
         // may not pre-satisfy the work the day's task is about. `SpreadDirt` gives EVERY Diggable tile of the Farm a
@@ -1795,16 +1809,6 @@ private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalChestF
                 return (kitTile, validStanding[0]);
         }
         return null;
-    }
-
-    private static string DescribeNativeLocalFixtureSetupFailure(Exception exception)
-    {
-        // Only our fixed diagnostic codes are safe to surface. Do not emit an
-        // arbitrary native exception message into SMAPI logs.
-        return exception is InvalidOperationException
-            && exception.Message.StartsWith("fixture_native_", StringComparison.Ordinal)
-            ? exception.Message
-            : "unexpected_fixture_setup_exception";
     }
 
     private void TryStartHostAutomation()

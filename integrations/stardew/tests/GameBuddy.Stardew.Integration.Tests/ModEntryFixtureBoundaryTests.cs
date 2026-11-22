@@ -107,6 +107,12 @@ public sealed class ModEntryFixtureBoundaryTests
         "RejectsThePlaySessionAnimalBuilding",
         // The play-session world's hay Given: the one pack stack that makes the coop's troughs published targets.
         "InstallNativeLocalPlaySessionHayGiven",
+        // The play-session world's dress-and-display Given: a wearable in the pack for each body slot the criterion can
+        // satisfy (resolved from the engine's own item data), and one display target standing in the room the day begins
+        // in - a mannequin, or a sign when no tile of that room publishes a mannequin. Its own placement question lives in
+        // the display Given as a local function, because a tuple-returning helper is not a shape this scanner can see.
+        "InstallNativeLocalPlaySessionDressAndDisplayGiven", "InstallNativeLocalPlaySessionWardrobeGiven",
+        "ResolvePlaySessionWearable", "InstallNativeLocalPlaySessionDisplayGiven", "IsEmptyDisplayTarget",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
         // The declared hand: the fixture config's one free-text Given, placed after the scenario's own Given so no
         // scenario initializer can clear it. Both halves live here for the same reason every other initializer does.
@@ -117,8 +123,7 @@ public sealed class ModEntryFixtureBoundaryTests
         "InstallWiaInterruptionFixture",
         "IsCrabPotFixtureInventoryUnchanged", "FindNativeLocalFarmFixtureTile",
         "FindNativeLocalFarmResourceClumpFixtureTile", "IsFixtureOwnedOrdinaryChest",
-        "DescribeNativeLocalFixtureSetupFailure", "TryStartHostAutomation",
-        "TryInitializeNativeFixtureScenario", "PublishFixtureReadiness", "FixtureFailureReason",
+        "TryStartHostAutomation", "TryInitializeNativeFixtureScenario", "PublishFixtureReadiness", "FixtureFailureReason",
         "InitializeNativeNpcRelationshipFixture", "InitializeNativeUseItemFixture",
         "InitializeNativeHarvestCropFixture", "InitializeNativePickupForageFixture",
         "InitializeNativePickupItemFixture", "ResolveHostAutomationFarmhand", "ResolveHostAutomationFarmArrival",

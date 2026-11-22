@@ -40,6 +40,24 @@ internal sealed partial class ExecutionManager
         if (!Context.IsWorldReady || Game1.player is null || Game1.player.currentLocation is null)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
 
+        // WHERE SHE STANDS IS THE NIGHT'S OWN PRECONDITION, AND IT IS ANSWERED IN THE SAME CALL.
+        //
+        // The refusal used to arrive a few frames after this one had already answered `accepted`, from inside the
+        // lifecycle's eligibility gate: the night then waited for the actor to walk home, and the walk home is a node of
+        // a DIFFERENT programme - which the submission path refuses while this node is still running
+        // (`planLookaheadRefusals`). Measured 2026-11-22 (`round93`, `plan_463`): `sleep()` submitted alone from Town
+        // reported `not_home` for 308 s, the `dismiss_modal` that could have changed the screen was refused
+        // `plan_action_not_composable_ahead`, and the engine's 2:00 AM pass-out ended the run with her money lost.
+        //
+        // The declaration is the lifecycle's own `HomeOf` - the same one the eligibility gate refuses from and the same
+        // one the projection states to the companion (`sleepAdmitsHere`, `snapshot-projection.ts` `sleepDayEndText`:
+        // "`sleep()` is refused here (`not_home`)"). Reading it here is not a second copy of that rule: it is the same
+        // declaration read one layer earlier, which is where the bridge receipt is minted, and the game-thread re-check in
+        // `TryEnterEligibility` still runs when the world moves her while the night is in flight.
+        if (SleepAndAdvanceDayLifecycle.HomeOf(Game1.player.currentLocation) is null)
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, SleepAndAdvanceDayLifecycle.NotHomeReason,
+                $"location={Game1.player.currentLocation.NameOrUniqueName}");
+
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs,
                 AdmissionActionabilityProfile.Overnight, FarmhandActionCatalog.LifecycleWatchdogMs) is { } admissionRefusal)
             return admissionRefusal;
@@ -79,7 +97,7 @@ internal sealed partial class ExecutionManager
         ExecutionState state = active.Lifecycle.TerminalState switch
         {
             "passed" => ExecutionState.Succeeded,
-            "not_home" => ExecutionState.Rejected,
+            SleepAndAdvanceDayLifecycle.NotHomeReason => ExecutionState.Rejected,
             "time_paused" => ExecutionState.Rejected,
             "menu_open" => ExecutionState.Rejected,
             "dialogue_up" => ExecutionState.Rejected,
