@@ -82,6 +82,17 @@ public sealed partial class ModEntry
     /// launcher sat waiting for a bridge that a fixture had made impossible, and reported `stardew_pipe_not_listening`
     /// two minutes later. The two predicates differed only in what they counted as a blocker, which is exactly the
     /// class this method exists to end.
+    ///
+    /// <para>
+    /// A TERRAIN FEATURE BLOCKS ONLY WHEN THE ENGINE SAYS SO. The previous rule refused any tile carrying one, which
+    /// is not the same fact: tilled soil (`HoeDirt`) and a grass tuft are passable in the target version, and
+    /// `StardewBodyController.IsWalkableTile` already walks over them ("standing among terrain features is the job",
+    /// `StardewBodyController.cs`). Measured round93 (2026-11-22): the fixture tills every Diggable tile of the field
+    /// before anything is sited in it, so that rule took the whole field off the walkable map - a barn inside the
+    /// field then had no approach to its door whatever tile it stood on, and no ground for its footprint either.
+    /// What the rule exists for still refuses: a grown tree (`Tree.isPassable` is false above growth stage 0), a bush
+    /// and a boulder, plus every object this fixture places.
+    /// </para>
     /// </summary>
     internal static Func<Point, bool> NativeLocalMultiDayWalkable(Farm farm)
     {
@@ -92,9 +103,17 @@ public sealed partial class ModEntry
             && tile.X < layer.LayerWidth
             && tile.Y < layer.LayerHeight
             && !farm.objects.ContainsKey(new Vector2(tile.X, tile.Y))
-            && !farm.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y))
+            && !BlocksAFarmer(farm, tile)
             && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y));
     }
+
+    /// <summary>
+    /// Whether a terrain feature on this tile stops a farmer, asked of the feature itself rather than of its kind.
+    /// </summary>
+    private static bool BlocksAFarmer(Farm farm, Point tile) =>
+        farm.terrainFeatures.TryGetValue(new Vector2(tile.X, tile.Y), out StardewValley.TerrainFeatures.TerrainFeature? feature)
+        && feature is not null
+        && !feature.isPassable(Game1.player);
 
     /// <summary>
     /// Can one Farm tile be WALKED TO from another, asked with <see cref="NativeLocalMultiDayWalkable"/> as the only

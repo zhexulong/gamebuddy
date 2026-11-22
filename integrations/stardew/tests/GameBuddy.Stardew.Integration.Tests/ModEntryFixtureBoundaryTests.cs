@@ -57,6 +57,9 @@ public sealed class ModEntryFixtureBoundaryTests
     // cannot sever the door->field route again.
     "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
     "NativeLocalMultiDayWalkable",
+    // Whether a terrain feature on a tile actually stops a farmer, asked of the feature itself: the rule above defers to
+    // it instead of refusing every kind of terrain feature, which is how a tilled field left the walkable map.
+    "BlocksAFarmer",
     // The same rule as a question about a PAIR of tiles, so selecting a site for a building and judging the world it
     // leaves cannot use two predicates again.
     "NativeLocalMultiDayWalkableFrom",
@@ -86,6 +89,14 @@ public sealed class ModEntryFixtureBoundaryTests
         // The play-session world's animal Given: the coop it places and the one adult animal inside it - plus the
         // question that keeps that coop off the door->field route, asked with the multi-day predicate above.
         "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",
+        // The ground a building is sited on, in three pieces the search composes: the footprint it would stand on, the
+        // door's approach (registered once, so reserving it and judging it cannot drift apart), and the fixture's own
+        // loose soil, which is lifted from that ground and put back when the candidate is refused. The lifter's
+        // declaration returns a named tuple, so this scanner does not see it - the same blind spot as the probe noted
+        // above; it lives beside them in the animal partial.
+        "PlaySessionAnimalFootprint", "PlaySessionAnimalDoorApproach", "RestorePlaySessionLooseSoil",
+        // The refusal reading: one tally per rule, and the rule name inside a rejection message.
+        "CountPlaySessionAnimalRefusal", "PlaySessionAnimalRule",
         // The placeable check: the coop's own footprint, its door's approach and the arm-time assertion itself, all
         // measured on the real building standing on the real farm rather than on a footprint simulated with stones.
         "RejectsThePlaySessionAnimalBuilding",

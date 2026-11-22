@@ -94,13 +94,8 @@ public sealed partial class ModEntry
         // Reachable means WALKABLE-TO, and the door tile itself is a building tile an actor never stands on: the
         // measured fact is an approach tile beside it the session's own start can walk to.
         Point from = new((int)startTile.X, (int)startTile.Y);
-        bool approach = new[]
-            {
-                new Vector2(door.X, door.Y + 1), new Vector2(door.X - 1, door.Y),
-                new Vector2(door.X + 1, door.Y), new Vector2(door.X, door.Y - 1),
-            }
-            .Any(tile => farm.isTileOnMap(tile)
-                && NativeLocalMultiDayWalkableFrom(farm, from, new Point((int)tile.X, (int)tile.Y)));
+        bool approach = PlaySessionAnimalDoorApproach(farm, building)
+            .Any(tile => NativeLocalMultiDayWalkableFrom(farm, from, new Point((int)tile.X, (int)tile.Y)));
         if (!approach)
             return $"no_approach:door={door.X},{door.Y}";
         // The composed world is the one that insists on the route home; a plain play-session world has no such promise to
@@ -345,6 +340,14 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
+    /// THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET, which is the half that was missing. This fixture
+    /// tills the field before anything is sited in it, so what the emptiness rules see on a field tile is the fixture's
+    /// own `HoeDirt`; the soil is lifted from the footprint and from the door's approach, and put back when the candidate
+    /// is refused (see <see cref="LiftPlaySessionLooseSoil"/>). A crop, a tree, a bush, an object, a building or a
+    /// not-placeable tile still refuses the candidate, by name.
+    /// </para>
+    ///
+    /// <para>
     /// THE BUILDING IS ADDED TO THE FARM AND REMOVED AGAIN, rather than simulated with stones on its footprint. Measured
     /// 2026-11-09: the simulation and the engine disagreed about the same site, this search certified a coop that severed
     /// door->field, and the arm-time assertion then refused the whole run - so the day had no animal at all and nothing
@@ -352,13 +355,11 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// `measured` is the refusal as a reading - how many free footprints there were, why the first few were refused, and
-    /// WHICH rule refused the footprint of the first few origins that had none - so "there is nowhere to put it" is a
-    /// measurement an operator can act on rather than a missing animal. The two halves are different questions and both
-    /// are needed: `rejected` means the ground was there and the day would not survive the building, `blocked` means the
-    /// ground itself was not on offer, naming the tile and the gate (`off_map`, `object`, `terrain_feature`, `building`,
-    /// `not_placeable`). A bare `free_footprints=0` distinguishes neither, which is what made round93's refusal
-    /// answerable only by re-reading this file.
+    /// `measured` is the refusal as a reading, in two shapes that answer different questions: `eliminated` counts the
+    /// candidates EACH rule refused (`terrain_feature=...,object=...,arm_refused=...`), `blocked`/`rejected` name the first
+    /// few with their tiles, and `free_footprints` counts the candidates the emptiness rules admitted. A bare
+    /// `free_footprints=0` distinguishes none of them - it reads the same whether the farm has no room or one rule refuses
+    /// every tile in the world - which is what made round93's refusal answerable only by re-reading this file.
     /// </para>
     /// </summary>
     private bool TryFindNativeLocalPlaySessionAnimalSite(
@@ -379,6 +380,11 @@ public sealed partial class ModEntry
             return false;
         }
         int freeFootprints = 0;
+        // HOW MANY CANDIDATES EACH RULE ELIMINATED, not just a count of the survivors. round93's refusal was
+        // `free_footprints=0;rejected=none`, which reads the same whether the farm has no room left or ONE rule refuses
+        // every tile in the world - and it was the second. The tally is keyed by the gate names themselves, so the
+        // count and the reason cannot drift apart.
+        Dictionary<string, int> eliminated = new(StringComparer.Ordinal);
         List<string> rejected = new();
         List<string> blocked = new();
         foreach (Point candidate in PlaySessionFixturePlacement.PlaceableCandidates(
@@ -388,37 +394,50 @@ public sealed partial class ModEntry
         {
             building.tileX.Value = candidate.X;
             building.tileY.Value = candidate.Y;
-            List<Vector2> footprint = new();
-            string? blocker = null;
-            for (int offsetX = 0; offsetX < building.tilesWide.Value && blocker is null; offsetX++)
+            List<Vector2> footprint = PlaySessionAnimalFootprint(building, candidate);
+            // THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET. This fixture tills the field before anything
+            // is sited in it, so what the rules below see on a field tile is the fixture's own `HoeDirt` - and
+            // refusing THAT is what emptied the world: measured round93 (2026-11-22),
+            // `free_footprints=0;rejected=none` twice, before and after the animal Given was moved ahead of the props.
+            // The soil is lifted from the footprint AND the door's approach, so dirt is spread around the house rather
+            // than over it; a crop, a tree, a bush, an object, a building or a not-placeable tile still refuses the
+            // candidate, by name, below.
+            List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted = LiftPlaySessionLooseSoil(
+                farm,
+                footprint.Concat(PlaySessionAnimalDoorApproach(farm, building)));
+            string? refusal = null;
+            Vector2 refusedTile = Vector2.Zero;
+            foreach (Vector2 tile in footprint)
             {
-                for (int offsetY = 0; offsetY < building.tilesHigh.Value && blocker is null; offsetY++)
+                refusal = !farm.isTileOnMap(tile) ? "off_map"
+                    : farm.objects.ContainsKey(tile) ? "object"
+                    : farm.terrainFeatures.ContainsKey(tile) ? "terrain_feature"
+                    : farm.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y)) ? "building"
+                    : !farm.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true) ? "not_placeable"
+                    : null;
+                if (refusal is not null)
                 {
-                    Vector2 tile = new(candidate.X + offsetX, candidate.Y + offsetY);
-                    // WHICH gate said no, on WHICH tile. A count of free footprints cannot answer this: measured
-                    // `round93` (2026-11-22), the refusal was `free_footprints=0;rejected=none`, and that reads the
-                    // same whether the farm has no room or one of these five rules refuses every tile in the world.
-                    blocker = !farm.isTileOnMap(tile) ? $"{tile.X},{tile.Y}:off_map"
-                        : farm.objects.ContainsKey(tile) ? $"{tile.X},{tile.Y}:object"
-                        : farm.terrainFeatures.ContainsKey(tile) ? $"{tile.X},{tile.Y}:terrain_feature"
-                        : farm.buildings.Any(other => other is not null && other.occupiesTile((int)tile.X, (int)tile.Y)) ? $"{tile.X},{tile.Y}:building"
-                        : !farm.CanItemBePlacedHere(tile, itemIsPassable: false, CollisionMask.All, CollisionMask.None, useFarmerTile: true) ? $"{tile.X},{tile.Y}:not_placeable"
-                        : null;
-                    if (blocker is null)
-                        footprint.Add(tile);
+                    refusedTile = tile;
+                    break;
                 }
             }
-            if (blocker is not null)
+            if (refusal is not null)
             {
-                // Bounded for the same reason `rejected` is: a farm has thousands of candidate origins and the
-                // reason only has to be readable.
-                if (blocked.Count < 8) blocked.Add($"{candidate.X},{candidate.Y}@{blocker}");
+                RestorePlaySessionLooseSoil(farm, lifted);
+                CountPlaySessionAnimalRefusal(eliminated, refusal);
+                // Bounded for the same reason `rejected` is: a farm has thousands of candidate origins and the reason
+                // only has to be readable.
+                if (blocked.Count < 8) blocked.Add($"{candidate.X},{candidate.Y}@{refusedTile.X},{refusedTile.Y}:{refusal}");
                 continue;
             }
             // The candidate order excludes the actor's own ring, but a footprint is several tiles wide: a building
             // whose ORIGIN is two tiles away can still cover the tile the session starts on.
             if (footprint.Contains(startTile))
+            {
+                RestorePlaySessionLooseSoil(farm, lifted);
+                CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalStartTileRefusal);
                 continue;
+            }
             freeFootprints += 1;
             // Stand the real building on the real farm, ask the composed world's own question, and take it down again.
             // The same footprint measured with stones on it asked a different question and got a different answer.
@@ -435,15 +454,100 @@ public sealed partial class ModEntry
             farm.buildings.Remove(building);
             if (rejection is not null)
             {
+                RestorePlaySessionLooseSoil(farm, lifted);
+                CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalRule(rejection));
                 // Bounded, because a farm has thousands of candidate origins and the reason only has to be readable.
                 if (rejected.Count < 8) rejected.Add($"{candidate.X},{candidate.Y}:{rejection}");
                 continue;
             }
+            // The soil stays lifted: this ground is the house's, and the day should see dirt around it, not under it.
             site = new Vector2(candidate.X, candidate.Y);
             return true;
         }
-        measured = $"free_footprints={freeFootprints};rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))};"
+        measured = $"free_footprints={freeFootprints};"
+            + $"eliminated={(eliminated.Count == 0 ? "none" : string.Join("|", eliminated.OrderBy(pair => pair.Key, StringComparer.Ordinal).Select(pair => $"{pair.Key}={pair.Value}")))};"
+            + $"rejected={(rejected.Count == 0 ? "none" : string.Join("|", rejected))};"
             + $"blocked={(blocked.Count == 0 ? "none" : string.Join("|", blocked))}";
         return false;
+    }
+
+    /// <summary>The refusal a building uses when its footprint would cover the tile the session starts on.</summary>
+    private const string PlaySessionAnimalStartTileRefusal = "start_tile";
+
+    /// <summary>The tiles the building would stand on if its top-left corner were at this origin.</summary>
+    private static List<Vector2> PlaySessionAnimalFootprint(Building building, Point origin)
+    {
+        List<Vector2> footprint = new();
+        for (int offsetX = 0; offsetX < building.tilesWide.Value; offsetX++)
+            for (int offsetY = 0; offsetY < building.tilesHigh.Value; offsetY++)
+                footprint.Add(new Vector2(origin.X + offsetX, origin.Y + offsetY));
+        return footprint;
+    }
+
+    /// <summary>
+    /// The tiles an actor stands on to use the building's door. ONCE for both callers - the site search reserves them from
+    /// the soil and <see cref="RejectsThePlaySessionAnimalBuilding"/> asks whether the session can walk to one - because a
+    /// reserved ring and a judged ring that disagreed would certify an approach nobody can use.
+    /// </summary>
+    private static List<Vector2> PlaySessionAnimalDoorApproach(GameLocation farm, Building building)
+    {
+        Point door = building.getPointForHumanDoor();
+        return new[]
+            {
+                new Vector2(door.X, door.Y + 1), new Vector2(door.X - 1, door.Y),
+                new Vector2(door.X + 1, door.Y), new Vector2(door.X, door.Y - 1),
+            }
+            .Where(tile => farm.isTileOnMap(tile))
+            .ToList();
+    }
+
+    /// <summary>
+    /// Take this fixture's own loose soil off the ground a candidate would use, and hand back what was removed so a
+    /// refused candidate can put it back.
+    ///
+    /// <para>
+    /// WHY. The play-session world tills the farm before anything is sited in it (`RemoveDirt`/`SpreadDirt`, the same
+    /// scenario setup the harvest fixtures use), and every Diggable tile then carries a `HoeDirt`. The emptiness rule
+    /// refuses a terrain feature, so afterwards a 7x4 footprint of untouched ground does not exist anywhere in the field:
+    /// measured round93 (2026-11-22), `fixture_native_local_play_session_animal_site_missing:start=56,11;
+    /// free_footprints=0;rejected=none` - twice, because moving the Given ahead of the props addressed the wrong layer.
+    /// The dirt is the fixture's own input rather than the map's, so the fixture lifts it where the house and its door
+    /// approach go, and the day sees soil AROUND the building. Only soil with no crop is liftable: a crop is the day's
+    /// own work, and a tree, a bush or a boulder is the map's.
+    /// </para>
+    /// </summary>
+    private static List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> LiftPlaySessionLooseSoil(
+        Farm farm,
+        IEnumerable<Vector2> tiles)
+    {
+        List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted = new();
+        foreach (Vector2 tile in tiles)
+        {
+            if (farm.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
+                && feature is StardewValley.TerrainFeatures.HoeDirt dirt
+                && dirt.crop is null)
+            {
+                farm.terrainFeatures.Remove(tile);
+                lifted.Add((tile, dirt));
+            }
+        }
+        return lifted;
+    }
+
+    /// <summary>Put back exactly the soil <see cref="LiftPlaySessionLooseSoil"/> removed from a refused candidate.</summary>
+    private static void RestorePlaySessionLooseSoil(Farm farm, List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted)
+    {
+        foreach ((Vector2 tile, StardewValley.TerrainFeatures.HoeDirt dirt) in lifted)
+            farm.terrainFeatures.Add(tile, dirt);
+    }
+
+    private static void CountPlaySessionAnimalRefusal(Dictionary<string, int> eliminated, string rule) =>
+        eliminated[rule] = eliminated.TryGetValue(rule, out int seen) ? seen + 1 : 1;
+
+    /// <summary>The rule name inside a rejection reading (`no_approach:door=..` -> `no_approach`).</summary>
+    private static string PlaySessionAnimalRule(string rejection)
+    {
+        int separator = rejection.IndexOf(':');
+        return separator > 0 ? rejection[..separator] : rejection;
     }
 }
