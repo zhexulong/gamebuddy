@@ -1634,7 +1634,7 @@ const GAME_SITUATION_FACTS: Readonly<
   // (`connectionStatus: "disconnected"`), so the card names that instead of a wait nobody is on.
   disconnected_world_running: { where: "game_running", condition: "dropped", next: { action: "gameReadAgain" } },
   launch_failed: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
-  game_ended: { where: "game_gone", condition: null, next: { text: "gameSituationNextSeeBelow" } },
+  ended_attempt_ready: { where: "game_gone", condition: null, next: { action: "gameActivation" } },
   game_not_read: { where: "not_read", condition: null, next: { action: "gameReadAgain" } },
   attached_connected: { where: "in_farm", condition: null, next: { text: "gameSituationNextReturnToGame" } },
   attached_actions_paused: { where: "in_farm", condition: "paused", next: { action: "gameReopen" } },

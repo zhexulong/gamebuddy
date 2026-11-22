@@ -577,6 +577,11 @@ const UNREAD_RECORDED_DEBT = [
     reason: "no surface renders a read-only chat badge; the word has no reader",
     keys: ["readOnlyChat"],
   },
+  {
+    reason:
+      "an attempt the Host watched end now offers the next one instead of naming a tray quit, so nothing renders this sentence; the copy lane that owns the two restart sentences deletes it with `gameLaunchQuarantined`'s sibling (ADR-0015 §9.4 item 3) and that change owns `i18n.ts`",
+    keys: ["gameEndedQuarantined"],
+  },
 ];
 
 /** Every allowed unread key, its reason, and the failures a list itself can have. */

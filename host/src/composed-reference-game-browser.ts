@@ -577,6 +577,14 @@ function gameActivateProblemCode(error: unknown): string {
       return boundedLifecycleCause(error) === "stardew_bootstrap_registration_held"
         ? "stardew_bootstrap_registration_held"
         : "state_unavailable";
+    case "stardew_player_host_attempt_settle_refused":
+      // The ended attempt still holds the durable registration pointer, so the attempt this press
+      // would prepare cannot be staged on top of it (`settleEndedAttempt` re-reads the pointer after
+      // the one pass allowed to release it). That is the SAME fact
+      // `stardew_bootstrap_registration_held` names - an earlier attempt of this product holds what
+      // the next one has to reserve - and the same two things free it (close the game, then this
+      // GameBuddy session), so the two are one word for the player rather than a generic refusal.
+      return "stardew_bootstrap_registration_held";
     default:
       return "state_unavailable";
   }

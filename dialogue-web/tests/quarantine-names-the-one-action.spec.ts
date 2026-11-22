@@ -24,8 +24,10 @@
  * measured here and not assumed.
  *
  * The population of quarantined sentences is derived from the catalogue (every key ending
- * `Quarantined`), and each one is driven through the projection its phase really publishes, so a third
- * quarantine string cannot appear without being measured by name.
+ * `Quarantined`), and each one the surface still renders is driven through the projection its phase
+ * really publishes, so a third quarantine string cannot appear without being measured by name. The
+ * catalogue key no surface renders any more - the ended attempt's, whose attempt the Host hands back
+ * instead of sending the player to quit GameBuddy - is named below with the owner that deletes it.
  */
 import { messages } from "../src/i18n";
 import { draft, game, jsonOk, root, token } from "./composed-reference-game-fixtures";
@@ -34,14 +36,11 @@ import { expect, test, type Page } from "./frontend-coverage";
 const en = messages("en");
 const zh = messages("zh-CN");
 
-type QuarantineKey = "gameLaunchQuarantined" | "gameEndedQuarantined";
+type QuarantineKey = "gameLaunchQuarantined";
 
 /**
- * The projection each quarantined sentence belongs to.
- *
- * A failed launch is the instance the coordinator quarantined (`crashed`); the game the player quit
- * before the companion moved in is the same terminal attempt reported as `stopped`. The two are told
- * apart only by that word, which is why they have two sentences and one step.
+ * The projection the quarantined sentence belongs to: the instance the coordinator quarantined
+ * (`crashed`, and no exit code, because nobody watched that launch's process end).
  */
 const QUARANTINED_ROOT: Readonly<Record<QuarantineKey, unknown>> = {
   gameLaunchQuarantined: {
@@ -53,17 +52,6 @@ const QUARANTINED_ROOT: Readonly<Record<QuarantineKey, unknown>> = {
         prerequisites: { status: "met", detectedGame: "Stardew Valley" },
         instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },
         latestOutcome: "failed",
-      },
-    },
-  },
-  gameEndedQuarantined: {
-    ...root,
-    game: {
-      ...game,
-      game: {
-        ...game.game,
-        prerequisites: { status: "met", detectedGame: "Stardew Valley" },
-        instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0 },
       },
     },
   },
@@ -138,15 +126,35 @@ async function readQuarantined(page: Page): Promise<QuarantinedReading> {
 }
 
 /** The catalogue's own population of quarantined sentences, rather than a list written here. */
-const QUARANTINE_KEYS = Object.keys(en).filter((key): key is QuarantineKey => /Quarantined$/u.test(key));
+const QUARANTINE_KEYS: readonly string[] = Object.keys(en).filter((key) => /Quarantined$/u.test(key));
+
+/**
+ * The catalogue member no surface renders, and where it goes.
+ *
+ * An attempt the Host watched end is handed back by the next activation, so the panel offers that
+ * press instead of the ending's quarantine sentence (`ended_attempt_ready` in
+ * `../src/game-lifecycle-controls.ts`). The copy itself is the copy lane's to delete, and
+ * `../tests/i18n-parity-gate.test.mjs` records it as unread until then - this set is the second half
+ * of the same record, from the side that drives the rendering, and it fails the moment the
+ * catalogue stops declaring the key or a surface starts reading it again.
+ */
+const NOT_RENDERED: Readonly<Record<string, string>> = Object.freeze({
+  gameEndedQuarantined: "the ended attempt offers the next one; the copy lane deletes this sentence",
+});
+
+/** The keys this spec drives: the catalogue's, minus the one recorded as no surface's. */
+const RENDERED_QUARANTINE_KEYS = QUARANTINE_KEYS.filter((key): key is QuarantineKey => !Object.hasOwn(NOT_RENDERED, key));
 
 test("the quarantine population is the catalogue's, and every member is driven here", () => {
-  expect(QUARANTINE_KEYS.sort()).toEqual(["gameEndedQuarantined", "gameLaunchQuarantined"]);
-  expect(QUARANTINE_KEYS.every((key) => key in QUARANTINED_ROOT)).toBe(true);
+  expect([...QUARANTINE_KEYS].sort()).toEqual(["gameEndedQuarantined", "gameLaunchQuarantined"]);
+  expect(RENDERED_QUARANTINE_KEYS).toEqual(["gameLaunchQuarantined"]);
+  expect(RENDERED_QUARANTINE_KEYS.every((key) => key in QUARANTINED_ROOT)).toBe(true);
+  // The record cannot go stale: a key listed there must still be a catalogue quarantine sentence.
+  for (const key of Object.keys(NOT_RENDERED)) expect(QUARANTINE_KEYS).toContain(key);
 });
 
 for (const locale of ["en", "zh-CN"] as const) {
-  for (const key of QUARANTINE_KEYS) {
+  for (const key of RENDERED_QUARANTINE_KEYS) {
     test(`${locale}: ${key} names the one step that exists, and says the page cannot lift the lock`, async ({ page }) => {
       const labels = locale === "en" ? en : zh;
       await mountQuarantined(page, key, locale);

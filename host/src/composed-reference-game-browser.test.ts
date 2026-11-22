@@ -3976,6 +3976,45 @@ test("the lifecycle activation route refuses an admission issued for another ope
   }
 });
 
+test("an activation that cannot hand the ended attempt back answers with the registration it still holds", async () => {
+  // Failure caught: the press a surface offers after a game ended is the activation that hands the
+  // attempt back and stages the next one, and when that settle refuses the ended attempt still holds
+  // the durable registration pointer (`stardew_player_host_attempt_settle_refused`,
+  // stardew-production-lifecycle-coordinator.internal.ts). Answered as the generic `state_unavailable`
+  // the player read "The game is not available right now ... reload the page", which names neither the
+  // holder nor the two things that free it. It is the SAME fact the reservation reports by name, so it
+  // answers with the same word.
+  let handler!: ReturnType<typeof createComposedReferenceGameBrowserRequestHandler>;
+  handler = createComposedReferenceGameBrowserRequestHandler({
+    profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile }),
+    bootstrapToken,
+    readChat: async (context) => stateForChat(context),
+    readGame: async (context) => stateForGame(context),
+    gameActivate: async () => {
+      throw new Error("stardew_player_host_attempt_settle_refused");
+    },
+  });
+  const server = await start(handler);
+  try {
+    const initial = await bootstrap(server.origin);
+    const cookie = initial.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const root = (await initial.json()) as { chat: { csrfToken: string } };
+    const response = await fetch(`${server.origin}/api/composed-reference-game/v1/lifecycle/activate`, {
+      method: "POST",
+      headers: {
+        origin: server.origin,
+        cookie,
+        "x-csrf-token": root.chat.csrfToken,
+        "content-type": "application/json",
+      },
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { code: "stardew_bootstrap_registration_held" });
+  } finally {
+    await server.close();
+  }
+});
+
 /** The exact settings projection the coordinator publishes, for the route tests. */
 function settingsProjection(
   denied: readonly string[],

@@ -317,19 +317,56 @@ test("a confirmed installation with no staged attempt still offers the player ac
  * never shown nothing to press. The population is derived from the two flags the
  * browser contract distinguishes rather than from a hand-written list of states, so a
  * future projection shape cannot reintroduce the dead end silently.
+ *
+ * The second population is the one an external review called a fatal deadlock: a game
+ * that ENDED. Its shapes are the launch-readiness view's own ended statuses - `failed`
+ * with the code the Guardian reported, `failed` with no code at all when nobody knows
+ * (the launch quarantine), and `ended` for the player's own endgame. Only the quarantine
+ * is a dead end this surface cannot leave; the other three are attempts the Host has
+ * already handed back, so they are in this gate's population and the quarantine is
+ * excluded by name, with its reason.
  */
-test("every nothing-running lifecycle shape offers the player a lifecycle control", async () => {
+test("every nothing-running lifecycle shape offers the player a lifecycle control", async (t) => {
   const idleFacadeView = await facadeViewFor("idle");
   const deadEnds = [];
+  let examined = 0;
   for (const installation of ["absent", "registered"])
     for (const generation of [0, 1]) {
+      examined += 1;
       const gameState = await readState(idleFacadeView, { status: generation === 1 ? "ready" : "none", generation }, installation);
       const controls = clientControls(gameState);
       if (!controls.activationAvailable && !controls.setupAvailable && !controls.launchAvailable)
         deadEnds.push({ installation, generation, prerequisites: gameState.game.prerequisites.status });
     }
 
-  assert.deepEqual(deadEnds, []);
+  // An ended attempt, in the three shapes its ending really takes. The quarantine
+  // (`failed` with no exit code) is the fourth and is excluded by name below.
+  const ended = Object.freeze([
+    Object.freeze({ status: "failed", generation: 0, playerHostExitCode: 86, why: "the game crashed" }),
+    Object.freeze({ status: "failed", generation: 0, playerHostExitCode: 0, why: "the player quit the game" }),
+    Object.freeze({ status: "ended", generation: 0, playerHostExitCode: null, why: "the player ended the game" }),
+    Object.freeze({ status: "failed", generation: 0, playerHostExitCode: null, why: "nobody knows the outcome" }),
+  ]);
+  for (const shape of ended) {
+    examined += 1;
+    const gameState = await readState(
+      idleFacadeView,
+      { status: shape.status, generation: shape.generation, playerHostExitCode: shape.playerHostExitCode },
+      "registered",
+    );
+    const controls = clientControls(gameState);
+    const offered = controls.activationAvailable || controls.setupAvailable || controls.launchAvailable;
+    const quarantined = shape.playerHostExitCode === null && shape.status === "failed";
+    t.diagnostic(
+      `nothing-running: ${shape.why} -> instance ${gameState.game.instance.status} · ` +
+        `activate=${controls.activationAvailable} setup=${controls.setupAvailable} launch=${controls.launchAvailable}` +
+        `${quarantined ? " (the launch quarantine: its step is named, not offered)" : ""}`,
+    );
+    if (!offered && !quarantined) deadEnds.push({ ended: shape.why });
+  }
+
+  assert.ok(examined >= 8, `examined ${examined} nothing-running shape(s)`);
+  assert.deepEqual(deadEnds, [], "a lifecycle shape with no game and no step is the dead end this gate exists for");
 });
 
 /**
@@ -364,7 +401,9 @@ export function sessionForwardActionHolds(controls, action) {
       // Reserved for the phase with no session to advance: the AppBar is the step.
       return controls.phase === "no_projection";
     case "activate":
-      return controls.phase === "pre_activation";
+      // Two shapes start an attempt: nothing was ever prepared, and an attempt the Host
+      // watched end (the press hands it back and stages the next instance).
+      return controls.phase === "pre_activation" || controls.phase === "ended_attempt_ready";
     case "setup":
       return controls.phase === "pre_activation";
     case "launch":
@@ -857,7 +896,8 @@ test("cabin-forward-path.7: the budget's end names the step the player still has
 });
 
 /**
- * The two endings a game can have, told apart by the number the OS reported.
+ * The two endings a game can have, told apart by the number the OS reported, and the
+ * one shape that only LOOKS like an ending.
  *
  * Measured defect this test exists for: the Host's Guardian reports the game process ending with
  * the code the OS gave it, and the browser read the PRESENCE of that exit as a crash. A player who
@@ -865,13 +905,21 @@ test("cabin-forward-path.7: the budget's end names the step the player still has
  * same danger sentence - "This attempt failed ..." - as a player whose game really died, with only
  * the digit in "Ended (exit code N)" telling them apart.
  *
- * The pair below is that exact pair, driven through the REAL Host projection
+ * The second defect, measured on the same pair (an external review, 2026-11-23): both endings were
+ * given the step `restart_gamebuddy` - quit GameBuddy from the tray - because the surface could not
+ * tell an attempt the Host HAD handed back from a launch whose outcome nobody knows. The Host can:
+ * `stardew-production-lifecycle-coordinator.internal.ts` `settleEndedAttempt` releases the attempt and
+ * the next activation stages instance 2 in the same process
+ * (`stardew-production-lifecycle-coordinator-player-host-exit.internal.test.ts`, "a settled attempt
+ * hands the surface back"). The one published fact that separates them is `instance.playerHostExitCode`:
+ * present exactly when this Host watched the game process end (`game-browser-contract/index.ts`).
+ *
+ * The pair below is driven through the REAL Host projection
  * (`game-browser/game-browser-state-provider.ts`) into the panel's own derivation, so the two
  * sides cannot drift: the difference between them is the difference the product is allowed to
- * state - the ending's own word for the instance, the outcome category, and the code - and
- * nothing else. The last assertions hold the sentences to the same rule.
+ * state - the ending's own word for the instance, the outcome category, and the code.
  */
-test("exit 0 is an ending and a non-zero code is a crash, and the two differ only there", async (t) => {
+test("exit 0 is an ending and a non-zero code is a crash, and both hand the attempt back", async (t) => {
   const readGame = async (playerHostExitCode) =>
     await readState(
       Object.freeze({
@@ -896,17 +944,40 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     deriveGameSessionControls({ ready: true, game, resumeFailureSurface: false, resumeAttemptFailed: false });
   const quitControls = controlsFor(quit);
   const crashedControls = controlsFor(crashed);
-  assert.equal(quitControls.phase, "game_ended");
-  assert.equal(crashedControls.phase, "launch_failed");
-  // The step is the SAME in both, and so is the reason: the attempt is terminal either way, and
-  // no control on this page can launch it again.
-  assert.deepEqual([...quitControls.forwardActions], ["restart_gamebuddy"]);
-  assert.deepEqual([...crashedControls.forwardActions], ["restart_gamebuddy"]);
-  assert.equal(quitControls.restartRequired, true);
-  assert.equal(crashedControls.restartRequired, true);
-  // And no staging control is offered beside it: the guide would be a panel of refusals.
-  for (const [name, value] of Object.entries(clientControls(quit)))
-    assert.equal(value, name === "launchGeneration" ? null : name === "activationBlockedBy" ? null : false, name);
+  assert.equal(quitControls.phase, "ended_attempt_ready");
+  assert.equal(crashedControls.phase, "ended_attempt_ready");
+  // The step is the same in both, and it is the step that hands the attempt back: the
+  // activation the first attempt started with. The press settles the attempt and stages the
+  // next one (`attemptEndedWithKnownOutcome`, `game-lifecycle-controls.ts`).
+  assert.deepEqual([...quitControls.forwardActions], ["activate"]);
+  assert.deepEqual([...crashedControls.forwardActions], ["activate"]);
+  assert.equal(quitControls.restartRequired, false, "nothing has to be restarted to start another game");
+  assert.equal(crashedControls.restartRequired, false);
+  // And the staging control the step names is really offered, so the press is not a button the
+  // handler refuses (`handleLifecycleActivate` re-derives the same availability).
+  assert.equal(clientControls(quit).activationAvailable, true);
+  assert.equal(clientControls(crashed).activationAvailable, true);
+  assert.equal(clientControls(crashed).launchGeneration, null, "nothing is staged yet, so there is no instance to name");
+
+  // The shape that is NOT an ending: the coordinator's launch quarantine, where nobody knows what the
+  // Player Host did. It publishes no exit code, it cannot be settled inside this Host, and its step is
+  // the one the panel names instead of drawing a control.
+  const unknown = await readState(
+    Object.freeze({
+      schemaVersion: 1,
+      playerHost: Object.freeze({ state: "not_started", ownership: "none" }),
+      aiClient: Object.freeze({ state: "not_started", ownership: "none" }),
+    }),
+    { status: "failed", generation: 0, playerHostExitCode: null },
+    "registered",
+  );
+  assert.equal(unknown.game.instance.status, "crashed");
+  assert.equal(Object.hasOwn(unknown.game.instance, "playerHostExitCode"), false, "no exit was observed, so none is claimed");
+  const unknownControls = controlsFor(unknown);
+  assert.equal(unknownControls.phase, "launch_failed");
+  assert.deepEqual([...unknownControls.forwardActions], ["restart_gamebuddy"]);
+  assert.equal(unknownControls.restartRequired, true);
+  assert.equal(clientControls(unknown).activationAvailable, false, "a quarantined attempt is not handed back by a press");
 
   const en = messages("en");
   const zh = messages("zh-CN");
@@ -920,56 +991,67 @@ test("exit 0 is an ending and a non-zero code is a crash, and the two differ onl
     instanceLabel(en, crashed.game.instance).replace("86", "#"),
     "the two endings differ only in the code the OS reported",
   );
-
-  // The sentences are where the difference has to be stated: only the crash may claim a failure,
-  // and both must name the same step, because the quarantine they walk out of is the same one.
-  assert.match(en.gameLaunchQuarantined, /failed/u, "the crashed attempt's sentence names the failure it was");
-  assert.doesNotMatch(en.gameEndedQuarantined, /fail/iu, "a game the player ended is not told back to them as failed");
+  // The one sentence a player of THIS path reads: the quarantine's own is not shown for an ending,
+  // and the ending itself is still stated - by the instance row, from the code the Guardian reported.
+  assert.match(en.gameLaunchQuarantined, /failed/u, "the quarantine's sentence still names the failure it was");
   assert.match(zh.gameLaunchQuarantined, /失败/u);
-  assert.doesNotMatch(zh.gameEndedQuarantined, /失败/u);
-  for (const labels of [en, zh]) {
-    assert.match(
-      labels.gameEndedQuarantined,
-      /GameBuddy/u,
-      "the ended sentence names the one step out, which is a fresh GameBuddy",
-    );
-    assert.notEqual(labels.gameEndedQuarantined, labels.gameLaunchQuarantined);
-  }
-  // The name is the fact, not its place in the sentence: the step opens the ended sentence's last
-  // clause, so the match is case-insensitive rather than pinned to a mid-sentence position.
-  assert.match(en.gameEndedQuarantined, /quit GameBuddy itself/iu);
-  assert.match(zh.gameEndedQuarantined, /退出 GameBuddy 本身/u);
-  // The ONE clause the reported exit changes: the failed launch may still have a game running (its
-  // outcome is unknown), while a reported exit is a game that is already gone - so only the failed
-  // launch asks the player to close it. `instance.status` is the fact that selects which.
   for (const labels of [en, zh]) {
     assert.match(
       labels.gameLaunchQuarantined,
       /If Stardew Valley is still running, close it|如果《星露谷物语》还在运行/u,
       "an unknown launch outcome may still be running, so that sentence asks for the close",
     );
-    assert.doesNotMatch(
-      labels.gameEndedQuarantined,
-      /still running|还在运行/u,
-      "a reported exit is a game that is gone: asking the player to close it is work that cannot be done",
-    );
-    assert.match(
-      labels.gameEndedQuarantined,
-      /until it is started again|要等到重新打开/u,
-      "and the step is the restart of GameBuddy, not a restart of the game",
-    );
-  }
-  // …and both say that the page is not where that step is carried out: the ending is held inside
-  // GameBuddy until it is started again, so reloading comes back to this same screen. The premise is
-  // unchanged; the wording is not "nothing on this page can do it", which the owner read as the
-  // product giving up before it had said what happened - a reload that will not change the state is
-  // stated plainly instead.
-  for (const labels of [en, zh]) {
+    // …and the sentence is only ever read in the shape it is true for, because the phase that draws it
+    // is the quarantine's alone.
     assert.match(labels.gameLaunchQuarantined, /starting this page over will not change|刷新这一页也不会改变/u);
-    assert.doesNotMatch(labels.gameLaunchQuarantined, /no control on this page|本页没有任何控件/u);
-    assert.doesNotMatch(labels.gameLaunchQuarantined, /then play with your companion|然后再启动伙伴陪玩/u);
+    assert.match(labels.gameLaunchQuarantined, /quit GameBuddy itself|退出 GameBuddy 本身/iu);
   }
-  t.diagnostic(`game-ended: quit -> ${quitControls.phase}, crashed -> ${crashedControls.phase}`);
+  t.diagnostic(
+    `game-ended: quit -> ${quitControls.phase}/${quitControls.forwardActions.join("+")}, ` +
+      `crashed -> ${crashedControls.phase}/${crashedControls.forwardActions.join("+")}, ` +
+      `unknown -> ${unknownControls.phase}/${unknownControls.forwardActions.join("+")}`,
+  );
+});
+
+/**
+ * The whole retry, as the two halves each of them can prove in one process.
+ *
+ * Half one is here: the surface offers the press after a crash, and the Host's answer to that press
+ * - a staged attempt at the NEXT instance number - is the launch control again, naming instance 2.
+ * Half two is the Host's own gate (`stardew-production-lifecycle-coordinator-player-host-exit.internal.test.ts`,
+ * "a settled attempt hands the surface back"): the settle really releases attempt 1, the durable
+ * registration issues instance 2, attempt 1's number is refused with
+ * `stardew_game_instance_generation_conflict`, and the second `launchPlayerHost` reaches the platform.
+ *
+ * What neither half proves is the farm: `attachment: attached` after the second attempt needs a real
+ * Stardew world to hand a cabin over.
+ */
+test("after a crash the surface offers the game again, and the Host's next attempt is instance 2", async (t) => {
+  const idleFacadeView = await facadeViewFor("idle");
+  const crashed = await readState(idleFacadeView, { status: "failed", generation: 0, playerHostExitCode: 86 }, "registered");
+  const before = deriveGameSessionControls({
+    ready: true,
+    game: crashed,
+    resumeFailureSurface: false,
+    resumeAttemptFailed: false,
+  });
+  assert.deepEqual([...before.forwardActions], ["activate"], "the crashed attempt is offered back, not restarted");
+  assert.equal(clientControls(crashed).activationAvailable, true);
+
+  // The answer the coordinator's next activation really has: `settleEndedAttempt` hands attempt 1 back,
+  // the reservation takes the durable registration's next number, and `staged` publishes it.
+  const staged = await readState(idleFacadeView, { status: "ready", generation: 2 }, "registered");
+  assert.equal(staged.game.instance.status, "none");
+  assert.equal(staged.game.instance.generation, 2);
+  const after = deriveGameSessionControls({ ready: true, game: staged, resumeFailureSurface: false, resumeAttemptFailed: false });
+  assert.equal(after.phase, "activated_not_launched");
+  assert.deepEqual([...after.forwardActions], ["launch"]);
+  assert.equal(clientControls(staged).launchAvailable, true);
+  assert.equal(clientControls(staged).launchGeneration, 2, "the press names the instance the Host staged, not 1");
+  t.diagnostic(
+    `retry: crashed -> ${before.phase}/${before.forwardActions.join("+")} · ` +
+      `staged -> ${after.phase}/${after.forwardActions.join("+")} @ generation ${clientControls(staged).launchGeneration}`,
+  );
 });
 
 /**

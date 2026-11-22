@@ -17,8 +17,13 @@ import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-refere
  *   ready to start a Player Host and nothing is running. This is where the
  *   launch control belongs.
  * - `instance.status: "launching"` means a launch is actually in flight (and
- *   `"running"`/`"crashed"` mean a Player Host is attached/failed), so neither
- *   is a state from which a launch may be started.
+ *   `"running"` means a Player Host is attached), so neither is a state from which
+ *   a launch may be started.
+ * - `instance.status: "crashed"`/`"stopped"` is a game that ENDED - and there are two
+ *   different facts behind those two words, which `attemptEndedWithKnownOutcome` below
+ *   tells apart: an attempt the Host watched end (it has the report, so the next
+ *   activation hands it back and stages the next instance) and one whose outcome nobody
+ *   knows (the coordinator's launch quarantine, which no press in this process can leave).
  *
  * What separates the first two shapes is the expected generation, not
  * `prerequisites`: that flag turns `met` as soon as the Host holds a ready
@@ -72,6 +77,29 @@ export type GameLifecycleControlAvailability = Readonly<{
   activationBlockedBy: "installation_not_registered" | null;
 }>;
 
+/**
+ * Whether this instance slot is an attempt that ended AND whose ending the Host has.
+ *
+ * The two words the projection publishes for an ended game are not one fact, and the one
+ * field that tells them apart is already published once:
+ *
+ * - `playerHostExitCode` is present exactly when this Host's Guardian watched the game
+ *   process end (`game-browser-contract/index.ts`, `GameInstanceV1Schema`), and that
+ *   ending is what the coordinator's settle needs. Either code - a crash's number or the
+ *   OS's normal-termination 0 - is knowledge, and so is the player's own endgame, which
+ *   publishes `stopped` with no code at all.
+ * - `crashed` with NO code is the coordinator's launch quarantine: nobody knows what the
+ *   Player Host did, so nothing is handed back and no press in this process reaches it
+ *   (`STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`).
+ *
+ * So the predicate is the Host's own settle condition, read off the two published fields
+ * rather than guessed beside them.
+ */
+function attemptEndedWithKnownOutcome(instance: GameBrowserStateV1["game"]["instance"]): boolean {
+  if (instance.status === "stopped") return true;
+  return instance.status === "crashed" && instance.playerHostExitCode !== undefined;
+}
+
 const NO_CONTROLS: GameLifecycleControlAvailability = Object.freeze({
   activationAvailable: false,
   setupAvailable: false,
@@ -90,7 +118,13 @@ export function deriveGameLifecycleControlAvailability(
   // `unread` is not "nothing is running": the Host holds no read of the game at all, so
   // no lifecycle control is offered either - see `game_not_read` in the session
   // derivation below, which is the state that says so.
-  const nothingRunning = instance.status === "none";
+  //
+  // A game that ended occupies no instance either. An attempt the Host watched end is
+  // handed back by the very activation this derivation offers, which then stages the next
+  // instance - so the same three controls a first run starts with are the ones that start
+  // another one. Withholding them was the dead end: `restart_gamebuddy` was the only step
+  // left for a game the Host could start again in the same process.
+  const nothingRunning = instance.status === "none" || attemptEndedWithKnownOutcome(instance);
   const launchable = nothingRunning && prerequisites.status === "met" && instance.generation >= 1;
   const installationRegistered = prerequisites.status === "met";
   const preActivation = nothingRunning && !launchable;
@@ -160,30 +194,37 @@ export type GameSessionPhase =
    * (`stardew-game-lifecycle-state.internal.ts`) and answers every further launch with
    * `stardew_player_host_launch_quarantined`, so no control on this page can carry the player out.
    *
-   * A restart does NOT help, and the surface must not say it does: the failed attempt leaves an
-   * owner record in the terminal `quarantined` state, and that record holds the installation
-   * registration the next launch has to reserve, so a fresh process arrives at the same refusal.
-   * Settlement cannot release it: a launch that never reached the contained runtime has no runtime
-   * to contain, and where one did, the settlement's first durable transition (`arm`) needs the
-   * `reserved` predecessor the quarantine consumed. Nothing mints a settlement proof for a
-   * quarantined revision either, and one would free the registration for a process whose
-   * containment was never observed. The exit is a `never_spawned` proof - that no runtime was ever
-   * created - which belongs to the next unit and not to this page. That gap is declared, with its
-   * reason, in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
+   * This is the ONE ending a GameBuddy restart is the answer to, and only because it is the one
+   * ending no press reaches: the failed attempt leaves an owner record in the terminal
+   * `quarantined` state, that record holds the installation registration the next launch has to
+   * reserve, and the in-process settle refuses it by name (`stardew_player_host_attempt_settle_refused`,
+   * because the launch's outcome nobody knows is exactly what must not be re-driven). Settlement
+   * cannot release it: a launch that never reached the contained runtime has no runtime to contain,
+   * and where one did, the settlement's first durable transition (`arm`) needs the `reserved`
+   * predecessor the quarantine consumed. Nothing mints a settlement proof for a quarantined revision
+   * either, and one would free the registration for a process whose containment was never observed.
+   * The exit is a `never_spawned` proof - that no runtime was ever created - which belongs to the
+   * next unit and not to this page. That gap is declared, with its reason, in
+   * `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`.
    *
    * So the phase names the honest step (`restart_gamebuddy`, kept because it is the only thing
    * this page can even name) and the sentence says it is not the cure.
    */
   | "launch_failed"
   /**
-   * No attachment and the game ended without failing: the Guardian reported the
-   * process exiting with the OS's normal-termination code, so the instance reads
-   * `stopped` rather than `crashed`. The attempt is terminal exactly as a failed
-   * launch is - the same quarantine refuses every further launch for the life of
-   * this Host process - but nothing here failed, so this phase exists to keep the
-   * surface from telling a player who quit the game that it crashed.
+   * No attachment and the game ended with a Host that holds the ending: the Guardian reported the
+   * process exiting (with any code, the OS's normal-termination 0 included) or the player ended the
+   * game themselves. The attempt is over, and the surface offers the step a first run starts
+   * with - activation, which is the press that hands the ended attempt back and stages the next
+   * instance (`settleEndedAttempt`, then the reservation that takes the durable registration's next
+   * number).
+   *
+   * The crash and the quit are two events and one step, so they are two readings of the instance
+   * row ("Ended (exit code 86)" beside "Ended (exit code 0)") and one phase: whichever way the
+   * game went, what is left to do is the same. The distinction from `launch_failed` is the whole
+   * point of the pair - there the Host has nothing, and here it has an ending it can act on.
    */
-  | "game_ended"
+  | "ended_attempt_ready"
   /**
    * No attachment and the Host has not read the player's game (`instance.status:
    * "unread"`, from the coordinator's own `unavailable`/`unknown` Player Host slot).
@@ -279,8 +320,8 @@ export type GameSessionControls = Readonly<{
   waitingForGame: boolean;
   /**
    * Whether the surface must state that a fresh GameBuddy is the step, in place
-   * of the getting-going guide. True exactly in `launch_failed` and `game_ended`,
-   * whose two sentences differ because only one of them names a failure.
+   * of the getting-going guide. True exactly in `launch_failed`, the one ending no
+   * press on this page reaches.
    */
   restartRequired: boolean;
   /**
@@ -358,7 +399,7 @@ export function deriveGameSessionControls(
       ...flags,
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
-      restartRequired: phase === "launch_failed" || phase === "game_ended",
+      restartRequired: phase === "launch_failed",
       rereadAvailable: phase === "game_not_read" || phase === "disconnected_world_running",
       disconnectedWorldRunning: phase === "disconnected_world_running",
     });
@@ -423,11 +464,15 @@ export function deriveGameSessionControls(
 
   // No attachment: what the Player Host instance is doing decides the step, and
   // the staging controls are the same derivation the getting-going guide renders.
-  if (instance.status === "crashed") return build("launch_failed", {}, ["restart_gamebuddy"]);
-  // The game the player ended. Its attempt is as terminal as a failed launch's (the
-  // coordinator's launch is refused for the rest of this Host process), so the step is the
-  // same and only the sentence differs - see `restartRequired`.
-  if (instance.status === "stopped") return build("game_ended", {}, ["restart_gamebuddy"]);
+  // An attempt whose outcome nobody knows answers first: it is the one ending no press on
+  // this page reaches, so it is the one that names a step off the page instead of drawing a
+  // control (`attemptEndedWithKnownOutcome` states why the two are not the same word).
+  if (instance.status === "crashed" && instance.playerHostExitCode === undefined)
+    return build("launch_failed", {}, ["restart_gamebuddy"]);
+  // The attempt ended and the Host holds the ending. The step is the one a first attempt
+  // starts with, because that is the press that hands the ended attempt back and stages the
+  // next instance; the instance row keeps stating the ending itself.
+  if (attemptEndedWithKnownOutcome(instance)) return build("ended_attempt_ready", {}, ["activate"]);
   if (instance.status === "launching") return build("launching", {}, ["wait_for_game"]);
   // Before any lifecycle control is considered: the Host has not read the game, so
   // there is no installation standing, staged attempt or expected generation for those
@@ -436,8 +481,8 @@ export function deriveGameSessionControls(
   if (instance.status !== "none")
     // A running game this browser let go says so in the one word the disconnect publishes, and then the
     // step is not a wait: nothing is on its way. What this page can honestly do is read the game again -
-    // which is how a world the player has since quit in the game reaches `game_ended` and its own step -
-    // and say, in a sentence, that the world they left is still running.
+    // which is how a world the player has since quit in the game reaches `ended_attempt_ready` and its
+    // own step - and say, in a sentence, that the world they left is still running.
     return connectionStatus === "disconnected"
       ? build("disconnected_world_running", {}, ["reread_game"])
       : build("running_without_attachment", {}, ["wait_for_game"]);
@@ -460,7 +505,7 @@ export const GAME_SESSION_PHASES: readonly GameSessionPhase[] = Object.freeze([
   "running_without_attachment",
   "disconnected_world_running",
   "launch_failed",
-  "game_ended",
+  "ended_attempt_ready",
   "game_not_read",
   "attached_connected",
   "attached_actions_paused",
@@ -555,12 +600,16 @@ export const GAME_SESSION_INPUTS: Readonly<Record<GameSessionPhase, Parameters<t
       ),
       launch_failed: input(
         game({
+          // No `playerHostExitCode`: nobody knows what the Player Host did, which is exactly the
+          // fact that makes this the one ending a press cannot leave.
           instance: { status: "crashed", gameTitle: "Stardew Valley", generation: 0 },
           latestOutcome: "failed",
         }),
       ),
-      game_ended: input(
+      ended_attempt_ready: input(
         game({
+          // The player quit the game: the Guardian reported the OS's own normal termination, so
+          // the ending is knowledge and the attempt is the Host's to hand back.
           instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0, playerHostExitCode: 0 },
         }),
       ),

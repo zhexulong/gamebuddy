@@ -548,14 +548,12 @@ test("a launch that failed for good names the only step out of it instead of a g
 });
 
 /* ==========================================================================
-   5b. A game the player ended. The same dead end as a failed launch, selected by
-       the exit the Host published - and the one clause that is false here is
-       the one asking the player to close a game that is already gone.
+   5b. A game the player ended. The Host watched it end, so it holds an attempt it
+       can hand back: the state shows the ending and offers the step that starts
+       another one.
    ========================================================================== */
 
-test("a game the player ended names the ending, shows the code it ended with, and offers nothing to press", async ({
-  page,
-}) => {
+test("a game the player ended shows the ending and offers the step that starts another one", async ({ page }) => {
   await stubHost(page, {
     ...ATTACHED_CONNECTED,
     instance: { status: "stopped", gameTitle: "Stardew Valley", generation: 0, playerHostExitCode: 0 },
@@ -569,26 +567,21 @@ test("a game the player ended names the ending, shows the code it ended with, an
   const panel = panelOf(page);
   const en = messages("en");
 
-  // The fact that selects this sentence is the exit the Host published: `stopped` is the OS's
+  // The fact that selects this state is the exit the Host published: `stopped` is the OS's
   // normal termination reported by the Guardian, so the state says the game ended rather than
   // telling the player their launch failed.
-  const ended = panel.getByTestId("game-launch-quarantined");
-  await expect(ended).toBeVisible();
-  await expect(ended).toHaveText(en.gameEndedQuarantined);
-  // …and it does not ask for work that cannot be done: a reported exit is a game that is gone, so
-  // the clause the unknown-outcome sentence carries (an attempt that may still be running) has no
-  // place here.
-  await expect(ended).not.toContainText("still running");
-  await expect(ended).not.toContainText("failed");
-
-  // The state's own facts, on screen: the instance ended, with the code the OS gave.
   await expect(panel).toContainText("Ended (exit code 0)");
 
-  // And no control that could only fail: the launch is refused for the rest of this Host's process,
-  // so the guide is held back and nothing else on the panel is pressable either.
-  await expect(panel.getByTestId("game-start-guide")).toHaveCount(0);
-  await expect(panel.getByTestId("game-launch")).toHaveCount(0);
-  await expect(panel.getByRole("button")).toHaveCount(0);
+  // The attempt is over and the Host holds the ending, so the step is the one a first run starts
+  // with: the press that hands attempt 1 back and stages the next instance
+  // (`settleEndedAttempt`, then the reservation that takes the registration's next number).
+  await expect(panel.getByTestId("game-start-guide")).toBeVisible();
+  await expect(panel.getByTestId("game-activate")).toBeVisible();
+
+  // …and the sentence that sent the player to quit GameBuddy is not borrowed: it asks them to close a
+  // game that is already gone, and a restart is not the step here.
+  await expect(panel.getByTestId("game-launch-quarantined")).toHaveCount(0);
+  await expect(panel).not.toContainText(en.gameLaunchQuarantined);
 });
 
 /* ==========================================================================
