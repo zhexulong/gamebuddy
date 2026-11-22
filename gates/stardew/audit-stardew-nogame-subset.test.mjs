@@ -1,0 +1,84 @@
+// The no-game subset gate. Its job is to fail when the project's `<Compile Include>` list and
+// the compiler disagree, so the assertions here are about the gate's own report: that both
+// directions are named, and that the derivation is the compiler's answer rather than a list.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { deriveGameFreeFiles } from "./audit-stardew-nogame-subset.mjs";
+import { compiledFiles, suiteFiles } from "../../tools/lib/nogame-partition.mjs";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const PROJECT = join(
+  ROOT,
+  "integrations/stardew/tests/GameBuddy.Stardew.NoGame.Tests/GameBuddy.Stardew.NoGame.Tests.csproj",
+);
+const SUITE_DIR = join(ROOT, "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests");
+
+test("the derivation asks the compiler, so it cannot agree with a hand-edited list", () => {
+  const result = deriveGameFreeFiles();
+  assert.equal(result.derived === null, false, "the compiler must accept some subset");
+  assert.ok(result.rounds >= 1);
+  assert.equal(result.total, suiteFiles().length);
+  assert.equal(result.derived.length + result.referenceTree.length + result.refused.length, result.total);
+});
+
+test("the project compiles exactly the headless files that read no gitignored input", () => {
+  const derived = deriveGameFreeFiles();
+  assert.deepEqual(compiledFiles(), derived.derived);
+});
+
+test("no file that reads the gitignored reference tree is compiled into the no-game lane", () => {
+  const derived = deriveGameFreeFiles();
+  const included = compiledFiles();
+  const offenders = derived.referenceTree.filter((name) => included.includes(name));
+  assert.deepEqual(offenders, [], `reference-tree readers in the no-game lane: ${offenders.join(", ")}`);
+  // The measurement is only a measurement if every member names the tree: a set that stopped being
+  // derived from the source would pass the assertion above while reading nothing.
+  for (const name of derived.referenceTree) {
+    assert.ok(
+      readFileSync(join(SUITE_DIR, name), "utf8").includes("StardewValleyDecompiled"),
+      `${name} does not name the gitignored decompiled tree`,
+    );
+  }
+});
+
+test("no game-free file is left out of the no-game lane", () => {
+  const derived = deriveGameFreeFiles();
+  const included = compiledFiles();
+  const missing = derived.derived.filter((name) => !included.includes(name));
+  assert.deepEqual(missing, [], `unrun headless tests: ${missing.join(", ")}`);
+});
+
+test("no file that needs a game is compiled into the no-game lane", () => {
+  const derived = deriveGameFreeFiles();
+  const included = compiledFiles();
+  const extra = included.filter((name) => !derived.derived.includes(name));
+  assert.deepEqual(extra, [], `game-dependent files in the no-game lane: ${extra.join(", ")}`);
+});
+
+test("the project includes the suite's files and holds no copy of its own", () => {
+  const project = readFileSync(PROJECT, "utf8");
+  for (const match of project.matchAll(/<Compile\s+Include="([^"]+)"/gu)) {
+    assert.ok(
+      match[1].replace(/\\/gu, "/").startsWith("../GameBuddy.Stardew.Integration.Tests/"),
+      `${match[1]} is not a file of the integration suite`,
+    );
+  }
+  assert.deepEqual(
+    compiledFiles().filter((name) => !suiteFiles().includes(name)),
+    [],
+  );
+});
+
+test("the subset is small enough that a green run must not be read as the whole suite", () => {
+  // A guard against the other silent failure: if this subset ever grew to the whole suite the
+  // no-game lane would be claiming to be the integration suite. The printed counts carry the
+  // same fact at run time; this keeps a person from quietly deleting the distinction.
+  const derived = deriveGameFreeFiles();
+  const total = suiteFiles().length;
+  assert.ok(derived.derived.length < total, "a no-game subset that equals the suite is not a subset");
+  assert.ok(derived.refused.length > 0, "some files must still need a game");
+});

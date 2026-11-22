@@ -222,7 +222,7 @@ export const REASON_CLASSES = Object.freeze({
  */
 export const EXEMPTIONS = Object.freeze([
   {
-    path: "tools/check-viewport-population.mjs",
+    path: "gates/product/check-viewport-population.mjs",
     reason:
       "elsewhere: static scan of the first-viewport population, runs on every push in the CI gates job through `check:viewport-population`",
     runsIn: "pnpm check:viewport-population",
@@ -239,7 +239,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:live-run-closures",
   },
   {
-    path: "tools/check-presentation-delivery-account.mjs",
+    path: "gates/data/check-presentation-delivery-account.mjs",
     reason:
       "arguments: it reconciles ONE finished run's bundle - `--run-dir DIR` or the newest under `.live-runs` - so before a" +
       " run exists there is nothing for it to examine, and it says so with `delivery_account_not_measured` (exit 2) rather" +
@@ -252,7 +252,7 @@ export const EXEMPTIONS = Object.freeze([
       "a caller passing --run-dir",
   },
   {
-    path: "tools/audit-chat-live-run.mjs",
+    path: "gates/product/audit-chat-live-run.mjs",
     reason:
       "arguments: requires `--audit <chat-run-dir>` pointing at an existing Chat live-run directory (same entry as " +
       "gates/meta/check-ci-coverage.mjs's register), so there is nothing to verify before a run exists",
@@ -272,7 +272,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:gate-red-proofs",
   },
   {
-    path: "tools/check-release-generation-self-contained.mjs",
+    path: "gates/product/check-release-generation-self-contained.mjs",
     reason:
       "elsewhere: reads the generation `host/dist/current.json` points at and the modules `production-artifact.config.json` " +
       "declares; runs in the CI `gates` job, where it reports `not_measured` when no generation is on disk, and in " +
@@ -280,28 +280,28 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:release-generation-self-contained",
   },
   {
-    path: "tools/check-vendored-bundle-leaks.mjs",
+    path: "gates/arch/check-vendored-bundle-leaks.mjs",
     reason:
       "elsewhere: reads every `dist` under `vendor/`, i.e. bundles a submodule builds; runs in the CI `gates` job " +
       "after `pnpm build:magic-context`, so it needs an install and a vendor build the rungs before launch do not have",
     runsIn: "pnpm check:vendored-bundle-leaks",
   },
   {
-    path: "tools/check-preset-macros.mjs",
+    path: "gates/product/check-preset-macros.mjs",
     runsIn: "pnpm check:preset-macros",
     reason:
       "elsewhere: reads a SillyTavern preset document and asks whether every macro it spells is declared in PRESET_MACROS, which is a judgement about a source file that exists before any install or build." +
       " It runs through its `pnpm check:` script in the derived gate corpus, not in a prelive rung.",
   },
   {
-    path: "tools/check-preset-round-trip.mjs",
+    path: "gates/product/check-preset-round-trip.mjs",
     runsIn: "pnpm check:preset-round-trip",
     reason:
       "elsewhere: imports a preset, exports it and re-imports it to prove nothing was dropped on the way through the store, which needs no rung and no environment." +
       " It runs through its `pnpm check:` script in the derived gate corpus, not in a prelive rung.",
   },
   {
-    path: "tools/check-vendor-build-artifacts.mjs",
+    path: "gates/arch/check-vendor-build-artifacts.mjs",
     reason:
       "elsewhere: asks whether the files the workspace's `file:` dependencies promise exist, so it must run AFTER " +
       "`vendor/magic-context` and `vendor/pi-koe` are built and BEFORE the install that imports them; that seam is " +
@@ -317,7 +317,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:workflow-expressions",
   },
   {
-    path: "tools/check-configuration-surfaces.mjs",
+    path: "gates/product/check-configuration-surfaces.mjs",
     reason:
       "elsewhere: reads the Type.Union of OperationId in host/src/tavern/browser-contract/index.ts and every .tsx/.ts in " +
       "dialogue-web, and its default run is report-only (exit 0 unless --fail) - measured 2026-11-09: examined 58, " +
@@ -326,7 +326,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:configuration-surfaces",
   },
   {
-    path: "tools/check-frontend-reads-have-producers.mjs",
+    path: "gates/product/check-frontend-reads-have-producers.mjs",
     runsIn: "pnpm check:frontend-reads-have-producers",
     reason:
       "elsewhere: compares every `/api/` route literal in `dialogue-web/src` against the routes `host/src` registers in a " +
@@ -346,7 +346,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:hotspots",
   },
   {
-    path: "tools/audit-preset-macro-frequency.mjs",
+    path: "gates/product/audit-preset-macro-frequency.mjs",
     reason:
       "environment: the population is presets, and the only real ones in this tree live in the design/library mount - " +
       "`ref/` supplies the SillyTavern checkout whose `default/content/presets/openai/Default.json` is the single " +
@@ -357,14 +357,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:tools-lib",
   },
   {
-    path: "tools/audit-run-reading-shape.mjs",
+    path: "gates/data/audit-run-reading-shape.mjs",
     reason:
       "elsewhere: static scan of the analysis scripts for a count that never reached tools/lib/reading.mjs, so it " +
       "needs no game, no run and no artifact; runs on every push in the CI gates job",
     runsIn: "pnpm audit:run-reading-shape",
   },
   {
-    path: "tools/audit-stardew-action-admission-ledger.mjs",
+    path: "gates/stardew/audit-stardew-action-admission-ledger.mjs",
     reason:
       "report: re-derives the ledger of design/architecture/stardew-action-execution-kernel.md and prints the drift " +
       "to stderr while exiting 0 (measured 2026-11-05: `requestHandlers: document says 42, source has 95`), so a rung " +
@@ -376,7 +376,7 @@ export const EXEMPTIONS = Object.freeze([
       "drift, so a verdict can read it",
   },
   {
-    path: "tools/audit-stardew-admission-fork-delta.mjs",
+    path: "gates/stardew/audit-stardew-admission-fork-delta.mjs",
     reason:
       "report: static audit of the forked admission sites - a migration decision aid that prints the delta and " +
       "exits 0, so it is a report rather than a gate and the register removed its `audit:` script for exactly that " +
@@ -385,7 +385,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:stardew-admission-fork-delta",
   },
   {
-    path: "tools/audit-stardew-open-ground-claims.mjs",
+    path: "gates/stardew/audit-stardew-open-ground-claims.mjs",
     reason:
       "elsewhere: a static census over the Mod's runtime sources for members whose only walking answer is " +
       "`GameLocation.isTilePassable`, plus the assertion that the one predicate it accepts in corroboration " +
@@ -399,7 +399,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm audit:stardew-open-ground-claims",
   },
   {
-    path: "tools/audit-stardew-clearing-vocabulary.mjs",
+    path: "gates/stardew/audit-stardew-clearing-vocabulary.mjs",
     reason:
       "suite: nothing runs this file as a gate; the vocabulary its own scan reports over `TileOccupantKind` is exercised " +
       "by `tools/audit-stardew-clearing-vocabulary.test.mjs`, a member of `suite:stardew-tooling` that ci.yml runs on " +
@@ -408,12 +408,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/audit-stardew-decision-closure.mjs",
+    path: "gates/stardew/audit-stardew-decision-closure.mjs",
     reason: "elsewhere: static decision-closure audit over the action surface, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-decision-closure",
   },
   {
-    path: "tools/audit-stardew-handler-actor-guard.mjs",
+    path: "gates/stardew/audit-stardew-handler-actor-guard.mjs",
     reason:
       "arguments: reads `integrations/stardew/` out of a git revision (`git ls-tree -r <rev>`, `git show <rev>:<file>`), " +
       "so it measures a commit's tree, not the worktree the ladder is about to run",
@@ -422,34 +422,34 @@ export const EXEMPTIONS = Object.freeze([
       "expires when it reads the worktree instead of a git revision, so a rung can judge the tree it is about to run",
   },
   {
-    path: "tools/audit-stardew-native-local-runner-contract.mjs",
+    path: "gates/stardew/audit-stardew-native-local-runner-contract.mjs",
     reason: "elsewhere: static audit of the native-local runners' two habits, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-native-local-runner-contract",
   },
   {
-    path: "tools/audit-stardew-nogame-subset.mjs",
+    path: "gates/stardew/audit-stardew-nogame-subset.mjs",
     reason:
       "environment: reads the decompiled tree under ref/external/StardewValleyDecompiled to decide which " +
       "Integration.Tests files can run without a game",
     runsIn: "ci:.github/workflows/ci.yml",
   },
   {
-    path: "tools/audit-stardew-scene-kind-projection.mjs",
+    path: "gates/stardew/audit-stardew-scene-kind-projection.mjs",
     reason: "elsewhere: static nine-hop projection audit for `observe_scene`, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-scene-kind-projection",
   },
   {
-    path: "tools/audit-stardew-state-coverage.mjs",
+    path: "gates/stardew/audit-stardew-state-coverage.mjs",
     reason: "elsewhere: static state-coverage audit over the Mod and the snapshot families, runs on every push",
     runsIn: "pnpm audit:stardew-state-coverage",
   },
   {
-    path: "tools/audit-stardew-test-shape.mjs",
+    path: "gates/stardew/audit-stardew-test-shape.mjs",
     reason: "elsewhere: static audit of source-shape pins in the C# test projects, runs on every push",
     runsIn: "pnpm audit:stardew-test-shape",
   },
   {
-    path: "tools/check-action-coverage.mjs",
+    path: "gates/stardew/check-action-coverage.mjs",
     reason:
       "report: counts dispatches out of `.live-runs/game-ladder` artifacts and exits 0 by design until someone puts a " +
       "number on what well-covered means (`--fail-under`), so there is nothing to fail before a run exists, and no " +
@@ -458,24 +458,24 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:tools-utilities",
   },
   {
-    path: "tools/check-assertion-hooks.mjs",
+    path: "gates/data/check-assertion-hooks.mjs",
     reason:
       "elsewhere: static scan of assertion hooks, runs on every push in the CI gates job through `check:assertion-hooks`",
     runsIn: "pnpm check:assertion-hooks",
   },
   {
-    path: "tools/check-assertion-substance.mjs",
+    path: "gates/data/check-assertion-substance.mjs",
     reason: "elsewhere: static surface-journey assertion scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:assertion-substance",
   },
   {
-    path: "tools/check-baseline-paths.mjs",
+    path: "gates/data/check-baseline-paths.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-baseline-paths.test.mjs`, inside `test:baseline-paths`, a member of the tool-test corpus that ci.yml runs on every push",
     runsIn: "suite:test:baseline-paths",
   },
   {
-    path: "tools/check-body-owner-hold-bounds.mjs",
+    path: "gates/stardew/check-body-owner-hold-bounds.mjs",
     reason:
       "suite: nothing runs this file as a gate - no package.json script names it or its falsifier - so its rule is " +
       "exercised by `tools/check-body-owner-hold-bounds.test.mjs`, a member of `suite:stardew-tooling` that ci.yml runs " +
@@ -483,19 +483,19 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/check-build-artifact-producers.mjs",
+    path: "gates/arch/check-build-artifact-producers.mjs",
     reason: "elsewhere: static scan of every documented artifact path against its producer, runs on every push",
     runsIn: "pnpm check:build-artifact-producers",
   },
   {
-    path: "tools/check-chat-conversational-quality-gate.mjs",
+    path: "gates/product/check-chat-conversational-quality-gate.mjs",
     reason:
       "environment: needs the Host's live DB (`--require-db`) and a synthetic transcript fixture, which the smoke " +
       "script supplies and the ladder does not have",
     runsIn: "pnpm smoke:chat-conversational-quality-gate",
   },
   {
-    path: "tools/check-browser-state-projection-fields.mjs",
+    path: "gates/product/check-browser-state-projection-fields.mjs",
     reason:
       "elsewhere: static scan of the fields the browser projection declares, runs on every push in the CI gates job through `check:browser-state-projection-fields`",
     runsIn: "pnpm check:browser-state-projection-fields",
@@ -515,7 +515,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "ci:.github/workflows/ci.yml",
   },
   {
-    path: "tools/check-class-name-declarations.mjs",
+    path: "gates/arch/check-class-name-declarations.mjs",
     reason: "elsewhere: static scan for undeclared class names, runs on every push in the CI gates job",
     runsIn: "pnpm check:class-name-declarations",
   },
@@ -530,7 +530,7 @@ export const EXEMPTIONS = Object.freeze([
       "tree-level home can exist for it",
   },
   {
-    path: "tools/check-contrast-tokens.mjs",
+    path: "gates/product/check-contrast-tokens.mjs",
     reason:
       "elsewhere: measures every declared token pair in dialogue-web/src/style.css against AA, per theme, and runs on " +
       "every push in the CI gates job through `pnpm check:contrast-tokens --fail`; it used to have no script at all, " +
@@ -538,14 +538,14 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:contrast-tokens",
   },
   {
-    path: "tools/check-crab-pot-output-fixture-contract.mjs",
+    path: "gates/data/check-crab-pot-output-fixture-contract.mjs",
     reason:
       "arguments: requires `--contract <path>` to a provenance contract; without it the gate exits 1 with its own " +
       "usage line, so bare running is not a reading of the tree",
     runsIn: "suite:suite:tools-utilities",
   },
   {
-    path: "tools/check-child-output-parsing.mjs",
+    path: "gates/arch/check-child-output-parsing.mjs",
     reason:
       "debt: measured red at HEAD — 3 sites hand-parse subprocess output and all three are files another lane holds " +
       "uncommitted (`tools/sandbox/sandbox-bus.mjs`, `tools/scripts/check-workspace-debris.mjs`), " +
@@ -561,24 +561,24 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:gate-population-agreement",
   },
   {
-    path: "tools/check-head-self-contained.mjs",
+    path: "gates/arch/check-head-self-contained.mjs",
     reason:
       "elsewhere: reads the commit's own module graph (`git ls-tree HEAD`, not the index), runs on every push in " +
       "the CI gates job",
     runsIn: "pnpm check:head-self-contained",
   },
   {
-    path: "tools/check-credential-export-isolation.mjs",
+    path: "gates/product/check-credential-export-isolation.mjs",
     reason: "elsewhere: static scan that no long-lived credential reaches an artifact, runs on every push",
     runsIn: "pnpm check:credential-export-isolation",
   },
   {
-    path: "tools/check-csharp-compile.mjs",
+    path: "gates/stardew/check-csharp-compile.mjs",
     reason: "elsewhere: compiles the committed C# projects, which ci.yml runs as its own step",
     runsIn: "pnpm check:csharp-compile",
   },
   {
-    path: "tools/check-cross-language-value-reads.mjs",
+    path: "gates/data/check-cross-language-value-reads.mjs",
     reason:
       "suite: nothing runs this file as a gate - no package.json script names it or its falsifier - so its rule is " +
       "exercised by `tools/check-cross-language-value-reads.test.mjs`, a member of `suite:stardew-tooling` that ci.yml " +
@@ -588,7 +588,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/check-deadline-ceiling-declaration.mjs",
+    path: "gates/stardew/check-deadline-ceiling-declaration.mjs",
     reason:
       "elsewhere: static comparison of the two Host files that size a deadline against the Mod's own " +
       "`action-deadline-windows.v1.json` - `game-tools.ts`'s watchdog clamp and `protocol.ts`'s admission - so it needs " +
@@ -597,7 +597,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:deadline-ceiling-declaration",
   },
   {
-    path: "tools/check-declared-deleted-facts.mjs",
+    path: "gates/product/check-declared-deleted-facts.mjs",
     reason:
       "arguments: its `check:declared-deleted-facts` script passes `--log <a recorded run's fact log> --expect " +
       "accepted=46,...`, so its reading is of a run that has already happened and there is nothing to count before one " +
@@ -606,7 +606,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:declared-deleted-facts",
   },
   {
-    path: "tools/check-description-plan-vocabulary.mjs",
+    path: "gates/product/check-description-plan-vocabulary.mjs",
     reason:
       "elsewhere: static scan of the two strings that teach plan syntax - the bridge schema's `tileAreaRow.occupantKind` " +
       "and `stardew_observe`'s own text - against the vocabulary the compiler still accepts, so it needs no install and " +
@@ -614,12 +614,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:description-plan-vocabulary",
   },
   {
-    path: "tools/check-dependency-audit.mjs",
+    path: "gates/arch/check-dependency-audit.mjs",
     reason: "elsewhere: validates the recorded advisory dispositions, runs on every push in the CI gates job",
     runsIn: "pnpm check:dependency-audit",
   },
   {
-    path: "tools/check-dependency-risk.mjs",
+    path: "gates/arch/check-dependency-risk.mjs",
     reason: "elsewhere: validates the frozen risk snapshot and lock hashes, runs on every push",
     runsIn: "pnpm check:dependency-risk",
   },
@@ -630,7 +630,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:diff",
   },
   {
-    path: "tools/check-dotnet-target-and-language.mjs",
+    path: "gates/arch/check-dotnet-target-and-language.mjs",
     reason:
       "elsewhere: the framework it names as the replacement is now the one every project targets - measured at 2026-11-16, " +
       "projects examined 30, supported 16, forced by an external constraint 12, declared 2, unsupported 0 - so a rung would " +
@@ -638,7 +638,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:dotnet-target-and-language",
   },
   {
-    path: "tools/check-dist-runtime-exports.mjs",
+    path: "gates/product/check-dist-runtime-exports.mjs",
     reason:
       "installed: imports `vendor/magic-context/packages/pi-plugin/dist` (a build output), which nothing in the " +
       "ladder assembles · measured 0 violations, every dist runtime export matching the Host contract, exit 0 with the " +
@@ -648,33 +648,33 @@ export const EXEMPTIONS = Object.freeze([
       "expires when the ladder assembles vendor/magic-context/packages/pi-plugin/dist, the build output this gate imports",
   },
   {
-    path: "tools/check-draft-declaration-coverage.mjs",
+    path: "gates/product/check-draft-declaration-coverage.mjs",
     reason: "elsewhere: static draft-surface coverage scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:draft-declaration-coverage",
   },
   {
-    path: "tools/check-duplicated-authority.mjs",
+    path: "gates/arch/check-duplicated-authority.mjs",
     reason: "elsewhere: static duplicated-authority scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:duplicated-authority",
   },
   {
-    path: "tools/check-engine-affordance-census.mjs",
+    path: "gates/stardew/check-engine-affordance-census.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-engine-affordance-census.test.mjs`, inside `test:engine-affordance-census`, a member of the tool-test corpus that ci.yml runs on every push; the file's own only launcher is `census:engine-affordances`, a prefix neither the gate namespace nor the corpus derives",
     runsIn: "suite:test:engine-affordance-census",
   },
   {
-    path: "tools/check-error-identity-classification.mjs",
+    path: "gates/arch/check-error-identity-classification.mjs",
     reason: "elsewhere: static scan for failure classification by message text, runs on every push",
     runsIn: "pnpm check:error-identity-classification",
   },
   {
-    path: "tools/check-evidence-bundle.mjs",
+    path: "gates/data/check-evidence-bundle.mjs",
     reason: "elsewhere: validates the documented evidence-bundle shape, runs on every push in the CI gates job",
     runsIn: "pnpm check:evidence-bundle",
   },
   {
-    path: "tools/check-fact-authority.mjs",
+    path: "gates/product/check-fact-authority.mjs",
     reason:
       "environment: it reads `design/fact-authority.md` - the mount declaring which traces are not facts - beside the " +
       "Mod's sources, so a checkout without that mount has nothing to judge; its rule is exercised by " +
@@ -682,19 +682,19 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:fact-authority",
   },
   {
-    path: "tools/check-fail-closed-forward-path.mjs",
+    path: "gates/product/check-fail-closed-forward-path.mjs",
     reason:
       "elsewhere: reads every refusal the two browser contracts declare and the step its own sentence owes " +
       "the player, runs on every push in the CI gates job",
     runsIn: "pnpm check:fail-closed-forward-path",
   },
   {
-    path: "tools/check-game-historian-rubric.mjs",
+    path: "gates/product/check-game-historian-rubric.mjs",
     reason: "elsewhere: static rubric gate over the historian prompt, runs on every push in the CI gates job",
     runsIn: "pnpm check:game-historian-rubric",
   },
   {
-    path: "tools/check-gameplay-capability-catalog.mjs",
+    path: "gates/stardew/check-gameplay-capability-catalog.mjs",
     reason: "environment: reads design/gameplay-capability-catalog.json from the design/ mount",
     runsIn: "pnpm check:gameplay-capability-catalog",
   },
@@ -715,73 +715,73 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:gate-premises",
   },
   {
-    path: "tools/check-head-typecheck.mjs",
+    path: "gates/arch/check-head-typecheck.mjs",
     reason: "elsewhere: typechecks HEAD through the installed workspace, runs on every push as its own step",
     runsIn: "pnpm check:head-typecheck",
   },
   {
-    path: "tools/check-host-diagnostic-output.mjs",
+    path: "gates/product/check-host-diagnostic-output.mjs",
     reason: "elsewhere: static scan of Host diagnostic output shape, runs on every push",
     runsIn: "pnpm check:host-diagnostic-output",
   },
   {
-    path: "tools/check-host-game-physical-seam.mjs",
+    path: "gates/product/check-host-game-physical-seam.mjs",
     reason: "elsewhere: static scan of the Host/Game physical seam, runs on every push in the CI gates job",
     runsIn: "pnpm check:host-game-physical-seam",
   },
   {
-    path: "tools/check-host-production-import-boundary.mjs",
+    path: "gates/product/check-host-production-import-boundary.mjs",
     reason: "elsewhere: static import-boundary scan over host/src, runs on every push in the CI gates job",
     runsIn: "pnpm check:host-production-import-boundary",
   },
   {
-    path: "tools/check-host-source-directories.mjs",
+    path: "gates/arch/check-host-source-directories.mjs",
     reason:
       "elsewhere: static scan of `host/src` directories and the modules they quote, install-free, and it lands in the " +
       "derived CI gates job by being named `check:*`",
     runsIn: "pnpm check:host-source-directories",
   },
   {
-    path: "tools/check-host-windows-test-preflight.mjs",
+    path: "gates/product/check-host-windows-test-preflight.mjs",
     reason: "elsewhere: static preflight over the Windows Host test entry, runs on every push",
     runsIn: "pnpm check:host-windows-test-preflight",
   },
   {
-    path: "tools/check-inventory-row-field-rendering.mjs",
+    path: "gates/product/check-inventory-row-field-rendering.mjs",
     reason:
       "elsewhere: static scan of inventory-row field rendering, runs on every push in the CI gates job through `check:inventory-row-field-rendering`",
     runsIn: "pnpm check:inventory-row-field-rendering",
   },
   {
-    path: "tools/check-live-run-failure-dump.mjs",
+    path: "gates/data/check-live-run-failure-dump.mjs",
     reason: "elsewhere: static scan of the live-run failure dump, runs on every push in the CI gates job",
     runsIn: "pnpm check:live-run-failure-dump",
   },
   {
-    path: "tools/check-live-run-isolation.mjs",
+    path: "gates/data/check-live-run-isolation.mjs",
     reason:
       "environment: builds lanes from %LOCALAPPDATA%/GameBuddy/stardew-profiles/native-local-stable and the Steam " +
       "install (measured exit 1 with live_run_isolation_source_profile_config_missing on a bare tree)",
     runsIn: "pnpm check:live-run-isolation",
   },
   {
-    path: "tools/check-live-run-multiday-baseline.mjs",
+    path: "gates/data/check-live-run-multiday-baseline.mjs",
     reason: "elsewhere: static comparison against the recorded multi-day baseline, runs on every push",
     runsIn: "pnpm check:live-run-multiday-baseline",
   },
   {
-    path: "tools/check-live-run-preset-surface.mjs",
+    path: "gates/product/check-live-run-preset-surface.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/live-run/core/persona.test.mjs`, inside `suite:live-run-harness`, a member of the tool-test corpus that ci.yml runs on every push",
     runsIn: "suite:suite:live-run-harness",
   },
   {
-    path: "tools/check-live-run-silence.mjs",
+    path: "gates/data/check-live-run-silence.mjs",
     reason: "elsewhere: static scan for silent live-run outcomes, runs on every push in the CI gates job",
     runsIn: "pnpm check:live-run-silence",
   },
   {
-    path: "tools/check-live-run-speech.mjs",
+    path: "gates/data/check-live-run-speech.mjs",
     reason:
       "elsewhere: reads the card's declared conduct against a finished run's own `result.json` bubbles, and its " +
       "`check:live-run-speech` script passes `--rules`, which judges the conduct the card declares without a run - that " +
@@ -805,30 +805,30 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:loose-assertions",
   },
   {
-    path: "tools/check-native-local-runner-scaffold.mjs",
+    path: "gates/stardew/check-native-local-runner-scaffold.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-native-local-runner-scaffold.test.mjs`, inside `test:stardew-native-local-runner-scaffold`, a member of the tool-test corpus that ci.yml runs on every push",
     runsIn: "suite:test:stardew-native-local-runner-scaffold",
   },
   {
-    path: "tools/check-parser-agreement.mjs",
+    path: "gates/arch/check-parser-agreement.mjs",
     reason: "elsewhere: static parser-agreement scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:parser-agreement",
   },
   {
-    path: "tools/check-perf-budget.mjs",
+    path: "gates/data/check-perf-budget.mjs",
     reason: "elsewhere: re-measures recorded budgets, runs on every push in the CI gates job",
     runsIn: "pnpm check:perf-budget",
   },
   {
-    path: "tools/check-perf-scaling.mjs",
+    path: "gates/data/check-perf-scaling.mjs",
     reason:
       "installed: drives the bench suite as size pairs in child processes, which needs a built `host/dist-test` · " +
       "measured findings 6 over 6 files and 0 pairs, both benches refusing `live_run_artifact_stale` at 95dd6efe",
     runsIn: "pnpm check:perf-scaling",
   },
   {
-    path: "tools/check-persona-example-behaviours.mjs",
+    path: "gates/product/check-persona-example-behaviours.mjs",
     reason:
       "elsewhere: static scan of the card's shipped examples against the sentence that permits or forbids each " +
       "behaviour - the defect behind it was one clause deleted from `system_prompt` while every example still performed " +
@@ -836,7 +836,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:persona-example-behaviours",
   },
   {
-    path: "tools/check-planner-guidance-observation-tools.mjs",
+    path: "gates/product/check-planner-guidance-observation-tools.mjs",
     reason:
       "elsewhere: reads two source declarations - the observation tools the adapter mounts, and the text `stardew_plan_work` " +
       "hands the model - so it needs no install, no build and no run, and it runs on every push in the derived CI gates job " +
@@ -845,7 +845,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:planner-guidance-observation-tools",
   },
   {
-    path: "tools/check-policy-change-is-learned-by-polling.mjs",
+    path: "gates/stardew/check-policy-change-is-learned-by-polling.mjs",
     reason:
       "elsewhere: static scan of the Mod's sources for a running world learning an action-policy change by re-reading " +
       "`config.json` instead of from a message, so it needs no install, no build and no game; it runs on every push in " +
@@ -853,13 +853,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:policy-change-is-learned-by-polling",
   },
   {
-    path: "tools/check-production-pack-load.mjs",
+    path: "gates/product/check-production-pack-load.mjs",
     reason:
       "environment: measured pointer_missing on host/dist/current.json, a generation only the release lane builds",
     runsIn: "pnpm check:production-pack-load",
   },
   {
-    path: "tools/check-publint.mjs",
+    path: "gates/arch/check-publint.mjs",
     reason: "elsewhere: package-format gate over the built packages, runs as its own step on every push",
     runsIn: "pnpm check:publint",
   },
@@ -875,7 +875,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:red-proof-markers",
   },
   {
-    path: "tools/check-rederivation-parity.mjs",
+    path: "gates/arch/check-rederivation-parity.mjs",
     reason:
       "debt: it is red at HEAD on the two declared re-derivations whose parity test does not exist " +
       "(`MeleeWeapon.getAreaOfEffect`'s arc, whose 4096-position claim is prose, and " +
@@ -887,7 +887,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:test:rederivation-parity",
   },
   {
-    path: "tools/check-refusal-action-names.mjs",
+    path: "gates/product/check-refusal-action-names.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule - the 2679 refusal codes its scan reports, cited by `<c>` doc " +
       "comments in `integrations/stardew/**` where the product names the gate - is exercised by " +
@@ -895,7 +895,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/check-refusal-informativeness.mjs",
+    path: "gates/product/check-refusal-informativeness.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, `unclassified_reason_code " +
       "remove_placed_item_furniture_move_unsupported - no declared family matches it`), so wiring it into a rung " +
@@ -907,7 +907,7 @@ export const EXEMPTIONS = Object.freeze([
       "in a rung, and the row is deleted with its adoption",
   },
   {
-    path: "tools/check-release-live-evidence.mjs",
+    path: "gates/data/check-release-live-evidence.mjs",
     reason:
       "elsewhere: runs in the protected release lane, where the evidence it reads is the release claim - " +
       "release-windows.yml invokes it by path on tag pushes (not every push, which is why runsIn names that workflow " +
@@ -916,21 +916,21 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "ci:.github/workflows/release-windows.yml",
   },
   {
-    path: "tools/check-run-walking.mjs",
+    path: "gates/data/check-run-walking.mjs",
     reason:
       "arguments: its `check:run-walking` script takes `--log <a recorded run's log> --expect walked=647,...`, so it " +
       "reads a run that has already happened; its rule is exercised by `test:run-walking`, which ci.yml runs on every push",
     runsIn: "suite:test:run-walking",
   },
   {
-    path: "tools/check-scope-references.mjs",
+    path: "gates/arch/check-scope-references.mjs",
     reason:
       "debt: measured red at HEAD on scope references · measured 6 findings (5 out_of_scope_reference, 1 " +
       "read_before_declaration) over 1086 files at 95dd6efe",
     runsIn: "pnpm check:scope-references",
   },
   {
-    path: "tools/check-silent-failure.mjs",
+    path: "gates/arch/check-silent-failure.mjs",
     reason: "elsewhere: static silent-failure scan, runs on every push in the CI gates job",
     runsIn: "pnpm check:silent-failure",
   },
@@ -948,7 +948,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:spec-waiver-comments",
   },
   {
-    path: "tools/check-stale-line-age.mjs",
+    path: "gates/product/check-stale-line-age.mjs",
     reason:
       "elsewhere: static scan for the state line that prints a value without its age - the defect was `<world-state>` " +
       "showing a seed count she had already spent - so it reads the Host's prompt assembly rather than a run, and runs " +
@@ -956,36 +956,36 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:stale-line-age",
   },
   {
-    path: "tools/check-stardew-companion-production-admission.mjs",
+    path: "gates/stardew/check-stardew-companion-production-admission.mjs",
     reason:
       "arguments: reports admission_cli_required_flag_missing without a caller's evidence paths (same entry as " +
       "gates/meta/check-ci-coverage.mjs's register)",
     runsIn: "pnpm check:stardew-companion-production-admission",
   },
   {
-    path: "tools/check-stardew-dialogue-autonomy.mjs",
+    path: "gates/stardew/check-stardew-dialogue-autonomy.mjs",
     reason:
       "arguments: takes `<ladder-result.json> [--session <file>]` and judges one run's autonomy, so there must be a " +
       "run first",
     runsIn: "suite:test:stardew-dialogue-autonomy",
   },
   {
-    path: "tools/check-stardew-dialogue-stream.mjs",
+    path: "gates/stardew/check-stardew-dialogue-stream.mjs",
     reason: "arguments: takes `<result.json> [--expect-speaker] [--session]` and judges one run's dialogue stream",
     runsIn: "suite:test:stardew-dialogue-stream",
   },
   {
-    path: "tools/check-stardew-discovery-collection-coverage.mjs",
+    path: "gates/stardew/check-stardew-discovery-collection-coverage.mjs",
     reason: "elsewhere: static discovery-collection coverage gate, runs on every push as its own step",
     runsIn: "pnpm check:stardew-discovery-collection-coverage",
   },
   {
-    path: "tools/check-stardew-execution-receipt-field-parity.mjs",
+    path: "gates/stardew/check-stardew-execution-receipt-field-parity.mjs",
     reason: "elsewhere: static receipt-field parity gate, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-execution-receipt-field-parity",
   },
   {
-    path: "tools/check-stardew-execution-terminal-uniqueness.mjs",
+    path: "gates/stardew/check-stardew-execution-terminal-uniqueness.mjs",
     reason:
       "arguments: requires `--artifact <path>` pointing at one FINISHED run's receipt reading (the frames its fact" +
       " listeners emitted, and the answers its caller received), so there is nothing to compare before a run exists;" +
@@ -995,13 +995,13 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:stardew-execution-terminal-uniqueness",
   },
   {
-    path: "tools/check-stardew-family-size.mjs",
+    path: "gates/stardew/check-stardew-family-size.mjs",
     reason:
       "elsewhere: static scan of the action family sizes, runs on every push in the CI gates job through `check:stardew-family-size`",
     runsIn: "pnpm check:stardew-family-size",
   },
   {
-    path: "tools/check-stardew-game-thread-affinity.mjs",
+    path: "gates/stardew/check-stardew-game-thread-affinity.mjs",
     reason:
       "elsewhere: static scan of the Mod's sources for a `StardewValley` entity read or written from a thread that is " +
       "not the game loop, so it needs no game, no build and no SMAPI; it runs on every push in the CI gates job through " +
@@ -1009,99 +1009,99 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:stardew-game-thread-affinity",
   },
   {
-    path: "tools/check-stardew-fixture-scenario-wiring.mjs",
+    path: "gates/stardew/check-stardew-fixture-scenario-wiring.mjs",
     reason: "elsewhere: static fixture-scenario wiring gate, runs on every push in the CI gates job",
     runsIn: "pnpm audit:stardew-fixture-scenario-wiring",
   },
   {
-    path: "tools/check-stardew-gameplay-completeness.mjs",
+    path: "gates/stardew/check-stardew-gameplay-completeness.mjs",
     reason: "arguments: requires `--report <direct-inspector-report.json>`, a report a live lane produces",
     runsIn: "pnpm check:stardew-gameplay-completeness",
   },
   {
-    path: "tools/check-stardew-lifecycle-pins.mjs",
+    path: "gates/stardew/check-stardew-lifecycle-pins.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-lifecycle-pins.test.mjs`, inside `test:stardew-lifecycle-pins`, a member of the tool-test corpus that ci.yml runs on every push",
     runsIn: "suite:test:stardew-lifecycle-pins",
   },
   {
-    path: "tools/check-stardew-live-runner-coverage.mjs",
+    path: "gates/stardew/check-stardew-live-runner-coverage.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-live-runner-coverage.test.mjs`, inside `test:stardew-live-runner-coverage`, a member of the tool-test corpus that ci.yml runs on every push",
     runsIn: "suite:test:stardew-live-runner-coverage",
   },
   {
-    path: "tools/check-stardew-task-gap-reasons.mjs",
+    path: "gates/stardew/check-stardew-task-gap-reasons.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-task-gap-reasons.test.mjs`, inside `test:stardew-task-gap-reasons`, a member of the tool-test corpus that ci.yml runs on every push. Its tier is l2 because the population it reads - `tools/lib/task-purpose.mjs` - imports the built `host/dist-test` adapter, and the ladder's L0 rung runs before that artifact is assembled",
     runsIn: "suite:test:stardew-task-gap-reasons",
   },
   {
-    path: "tools/check-stardew-instance-property-coverage.mjs",
+    path: "gates/stardew/check-stardew-instance-property-coverage.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule is exercised by `tools/check-stardew-observation-gap.test.mjs`, inside `test:stardew-observation-gap`, a member of the tool-test corpus that ci.yml runs on every push, which is `tools/check-stardew-observation-gap.mjs`'s own falsifier",
     runsIn: "suite:test:stardew-observation-gap",
   },
   {
-    path: "tools/check-stardew-loop-closure.mjs",
+    path: "gates/stardew/check-stardew-loop-closure.mjs",
     reason:
       "environment: measured stardew_decompile_root_missing; it counts call sites in ref/external/StardewValleyDecompiled",
     runsIn: "pnpm check:stardew-loop-closure",
   },
   {
-    path: "tools/check-stardew-mod-folder-name.mjs",
+    path: "gates/stardew/check-stardew-mod-folder-name.mjs",
     reason: "elsewhere: static three-file scan of the deployed folder name, runs on every push in the CI gates job",
     runsIn: "pnpm check:stardew-mod-folder-name",
   },
   {
-    path: "tools/check-stardew-native-mechanism-review-register.mjs",
+    path: "gates/stardew/check-stardew-native-mechanism-review-register.mjs",
     reason: "arguments: requires `--mechanism-report`, `--register` and `--source-root`",
     runsIn: "pnpm check:stardew-native-mechanism-review-register",
   },
   {
-    path: "tools/check-stardew-native-multiplayer-sensitivity.mjs",
+    path: "gates/stardew/check-stardew-native-multiplayer-sensitivity.mjs",
     reason:
       "environment: reads the gitignored decompiled tree; its own script passes " +
       "`--source-root ref/external/StardewValleyDecompiled/Stardew Valley`",
     runsIn: "pnpm check:stardew-native-multiplayer-sensitivity",
   },
   {
-    path: "tools/check-stardew-native-normal-player-ingress-register.mjs",
+    path: "gates/stardew/check-stardew-native-normal-player-ingress-register.mjs",
     reason: "arguments: requires `--register`, `--mechanism-report` and `--source-root`",
     runsIn: "pnpm check:stardew-native-normal-player-ingress-register",
   },
   {
-    path: "tools/check-stardew-native-notice-coverage.mjs",
+    path: "gates/stardew/check-stardew-native-notice-coverage.mjs",
     reason: "environment: counts call sites in the gitignored decompiled tree, which a checkout reports as 0 files",
     runsIn: "pnpm check:stardew-native-notice-coverage",
   },
   {
-    path: "tools/check-stardew-native-pathfinder-source.mjs",
+    path: "gates/stardew/check-stardew-native-pathfinder-source.mjs",
     reason: "elsewhere: static pathfinder-source gate, runs on every push in the CI gates job",
     runsIn: "pnpm check:stardew-native-pathfinder-source",
   },
   {
-    path: "tools/check-stardew-native-router-exit-classifier.mjs",
+    path: "gates/stardew/check-stardew-native-router-exit-classifier.mjs",
     reason: "arguments: requires `--inventory` and `--classifier`",
     runsIn: "pnpm check:stardew-native-router-exit-classifier",
   },
   {
-    path: "tools/check-stardew-native-source-closure.mjs",
+    path: "gates/stardew/check-stardew-native-source-closure.mjs",
     reason: "arguments: requires a certificate, universe, boundary model, source root, assembly and content manifest",
     runsIn: "pnpm check:stardew-native-source-closure",
   },
   {
-    path: "tools/check-stardew-native-transition-ledger.mjs",
+    path: "gates/stardew/check-stardew-native-transition-ledger.mjs",
     reason: "arguments: requires a ledger, mechanism report, review register, scope manifest and source root",
     runsIn: "pnpm check:stardew-native-transition-ledger",
   },
   {
-    path: "tools/check-stardew-receipt-attribution.mjs",
+    path: "gates/stardew/check-stardew-receipt-attribution.mjs",
     reason: "elsewhere: static receipt-attribution gate, runs on every push in the CI gates job",
     runsIn: "pnpm check:stardew-receipt-attribution",
   },
   {
-    path: "tools/check-stardew-shop-purchase-pays-for-goods.mjs",
+    path: "gates/stardew/check-stardew-shop-purchase-pays-for-goods.mjs",
     reason:
       "suite: nothing runs this file as a gate; its rule - the receipt fixture it reads, and the invariant the Mod's shop " +
       "handlers cite in `<c>` comments - is exercised by `tools/check-stardew-shop-purchase-pays-for-goods.test.mjs`, a " +
@@ -1109,7 +1109,7 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/check-stardew-snapshot-family-bounds.mjs",
+    path: "gates/stardew/check-stardew-snapshot-family-bounds.mjs",
     reason:
       "debt: measured red at HEAD (exit 1, 1 finding) on the Mod's bounded target arrays against the Host's caps, so " +
       "wiring it would stop the ladder on a disagreement between two hand-written sides · measured exit 1 with ZERO " +
@@ -1121,7 +1121,7 @@ export const EXEMPTIONS = Object.freeze([
       "being about a parse failure",
   },
   {
-    path: "tools/check-stardew-tick-handler-allocation.mjs",
+    path: "gates/stardew/check-stardew-tick-handler-allocation.mjs",
     reason:
       "elsewhere: static scan of the handlers the Mod registers on the game loop's tick for an allocation per frame - a " +
       "cost no test catches because the result is correct - so it needs no game and no build; it runs on every push in " +
@@ -1129,12 +1129,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:stardew-tick-handler-allocation",
   },
   {
-    path: "tools/check-stardew-tool-family-stamina-evidence.mjs",
+    path: "gates/stardew/check-stardew-tool-family-stamina-evidence.mjs",
     reason: "elsewhere: static stamina-evidence gate over the tool families, runs on every push",
     runsIn: "pnpm check:stardew-tool-family-stamina-evidence",
   },
   {
-    path: "tools/check-stardew-wia-agent-loop.mjs",
+    path: "gates/stardew/check-stardew-wia-agent-loop.mjs",
     reason:
       "arguments: judges ONE ladder-6 run from its result/session artifacts, so it is a post-run verdict with " +
       "nothing to read before the run; its rule is exercised by `tools/check-stardew-wia-agent-loop.test.mjs`, a member " +
@@ -1142,34 +1142,34 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "suite:suite:stardew-tooling",
   },
   {
-    path: "tools/check-stub-subject-collision.mjs",
+    path: "gates/data/check-stub-subject-collision.mjs",
     reason: "elsewhere: static stub-subject collision report over the surface journeys, runs on every push",
     runsIn: "pnpm check:stub-subject-collision",
   },
   {
-    path: "tools/check-surface-journeys.mjs",
+    path: "gates/product/check-surface-journeys.mjs",
     reason: "elsewhere: static surface-journey coverage gate, runs on every push in the CI gates job",
     runsIn: "pnpm check:surface-journeys",
   },
   {
-    path: "tools/check-tavern-release-prerequisites.mjs",
+    path: "gates/product/check-tavern-release-prerequisites.mjs",
     reason: "environment: needs live provider turns and an assembled generation; it exits 2 (blocked) without them",
     runsIn: "pnpm check:tavern-release-prerequisites",
   },
   {
-    path: "tools/check-test-store-teardown.mjs",
+    path: "gates/data/check-test-store-teardown.mjs",
     reason: "elsewhere: static scan for unclosed test stores, runs on every push as its own step",
     runsIn: "pnpm check:test-store-teardown",
   },
   {
-    path: "tools/check-text-hygiene.mjs",
+    path: "gates/data/check-text-hygiene.mjs",
     reason:
       "debt: measured red at HEAD - committed files are missing a final newline or carry trailing whitespace · " +
       "measured files examined 3472, violations 201, verdict blocked at 95dd6efe",
     runsIn: "pnpm check:text-hygiene",
   },
   {
-    path: "tools/check-unreported-catch.mjs",
+    path: "gates/arch/check-unreported-catch.mjs",
     reason: "elsewhere: static scan of catch clauses through the workspace's TypeScript compiler, runs on every push",
     runsIn: "pnpm check:unreported-catch",
   },

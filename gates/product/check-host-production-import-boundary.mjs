@@ -1,0 +1,1598 @@
+// red-proof: inject  a production Host module the walk already visited (the action registry) gains a side-effect
+//   `import "./companion-control-server.test.js"` -> verdict blocked, violation kind production_reaches_test_only_module naming importer/specifier/line 1396, exit 2 (restored: passed, examined 186)
+
+export const gateDeclaration = {
+  id: "check-host-production-import-boundary",
+  domain: "product",
+  tier: "l0",
+  kind: "ratchet",
+};
+
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { builtinModules, createRequire } from "node:module";
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  display,
+  importedBindings,
+  isDeclaredExternalPackage,
+  isMethodDeclaration,
+  matchingToken,
+  tokens,
+} from "../../tools/lib/javascript-lexicon.mjs";
+
+const requireFromHost = createRequire(resolve(import.meta.dirname, "../host/package.json"));
+const ts = requireFromHost("typescript");
+
+const here = dirname(fileURLToPath(import.meta.url));
+export const repositoryRoot = resolve(here, "..");
+export const DEFAULT_ROOTS = Object.freeze(["host/src/main.ts"]);
+/** Mounted-turn composition is a production island, not an application entry root. */
+export const MOUNTED_TURN_COMPOSITION_ROOTS = Object.freeze([
+  "host/src/tavern/player-turn-acceptance.ts",
+  "host/src/tavern/player-turn-acceptance.internal.ts",
+  "host/src/tavern/provider-attempt-claim.ts",
+  "host/src/tavern/provider-attempt-claim.internal.ts",
+  "host/src/tavern/chat-provider-start.ts",
+]);
+export function validateHostProductionImportBoundaryBaseline(report) {
+  return report?.verdict === "passed"
+    ? { accepted: true, mode: "clean" }
+    : { accepted: false, reason: "production_import_boundary_violations" };
+}
+export const LEGACY_ADOPTION_FUNCTIONS = Object.freeze([
+  "adoptLegacyPartition",
+  "collectQuiescentLegacyContinuitySnapshot",
+  "createQuiescentLegacyContinuitySnapshot",
+  "validateQuiescentLegacyContinuitySnapshot",
+]);
+const LEGACY_MODULES = Object.freeze([
+  "continuity.ts",
+  "continuity-production-migration/",
+  "continuity-authority-coordinator/",
+  "continuity-authority-routing/",
+  "game-origin-authority/",
+  "game-surface-lease.ts",
+  "game-surface-recovery.ts",
+  "game-surface-lifecycle/",
+]);
+const SEMANTIC_AUTHORITY_MODULES = Object.freeze(["continuity-semantic-provisioning/", "continuity-semantic-store/"]);
+const SEMANTIC_PRODUCTION_COORDINATOR = "continuity-semantic-production-coordinator/";
+const SEMANTIC_PRODUCTION_COORDINATOR_PUBLIC_MODULE =
+  "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.ts";
+const SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE =
+  "continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts";
+const SEMANTIC_BACKEND_MODULE = "continuity-semantic-backend/";
+const ACCEPTANCE_FACADE_MODULE = "tavern/player-turn-acceptance.ts";
+const ACCEPTANCE_BRIDGE_MODULE = "tavern/player-turn-acceptance.internal.ts";
+const CLAIM_FACADE_MODULE = "tavern/provider-attempt-claim.ts";
+const CLAIM_BRIDGE_MODULE = "tavern/provider-attempt-claim.internal.ts";
+const PROVIDER_START_MODULE = "tavern/chat-provider-start.ts";
+const CHAT_THREAD_STORE_MODULE = "tavern/chat-thread-store.ts";
+const MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE = "tavern/chat-thread-store.mounted-turn-transition.internal.ts";
+const ACCEPTANCE_COORDINATOR_IMPORTS = new Set(["acceptMountedDurableTurn", "consumeMountedDurableAdmission"]);
+const CLAIM_COORDINATOR_IMPORTS = new Set(["claimMountedAttempt", "consumeMountedAttemptAdmission"]);
+const PROVIDER_START_COORDINATOR_IMPORTS = new Set(["startMountedAttempt", "consumeMountedAttemptInvocationAdmission"]);
+/**
+ * The provider start's only fixed parameters: the ones `startMountedAttempt` itself receives.
+ *
+ * Everything after them is an optional value the facade FORWARDS to the execution ledger, so the list
+ * cannot be a hand-maintained table of names - every legitimate new forward (the speech sink, the
+ * pacing choice) would otherwise need a gate edit, and the gate would be pinned to a shape it does
+ * not actually own. Threading is checked from the call below instead: the ledger receives exactly
+ * the trailing parameters, in order, so an unforwarded widening still fails.
+ */
+const PROVIDER_START_REQUIRED_PARAMETERS = Object.freeze(["manifest", "lease"]);
+const MOUNTED_STORE_IMPORTS = new Set([
+  "acceptMountedPlayerMessage",
+  "claimMountedAttempt",
+  "transitionMountedProviderStart",
+  "transitionMountedPresentation",
+]);
+const MOUNTED_TURN_SENSITIVE_IMPORTS = new Set([
+  ...ACCEPTANCE_COORDINATOR_IMPORTS,
+  ...CLAIM_COORDINATOR_IMPORTS,
+  ...PROVIDER_START_COORDINATOR_IMPORTS,
+  ...MOUNTED_STORE_IMPORTS,
+  "createMountedTurnTransitionAuthority",
+]);
+const LEGACY_BACKEND_MINT_IDENTIFIERS = Object.freeze([
+  "createSemanticProductionBackend",
+  "SemanticProductionBackend",
+  "SemanticProductionBackendOperations",
+]);
+const SOURCE_EXTENSIONS = Object.freeze([".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"]);
+const PERMITTED_NODE_BUILTIN_SPECIFIERS = new Set(
+  builtinModules.flatMap((specifier) => [specifier, `node:${specifier}`]),
+);
+
+/**
+ * TypeScript represents erased `import("x").T` and `typeof import("x")`
+ * syntax as `ImportType` AST nodes, while executable `import("x").then()`
+ * remains a CallExpression. Token adjacency cannot make that distinction
+ * safely, so ask the same pinned TypeScript compiler used by Host.
+ */
+function erasedImportTypeOffsets(source) {
+  const file = ts.createSourceFile("production-boundary.ts", source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+  const offsets = new Set();
+  const visit = (node) => {
+    if (node.kind === ts.SyntaxKind.ImportType) {
+      const start = node.getStart(file, false);
+      // `getStart()` may include `typeof`; find the actual `import` keyword
+      // within this exact ImportTypeNode, never beyond it.
+      const offset = source.indexOf("import", start);
+      if (offset >= start && offset < node.end) offsets.add(offset);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return offsets;
+}
+
+/** Parses the bridge's deliberately tiny runtime export surface. Type-only
+ * imports/exports are erased, so they cannot leak a runtime ingress. */
+function bridgeRuntimeExports(source) {
+  const all = tokens(source);
+  const sensitiveLocals = new Set();
+  for (let index = 0; index < all.length; index += 1) {
+    if (all[index].value !== "import" || all[index + 1]?.value === "type") continue;
+    let from = -1;
+    for (let cursor = index + 1; cursor < all.length && all[cursor].value !== ";"; cursor += 1)
+      if (all[cursor].value === "from" && all[cursor + 1]?.type === "string") {
+        from = cursor;
+        break;
+      }
+    if (from < 0) continue;
+    const specifier = all[from + 1].value;
+    const sensitive =
+      specifier.includes("continuity-semantic-production-coordinator.internal") ||
+      specifier.includes("/chat-thread-store");
+    if (!sensitive) continue;
+    for (let cursor = index + 1; cursor < from; cursor += 1) {
+      if (all[cursor].value === "*") {
+        if (all[cursor + 1]?.value === "as") sensitiveLocals.add(all[cursor + 2]?.value);
+        continue;
+      }
+      if (all[cursor].value === "{") {
+        const close = matchingToken(all, cursor, "{", "}");
+        for (let item = cursor + 1; item < close; item += 1) {
+          if ((all[item].type !== "word" && all[item].type !== "string") || all[item].value === "type") continue;
+          if (["{", ","].includes(all[item - 1]?.value))
+            sensitiveLocals.add(all[item + 1]?.value === "as" ? all[item + 2]?.value : all[item].value);
+        }
+        cursor = close;
+      } else if (all[cursor].type === "word" && cursor === index + 1) sensitiveLocals.add(all[cursor].value);
+    }
+  }
+  // The pinned TypeScript AST is the authority for whether a variable's
+  // initializer emits as a bare identifier. Only a small, explicitly erased
+  // wrapper set preserves sensitive provenance; calls, member access,
+  // destructuring, assignments, and every other initializer remain outside
+  // this deliberately narrow graph.
+  const ast = ts.createSourceFile("mounted-turn-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const erasedAliasSource = (expression) => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current)
+    )
+      current = current.expression;
+    return ts.isIdentifier(current) ? current.text : null;
+  };
+  const simpleAliases = [];
+  const collectAliases = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      const sourceLocal = erasedAliasSource(node.initializer);
+      if (sourceLocal !== null) simpleAliases.push([node.name.text, sourceLocal]);
+    }
+    ts.forEachChild(node, collectAliases);
+  };
+  collectAliases(ast);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [local, sourceLocal] of simpleAliases) {
+      if (sensitiveLocals.has(sourceLocal) && !sensitiveLocals.has(local)) {
+        sensitiveLocals.add(local);
+        changed = true;
+      }
+    }
+  }
+  const exports = [];
+  for (let index = 0; index < all.length; index += 1) {
+    if (all[index].value !== "export" || all[index + 1]?.value === "type") continue;
+    if (all[index + 1]?.value === "default") {
+      const local = all[index + 2]?.value;
+      exports.push({ name: "default", sensitive: sensitiveLocals.has(local) });
+      continue;
+    }
+    if (all[index + 1]?.value === "{") {
+      const close = matchingToken(all, index + 1, "{", "}");
+      for (let item = index + 2; item < close; item += 1) {
+        if (all[item].type !== "word" || all[item].value === "type" || !["{", ","].includes(all[item - 1]?.value))
+          continue;
+        exports.push({
+          name: all[item + 1]?.value === "as" ? all[item + 2]?.value : all[item].value,
+          sensitive: sensitiveLocals.has(all[item].value),
+        });
+      }
+      continue;
+    }
+    if (all[index + 1]?.value === "*") {
+      exports.push({ name: "*", sensitive: true });
+      continue;
+    }
+    if (["const", "let", "var", "function", "class", "async"].includes(all[index + 1]?.value)) {
+      const name = all[index + 1]?.value === "async" ? all[index + 3]?.value : all[index + 2]?.value;
+      exports.push({ name, sensitive: sensitiveLocals.has(name) });
+    }
+  }
+  return exports;
+}
+function isExactBridgeImplementation(
+  source,
+  shape = Object.freeze({
+    facade: "acceptMountedDurableTurnFromFacade",
+    runner: "acceptMountedDurableTurn",
+    consumer: "consumeMountedDurableAdmission",
+    store: "acceptMountedPlayerMessage",
+    command: true,
+  }),
+) {
+  const file = ts.createSourceFile("mounted-turn-bridge.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const runtimeImports = new Map();
+  const addRuntimeImport = (module, name, local) => {
+    const entries = runtimeImports.get(module) ?? [];
+    entries.push({ name, local });
+    runtimeImports.set(module, entries);
+  };
+  let implementation;
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
+      const clause = statement.importClause;
+      if (clause === undefined || clause.isTypeOnly) continue;
+      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+        return false;
+      for (const entry of clause.namedBindings.elements) {
+        if (entry.isTypeOnly) continue;
+        addRuntimeImport(statement.moduleSpecifier.text, entry.propertyName?.text ?? entry.name.text, entry.name.text);
+      }
+      continue;
+    }
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
+    )
+      continue;
+    if (ts.isFunctionDeclaration(statement)) {
+      if (implementation !== undefined) return false;
+      implementation = statement;
+      continue;
+    }
+    return false;
+  }
+  const hasExactRuntimeImports = (module, expected) => {
+    const actual = runtimeImports.get(module) ?? [];
+    return (
+      actual.length === expected.length &&
+      expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local))
+    );
+  };
+  if (
+    runtimeImports.size !== 2 ||
+    !hasExactRuntimeImports(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+      [
+        { name: shape.runner, local: shape.runner },
+        { name: shape.consumer, local: shape.consumer },
+        ...(shape.invocationConsumer === undefined
+          ? []
+          : [{ name: shape.invocationConsumer, local: shape.invocationConsumer }]),
+      ],
+    ) ||
+    !hasExactRuntimeImports("./chat-thread-store.js", [
+      { name: shape.storeImported ?? shape.store, local: shape.store },
+    ]) ||
+    implementation === undefined ||
+    implementation.name?.text !== shape.facade ||
+    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
+    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    implementation.parameters.length !== (shape.command ? 3 : 2) ||
+    implementation.parameters.some(
+      (parameter, index) =>
+        parameter.name.kind !== ts.SyntaxKind.Identifier ||
+        parameter.name.getText(file) !==
+          (shape.command ? ["manifest", "lease", "command"][index] : ["manifest", "lease"][index]) ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        parameter.questionToken !== undefined ||
+        (parameter.modifiers?.length ?? 0) !== 0,
+    ) ||
+    implementation.body === undefined ||
+    implementation.body.statements.length !== 1 ||
+    !ts.isReturnStatement(implementation.body.statements[0]) ||
+    implementation.body.statements[0].expression === undefined
+  )
+    return false;
+  const outer = implementation.body.statements[0].expression;
+  if (
+    !(ts.isCallExpression(outer) && ts.isIdentifier(outer.expression)) ||
+    outer.expression.text !== shape.runner ||
+    outer.arguments.length !== (shape.invocationConsumer === undefined ? 3 : 4)
+  )
+    return false;
+  if (
+    !ts.isIdentifier(outer.arguments[0]) ||
+    outer.arguments[0].text !== "manifest" ||
+    !ts.isIdentifier(outer.arguments[1]) ||
+    outer.arguments[1].text !== "lease"
+  )
+    return false;
+  const firstCallback = outer.arguments[2];
+  if (
+    !ts.isArrowFunction(firstCallback) ||
+    firstCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(firstCallback.parameters[0].name)
+  )
+    return false;
+  const admission = firstCallback.parameters[0].name.text;
+  const firstBody = ts.isBlock(firstCallback.body)
+    ? firstCallback.body.statements.length === 1 && ts.isReturnStatement(firstCallback.body.statements[0])
+      ? firstCallback.body.statements[0].expression
+      : undefined
+    : firstCallback.body;
+  if (
+    !(firstBody && ts.isCallExpression(firstBody) && ts.isIdentifier(firstBody.expression)) ||
+    firstBody.expression.text !== shape.consumer ||
+    firstBody.arguments.length !== 2 ||
+    !ts.isIdentifier(firstBody.arguments[0]) ||
+    firstBody.arguments[0].text !== admission
+  )
+    return false;
+  const secondCallback = firstBody.arguments[1];
+  if (
+    !ts.isArrowFunction(secondCallback) ||
+    secondCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(secondCallback.parameters[0].name)
+  )
+    return false;
+  const binding = secondCallback.parameters[0].name.text;
+  const secondBody = ts.isBlock(secondCallback.body)
+    ? secondCallback.body.statements.length === 1 && ts.isReturnStatement(secondCallback.body.statements[0])
+      ? secondCallback.body.statements[0].expression
+      : undefined
+    : secondCallback.body;
+  const exactStoreCall = !!(
+    secondBody &&
+    ts.isCallExpression(secondBody) &&
+    ts.isIdentifier(secondBody.expression) &&
+    secondBody.expression.text === shape.store &&
+    secondBody.arguments.length === (shape.command ? 2 : 1) &&
+    ts.isIdentifier(secondBody.arguments[0]) &&
+    secondBody.arguments[0].text === binding &&
+    (!shape.command || (ts.isIdentifier(secondBody.arguments[1]) && secondBody.arguments[1].text === "command"))
+  );
+  if (!exactStoreCall) return false;
+  if (shape.invocationConsumer === undefined) return true;
+  const observer = outer.arguments[3];
+  if (
+    !ts.isArrowFunction(observer) ||
+    observer.parameters.length !== 1 ||
+    !ts.isIdentifier(observer.parameters[0].name)
+  )
+    return false;
+  const invocation = observer.parameters[0].name.text;
+  const observerBody = observer.body;
+  if (
+    !(ts.isCallExpression(observerBody) && ts.isIdentifier(observerBody.expression)) ||
+    observerBody.expression.text !== shape.invocationConsumer ||
+    observerBody.arguments.length !== 2 ||
+    !ts.isIdentifier(observerBody.arguments[0]) ||
+    observerBody.arguments[0].text !== invocation
+  )
+    return false;
+  const callback = observerBody.arguments[1];
+  return (
+    ts.isArrowFunction(callback) &&
+    callback.parameters.length === 0 &&
+    callback.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true &&
+    ts.isIdentifier(callback.body) &&
+    callback.body.text === "undefined"
+  );
+}
+
+/** Provider start may only enter an already durable claim through its private scope and execution ledger. */
+function isExactProviderStartImplementation(source) {
+  const file = ts.createSourceFile("chat-provider-start.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const runtimeImports = new Map();
+  let implementation;
+  for (const statement of file.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      if (!ts.isStringLiteral(statement.moduleSpecifier)) return false;
+      const clause = statement.importClause;
+      if (clause === undefined || clause.isTypeOnly) continue;
+      if (clause.name !== undefined || clause.namedBindings === undefined || !ts.isNamedImports(clause.namedBindings))
+        return false;
+      runtimeImports.set(
+        statement.moduleSpecifier.text,
+        clause.namedBindings.elements
+          .filter((entry) => !entry.isTypeOnly)
+          .map((entry) => ({
+            name: entry.propertyName?.text ?? entry.name.text,
+            local: entry.name.text,
+          })),
+      );
+      continue;
+    }
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) && statement.isTypeOnly)
+    )
+      continue;
+    if (ts.isFunctionDeclaration(statement) && implementation === undefined) {
+      implementation = statement;
+      continue;
+    }
+    return false;
+  }
+  const exactImports = (module, expected) => {
+    const actual = runtimeImports.get(module) ?? [];
+    return (
+      actual.length === expected.length &&
+      expected.every(({ name, local }) => actual.some((entry) => entry.name === name && entry.local === local))
+    );
+  };
+  if (
+    runtimeImports.size !== 2 ||
+    !exactImports(
+      "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+      [
+        { name: "startMountedAttempt", local: "startMountedAttempt" },
+        { name: "consumeMountedAttemptInvocationAdmission", local: "consumeMountedAttemptInvocationAdmission" },
+      ],
+    ) ||
+    !exactImports("./p4-provider-start-execution.js", [
+      { name: "runMountedProviderStartLedger", local: "runMountedProviderStartLedger" },
+    ]) ||
+    implementation === undefined ||
+    implementation.name?.text !== "startMountedChatProvider" ||
+    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ||
+    !implementation.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    implementation.parameters.length < PROVIDER_START_REQUIRED_PARAMETERS.length ||
+    implementation.parameters.some(
+      (parameter, index) =>
+        parameter.name.kind !== ts.SyntaxKind.Identifier ||
+        parameter.initializer !== undefined ||
+        parameter.dotDotDotToken !== undefined ||
+        (index < PROVIDER_START_REQUIRED_PARAMETERS.length
+          ? parameter.questionToken !== undefined ||
+            parameter.name.getText(file) !== PROVIDER_START_REQUIRED_PARAMETERS[index]
+          : parameter.questionToken === undefined) ||
+        (parameter.modifiers?.length ?? 0) !== 0,
+    ) ||
+    implementation.body === undefined ||
+    implementation.body.statements.length !== 1 ||
+    !ts.isReturnStatement(implementation.body.statements[0]) ||
+    implementation.body.statements[0].expression === undefined
+  )
+    return false;
+  const returned = implementation.body.statements[0].expression;
+  const outer = ts.isAwaitExpression(returned) ? returned.expression : returned;
+  if (
+    !(ts.isCallExpression(outer) && ts.isIdentifier(outer.expression)) ||
+    outer.expression.text !== "startMountedAttempt" ||
+    outer.arguments.length !== 3
+  )
+    return false;
+  if (
+    !ts.isIdentifier(outer.arguments[0]) ||
+    outer.arguments[0].text !== "manifest" ||
+    !ts.isIdentifier(outer.arguments[1]) ||
+    outer.arguments[1].text !== "lease"
+  )
+    return false;
+  const invocationCallback = outer.arguments[2];
+  if (
+    !ts.isArrowFunction(invocationCallback) ||
+    invocationCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(invocationCallback.parameters[0].name)
+  )
+    return false;
+  const invocation = invocationCallback.parameters[0].name.text;
+  const invocationBody = invocationCallback.body;
+  if (
+    !(ts.isCallExpression(invocationBody) && ts.isIdentifier(invocationBody.expression)) ||
+    invocationBody.expression.text !== "consumeMountedAttemptInvocationAdmission" ||
+    invocationBody.arguments.length !== 2 ||
+    !ts.isIdentifier(invocationBody.arguments[0]) ||
+    invocationBody.arguments[0].text !== invocation
+  )
+    return false;
+  const scopeCallback = invocationBody.arguments[1];
+  if (
+    !ts.isArrowFunction(scopeCallback) ||
+    scopeCallback.parameters.length !== 1 ||
+    !ts.isIdentifier(scopeCallback.parameters[0].name)
+  )
+    return false;
+  const scope = scopeCallback.parameters[0].name.text;
+  return (
+    ts.isCallExpression(scopeCallback.body) &&
+    ts.isIdentifier(scopeCallback.body.expression) &&
+    scopeCallback.body.expression.text === "runMountedProviderStartLedger" &&
+    scopeCallback.body.arguments.length === implementation.parameters.length - 1 &&
+    ts.isIdentifier(scopeCallback.body.arguments[0]) &&
+    scopeCallback.body.arguments[0].text === scope &&
+    implementation.parameters
+      .slice(PROVIDER_START_REQUIRED_PARAMETERS.length)
+      .every(
+        (parameter, offset) =>
+          ts.isIdentifier(scopeCallback.body.arguments[offset + 1]) &&
+          scopeCallback.body.arguments[offset + 1].text === parameter.name.getText(file),
+      )
+  );
+}
+
+function staticModuleMemberEnd(all, index, moduleBindings, property) {
+  if (!moduleBindings.has(all[index]?.value)) return -1;
+  if (all[index + 1]?.value === "." && all[index + 2]?.value === property) return index + 2;
+  if (
+    all[index + 1]?.value === "[" &&
+    all[index + 2]?.type === "string" &&
+    all[index + 2]?.value === property &&
+    all[index + 3]?.value === "]"
+  )
+    return index + 3;
+  return -1;
+}
+
+/** Every identifier a binding name introduces, including destructured and rest elements. */
+function bindingIdentifiers(name) {
+  if (ts.isIdentifier(name)) return [name];
+  const identifiers = [];
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    identifiers.push(...bindingIdentifiers(element.name));
+  }
+  return identifiers;
+}
+/** `Symbol()` and `Symbol.for(...)` are the two calls that yield a symbol value; `Symbol.keyFor` yields a string. */
+function isSymbolValueExpression(expression) {
+  let current = expression;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current)
+  )
+    current = current.expression;
+  if (!ts.isCallExpression(current)) return false;
+  const callee = current.expression;
+  if (ts.isIdentifier(callee)) return callee.text === "Symbol";
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    ts.isIdentifier(callee.expression) &&
+    callee.expression.text === "Symbol" &&
+    callee.name.text === "for"
+  );
+}
+
+/**
+ * The named, single-purpose exception for a sandbox that builds an isolated context and DELETES the
+ * capabilities it withholds.
+ *
+ * That is the one mechanism a plan-script sandbox has, and it is the shape the computed-global rule
+ * forbids - so the rule stays fail-closed and a file opts in BY NAME, with a reason the report prints.
+ * A bare marker is not an exception (a reasonless exemption is the silent pass again), and the delete
+ * requirement is checked at the syntax node, so a declared file still cannot READ a computed global.
+ */
+const GLOBAL_STRIP_DECLARATION = /(?:\/\/|\/\*|\*)\s*global-strip-sandbox:\s*(\S.*?)\s*(?:\*\/)?$/;
+function globalStripSandboxDeclarations(source) {
+  const declarations = [];
+  source.split("\n").forEach((text, index) => {
+    const matched = GLOBAL_STRIP_DECLARATION.exec(text.trim());
+    if (matched !== null) declarations.push({ line: index + 1, reason: matched[1] });
+  });
+  return declarations;
+}
+
+function staticReferences(source) {
+  const result = [];
+  const all = tokens(source);
+  // A sandbox that builds a fresh `node:vm` context and DELETES the capabilities
+  // it withholds writes exactly the shape the computed-global rule forbids, on
+  // purpose. The rule stays fail-closed; a file may opt in by name, on the
+  // stripping line or the two above it, with a reason the report prints.
+  const globalStripDeclarations = globalStripSandboxDeclarations(source);
+  const consumedGlobalStrips = new Set();
+  const permittedGlobalStrips = [];
+  const globalStripDeclarationFor = (line) =>
+    globalStripDeclarations.filter((declaration) => declaration.line <= line && declaration.line >= line - 2).at(-1);
+  const erasedTypeOffsets = erasedImportTypeOffsets(source);
+  const ast = ts.createSourceFile("production-source.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  // A computed `globalThis[...]` can reach the string-keyed `process`/`global`
+  // capability only if its key can be one of those strings. A key that is
+  // provably a symbol value cannot: `globalThis[symbol]` and
+  // `globalThis["process"]` are different properties. The only symbol shape
+  // production uses is a `const` bound to `Symbol.for(...)`/`Symbol(...)` (a
+  // `const` cannot be reassigned), so resolve exactly that, and treat a name
+  // declared more than once - or any binding that shadows the `Symbol` builtin
+  // itself - as unknown and fail closed.
+  const symbolDeclarations = new Map();
+  const recordDeclaration = (name, symbolValued) => {
+    if (!ts.isIdentifier(name)) return;
+    const entry = symbolDeclarations.get(name.text) ?? { count: 0, symbolValued: false };
+    entry.count += 1;
+    entry.symbolValued ||= symbolValued;
+    symbolDeclarations.set(name.text, entry);
+  };
+  const collectDeclarations = (node) => {
+    if (ts.isVariableDeclaration(node)) {
+      const isConst = ts.isVariableDeclarationList(node.parent) && (node.parent.flags & ts.NodeFlags.Const) !== 0;
+      for (const identifier of bindingIdentifiers(node.name))
+        recordDeclaration(
+          identifier,
+          isConst && node.initializer !== undefined && isSymbolValueExpression(node.initializer),
+        );
+    } else if (ts.isParameter(node)) {
+      for (const identifier of bindingIdentifiers(node.name)) recordDeclaration(identifier, false);
+    } else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name !== undefined) {
+      recordDeclaration(node.name, false);
+    } else if (ts.isImportClause(node) && node.name !== undefined) {
+      recordDeclaration(node.name, false);
+    } else if (ts.isImportSpecifier(node) || ts.isNamespaceImport(node) || ts.isImportEqualsDeclaration(node)) {
+      recordDeclaration(node.name, false);
+    }
+    ts.forEachChild(node, collectDeclarations);
+  };
+  collectDeclarations(ast);
+  const symbolBuiltinIsShadowed = (symbolDeclarations.get("Symbol")?.count ?? 0) > 0;
+  const symbolValuedNames = new Set(
+    symbolBuiltinIsShadowed
+      ? []
+      : [...symbolDeclarations].filter(([, entry]) => entry.count === 1 && entry.symbolValued).map(([name]) => name),
+  );
+  const isProvablySymbolKey = (expression) => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current)
+    )
+      current = current.expression;
+    if (ts.isIdentifier(current)) return symbolValuedNames.has(current.text);
+    return !symbolBuiltinIsShadowed && isSymbolValueExpression(current);
+  };
+  const inspectRuntimeLoaders = (node) => {
+    const unwrapTransparentGlobalReceiver = (value) => {
+      let current = value;
+      while (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isSatisfiesExpression(current) ||
+        ts.isNonNullExpression(current)
+      )
+        current = current.expression;
+      return current;
+    };
+    const globalObject = (value) => {
+      const unwrapped = unwrapTransparentGlobalReceiver(value);
+      return ts.isIdentifier(unwrapped) && (unwrapped.text === "globalThis" || unwrapped.text === "global");
+    };
+    const globalSelfAliasAcquisition =
+      (ts.isPropertyAccessExpression(node) &&
+        globalObject(node.expression) &&
+        (node.name.text === "global" || node.name.text === "globalThis")) ||
+      (ts.isElementAccessExpression(node) &&
+        globalObject(node.expression) &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        (node.argumentExpression.text === "global" || node.argumentExpression.text === "globalThis"));
+    const globalProcessPath = (value) => {
+      const unwrapped = unwrapTransparentGlobalReceiver(value);
+      return (
+        (ts.isPropertyAccessExpression(unwrapped) &&
+          globalObject(unwrapped.expression) &&
+          unwrapped.name.text === "process") ||
+        (ts.isElementAccessExpression(unwrapped) &&
+          globalObject(unwrapped.expression) &&
+          ts.isStringLiteral(unwrapped.argumentExpression) &&
+          unwrapped.argumentExpression.text === "process")
+      );
+    };
+    const hasGlobalProcessAcquisition =
+      (ts.isPropertyAccessExpression(node) && globalObject(node.expression) && node.name.text === "process") ||
+      (ts.isElementAccessExpression(node) &&
+        globalObject(node.expression) &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        node.argumentExpression.text === "process");
+    const hasComputedGlobalMember =
+      ts.isElementAccessExpression(node) &&
+      globalObject(node.expression) &&
+      !ts.isStringLiteral(node.argumentExpression) &&
+      !isProvablySymbolKey(node.argumentExpression);
+    const processCapablePath = (value) => {
+      const unwrapped = unwrapTransparentGlobalReceiver(value);
+      return (ts.isIdentifier(unwrapped) && unwrapped.text === "process") || globalProcessPath(unwrapped);
+    };
+    // There is no approved production use of Node's runtime module-loader or
+    // runtime reflection. Reject acquisition itself (including extraction):
+    // otherwise an alias can postpone the unknown loader call beyond the
+    // static scanner.
+    const propertyName = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isElementAccessExpression(node) && ts.isStringLiteral(node.argumentExpression)
+        ? node.argumentExpression.text
+        : ts.isBindingElement(node) && node.propertyName !== undefined
+          ? ts.isIdentifier(node.propertyName) || ts.isStringLiteral(node.propertyName)
+            ? node.propertyName.text
+            : undefined
+          : undefined;
+    const hasComputedGlobalProcessMember =
+      ts.isElementAccessExpression(node) &&
+      globalProcessPath(node.expression) &&
+      !ts.isStringLiteral(node.argumentExpression);
+    // Do not permit a transparent direct `process` expression to be saved and
+    // then used after this bounded syntax check. This is acquisition, not a
+    // general provenance graph: only a declaration whose initializer itself
+    // normalizes to the process capability is rejected.
+    const isTransparentProcessAliasAcquisition =
+      ts.isVariableDeclaration(node) && node.initializer !== undefined && processCapablePath(node.initializer);
+    const isReflectGet =
+      ts.isCallExpression(node) &&
+      ((ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "Reflect" &&
+        node.expression.name.text === "get") ||
+        (ts.isElementAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "Reflect" &&
+          ts.isStringLiteral(node.expression.argumentExpression) &&
+          node.expression.argumentExpression.text === "get"));
+    const isObjectDescriptorOnProcess =
+      ts.isCallExpression(node) &&
+      node.arguments.length >= 1 &&
+      processCapablePath(node.arguments[0]) &&
+      (() => {
+        const staticBuiltinProperty =
+          node.arguments.length >= 2 &&
+          ts.isStringLiteral(node.arguments[1]) &&
+          node.arguments[1].text === "getBuiltinModule";
+        if (
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "Object"
+        )
+          return node.expression.name.text === "getOwnPropertyDescriptor" && staticBuiltinProperty;
+        if (
+          ts.isElementAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "Object"
+        )
+          return ts.isStringLiteral(node.expression.argumentExpression)
+            ? node.expression.argumentExpression.text === "getOwnPropertyDescriptor" && staticBuiltinProperty
+            : true;
+        return false;
+      })();
+    // Only the delete itself is the withholding mechanism. Reading a computed
+    // global member is an acquisition, and nothing here may excuse one.
+    const isGlobalStrip =
+      node.parent !== undefined &&
+      ts.isDeleteExpression(node.parent) &&
+      (hasComputedGlobalMember || hasComputedGlobalProcessMember);
+    if (
+      propertyName === "getBuiltinModule" ||
+      globalSelfAliasAcquisition ||
+      hasGlobalProcessAcquisition ||
+      hasComputedGlobalMember ||
+      hasComputedGlobalProcessMember ||
+      isTransparentProcessAliasAcquisition ||
+      isReflectGet ||
+      isObjectDescriptorOnProcess
+    ) {
+      const line = file.getLineAndCharacterOfPosition(node.getStart(file)).line + 1;
+      const declaration = isGlobalStrip ? globalStripDeclarationFor(line) : undefined;
+      if (declaration === undefined) result.push({ kind: "dynamic_require", specifier: null, line });
+      else {
+        consumedGlobalStrips.add(declaration.line);
+        permittedGlobalStrips.push({ line, reason: declaration.reason });
+      }
+    }
+    ts.forEachChild(node, inspectRuntimeLoaders);
+  };
+  const file = ast;
+  inspectRuntimeLoaders(file);
+  const factoryBindings = new Set();
+  const requireBindings = new Set();
+  const privateRequireBindings = new Set();
+  const moduleBindings = new Set(["module"]);
+  const requireCallIndexes = new Set();
+  for (let index = 0; index < all.length; index += 1) {
+    const token = all[index];
+    if (token.type !== "word") continue;
+    if (token.value === "import") {
+      if (all[index + 1]?.value === "(" && all[index - 1]?.value !== "." && !isMethodDeclaration(all, index)) {
+        const close = matchingToken(all, index + 1, "(", ")");
+        const argument = all[index + 2];
+        // Only a syntactically unambiguous TypeScript type query is erased.
+        // Runtime member access such as `import("...").then(...)` stays
+        // fail-closed as a dynamic ingress.
+        if (!(argument?.type === "string" && close >= 0 && erasedTypeOffsets.has(token.offset))) {
+          result.push({
+            kind: "dynamic_import",
+            specifier: null,
+            line: token.line,
+            expression: close < 0 ? null : source.slice(all[index + 1].offset + 1, all[close].offset).trim(),
+          });
+        }
+        continue;
+      }
+      // TypeScript import-equals is a static CommonJS ingress, not an ES import.
+      if (
+        all[index + 1]?.type === "word" &&
+        all[index + 2]?.value === "=" &&
+        all[index + 3]?.value === "require" &&
+        all[index + 4]?.value === "("
+      ) {
+        requireCallIndexes.add(index + 3);
+        const argument = all[index + 5];
+        result.push(
+          argument?.type === "string"
+            ? { kind: "require", specifier: argument.value, line: argument.line }
+            : { kind: "dynamic_require", specifier: null, line: all[index + 3].line },
+        );
+        continue;
+      }
+      if (all[index + 1]?.type === "string") {
+        result.push({ kind: "import", specifier: all[index + 1].value, line: all[index + 1].line });
+        continue;
+      }
+      // Type-only imports are erased and therefore cannot form a production
+      // authority ingress. Runtime named/default/namespace imports continue
+      // through the ordinary static-import policy below.
+      if (all[index + 1]?.value === "type") continue;
+      for (let cursor = index + 1; cursor < all.length && all[cursor].value !== ";"; cursor += 1) {
+        if (all[cursor].value === "from" && all[cursor + 1]?.type === "string") {
+          const bindings = importedBindings(all, index + 1, cursor);
+          if (bindings.length > 0)
+            result.push({
+              kind: "import",
+              specifier: all[cursor + 1].value,
+              line: all[cursor + 1].line,
+              bindings,
+            });
+          if (all[cursor + 1].value === "node:module")
+            for (let binding = index + 1; binding < cursor; binding += 1) {
+              if (all[binding].value === "createRequire")
+                factoryBindings.add(all[binding + 1]?.value === "as" ? all[binding + 2]?.value : "createRequire");
+              // A direct default import is the module namespace object for this
+              // scanner's createRequire/module.require member tracking.
+              if (binding === index + 1 && all[binding]?.type === "word") moduleBindings.add(all[binding].value);
+              if (all[binding].value === "*" && all[binding + 1]?.value === "as" && all[binding + 2]?.type === "word")
+                moduleBindings.add(all[binding + 2].value);
+            }
+          break;
+        }
+      }
+    }
+    if (token.value === "export" && all[index + 1]?.value !== "type")
+      for (let cursor = index + 1; cursor < all.length && all[cursor].value !== ";"; cursor += 1) {
+        if (all[cursor].value === "from" && all[cursor + 1]?.type === "string") {
+          const bindings = importedBindings(all, index + 1, cursor);
+          if (bindings.length > 0)
+            result.push({
+              kind: "re_export",
+              specifier: all[cursor + 1].value,
+              line: all[cursor + 1].line,
+              bindings,
+            });
+          break;
+        }
+      }
+  }
+  // Follow simple lexical aliases only. Anything more indirect is not recognized as a
+  // require ingress; recognized factory calls with non-literals still fail closed below.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let index = 0; index < all.length; index += 1) {
+      const name = all[index];
+      const declaration = ["const", "let", "var"].includes(all[index - 1]?.value);
+      // const { createRequire: factory } = require("node:module") or Module.
+      if (
+        name?.value === "createRequire" &&
+        all[index - 1]?.value === "{" &&
+        ["const", "let", "var"].includes(all[index - 2]?.value)
+      ) {
+        const close = matchingToken(all, index - 1, "{", "}");
+        const binding = all[index + 1]?.value === ":" ? all[index + 2]?.value : "createRequire";
+        const isNodeModuleRequire =
+          all[close + 2]?.value === "require" &&
+          all[close + 3]?.value === "(" &&
+          all[close + 4]?.type === "string" &&
+          all[close + 4].value === "node:module";
+        const isModuleBinding = moduleBindings.has(all[close + 2]?.value);
+        if (
+          close >= 0 &&
+          all[close + 1]?.value === "=" &&
+          (isNodeModuleRequire || isModuleBinding) &&
+          !factoryBindings.has(binding)
+        ) {
+          factoryBindings.add(binding);
+          changed = true;
+        }
+      }
+      // const { require: load } = module; follows the same policy as require().
+      if (
+        name?.value === "require" &&
+        all[index - 1]?.value === "{" &&
+        ["const", "let", "var"].includes(all[index - 2]?.value)
+      ) {
+        const close = matchingToken(all, index - 1, "{", "}");
+        const binding = all[index + 1]?.value === ":" ? all[index + 2]?.value : "require";
+        if (
+          close >= 0 &&
+          all[close + 1]?.value === "=" &&
+          moduleBindings.has(all[close + 2]?.value) &&
+          !requireBindings.has(binding)
+        ) {
+          requireBindings.add(binding);
+          changed = true;
+        }
+      }
+      if (name?.type !== "word" || all[index + 1]?.value !== "=") continue;
+      // A private field only becomes a CommonJS ingress when it is explicitly
+      // assigned an existing require binding. A private method named #require
+      // is not a require call.
+      if (all[index - 1]?.value === "#") {
+        const rhs = all[index + 2];
+        if ((rhs?.value === "require" || requireBindings.has(rhs?.value)) && all[index + 3]?.value !== "(")
+          privateRequireBindings.add(name.value);
+        continue;
+      }
+      // A declaration name or assignment target can only acquire a simple alias.
+      if (!declaration && all[index - 1]?.value === ".") continue;
+      const rhs = all[index + 2];
+      if (!rhs) continue;
+      const isNodeModuleRequire =
+        rhs.value === "require" &&
+        all[index + 3]?.value === "(" &&
+        all[index + 4]?.type === "string" &&
+        all[index + 4].value === "node:module";
+      if (isNodeModuleRequire && !moduleBindings.has(name.value)) {
+        moduleBindings.add(name.value);
+        changed = true;
+      }
+      const factoryMemberEnd = staticModuleMemberEnd(all, index + 2, moduleBindings, "createRequire");
+      const requireMemberEnd = staticModuleMemberEnd(all, index + 2, moduleBindings, "require");
+      const isFactoryMember = factoryMemberEnd >= 0;
+      const isRequireMember = requireMemberEnd >= 0;
+      const isFactoryCall =
+        (factoryBindings.has(rhs.value) && all[index + 3]?.value === "(") ||
+        (isFactoryMember && all[factoryMemberEnd + 1]?.value === "(");
+      if ((isFactoryCall || isRequireMember) && !requireBindings.has(name.value)) {
+        requireBindings.add(name.value);
+        changed = true;
+      }
+      if (!isFactoryCall && (factoryBindings.has(rhs.value) || isFactoryMember) && !factoryBindings.has(name.value)) {
+        factoryBindings.add(name.value);
+        changed = true;
+      }
+      if (moduleBindings.has(rhs.value) && all[index + 3]?.value !== "." && !moduleBindings.has(name.value)) {
+        moduleBindings.add(name.value);
+        changed = true;
+      }
+      if (
+        (rhs.value === "require" || requireBindings.has(rhs.value)) &&
+        all[index + 3]?.value !== "(" &&
+        !requireBindings.has(name.value)
+      ) {
+        requireBindings.add(name.value);
+        changed = true;
+      }
+    }
+  }
+  for (let index = 0; index < all.length; index += 1) {
+    if (moduleBindings.has(all[index]?.value) && all[index + 1]?.value === "[" && all[index + 2]?.type !== "string")
+      result.push({ kind: "dynamic_require", specifier: null, line: all[index].line });
+  }
+  const addRequireCall = (open, line) => {
+    const argument = all[open + 1];
+    result.push(
+      argument?.type === "string"
+        ? { kind: "require", specifier: argument.value, line: argument.line }
+        : { kind: "dynamic_require", specifier: null, line },
+    );
+  };
+  for (let index = 0; index < all.length; index += 1) {
+    const token = all[index];
+    if (token.type !== "word") continue;
+    const requireMemberEnd = staticModuleMemberEnd(all, index, moduleBindings, "require");
+    if (requireMemberEnd >= 0 && all[requireMemberEnd + 1]?.value === "(") {
+      const close = matchingToken(all, requireMemberEnd + 1, "(", ")");
+      // module.require is an intended CommonJS ingress, except when it is a method declaration.
+      if (close < 0 || all[close + 1]?.value !== "{") addRequireCall(requireMemberEnd + 1, token.line);
+      continue;
+    }
+    const factoryMemberEnd = staticModuleMemberEnd(all, index, moduleBindings, "createRequire");
+    if (factoryMemberEnd >= 0 && all[factoryMemberEnd + 1]?.value === "(") {
+      const close = matchingToken(all, factoryMemberEnd + 1, "(", ")");
+      if (close >= 0 && all[close + 1]?.value === "(") addRequireCall(close + 1, token.line);
+      continue;
+    }
+    if (all[index - 1]?.value === "#") {
+      if (privateRequireBindings.has(token.value) && all[index + 1]?.value === "(")
+        addRequireCall(index + 1, token.line);
+      continue;
+    }
+    if (all[index - 1]?.value === ".") continue;
+    if (factoryBindings.has(token.value) && all[index + 1]?.value === "(") {
+      const close = matchingToken(all, index + 1, "(", ")");
+      if (close >= 0 && all[close + 1]?.value === "(") addRequireCall(close + 1, token.line);
+      continue;
+    }
+    if (
+      (token.value === "require" || requireBindings.has(token.value)) &&
+      all[index + 1]?.value === "(" &&
+      !requireCallIndexes.has(index)
+    ) {
+      const close = matchingToken(all, index + 1, "(", ")");
+      // Object/class methods and function declarations are not CommonJS ingress.
+      if (close < 0 || all[close + 1]?.value !== "{") addRequireCall(index + 1, token.line);
+    }
+  }
+  const exportedBindings = [];
+  for (let index = 0; index < all.length; index += 1) {
+    if (all[index].value !== "export" || all[index + 1]?.value !== "{") continue;
+    const close = matchingToken(all, index + 1, "{", "}");
+    if (close >= 0) exportedBindings.push(...importedBindings(all, index + 1, close));
+  }
+  return {
+    references: result,
+    tokens: all,
+    exportedBindings,
+    permittedGlobalStrips,
+    staleGlobalStripDeclarations: globalStripDeclarations
+      .filter((declaration) => !consumedGlobalStrips.has(declaration.line))
+      .map((declaration) => declaration.line),
+  };
+}
+
+function isWithin(base, target) {
+  const path = relative(base, target);
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+function resolveRelative(importer, specifier) {
+  const requested = resolve(dirname(importer), specifier.replaceAll("\\", "/"));
+  const extension = extname(requested);
+  // A dotted basename such as `*.test-support` is not a source extension;
+  // always try appending recognized source extensions before replacement.
+  const candidates = extension
+    ? [
+        requested,
+        ...SOURCE_EXTENSIONS.map((item) => requested + item),
+        ...SOURCE_EXTENSIONS.filter((item) => item !== extension).map(
+          (item) => requested.slice(0, -extension.length) + item,
+        ),
+      ]
+    : SOURCE_EXTENSIONS.map((item) => requested + item);
+  candidates.push(...SOURCE_EXTENSIONS.map((item) => resolve(requested, `index${item}`)));
+  const candidate = candidates.find(existsSync);
+  return candidate ? realpathSync(candidate) : null;
+}
+function sourcePath(root, target) {
+  const path = display(resolve(root, "host/src"), target);
+  return path.endsWith(".ts") ? path : `${path}.ts`;
+}
+function isBanned(root, target) {
+  const path = sourcePath(root, target);
+  return LEGACY_MODULES.find((module) => path === module || path.startsWith(module)) ?? null;
+}
+function semanticAuthorityModule(root, target) {
+  const path = sourcePath(root, target);
+  return SEMANTIC_AUTHORITY_MODULES.find((module) => path.startsWith(module)) ?? null;
+}
+function isExactModule(root, path, module) {
+  return sourcePath(root, path).replace(/\.ts$/, "") === module.replace(/\.ts$/, "");
+}
+function isAcceptanceFacade(root, path) {
+  return isExactModule(root, path, ACCEPTANCE_FACADE_MODULE);
+}
+function isAcceptanceBridge(root, path) {
+  return isExactModule(root, path, ACCEPTANCE_BRIDGE_MODULE);
+}
+function isClaimFacade(root, path) {
+  return isExactModule(root, path, CLAIM_FACADE_MODULE);
+}
+function isClaimBridge(root, path) {
+  return isExactModule(root, path, CLAIM_BRIDGE_MODULE);
+}
+function isProviderStart(root, path) {
+  return isExactModule(root, path, PROVIDER_START_MODULE);
+}
+function isAnyMountedTurnBridge(root, path) {
+  return isAcceptanceBridge(root, path) || isClaimBridge(root, path);
+}
+function isAnyMountedTurnFacade(root, path) {
+  return isAcceptanceFacade(root, path) || isClaimFacade(root, path);
+}
+function isChatThreadStore(root, path) {
+  return isExactModule(root, path, CHAT_THREAD_STORE_MODULE);
+}
+function isMountedTurnTransitionAuthorityModule(root, path) {
+  return isExactModule(root, path, MOUNTED_TURN_TRANSITION_AUTHORITY_MODULE);
+}
+function isSemanticProductionCoordinatorAuthorityInternal(root, importer) {
+  return (
+    sourcePath(root, importer).replace(/\.ts$/, "") ===
+    SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE.replace(/\.ts$/, "")
+  );
+}
+function isSemanticProductionCoordinatorPublic(root, importer) {
+  return (
+    sourcePath(root, importer).replace(/\.ts$/, "") ===
+    SEMANTIC_PRODUCTION_COORDINATOR_PUBLIC_MODULE.replace(/\.ts$/, "")
+  );
+}
+function isSemanticProductionCoordinatorInternal(root, target) {
+  return (
+    sourcePath(root, target).replace(/\.ts$/, "") ===
+    SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE.replace(/\.ts$/, "")
+  );
+}
+function isTestOnlyPath(root, target) {
+  return /(?:^|\/)[^/]*\.(?:test|test-support)(?:\.[^/]+)?$/.test(sourcePath(root, target));
+}
+function isSemanticBackend(root, target) {
+  return sourcePath(root, target).startsWith(SEMANTIC_BACKEND_MODULE);
+}
+function violation(kind, importer, specifier, line, detail) {
+  return { kind, importer, specifier, line, detail };
+}
+
+export function checkHostProductionImportBoundary({
+  root = repositoryRoot,
+  roots = DEFAULT_ROOTS,
+  readFile = (path) => readFileSync(path, "utf8"),
+} = {}) {
+  const canonicalSourceRoot = realpathSync(resolve(root, "host/src"));
+  const configPath = resolve(root, "host/production-artifact.config.json");
+  let externalPackages = new Set();
+  let declaredDynamicImports = [];
+  let configError;
+  if (existsSync(configPath)) {
+    try {
+      const closure = JSON.parse(readFile(configPath)).externalRuntimeClosure;
+      if (!(Array.isArray(closure?.packages) && Array.isArray(closure.dynamicExternalImports))) throw new Error();
+      externalPackages = new Set(closure.packages.filter((entry) => typeof entry === "string"));
+      declaredDynamicImports = closure.dynamicExternalImports.filter(
+        (entry) =>
+          typeof entry?.package === "string" &&
+          typeof entry.module === "string" &&
+          typeof entry.expression === "string" &&
+          Number.isSafeInteger(entry.occurrence) &&
+          entry.occurrence >= 0 &&
+          entry.package === "@cortexkit/pi-magic-context" &&
+          externalPackages.has(entry.package),
+      );
+    } catch {
+      configError = "invalid_external_runtime_closure";
+    }
+  }
+  // Mounted-turn facades, private bridges, and provider start are mandatory production
+  // inspection roots whenever present, even when application roots do not import them.
+  const allRoots = [
+    ...new Set([...roots, ...MOUNTED_TURN_COMPOSITION_ROOTS.filter((path) => existsSync(resolve(root, path)))]),
+  ];
+  const absoluteRoots = allRoots.map((path) => resolve(root, path));
+  const pending = [];
+  const visited = new Set();
+  const violations = [];
+  const permittedGlobalStrips = [];
+  if (configError)
+    violations.push(
+      violation("invalid_production_artifact_config", "host/production-artifact.config.json", null, 1, configError),
+    );
+  const dynamicOccurrences = new Map();
+  for (const suppliedRoot of absoluteRoots) {
+    if (!existsSync(suppliedRoot)) {
+      violations.push(violation("invalid_root", display(root, suppliedRoot), null, 1, "root_source_not_found"));
+      continue;
+    }
+    let canonicalRoot;
+    try {
+      canonicalRoot = realpathSync(suppliedRoot);
+    } catch {
+      violations.push(violation("invalid_root", display(root, suppliedRoot), null, 1, "root_source_unreadable"));
+      continue;
+    }
+    if (!isWithin(canonicalSourceRoot, canonicalRoot)) {
+      violations.push(violation("invalid_root", display(root, suppliedRoot), null, 1, "root_outside_host_src"));
+      continue;
+    }
+    pending.push(canonicalRoot);
+  }
+  while (pending.length > 0) {
+    const importer = pending.pop();
+    if (visited.has(importer)) continue;
+    visited.add(importer);
+    let source;
+    try {
+      source = readFile(importer);
+    } catch {
+      violations.push(violation("unresolved_root", display(root, importer), null, 1, "root_source_unreadable"));
+      continue;
+    }
+    const parsed = staticReferences(source);
+    for (const strip of parsed.permittedGlobalStrips)
+      permittedGlobalStrips.push({ importer: display(root, importer), line: strip.line, reason: strip.reason });
+    // A declaration that no longer excuses a delete is the same silent pass in the other direction:
+    // the strip it was written for is gone, so the marker must go with it.
+    for (const line of parsed.staleGlobalStripDeclarations)
+      violations.push(
+        violation(
+          "stale_global_strip_declaration",
+          display(root, importer),
+          null,
+          line,
+          "global_strip_sandbox_declaration_excuses_no_delete",
+        ),
+      );
+    for (const reference of parsed.references) {
+      const shownImporter = display(root, importer);
+      if (reference.kind === "dynamic_import") {
+        const module = sourcePath(root, importer).replace(/\.ts$/, ".js");
+        const occurrenceKey = `${module}\u0000${reference.expression}`;
+        const occurrence = dynamicOccurrences.get(occurrenceKey) ?? 0;
+        dynamicOccurrences.set(occurrenceKey, occurrence + 1);
+        const declared = declaredDynamicImports.find(
+          (entry) =>
+            entry.module === module && entry.expression === reference.expression && entry.occurrence === occurrence,
+        );
+        if (declared === undefined) {
+          violations.push(
+            violation(
+              "unresolved_dynamic_import",
+              shownImporter,
+              null,
+              reference.line,
+              "dynamic_imports_are_not_statically_resolvable",
+            ),
+          );
+        }
+        continue;
+      }
+      if (reference.kind === "dynamic_require") {
+        violations.push(
+          violation(
+            "unresolved_dynamic_require",
+            shownImporter,
+            null,
+            reference.line,
+            "dynamic_requires_are_not_statically_resolvable",
+          ),
+        );
+        continue;
+      }
+      if (!reference.specifier.startsWith(".")) {
+        if (
+          PERMITTED_NODE_BUILTIN_SPECIFIERS.has(reference.specifier) ||
+          isDeclaredExternalPackage(reference.specifier, externalPackages)
+        )
+          continue;
+        violations.push(
+          violation(
+            reference.kind === "require" ? "unresolved_require_style_import" : "unresolved_nonrelative_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            reference.kind === "require"
+              ? "require_style_specifier_not_permitted"
+              : "nonrelative_specifier_not_permitted",
+          ),
+        );
+        continue;
+      }
+      const requested = resolve(dirname(importer), reference.specifier.replaceAll("\\", "/"));
+      if (!isWithin(canonicalSourceRoot, requested)) {
+        violations.push(
+          violation(
+            "relative_import_escapes_host_source",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            "relative_target_outside_host_src",
+          ),
+        );
+        continue;
+      }
+      const target = resolveRelative(importer, reference.specifier);
+      if (!target) {
+        violations.push(
+          violation(
+            "unresolved_relative_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            "relative_source_not_found",
+          ),
+        );
+        continue;
+      }
+      if (!isWithin(canonicalSourceRoot, target)) {
+        violations.push(
+          violation(
+            "relative_import_escapes_host_source",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            "relative_target_outside_host_src",
+          ),
+        );
+        continue;
+      }
+      if (isTestOnlyPath(root, target)) {
+        violations.push(
+          violation(
+            "production_reaches_test_only_module",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            "test_only_module_in_production_closure",
+          ),
+        );
+      }
+      if (isAnyMountedTurnBridge(root, target) && !isAnyMountedTurnFacade(root, importer)) {
+        const requiredFacade = isClaimBridge(root, target) ? CLAIM_FACADE_MODULE : ACCEPTANCE_FACADE_MODULE;
+        violations.push(
+          violation(
+            "unauthorized_mounted_turn_bridge_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `mounted_turn_bridge_import_requires:${requiredFacade}`,
+          ),
+        );
+      }
+      if (
+        isMountedTurnTransitionAuthorityModule(root, target) &&
+        (reference.kind === "require" ||
+          reference.kind === "re_export" ||
+          reference.bindings?.includes("createMountedTurnTransitionAuthority") ||
+          reference.bindings?.includes("*") ||
+          reference.bindings?.includes("default")) &&
+        !isSemanticProductionCoordinatorAuthorityInternal(root, importer)
+      ) {
+        violations.push(
+          violation(
+            "unauthorized_mounted_turn_transition_authority_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `mounted_turn_transition_authority_mint_requires:${SEMANTIC_PRODUCTION_COORDINATOR_INTERNAL_MODULE}`,
+          ),
+        );
+      }
+      if (
+        isSemanticProductionCoordinatorInternal(root, target) &&
+        !isSemanticProductionCoordinatorPublic(root, importer) &&
+        !isAnyMountedTurnBridge(root, importer) &&
+        !isProviderStart(root, importer)
+      ) {
+        violations.push(
+          violation(
+            "unauthorized_coordinator_internal_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `coordinator_internal_import_requires:${SEMANTIC_PRODUCTION_COORDINATOR_PUBLIC_MODULE}`,
+          ),
+        );
+      }
+      // CommonJS has no static named-binding clause. A require of this module
+      // can obtain the raw ingress, so it is sensitive by construction rather
+      // than silently becoming an untracked topology edge.
+      const importsSensitiveMountedTurnIngress =
+        reference.kind === "require" ||
+        reference.kind === "re_export" ||
+        reference.bindings?.some((binding) => MOUNTED_TURN_SENSITIVE_IMPORTS.has(binding)) ||
+        reference.bindings?.includes("*") ||
+        reference.bindings?.includes("default");
+      if (
+        isChatThreadStore(root, target) &&
+        importsSensitiveMountedTurnIngress &&
+        !isAnyMountedTurnBridge(root, importer) &&
+        !isSemanticProductionCoordinatorAuthorityInternal(root, importer)
+      ) {
+        violations.push(
+          violation(
+            "unauthorized_mounted_turn_store_ingress_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `mounted_turn_store_ingress_import_requires:${ACCEPTANCE_BRIDGE_MODULE}_or:${CLAIM_BRIDGE_MODULE}`,
+          ),
+        );
+      }
+      if (
+        (isAnyMountedTurnBridge(root, importer) || isProviderStart(root, importer)) &&
+        isSemanticProductionCoordinatorInternal(root, target)
+      ) {
+        const allowed = isProviderStart(root, importer)
+          ? PROVIDER_START_COORDINATOR_IMPORTS
+          : isClaimBridge(root, importer)
+            ? CLAIM_COORDINATOR_IMPORTS
+            : ACCEPTANCE_COORDINATOR_IMPORTS;
+        const invalid = reference.kind === "re_export" || reference.bindings?.some((binding) => !allowed.has(binding));
+        if (invalid)
+          violations.push(
+            violation(
+              "invalid_mounted_turn_bridge_coordinator_edge",
+              shownImporter,
+              reference.specifier,
+              reference.line,
+              "mounted_turn_bridge_may_import_only_opaque_runner_and_consumer",
+            ),
+          );
+      }
+      if (isAnyMountedTurnBridge(root, importer) && isChatThreadStore(root, target)) {
+        const expectedIngress = isClaimBridge(root, importer) ? "claimMountedAttempt" : "acceptMountedPlayerMessage";
+        const exactStoreIngress =
+          expectedIngress !== null &&
+          reference.kind === "import" &&
+          reference.bindings?.length === 1 &&
+          reference.bindings[0] === expectedIngress;
+        if (!exactStoreIngress)
+          violations.push(
+            violation(
+              "invalid_mounted_turn_bridge_store_edge",
+              shownImporter,
+              reference.specifier,
+              reference.line,
+              "mounted_turn_bridge_may_import_only_exact_named_store_ingress",
+            ),
+          );
+      }
+      const banned = isBanned(root, target);
+      if (banned)
+        violations.push(
+          violation(
+            "banned_legacy_module",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `legacy_authority_module:${banned}`,
+          ),
+        );
+      const authorityModule = semanticAuthorityModule(root, target);
+      if (
+        authorityModule &&
+        !isSemanticProductionCoordinatorAuthorityInternal(root, importer) &&
+        semanticAuthorityModule(root, importer) === null
+      ) {
+        violations.push(
+          violation(
+            "unauthorized_semantic_authority_import",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `semantic_authority_import_requires:${SEMANTIC_PRODUCTION_COORDINATOR}`,
+          ),
+        );
+      }
+      if (isSemanticBackend(root, target)) {
+        violations.push(
+          violation(
+            "banned_semantic_backend_module",
+            shownImporter,
+            reference.specifier,
+            reference.line,
+            `semantic_authority_module:${SEMANTIC_BACKEND_MODULE}`,
+          ),
+        );
+      }
+      pending.push(target);
+    }
+    if (isAnyMountedTurnBridge(root, importer)) {
+      const isAttemptBridge = isClaimBridge(root, importer);
+      const expectedExport = isAttemptBridge
+        ? "claimMountedProviderAttemptFromFacade"
+        : "acceptMountedDurableTurnFromFacade";
+      const shape = isAttemptBridge
+        ? Object.freeze({
+            facade: "claimMountedProviderAttemptFromFacade",
+            runner: "claimMountedAttempt",
+            consumer: "consumeMountedAttemptAdmission",
+            store: "claimStoreMountedAttempt",
+            storeImported: "claimMountedAttempt",
+            command: false,
+          })
+        : undefined;
+      const bridgeExports = bridgeRuntimeExports(source);
+      if (bridgeExports.length !== 1 || bridgeExports[0]?.name !== expectedExport || bridgeExports[0]?.sensitive)
+        violations.push(
+          violation(
+            "invalid_mounted_turn_bridge_runtime_export_surface",
+            display(root, importer),
+            null,
+            1,
+            `mounted_turn_bridge_may_export_only_${expectedExport}`,
+          ),
+        );
+      if (!isExactBridgeImplementation(source, shape))
+        violations.push(
+          violation(
+            "invalid_mounted_turn_bridge_implementation",
+            display(root, importer),
+            null,
+            1,
+            "mounted_turn_bridge_must_use_exact_coordinator_admission_chain",
+          ),
+        );
+    }
+    if (isProviderStart(root, importer) && !isExactProviderStartImplementation(source))
+      violations.push(
+        violation(
+          "invalid_provider_start_implementation",
+          display(root, importer),
+          null,
+          1,
+          "provider_start_must_use_exact_invocation_admission_and_execution_ledger",
+        ),
+      );
+    for (const token of parsed.tokens) {
+      if (token.type !== "word") continue;
+      if (LEGACY_ADOPTION_FUNCTIONS.includes(token.value)) {
+        violations.push(
+          violation(
+            "banned_legacy_adoption_function",
+            display(root, importer),
+            token.value,
+            token.line,
+            "legacy_adoption_function",
+          ),
+        );
+      }
+      if (LEGACY_BACKEND_MINT_IDENTIFIERS.includes(token.value)) {
+        violations.push(
+          violation(
+            "banned_legacy_backend_mint_identifier",
+            display(root, importer),
+            token.value,
+            token.line,
+            "legacy_backend_mint_identifier",
+          ),
+        );
+      }
+    }
+  }
+  violations.sort((left, right) =>
+    `${left.importer}:${left.line}:${left.kind}:${left.specifier}`.localeCompare(
+      `${right.importer}:${right.line}:${right.kind}:${right.specifier}`,
+    ),
+  );
+  const inspectedFiles = [...visited].map((path) => display(root, path)).sort();
+  return {
+    gate: "host_production_import_boundary/v1",
+    verdict: violations.length === 0 ? "passed" : "blocked",
+    roots: absoluteRoots.map((path) => display(root, path)),
+    inspectedFiles,
+    // The objects this gate examined: the specifiers it followed into a file. Zero of them is a broken walk, not a clean tree.
+    examined: inspectedFiles.length,
+    declaredGlobalStrips: permittedGlobalStrips.sort((left, right) =>
+      `${left.importer}:${left.line}`.localeCompare(`${right.importer}:${right.line}`),
+    ),
+    violations,
+  };
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const report = checkHostProductionImportBoundary();
+  console.log(JSON.stringify(report, null, 2));
+  if (report.verdict !== "passed") process.exitCode = 2;
+}

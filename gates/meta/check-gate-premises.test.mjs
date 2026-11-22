@@ -25,8 +25,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /** The commit that deleted the HUD: its own tree is where both gates named a file that was already gone. */
 const DELETION_COMMIT = "213cde50";
-const CONSUMERS_GATE = "tools/check-stardew-observation-consumers.mjs";
-const GAP_GATE = "tools/check-stardew-observation-gap.mjs";
+const CONSUMERS_GATE = "gates/stardew/check-stardew-observation-consumers.mjs";
+const GAP_GATE = "gates/stardew/check-stardew-observation-gap.mjs";
 const DELETED_INPUT = "host/src/snapshot-hud.ts";
 
 function fromHistory(revision, path) {
@@ -128,7 +128,7 @@ test("the gate that SPAWNS the analyzer inherits its inputs, which is why `reads
 
   const withoutInheritance = premisesAt(DELETION_COMMIT, [
     { gate: GAP_GATE },
-    { gate: CONSUMERS_GATE, reads: ["tools/check-snapshot-field-rendering.mjs"] },
+    { gate: CONSUMERS_GATE, reads: ["gates/product/check-snapshot-field-rendering.mjs"] },
   ]);
   assert.ok(
     !withoutInheritance.findings.some((finding) => finding.gate === GAP_GATE),

@@ -67,7 +67,7 @@ const OBSERVATION_GAP_ANALYZER =
   "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs";
 
 /** The module that owns the renderer declaration the consumers gate imports its per-turn text from. */
-const RENDERER_DECLARATION = "tools/check-snapshot-field-rendering.mjs";
+const RENDERER_DECLARATION = "gates/product/check-snapshot-field-rendering.mjs";
 
 /**
  * One row per source gate that reads files: the gate, and the modules whose declarations it inherits.
@@ -76,12 +76,12 @@ const RENDERER_DECLARATION = "tools/check-snapshot-field-rendering.mjs";
  * whatever THAT module declares, and a registry that only looked at the gate's own text would call the gate whole.
  */
 export const GATE_PREMISES = Object.freeze([
-  { gate: "tools/check-stardew-observation-gap.mjs", reads: [OBSERVATION_GAP_ANALYZER] },
-  { gate: "tools/check-stardew-observation-consumers.mjs", reads: [RENDERER_DECLARATION] },
+  { gate: "gates/stardew/check-stardew-observation-gap.mjs", reads: [OBSERVATION_GAP_ANALYZER] },
+  { gate: "gates/stardew/check-stardew-observation-consumers.mjs", reads: [RENDERER_DECLARATION] },
   // Both gates below declare their inputs as UPPER_CASE constants and `path:` rows, so their premise lists are derived
   // rather than restated here: the wire schema, the Host validator, the contract and the producer it judges.
-  { gate: "tools/check-inventory-row-field-rendering.mjs" },
-  { gate: "tools/check-browser-state-projection-fields.mjs" },
+  { gate: "gates/product/check-inventory-row-field-rendering.mjs" },
+  { gate: "gates/product/check-browser-state-projection-fields.mjs" },
 ]);
 
 /** A repo-relative path: the roots this tree's gates read from. A string outside these is prose, not an input. */
