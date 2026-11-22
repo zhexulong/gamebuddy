@@ -17,8 +17,8 @@ public sealed partial class ModEntry
     private const int MilestoneLevel = 5;
 
     /// <summary>
-    /// The composed world must let the companion WALK between the places its day uses: home, the bin, and the field
-    /// it works - all in one walkable component, or the day cannot be ended at all.
+    /// The composed world must let the companion WALK between the places its day uses: home, the bin, the field it
+    /// works, and the animal house it tends - all in one walkable component, or the day cannot be ended at all.
     ///
     /// `advance_day` only begins a night from inside a farmhouse and the companion has to walk there, so the composed
     /// world is only usable if the farmhouse is reachable from where the session works. The multi-day Given puts the
@@ -29,7 +29,7 @@ public sealed partial class ModEntry
     /// (<see cref="StardewBodyController.AssessReachability"/>), so an arm-time refusal and a mid-run
     /// `no_native_path` can never disagree about what "reachable" means.
     /// </summary>
-    private void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm)
+    private void AssertNativeLocalMultiDayHomeReachable(Farmer player, Farm farm, Point? animalHouseDoor)
     {
         Point door = NativeLocalMultiDayDoorStandingSpot(player, farm);
         // Measured on the FARM, from the spot the actor stands on when it comes OUT of its home - not from the
@@ -68,7 +68,96 @@ public sealed partial class ModEntry
 
         AssertReachable(door, binStandingTile, walkable, "bin");
         AssertReachable(door, field, walkable, "field");
+
+        // AND the animal house, whose approach ring the play-session Given judged on a world the props had not reached
+        // yet. That Given sites the house before it places a prop (`no_approach` asks whether the session's START can
+        // walk to one of the door's four tiles), so the ring is a measurement of the field BEFORE the day's ground was
+        // spent - while this assertion runs on the world the day is played in. Measured `round93` (2026-11-22): 26
+        // minutes and 233 bridge facts with `Barn 0` / `Coop 0`, and no assertion had ever asked whether the farmhouse
+        // could walk to the animal house at all. A clearing with four free neighbours can be sealed off by the building
+        // itself, which is why the question below is the flood and not the ring.
+        if (animalHouseDoor is not { } porch)
+            throw new InvalidOperationException("fixture_native_local_multi_day_animal_house_door_unrecorded");
+        AssertNativeLocalMultiDayAnimalPorchReachable(
+            door,
+            porch,
+            walkable,
+            tile => NativeLocalMultiDayTileKind(farm, tile));
     }
+
+    /// <summary>
+    /// The ROAD from the farmhouse's own porch to the animal house's, which the animal house's four neighbours do not
+    /// answer.
+    ///
+    /// <para>
+    /// The flood is aimed at the building's DOOR TILE and that IS the ring: <see cref="StardewBodyController.AssessReachability"/>
+    /// calls a route found when its search reaches a CARDINAL NEIGHBOUR of the target, and those four tiles are exactly
+    /// what <see cref="PlaySessionAnimalDoorApproach"/> reserves. One span of the map's ground instead of four, asked
+    /// with the same predicate the day is judged by.
+    /// </para>
+    ///
+    /// <para>
+    /// THE REFUSAL NAMES THE TILE THE ROAD STOPPED AT AND WHAT STANDS THERE. A boolean is what let this through: the
+    /// arm-time line said nothing at all, so "no road" and "no road worth asking about" read the same. `tileKind` is
+    /// the caller's reading of one tile - the receipt layer in production, a literal in a test - so this message cannot
+    /// grow a second opinion about what blocks a farmer.
+    /// </para>
+    /// </summary>
+    internal static void AssertNativeLocalMultiDayAnimalPorchReachable(
+        Point houseDoor,
+        Point porch,
+        Func<Point, bool> walkable,
+        Func<Point, string> tileKind)
+    {
+        // `findClosestReachable: false` is the shape this needs: a porch the road reaches returns as soon as the flood
+        // meets one of its approach tiles, while an unreachable one still enumerates the component and hands back the
+        // tile it got closest with. The other way round enumerates on every site the animal Given's search tries.
+        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+            houseDoor,
+            porch,
+            walkable,
+            maxVisited: 8000,
+            findClosestReachable: false);
+        if (verdict is not { } assessed)
+        {
+            throw new InvalidOperationException(
+                $"fixture_native_local_multi_day_home_reachability_unknown:what=animal_porch;door={houseDoor.X},{houseDoor.Y};target={porch.X},{porch.Y}");
+        }
+        if (!assessed.TargetEnclosed)
+            return;
+        Point frontier = assessed.ClosestToTarget ?? houseDoor;
+        // The blocking tile is one of the frontier's four steps: the ground the road would have had to cross, nearest
+        // the porch. The steps are the planner's own cardinal set (`PathFindController.Directions`), the same four the
+        // door ring is drawn from.
+        Point blockedAt = frontier;
+        int nearestPorch = int.MaxValue;
+        foreach (Point offset in new[] { new Point(0, -1), new Point(0, 1), new Point(-1, 0), new Point(1, 0) })
+        {
+            Point neighbour = new(frontier.X + offset.X, frontier.Y + offset.Y);
+            if (walkable(neighbour))
+                continue;
+            int distance = Math.Max(Math.Abs(neighbour.X - porch.X), Math.Abs(neighbour.Y - porch.Y));
+            if (distance >= nearestPorch)
+                continue;
+            nearestPorch = distance;
+            blockedAt = neighbour;
+        }
+        throw new InvalidOperationException(
+            $"animal_building_unreachable_from_house:door={houseDoor.X},{houseDoor.Y};porch={porch.X},{porch.Y};"
+                + $"blocked_at={blockedAt.X},{blockedAt.Y};why={(nearestPorch == int.MaxValue ? "none" : tileKind(blockedAt))}");
+    }
+
+    /// <summary>
+    /// What kind of tile this is, in the vocabulary a refusal receipt publishes as `blocked_by`.
+    ///
+    /// The arm-time refusal and a mid-run `no_native_path` describe the same world, so they name a tile the same way
+    /// (`building:Barn`, `object:(O)390`, `buildings_tile:blocked@12,3`) through the one probe that answers it, rather
+    /// than through a second table of tile kinds that agrees today and drifts the first time either moves.
+    /// </summary>
+    private static string NativeLocalMultiDayTileKind(Farm farm, Point tile) =>
+        farm.isTileOnMap(new Vector2(tile.X, tile.Y))
+            ? StardewBodyController.DescribeTargetOccupant(farm, new Vector2(tile.X, tile.Y), Game1.player).Format()
+            : "off_map";
 
     /// <summary>
     /// What "walkable" means for this scenario, in ONE place, because two answers to it already cost a run.

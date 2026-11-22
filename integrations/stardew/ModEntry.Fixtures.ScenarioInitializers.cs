@@ -429,7 +429,7 @@ public sealed partial class ModEntry
         // Refused HERE, by name and with numbers, instead of burning a turn on a world that cannot be
         // finished. It asserts the DIRECTION? no - it asserts reachability only: how the companion gets home
         // is still its own decision.
-        AssertNativeLocalMultiDayHomeReachable(player, farm);
+        AssertNativeLocalMultiDayHomeReachable(player, farm, this.nativeLocalPlaySessionAnimalDoor);
     }
 
     private void InitializeNativeLocalPickupForageFixture(Farmer player, Farm farm)

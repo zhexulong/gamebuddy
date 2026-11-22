@@ -163,14 +163,14 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // was 28 tiles with the door outside it, eleven move_to_tile attempts came back no_native_path and
         // enter_exit said door_out_of_range, so the night could never begin and the turn was spent re-aiming.
         string source = ReadFixtureSource();
-        source.Should().Contain("AssertNativeLocalMultiDayHomeReachable(player, farm);");
+        source.Should().Contain("AssertNativeLocalMultiDayHomeReachable(player, farm, this.nativeLocalPlaySessionAnimalDoor);");
         // The start tile is chosen INSIDE the door's component, not merely checked afterwards: choosing a start in
         // a different piece of the Farm is the defect the check caught, so the choice is what had to change.
         source.Should().Contain("if (requiredReachable is { } required && !IsReachableFromStart(farm, tile, required))");
         // ...and it runs AFTER both givens, because it is the composition it checks.
         int multiDay = source.IndexOf("InitializeNativeLocalMultiDayFixture(player, farm);", StringComparison.Ordinal);
         int playSession = source.IndexOf("InitializeNativeLocalPlaySessionFixture(", multiDay, StringComparison.Ordinal);
-        int assertion = source.IndexOf("AssertNativeLocalMultiDayHomeReachable(player, farm);", playSession, StringComparison.Ordinal);
+        int assertion = source.IndexOf("AssertNativeLocalMultiDayHomeReachable(player, farm, this.nativeLocalPlaySessionAnimalDoor);", playSession, StringComparison.Ordinal);
         assertion.Should().BeGreaterThan(playSession, "the check is about the composed world");
 
         string given = ReadMultiDayGivenSource();
@@ -183,7 +183,8 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // coordinate refused every world (component_tiles=22 around the bed, measured on run g5).
         given.Should().NotContain("Point from = new((int)player.Tile.X");
         given.Should().Contain("FindNativeLocalShippingBinStandingTile(farm, bin)");
-        // The refusal carries numbers rather than a verdict, and it says nothing about the ROUTE.
+        // The refusal carries numbers rather than a verdict: the flood's component size and the tile it got closest
+        // with, not a route.
         given.Should().Contain("component_tiles={assessed.ComponentTiles}");
         given.Should().Contain("closest=");
         given.Should().Contain("what={what}");
@@ -224,6 +225,36 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
+    public void TheComposedWorldMustAlsoReachTheAnimalHousePorch()
+    {
+        // THE DEFECT CLASS this answers: the animal house's own four neighbours were judged, never the road to them -
+        // and the ring was judged on the field BEFORE the props that spend it. Measured round93 (2026-11-22): 26
+        // minutes, 233 bridge facts, `Barn 0` / `Coop 0`, and no assertion had asked whether the farmhouse could walk
+        // to the building at all. The route itself is pinned by `AnimalBuildingPorchRouteTests`; what is pinned here is
+        // that the arm-time assertion asks it, of the right building, with the world's one walkability rule.
+        string source = ReadFixtureSource();
+        // The door is the one the animal Given actually placed, recorded for the assertion that runs after the props.
+        source.Should().Contain("this.nativeLocalPlaySessionAnimalDoor = door;");
+        // ...and the site search asks about the CANDIDATE's door, so a site that seals its own road is refused while
+        // the search is still looking rather than after the day has armed on it.
+        source.Should().Contain("AssertNativeLocalMultiDayHomeReachable(player, farm, door);");
+
+        string given = ReadMultiDayGivenSource();
+        given.Should().Contain("AssertNativeLocalMultiDayAnimalPorchReachable(");
+        // ...and the assertion must actually CALL it, with the world's own tile kind: this pin read the helper's
+        // declaration and stayed green when the call was deleted (seen red 2026-11-22, injected), so it names the
+        // argument the declaration does not carry.
+        given.Should().Contain("tile => NativeLocalMultiDayTileKind(farm, tile)");
+        // The refusal names the tile the road stopped at and what stands there: a bare boolean is what let round93 arm.
+        given.Should().Contain("animal_building_unreachable_from_house:door=");
+        given.Should().Contain("blocked_at={blockedAt.X},{blockedAt.Y};why=");
+        // The kind is the layer a refusal receipt publishes as `blocked_by`, not a second table of tile kinds.
+        given.Should().Contain("StardewBodyController.DescribeTargetOccupant(");
+        // A world with no animal house to walk to is not one this assertion may pass silently.
+        given.Should().Contain("fixture_native_local_multi_day_animal_house_door_unrecorded");
+    }
+
+    [Fact]
     public void TheBranchWorldsMilestoneIsTheOnePendingLevelUp()
     {
         // Measured 2026-10-17 (run g15, from the product's own refusal evidence): pinning skills to 10 WITHOUT professions
@@ -250,12 +281,12 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         // Measured round93 (2026-11-22, SMAPI log `GameBuddy`):
         // `fixture_native_local_play_session_animal_site_missing:start=56,11;free_footprints=0;rejected=none` - the
         // coop had fitted in what the props left, the barn that replaced it needs ten tiles more, and the launcher
-        // waited out its pipe timeout on a world that could never arm. Moving this Given ahead of the props was the
-        // first attempt at that reading and did NOT change the count: the same refusal came back, because the ground
-        // was gone before the props ran (`SpreadDirt` tills every Diggable tile). The order is still the right one -
-        // the props are placed nearest-the-crossroads-first, so the building must choose its ground before they spend
-        // it - but it is not the fix: `TheAnimalHouseTakesItsGroundBackFromTheSoilTheWorldSpread` is. No compiler can
-        // state "this Given runs before those loops", so the order is read out of the initializer's own body.
+        // waited out its pipe timeout on a world that could never arm. That refusal had a second cause (the ground the
+        // search was judging carried `SpreadDirt`'s soil - see `ThePlaySessionGivenLeavesTheGroundUntilled`), so the
+        // order below is one of two things round93 needed, not the fix by itself. It is still the right order: the props
+        // are placed nearest-the-crossroads-first, so the building must choose its ground before they spend it. No
+        // compiler can state "this Given runs before those loops", so the order is read out of the initializer's own
+        // body.
         string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
         int animal = body.IndexOf("InstallNativeLocalPlaySessionAnimalGiven(", StringComparison.Ordinal);
         int firstProp = body.IndexOf("FindNativeLocalPlaySessionSpot(", StringComparison.Ordinal);
@@ -288,37 +319,24 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
-    public void TheAnimalHouseTakesItsGroundBackFromTheSoilTheWorldSpread()
+    public void ThePlaySessionGivenLeavesTheGroundUntilled()
     {
-        // THE INVARIANT: the ground a structure stands on is judged against the ground it will actually get. The
-        // play-session world tills the field (`RemoveDirt`/`SpreadDirt`, the same scenario setup the harvest fixtures
-        // use) BEFORE anything is sited in it, so every Diggable tile carries a `HoeDirt` - and the emptiness rule
-        // refuses a tile that carries a terrain feature. Moving this Given ahead of the props therefore changed
-        // nothing: round93's two launches both answered `free_footprints=0`, with `start=56,11`.
+        // THE INVARIANT: a fixture must not pre-satisfy the work the day's task is about. `SpreadDirt` gives every
+        // Diggable tile of the Farm a `HoeDirt`, which is the whole field already opened; measured `round93`
+        // (2026-11-22), a day asked to open a 3-wide, twenty-long strip answered `soil_tilled 0` against
+        // `seed_planted 28`, because there was no untilled tile to hoe and nothing forced a hoe before a planting.
         //
-        // The dirt is this fixture's own input, not the map's, so the fixture lifts it where the house and its door
-        // approach go: the soil ends up spread AROUND the barn rather than over it, which is the world this Given
-        // describes. The emptiness rule is NOT widened - a crop, a tree, a bush, an object, a building or a
-        // not-placeable tile still refuses the candidate by name.
-        string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
-        int lift = search.IndexOf("LiftPlaySessionLooseSoil(", StringComparison.Ordinal);
-        int rule = search.IndexOf(": farm.terrainFeatures.ContainsKey(tile) ? \"terrain_feature\"", StringComparison.Ordinal);
-        lift.Should().BeGreaterThanOrEqualTo(0, "the search must take this fixture's own soil off the candidate ground");
-        rule.Should().BeGreaterThan(lift, "the emptiness rule judges the ground AFTER the soil it spread is lifted");
-        search.Should().Contain(
-            "PlaySessionAnimalDoorApproach(",
-            "the door's approach is reserved with the footprint, through the one helper that names it");
-        search.Should().Contain("RestorePlaySessionLooseSoil", "a refused candidate puts the soil back");
-        InitializerBody("private static List<Vector2> PlaySessionAnimalDoorApproach(")
-            .Should()
-            .Contain("getPointForHumanDoor()");
-
-        // Only soil with no crop is liftable: a crop is the day's own work, and a grown tree, a bush or a boulder is
-        // the map's. The lifter is the one place that answers it.
-        string lifter = InitializerBody(
-            "private static List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> LiftPlaySessionLooseSoil(");
-        lifter.Should().Contain("dirt.crop is null");
-        lifter.Should().Contain("is StardewValley.TerrainFeatures.HoeDirt");
+        // What the world starts with is the farm nobody has worked, so the run's own `till_soil` is the only thing that
+        // can create the ground it plants on. The props do not need loose soil - each crop is planted with its own
+        // `HoeDirt` - and the animal Given's site search therefore judges real ground (a tree, a bush, a boulder, an
+        // object, a building) rather than the fixture's own soil, which is what emptied round93's world.
+        string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
+        body.Should().Contain(
+            "parseDebugInput(\"RemoveDirt\"",
+            "the ground must start with no hoe in it, whatever the save it was armed on arrived with");
+        body.Should().NotContain(
+            "parseDebugInput(\"SpreadDirt\"",
+            "spreading soil opens the whole field before any turn runs, so `till_soil` measures the fixture, not her");
     }
 
     [Fact]
@@ -326,10 +344,11 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     {
         // THE DEFECT CLASS: two answers to "can the actor walk there". The arm-time rule counted ANY terrain feature
         // as a wall, while the engine - and `StardewBodyController.IsWalkableTile`, which says "standing among
-        // terrain features is the job" - treat a tilled tile as ordinary ground. Because this fixture tills the whole
-        // field, that rule declared the field unwalkable, so a barn inside it could never have an approach whatever
-        // tile it stood on: solving the footprint would have moved the refusal from `free_footprints=0` to
-        // `no_approach` on the door's own ring.
+        // terrain features is the job" - treat a tilled tile as ordinary ground. While this fixture spread soil, that
+        // rule declared the field unwalkable, so a barn inside it could never have an approach whatever tile it stood
+        // on: solving the footprint would have moved the refusal from `free_footprints=0` to `no_approach` on the door's
+        // own ring. The play-session Given no longer spreads soil, and the rule still has to be the engine's answer
+        // rather than "any terrain feature is a wall".
         //
         // The rule now asks the engine (`TerrainFeature.isPassable`). A grown tree, a bush and a boulder still refuse,
         // which is what the rule was written for; the props are objects and still block as objects.

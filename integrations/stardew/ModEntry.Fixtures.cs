@@ -42,6 +42,14 @@ public sealed partial class ModEntry : Mod
     private Vector2? nativeLocalPlaySessionStartTile;
 
     /// <summary>
+    /// The door tile of the animal house the play-session Given actually sited, remembered for the same reason as
+    /// <see cref="nativeLocalPlaySessionStartTile"/>: the composed multi-day world asks whether the farmhouse can walk
+    /// to that house, and the answer has to be about the building that stands on the farm rather than one looked up
+    /// again after the props exist.
+    /// </summary>
+    private Point? nativeLocalPlaySessionAnimalDoor;
+
+    /// <summary>
     /// Whether the declared hand has been placed. The initializer entry is called on every tick, and a declared Given
     /// must exist exactly once.
     /// </summary>
@@ -705,21 +713,22 @@ public sealed partial class ModEntry : Mod
             && player.addItemToInventory(ItemRegistry.Create<StardewValley.Object>(cauliflowerSeedId, 2)) is not null)
             throw new InvalidOperationException("fixture_native_local_play_session_seed_inventory_full");
 
-        // One real mature ordinary crop on the Farm: the target-version GrowCrops
-        // command supplies the mature state as the scenario's starting fact (the
-        // growth duration is scenario setup, not an Agent wait), exactly as the
-        // harvest fixtures do. Everything else on this farm stays untouched soil,
-        // so tilling and planting remain available to the session as well.
+        // THE GROUND STARTS UNTILLED, and that is a rule about fixtures rather than a detail of this world: a Given
+        // may not pre-satisfy the work the day's task is about. `SpreadDirt` gives EVERY Diggable tile of the Farm a
+        // `HoeDirt`, which is the whole field already opened - measured `round93` (2026-11-22), a day asked to open a
+        // 3-wide, twenty-long strip answered `soil_tilled 0` against `seed_planted 28`, because there was no untilled
+        // tile to hoe and nothing forced a hoe before a planting. So the world starts with the farm nobody has worked:
+        // `RemoveDirt` and no spreading, and the run's own `till_soil` creates the ground it plants on.
+        //
+        // The props below do not need loose soil - every crop is planted here with its own `HoeDirt`, which is how the
+        // mature-ready-crop Given is established. The whole-field seeding this used to do (SpreadSeeds + GrowCrops)
+        // turned the farm into one enormous crop field that a live session then spent 36 dispatches inside; the
+        // strawberry-covenant fixture in this same file records the same lesson.
         GameLocation? previousLocation = Game1.currentLocation;
         try
         {
             Game1.currentLocation = farm;
-            // Loose soil only. The whole-field seeding this used to do (SpreadSeeds + GrowCrops)
-            // turned the farm into one enormous crop field: a live session then spent 36 dispatches
-            // and its entire turn inside it, which measures the field rather than the companion.
-            // The strawberry-covenant fixture in this same file records the same lesson.
-            if (!Game1.game1.parseDebugInput("RemoveDirt", null)
-                || !Game1.game1.parseDebugInput("SpreadDirt", null))
+            if (!Game1.game1.parseDebugInput("RemoveDirt", null))
                 throw new InvalidOperationException("fixture_native_local_play_session_farm_setup_unavailable");
         }
         finally

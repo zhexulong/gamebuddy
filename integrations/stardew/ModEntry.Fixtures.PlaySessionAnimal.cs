@@ -104,7 +104,9 @@ public sealed partial class ModEntry
             return null;
         try
         {
-            AssertNativeLocalMultiDayHomeReachable(player, farm);
+            // The CANDIDATE's own door, because this building is the one standing in `farm.buildings` right now: the
+            // question is whether the world can walk to this house's porch, not to whatever was sited last.
+            AssertNativeLocalMultiDayHomeReachable(player, farm, door);
             return null;
         }
         catch (InvalidOperationException refused)
@@ -190,6 +192,9 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_native_local_play_session_animal_site_rejected:origin={barn.tileX.Value},{barn.tileY.Value};{rejected}");
         }
+        // Remembered for the composed world's own assertion, which runs after the props exist (see
+        // `nativeLocalPlaySessionAnimalDoor`): the door of the house that actually stands here.
+        this.nativeLocalPlaySessionAnimalDoor = door;
 
         FarmAnimal animal = new(PlaySessionAnimalType, Game1.random.Next(int.MaxValue), player.UniqueMultiplayerID);
         house.adoptAnimal(animal);
@@ -340,11 +345,11 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET, which is the half that was missing. This fixture
-    /// tills the field before anything is sited in it, so what the emptiness rules see on a field tile is the fixture's
-    /// own `HoeDirt`; the soil is lifted from the footprint and from the door's approach, and put back when the candidate
-    /// is refused (see <see cref="LiftPlaySessionLooseSoil"/>). A crop, a tree, a bush, an object, a building or a
-    /// not-placeable tile still refuses the candidate, by name.
+    /// THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET, and that ground is UNTILLED: the play-session
+    /// Given spreads no soil (a fixture may not pre-satisfy the hoeing a task asks for - see
+    /// `InitializeNativeLocalPlaySessionFixture`'s own rule), so a field tile carries a terrain feature only where the
+    /// MAP put one - a tree, a bush, a boulder. Any of those, an object, a building or a not-placeable tile still
+    /// refuses the candidate, by name.
     /// </para>
     ///
     /// <para>
@@ -395,16 +400,6 @@ public sealed partial class ModEntry
             building.tileX.Value = candidate.X;
             building.tileY.Value = candidate.Y;
             List<Vector2> footprint = PlaySessionAnimalFootprint(building, candidate);
-            // THE CANDIDATE IS JUDGED ON THE GROUND IT WOULD ACTUALLY GET. This fixture tills the field before anything
-            // is sited in it, so what the rules below see on a field tile is the fixture's own `HoeDirt` - and
-            // refusing THAT is what emptied the world: measured round93 (2026-11-22),
-            // `free_footprints=0;rejected=none` twice, before and after the animal Given was moved ahead of the props.
-            // The soil is lifted from the footprint AND the door's approach, so dirt is spread around the house rather
-            // than over it; a crop, a tree, a bush, an object, a building or a not-placeable tile still refuses the
-            // candidate, by name, below.
-            List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted = LiftPlaySessionLooseSoil(
-                farm,
-                footprint.Concat(PlaySessionAnimalDoorApproach(farm, building)));
             string? refusal = null;
             Vector2 refusedTile = Vector2.Zero;
             foreach (Vector2 tile in footprint)
@@ -423,7 +418,6 @@ public sealed partial class ModEntry
             }
             if (refusal is not null)
             {
-                RestorePlaySessionLooseSoil(farm, lifted);
                 CountPlaySessionAnimalRefusal(eliminated, refusal);
                 // Bounded for the same reason `rejected` is: a farm has thousands of candidate origins and the reason
                 // only has to be readable.
@@ -434,7 +428,6 @@ public sealed partial class ModEntry
             // whose ORIGIN is two tiles away can still cover the tile the session starts on.
             if (footprint.Contains(startTile))
             {
-                RestorePlaySessionLooseSoil(farm, lifted);
                 CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalStartTileRefusal);
                 continue;
             }
@@ -454,13 +447,11 @@ public sealed partial class ModEntry
             farm.buildings.Remove(building);
             if (rejection is not null)
             {
-                RestorePlaySessionLooseSoil(farm, lifted);
                 CountPlaySessionAnimalRefusal(eliminated, PlaySessionAnimalRule(rejection));
                 // Bounded, because a farm has thousands of candidate origins and the reason only has to be readable.
                 if (rejected.Count < 8) rejected.Add($"{candidate.X},{candidate.Y}:{rejection}");
                 continue;
             }
-            // The soil stays lifted: this ground is the house's, and the day should see dirt around it, not under it.
             site = new Vector2(candidate.X, candidate.Y);
             return true;
         }
@@ -485,9 +476,8 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The tiles an actor stands on to use the building's door. ONCE for both callers - the site search reserves them from
-    /// the soil and <see cref="RejectsThePlaySessionAnimalBuilding"/> asks whether the session can walk to one - because a
-    /// reserved ring and a judged ring that disagreed would certify an approach nobody can use.
+    /// The tiles an actor stands on to use the building's door, asked by <see cref="RejectsThePlaySessionAnimalBuilding"/>:
+    /// an approach tile the session's start can walk to is what "the door is usable" means.
     /// </summary>
     private static List<Vector2> PlaySessionAnimalDoorApproach(GameLocation farm, Building building)
     {
@@ -499,46 +489,6 @@ public sealed partial class ModEntry
             }
             .Where(tile => farm.isTileOnMap(tile))
             .ToList();
-    }
-
-    /// <summary>
-    /// Take this fixture's own loose soil off the ground a candidate would use, and hand back what was removed so a
-    /// refused candidate can put it back.
-    ///
-    /// <para>
-    /// WHY. The play-session world tills the farm before anything is sited in it (`RemoveDirt`/`SpreadDirt`, the same
-    /// scenario setup the harvest fixtures use), and every Diggable tile then carries a `HoeDirt`. The emptiness rule
-    /// refuses a terrain feature, so afterwards a 7x4 footprint of untouched ground does not exist anywhere in the field:
-    /// measured round93 (2026-11-22), `fixture_native_local_play_session_animal_site_missing:start=56,11;
-    /// free_footprints=0;rejected=none` - twice, because moving the Given ahead of the props addressed the wrong layer.
-    /// The dirt is the fixture's own input rather than the map's, so the fixture lifts it where the house and its door
-    /// approach go, and the day sees soil AROUND the building. Only soil with no crop is liftable: a crop is the day's
-    /// own work, and a tree, a bush or a boulder is the map's.
-    /// </para>
-    /// </summary>
-    private static List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> LiftPlaySessionLooseSoil(
-        Farm farm,
-        IEnumerable<Vector2> tiles)
-    {
-        List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted = new();
-        foreach (Vector2 tile in tiles)
-        {
-            if (farm.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? feature)
-                && feature is StardewValley.TerrainFeatures.HoeDirt dirt
-                && dirt.crop is null)
-            {
-                farm.terrainFeatures.Remove(tile);
-                lifted.Add((tile, dirt));
-            }
-        }
-        return lifted;
-    }
-
-    /// <summary>Put back exactly the soil <see cref="LiftPlaySessionLooseSoil"/> removed from a refused candidate.</summary>
-    private static void RestorePlaySessionLooseSoil(Farm farm, List<(Vector2 Tile, StardewValley.TerrainFeatures.HoeDirt Dirt)> lifted)
-    {
-        foreach ((Vector2 tile, StardewValley.TerrainFeatures.HoeDirt dirt) in lifted)
-            farm.terrainFeatures.Add(tile, dirt);
     }
 
     private static void CountPlaySessionAnimalRefusal(Dictionary<string, int> eliminated, string rule) =>
