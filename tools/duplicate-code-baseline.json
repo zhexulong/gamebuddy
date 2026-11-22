@@ -197,20 +197,20 @@
       ]
     },
     {
-      "hash": "2d63f72d9337",
+      "hash": "ae2f62b46c7c",
       "tokens": 43,
       "sites": [
-        "tools/check-stardew-native-normal-player-ingress-register.mjs:4",
-        "tools/check-stardew-native-router-exit-classifier.mjs:2",
+        "gates/stardew/check-stardew-native-normal-player-ingress-register.mjs:15",
+        "gates/stardew/check-stardew-native-router-exit-classifier.mjs:19",
         "tools/derive-stardew-native-mechanism-family-register.mjs:3",
         "tools/derive-stardew-native-router-invocation-inventory.mjs:3"
       ]
     },
     {
-      "hash": "31d5c0a460f7",
+      "hash": "a60380526395",
       "tokens": 65,
       "sites": [
-        "tools/check-stardew-native-normal-player-ingress-register.mjs:4",
+        "gates/stardew/check-stardew-native-normal-player-ingress-register.mjs:15",
         "tools/derive-stardew-native-virtual-member-invocation-register.mjs:4",
         "tools/derive-stardew-native-virtual-receiver-register.mjs:3"
       ]
