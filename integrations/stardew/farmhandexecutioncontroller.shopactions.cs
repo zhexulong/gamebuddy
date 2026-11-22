@@ -1035,7 +1035,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     {
         return $"shop={shopId};item={itemId};requested={requested};purchased=0;unit_price={unitPrice};"
             + $"currency={ShopCurrencyName(shopCurrency)};held={held};money_before={held};money_after={held};"
-            + $"owned_before={owned};owned_after={owned};gained=0;stock={stock};room={room}";
+            + $"owned_before={owned};owned_after={owned};gained=0;stock={ShopStockToken(stock)};room={room}";
     }
 
     /// <summary>
@@ -1308,7 +1308,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 executionId,
                 ExecutionState.Rejected,
                 "out_of_stock",
-                $"shop={target.ShopId};item={expectedItemId};stock={charged.Stock}");
+                $"shop={target.ShopId};item={expectedItemId};stock={ShopStockToken(charged.Stock)}");
         }
         if (packPurchases < 1 && goods is not null)
         {
@@ -1449,7 +1449,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
                 ClickableComponent button = menu.forSaleButtons[saleRow];
                 long currencyBeforeClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-                int stockBeforeClick = stock.TryGetValue(offer, out ItemStockInformation? s0) && s0 is not null ? s0.Stock : -1;
+                int? stockBeforeClick = stock.TryGetValue(offer, out ItemStockInformation? s0) && s0 is not null ? s0.Stock : null;
                 int safetyBefore = menu.safetyTimer;
                 bool heldNull = menu.heldItem is null;
                 int clickX = button.bounds.Center.X;
@@ -1462,11 +1462,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                 menu.receiveLeftClick(clickX, clickY, playSound: true);
 
                 long currencyAfterClick = ShopMenu.getPlayerCurrencyAmount(actor, shopCurrency);
-                int stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : -1;
+                int? stockAfterClick = stock.TryGetValue(offer, out ItemStockInformation? s1) && s1 is not null ? s1.Stock : null;
                 clickDiagnostics.Add(
                     $"click{bought}:row={saleRow}|cursor={menu.currentItemIndex}|at={clickX},{clickY}|addressed={addressedToButton}|"
                     + $"safety_before={safetyBefore}|held_null={heldNull}|"
-                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|stock={stockBeforeClick}->{stockAfterClick}|"
+                    + $"currency={currencyBeforeClick}->{currencyAfterClick}|"
+                    + $"stock={ShopStockToken(stockBeforeClick)}->{ShopStockToken(stockAfterClick)}|"
                     + $"held_after={menu.heldItem?.QualifiedItemId ?? "none"}");
 
                 if (currencyAfterClick == currencyBeforeClick)
@@ -1581,7 +1582,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             StockBefore: stockBefore,
             StockAfter: stock.TryGetValue(offer, out ItemStockInformation? stockAfterReading) && stockAfterReading is not null
                 ? stockAfterReading.Stock
-                : -1,
+                : null,
             CounterX: target.CounterX,
             CounterY: target.CounterY,
             MenuClosed: menuClosed,

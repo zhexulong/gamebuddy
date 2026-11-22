@@ -67,6 +67,22 @@ internal sealed class ExecutionReceiptStore : IDispatchExecutionLedger
     internal IReadOnlyDictionary<string, LocalExecutionReceipt> ByRequestId => this.receiptsByRequestId;
 
     /// <summary>
+    /// The receipt stored most recently, or null when none has been.
+    ///
+    /// <para>
+    /// A refusal asks this to tell a repeat from a new fact (<c>ExecutionManager.NoteRepeatedRefusal</c>): "the answer
+    /// before mine" is the previous SETTLEMENT, so anything that resolved in between breaks the chain. The order is the
+    /// order requests arrived, which is the same order their terminals were stored - one request's dispatch answers it
+    /// synchronously, and a later transition of the same request rewrites that request's own entry rather than adding one.
+    /// </para>
+    /// </summary>
+    internal LocalExecutionReceipt? MostRecentReceipt =>
+        this.receiptOrder.Count > 0
+        && this.receiptsByRequestId.TryGetValue(this.receiptOrder.Last(), out LocalExecutionReceipt? receipt)
+            ? receipt
+            : null;
+
+    /// <summary>
     /// Stores one receipt and returns the instance the map now holds - the caller publishes what was stored, never a
     /// copy of what it passed in.
     ///

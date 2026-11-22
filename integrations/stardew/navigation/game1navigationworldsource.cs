@@ -106,6 +106,67 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
     internal static IReadOnlyList<NavigationTransitionLeg> DoorLegs(GameLocation location) =>
         ProjectTopologyLegs(location).Where(leg => leg.IsDoor).ToArray();
 
+    /// <summary>
+    /// The legs of ONE loaded location a body could actually walk into: <see cref="ProjectTopologyLegs"/> without the
+    /// exits whose own entry cell is a wall that stands for the whole run.
+    ///
+    /// <para>
+    /// WHY AT BUILD TIME. The planner is an unweighted breadth-first search over map hops, so a two-hop route always beats
+    /// a three-hop one - and `round89` measured what that means when the shorter one is not walkable: `Farm -> Backwoods
+    /// -> Mountain` is two hops, the Backwoods' east exit is entered from the tile that map puts a Bush on
+    /// (`entry_blocked_by:large:Bush@49,10`), so every navigation across the north of the valley walked to that wall and
+    /// back while `Farm -> Backwoods -> BusStop -> Town -> Mountain` sat in the same topology unasked. An exit that can
+    /// never be walked is not a route, and the graph is the layer that can say so once instead of once per navigation.
+    /// </para>
+    ///
+    /// <para>
+    /// ONLY AN EDGE EXIT IS EXAMINED, and only for an occupant no published action opens (<see cref="IsPermanentWall"/>).
+    /// A DOOR is left alone on purpose: when the cell it faces is unusable the walk falls back to the ring around the door
+    /// (<c>ExecutionManager.SelectSafeApproachTarget</c>), so a blocked facing cell there is a different fact and dropping
+    /// the leg would make an interior unreachable. Everything transient - a villager, an animal, a chest, a boulder the
+    /// pickaxe prices, a weed - stays in the graph for the same reason: which of them blocks TODAY is the walk's own
+    /// question, and the executor re-plans around the answer it gets.
+    /// </para>
+    ///
+    /// <para>
+    /// The entry cell is <see cref="ExecutionManager.TransitionEntryCell"/>'s, derived from the source location and the
+    /// transition's own data - the SAME cell the walk is aimed at and the refusal names, so the edge dropped here is the
+    /// edge that walk would have refused.
+    /// </para>
+    /// </summary>
+    internal static NavigationTransitionLeg[] TraversableTopologyLegs(GameLocation location)
+    {
+        List<NavigationTransitionLeg> legs = new();
+        foreach (NavigationTransitionLeg leg in ProjectTopologyLegs(location))
+        {
+            if (leg.IsDoor
+                || ExecutionManager.TransitionEntryCell(location, leg) is not { } entry
+                || !IsPermanentWall(StardewBodyController.DescribeTargetOccupant(location, entry)))
+            {
+                legs.Add(leg);
+            }
+        }
+
+        return legs.ToArray();
+    }
+
+    /// <summary>
+    /// Whether what stands on one cell stands there for the whole run: the map's own two tile layers, a building
+    /// footprint, or a large terrain feature - a Bush, the one occupant that blocks a body and that no priced tool removes
+    /// (<see cref="StardewBodyController.OccupantAt"/> names it and prices it at nothing).
+    ///
+    /// <para>
+    /// Grass, tilled soil and crops are where standing happens; a resource clump may be a boulder the pickaxe opens; an
+    /// object may be litter an action clears or something the player lifts. None of them deletes a route from the graph:
+    /// the walk decides those, and the executor re-plans when it refuses.
+    /// </para>
+    /// </summary>
+    private static bool IsPermanentWall(RefusalLayerToken occupant) =>
+        occupant.Layer is RefusalLayerKind.BackTile
+            or RefusalLayerKind.BuildingsTile
+            or RefusalLayerKind.Large
+            or RefusalLayerKind.Building;
+
     public bool TryCreateCurrentOrdinaryWarpTopology(
         NavigationDestinationBinding acceptedBinding,
         out NavigationOrdinaryWarpTopology? topology,
@@ -143,7 +204,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
                 return false;
             }
 
-            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, ProjectTopologyLegs(location)));
+            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, TraversableTopologyLegs(location)));
         }
 
         string currentSource = currentLocation.NameOrUniqueName;

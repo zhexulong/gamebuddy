@@ -173,6 +173,27 @@ public sealed class NavigationDoorTopologyGateTests
         controller.Should().NotContain("nextLeg.IsDoor ||", "a door leg is materialized, not refused");
     }
 
+    /// <summary>
+    /// The graph the live source builds is the FILTERED projection: an exit whose own entry cell is a wall the map keeps
+    /// for the whole run is not a route (<c>Game1NavigationWorldSource.TraversableTopologyLegs</c>, measured `round89`).
+    /// A rule the production builder does not call changed nothing, so the one line that chooses the edge source is
+    /// asserted where it is written - <c>NavigationDoorTopologyGateTests</c>'s own population keeps reading the DECLARED
+    /// projection, because a gate must examine an edge even when the topology drops it.
+    /// </summary>
+    [Fact]
+    public void TheLiveGraphIsBuiltFromTheTraversableLegs()
+    {
+        string source = ReadRepositoryFile(WorldSourceRelativePath);
+        string topology = MethodBody(source, "TryCreateCurrentOrdinaryWarpTopology");
+
+        topology.Should().Contain(
+            "new NavigationOrdinaryWarpLegs(sourceId, TraversableTopologyLegs(location))",
+            "the loaded locations' legs go through the exit rule before they become edges of the graph");
+        topology.Should().NotContain(
+            "new NavigationOrdinaryWarpLegs(sourceId, ProjectTopologyLegs(location))",
+            "the unfiltered projection is not what the live graph is built from");
+    }
+
     private static string WithoutComments(string source) =>
         string.Join('\n', source.Split('\n').Select(DecompiledSource.WithoutComment));
 

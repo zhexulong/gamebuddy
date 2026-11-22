@@ -71,8 +71,10 @@ public sealed class EnterExitAdjacentExitRefusalTests
         receipt.State.Should().Be(ExecutionState.Rejected);
         receipt.ReasonCode.Should().Be("door_not_available");
         receipt.Evidence.Should().Be(
-            "source=9,9;warps=1;you=5,9;nearest=3,12;distance=3;doors=3,12->Farm",
-            "the refusal knows where the door is; naming the count of the warp list alone is the round42 defect");
+            "source=9,9;warps=1;you=5,9;nearest=3,12;distance=3;doors=3,12->Farm;map=ProbeFarm;door_tile=9,9;door_at_tile=absent",
+            "the refusal knows where the door is; naming the count of the warp list alone is the round42 defect, and a "
+            + "list of exits without the map they are exits OF leaves 'the door is not here' and 'the door is here and shut' "
+            + "as one sentence (round91)");
     }
 
     /// <summary>
@@ -168,6 +170,65 @@ public sealed class EnterExitAdjacentExitRefusalTests
         receipt.Evidence.Should().Contain("distance=6");
         receipt.Evidence.Should().Contain("door=3,12");
         receipt.Evidence.Should().NotContain("target_on_map=false", "the tile IS a tile of this map");
+
+        // THE TWO ORIGINS. `Utility.tileWithinRadiusOfPlayer` compares TILE INDICES (`f.Tile`), and `f.Tile` is
+        // `StandingPixel / 64` (Character.cs:361-373) - so the tile the gate read and the pixel she stands on are two
+        // different origins for "where she is", and a reader who is told only the tile cannot tell a six-tile walk from
+        // a measurement taken elsewhere (round91). Both are printed, from the engine's own readings, never restated.
+        Point standing = Game1.player.StandingPixel;
+        int measured = Math.Max(Math.Abs(standing.X - (9 * 64 + 32)), Math.Abs(standing.Y - (9 * 64 + 32)));
+        receipt.Evidence.Should().Contain("actor_tile=3,11", "the tile index the radius gate actually compared");
+        receipt.Evidence.Should().Contain($"actor_px={standing.X},{standing.Y}", "and the pixel that tile was derived from");
+        receipt.Evidence.Should().Contain("allowed_px=64", "one tile's edge in pixels is the radius the gate's `1` is measured in");
+        receipt.Evidence.Should().Contain($"measured_px={measured}", "the same separation in pixels, for the reader to compare");
+        this.output.WriteLine($"round91 door_out_of_range verbatim: {receipt.Evidence}");
+    }
+
+    /// <summary>
+    /// THE MINUTE. `round91` read eight door refusals in one window - `door_out_of_range` twice with the same actor and
+    /// distance, `door_not_available` six times - and every one of them was the same sentence as the last, so nothing in
+    /// the delivery could tell her that the door had not changed since she last asked.
+    ///
+    /// <para>
+    /// A refusal that comes back IDENTICAL now says so, with how many times it has been answered before it: the fact is
+    /// read from the receipt the ledger stored last, so it is the previous SETTLEMENT that answers "is this the same
+    /// question" - a door entered in between breaks the chain, and a refusal whose distance moved does not carry the
+    /// note at all because its sentence is already a new fact.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheSameDoorAskedAgainSaysItIsTheSameRefusal()
+    {
+        using var world = HeadlessWorld.Create();
+        world.PlaceActorAt(5, 9);
+
+        LocalExecutionReceipt first = world.RequestEnterExit("req_door_repeat_1", 9, 9);
+        LocalExecutionReceipt second = world.RequestEnterExit("req_door_repeat_2", 9, 9);
+        LocalExecutionReceipt third = world.RequestEnterExit("req_door_repeat_3", 9, 9);
+
+        const string asked = "source=9,9;warps=0;you=5,9;nearest=none;distance=none;doors=none;map=ProbeFarm;door_tile=9,9;door_at_tile=absent";
+        first.Evidence.Should().Be(asked, "the first answer is a new fact and carries no repeat note");
+        second.Evidence.Should().Be($"{asked};same_refusal_as_before=1", "the second answer is the same sentence, and says so");
+        third.Evidence.Should().Be($"{asked};same_refusal_as_before=2", "and the count climbs, so one look sizes the minute");
+    }
+
+    /// <summary>
+    /// The other side: a refusal whose own sentence CHANGED is not a repeat, and must not claim to be one - the distance
+    /// shrinking is the new fact she needs.
+    /// </summary>
+    [Fact]
+    public void ARefusalThatNamesANewDistanceIsNotARepeat()
+    {
+        using var world = HeadlessWorld.Create();
+        world.PlaceActorAt(5, 9);
+        LocalExecutionReceipt far = world.RequestEnterExit("req_door_moved_1", 9, 9);
+
+        world.PlaceActorAt(8, 9);
+        LocalExecutionReceipt near = world.RequestEnterExit("req_door_moved_2", 9, 9);
+
+        near.Evidence.Should().Contain("you=8,9", "the second refusal measured a different body position");
+        near.Evidence.Should().NotContain("same_refusal_as_before", "a new sentence is a new fact, not a repeated one");
+        far.Evidence.Should().NotContain("same_refusal_as_before");
     }
 
     /// <summary>
@@ -268,7 +329,8 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.PlaceActorAt(41, 60);
         LocalExecutionReceipt receipt = world.RequestEnterExit(45, 60);
         receipt.ReasonCode.Should().Be("door_not_available");
-        receipt.Evidence.Should().Be("source=45,60;warps=1;you=41,60;nearest=41,65;distance=5;doors=41,65->Forest");
+        receipt.Evidence.Should().Be(
+            "source=45,60;warps=1;you=41,60;nearest=41,65;distance=5;doors=41,65->Forest;map=ProbeFarm;door_tile=45,60;door_at_tile=absent");
     }
 
     /// <summary>
@@ -381,7 +443,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
         receipt.Evidence.Should().Be(
             "source=9,9;warps=5;you=9,1;nearest=5,5;distance=4;"
-            + "doors=5,5->Desert|4,4->Forest|3,3->Mountain");
+            + "doors=5,5->Desert|4,4->Forest|3,3->Mountain;map=ProbeFarm;door_tile=9,9;door_at_tile=absent");
     }
 
     /// <summary>
@@ -397,7 +459,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         LocalExecutionReceipt receipt = world.RequestEnterExit(9, 9);
 
         receipt.ReasonCode.Should().Be("door_not_available");
-        receipt.Evidence.Should().Be("source=9,9;warps=0;you=9,9;nearest=none;distance=none;doors=none");
+        receipt.Evidence.Should().Be("source=9,9;warps=0;you=9,9;nearest=none;distance=none;doors=none;map=ProbeFarm;door_tile=9,9;door_at_tile=absent");
     }
 
     // ---------------------------------------------------------------------------------------------------------
@@ -456,6 +518,9 @@ public sealed class EnterExitAdjacentExitRefusalTests
         }
 
         public GameLocation Location { get; private set; } = null!;
+
+        /// <summary>The one manager every request of this world is dispatched by, created on first use.</summary>
+        private ExecutionManager? executions;
 
         public static HeadlessWorld Create(string locationName = "ProbeFarm")
         {
@@ -571,13 +636,20 @@ public sealed class EnterExitAdjacentExitRefusalTests
         }
 
         /// <summary>`enter_exit` through its real request path.</summary>
-        public LocalExecutionReceipt RequestEnterExit(int sourceX, int sourceY)
+        public LocalExecutionReceipt RequestEnterExit(int sourceX, int sourceY) =>
+            this.RequestEnterExit($"req_enter_exit_{sourceX}_{sourceY}", sourceX, sourceY);
+
+        /// <summary>
+        /// The same request under a caller-given id, dispatched by the SAME manager: a repeat is a fact about the
+        /// previous settlement, so the manager that answered it is the only one that can state it.
+        /// </summary>
+        public LocalExecutionReceipt RequestEnterExit(string requestId, int sourceX, int sourceY)
         {
             var publication = FarmhandCapabilityPublication.Initial(
                 new HashSet<string>(StringComparer.Ordinal) { "enter_exit" });
-            var executions = new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
-            return executions.RequestLocalEnterExit(
-                $"req_enter_exit_{sourceX}_{sourceY}",
+            this.executions ??= new ExecutionManager(new DummyMonitor(), () => publication, executionScope: null);
+            return this.executions.RequestLocalEnterExit(
+                requestId,
                 sourceX,
                 sourceY,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000);

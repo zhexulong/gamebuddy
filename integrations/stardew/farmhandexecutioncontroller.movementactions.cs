@@ -821,7 +821,8 @@ internal sealed partial class ExecutionManager
                     executionId,
                     ExecutionState.Rejected,
                     isDoor ? "door_not_available" : "warp_not_available",
-                    DescribeExitRefusal((sourceX, sourceY), location.warps.Count, actorTile, exits));
+                    DescribeExitRefusal((sourceX, sourceY), location.warps.Count, actorTile, exits)
+                        + ";" + DescribeDoorAtTile(location, sourceX, sourceY));
         }
         if (!Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, Game1.player))
         {
@@ -841,7 +842,7 @@ internal sealed partial class ExecutionManager
                     anotherMapEvidence);
             }
 
-            string radiusEvidence = $"source={sourceX},{sourceY};door={warp.X},{warp.Y};actor={(int)Game1.player.Tile.X},{(int)Game1.player.Tile.Y};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}";
+            string radiusEvidence = $"source={sourceX},{sourceY};door={warp.X},{warp.Y};{DescribeRadiusOrigins((sourceX, sourceY), Game1.player)};distance={Math.Max(Math.Abs((int)Game1.player.Tile.X - sourceX), Math.Abs((int)Game1.player.Tile.Y - sourceY))};target={warp.TargetName}:{warp.TargetX},{warp.TargetY};blocked_by={new RefusalLayerToken(RefusalLayerKind.Range, $"adjacent:{ChebyshevDistance(Game1.player, sourceX, sourceY)}").Format()}";
             // A tile nothing on this map claims has no distance from her either, and no map to be named in its place - so
             // the arithmetic is reported with the one fact that stops it being read as a walk here.
             if (!ofThisMap)
@@ -896,7 +897,7 @@ internal sealed partial class ExecutionManager
                         executionId,
                         ExecutionState.Rejected,
                         "door_gate_refused",
-                        $"source={sourceX},{sourceY};gate=refused;entry={entry};dialogue={refusal}{adjacentApproach}");
+                        $"source={sourceX},{sourceY};gate=refused;entry={entry};{DescribeDoorAtTile(location, doorPoint.X, doorPoint.Y)};dialogue={refusal}{adjacentApproach}");
 
                 case NativeDoorOutcome.NoEffect:
                     return this.RememberTerminal(
@@ -1056,6 +1057,160 @@ internal sealed partial class ExecutionManager
     internal static bool IsTileOfCurrentMap(Farmer player, int x, int y) =>
         (player.currentLocation is { } location && location.isTileOnMap(new Vector2(x, y)))
         || DiscoverExitTiles(player).Any(exit => exit.SourceX == x && exit.SourceY == y);
+
+    /// <summary>One tile's edge in pixels: `Character.Tile` is `StandingPixel / 64` (Character.cs:361-373), so this is
+    /// the pixel width the radius of one tile is measured in.</summary>
+    internal const int TilePixels = 64;
+
+    /// <summary>
+    /// The two origins a radius refusal prints, so a reader can tell a distance from an artefact of how it was measured.
+    ///
+    /// <para>
+    /// <c>Utility.tileWithinRadiusOfPlayer</c> (Utility.cs:4100-4109) compares TILE INDICES: it reads <c>f.Tile</c>, which
+    /// is <c>StandingPixel / 64</c> (Character.cs:361-373) - the centre of the body's bounding box, floored. So the gate
+    /// that admitted or refused a door was decided in tiles derived from one pixel, and the refusal printed only the tile
+    /// (`actor=9,9`). Measured `round91`: `door_out_of_range ... actor=9,9 distance=6` gave a reader no way to tell "she is
+    /// six tiles away" from "the check used an origin other than the one you are holding".
+    /// </para>
+    /// <para>
+    /// <c>measured_px</c> is that same separation in pixels - her standing pixel to the requested tile's centre - and it
+    /// differs from <c>distance</c> × 64 by up to half a tile on each axis, because the tile index is the FLOOR of hers.
+    /// The disagreement is the fact this publishes rather than a rounding error to hide: it appears exactly when the body
+    /// is off a tile centre, which is most of a walk. <c>allowed_px</c> is the radius the gate compares against, one tile.
+    /// </para>
+    /// </summary>
+    internal static string DescribeRadiusOrigins((int X, int Y) requested, Farmer actor)
+    {
+        Microsoft.Xna.Framework.Point standing = actor.StandingPixel;
+        int centreX = requested.X * TilePixels + TilePixels / 2;
+        int centreY = requested.Y * TilePixels + TilePixels / 2;
+        int measured = Math.Max(Math.Abs(standing.X - centreX), Math.Abs(standing.Y - centreY));
+        return $"actor_tile={(int)actor.Tile.X},{(int)actor.Tile.Y};actor_px={standing.X},{standing.Y};"
+            + $"allowed_px={TilePixels};measured_px={measured.ToString(CultureInfo.InvariantCulture)}";
+    }
+
+    /// <summary>
+    /// What THIS map says about one tile a door request named: whether it declares a door there at all, and - for the
+    /// door the clock shuts - the hours the game itself reads.
+    ///
+    /// <para>
+    /// WHY THE MAP'S NAME IS PART OF IT. Measured `round91`: `door_not_available ... you=7,18;nearest=28,15;distance=21`
+    /// six times, and the sentence could not tell "no door of this map is on that tile" from "one is, and it is shut",
+    /// because it named the exits it had enumerated without saying whose exits they were.
+    /// </para>
+    /// <para>
+    /// The declaration tested here is the one the door path itself admits on: a building's human door, or a
+    /// Buildings-layer <c>Action</c> containing "Warp" (<see cref="IsNativeWarpAction"/>, the predicate
+    /// <c>updateDoors</c> applies). <c>locked_by_hours</c> is read from `LockedDoorWarp`'s own arguments -
+    /// `LockedDoorWarp &lt;x&gt; &lt;y&gt; &lt;location&gt; &lt;openTime&gt; &lt;closeTime&gt;` (GameLocation.cs:9539) - so the hours
+    /// are the world's numbers and not a second copy of the gate's verdict: the gate ALSO honours the town key, the
+    /// SeedShop Wednesday rule and green rain (GameLocation.cs:10319-10379), which is why the verdict stays the game's
+    /// own dialogue and only the window is printed here.
+    /// </para>
+    /// </summary>
+    internal static string DescribeDoorAtTile(StardewValley.GameLocation? location, int x, int y)
+    {
+        if (location is null)
+            return $"map=unknown;door_tile={x},{y};door_at_tile=unknown";
+
+        Microsoft.Xna.Framework.Point tile = new(x, y);
+        string? action = ReadBuildingsLayerAction(location, tile);
+        bool declared = IsNativeWarpAction(action)
+            || location.buildings.Any(building => building.HasIndoors() && building.getPointForHumanDoor() == tile);
+        string head = $"map={location.NameOrUniqueName};door_tile={x},{y};door_at_tile=";
+        if (!declared)
+            return head + "absent";
+        return ReadLockedDoorWindow(action) is { } window
+            ? $"{head}locked_by_hours;opens_at={window.OpensAt.ToString(CultureInfo.InvariantCulture)};"
+                + $"closes_at={window.ClosesAt.ToString(CultureInfo.InvariantCulture)};now={Game1.timeOfDay.ToString(CultureInfo.InvariantCulture)}"
+            : head + "declared";
+    }
+
+    /// <summary>
+    /// The open/close window a `LockedDoorWarp` Buildings-layer <c>Action</c> declares, or null when this tile carries no
+    /// such window. The token positions are the engine's own (`ArgUtility.TryGetInt(action, 4, ...)` / <c>5</c>,
+    /// GameLocation.cs:9539): token 0 is the action name, 1-2 the destination tile, 3 the destination map.
+    /// </summary>
+    private static (int OpensAt, int ClosesAt)? ReadLockedDoorWindow(string? action)
+    {
+        if (action is null)
+            return null;
+        string[] tokens = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 6 || !string.Equals(tokens[0], "LockedDoorWarp", StringComparison.Ordinal))
+            return null;
+        return int.TryParse(tokens[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int opensAt)
+            && int.TryParse(tokens[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int closesAt)
+            ? (opensAt, closesAt)
+            : null;
+    }
+
+    /// <summary>The field a refusal carries when it is the refusal answered just before it, word for word.</summary>
+    internal const string SameRefusalField = "same_refusal_as_before";
+
+    /// <summary>
+    /// <paramref name="evidence"/> with <c>same_refusal_as_before=&lt;n&gt;</c> when the receipt stored immediately before this
+    /// one was the same refusal: same code, same evidence, nothing settled between them.
+    ///
+    /// <para>
+    /// WHY A REPEAT HAS TO SAY SO. Measured `round91`: eight door refusals in one window - `door_out_of_range` twice with
+    /// the same actor and distance, `door_not_available` six times - each one word for word the one before. A refusal that
+    /// comes back identical carries no fact its predecessor did not, so a reader cannot tell "the world has not changed"
+    /// from "the world changed and this is a new failure", and the run spends the turn re-reading one sentence. The count
+    /// sizes the stretch at a glance: `same_refusal_as_before=7` is the eighth answer to one question.
+    /// </para>
+    /// <para>
+    /// THE COMPARISON IS THE PREVIOUS SETTLEMENT, NOT THE PREVIOUS REFUSAL OF THIS KIND, and that settlement is the receipt
+    /// the ledger stored last - so anything that resolved in between (a door entered, a walk taken, another action
+    /// settled) breaks the chain, while a refusal whose own evidence MOVED (the distance shrank, the nearest door changed)
+    /// is a new fact and is never marked. The two answers are compared with the previous one's own marker removed, which is
+    /// the only thing they are allowed to differ by.
+    /// </para>
+    /// <para>
+    /// Applied at the two places a receipt is minted - <c>ExecutionManager.RememberTerminal</c> for every action's
+    /// terminal, and <c>ExecutionManager.SettleNavigationTerminal</c> for a navigation - so the rule is one field and one
+    /// function rather than a line in each family's refusal.
+    /// </para>
+    /// </summary>
+    internal static string? NoteRepeatedRefusal(
+        string? previousReasonCode,
+        string? previousEvidence,
+        string reasonCode,
+        string? evidence)
+    {
+        if (evidence is null
+            || previousEvidence is null
+            || !string.Equals(previousReasonCode, reasonCode, StringComparison.Ordinal))
+            return evidence;
+        return string.Equals(WithoutRepeatedRefusal(previousEvidence), evidence, StringComparison.Ordinal)
+            ? $"{evidence};{SameRefusalField}={(RepeatedRefusalCount(previousEvidence) + 1).ToString(CultureInfo.InvariantCulture)}"
+            : evidence;
+    }
+
+    /// <summary>
+    /// How many identical answers one refusal's own evidence says came before it: 0 when it carries no marker, and the
+    /// marker's own count plus one when it does, so the marker of a refusal and the count of its run never disagree.
+    /// </summary>
+    private static int RepeatedRefusalCount(string evidence) => RepeatMarkerSpan(evidence) is { } span ? span.Count : 0;
+
+    /// <summary>The same evidence with the repeat marker removed, so two answers can be compared on what they say.</summary>
+    private static string WithoutRepeatedRefusal(string evidence) =>
+        RepeatMarkerSpan(evidence) is { } span ? evidence.Remove(span.Start, span.End - span.Start) : evidence;
+
+    /// <summary>Where the repeat field sits in one evidence detail and what it counts, or null when it carries none.</summary>
+    private static (int Start, int End, int Count)? RepeatMarkerSpan(string evidence)
+    {
+        int start = evidence.IndexOf($";{SameRefusalField}=", StringComparison.Ordinal);
+        if (start < 0)
+            return null;
+        int digits = start + SameRefusalField.Length + 2;
+        int end = digits;
+        while (end < evidence.Length && evidence[end] >= '0' && evidence[end] <= '9')
+            end += 1;
+        return end > digits
+            && int.TryParse(evidence[digits..end], NumberStyles.Integer, CultureInfo.InvariantCulture, out int count)
+            ? (start, end, count)
+            : null;
+    }
 
     /// <summary>
     /// The map a coordinate that is not a tile of THIS one really belongs to, or null when no loaded map claims it.

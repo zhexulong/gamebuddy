@@ -364,6 +364,122 @@ public sealed class ShopSaleReachTests : IDisposable
     }
 
     /// <summary>
+    /// A STOCK READING IS A COUNT OR THE GAME'S OWN WORD FOR UNBOUNDED, never a sentinel printed as a number.
+    ///
+    /// <para>
+    /// `ItemStockInformation.Stock` is "the maximum number of sets of this item which can be purchased in one day, or
+    /// `ShopMenu.infiniteStock` for unlimited" (ItemStockInformation.cs:12), and `ShopMenu.infiniteStock` IS
+    /// `int.MaxValue` (ShopMenu.cs:168). `round92`'s one purchase printed
+    /// `stock_before=2147483647;stock_after=2147483647`, which no reader can tell from a shop that happens to hold two
+    /// billion units - and a downstream "is there enough stock?" answers yes for the wrong reason. It is the same shape
+    /// as `money: null` for a purse nobody measured.
+    /// </para>
+    /// <para>
+    /// THE POPULATION IS THE SUITE'S OWN RECEIPTS, read whole: the two `stock_before`/`stock_after` fields, the pack
+    /// refusal's single `stock=`, and the click trace's `stock=` sub-field, which is the same sentinel in the same
+    /// receipt. The sentinel is DERIVED from the engine's constant rather than typed here, so a producer that prints it
+    /// again fails by the value the engine chose; the word `unlimited` is asserted to be present at least once, because
+    /// the fixture's own offer IS unlimited and a receipt that states no stock has stopped stating it rather than fixed
+    /// it.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryStockAReceiptStatesIsACountOrTheGamesWordForUnbounded()
+    {
+        string sentinel = ShopMenu.infiniteStock.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        List<(string Scenario, string Detail)> receipts = ProducePurchaseReceipts();
+        List<string> unbounded = new();
+
+        foreach ((string scenario, string detail) in receipts)
+        {
+            detail.Should().NotContain(
+                sentinel,
+                $"{scenario} printed the engine's unlimited sentinel as a number, which no reader can tell from a count");
+            // The pack refusal never reached the click and a loop that ran none has no trace, so the two receipts with
+            // no trace are named rather than excused by a predicate nobody can read.
+            bool hasClickTrace = detail.Contains("clicks=", StringComparison.Ordinal)
+                && !detail.Contains("clicks=0[]", StringComparison.Ordinal);
+            if (hasClickTrace)
+            {
+                detail.Should().Contain(
+                    "|stock=",
+                    $"{scenario}'s click trace states the stock each click saw, so this gate's population cannot narrow by a producer dropping it");
+            }
+            foreach (string clause in detail.Split(';'))
+            {
+                int separator = clause.IndexOf('=', StringComparison.Ordinal);
+                if (separator <= 0 || !clause.StartsWith("stock", StringComparison.Ordinal))
+                    continue;
+                string value = clause[(separator + 1)..];
+                if (value == "unlimited")
+                {
+                    unbounded.Add($"{scenario}:{clause}");
+                    continue;
+                }
+
+                bool wasACount = int.TryParse(
+                    value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int count);
+                wasACount.Should().BeTrue($"{scenario} states `{clause}`, and a stock that is not the word for unbounded has to be a count");
+                count.Should().BeGreaterThanOrEqualTo(0, $"{scenario} states `{clause}`, and a negative stock is not a count either");
+            }
+        }
+
+        unbounded.Should().NotBeEmpty(
+            "the suite's own offer is unlimited stock, so a receipt that states no `unlimited` has stopped stating stock at all");
+    }
+
+    /// <summary>
+    /// THE OTHER HALF, which is what stops the fix from being "spell every stock `unlimited`": a counter that really
+    /// holds three states three, and the one producer of a stock reading has no way to say "not measured" except by
+    /// saying nothing.
+    /// </summary>
+    [Fact]
+    public void AStockOfThreeIsStillTheCountThree()
+    {
+        Receipt(stockBefore: 3, stockAfter: 1).Should().Contain(
+            "stock_before=3;stock_after=1", "a counter that holds three states three, and one that holds one states one");
+        Receipt(stockBefore: ShopMenu.infiniteStock, stockAfter: ShopMenu.infiniteStock)
+            .Should().Contain(
+                "stock_before=unlimited;stock_after=unlimited",
+                "the same shop with no limit is not a count, and must not be printed as one");
+        ExecutionManager.ShopStockToken(0).Should().Be("0", "none left is a count of none, never an absence");
+        ExecutionManager.ShopStockToken(null).Should().Be(
+            "unreadable",
+            "the stock entry the handler could no longer find is 'not measured'; a number there was the sentinel this replaces");
+    }
+
+    /// <summary>
+    /// One receipt's text from the two facts that vary here, with the rest of the shape the suite's own purchases use -
+    /// so the finite and the unbounded reading are read off the producer's real text rather than off a helper.
+    /// </summary>
+    private static string Receipt(int stockBefore, int stockAfter) =>
+        ExecutionManager.ShopPurchaseReceipt(new ExecutionManager.ShopPurchaseReceiptFacts(
+            ShopId: "SeedShop",
+            OwnerName: "Pierre",
+            TileOpened: false,
+            ItemId: "(O)472",
+            Requested: 2,
+            Purchased: 2,
+            UnitPrice: Price,
+            CurrencyBefore: 500,
+            CurrencyAfter: 460,
+            OwnedBefore: 0,
+            OwnedAfter: 2,
+            StockBefore: stockBefore,
+            StockAfter: stockAfter,
+            CounterX: 5,
+            CounterY: 16,
+            MenuClosed: true,
+            Clicks: new[] { "click0:row=0|cursor=0|held_after=(O)472" },
+            Drops: new[] { "drop0:slot=0|held=(O)472->none" },
+            UpgradedToolId: null,
+            DaysLeftForToolUpgrade: 0,
+            RequiredToolQualifiedId: string.Empty,
+            RequiredToolBefore: 0,
+            RequiredToolAfter: 0,
+            PurchaseDialogue: "none"));
+
+    /// <summary>
     /// The purchase decision sequence of the handler, replayed where a world cannot be mounted: the pack count, the one
     /// capacity, the refusal, the engine's click, the engine's drop, the decider and the receipt. The order is pinned by
     /// <see cref="ThePackIsJudgedBeforeTheClickThatChargesThePurse"/>, so this cannot silently drift from the handler.
@@ -439,8 +555,16 @@ public sealed class ShopSaleReachTests : IDisposable
         for (int bought = 0; bought < purchasable; bought++)
         {
             int row = ExecutionManager.ShopSaleRowInView(shop.Menu, 0, out _);
+            int stockBeforeClick = shop.Menu.itemPriceAndStock[sale].Stock;
             shop.Confirm(row);
-            clicks.Add($"click{bought}:row={row}|cursor={shop.Menu.currentItemIndex}|held_after={shop.Menu.heldItem?.QualifiedItemId ?? "none"}");
+            // The stock sub-field is the HANDLER'S spelling, so the receipt this suite mints carries the sibling the
+            // producer's own trace carries and the gate above can read it: `round92` printed the engine's `int.MaxValue`
+            // sentinel here too, beside the two fields at the top of the detail.
+            clicks.Add(
+                $"click{bought}:row={row}|cursor={shop.Menu.currentItemIndex}|"
+                + $"stock={ExecutionManager.ShopStockToken(stockBeforeClick)}->"
+                + $"{ExecutionManager.ShopStockToken(shop.Menu.itemPriceAndStock[sale].Stock)}|"
+                + $"held_after={shop.Menu.heldItem?.QualifiedItemId ?? "none"}");
 
             if (shop.Menu.heldItem is not Item held)
                 continue;

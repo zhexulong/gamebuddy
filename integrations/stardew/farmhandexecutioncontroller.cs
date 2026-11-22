@@ -3043,9 +3043,74 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
         this.LogNavigationWarpDiagnostic("approach_terminal", $"state={state};reason={reasonCode};evidence={evidence ?? "none"}");
         this.slots.Active.Clear();
+        if (this.TryReplanPastBlockedApproach(navigation, reasonCode, evidence))
+            return;
         this.SettleNavigationTerminal(navigation, state, reasonCode,
             $"approach_pre_release={evidence ?? "none"};phase=approaching;controller_traversal=true");
     }
+
+    /// <summary>
+    /// Takes the other published exit when the walk to the one the plan committed to comes back `no_native_path`.
+    ///
+    /// <para>
+    /// MEASURED `round89`: <see cref="SelectSafeApproachTarget"/> asks <c>IsStandableTile</c> of a transition's entry cell
+    /// and nothing about whether the body can walk to it, so a cell that is standable and walled in from where she stands
+    /// is chosen, the walk answers <c>no_native_path</c> three times, and the whole navigation settled
+    /// <c>navigation_approach_unavailable</c> with <c>never_retry=true</c> while `Backwoods -> BusStop -> Town ->
+    /// Mountain` was published the whole time. A blocked approach is not the end of the navigation; it is the end of that
+    /// exit.
+    /// </para>
+    ///
+    /// <para>
+    /// ONLY <c>no_native_path</c> IS THIS FACT (<see cref="IsUnwalkableExitRefusal"/>). The walk's other refusals are
+    /// different worlds and each already publishes its own next step: <c>target_tile_occupied</c> and
+    /// <c>path_blocked_by_character</c> name a body that moves away, <c>native_path_ended</c> a stall whose blocker the body
+    /// controller names, <c>deadline_expired</c> the request's own clock. Dropping the leg for any of them would
+    /// abandon a published route over a condition the world clears by itself.
+    /// </para>
+    ///
+    /// <para>
+    /// The replacement is never chosen here: the leg is recorded on the execution
+    /// (<see cref="AcceptedNavigationExecution.ExcludeBlockedLeg"/>) and the plan is re-asked, so what answers is still
+    /// the planner's own shortest route over the world's own topology - and a settlement that follows names every route
+    /// it refused.
+    /// </para>
+    /// </summary>
+    private bool TryReplanPastBlockedApproach(LocalNavigateSpec navigation, string reasonCode, string? evidence)
+    {
+        if (!IsUnwalkableExitRefusal(reasonCode))
+            return false;
+        // Out of time is not a route question: the request's own deadline bounds this walk, and the terminal the tick
+        // loop mints for it names the deadline rather than a second guess at the map.
+        if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > navigation.DeadlineMs)
+            return false;
+        AcceptedNavigationExecution? coordinator = this.activeNavigationCoordinator;
+        if (coordinator is null)
+            return false;
+
+        coordinator.ExcludeBlockedLeg(navigation.Leg);
+        this.LogNavigationWarpDiagnostic(
+            "approach_replan", $"refused={DescribeRoute(navigation.Leg)};reason={reasonCode};evidence={evidence ?? "none"}");
+        this.AdvanceNavigationToNextLeg(navigation, deferWhileLocked: false, navigation.Leg);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a refused approach says THE EXIT ITSELF cannot be walked from where the body stands, rather than that the
+    /// walk was interrupted on its way there.
+    ///
+    /// <para>
+    /// One member, and named rather than inlined at the settlement, because this is the boundary between two answers that
+    /// lead to different next steps: an exit with no road is a route question (ask the planner for another published
+    /// one), while every other refusal is a condition with its own published countermeasure.
+    /// </para>
+    /// </summary>
+    private static bool IsUnwalkableExitRefusal(string reasonCode) =>
+        string.Equals(reasonCode, StardewBodyController.NoNativePathReasonCode, StringComparison.Ordinal);
+
+    /// <summary>One route's spelling in a receipt, so a replan and a settlement name the same exit the same way.</summary>
+    private static string DescribeRoute(NavigationTransitionLeg leg) =>
+        $"{leg.TargetLocation}@{leg.SourceX},{leg.SourceY}";
 
     private void CommitNavigationApproach(LocalNavigateSpec navigation)
     {
@@ -3276,6 +3341,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // Every navigation terminal leaves the caller a next step, from the one table that classifies them. A site that
         // already published one (a body hold's own countermeasure) keeps it: that sentence names the game's condition.
         string? stated = NavigationNextStep.Describe(reasonCode, evidence);
+        // THE SAME REPEAT RULE THIS FUNNEL OWES. A navigation terminal mints its receipt here rather than through
+        // `RememberTerminal`, so a door leg refused twice by the same lock would otherwise read as two new facts.
+        if (state == ExecutionState.Rejected)
+        {
+            LocalExecutionReceipt? settled = this.ledger.MostRecentReceipt;
+            stated = NoteRepeatedRefusal(settled?.ReasonCode, settled?.Evidence, reasonCode, stated);
+        }
         this.monitor.Log($"[nav-settle-marker] request={navigation.RequestId};state={state};reason={reasonCode};evidence={stated ?? "none"}", LogLevel.Trace);
         this.LogNavigationWarpDiagnostic("settle", $"state={state};reason={reasonCode};evidence={stated ?? "none"}");
         this.slots.Active.Clear();
@@ -3365,6 +3437,43 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return;
         }
 
+        this.AdvanceNavigationToNextLeg(navigation, deferWhileLocked: true, refusedLeg: null);
+    }
+
+    /// <summary>
+    /// Plans the next published route, arms the leg whose approach the body can walk, and settles the navigation when no
+    /// route is left - the ONE place a multi-hop execution asks the planner for its next leg.
+    ///
+    /// <para>
+    /// TWO THINGS END WITH THIS ANSWER and used to be written as two paths: a confirmed warp (the arrival is correlated, so
+    /// the plan is read fresh in the new location) and a blocked approach (the leg the plan committed to cannot be walked,
+    /// see <see cref="TryReplanPastBlockedApproach"/>). Splitting the walk's half off into a settlement of its own is what
+    /// let one blocked exit end an action a second published route could finish.
+    /// </para>
+    ///
+    /// <para>
+    /// Every settlement here is the planner's own sentence about the topology, and the route evidence names what this
+    /// execution refused and what the retry answered - so <c>never_retry=true</c> is a measured fact about the world and
+    /// not a shrug (<see cref="DescribeExhaustedRoutes"/>).
+    /// </para>
+    ///
+    /// <para>
+    /// <paramref name="deferWhileLocked"/> is the one difference the two callers have, and it is a fact about the phase
+    /// rather than a preference: after a warp the world spends a frame or two settling (<c>CanMove</c> is false while the
+    /// fade runs), so the deferred window belongs to that warp and <c>Update</c> re-asks on the first actionable frame;
+    /// after a blocked approach the body is walking, so a hold the world reports is the terminal `destination_locked` with
+    /// its own countermeasure, never a window that nothing would re-arm.
+    /// </para>
+    ///
+    /// <param name="refusedLeg">
+    /// The leg whose exit this execution has already proven unwalkable, or <c>null</c> after a warp. Its
+    /// <see cref="DescribeRoute"/> spelling and its entry cell are part of the count and the sentence a settlement
+    /// publishes, so a route that was walked and refused is never invisible in it.
+    /// </param>
+    /// </summary>
+    private void AdvanceNavigationToNextLeg(LocalNavigateSpec navigation, bool deferWhileLocked, NavigationTransitionLeg? refusedLeg)
+    {
+        string? refusedRoute = refusedLeg is null ? null : DescribeRoute(refusedLeg);
         AcceptedNavigationExecution? coordinator = this.activeNavigationCoordinator;
         if (coordinator is null)
         {
@@ -3384,7 +3493,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         this.LogNavigationWarpDiagnostic("warp_planned", $"terminal={nextPlan.IsTerminal};state={nextPlan.Outcome.State};reason={nextPlan.Outcome.TerminalReasonCode};next={nextPlan.Outcome.NextLeg?.TargetLocation ?? "none"}");
 
-        if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked")
+        if (nextPlan.IsTerminal && nextPlan.Outcome.TerminalReasonCode == "destination_locked" && deferWhileLocked)
         {
             this.slots.DeferWarpReplan(this.tick);
             this.LogNavigationWarpDiagnostic("warp_replan_deferred", "destination_locked;waiting_for_actionable_frame");
@@ -3401,6 +3510,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
         if (nextPlan.IsTerminal)
         {
+            // A TOPOLOGY WITH NOTHING LEFT still owes the reader the route it was asked to walk first: the walk refused
+            // one exit, and `destination_unreachable` on its own would read as a fact nobody had measured. The refused
+            // leg is named, with its entry cell and the planner's own answer, which is the shape every other exhaustion
+            // publishes (<see cref="DescribeExhaustedRoutes"/>).
+            if (refusedLeg is not null && nextPlan.Outcome.TerminalReasonCode == "destination_unreachable")
+            {
+                this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable",
+                    $"phase=multi_hop;approach=unavailable;never_retry=true{DescribeExhaustedRoutes(new List<string> { refusedRoute! }, null, refusedLeg, "destination_unreachable")}");
+                return;
+            }
+
             ExecutionState state = nextPlan.Outcome.TerminalReasonCode == "destination_access_indeterminate"
                 ? ExecutionState.Uncertain
                 : nextPlan.Outcome.State;
@@ -3416,7 +3536,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         }
 
         string canonicalDestinationIdentity = nextPlan.Resolution.Binding?.CanonicalDestinationIdentity ?? nextLeg.TargetLocation;
-        NavigationTransitionLeg? approachLeg = this.SelectApproachableLeg(coordinator, nextLeg, out Vector2 approachTile, out string routeEvidence);
+        NavigationTransitionLeg? approachLeg = this.SelectApproachableLeg(coordinator, nextLeg, out Vector2 approachTile, out string routeEvidence, refusedRoute);
         if (approachLeg is null)
         {
             this.SettleNavigationTerminal(navigation, ExecutionState.Uncertain, "navigation_approach_unavailable", $"phase=multi_hop;approach=unavailable;never_retry=true{routeEvidence}");
@@ -3557,22 +3677,61 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// with a refused one.
     /// </para>
     /// </summary>
+    /// <param name="firstLeg">
+    /// The leg the planner has already answered, or <c>null</c> when the plan has to be asked for one - which is the
+    /// state a blocked APPROACH leaves behind: that leg was armed, walked and refused by the engine, so it is already in
+    /// <paramref name="refusedRoute"/> and the only thing left to do is ask for the next route.
+    /// </param>
     /// <param name="approachTarget">The tile to walk to, when a leg was found.</param>
     /// <param name="routeEvidence">
     /// Empty when the first leg's approach was walkable; otherwise the fact that this call re-planned (on success) or the
     /// approach ring, entry cell and every refused route with the retry's own answer (on exhaustion).
     /// </param>
+    /// <param name="refusedRoute">A route this execution already refused before this call, in
+    /// <see cref="DescribeRoute"/>'s spelling.</param>
     private NavigationTransitionLeg? SelectApproachableLeg(
         AcceptedNavigationExecution coordinator,
-        NavigationTransitionLeg firstLeg,
+        NavigationTransitionLeg? firstLeg,
         out Vector2 approachTarget,
-        out string routeEvidence)
+        out string routeEvidence,
+        string? refusedRoute = null)
     {
         List<string> refused = new();
+        if (refusedRoute is not null)
+            refused.Add(refusedRoute);
         StardewBodyController.CardinalRing? ring = null;
+        NavigationTransitionLeg? lastRefused = null;
         NavigationTransitionLeg? leg = firstLeg;
-        while (leg is not null)
+        while (true)
         {
+            if (leg is null)
+            {
+                NavigationPlan retry;
+                try
+                {
+                    retry = coordinator.PlanNextRouteLeg();
+                }
+                catch
+                {
+                    approachTarget = default;
+                    routeEvidence = DescribeExhaustedRoutes(refused, ring, lastRefused, "decision_unavailable");
+                    return null;
+                }
+                if (retry.IsTerminal)
+                {
+                    approachTarget = default;
+                    routeEvidence = DescribeExhaustedRoutes(refused, ring, lastRefused, retry.Outcome.TerminalReasonCode ?? "no_route");
+                    return null;
+                }
+                leg = retry.Outcome.NextLeg;
+                if (leg is null)
+                {
+                    approachTarget = default;
+                    routeEvidence = DescribeExhaustedRoutes(refused, ring, lastRefused, "transition=none");
+                    return null;
+                }
+            }
+
             Vector2? target = this.SelectSafeApproachTarget(leg, out ring);
             if (target is not null)
             {
@@ -3583,32 +3742,11 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 return leg;
             }
 
-            refused.Add($"{leg.TargetLocation}@{leg.SourceX},{leg.SourceY}");
+            refused.Add(DescribeRoute(leg));
             coordinator.ExcludeBlockedLeg(leg);
-
-            NavigationPlan retry;
-            try
-            {
-                retry = coordinator.PlanNextRouteLeg();
-            }
-            catch
-            {
-                approachTarget = default;
-                routeEvidence = DescribeExhaustedRoutes(refused, ring, leg, "decision_unavailable");
-                return null;
-            }
-            if (retry.IsTerminal)
-            {
-                approachTarget = default;
-                routeEvidence = DescribeExhaustedRoutes(refused, ring, leg, retry.Outcome.TerminalReasonCode ?? "no_route");
-                return null;
-            }
-            leg = retry.Outcome.NextLeg;
+            lastRefused = leg;
+            leg = null;
         }
-
-        approachTarget = default;
-        routeEvidence = DescribeExhaustedRoutes(refused, ring, null, "transition=none");
-        return null;
     }
 
     /// <summary>
@@ -3736,6 +3874,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         string? detail = evidence;
         if (state.IsTerminal() && FarmhandActionCatalog.ChoreEntry(boundActionId) is { } chore)
             detail = string.IsNullOrEmpty(detail) ? chore : $"{detail};{chore}";
+        // A REJECTION THAT REPEATS ITSELF SAYS SO, in the last field of the detail. This is the funnel every action's
+        // terminal passes through, so the rule is one call here rather than a line in each family's refusal;
+        // `SettleNavigationTerminal` mints its own receipt outside this funnel and applies the same rule there.
+        if (state == ExecutionState.Rejected)
+        {
+            LocalExecutionReceipt? settled = this.ledger.MostRecentReceipt;
+            detail = NoteRepeatedRefusal(settled?.ReasonCode, settled?.Evidence, reasonCode, detail);
+        }
         LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint);
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt, publish);

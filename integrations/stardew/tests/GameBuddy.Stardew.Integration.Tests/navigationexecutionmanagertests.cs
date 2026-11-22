@@ -439,6 +439,75 @@ public sealed class NavigationExecutionManagerTests
     }
 
     /// <summary>
+    /// THE SAME BLOCKED EXIT ONE PHASE LATER, which is the other half of `round89` and the half that settled: the entry
+    /// cell the plan committed to was STANDABLE (a body may stand on it), so the arm succeeded and only the walk could
+    /// answer that she cannot get there. `Approaching` then ate `no_native_path` and the whole action settled
+    /// `navigation_approach_unavailable` with `never_retry=true`, while `Backwoods -> BusStop -> Town -> Mountain` was
+    /// published the whole time.
+    ///
+    /// <para>
+    /// RED BEFORE THE FIX: `Uncertain`/`navigation_approach_unavailable`, two arms, and the BusStop route never asked for.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnUnwalkableApproach_AfterTheArm_ReplansToTheOtherRouteInsteadOfSettling()
+    {
+        var harness = new ManagerHarness(
+            View(true, true, "Farm", at: false, new[] { FarmToBackwoods }),
+            evaluateCandidate: _ => true,
+            topologySources: FarmToBackwoodsTopology());
+
+        harness.Manager.RequestNavigate("req_walk", Label("Mine"), Deadline());
+        harness.EmitApproachSucceeded();
+        harness.Manager.Update();
+        harness.CompleteWarp("Farm", "Backwoods", 40, 0);
+        harness.Armed.Should().HaveCount(2, "the east exit's entry cell is standable, so the plan commits to it");
+        harness.Armed[1].TargetTile.Should().Be(new Vector2(49, 10));
+
+        // THE ENGINE ANSWERS WHAT STANDABILITY COULD NOT: there is no road from here to the cell in front of the exit.
+        harness.Emit(ExecutionState.Failed, "no_native_path",
+            "from=40,0;to=49,10;location=Backwoods;native=attempted;blocked_by=large:Bush@49,10");
+
+        LocalExecutionReceipt receipt = harness.Stored("req_walk");
+        receipt.State.Should().Be(ExecutionState.Running, "an exit the body cannot walk is not the end of the navigation");
+        receipt.ReasonCode.Should().Be("navigation_multi_hop_leg_armed");
+        receipt.Evidence.Should().Contain("route_replanned=true");
+        receipt.Evidence.Should().Contain($"refused={MountainEastExit.TargetLocation}@{MountainEastExit.SourceX},{MountainEastExit.SourceY}");
+        harness.Armed.Should().HaveCount(3);
+        harness.Armed[2].TargetTile.Should().Be(new Vector2(49, 30), "the BusStop exit is the route that is actually walkable");
+        harness.Manager.IsBodySettled.Should().BeFalse();
+    }
+
+    /// <summary>
+    /// The same refusal when the published topology holds NOTHING ELSE: the settlement has to be worth its
+    /// `never_retry=true`, so it names the exit the walk refused and the planner's own answer to the retry - the two
+    /// facts `round89`'s receipt did not carry.
+    ///
+    /// <para>
+    /// RED BEFORE THE FIX: `no_native_path` plus `phase=approaching;controller_traversal=true` and no statement about any
+    /// other route at all, so a reader could not tell a wall from an unfinished search.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnUnwalkableApproach_WithNoOtherRoute_SettlesAndNamesTheRouteItRefused()
+    {
+        var harness = new ManagerHarness(NotAtFarm());
+        harness.Manager.RequestNavigate("req_walk_only", Label("Mine"), Deadline());
+
+        harness.Emit(ExecutionState.Failed, "no_native_path", "from=0,0;to=9,10;native=attempted;blocked_by=none");
+
+        LocalExecutionReceipt receipt = harness.Stored("req_walk_only");
+        receipt.State.Should().Be(ExecutionState.Uncertain);
+        receipt.ReasonCode.Should().Be("navigation_approach_unavailable");
+        receipt.Evidence.Should().Contain("never_retry=true");
+        receipt.Evidence.Should().Contain("routes_considered=1");
+        receipt.Evidence.Should().Contain($"refused={MineLeg.TargetLocation}@{MineLeg.SourceX},{MineLeg.SourceY}");
+        receipt.Evidence.Should().Contain("retry=destination_unreachable", "the planner was asked again and answered from the same topology");
+        harness.Armed.Should().HaveCount(1);
+        harness.Manager.IsBodySettled.Should().BeTrue();
+    }
+
+    /// <summary>
     /// ③ `never_retry=true` has to be EARNED. With no second route in the published topology the settlement names the
     /// route it refused and the planner's own answer to the retry, so "there is no other way" is a measured fact rather
     /// than a shrug - which is exactly what the live receipt could not say.

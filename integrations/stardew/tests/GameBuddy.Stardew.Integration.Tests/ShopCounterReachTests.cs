@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -120,6 +121,145 @@ public sealed class ShopCounterReachTests
             .ShopCounterReachRefusal(counterIsTileAction: true, string.Empty, OwnerX, OwnerY, harness.Actor)
             .Should()
             .Be("owner=none;owner_tile=4,17;actor_tile=5,19;radius=1");
+    }
+
+    /// <summary>
+    /// THE RECEIPT'S OWN HALF: a purchase says which distance gate its counter form HAS, so "she did not need to walk"
+    /// and "the gate was skipped" stop being the same receipt.
+    ///
+    /// <para>
+    /// Measured round92, a completed purchase a watcher read as <em>"she bought seeds at the door without going to
+    /// Pierre, why?"</em>:
+    /// </para>
+    /// <code>
+    /// shop=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=12;purchased=12;unit_price=20;
+    /// money_before=500;money_after=260
+    /// </code>
+    /// <para>
+    /// Nothing in that text could answer it. <c>owner_tile</c> says where the counter is and never whether reaching it
+    /// was required, so the two readings - she stood at the counter, she never had to - were one receipt. The decision
+    /// was NOT to invent a distance rule the engine does not have (see
+    /// <see cref="ExecutionManager.ShopCounterReachRefusal"/>): the receipt states which gate exists. That is why the
+    /// two kinds carry two different tokens rather than one number, and why the NPC form states NO distance at all
+    /// instead of a zero that would read as a measurement.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void APurchaseReceiptStatesWhichDistanceGateItsCounterFormHas()
+    {
+        string npcOwner = Receipt(tileOpened: false, OwnerX, OwnerY, ActorX, ActorY);
+        npcOwner.Should().Contain(
+            "entry=npc_owner;distance_required=none;why=engine_has_no_gate_for_npc_counters",
+            "round92: the counter an NPC runs has no player-distance gate anywhere in the engine, and the receipt has to "
+                + "say so rather than leave a watcher to guess at a boundary that was never crossed");
+        npcOwner.Should().NotContain(
+            ";distance=",
+            "no gap was measured against any gate, so none is stated: a `distance=0` here would be a number invented for "
+                + "a gate the engine does not have");
+
+        string tileCounter = Receipt(tileOpened: true, OwnerX, OwnerY, ActorX + 1, ActorY);
+        tileCounter.Should().Contain(
+            "entry=tile_action;distance_required=1;distance=1",
+            "a counter that IS a tile is gated by the engine's own click radius, and the receipt states the gap it "
+                + "measured beside the radius it was measured against");
+        tileCounter.Should().NotContain(
+            ";why=",
+            "the gated form has a gate, so there is no absence to explain - the two tokens are exclusive");
+    }
+
+    /// <summary>
+    /// THE NUMBER AND THE GATE ARE ONE FACT. <c>distance</c> is measured in the engine's own metric
+    /// (<c>Utility.tileWithinRadiusOfPlayer</c>, Utility.cs:4100-4109), so "at or below the radius" must hold exactly
+    /// where the engine admits the tile, at every offset of a two-tile window. A sum of axis deltas is what would
+    /// disagree first: it refuses the diagonal the engine admits, and the receipt would then state a gap for a purchase
+    /// the engine refuses.
+    ///
+    /// <para>
+    /// THIS IS A CROSS-CHECK, not a restatement: the expected answer comes from the engine's own function called with
+    /// the same body, and the produced answer comes from the receipt's own text. The counts - nine admitted, sixteen
+    /// refused - are the square radius measured rather than asserted.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheDistanceAReceiptStatesIsTheEnginesOwnGateAtEveryOffset()
+    {
+        using ActorHarness harness = ActorHarness.Create();
+        int admitted = 0;
+        int refused = 0;
+        for (int dy = -2; dy <= 2; dy++)
+        {
+            for (int dx = -2; dx <= 2; dx++)
+            {
+                harness.StandOn(OwnerX + dx, OwnerY + dy);
+                bool native = Utility.tileWithinRadiusOfPlayer(
+                    OwnerX, OwnerY, ExecutionManager.NativeInteractionRadius, harness.Actor);
+                int stated = StatedDistance(Receipt(tileOpened: true, OwnerX, OwnerY, OwnerX + dx, OwnerY + dy));
+
+                (stated <= ExecutionManager.NativeInteractionRadius).Should().Be(
+                    native,
+                    $"the receipt states distance={stated} from an offset of {dx},{dy} and the engine's own answer there "
+                        + $"is {native}");
+                if (native)
+                    admitted++;
+                else
+                    refused++;
+            }
+        }
+
+        admitted.Should().Be(
+            9,
+            "the engine tests BOTH axes against the radius, so nine tiles of a two-tile window are inside it");
+        refused.Should().Be(
+            16,
+            "and the sixteen outside it are the ones the action refuses: five tiles would be a sum of axis deltas");
+    }
+
+    /// <summary>
+    /// round92's own purchase, as the producer emits it: twelve seeds at Pierre's counter, 500g in the purse and 260g
+    /// after. The two counter forms are the two this action opens (see the class summary), and the body's tile is a
+    /// parameter because the distance the receipt states is measured against it.
+    /// </summary>
+    private static string Receipt(bool tileOpened, int counterX, int counterY, int actorX, int actorY)
+    {
+        const int unitPrice = 20;
+        const int requested = 12;
+        const int purse = 500;
+        return ExecutionManager.ShopPurchaseReceipt(new ExecutionManager.ShopPurchaseReceiptFacts(
+            ShopId: "SeedShop",
+            OwnerName: tileOpened ? string.Empty : "Pierre",
+            TileOpened: tileOpened,
+            ItemId: "(O)472",
+            Requested: requested,
+            Purchased: requested,
+            UnitPrice: unitPrice,
+            CurrencyBefore: purse,
+            CurrencyAfter: purse - (requested * unitPrice),
+            OwnedBefore: 0,
+            OwnedAfter: requested,
+            StockBefore: 999,
+            StockAfter: 999 - requested,
+            CounterX: counterX,
+            CounterY: counterY,
+            MenuClosed: true,
+            Clicks: new[] { "click11:row=0|cursor=0|held_after=(O)472" },
+            Drops: new[] { "drop11:slot=0|held=(O)472->none" },
+            UpgradedToolId: null,
+            DaysLeftForToolUpgrade: 0,
+            RequiredToolQualifiedId: string.Empty,
+            RequiredToolBefore: 0,
+            RequiredToolAfter: 0,
+            PurchaseDialogue: "none"));
+    }
+
+    /// <summary>The gap a receipt states, read off the receipt's own text - the producer's answer, not a second count.</summary>
+    private static int StatedDistance(string detail)
+    {
+        int at = Array.FindIndex(
+            detail.Split(';'), part => part.StartsWith("distance=", StringComparison.Ordinal));
+        if (at < 0)
+            throw new InvalidOperationException($"a tile counter's receipt states the gap it measured: {detail}");
+        return int.Parse(
+            detail.Split(';')[at]["distance=".Length..], NumberStyles.Integer, CultureInfo.InvariantCulture);
     }
 
     /// <summary>

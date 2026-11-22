@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using GameBuddy.Stardew.Core.Models;
+using StardewValley.Menus;
 
 namespace GameBuddy.Stardew;
 
@@ -124,6 +126,12 @@ internal sealed partial class ExecutionManager
     /// (host/src/stardew-completion-contracts.ts:4655-4704), so an extra token on the ordinary path is a producer bug
     /// there rather than a fact - see <see cref="ShopToolUpgradeEvidence"/> for the same constraint stated on a field.
     /// </para>
+    /// <para>
+    /// THE TWO STOCK FIELDS ARE NULLABLE BECAUSE A MISSING READING IS NOT A COUNT: the handler resolves the stock entry
+    /// it buys from once, and a re-read that no longer finds it states nothing rather than a number standing for "no
+    /// answer" (<see cref="ShopStockToken"/> writes that as a word, and <c>int.MaxValue</c> is the game's own word for
+    /// unbounded).
+    /// </para>
     /// </summary>
     internal readonly record struct ShopPurchaseReceiptFacts(
         string ShopId,
@@ -137,8 +145,8 @@ internal sealed partial class ExecutionManager
         long CurrencyAfter,
         int OwnedBefore,
         int OwnedAfter,
-        int StockBefore,
-        int StockAfter,
+        int? StockBefore,
+        int? StockAfter,
         int CounterX,
         int CounterY,
         bool MenuClosed,
@@ -189,7 +197,7 @@ internal sealed partial class ExecutionManager
             + $"requested={facts.Requested};purchased={facts.Purchased};unit_price={facts.UnitPrice};"
             + $"money_before={facts.CurrencyBefore};money_after={facts.CurrencyAfter};"
             + $"owned_before={facts.OwnedBefore};owned_after={facts.OwnedAfter};gained={gained};"
-            + $"stock_before={facts.StockBefore};stock_after={facts.StockAfter};"
+            + $"stock_before={ShopStockToken(facts.StockBefore)};stock_after={ShopStockToken(facts.StockAfter)};"
             + $"owner_tile={facts.CounterX},{facts.CounterY};menu_closed={facts.MenuClosed.ToString().ToLowerInvariant()};"
             + ShopPurchaseTraceField("clicks", facts.Clicks) + ";"
             + ShopPurchaseTraceField("drops", facts.Drops)
@@ -201,6 +209,32 @@ internal sealed partial class ExecutionManager
                 facts.RequiredToolAfter,
                 facts.PurchaseDialogue);
     }
+
+    /// <summary>
+    /// One stock reading as the wire states it: a count when the counter really counts, the game's own word where it
+    /// means unbounded, and a word rather than a number where nothing was read.
+    ///
+    /// <para>
+    /// `ItemStockInformation.Stock` is "the maximum number of sets of this item which can be purchased in one day, or
+    /// `ShopMenu.infiniteStock` for unlimited" (ItemStockInformation.cs:12), and `ShopMenu.infiniteStock` IS
+    /// <c>int.MaxValue</c> (ShopMenu.cs:168) - the engine never compares it to a count, only to that constant (:1398,
+    /// :1483, :1911, :2044). `round92`'s one purchase printed `stock_before=2147483647;stock_after=2147483647`, which a
+    /// reader cannot tell from a shop that happens to hold two billion units, and "is there enough stock?" then answers
+    /// yes for the wrong reason. A sentinel is not a measurement: the same shape as `money: null` for a purse nobody
+    /// measured.
+    /// </para>
+    /// <para>
+    /// "NOT MEASURED" IS THE ABSENCE OF THE VALUE, not a number chosen to stand for it. The handler used to write
+    /// <c>-1</c> when the stock entry it had already resolved was no longer in the dictionary; <c>int?</c> is what makes
+    /// that unreachable, so no caller can spell an absence as a count and no later comparison can read one as one.
+    /// </para>
+    /// </summary>
+    internal static string ShopStockToken(int? stock) =>
+        stock is not int measured
+            ? "unreadable"
+            : measured == ShopMenu.infiniteStock
+                ? "unlimited"
+                : measured.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>
     /// One folded diagnostic trace of a purchase receipt: HOW MANY entries the click loop produced, and the LAST of them.
