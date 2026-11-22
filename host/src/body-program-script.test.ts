@@ -12,10 +12,12 @@ import {
   GAME_PROSE_PAIR_BUDGET_CHARS,
   MAX_PLAN_NODES,
   MAX_PLAN_SELF_WAIT_NODES,
+  MAX_REPORTED_PLAN_READINGS,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
   PLAN_ITERATION_CONDITIONS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_SNAPSHOT_DISCOVERY_RADIUS,
   PLAN_SNAPSHOT_READINGS,
   type PlanIterationCondition,
   type PublishedPlanAction,
@@ -25,9 +27,11 @@ import {
   planSettlementNote,
   planShape,
   planWorkDescription,
+  TRANSITION_SOURCE_PLAN_ACTION_IDS,
 } from "./body-program-script.js";
 import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
+import type { StardewTileRead } from "./game-connection.js";
 import { ROW_STATE_FIELDS } from "./game-world-vocabulary.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
@@ -164,8 +168,15 @@ const exitRow = (sourceX: number, sourceY: number, targetLocation: string) => ({
   targetY: 12,
 });
 
-function compile(script: string, overrides: Partial<Snapshot> = {}): CompiledPlan {
-  return compilePlanScript({ script }, { snapshot: snapshot(overrides), actions: ACTIONS });
+function compile(script: string, overrides: Partial<Snapshot> = {}, tileRead?: StardewTileRead | null): CompiledPlan {
+  return compilePlanScript(
+    { script },
+    {
+      snapshot: snapshot(overrides),
+      actions: ACTIONS,
+      ...(tileRead === undefined ? {} : { tileRead }),
+    },
+  );
 }
 
 /**
@@ -901,6 +912,297 @@ test("a snapshot with no exit table says unmeasured, and a published empty one s
   );
 });
 
+/**
+ * A REFUSED TRANSITION DOES NOT LEAVE THE REST OF HER SCRIPT STANDING, and `round93` paid a night to learn it.
+ *
+ * <p>
+ * Measured 2026-11-22 (`round93`, `plan_463`): she stood in Town and wrote `enter_exit({x:64,y:14}); sleep();`. The
+ * transition was refused by name - `(64,14)` is the FARMHOUSE's human door, spelled in the town's frame - and the `sleep`
+ * was KEPT, because one refused call stops only itself. The plan that ran was `sleep()` ALONE, from Town: the night
+ * answered `not_home` for 308 s and the engine's 2:00 AM pass-out ended the run. The compiler had submitted a plan nobody
+ * wrote - hers had the walk home in it - which is the shape this rule exists to make impossible: a plan that loses its
+ * precondition must not become a SMALLER plan.
+ * </p>
+ *
+ * <p>
+ * The premise is the MAP: `enter_exit` and `travel` move the actor to another one (`TRANSITION_SOURCE_PLAN_ACTION_IDS`),
+ * so every call written after a refused one was written for a world this compile never read. The orphan is refused BY
+ * NAME, in the same answer, with the call that orphaned it - and the calls written BEFORE the transition still run, which
+ * is the falsifier beside this case.
+ * </p>
+ */
+test("round93 plan_463: the sleep written after a refused enter_exit is refused with it, never kept alone", () => {
+  const result = compile("builder.enter_exit({ x: 64, y: 14 });\nbuilder.sleep();", {
+    location: "Town",
+    warps: [],
+    doorTargets: [],
+  });
+
+  assert.equal(
+    refusalOf(result),
+    "plan_script_door_not_on_this_map:64:14:map=Town:warps=0:doors=0",
+    "the transition's own refusal is the first one, and it is what has to be corrected",
+  );
+  assert.equal(
+    "program" in result,
+    false,
+    "nothing is dispatched: `sleep()` from Town is the step the refusal exists to stop, and it is not hers to run",
+  );
+  assert.deepEqual(
+    rejectionsOf(result).map((call) => [call.call, call.actionId, call.reasonCode]),
+    [
+      [1, "enter_exit", "plan_script_door_not_on_this_map:64:14:map=Town:warps=0:doors=0"],
+      [2, "sleep", "plan_script_orphaned_by_a_refused_predecessor:n02:sleep:n01:enter_exit"],
+    ],
+    "the orphan is refused with its predecessor by name and position, so the answer says which of her calls went",
+  );
+});
+
+/**
+ * THE OTHER READING: the orphan rule costs the orphan and no more, so a batch with good work in front of a bad transition
+ * still runs that work. Without this, "refuse every later call" would be indistinguishable from "void the batch", and the
+ * partial doctrine would have been traded away for the fix rather than kept beside it.
+ */
+test("the steps written BEFORE a refused transition still run, and only the orphan is dropped", () => {
+  const result = compile(
+    "builder.move_to_tile({ x: 3, y: 11 });\nbuilder.enter_exit({ x: 64, y: 14 });\nbuilder.sleep();",
+    { location: "Town", warps: [], doorTargets: [] },
+  );
+
+  assert.equal(result.status, "partial", "the walk was her own step on this map and it compiled");
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile"],
+    "the walk runs; the transition and the sleep after it do not",
+  );
+  assert.deepEqual(accountOf(result).acceptedSteps, ["n01"]);
+  assert.deepEqual(accountOf(result).dropped, [
+    "n02:plan_script_door_not_on_this_map:64:14:map=Town:warps=0:doors=0",
+    "n03:plan_script_orphaned_by_a_refused_predecessor:n03:sleep:n02:enter_exit",
+  ]);
+});
+
+/**
+ * The same rule from the success side, which is what keeps it about the REFUSAL and not about transitions in general: a
+ * door this map publishes compiles, and the step after it is the step she wrote.
+ */
+test("a step written after a transition that COMPILED is untouched", () => {
+  const result = compile("builder.enter_exit({ x: 3, y: 12 });\nbuilder.sleep();", {
+    location: "Farm",
+    warps: [exitRow(3, 12, "FarmHouse")],
+  });
+
+  assert.equal(result.status, "compiled", "nothing was refused, so nothing is orphaned");
+  assert.deepEqual(
+    nodesOf(result).map((node) => node.actionId),
+    ["move_to_tile", "enter_exit", "sleep"],
+    "the door she published, the walk the compiler wrote, and her own step after it",
+  );
+});
+
+/**
+ * THE PROPERTY `plan_463` IS ONE INSTANCE OF, MEASURED OVER A GENERATED POPULATION.
+ *
+ * <p>
+ * A HAND-WRITTEN CASE FOR `[enter_exit, sleep]` MISSES THE ELEVENTH COMBINATION. The compiler's whole job is composition,
+ * so what is asserted here is the rule and not three examples of it: for every prerequisite this compiler recognises, made
+ * refused by every poison this gate can write, with EVERY published action written on either side of it, no step that was
+ * written to need what the refused prerequisite would have produced may be SUBMITTED - it is refused with its
+ * predecessor and named (`plan_script_orphaned_by_a_refused_predecessor:`), or the whole script is refused and nothing
+ * dispatches. Never a smaller plan.
+ * </p>
+ *
+ * <p>
+ * TWO DEPENDENCIES, BOTH DERIVED FROM THE COMPILER'S OWN DECLARATIONS rather than from a table of action pairs here:
+ * the MAP (`TRANSITION_SOURCE_PLAN_ACTION_IDS` - a step written after a transition was written for the map it leads to)
+ * and the TILE (the `planWorldTileOf` consumer relation `dependsOn` is built from - a step on the tile a refused step was
+ * to prepare). The map half is enumerated over the whole vocabulary; the tie half is enumerated over the families this
+ * suite can publish a row for, and the population line says how many that was.
+ * </p>
+ *
+ * <p>
+ * WHAT A PAIRING HAS TO SURVIVE TO BE MEASURED, printed rather than assumed: the dependant must compile ALONE in the same
+ * world, or the pairing cannot tell "refused because it was orphaned" from "refused anyway"; and each poison must really
+ * refuse its prerequisite on this tree. Both exclusions are counted in the line, so a shrinking population is visible
+ * instead of reading as a green run.
+ * </p>
+ */
+test("a refused prerequisite never leaves its dependants in the plan: every generated pairing", () => {
+  type Pairing = Readonly<{
+    label: string;
+    script: string;
+    snapshot?: Partial<Snapshot>;
+    /** The call written as the prerequisite. */
+    pivotCall: number;
+    /** The calls written to need what that prerequisite would have produced: none of them may be submitted. */
+    dependantCalls: readonly number[];
+    /** The calls written BEFORE the prerequisite, which must still run: the rule does not reach backwards. */
+    mustRunCalls: readonly number[];
+  }>;
+  /** The walk every script opens with: a legal step on this map, at a tile no poison below names. */
+  const earlier = "builder.move_to_tile({ x: 5, y: 5 });";
+  const pairings: Pairing[] = [];
+  const poisons: string[] = [];
+  const unmeasured = new Set<string>();
+
+  // THE MAP. Every transition the compiler declares, refused by every poison, against every published action.
+  for (const pivotActionId of TRANSITION_SOURCE_PLAN_ACTION_IDS) {
+    for (const poison of REFUSAL_POISONS) {
+      const pivotCall = poison.call(pivotActionId);
+      if (compile(pivotCall).status === "compiled") {
+        unmeasured.add(`poison_does_not_refuse:${poison.name}:${pivotActionId}`);
+        continue;
+      }
+      poisons.push(`${pivotActionId}.${poison.name}`);
+      for (const dependant of ACTIONS) {
+        const dependantCall = builderCall(dependant.actionId);
+        if (compile(dependantCall).status !== "compiled") {
+          unmeasured.add(`dependant_not_writable_alone:${dependant.actionId}`);
+          continue;
+        }
+        for (const pivotPosition of ["first", "last"] as const)
+          pairings.push({
+            label: `map:${pivotActionId}:${poison.name}:${dependant.actionId}:pivot_${pivotPosition}`,
+            script:
+              pivotPosition === "first"
+                ? [earlier, pivotCall, dependantCall].join("\n")
+                : [earlier, dependantCall, pivotCall].join("\n"),
+            pivotCall: pivotPosition === "first" ? 2 : 3,
+            // WRITTEN AFTER THE PREREQUISITE MEANS IT NEEDS IT; WRITTEN BEFORE MEANS IT DOES NOT. The second ordering is
+            // the falsifier that keeps the rule from reaching backwards, so its step must still run.
+            dependantCalls: pivotPosition === "first" ? [3] : [],
+            mustRunCalls: pivotPosition === "first" ? [1] : [1, 2],
+          });
+      }
+    }
+  }
+
+  // THE TILE, over the families whose rows this suite can publish: `cropTargets` and `harvestTargets`, one row each on ONE
+  // tile, so a step on that tile is writable alone and the refused step is the same address. Families whose rows this
+  // file cannot describe are the population's own hole, printed below.
+  const TILE = Object.freeze({ x: 12, y: 12 });
+  const tileWorld: Partial<Snapshot> = {
+    cropTargets: [crop("crop_01", TILE.x, TILE.y)],
+    harvestTargets: [
+      {
+        targetId: "harvest_01",
+        x: TILE.x,
+        y: TILE.y,
+        cropId: "spring_onion",
+        qualifiedHarvestItemId: "(O)24",
+        displayName: "Parsnip",
+        regrowsAfterHarvest: false,
+      },
+    ],
+  };
+  // THE PREREQUISITE IS REFUSED BY A NON-READING ARGUMENT on the SAME tile: `charge` is hers, not the snapshot's, so the
+  // refusal happens with `x`/`y` already canonical - which is what makes the tile readable and the dependency real. (An
+  // `expectedTargetId` could not do it: it is a READING, so a wrong one is replaced by the row's own before any check,
+  // which is how the first version of this half measured nothing and printed `pairing_compiled`.)
+  const tillHere = `builder.till_soil({ x: ${TILE.x}, y: ${TILE.y}, charge: "not_an_integer" });`;
+  const waterHere = `builder.water_crop({ x: ${TILE.x}, y: ${TILE.y}, expectedTargetId: "crop_01", charge: 0 });`;
+  pairings.push(
+    {
+      label: "tile:pivot_first",
+      script: [earlier, tillHere, waterHere].join("\n"),
+      snapshot: tileWorld,
+      pivotCall: 2,
+      dependantCalls: [3],
+      mustRunCalls: [1],
+    },
+    {
+      label: "tile:pivot_last",
+      script: [earlier, waterHere, tillHere].join("\n"),
+      snapshot: tileWorld,
+      pivotCall: 3,
+      dependantCalls: [],
+      mustRunCalls: [1, 2],
+    },
+  );
+
+  // ONE ASSERTION FOR ALL OF THEM.
+  const submittedAnyway: string[] = [];
+  let pivotsRefused = 0;
+  for (const pairing of pairings) {
+    const result = compile(pairing.script, pairing.snapshot);
+    if (result.status === "compiled") {
+      unmeasured.add(`pairing_compiled:${pairing.label}`);
+      continue;
+    }
+    const dropped = new Set(result.dropped.map(accountPosition));
+    // THIS PAIRING IS ONLY ABOUT A REFUSED PREREQUISITE. A script whose pivot COMPILED is a hole in the population - the
+    // poison did not survive the rest of the script - so it is named rather than silently skipped.
+    if (!dropped.has(pairing.pivotCall)) {
+      unmeasured.add(`prerequisite_not_refused:${pairing.label}`);
+      continue;
+    }
+    pivotsRefused += 1;
+    const accepted = new Set(result.acceptedSteps.map(accountPosition));
+    for (const call of pairing.dependantCalls)
+      if (accepted.has(call))
+        submittedAnyway.push(
+          `${pairing.label}: n0${call} WAS SUBMITTED while its prerequisite n0${pairing.pivotCall} was refused - script ${JSON.stringify(pairing.script)}`,
+        );
+      else if (!dropped.has(call))
+        submittedAnyway.push(
+          `${pairing.label}: n0${call} depends on n0${pairing.pivotCall} and is neither run nor named: ${JSON.stringify(result.status === "refused" ? result.dropped : result.dropped)}`,
+        );
+    for (const call of pairing.mustRunCalls)
+      if (!accepted.has(call))
+        submittedAnyway.push(
+          `${pairing.label}: n0${call} was written BEFORE the refused step and must still run`,
+        );
+  }
+
+  // THE POPULATION, PRINTED AND REFUSED AT ZERO: a property test that cannot say how many cases it examined is a test.
+  console.log(
+    `a_refused_prerequisite_takes_its_dependants: scripts generated ${String(pairings.length)} · ` +
+      `prerequisites refused ${String(pivotsRefused)} · poisons ${poisons.join(",")} · ` +
+      `unmeasured pairings ${String(unmeasured.size)}` +
+      `${unmeasured.size === 0 ? "" : ` (${[...unmeasured].slice(0, 6).join(" | ")}${unmeasured.size > 6 ? " | ..." : ""})`} · ` +
+      `orphans that would have been submitted ${String(submittedAnyway.length)}`,
+  );
+  assert.ok(pairings.length > 0, "blocked: this gate generated no script, so it agrees with itself");
+  assert.ok(
+    pivotsRefused > 0,
+    "blocked: not one generated script refused its prerequisite, so the rule was never measured",
+  );
+  assert.ok(
+    poisons.length >= TRANSITION_SOURCE_PLAN_ACTION_IDS.length,
+    `blocked: every declared transition must be refused at least once, and poisons=${String(poisons.length)}`,
+  );
+  assert.deepEqual(submittedAnyway, [], "a plan that loses its precondition must not become a smaller plan");
+});
+
+/**
+ * The ways this gate can make a call refused, each derived from the surface's OWN declaration of the arguments: a call
+ * missing every argument it declares, and one whose first non-string argument carries a value its type refuses. A
+ * transition is the pivot here, so a third poison is the ordinary call on a map that publishes no door - which the door
+ * rule refuses without this gate writing it.
+ */
+const REFUSAL_POISONS: readonly Readonly<{ name: string; call: (actionId: string) => string }>[] = Object.freeze([
+  Object.freeze({ name: "missing_every_argument", call: (actionId: string) => `builder.${actionId}({});` }),
+  Object.freeze({
+    name: "wrong_typed_argument",
+    call: (actionId: string) => {
+      const declared = surfaceArguments(actionId);
+      const target = declared.find((argument) => argument.type !== "string") ?? declared[0];
+      if (target === undefined) return `builder.${actionId}({});`;
+      const supplied = declared.map(
+        (argument) =>
+          `${argument.name}: ${argument.name === target.name ? (argument.type === "integer" ? '"not_an_integer"' : "true") : probeValue(argument)}`,
+      );
+      return `builder.${actionId}({ ${supplied.join(", ")} });`;
+    },
+  }),
+  Object.freeze({ name: "door_not_on_this_map", call: (actionId: string) => `builder.${actionId}({ x: 12, y: 12 });` }),
+]);
+
+/** The call position an account entry names: `n03` or `n03:<reasonCode>`. */
+function accountPosition(entry: string): number {
+  return Number(entry.slice(1, 3));
+}
+
 test("a plan with no transition is exactly the plan the script wrote", () => {
   const nodes = nodesOf(
     compile(WATER_BY_DOOR, {
@@ -1280,7 +1582,15 @@ test("the dismissal is inserted for exactly the actions the declaration calls bo
   const insertedFor: string[] = [];
   let refusedAsWorldReset = 0;
   for (const action of ACTIONS) {
-    const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`);
+    // THE MAP PUBLISHES THE DOOR A TRANSITION NAMES, because each action's own step has to COMPILE for this pair to be
+    // about the dismissal at all. `enter_exit`/`travel` name (12,12), and a snapshot carrying no exit table refuses it by
+    // name (`plan_script_door_not_on_this_map`) - after which the step after it is an orphan and the compile has no
+    // program. Before this fixture published one, those two members were silently READ AS THEIR `move_to_tile`: the
+    // answer was `partial` and its insertions were empty, so the gate agreed with itself about the two actions it never
+    // measured.
+    const result = compile(`${builderCall(action.actionId)}\nbuilder.move_to_tile({ x: 11, y: 10 });`, {
+      warps: [exitRow(12, 12, "Town")],
+    });
     if (worldResetting.includes(action.actionId)) {
       assert.equal(
         firstRefusalOf(result),
@@ -1728,10 +2038,19 @@ function answerOf(code: string, prefix: string): Readonly<{ expects: string; fro
 const NAMED_SOURCES = Object.freeze(["observe_scene", "find_destination", "not_in_snapshot"]);
 
 /**
- * The refusal a READING's omission earns when the action's own family is published and holds no row at her target: the
- * family to re-read, and the tile she named.
+ * THE TILE CLAIMS A READING'S OMISSION MAY BE ANSWERED WITH, one name per claim, because they are different facts:
+ *
+ *   `..._target_not_in_the_submitted_snapshot` - INSIDE the window, the family measured her tile and lists nothing;
+ *   `..._target_outside_the_read` - OUTSIDE it, and nothing this session read names the tile;
+ *   `..._reading_outside_the_submitted_snapshot` - the read names the tile, but this action's value has to be copied
+ *     out of a snapshot that does not reach it and the Mod does not mint it at execution.
+ *
+ * A call naming a tile the snapshot cannot speak about is answered about the TILE rather than about the argument she
+ * omitted - the order the snapshot claim has always had here - so every gate below that asks "what did her omission
+ * earn" has to recognise all three, and none of them may be folded into another.
  */
-const TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT = /^plan_script_target_not_in_the_submitted_snapshot:[A-Za-z]+:[^:]+$/u;
+const TARGET_TILE_CLAIM =
+  /^plan_script_(?:target_not_in_the_submitted_snapshot|target_outside_the_read|reading_outside_the_submitted_snapshot):[A-Za-z._]+:[^:]+/u;
 
 /**
  * The gate the measured refusals asked for: for EVERY action whose surface declares an argument, omitting that argument
@@ -1752,10 +2071,7 @@ test("every declared argument, omitted, is refused with what it must be and wher
       // answered it (`accepted`), the family is published and holds no such row (the refusal that names both), or the
       // family is not published at all and the snapshot cannot answer - which is the missing-argument answer below.
       if (!code.startsWith(prefix)) {
-        if (
-          PLAN_SNAPSHOT_READINGS.has(argument.name) &&
-          (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code))
-        )
+        if (PLAN_SNAPSHOT_READINGS.has(argument.name) && (code === "accepted" || TARGET_TILE_CLAIM.test(code)))
           continue;
         faults.push(`${subject}: expected ${prefix}..., received ${code}`);
         continue;
@@ -1793,10 +2109,7 @@ test("a sparse snapshot changes the source, never the shape of the answer", () =
       const code = result.status === "compiled" ? "accepted" : result.reasonCode;
       const prefix = `plan_script_missing_argument:${action.actionId}.${argument.name}:`;
       if (!code.startsWith(prefix)) {
-        if (
-          PLAN_SNAPSHOT_READINGS.has(argument.name) &&
-          (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code))
-        )
+        if (PLAN_SNAPSHOT_READINGS.has(argument.name) && (code === "accepted" || TARGET_TILE_CLAIM.test(code)))
           continue;
         faults.push(`${action.actionId}.${argument.name}: ${code}`);
         continue;
@@ -2139,15 +2452,20 @@ test("an empty plan says whether the script never asked for a step or asked and 
     "plan_script_empty_no_node_added:1",
   );
   // A swallowed refusal is still the refusal, and it names more than the count would: the call, the argument and
-  // where a legal value comes from. The split must not hide it behind `no_node_added`.
+  // where a legal value comes from. The split must not hide it behind `no_node_added`. The argument is `water_crop`'s and
+  // not one the Mod mints at execution: a reading the MOD answers for (`ResolvedAtExecution`) is no longer a refusal at
+  // all, and pinning this rule on one would pin the product's declaration instead of the compiler's.
   assert.match(
     refusalOf(
-      compile("try { builder.cut_weeds({ x: 5, y: 6, slot: 3 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');", {
-        currentToolSlot: 3,
-        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
-      }),
+      compile(
+        "try { builder.water_crop({ x: 5, y: 6, charge: 0 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');",
+        {
+          currentToolSlot: 3,
+          toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+        },
+      ),
     ),
-    /^plan_script_missing_argument:cut_weeds\.expectedTargetId:/u,
+    /^plan_script_missing_argument:water_crop\.expectedTargetId:/u,
   );
   // And the split does not touch the happy path: one added node is a plan.
   assert.equal(nodesOf(compile("builder.move_to_tile({ x: 4, y: 9 });")).length, 1);
@@ -3614,9 +3932,7 @@ test("every argument plan_shape marks required is one whose omission the builder
       // THE SAME THREE ANSWERS ONE LEVEL UP: `required` is the MOD's requirement, and this compiler satisfies it either
       // by refusing the omission or by reading the row - `boundFromSnapshot` names which, per call. A TILE refusal is a
       // different argument's business, so it is neither answer to this question.
-      const reads =
-        PLAN_SNAPSHOT_READINGS.has(argument.name) &&
-        (code === "accepted" || TARGET_NOT_IN_THE_SUBMITTED_SNAPSHOT.test(code));
+      const reads = PLAN_SNAPSHOT_READINGS.has(argument.name) && (code === "accepted" || TARGET_TILE_CLAIM.test(code));
       if (argument.required === true && !refuses && !reads)
         faults.push(`${action.actionId}.${argument.name}: marked required, but an omission answered ${code}`);
       // AN ARGUMENT THE BODY ANSWERS FOR IS NEVER THE REASON A REFUSAL NAMES: the Mod resolves it at execution, so an
@@ -4408,5 +4724,231 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
     ),
     [],
     "the shipped reason denotes the Mod code that publishes only rows needing the work",
+  );
+});
+
+/**
+ * A TILE OUTSIDE THE SNAPSHOT'S WINDOW IS NOT A TILE THE SNAPSHOT MEASURED EMPTY.
+ *
+ * <p>
+ * Every displaced family is published through the Mod's Chebyshev discovery radius
+ * (`ExecutionManager.TargetDiscoveryRadius`, six tiles), so past it the submit-moment snapshot holds no row for ANY
+ * tile - not "no target", but "not asked". The compiler folded the two and refused a 3x20 strip the session had just
+ * read tile by tile: `patch-3x20` dropped 30 of 30 clear nodes with
+ * `plan_script_target_not_in_the_submitted_snapshot:weedTargets:51,7` for a strip that was genuinely full of weeds.
+ * </p>
+ *
+ * <p>
+ * THE ONE READING THAT REACHES SUCH A TILE is the rectangle query, and its rows reached only the model's answer. This
+ * suite drives that reading into the compile the way the bridge now records it, and asserts the three answers apart:
+ * (1) INSIDE the window a family listing nothing is a measurement and still refuses, with the same code and the same
+ * words; (2) OUTSIDE it, a tile nothing on this side named is refused as `plan_script_target_outside_the_read`, which
+ * states how many tiles the surviving read covers - or `replaced`, because only the last read survives; (3) OUTSIDE it,
+ * a tile this session DID read is admitted when the action's reading is the body's to mint at execution, and refused by
+ * name when it is not.
+ * </p>
+ *
+ * <p>
+ * WHY ADMITTED AT ALL: the read is a PERMISSION, not a promise. It says what stood on the tile when she looked; the
+ * promise is kept by the Mod, which mints the target at the moment it acts and refuses `*_target_changed` when the world
+ * moved. That is why no revision equality is asserted anywhere below - a stale read that names the right tile and kind
+ * is still good enough to let the node exist.
+ * </p>
+ */
+const STRIP = Object.freeze({ x: 30, y: 4, w: 3, h: 20 });
+
+/** One answered rectangle's rows: the coordinate, and what the Mod's classifier found standing there. */
+function readRows(
+  rectangle: Readonly<{ x: number; y: number; w: number; h: number }>,
+  occupantKind: string,
+): readonly Readonly<{ x: number; y: number; occupantKind: string }>[] {
+  const rows: { x: number; y: number; occupantKind: string }[] = [];
+  for (let offsetY = 0; offsetY < rectangle.h; offsetY += 1)
+    for (let offsetX = 0; offsetX < rectangle.w; offsetX += 1)
+      rows.push({ x: rectangle.x + offsetX, y: rectangle.y + offsetY, occupantKind });
+  return Object.freeze(rows.map((row) => Object.freeze(row)));
+}
+
+function readOf(
+  rows: readonly Readonly<{ x: number; y: number; occupantKind: string }>[],
+  overrides: Partial<StardewTileRead> = {},
+): StardewTileRead {
+  return Object.freeze({
+    location: "Farm",
+    revision: 11,
+    x: STRIP.x,
+    y: STRIP.y,
+    w: STRIP.w,
+    h: STRIP.h,
+    reads: 1,
+    rows,
+    ...overrides,
+  });
+}
+
+/** The strip's first thirty tiles, written as the loop a plan would carry - the measured 30-node shape. */
+function stripCalls(actionId: string, extra: string, tiles = 30): string {
+  const body = tiles === 30 ? "y <= 13" : "y <= 23";
+  return `for (let y = 4; ${body}; y += 1) for (let x = 30; x <= 32; x += 1) builder.${actionId}({ x, y${extra} });`;
+}
+
+test("inside the window a family that lists nothing for her tile still refuses, read or no read", () => {
+  // (8,8) is Chebyshev 2 from her tile at (10,10): the published families reach it, so `weedTargets: []` is the
+  // snapshot MEASURING the tile - the claim this refusal has always made, and the one the outside case must not borrow.
+  const script = `builder.cut_weeds({ x: 8, y: 8, slot: 3, expectedTargetId: "weed_named_by_hand" });`;
+  assert.equal(
+    firstRefusalOf(compile(script, { weedTargets: [] })),
+    "plan_script_target_not_in_the_submitted_snapshot:weedTargets:8,8",
+  );
+  // AND A READ THAT NAMES THE TILE DOES NOT OVERRULE IT. Inside the radius the family's silence is a measurement; if a
+  // session read contradicts one, the compile answers with the snapshot's own claim rather than quietly preferring the
+  // reading nobody re-checked.
+  assert.equal(
+    firstRefusalOf(compile(script, { weedTargets: [] }, readOf(readRows({ x: 8, y: 8, w: 1, h: 1 }, "weed")))),
+    "plan_script_target_not_in_the_submitted_snapshot:weedTargets:8,8",
+  );
+});
+
+test("outside the window the refusal names the read, and says no reading was made", () => {
+  const result = compile(`builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`, {
+    weedTargets: [],
+  });
+  assert.equal(firstRefusalOf(result), "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=0");
+});
+
+test("outside the window a read that does not name the tile covers a stated number of tiles, not hers", () => {
+  const elsewhere = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "weed"));
+  assert.equal(
+    firstRefusalOf(
+      compile(
+        `builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`,
+        { weedTargets: [] },
+        elsewhere,
+      ),
+    ),
+    "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=9",
+  );
+});
+
+test("outside the window a session that read twice says replaced, never a count that meant another read", () => {
+  // Only the last read survives, so this side cannot say which of the session's readings the plan was written from - and
+  // the number of the surviving one would silently mean "a different read".
+  const second = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "weed"), { reads: 2 });
+  assert.equal(
+    firstRefusalOf(
+      compile(
+        `builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`,
+        { weedTargets: [] },
+        second,
+      ),
+    ),
+    "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=replaced",
+  );
+});
+
+test("a strip this session read compiles its plantings, and every node says where the proof came from", () => {
+  // `patch-3x20`'s shape, on the reading that reaches the tiles: thirty plantings down a 3-wide strip the session read as
+  // ONE rectangle. `seedTargets` is published and holds nothing, because the strip is twenty tiles outside the window -
+  // which is exactly the fold this test exists to keep apart.
+  const result = compile(
+    stripCalls("plant_seed", `, expectedQualifiedItemId: "(O)472"`),
+    { seedTargets: [] },
+    readOf(readRows(STRIP, "none")),
+  );
+  assert.equal(
+    result.status,
+    "compiled",
+    JSON.stringify(result.status === "refused" ? result.reasonCode : result.dropped),
+  );
+  const nodes = result.status === "compiled" ? result.program.nodes : [];
+  assert.equal(nodes.length, 30, "thirty tiles, thirty nodes");
+  for (const node of nodes) {
+    assert.equal(Object.hasOwn(node.arguments, "expectedTargetId"), false, "the body mints the id at execution");
+    assert.equal(Object.hasOwn(node.arguments, "slot"), false, "the body resolves the pack slot at execution");
+  }
+  // TWO READINGS PER NODE (the id and the slot), each naming the family, the tile it was proved on and the kind the read
+  // found there - so a reader can tell "she read it" from "it is assumed".
+  assert.equal(result.status === "compiled" ? result.resolvedFromObservationCount : 0, 60);
+  const lines = result.status === "compiled" ? result.resolvedFromObservation : [];
+  assert.equal(lines.length, MAX_REPORTED_PLAN_READINGS, "the list is bounded and the count is the population");
+  for (const line of lines) {
+    assert.match(
+      line,
+      /^n\d+:resolved_from_observation=plant_seed\.(expectedTargetId|slot);family=seedTargets;tile=3[0-2],\d+;kind=none$/u,
+      "the proof names the node that carries it, the reading it answered, and the tile the session read",
+    );
+  }
+  assert.equal(
+    result.status === "compiled" ? result.resolvedAfterCount : -1,
+    0,
+    "no step of this plan made those tiles, so nothing is reported as a producer",
+  );
+});
+
+test("the same strip of clear nodes is refused by the one reading the body does not mint", () => {
+  // THE STRIP IS PROVED AND THE STEP STILL CANNOT EXIST, because a declaration - not this seam - decides that. The Mod
+  // mints `cut_weeds.expectedTargetId` at execution now (`ResolvesTargetAtExecution`, and `BuildWeedTargetId` derives it
+  // from the live tile), while the scythe family's `slot` is still the caller's to supply even though the handler selects
+  // the tool from its own `tool:` claim (`ResolveDeclaredTool`). So the refusal names `slot`, and the tile claim is never
+  // reached - which is why it says `reading` and not `target`.
+  const asDeclared = compile(stripCalls("cut_weeds", ""), { weedTargets: [] }, readOf(readRows(STRIP, "weed")));
+  assert.equal(
+    firstRefusalOf(asDeclared),
+    "plan_script_reading_outside_the_submitted_snapshot:cut_weeds.slot:weedTargets:30,4",
+  );
+  assert.equal(asDeclared.status === "refused" ? asDeclared.droppedCount : -1, 30, "thirty calls, thirty refusals");
+  // THE FALSIFIER: the same surface with that ONE declaration changed, and nothing else about the script or the snapshot.
+  // The strip compiles, with the session's own read as the proof of every tile it works.
+  const minted = ACTIONS.map((action) =>
+    action.actionId === "cut_weeds"
+      ? {
+          ...action,
+          arguments: action.arguments.map((argument) =>
+            argument.name === "slot" ? { ...argument, required: false } : argument,
+          ),
+        }
+      : action,
+  );
+  const compiled = compilePlanScript(
+    { script: stripCalls("cut_weeds", "") },
+    { snapshot: snapshot({ weedTargets: [] }), actions: minted, tileRead: readOf(readRows(STRIP, "weed")) },
+  );
+  assert.equal(
+    compiled.status,
+    "compiled",
+    JSON.stringify(compiled.status === "refused" ? compiled.reasonCode : compiled.dropped),
+  );
+  assert.equal(compiled.status === "compiled" ? compiled.program.nodes.length : -1, 30, "thirty tiles, thirty swings");
+  assert.equal(
+    compiled.status === "compiled" ? compiled.resolvedFromObservationCount : -1,
+    60,
+    "both readings of every swing are the body's, and every one names the tile the session read",
+  );
+});
+
+test("a read of another map proves nothing about this one", () => {
+  const town = readOf(readRows(STRIP, "none"), { location: "Town" });
+  assert.equal(
+    firstRefusalOf(compile(stripCalls("plant_seed", `, expectedQualifiedItemId: "(O)472"`), { seedTargets: [] }, town)),
+    "plan_script_target_outside_the_read:seedTargets:30,4:read_covers=60",
+  );
+});
+
+/**
+ * THE WINDOW THIS COMPILER REFUSES OUTSIDE IS THE MOD'S OWN RADIUS, read from the Mod's declaration.
+ *
+ * // source-invariant: the Host carries one number that only the Mod can decide - how far a published family reaches -
+ * //   and no compiler can hold a C# const to a TypeScript const.
+ * // source-expiry: when `TargetDiscoveryRadius` stops being a `const int` on `ExecutionManager` (a wire field, a config
+ * //   value, a per-family radius), this read answers nothing and must be replaced by the publication that states it.
+ */
+test("the window the compiler splits the silence on is the Mod's TargetDiscoveryRadius", () => {
+  const source = readFileSync(resolve(hostRoot, "../integrations/stardew/farmhandexecutioncontroller.cs"), "utf8");
+  const declared = /internal const int TargetDiscoveryRadius = (\d+);/u.exec(source);
+  assert.ok(declared, "the Mod still declares TargetDiscoveryRadius as a constant this gate can read");
+  assert.equal(
+    PLAN_SNAPSHOT_DISCOVERY_RADIUS,
+    Number(declared[1]),
+    `the compiler's window (${String(PLAN_SNAPSHOT_DISCOVERY_RADIUS)}) must be the Mod's published radius (${declared[1]})`,
   );
 });

@@ -45,7 +45,7 @@ import {
   createFarmhandSystemNoticePresenter,
   type FarmhandPresentationBridge,
 } from "../farmhand-companion-presentation.js";
-import type { GameConnection, StardewBridgeConnection } from "../game-connection.js";
+import type { GameConnection, StardewBridgeConnection, StardewTileRead } from "../game-connection.js";
 import type {
   GameIntegrationAdapter,
   IntegrationActionPolicy,
@@ -366,6 +366,7 @@ function createBodyProgramTools(
           const compiled = compilePlanScript(readPlanScriptRequest(params), {
             snapshot: readLiveSnapshot(connection),
             actions,
+            tileRead: readLiveTileRead(connection),
           });
           // The run artifact keeps the script, the snapshot it read and the program it produced, so a plan that
           // failed can be replayed and audited without guessing what the companion asked for.
@@ -772,6 +773,21 @@ function readLiveSnapshot(connection: GameConnection): Snapshot | null {
 }
 
 /**
+ * The last rectangle THIS SESSION read, beside the snapshot it read it against.
+ *
+ * <p>
+ * A snapshot family only publishes targets inside the Mod's discovery radius, so a target outside it is in no family at
+ * all - and the compiler read that silence as "measured, and empty". The rectangle query is the one read that reaches
+ * such a tile, and until it was kept it went to the model's answer and nowhere else. Same shape `readLiveSnapshot` has:
+ * the connection's own state, absent when the session never asked.
+ * </p>
+ */
+function readLiveTileRead(connection: GameConnection): StardewTileRead | null {
+  const state = (connection as { state?: { tileRead?: StardewTileRead } }).state;
+  return state?.tileRead ?? null;
+}
+
+/**
  * The world as the Mod publishes it right now, for a plan answer that held its turn for that plan's own settlement.
  *
  * <p>
@@ -966,7 +982,16 @@ function planReadingsNote(compiled: CompiledPlan): Readonly<Record<string, unkno
           resolvedAfterCount: compiled.resolvedAfterCount,
           resolvedAfterTruncated: compiled.resolvedAfterCount > compiled.resolvedAfter.length,
         };
-  return Object.freeze({ ...bound, ...unmeasured, ...resolved });
+  const observed =
+    compiled.resolvedFromObservationCount === 0
+      ? {}
+      : {
+          resolvedFromObservation: compiled.resolvedFromObservation,
+          resolvedFromObservationCount: compiled.resolvedFromObservationCount,
+          resolvedFromObservationTruncated:
+            compiled.resolvedFromObservationCount > compiled.resolvedFromObservation.length,
+        };
+  return Object.freeze({ ...bound, ...unmeasured, ...resolved, ...observed });
 }
 
 /**

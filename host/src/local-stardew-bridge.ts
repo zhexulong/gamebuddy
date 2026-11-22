@@ -268,6 +268,15 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
   #catalogRefreshGeneration = 0;
   #latestReceipt: LocalStardewBridgeState["latestReceipt"] = null;
   #latestReasonCode: string | null = null;
+  /**
+   * The last ANSWERED rectangle read, kept so a plan can be held to what this session actually read.
+   *
+   * Held here because this is where the snapshot and the receipt are held: the answer arrives on this client's own
+   * transport, so "the latest read this session made" is a fact this object owns and nothing else has to be told twice.
+   */
+  #tileRead: StardewBridgeConnectionState["tileRead"];
+  /** How many rectangle reads this session has made, so a refusal can say whether the surviving read replaced one. */
+  #tileReads = 0;
   #initialSnapshotReceived = false;
   readonly #factListeners = new Set<(fact: LocalStardewBridgeFact) => void>();
   readonly #connectionListeners = new Set<(fact: LocalStardewConnectionFact) => void>();
@@ -330,6 +339,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       this.#snapshot = null;
       this.#latestReceipt = null;
       this.#latestReasonCode = reasonCode;
+      this.#tileRead = undefined;
+      this.#tileReads = 0;
       for (const pending of this.#pending.values()) {
         clearTimeout(pending.timer);
         pending.reject(
@@ -445,6 +456,7 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       snapshot: this.#snapshot,
       latestReceipt: this.#latestReceipt,
       latestReasonCode: this.#latestReasonCode,
+      ...(this.#tileRead === undefined ? {} : { tileRead: this.#tileRead }),
     });
   }
 
@@ -541,7 +553,39 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     const response = await this.request("tile_area_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "tile_area_result") throw new Error("unexpected_tile_area_response");
+    this.rememberTileRead(response.payload);
     return response.payload;
+  }
+
+  /**
+   * Keeps ONE answered rectangle - the last one - in the session's own state.
+   *
+   * <p>
+   * A refusal read is not recorded: `area_too_large` proves nothing about any tile, and a record that kept it would
+   * answer "this session read a rectangle" about a reading nobody made. The rows are narrowed to the two facts a plan
+   * target is proved by (the coordinate and what stands there); the id and the slot are the Mod's to mint at execution.
+   * </p>
+   * <p>
+   * ONLY THE LAST ONE SURVIVES. A session that reads ten strips would otherwise keep a thousand rows whose staleness
+   * nothing bounds, and a tile any of them mentioned would read as read by this plan. `reads` is what carries the loss
+   * forward: a refusal can then say the surviving read is not the only one this session made.
+   * </p>
+   */
+  private rememberTileRead(result: Readonly<TileAreaResult>): void {
+    if (result.status !== "answered" || result.rows === null) return;
+    this.#tileReads += 1;
+    this.#tileRead = Object.freeze({
+      location: result.location,
+      revision: result.revision,
+      x: result.x,
+      y: result.y,
+      w: result.w,
+      h: result.h,
+      reads: this.#tileReads,
+      rows: Object.freeze(
+        result.rows.map((row) => Object.freeze({ x: row.x, y: row.y, occupantKind: row.occupantKind })),
+      ),
+    });
   }
 
   /** Read the Mod-advertised scene projection; this route cannot dispatch or create a receipt. */

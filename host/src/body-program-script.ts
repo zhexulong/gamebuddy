@@ -16,6 +16,7 @@ import {
   readDestinationSelector,
   type Snapshot,
 } from "./protocol.js";
+import type { StardewTileRead } from "./game-connection.js";
 import { isNonNegativeSafeInteger, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
 /**
@@ -266,7 +267,7 @@ const MAX_REPORTED_PLAN_INSERTIONS = 16;
  * one reading per node, so a forty-tile plan would repeat one sentence forty times. `boundFromSnapshotCount` is the
  * population, so a bounded list never reads as "that was the whole of it".
  */
-const MAX_REPORTED_PLAN_READINGS = 16;
+export const MAX_REPORTED_PLAN_READINGS = 16;
 
 /**
  * What became of every call the author wrote, by the one numbering a REFUSED plan still has: the position of her call.
@@ -450,6 +451,20 @@ type RunnablePlan = Readonly<{
   /** Every resolved-after reading, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
   resolvedAfterCount: number;
   /**
+   * The readings this compiler OMITTED because THIS SESSION READ the tile and the Mod mints the value when it acts, one
+   * per reading, spelled `<nodeId>:resolved_from_observation=<actionId>.<argument>;family=<family>;tile=<x>,<y>;kind=<occupantKind>`.
+   *
+   * The third way a reading can be answered, and the one that is NOT the same claim as `resolvedAfter`: a producer says
+   * the target does not exist YET and a node of this plan will make it, while this says the target EXISTS, the session
+   * read it at a coordinate the submit-moment snapshot cannot reach, and the body will mint its id. The coordinate and
+   * the occupant kind travel in the line because they are the whole of the evidence - a reader must be able to tell
+   * "she read it" from "it is assumed". Keyed by the node id the program actually carries, since the wire's node refuses
+   * unknown keys (`isBodyProgramNode`). Bounded; `resolvedFromObservationCount` is the population.
+   */
+  resolvedFromObservation: readonly string[];
+  /** Every reading proved by a rectangle read, including the ones past `MAX_REPORTED_PLAN_READINGS`. */
+  resolvedFromObservationCount: number;
+  /**
    * The seed counts this plan needed and the snapshot did not publish, one per seed it plants, spelled
    * `unmeasured=plant_seed.<item>;family_not_published=inventoryItemFacts`.
    *
@@ -587,8 +602,15 @@ function planNodeId(prefix: string, position: number): string {
  * The walk is prepended rather than required of the author because reachability is the Mod's answer, not the
  * compiler's: a door tile with no route is refused by the walk step with `no_native_path`, which names what is in the
  * way, where the transition's own refusal would only say the body is far from a tile it named correctly.
+ *
+ * TWO READERS, ONE FACT - these are the two actions that MOVE THE ACTOR TO ANOTHER MAP. The walk above is the first
+ * reading; the second is what a refused one costs the rest of a script (`emitPlanNode`): every later call of the same
+ * script was written against the map the transition leads to, and one compile holds one snapshot of one map.
+ *
+ * Exported so the gates read THIS declaration instead of a second hand-written copy: `check-plan-legal-fixpoint.mjs`
+ * measures what one refused call costs, and a transition's refusal is the one that costs the steps after it.
  */
-const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["enter_exit", "travel"]);
+export const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["enter_exit", "travel"]);
 
 /**
  * The one transition whose source tile must be a way out of the map she is standing on, and whose tables are checked.
@@ -1455,7 +1477,7 @@ export const PLAN_ITERATION_CONDITIONS: Readonly<Record<string, PlanIterationCon
   soilTiles: Object.freeze({ rowField: "hoeDirt" }),
   cropTargets: Object.freeze({
     publishedAsWork:
-      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1472-1492`), so every published row is a tile the Can is still needed on",
+      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1578-1625`), so every published row is a tile the Can is still needed on",
   }),
 });
 
@@ -1736,6 +1758,17 @@ export function compilePlanScript(
   dependencies: Readonly<{
     snapshot: Snapshot | null | undefined;
     actions: readonly PublishedPlanAction[];
+    /**
+     * The last rectangle this SESSION read, when it read one. Absent is a session that never asked.
+     *
+     * <p>
+     * `TileAreaQuery.Answer` is stateless on the Mod side and the rectangle's rows reached only the model's
+     * answer, so before this dependency existed the one reading that reaches outside the snapshot's window
+     * was thrown away at the moment it was made. A plan naming such a tile was refused as though the
+     * snapshot had measured it empty.
+     * </p>
+     */
+    tileRead?: StardewTileRead | null;
   }>,
 ): CompiledPlan {
   const scriptSource = typeof request.script === "string" ? request.script : "";
@@ -1753,6 +1786,7 @@ export function compilePlanScript(
     `(function (snapshot, builder) { "use strict";\n${scriptSource}\n})(snapshot, builder);`,
     snapshot,
     dependencies.actions,
+    dependencies.tileRead ?? null,
   );
   const state = run.state;
   if (run.attempt.outcome === "refused")
@@ -1917,6 +1951,12 @@ export function compilePlanScript(
     readingsUnmeasuredCount: state.readingsUnmeasured.length,
     resolvedAfter: Object.freeze(state.resolvedAfter.slice(0, MAX_REPORTED_PLAN_READINGS)),
     resolvedAfterCount: state.resolvedAfter.length,
+    resolvedFromObservation: Object.freeze(
+      state.resolvedFromObservation
+        .slice(0, MAX_REPORTED_PLAN_READINGS)
+        .map((proof) => `${programNodeId(proof.nodeId)}:${proof.line}`),
+    ),
+    resolvedFromObservationCount: state.resolvedFromObservation.length,
     heldSeedsUnmeasured: Object.freeze(seeds.unmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
     heldSeedsUnmeasuredCount: seeds.unmeasured.length,
     heldWaterUnmeasured: Object.freeze(water.unmeasured.slice(0, MAX_REPORTED_PLAN_READINGS)),
@@ -2004,19 +2044,23 @@ function runPlanScriptWindows(
   source: string,
   snapshot: Snapshot,
   actions: readonly PublishedPlanAction[],
+  tileRead: StardewTileRead | null,
 ): Readonly<{ state: PlanScriptState; attempt: PlanScriptAttempt }> {
   const frozenSnapshot = deepFreeze(structuredClone(snapshot));
-  let state = newPlanScriptState(actions);
+  let state = newPlanScriptState(actions, tileRead);
   let attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[0]!, state);
   for (let index = 1; index < PLAN_SCRIPT_BUDGET_MS.length && attempt.outcome === "expired"; index += 1) {
-    state = newPlanScriptState(actions);
+    state = newPlanScriptState(actions, tileRead);
     attempt = runPlanScriptAttempt(source, frozenSnapshot, actions, PLAN_SCRIPT_BUDGET_MS[index]!, state);
   }
   return { state, attempt };
 }
 
 /** The state one run of the script accumulates, empty: a re-measurement starts from here, not from the stopped run's. */
-function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScriptState {
+function newPlanScriptState(
+  actions: readonly PublishedPlanAction[],
+  tileRead: StardewTileRead | null,
+): PlanScriptState {
   return {
     nodes: [],
     refusal: null,
@@ -2026,6 +2070,9 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     rejectedCount: 0,
     acceptedSteps: [],
     refusedExits: [],
+    refusedTransitions: [],
+    refusedTiles: [],
+    tileRead,
     noStepNeeded: [],
     inserted: [],
     insertedNodeIds: [],
@@ -2033,6 +2080,7 @@ function newPlanScriptState(actions: readonly PublishedPlanAction[]): PlanScript
     boundFromSnapshot: [],
     readingsUnmeasured: [],
     resolvedAfter: [],
+    resolvedFromObservation: [],
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
@@ -2214,6 +2262,32 @@ type PlanScriptState = {
    * mistake written twice, and the walk is a node that would dispatch (`planWalkToRefusedExit`).
    */
   refusedExits: PlanRefusedExit[];
+  /**
+   * The transitions this compile REFUSED, by the position she wrote them, in order.
+   *
+   * Kept because a transition's refusal is not only its own: `enter_exit` and `travel` move the actor to another map
+   * (`TRANSITION_SOURCE_PLAN_ACTION_IDS`), so every later call of the same script was written against a world this
+   * compile never read - and a plan that loses that premise must not quietly become a smaller plan on this one. See
+   * `emitPlanNode` for the measurement and the refusal it names.
+   */
+  refusedTransitions: PlanRefusedTransition[];
+  /**
+   * The refused steps that named a piece of world, by the tile they named: the other half of the same invariant.
+   *
+   * A later step on that tile is a step on state this one was to create - the edge `dependsOn` writes for a step that
+   * WAS accepted, which a refused step has no node to carry. See `emitPlanNode`.
+   */
+  refusedTiles: PlanRefusedTile[];
+  /**
+   * THE LAST RECTANGLE THIS SESSION READ, which is the only evidence this compile has about a tile outside the snapshot's
+   * window.
+   *
+   * The submit-moment snapshot publishes a family's rows inside the Mod's discovery radius and nothing outside it, so a
+   * tile out there is in NO family - and an absence in every family is not the same claim as a family measuring the tile
+   * empty. Carried on the state rather than threaded through five signatures: it is one input of one run, like the
+   * actions the builder was generated from.
+   */
+  tileRead: StardewTileRead | null;
   /** The calls that had nothing to do, `n04:equip_for:already_held`. */
   noStepNeeded: string[];
   /**
@@ -2270,6 +2344,14 @@ type PlanScriptState = {
    * makes `till_soil` then `plant_seed` on one tile expressible as one plan. Narrowed once, where the answer is built.
    */
   resolvedAfter: string[];
+  /**
+   * The readings THIS SESSION'S OWN RECTANGLE READ answered, each with the node id it belongs to.
+   *
+   * A sibling of `resolvedAfter` and never folded into it: the two say different things about the world, and the node id
+   * travels because the line is about ONE node of the program that runs - `emitPlanStep` has it, `bindSnapshotReadings`
+   * does not. Renumbering is why it is stored rather than formatted there: the path order renames nodes.
+   */
+  resolvedFromObservation: PlanObservationProof[];
   /**
    * Which call wrote each node, so the account can name the call a node belongs to rather than a node id nothing else in
    * the account speaks in.
@@ -2773,11 +2855,34 @@ function refuseUnknownArguments(
  * exactly as it did before, and a call that omitted it is refused as a missing argument.
  * </p>
  * <p>
+ * <p>
  * (2) COVERS THE FAMILY THAT IS MEASURED AND EMPTY, which `planSnapshotRows` used to fold into (3): a published family
  * holding no row at all is the snapshot saying the target does not exist, and it is refused for the reason every
  * unmatched tile is. (3) IS NOT SILENT: her number stands, so the answer names the argument the harness could not read
  * (`readingsUnmeasured`) - a value nothing on this side checked is a fact she has to know about the program she submits.
  * </p>
+ * <p>
+ * AND (2) IS TRUE ONLY INSIDE THE WINDOW. Every displaced family is published through the Mod's Chebyshev discovery
+ * radius (`PLAN_SNAPSHOT_DISCOVERY_RADIUS`), so past it the family holds no row for ANY tile: the silence is "not asked",
+ * not "measured empty", and answering it with (2) dropped 30 of 30 clear nodes on a 3x20 strip the session had just
+ * read tile by tile. Outside the window there is a THIRD ANSWER - and two refusals that keep their own words, because
+ * they are different claims:
+ * </p>
+ * <ul>
+ *   <li>Nothing on this side names the tile: `plan_script_target_outside_the_read:<family>:<x>,<y>:read_covers=<n>`. The
+ *       number is how many tiles this session's surviving rectangle read covers (`0` when it made none), or `replaced`
+ *       when it made more than one and only the last survives - a count that silently meant "a different read" is the
+ *       shape this repository keeps deleting.</li>
+ *   <li>The session's own read names the tile, but this action's value has to be COPIED out of the snapshot and the Mod
+ *       does not mint it at execution: `plan_script_reading_outside_the_submitted_snapshot:<actionId>.<argument>:<family>:<x>,<y>`.
+ *       The tile is proved and the step still cannot be honoured, so the refusal points at the declaration rather than
+ *       at the snapshot.</li>
+ *   <li>The session's read names the tile AND the action's readings are the body's to mint (`required: false`): the
+ *       readings are omitted and the proof is recorded (`resolvedFromObservation`, keyed by the node that carries it).
+ *       A PERMISSION, NOT A PROMISE: the read says what stood there when she looked, and the promise is kept by the Mod,
+ *       which mints the target as it acts and refuses `*_target_changed` when the world moved. The read's revision is
+ *       therefore recorded and never compared; its MAP is, because a read of another map proves nothing about this one.</li>
+ * </ul>
  * <p>
  * AND A FOURTH: the target may be one this program is ABOUT TO MAKE (`till_soil` then `plant_seed` on one tile). The
  * snapshot cannot hold a row for a tile that is still bare, and refusing there made the batch the product needs
@@ -2785,6 +2890,12 @@ function refuseUnknownArguments(
  * node earlier in the same program addresses that tile, and named in `resolvedAfter` - the value is neither the
  * snapshot's nor the author's, because the body computes it on the game thread. A reading the Mod did NOT declare that
  * way is never omitted: it is still read from the row or refused by name.
+ * </p>
+ * <p>
+ * THE TWO OMISSIONS ARE NOT ONE FACT, and they are reported apart. `resolvedAfter` says a node of THIS PROGRAM will make
+ * the target (`till_soil` then `plant_seed`); `resolvedFromObservation` says the world already holds it and THIS SESSION
+ * read it at a coordinate the submit-moment snapshot never carries. A reader that could not tell them apart would read
+ * "the body will compute it" where the truth is "she looked".
  * </p>
  */
 function bindSnapshotReadings(
@@ -2819,7 +2930,7 @@ function bindSnapshotReadings(
       resolved.push(`resolved_after=${action.actionId}.${reading.name};producer=${producer}`);
     }
   const outstanding = readings.filter((reading) => reading.required || producer === undefined);
-  if (outstanding.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved });
+  if (outstanding.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved, observed: [] });
   const family = planSnapshotRows(snapshot, familyName);
   // NOT MEASURED, which is a different answer from "measured, and nothing is there": the doctrine every family in
   // `protocol.ts` states (`soilTiles` null versus an empty array). An unmeasured family cannot overrule the author's own
@@ -2831,18 +2942,24 @@ function bindSnapshotReadings(
     const unmeasured = outstanding
       .filter((reading) => reading.required)
       .map((reading) => `unmeasured=${action.actionId}.${reading.name};family_not_published=${familyName}`);
-    return Object.freeze({ bound: [], unmeasured: Object.freeze(unmeasured), resolved });
+    return Object.freeze({ bound: [], unmeasured: Object.freeze(unmeasured), resolved, observed: [] });
   }
   const rows = family.rows;
-  // MEASURED, AND THE FAMILY HOLDS NOTHING: no row can match, so the target this step names does not exist. Refusing
-  // here is the difference the fold used to lose - an empty family used to be read as "not measured", the answer that
-  // leaves her number standing, and the plan ran to answer `seed_target_unavailable` once per node.
-  if (rows.length === 0)
-    rejectPlanCall(
-      `plan_script_target_not_in_the_submitted_snapshot:${familyName}:${planNamedPlace(canonical)}`,
-      state,
-      requirement,
-    );
+  // THE WINDOW DECIDES WHAT A FAMILY'S SILENCE MEANS, and this is the whole of the change here. Inside it a published
+  // family that lists no row for her tile HAS MEASURED the tile - that is a proof the target is not there, and it is
+  // refused by name. Outside it the family publishes nothing about any tile (`ExecutionManager.TargetDiscoveryRadius`),
+  // so the same silence is the snapshot not having looked, and treating the two the same is what dropped 30 of 30 clear
+  // nodes on a 3x20 strip the session had just read tile by tile.
+  const place = planNamedPlace(canonical);
+  const unlisted = (where: string): PlanSnapshotReadings => {
+    if (!planTargetOutsideTheWindow(snapshot, canonical))
+      rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${where}`, state, requirement);
+    return planOutsideTheRead(action, snapshot, familyName, where, outstanding, canonical, state, requirement);
+  };
+  // MEASURED, AND THE FAMILY HOLDS NOTHING: no row can match, so the target this step names does not exist - INSIDE the
+  // window. Refusing here is the difference the fold used to lose - an empty family used to be read as "not measured",
+  // the answer that leaves her number standing, and the plan ran to answer `seed_target_unavailable` once per node.
+  if (rows.length === 0) return unlisted(place);
   const fields = planRowFields(rows);
   // SELECTION IS EXACT FIRST, and the assertion's own name is the fallback: an action that names no field its family
   // publishes exactly (`use_item` writes `expectedQualifiedItemId` against a row publishing `qualifiedItemId`) still
@@ -2850,9 +2967,12 @@ function bindSnapshotReadings(
   // SELECTION, never a reading: it is how a row is found, not a value taken from it.
   const exact = planRowSelections(action, canonical, false, fields);
   const selecting = exact.length > 0 ? exact : planRowSelections(action, canonical, true, fields);
-  if (selecting.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved });
+  // SHE WROTE NO READING TO SELECT WITH. Unchanged, inside the window and out: an argument she never wrote is answered
+  // as the omission it is (`plan_script_missing_argument`), never as a claim about a tile - the order of her mistakes is
+  // the order of the checks (`emitPlanStep`), and this binder does not get to move it.
+  if (selecting.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved, observed: [] });
   let chosen = planRowsMatching(rows, selecting);
-  const place = planSelectedPlace(selecting);
+  const selected = planSelectedPlace(selecting);
   if (chosen.length > 1) {
     const narrowing = planRowSelections(action, canonical, true, fields).filter(
       (selection) => !selecting.some((candidate) => candidate.field === selection.field),
@@ -2861,12 +2981,10 @@ function bindSnapshotReadings(
     // ONE TILE CAN HOLD SEVERAL TARGETS, and only the item she MEANT says which of them this step is about: a tile with
     // seed rows for two seed types and an argument naming a third is a target this snapshot does not hold, not an
     // ambiguity to guess through.
-    if (narrowing.length > 0 && narrowed.length === 0)
-      rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${place}`, state, requirement);
+    if (narrowing.length > 0 && narrowed.length === 0) return unlisted(selected);
     if (narrowed.length > 0) chosen = narrowed;
   }
-  if (chosen.length === 0)
-    rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${place}`, state, requirement);
+  if (chosen.length === 0) return unlisted(selected);
   const bound: string[] = [];
   for (const reading of outstanding) {
     const field = planReadingField(reading.name)!;
@@ -2881,7 +2999,7 @@ function bindSnapshotReadings(
     if (published.size === 0) continue;
     if (published.size > 1)
       rejectPlanCall(
-        `plan_script_target_is_ambiguous_in_the_submitted_snapshot:${familyName}:${place}`,
+        `plan_script_target_is_ambiguous_in_the_submitted_snapshot:${familyName}:${selected}`,
         state,
         requirement,
       );
@@ -2894,7 +3012,133 @@ function bindSnapshotReadings(
     canonical[reading.name] = value;
     bound.push(`bound=${action.actionId}.${reading.name};from=snapshot.${familyName}[].${field}`);
   }
-  return Object.freeze({ bound: Object.freeze(bound), unmeasured: [], resolved });
+  return Object.freeze({ bound: Object.freeze(bound), unmeasured: [], resolved, observed: [] });
+}
+
+/**
+ * The window a family's rows are published inside, in tiles from the actor.
+ *
+ * ONE HOST COPY OF THE MOD'S RADIUS, and it is a NAME rather than a number for the reason every other host copy in this
+ * repository is: `ExecutionManager.TargetDiscoveryRadius` is 6 in `farmhandexecutioncontroller.cs`, and
+ * `body-program-script.test.ts` reads that declaration and fails when the two disagree. The Host needs it because the
+ * question it answers is about THIS side's reading: a family that lists no row for a tile inside six tiles has measured
+ * the tile and found nothing, and a family that lists no row for a tile at distance nine has not looked at it at all.
+ */
+export const PLAN_SNAPSHOT_DISCOVERY_RADIUS = 6;
+
+/**
+ * Whether the tile this call names lies OUTSIDE the window the submit-moment snapshot publishes targets in.
+ *
+ * <p>
+ * OUTSIDE IS NOT EMPTY. Every displaced family is published through the Mod's Chebyshev radius, so past it the snapshot
+ * holds no row for any tile - not "no target", but "not asked" - and a binder that folds the two refuses a strip the
+ * session has just read tile by tile. Inside the radius the same silence is a measurement, and remains a refusal.
+ * </p>
+ * <p>
+ * A call naming no tile at all (`no-target-named`) is not outside anything: the question does not apply, and answering
+ * "outside" would move an ordinary missing-argument refusal onto a claim about the world.
+ * </p>
+ */
+function planTargetOutsideTheWindow(snapshot: Snapshot, canonical: Readonly<Record<string, PlanArgument>>): boolean {
+  const tile = planTileOf(canonical);
+  const actor = snapshot.tile;
+  if (tile === null || !Number.isFinite(actor?.x) || !Number.isFinite(actor?.y)) return false;
+  return Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) > PLAN_SNAPSHOT_DISCOVERY_RADIUS;
+}
+
+/**
+ * THE THIRD ANSWER FOR A TILE OUTSIDE THE WINDOW: what this session's own rectangle read proves about it.
+ *
+ * <p>
+ * A PERMISSION, NOT A PROMISE. The read says what stood on the tile when she looked; the promise that the step acts on
+ * that very thing is kept by the MOD, which mints the target at the moment it swings and refuses with
+ * `*_target_changed` when the world moved. That is why the read's revision is recorded and never compared: a
+ * read from two turns ago that names the right tile and the right occupant kind is still good enough to let the node
+ * exist, and a revision equality check here would turn a stale-but-harmless reading into a refused plan while changing
+ * nothing about the promise. THE MAP IS DIFFERENT: a read of another map proves nothing about this one.
+ * </p>
+ * <p>
+ * TWO REFUSALS, AND THEY ARE NOT THE SAME CLAIM. `plan_script_target_outside_the_read` says nothing on this side named
+ * the tile - and it states how many tiles the surviving read covers, or `replaced` when this session made more than one
+ * reading and only the last survives, because a count that silently meant "a different read" is exactly the shape this
+ * file keeps deleting. `plan_script_reading_outside_the_submitted_snapshot` says the opposite: the tile IS proved, but
+ * this action's value has to be COPIED out of the snapshot and the Mod does not resolve it at execution, so no node
+ * exists that could honour the tile without inventing that value.
+ * </p>
+ * <p>
+ * WHAT THIS IS NOT: the predecessor rule one branch up. `till_soil` then `plant_seed` on one tile omits the reading
+ * because a node of THIS PROGRAM will make the target (`resolvedAfter`); here nothing in the program makes it - the
+ * session read it in the world, at a coordinate the submit-moment snapshot never carries - and the two are reported
+ * apart (`resolvedFromObservation`) so a reader can tell "she read it" from "a step of hers will make it".
+ * </p>
+ */
+function planOutsideTheRead(
+  action: PublishedPlanAction,
+  snapshot: Snapshot,
+  familyName: string,
+  place: string,
+  outstanding: readonly PlanArgumentShape[],
+  canonical: Record<string, PlanArgument>,
+  state: PlanScriptState,
+  requirement: PlanArgumentRequirement,
+): PlanSnapshotReadings {
+  const proof = planReadProof(state.tileRead, snapshot, planTileOf(canonical));
+  if (proof === null)
+    rejectPlanCall(
+      `plan_script_target_outside_the_read:${familyName}:${place}:read_covers=${planReadCovers(state.tileRead)}`,
+      state,
+      requirement,
+    );
+  const required = outstanding.filter((reading) => reading.required);
+  if (required.length > 0)
+    rejectPlanCall(
+      `plan_script_reading_outside_the_submitted_snapshot:${action.actionId}.${required[0]!.name}:${familyName}:${place}`,
+      state,
+      requirement,
+    );
+  const observed: string[] = [];
+  for (const reading of outstanding) {
+    // Her copy is dropped for the same reason the producer path drops one: the value that has to be true at execution is
+    // the one the body computes, not the one she remembers.
+    delete canonical[reading.name];
+    observed.push(
+      `resolved_from_observation=${action.actionId}.${reading.name};family=${familyName};tile=${proof.x},${proof.y};kind=${proof.occupantKind}`,
+    );
+  }
+  return Object.freeze({ bound: [], unmeasured: [], resolved: [], observed: Object.freeze(observed) });
+}
+
+/** The tile a call's own intentions name, in coordinates, or `null` when they name none. */
+function planTileOf(canonical: Readonly<Record<string, PlanArgument>>): PlanTile | null {
+  const x = canonical.x;
+  const y = canonical.y;
+  if (x?.type !== "integer" || y?.type !== "integer") return null;
+  const tileX = Number(x.canonicalValue);
+  const tileY = Number(y.canonicalValue);
+  return Number.isSafeInteger(tileX) && Number.isSafeInteger(tileY) ? { x: tileX, y: tileY } : null;
+}
+
+/** What one session read proves about one tile: the coordinate it named and the kind it found standing there. */
+type PlanReadProof = Readonly<{ x: number; y: number; occupantKind: string }>;
+
+/** The session's own rectangle row for this tile, or `null` when nothing on this side named it. */
+function planReadProof(read: StardewTileRead | null, snapshot: Snapshot, tile: PlanTile | null): PlanReadProof | null {
+  if (read === null || tile === null) return null;
+  if (read.location === null || read.location !== snapshot.location) return null;
+  const row = read.rows.find((candidate) => candidate.x === tile.x && candidate.y === tile.y);
+  return row === undefined ? null : Object.freeze({ x: row.x, y: row.y, occupantKind: row.occupantKind });
+}
+
+/**
+ * How many tiles the session's own rectangle reading covers, as `plan_script_target_outside_the_read` names it.
+ *
+ * `0` is a session that never read a rectangle at all - the request's own count, not a read that found nothing. A
+ * session that has made more than one reading answers `replaced`, because only the last one survives and this side
+ * cannot say which of them the plan was written from.
+ */
+function planReadCovers(read: StardewTileRead | null): string {
+  if (read === null) return "0";
+  return read.reads > 1 ? "replaced" : String(read.rows.length);
 }
 
 /**
@@ -2909,10 +3153,24 @@ type PlanSnapshotReadings = Readonly<{
   unmeasured: readonly string[];
   /** `resolved_after=<actionId>.<argument>;producer=<nodeId>` - left out, and the body computes it at execution. */
   resolved: readonly string[];
+  /**
+   * `resolved_from_observation=<actionId>.<argument>;family=<family>;tile=<x>,<y>;kind=<occupantKind>` - left out, and
+   * the tile it belongs to was read by THIS SESSION outside the snapshot's window.
+   *
+   * Apart from `resolved` on purpose: a producer is a node of this plan that will make the target, while this is the
+   * world as the session's own reading found it. A reader that could not tell them apart would read "the body computes
+   * it" where the truth is "she looked".
+   */
+  observed: readonly string[];
 }>;
 
 /** One call with no readings at all, which is most of them. */
-const PLAN_NO_READINGS: PlanSnapshotReadings = Object.freeze({ bound: [], unmeasured: [], resolved: [] });
+const PLAN_NO_READINGS: PlanSnapshotReadings = Object.freeze({
+  bound: [],
+  unmeasured: [],
+  resolved: [],
+  observed: [],
+});
 
 /** The row field this argument reads, when the surface states it as a reading rather than as a statement of intent. */
 function planReadingField(argumentName: string): string | undefined {
@@ -3375,7 +3633,120 @@ function planWalkToRefusedExit(state: PlanScriptState): string | null {
   return null;
 }
 
+/**
+ * A transition this compile refused, by the position SHE wrote it: the call, its action, and the line she was answered
+ * with.
+ *
+ * The line travels with the position because the refusal that orphans her later steps is written once per orphan and has
+ * one predecessor to name (`emitPlanNode`), and a code that could only say "a transition" would send a reader back to the
+ * script to count which one.
+ */
+type PlanRefusedTransition = Readonly<{ call: number; actionId: string; reasonCode: string }>;
+
+/**
+ * A step this compile refused that named a piece of WORLD, by the position she wrote it and the tile it named.
+ *
+ * The tile is the compiler's own consumer relation (`planWorldTileOf`): a later step on the same tile is a step on state
+ * this one was to create, which is exactly the edge an ACCEPTED step gets as `dependsOn`. A refused step has no node, so
+ * that edge has nowhere to be written - and the later step would run with no producer, against a tile whose state nobody
+ * prepared.
+ */
+type PlanRefusedTile = Readonly<{ call: number; actionId: string; tile: string }>;
+
+/**
+ * One reading a rectangle read answered, against the node that carries it: `<nodeId>:resolved_from_observation=...`.
+ *
+ * The node id is carried rather than formatted where the line is written, because the path order that runs after the
+ * script renames nodes (`planPathOrderedProgram`) and a line naming the id it had before the reorder would point at a
+ * node the program does not hold.
+ */
+type PlanObservationProof = Readonly<{ nodeId: string; line: string }>;
+
+/**
+ * A REFUSED STEP DOES NOT LEAVE THE REST OF HER SCRIPT STANDING: the map it would have left her on, and the tile it would
+ * have prepared. `round93` paid a night to learn the first half.
+ *
+ * <p>
+ * Measured 2026-11-22 (`round93`, `plan_463`): she stood in Town and wrote `enter_exit({x:64,y:14}); sleep();`. The
+ * transition was refused by name - `plan_script_door_not_on_this_map:64:14:map=Town`, `(64,14)` being the FARMHOUSE's
+ * door spelled in the town's frame - and the `sleep` was KEPT, because one refused call stops only itself. The plan that
+ * ran was therefore `sleep()` ALONE, from Town: the night answered `not_home` for 308 s and the engine's 2:00 AM pass-out
+ * ended the run with her money lost. The compiler had submitted a plan nobody wrote: hers had the walk home in it.
+ * </p>
+ * <p>
+ * TWO DEPENDENCIES, BOTH THE COMPILER'S OWN AND NEITHER A TABLE OF ACTION PAIRS. The MAP is
+ * `TRANSITION_SOURCE_PLAN_ACTION_IDS`, the two actions that move the actor to another map: a call written after one was
+ * written for the map it leads to, and this compile holds one snapshot of ONE map. The TILE is `planWorldTileOf`, which
+ * is what `dependsOn` is built from for a step that WAS accepted - a later step on that tile is a step on state the
+ * refused one was to create. When the premise goes, the dependants go with it: a plan that loses its precondition must
+ * not become a SMALLER plan.
+ * </p>
+ * <p>
+ * WHAT THIS DOES NOT DO: it does not stop the calls after it from being READ, and it does not void the steps before it.
+ * Each orphan is refused as its own call - `dropped` names it and its predecessor by position - so a batch that had good
+ * work in front of a bad transition still runs that work, and a plan that was only the transition and what came after it
+ * is refused whole with nothing dispatched. ONE REFUSED CALL STILL STOPS ONLY ITSELF: the rule here is about the calls
+ * whose world or whose tile the refused step was.
+ * </p>
+ */
 function emitPlanNode(
+  action: PublishedPlanAction,
+  arguments_: unknown,
+  snapshot: Snapshot,
+  actions: readonly PublishedPlanAction[],
+  state: PlanScriptState,
+): void {
+  const tile = announcedTileOf(action, arguments_);
+  const predecessor =
+    state.refusedTransitions[0] ?? (tile === null ? undefined : state.refusedTiles.find((entry) => entry.tile === tile));
+  if (predecessor !== undefined)
+    rejectPlanCall(
+      `plan_script_orphaned_by_a_refused_predecessor:${planStepName(state.builderCalls)}:${action.actionId}:${planStepName(predecessor.call)}:${predecessor.actionId}`,
+      state,
+      requirementOf(action),
+    );
+  try {
+    emitPlanStep(action, arguments_, snapshot, actions, state);
+  } catch (error) {
+    // Recorded on the way out, where the refusal and the action that was being written are both in hand: `atPlanCall`
+    // records the rejection, and only this boundary knows whether the call that failed was THE STEP ITSELF or the
+    // `equipFor` helper that names an action (`equipForAction`), whose refusal orphans nothing.
+    if (error instanceof PlanScriptRefusal && !error.wholeScript) {
+      if (TRANSITION_SOURCE_PLAN_ACTION_IDS.includes(action.actionId))
+        state.refusedTransitions.push(
+          Object.freeze({ call: state.builderCalls, actionId: action.actionId, reasonCode: error.reasonCode }),
+        );
+      if (tile !== null)
+        state.refusedTiles.push(Object.freeze({ call: state.builderCalls, actionId: action.actionId, tile }));
+    }
+    throw error;
+  }
+}
+
+/**
+ * The world tile a call names, read from what she WROTE rather than from an argument record already canonicalised.
+ *
+ * `planWorldTileOf` answers the same question for a call that is about to become a node; this one has to answer it for a
+ * call that never will, so it canonicalises the pair itself through the surface's own declarations. Both end in
+ * `tileKeyOf`, so "the same tile" stays ONE rule rather than two that agree today.
+ */
+function announcedTileOf(action: PublishedPlanAction, arguments_: unknown): string | null {
+  if (action.targetFamily === null) return null;
+  if (typeof arguments_ !== "object" || arguments_ === null) return null;
+  const supplied = arguments_ as Readonly<Record<string, unknown>>;
+  const declared = new Map(action.arguments.map((argument) => [argument.name, argument] as const));
+  const canonical: Record<string, PlanArgument> = {};
+  for (const name of ["x", "y"]) {
+    const declaration = declared.get(name);
+    if (declaration === undefined || !Object.hasOwn(supplied, name)) return null;
+    const value = canonicalPlanArgument(declaration, supplied[name]);
+    if (value === undefined) return null;
+    canonical[name] = value;
+  }
+  return tileKeyOf(canonical);
+}
+
+function emitPlanStep(
   action: PublishedPlanAction,
   arguments_: unknown,
   snapshot: Snapshot,
@@ -3583,6 +3954,8 @@ function emitPlanNode(
   state.boundFromSnapshot.push(...readings.bound);
   state.readingsUnmeasured.push(...readings.unmeasured);
   state.resolvedAfter.push(...readings.resolved);
+  for (const line of readings.observed)
+    state.resolvedFromObservation.push(Object.freeze({ nodeId: authorNodeId, line }));
 }
 
 /**
@@ -3667,10 +4040,8 @@ function planWorldTileOf(
  * ground consumes a node that works a different tile.
  */
 function tileKeyOf(arguments_: Readonly<Record<string, PlanArgument>>): string | null {
-  const x = arguments_.x;
-  const y = arguments_.y;
-  if (x?.type !== "integer" || y?.type !== "integer") return null;
-  return `${x.canonicalValue},${y.canonicalValue}`;
+  const tile = planTileOf(arguments_);
+  return tile === null ? null : `${tile.x},${tile.y}`;
 }
 
 /**

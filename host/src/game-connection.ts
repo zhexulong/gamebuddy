@@ -44,6 +44,44 @@ export type StardewBridgeConnectionState = Readonly<{
   snapshot: Snapshot | null;
   latestReceipt: ExecutionReceipt | null;
   latestReasonCode: string | null;
+  /**
+   * THE LAST RECTANGLE THIS SESSION READ, beside the snapshot it read it against.
+   *
+   * <p>
+   * A family row is only published inside the Mod's discovery radius (`ExecutionManager.TargetDiscoveryRadius`), so a
+   * target outside it is in NO family - and the plan compiler read that silence as "measured, and empty". The one
+   * reader that reaches such a tile is the rectangle query, and until this field existed its answer went to the model
+   * and nowhere else: `TileAreaQuery.Answer` is stateless on the Mod side, and on this side `readRectangle` composed a
+   * sentence with the rows. So a session could read a 3x20 strip and then be refused for planning on a tile of it.
+   * </p>
+   * <p>
+   * OPTIONAL, because the state is built by every connection fixture in this repository and absent means this session
+   * never asked. Only an ANSWERED rectangle is recorded, only the latest one is kept, and `reads` says how many this
+   * session has made - which is what lets a refusal tell "the read you wrote this from" from "a read that replaced it".
+   * </p>
+   */
+  tileRead?: StardewTileRead;
+}>;
+
+/**
+ * One answered rectangle read, as the session keeps it: which tiles, what stood on them, and how many reads came
+ * before.
+ *
+ * The row carries the coordinate and the occupant kind because that is the whole of what a plan target needs to be
+ * proved: the id and the slot are not the reader's to mint - the Mod mints them at the moment it acts, or refuses.
+ */
+export type StardewTileRead = Readonly<{
+  /** The map the rectangle was read on, or null when the Mod's answer did not state it. */
+  location: string | null;
+  /** The world revision it was read at. RECORDED, never compared: a stale read is a permission, not a promise. */
+  revision: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** How many rectangle reads this session has made, this one included. Two means an earlier read's rows are gone. */
+  reads: number;
+  rows: readonly Readonly<{ x: number; y: number; occupantKind: string }>[];
 }>;
 
 /**

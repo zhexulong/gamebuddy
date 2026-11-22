@@ -351,29 +351,40 @@ test("the item she means is never replaced by the item on the row", () => {
 });
 
 /**
- * A TILE THE SUBMITTED SNAPSHOT DOES NOT HOLD IS REFUSED THERE, not twenty-two times in the body. The refusal names the
- * family she should re-read and the tile she named, and it costs only the call that named it.
+ * A TILE THE SUBMITTED SNAPSHOT DOES NOT HOLD IS REFUSED THERE, not twenty-two times in the body - and WHICH ABSENCE it
+ * is depends on whether the snapshot could have looked. Inside the Mod's discovery radius a family that lists nothing has
+ * measured her tile and the refusal names the family to re-read; past that radius the family publishes no row for ANY
+ * tile, so the same silence is "not asked" and the refusal names the read instead. Both cost only the call that named
+ * them.
  */
 test("a target the snapshot does not hold is refused by name at submit time, and only that call", () => {
   const fields = FAMILY_FIELDS.get("seedTargets")!;
   const live = snapshotCarrying(bareSnapshot("plant_seed"), "seedTargets", [rowAt(fields, { x: 79, y: 18 })]);
+  // (80,19) is Chebyshev 2 from her tile at (78,17): the family reaches it, so its silence is a measurement.
   const result = compile(
     [
       `builder.plant_seed({ x: 79, y: 18, expectedQualifiedItemId: "(O)472" });`,
-      `builder.plant_seed({ x: 81, y: 40, expectedQualifiedItemId: "(O)472" });`,
+      `builder.plant_seed({ x: 80, y: 19, expectedQualifiedItemId: "(O)472" });`,
     ].join("\n"),
     live,
   );
   assert.equal(result.status, "partial", JSON.stringify(result));
   assert.equal(
     result.status === "partial" ? result.reasonCode : "compiled",
-    "plan_script_target_not_in_the_submitted_snapshot:seedTargets:81,40",
+    "plan_script_target_not_in_the_submitted_snapshot:seedTargets:80,19",
     "the refusal names the family to re-read and the tile she named",
   );
   assert.deepEqual(
     nodesOf(result).map((node) => node.arguments.x),
     [{ type: "integer", canonicalValue: "79" }],
     "the step whose target IS in the snapshot still runs",
+  );
+  // THE SAME SILENCE TWENTY-THREE TILES AWAY IS NOT THAT CLAIM, and this file used to answer it with the same word.
+  const far = compile(`builder.plant_seed({ x: 81, y: 40, expectedQualifiedItemId: "(O)472" });`, live);
+  assert.equal(
+    far.status === "refused" || far.status === "partial" ? far.reasonCode : "compiled",
+    "plan_script_target_outside_the_read:seedTargets:81,40:read_covers=0",
+    "outside the radius nothing on this side named the tile, and no rectangle was read this session",
   );
 });
 
@@ -469,7 +480,13 @@ test("a_measured_empty_family_refuses_and_an_unmeasured_one_is_named:<action>.<a
     const readings = action.arguments.filter((argument) => PLAN_SNAPSHOT_READINGS.has(argument.name));
     if (readings.length === 0) continue;
     // (1) MEASURED, AND THE FAMILY HOLDS NOTHING: the target does not exist, so the call is refused by family and place.
-    const empty = compile(callScript(action), snapshotCarrying(bareSnapshot(action.actionId), family, []));
+    // THE ACTOR STANDS ON THE TILE, because a family's silence is a measurement only inside the Mod's discovery radius:
+    // past it the family publishes nothing for any tile and the refusal is a different claim
+    // (`plan_script_target_outside_the_read`, driven in `body-program-script.test.ts`).
+    const empty = compile(
+      callScript(action),
+      snapshotCarrying({ ...bareSnapshot(action.actionId), tile: { ...ROW_TILE } }, family, []),
+    );
     const code = empty.status === "compiled" ? "accepted" : empty.reasonCode;
     const prefix = `plan_script_target_not_in_the_submitted_snapshot:${family}:`;
     if (!code.startsWith(prefix)) faults.push(`${action.actionId}: a measured-empty ${family} answered ${code}`);
@@ -521,12 +538,22 @@ test("a_measured_empty_family_refuses_and_an_unmeasured_one_is_named:<action>.<a
  * </p>
  */
 test("a_reading_bound_from_the_submit_snapshot_does_not_refuse_a_reading_a_prior_node_makes:<action>.<argument>", () => {
-  const census: Census3 = { derived: 0, submitBound: 0, afterPriorNode: 0, refused: [], tileless: [] };
+  const census: Census3 = {
+    derived: 0,
+    submitBound: 0,
+    afterPriorNode: 0,
+    refused: [],
+    tileless: [],
+    tileUnproven: [],
+  };
   for (const action of PLAN_ACTIONS) for (const argument of action.arguments) readOneDerived(action, argument, census);
   console.log(
     `a_reading_bound_from_the_submit_snapshot_does_not_refuse_a_reading_a_prior_node_makes: derived ${String(census.derived)} · ` +
       `bound-at-submit ${String(census.submitBound)} · bound-after-a-prior-node ${String(census.afterPriorNode)} · ` +
-      `refused ${String(census.refused.length)}`,
+      `refused ${String(census.refused.length)} · tile-unproven ${String(census.tileUnproven.length)}`,
+  );
+  console.log(
+    `  not measured here (a reading the body answers, on a tile nothing named): ${census.tileUnproven.join(", ")}`,
   );
   assert.ok(census.derived > 100, `examined ${String(census.derived)} derived arguments`);
   assert.ok(census.submitBound > 50, `examined ${String(census.submitBound)} readings the snapshot answered`);
@@ -545,6 +572,17 @@ type Census3 = {
   afterPriorNode: number;
   refused: string[];
   tileless: string[];
+  /**
+   * The subjects whose step was refused by a claim about the TILE - never by the reading this gate varies.
+   *
+   * <p>
+   * A tile claim (`plan_script_target_outside_the_read`, or `plan_script_reading_outside_the_submitted_snapshot` naming
+   * the action's OTHER argument) says nothing on this side named the tile, so the step cannot exist whatever the reading
+   * a prior node makes. The premise this gate needs - a family that answers her tile - is absent there, so the subject is
+   * NOT MEASURED by this gate and is printed by name rather than excused.
+   * </p>
+   */
+  tileUnproven: string[];
 };
 
 /** One derived argument, driven twice: the ordinary submit-time binding, and the chain a prior node makes possible. */
@@ -587,7 +625,12 @@ function readOneDerived(
   );
   const node = nodesOf(chained).find((candidate) => candidate.actionId === action.actionId);
   if (node === undefined) {
-    census.refused.push(`${subject}:${chained.status === "refused" ? chained.reasonCode : "the step was dropped"}`);
+    // THE FIRST REFUSED CALL'S OWN CODE, which a `partial` plan carries exactly as a `refused` one does: what this gate
+    // asks is WHICH claim it is, and "the step was dropped" answers nothing.
+    const code = chained.status === "compiled" ? "the step was dropped" : chained.reasonCode;
+    if (/^plan_script_(?:target_outside_the_read|reading_outside_the_submitted_snapshot):/u.test(code))
+      census.tileUnproven.push(`${subject}:${code}`);
+    else census.refused.push(`${subject}:${code}`);
     return;
   }
   if (node.arguments[argument.name] !== undefined) {
@@ -720,10 +763,14 @@ function readOneArgument(action: PublishedPlanAction, argument: DeclaredArgument
     expected,
     `${subject}: the row publishes ${field}=${expected}`,
   );
-  // AND WHEN THE PUBLISHED FAMILY HOLDS NO ROW AT HER TARGET, NOTHING IS ACCEPTED: the refusal is the whole point.
-  const elsewhere = snapshotCarrying(bareSnapshot(action.actionId), action.targetFamily!, [
-    rowAt(familyFields, { x: 90, y: 90 }),
-  ]);
+  // AND WHEN THE PUBLISHED FAMILY HOLDS NO ROW AT HER TARGET, NOTHING IS ACCEPTED: the refusal is the whole point. The
+  // actor stands on the tile so the family's silence IS a measurement - outside its radius the same silence is answered
+  // by the other claim (`plan_script_target_outside_the_read`), which is not this gate's question.
+  const elsewhere = snapshotCarrying(
+    { ...bareSnapshot(action.actionId), tile: { ...ROW_TILE } },
+    action.targetFamily!,
+    [rowAt(familyFields, { x: 90, y: 90 })],
+  );
   const refused = compile(callScript(action, [argument.name]), elsewhere);
   const code = refused.status === "compiled" ? "accepted" : refused.reasonCode;
   const namesTheAbsence = code.startsWith(`plan_script_target_not_in_the_submitted_snapshot:${action.targetFamily!}:`);
