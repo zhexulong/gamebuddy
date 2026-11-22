@@ -263,8 +263,12 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   });
 
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
-  // The turn really is generating before either Class B write.
-  await expect(page.getByText("Thinking…")).toBeVisible();
+  // The turn really is generating before either Class B write. The claim is about the BAR's own word, so it is read off
+  // the bar's badge by its test handle rather than as loose text: the transcript draws that same word on her own row
+  // while the turn has written nothing yet (`Timeline`'s `awaitingReply`), and a bare text locator then matches two
+  // elements - the ambiguity is the fix's, not a second word's.
+  const modelStatus = page.getByTestId("app-bar-model-status");
+  await expect(modelStatus).toHaveAttribute("aria-label", "Thinking…");
 
   // Class B, member one: this surface's model parameters.
   const chatSurface = page.getByTestId("chat-surface");
@@ -284,7 +288,7 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   // The durable read-back is what the editor shows, and the generation is untouched.
   await expect(popout.locator('[data-model-notice="saved"]')).toBeVisible();
   await expect(popout.getByLabel("Thinking level")).toHaveValue("high");
-  await expect(page.getByText("Thinking…")).toBeVisible();
+  await expect(modelStatus).toHaveAttribute("aria-label", "Thinking…");
   // Escape closes it, and the Save that disabled itself beside it is no obstacle: the
   // modal drawer holds the key wherever focus is, so no keyboard player is left in a
   // drawer whose only way out is the pointer.
@@ -315,7 +319,7 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   });
   // The durable read-back is what the list shows, and the generation survived the rename.
   await expect(surface.getByTestId("chat-item").nth(1)).toContainText(renamedTitle);
-  await expect(page.getByText("Thinking…")).toBeVisible();
+  await expect(modelStatus).toHaveAttribute("aria-label", "Thinking…");
 
   // The turn reaches its own settlement: the authoritative state is a COMPLETED turn whose reply is
   // in the transcript, so no Class B write cancelled or parked the generation.
@@ -323,7 +327,7 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   await page.reload();
   await page.getByRole("button", { name: "Chat", exact: true }).click();
   await expect(page.getByRole("region", { name: "Chat transcript" })).toContainText(replyText);
-  await expect(page.getByText("Thinking…")).toHaveCount(0);
+  await expect(modelStatus).not.toHaveAttribute("aria-label", "Thinking…");
 
   // The value the next turn starts from is the one the player chose mid-turn: re-opening this
   // surface's own model settings reads it back from the Host, never from anything the surface kept
