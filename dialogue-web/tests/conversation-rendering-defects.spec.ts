@@ -1012,8 +1012,15 @@ test("a disabled stepper arrow is dimmer, not louder: the same bare glyph, one a
 
   // The 44 px target is not what changed, so the strip's own box cannot have moved with it.
   expect(previous.box, "the disabled arrow is the same target the enabled one is").toEqual(next.box);
-  expect(previous.box.width, "and it is still the 44 px floor").toBeGreaterThanOrEqual(44);
-  expect(previous.box.height, "in both directions").toBeGreaterThanOrEqual(44);
+  expect(previous.box.width, "and it is still the 44 px floor across").toBeGreaterThanOrEqual(44);
+  // THE PLATE SHRANK, THE FLOOR DID NOT: beside the 28 px pills the group is one pill tall, and each arrow
+  // keeps `--touch-target-min` behind it - read by hit testing (`tests/hit-area.ts`) rather than off the box.
+  const stepperArrows = page.locator(".swipe-controls .swipe-btn");
+  const stepperFailures: string[] = [];
+  for (let arrow = 0; arrow < (await stepperArrows.count()); arrow += 1) {
+    stepperFailures.push(...hitAreaViolations(`the pager's arrow ${arrow + 1}`, await readHitArea(stepperArrows.nth(arrow))));
+  }
+  expect(stepperFailures, "in both directions, on the pill's plate").toEqual([]);
 
   // The names: the live one keeps the short word, the dead one says why.
   expect(next.name, "the enabled arrow keeps the catalogue's short name").toBe("下一个变体");
@@ -1346,7 +1353,20 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
     };
   });
   console.log(`[defect-6 wide] ${JSON.stringify(wide)}`);
-  expect(wide.pager, "the pager is the same 184 px at 1440x900").toEqual({ width: 184, height: 46 });
+  // THE PAGER WEARS THE PILLS' PLATE WHERE IT SHARES THEIR LINE (owner ruling 2026-11-21, extended):
+  // 184x28, the same 28 px painted plate as Copy and Regenerate beside it, and the same 44 px target
+  // behind it - read below by hit testing rather than off the box.
+  expect(wide.pager, "the pager is the same 184 px plate at 1440x900, one pill tall").toEqual({ width: 184, height: 28 });
+  const pagerHitFailures: string[] = [];
+  const wideArrows = page.locator("ol.message-list > li").nth(2).locator(".swipe-controls button");
+  const wideArrowCount = await wideArrows.count();
+  expect(wideArrowCount, "the pager is still its own targets, not one plate").toBeGreaterThanOrEqual(2);
+  for (let arrow = 0; arrow < wideArrowCount; arrow += 1) {
+    pagerHitFailures.push(
+      ...hitAreaViolations("the pager's arrow (clears the 44 px floor as a HIT area)", await readHitArea(wideArrows.nth(arrow))),
+    );
+  }
+  expect(pagerHitFailures, "every target in the pager keeps the touch floor").toEqual([]);
   // THE WIDE PIN MOVED WITH THE STRIP, and this is the arithmetic that moved it. While the strip held five
   // worded actions it read 677 px of contents plus five 6 px gaps = 707 against this chat's 634 px column, so
   // the pager took a second line and the strip was 102 px tall under a 46 px bubble.
@@ -1366,7 +1386,9 @@ test("defect 6: the narrow strip is one row and the player's own line is as wide
   // reading measure even though its words are 11 characters. With the three entries behind the overflow the
   // strip's own contents are 412, so that is the box - the words, not the buttons, now decide how wide a short
   // reply's row is.
-  expect(wide.strip.height, "one row at 1440x900: the words, the pager and the overflow share it").toBe(46);
+  expect(wide.strip.height, "one row at 1440x900: the words, the pager and the overflow share it, one plate tall").toBe(
+    28,
+  );
   expect(wide.strip.width, "and the strip is exactly its own contents, on one line").toBe(412);
   const actionWidths = wide.children.filter((child) => child.className !== "swipe-controls");
   expect(actionWidths.length, "the three actions are all still there").toBe(3);

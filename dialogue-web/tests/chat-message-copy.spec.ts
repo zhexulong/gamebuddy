@@ -282,9 +282,26 @@ test("the strip keeps every target at the touch minimum, at both widths, without
     for (const [index, control] of measured.controls.entries()) {
       expect(control.width, `${where} ${control.name} is a target across`).toBeGreaterThanOrEqual(TOUCH_MINIMUM);
       expect(control.ariaLabel, `${where} ${control.name} is named`).toBeTruthy();
-      hitFailures.push(
-        ...hitAreaViolations(`${where} ${control.name} (clears the 44 px floor as a HIT area)`, await readHitArea(stripChildren.nth(index))),
-      );
+      // THE PAGER IS A GROUP, AND ITS TARGETS ARE ITS ARROWS. Its plate is one pill now, and the middle of
+      // that plate is the position counter - text, not a control - so a hit reading taken at the group's
+      // own centre would be asking the number to answer a press. The floor is read where a finger meets it:
+      // on each arrow inside the group (`tests/hit-area.ts`).
+      const child = stripChildren.nth(index);
+      const targets: (typeof child)[] = [];
+      if (control.name.includes("swipe-controls")) {
+        const arrows = await child.locator("button").count();
+        for (let arrow = 0; arrow < arrows; arrow += 1) targets.push(child.locator("button").nth(arrow));
+      } else {
+        targets.push(child);
+      }
+      for (const target of targets) {
+        hitFailures.push(
+          ...hitAreaViolations(
+            `${where} ${control.name} (clears the 44 px floor as a HIT area)`,
+            await readHitArea(target),
+          ),
+        );
+      }
     }
     console.log(`${where} hit areas: ${hitFailures.length === 0 ? "every control reaches the floor" : JSON.stringify(hitFailures)}`);
     expect(hitFailures, `${where} every control in the strip is still a 44 px target, whatever its plate is`).toEqual([]);

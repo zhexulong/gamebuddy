@@ -7860,9 +7860,9 @@
      (`chat-message-copy`, `conversation-rendering-defects` defect 6,
      `runtime-frontend-gates` gate 8).
 
-     The pager (`.swipe-controls`) is deliberately NOT in this rule: it is a group
-     of three targets with its own 46 px box, its own 44 px floor and its own
-     journeys (`ui-layout-tail`), and it carries a counter that needs the height.
+     The pager (`.swipe-controls`) keeps its own 46 px box on a PHONE, where it has a line of its
+     own; where it shares the row with the pills (the complement of the 430 px break below) it wears
+     the same plate they do - see the container query under the pills.
 
      WHERE THE BLOCK LIVES. It was appended after this layer closed, which made it
      win by being unlayered rather than by being the shape the owner ruled for - a
@@ -7878,12 +7878,55 @@
     --message-pill-height: 28px;
   }
 
+  /* THE PAGER WEARS THE SAME PLATE AS THE PILLS BESIDE IT, WHEREVER IT SITS BESIDE THEM.
+
+     Measured at 1440x900 on her paged reply, before this rule: the strip's children were Copy
+     76x28, the pager 184x46 and Regenerate 115x28 with their words on one baseline (every child's
+     centre 227.5) - but a row is as tall as its tallest child, so a paged row spent 46 px of flow
+     where the same row without a pager spends 28, and the two plate heights sat side by side.
+
+     What changes is PAINT, not the target: the group's plate is 28 px (its own 6 px corner, not the
+     pills' fully-round one - the frame is a group's, not a button's), and its arrows keep a 44 px
+     `::before` exactly as Copy and Regenerate do. Its 1 px frame stays a frame, so the group keeps the
+     184 px width its contents have always given it; the arrows fill the plate's inner box (26 px) and
+     the floor behind them is centred on it.
+
+     The condition is the complement of the 430 px break below, which is where the pager is given a
+     line of its own: on that line it is the only control, so it keeps the 46 px box it has always
+     had, and the two lines' 44 px floors stay 4 px apart instead of overlapping. */
+  @container (min-width: 431px) {
+    .message-actions .swipe-controls {
+      block-size: var(--message-pill-height);
+      min-block-size: var(--message-pill-height);
+    }
+
+    .message-actions .swipe-btn {
+      block-size: 100%;
+      min-block-size: 0;
+    }
+
+    .message-actions .swipe-remove-btn {
+      block-size: var(--message-pill-height);
+      min-block-size: var(--message-pill-height);
+      padding-block: 0;
+      border-radius: 999px;
+    }
+  }
+
   .message-actions :is(.copy-btn, .regenerate-btn, .more-btn) {
     position: relative;
     block-size: var(--message-pill-height);
     min-block-size: var(--message-pill-height);
     padding-block: 0;
     border-radius: 999px;
+  }
+
+  /* The arrow is not a pill in its own right on a phone - the group around it is the plate - but
+     the floor below hangs off it, and that needs a positioning context. The variant's discard
+     shares the group and the same floor (`::before` against the strip instead would paint a 44 px
+     band over every other control on the row - measured). */
+  .message-actions :is(.swipe-btn, .swipe-remove-btn) {
+    position: relative;
   }
 
   /* The target, which is the floor and not the plate.
@@ -7896,11 +7939,17 @@
      centred on the plate, and one frame wider than the padding box on each side so it is exactly as
      wide as the plate. It grows in the block direction only, because two controls 4 px apart must not
      swallow each other's taps. */
-  .message-actions :is(.copy-btn, .regenerate-btn, .more-btn)::before {
+  .message-actions :is(.copy-btn, .regenerate-btn, .more-btn, .swipe-btn, .swipe-remove-btn)::before {
     content: "";
     position: absolute;
     inset-inline: -1px;
     inset-block-start: calc((100% - var(--touch-target-min)) / 2);
     block-size: var(--touch-target-min);
+  }
+
+  /* The arrows have no frame, so the rule above would make an arrow answer 1 px into the gap
+     between it and its neighbour: its hit box is the plate's own width. */
+  .message-actions .swipe-btn::before {
+    inset-inline: 0;
   }
 } /* end @layer theme.polish */

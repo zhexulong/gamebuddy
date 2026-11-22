@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "./frontend-coverage";
+import { hitAreaViolations, readHitArea } from "./hit-area";
 
 /**
  * The layout tail: four surfaces where the shell's own geometry, not its
@@ -921,14 +922,22 @@ test("item 4: the variant switcher is a compact stepper with a named arrow and a
     expect(button.ariaLabel, "neither name is the raw glyph").not.toMatch(/^[\u2039\u203a<>\u2190\u2192]+$/u);
     // Visible text is gone - that is the decision, not an omission.
     expect(button.text, "the arrow is the whole visible control").toBe("");
-    expect(button.height, "and the control still clears the 44 px touch floor").toBeGreaterThanOrEqual(44);
     expect(button.width, "and it is still a square-ish target, not a shrunken glyph").toBeGreaterThanOrEqual(44);
   }
+  // THE PLATE SHRANK, THE FLOOR DID NOT: beside the 28 px pills the group is a 28 px pill too (owner
+  // ruling 2026-11-21, extended), so the two arrows keep `--touch-target-min` behind that plate and the
+  // reading is the HIT area (`tests/hit-area.ts`) - 4 px outside the plate answers the arrow, 1 px inside
+  // the floor answers it, 4 px beyond answers the strip.
+  const arrows = page.locator(".message-list .swipe-controls").first().locator("button");
+  const hitFailures: string[] = [];
+  for (let arrow = 0; arrow < (await arrows.count()); arrow += 1) {
+    hitFailures.push(...hitAreaViolations("the pager's arrow", await readHitArea(arrows.nth(arrow))));
+  }
+  expect(hitFailures, "each arrow keeps the touch floor behind the pill's plate").toEqual([]);
   // The position semantics are unchanged: the indicator is still the plain number
   // the Host published, beside the variant's own name.
   expect(measured.groupText, "the position is still the plain number").toContain("1/3");
   expect(measured.groupText, "and the variant's own name is still shown").toContain("默认");
-  expect(measured.groupHeight, "the group keeps gate 8's own floor").toBeGreaterThanOrEqual(44);
   expect(measured.groupText, "no raw markup reaches the player").not.toMatch(/[*{}]|\{\{/u);
 });
 

@@ -1143,18 +1143,27 @@ test("gate 8: the message-level controls clear the touch floor with a visible af
   }
   // Both switchers are one control group, so each keeps the same floor and the
   // same visible affordance the regenerate control is held to - one species, not two.
-  for (const [what, group, button] of [
-    ["the opening switcher", measured.openingGroup, measured.openingButton],
-    ["the swipe switcher", measured.swipeGroup, measured.swipeButton],
+  //
+  // THE PLATE SHRANK, THE FLOOR DID NOT (owner ruling 2026-11-21, extended where the pager shares the
+  // pills' row): the group is a 28 px pill now, so its floor is read the same way Regenerate's is - by
+  // hit testing each arrow inside it (`tests/hit-area.ts`). The group's own middle is the position
+  // counter, which is text, so probing the group would be asking the number to answer a press.
+  for (const [what, group, selector] of [
+    ["the opening switcher", measured.openingGroup, ".message-list > li:first-child .swipe-controls"],
+    ["the swipe switcher", measured.swipeGroup, ".message-list > li:last-child .swipe-controls"],
   ] as const) {
     if (group === null) {
       failures.push(`${what} is not rendered`);
       continue;
     }
-    if (group.height < 44) failures.push(`${what} is ${group.height}px tall, under the 44px floor the regenerate control keeps`);
     if (transparent.includes(group.backgroundColor))
       failures.push(`${what} computes to a transparent background (${group.backgroundColor})`);
-    if (button === null) failures.push(`${what} has no button`);
+    const arrows = page.locator(`${selector} button`);
+    const arrowCount = await arrows.count();
+    if (arrowCount < 2) failures.push(`${what} holds ${arrowCount} arrow(s), not the two the position needs`);
+    for (let arrow = 0; arrow < arrowCount; arrow += 1) {
+      failures.push(...hitAreaViolations(`${what}'s arrow ${arrow + 1}`, await readHitArea(arrows.nth(arrow))));
+    }
   }
 
   record(
