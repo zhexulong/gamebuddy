@@ -6193,6 +6193,13 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   // descriptor. The derived test beside this file now reads the Mod's own record, so a key this list lacks fails in
   // the Host's own suite instead of after a game launch (measured 2026-11-06: four live runs died at hello).
   "sceneTarget",
+  // What the action REQUIRES of the world and what it CHANGES, in the four classes a cross-tile dependency is built from
+  // (`FarmhandActionEffectClass`). The Mod publishes it on the STATIC surface artifact, which is what the script compiler
+  // reads; the hello_ack wire descriptor does not carry it. It is listed here because this array is the member vocabulary
+  // over one descriptor shape, and the published projection and this list are asserted equal (`audit-stardew-decision-
+  // closure`), so a member the artifact carries and this list lacks reports `host_whitelist_missing_member` - the same
+  // drift `arguments`, `watchdogMs`, `evidenceSchema` and `canonicalCodec` sit in this list from the other direction.
+  "effects",
 ] as const;
 
 export function isValidActionDescriptor(value: unknown): value is ActionRegistrationDescriptor {

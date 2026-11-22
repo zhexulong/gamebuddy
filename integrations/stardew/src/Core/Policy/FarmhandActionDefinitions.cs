@@ -384,6 +384,133 @@ public sealed record FarmhandChoreDeclaration(bool Consumes, string? LeavesRows 
     });
 }
 
+/// <summary>
+/// The four ways one action changes what a LATER action in the same plan can require, and nothing else.
+///
+/// <para>
+/// WHY THIS EXISTS. A Body Program's dependency edges are "the same (x, y) tile" and nothing more
+/// (<c>host/src/body-program-script.ts</c>), so a step on a different tile consumes nothing of an earlier one: a walk to
+/// a door that this script's own transition was refused for stayed in the plan, and a `sleep()` written after a refused
+/// `enter_exit` ran alone from the wrong map. Four patches have been bolted onto that one blindness
+/// (<c>planWalkToRefusedExit</c>, <c>planSeedCounts</c>, <c>planWaterBudget</c>, and the orphan refusal), each of them a
+/// table of action pairs that agrees with the catalogue today and cannot see an action it has not been told about.
+/// </para>
+/// <para>
+/// THE VOCABULARY IS CLOSED AND IT IS THE COMPILER'S, NOT THE WORLD'S: what an effect class has to answer is "can the
+/// next step depend on this one", so it holds only the four facts a cross-tile dependency can be built from. A change
+/// this set does not name is not thereby absent from the world - it is a change no plan can require, and
+/// <see cref="FarmhandActionEffects.None"/> names why.
+/// </para>
+/// </summary>
+public enum FarmhandActionEffectClass
+{
+    /// <summary>The actor's own place: her standing tile, or the map she is on.</summary>
+    MovesActor = 1,
+
+    /// <summary>Where the body must already be for the native entry to accept the request at all.</summary>
+    RequiresPlace = 2,
+
+    /// <summary>A resource that becomes available to a later step (a pack item, the water in a can).</summary>
+    Produces = 3,
+
+    /// <summary>A resource a step spends, so a later step can find it gone (a pack item, the water in a can).</summary>
+    Consumes = 4,
+}
+
+public static class FarmhandActionEffectClassWire
+{
+    public static string ToWireValue(this FarmhandActionEffectClass effectClass) => effectClass switch
+    {
+        FarmhandActionEffectClass.MovesActor => "moves_actor",
+        FarmhandActionEffectClass.RequiresPlace => "requires_place",
+        FarmhandActionEffectClass.Produces => "produces",
+        FarmhandActionEffectClass.Consumes => "consumes",
+        _ => throw new ArgumentOutOfRangeException(nameof(effectClass)),
+    };
+}
+
+/// <summary>
+/// One declared effect, with the SEAM that observes it - because a declaration nothing can check is prose, and prose is
+/// what this field replaces.
+///
+/// <para>
+/// <see cref="ObservedBy"/> is read per class, and each class has exactly one kind of authority:
+/// </para>
+/// <list type="bullet">
+/// <item><see cref="FarmhandActionEffectClass.MovesActor"/> - the STATE THE EXECUTOR ACTUALLY WRITES, as the symbol the
+/// handler contains (<c>LocalMoveSpec</c> for a walk, <c>warpFarmer</c> for a change of map). A subject the Mod never
+/// writes is a subject nothing moves.</item>
+/// <item><see cref="FarmhandActionEffectClass.RequiresPlace"/> - THE PREDICATE THE HANDLER ALREADY REFUSES WITH, as the
+/// symbol the handler contains (<c>SleepAndAdvanceDayLifecycle.HomeOf</c>). A precondition the handler does not enforce
+/// is an invented one.</item>
+/// <item><see cref="FarmhandActionEffectClass.Produces"/> - WHAT A RECEIPT ALREADY PROVES: <c>postcondition</c> for the
+/// row's own postcondition name, or a key of the descriptor's <see cref="FarmhandActionDescriptor.OutputFacts"/>. The
+/// generic <c>native_action_postcondition</c> proves that the native call resolved and NOT which resource appeared, so it
+/// is never admitted here - that gap is named by
+/// <see cref="FarmhandActionEffects.ResourceUnprovenByTheReceipt"/> rather than papered over.</item>
+/// <item><see cref="FarmhandActionEffectClass.Consumes"/> - THE REFUSAL THE HANDLER ALREADY ANSWERS WHEN THE RESOURCE IS
+/// ABSENT, as a reason-code literal (<c>seed_not_owned_in_pack</c>). A consumption has no receipt of its own: it is
+/// observable exactly where the Mod says "you do not have it".</item>
+/// </list>
+/// </summary>
+/// <param name="Subject">What moves, what must hold, or which resource - in the engine's or the pack's own words.</param>
+/// <param name="ObservedBy">The seam, read as its class says above.</param>
+public sealed record FarmhandActionEffect(FarmhandActionEffectClass Class, string Subject, string ObservedBy);
+
+/// <summary>
+/// What ONE action declares about the world a later step can require: the effects it has, or the reason it has none.
+///
+/// <para>
+/// ONE OF THE TWO IS ALWAYS SAID. An empty list with no reason is the silence this field replaces - the same shape
+/// <see cref="FarmhandChoreDeclaration.LeavesRows"/> and <see cref="FarmhandClearingDeclaration.Destructive"/> were given,
+/// and for the same reason: a default would let the next row stay silent without noticing that silence is the answer
+/// nobody can act on. `ActionEffectDeclarationCoverageTests` refuses both halves of the pair at once.
+/// </para>
+/// </summary>
+/// <param name="Declared">The effects this action has, each with the seam that observes it.</param>
+/// <param name="None">Why this action has none, from <see cref="NoneReasons"/>, or null when <paramref name="Declared"/> says it.</param>
+public sealed record FarmhandActionEffects(IReadOnlyList<FarmhandActionEffect> Declared, string? None = null)
+{
+    /// <summary>The step only reads: its `effect` is `read`, and what it returns is a reading no later step can require.</summary>
+    public const string ObservationOnly = "observation_only";
+
+    /// <summary>
+    /// The change is the actor's OWN body - the tool she holds, the wearable she has on, the mount under her, the emote
+    /// or the facing - and the Mod re-resolves all of it at execution, so no step can depend on having set it.
+    /// </summary>
+    public const string ActorBodyOnly = "actor_body_only";
+
+    /// <summary>
+    /// The change is confined to the row the action ADDRESSED: a machine's held object, a cask, a sign's text, a pond,
+    /// a gate, a light, a colour, a rotation, a pet's mood, a villager's friendship. The tile rule already orders a later
+    /// step on that row, and nothing outside it moved.
+    /// </summary>
+    public const string AddressedRowOnly = "addressed_row_only";
+
+    /// <summary>
+    /// The step writes a record the GAME owns - a quest or order accepted, a modal or dialogue answered, a level-up
+    /// choice made, a chat line posted, an entity named - and the plan's vocabulary has no requirement that reads it.
+    /// </summary>
+    public const string GameOwnedLedger = "game_owned_ledger";
+
+    /// <summary>
+    /// THE HONEST GAP, declared rather than smoothed over: the action really does move a resource in or out of the pack,
+    /// and no receipt fact names WHICH. Its postcondition is the generic `native_action_postcondition` and it publishes no
+    /// `outputFact`, so `produces` could only be backed by prose. Giving the row a receipt fact is what closes it.
+    /// </summary>
+    public const string ResourceUnprovenByTheReceipt = "resource_unproven_by_the_receipt";
+
+    /// <summary>Every admitted reason, so the gates compare against one set instead of a hand-written copy.</summary>
+    public static readonly IReadOnlyList<string> NoneReasons = Array.AsReadOnly(new[]
+    {
+        ObservationOnly,
+        ActorBodyOnly,
+        AddressedRowOnly,
+        GameOwnedLedger,
+        ResourceUnprovenByTheReceipt,
+    });
+}
+
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
 /// <remarks><see cref="WatchdogMs"/> is the descriptor-owned static execution
 /// budget for Body Program nodes of this action (default 60s). It is a Mod
@@ -478,7 +605,13 @@ public sealed record FarmhandChoreDeclaration(bool Consumes, string? LeavesRows 
 /// that consumes no family says so with a token from <see cref="FarmhandChoreDeclaration.LeavesRowsReasons"/> instead of
 /// staying silent, because silence is what the remainder clause has to report as `未测`.
 /// </param>
-public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false, FarmhandChargedFootprintDeclaration? ChargedFootprint = null, FarmhandChoreDeclaration? Chore = null);
+/// <param name="Effects">
+/// What this action REQUIRES of the world and what it CHANGES, in the four classes that decide whether a later step can
+/// depend on it (<see cref="FarmhandActionEffectClass"/>), or the reason it has none. Null only on a row that is not an
+/// action: every registration states one or the other, and `ActionEffectDeclarationCoverageTests` fails by name on a row
+/// that states neither.
+/// </param>
+public sealed record FarmhandActionDescriptor(IReadOnlyList<FarmhandActionArgument> Arguments, IReadOnlyDictionary<string, string> OutputFacts, IReadOnlyList<FarmhandActionResourceTemplateClaim> ResourceTemplate, string Effect, string Postcondition, string? NativeBinding = null, FarmhandActionObservationBindingDescriptor? SceneTarget = null, FarmhandExecutionAcceptanceFacts? Acceptance = null, FarmhandActionApproachRequirement? Approach = null, long WatchdogMs = FarmhandActionCatalog.DefaultWatchdogMs, string? TargetFamily = null, FarmhandClearingDeclaration? Clears = null, bool Synthetic = false, FarmhandChargedFootprintDeclaration? ChargedFootprint = null, FarmhandChoreDeclaration? Chore = null, FarmhandActionEffects? Effects = null);
 /// <summary>The only ordinary-Farmhand operation membership and descriptor source.</summary>
 public sealed record FarmhandActionRegistration(string ActionId, string FamilyId, int IdentityVersion, FarmhandActionLifecycle Lifecycle, FarmhandOperationKind Kind, FarmhandActionHandlerGroup? HandlerGroup, FarmhandActionDescriptor? Descriptor = null);
 public enum FarmhandActionHandlerGroup { Movement, Farming, Gathering, MachinesAndAnimals, ResourceTools, Expression, WorldLifecycle, Modal }
@@ -703,6 +836,33 @@ public static class FarmhandActionCatalog
     /// </summary>
     public static string? ChoreEntry(string? actionId) =>
         ChoreFamilyOf(actionId) is { } family ? $"{ChoreField}={family}" : null;
+
+
+    /// <summary>One descriptor's effects: the classes it has, each with its own seam.</summary>
+    private static FarmhandActionEffects Effects(params FarmhandActionEffect[] declared) =>
+        new(Array.AsReadOnly(declared), null);
+
+    /// <summary>One descriptor's answer that it has no effect, with the reason from <see cref="FarmhandActionEffects.NoneReasons"/>.</summary>
+    private static FarmhandActionEffects None(string reason) =>
+        FarmhandActionEffects.NoneReasons.Contains(reason, StringComparer.Ordinal)
+            ? new FarmhandActionEffects(Array.AsReadOnly(Array.Empty<FarmhandActionEffect>()), reason)
+            : throw new InvalidOperationException($"effect reason '{reason}' is not in the declared set");
+
+    /// <summary>Her place changed: `writtenBy` is the symbol the executor writes it through.</summary>
+    private static FarmhandActionEffect MovesActor(string subject, string writtenBy) =>
+        new(FarmhandActionEffectClass.MovesActor, subject, writtenBy);
+
+    /// <summary>The handler refuses unless `refusedByPredicate` holds where she stands.</summary>
+    private static FarmhandActionEffect RequiresPlace(string place, string refusedByPredicate) =>
+        new(FarmhandActionEffectClass.RequiresPlace, place, refusedByPredicate);
+
+    /// <summary>A receipt fact (`postcondition`, or an `outputFact` key) already proves the resource is in hand.</summary>
+    private static FarmhandActionEffect Produces(string resource, string provedByReceiptFact) =>
+        new(FarmhandActionEffectClass.Produces, resource, provedByReceiptFact);
+
+    /// <summary>The handler refuses with the reason code `refusedBy` when the resource is not held.</summary>
+    private static FarmhandActionEffect Consumes(string resource, string refusedBy) =>
+        new(FarmhandActionEffectClass.Consumes, resource, refusedBy);
 
     public static readonly IReadOnlyList<FarmhandActionRegistration> Registrations = Array.AsReadOnly(new[]
     {
@@ -1332,7 +1492,18 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         actionId is null || !ActionsThatChangeNothing.ContainsKey(actionId);
 
     static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
-    private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily });
+    private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, (targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily }) with { Effects = DeclaredEffectsOf(id) });
+
+    /// <summary>
+    /// The effects one registration declared, or a throw naming the row that declared neither an effect nor a reason.
+    ///
+    /// Thrown at TYPE INITIALIZATION rather than left null: a descriptor whose effects were simply never filled in is the
+    /// silence this field replaces, and a null that reads as "no effects" is the one answer nobody can act on.
+    /// </summary>
+    private static FarmhandActionEffects DeclaredEffectsOf(string actionId) =>
+        DeclaredEffects.TryGetValue(actionId, out FarmhandActionEffects? effects)
+            ? effects
+            : throw new InvalidOperationException($"farmhand action '{actionId}' declares neither an effect nor a reason it has none");
 
     /// <summary>
     /// The same descriptor with its approach requirement declared as <see cref="FarmhandActionApproachRequirement.SelfWalked"/>:
@@ -1455,7 +1626,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
                 : throw new InvalidOperationException($"{nameof(FarmhandChoreDeclaration)} reason '{reason}' is not in the declared set."),
         };
 
-    private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete"));
+    private static FarmhandActionRegistration R(string id, string family) => new(id, family, 1, FarmhandActionLifecycle.Published, FarmhandOperationKind.ReadOnly, null, A(null, Array.Empty<FarmhandActionResourceTemplateClaim>(), "observation_complete") with { Effects = DeclaredEffectsOf(id) });
     /// <summary>
     /// One descriptor from a list of <c>(name, type)</c> arguments, none of which is a TILE: an argument named
     /// <c>x</c> or <c>y</c> built here is left <see cref="FarmhandTileSpace"/>-less on purpose, so
@@ -1873,4 +2044,161 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("expectedTargetId","string") },
         new Dictionary<string, string> { ["machine_target_id"] = "string" },
         EmbodiedActorResource, "read", "native_action_postcondition");
+    /// <summary>
+    /// What EVERY action REQUIRES of the world and what it CHANGES, or why it has none.
+    ///
+    /// <para>
+    /// LAZY, AND DELIBERATELY NOT A FIELD BESIDE THE ROWS. A static field initialized textually before
+    /// <see cref="Registrations"/> would have to sit INSIDE the registration block, and four source-shape tests slice
+    /// this file from the first \<id>\` they find to the next marker - a table placed there made them read the table's
+    /// tail as if it were the action's descriptor (measured: BuildFarmBuildingActionSourceShapeTests,
+    /// ClearFishPondActionSourceShapeTests, AcceptDailyQuestActionTests, DeclaredToolSelectionTests). The property is
+    /// therefore declared here and its table is declared at the END of the file, so the text a source reader meets first
+    /// is still the registration.
+    /// </para>
+    /// <para>
+    /// ONE TABLE, AND IT ANSWERS EVERY REGISTRATION. <see cref="E"/> calls <see cref="DeclaredEffectsOf"/>, which
+    /// throws for an id this table does not answer - so a new row cannot be silently empty, which is the defect the field
+    /// exists to remove. ActionEffectDeclarationCoverageTests holds both directions (every registration has an entry,
+    /// every entry names a registration), prints the population, and re-reads each entry against the handler or the
+    /// receipt it names.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, FarmhandActionEffects> DeclaredEffects => declaredEffects ??= DeclareEffects();
+
+    /// <summary>The one dictionary <see cref="DeclaredEffects"/> builds on first use; null until then.</summary>
+    private static IReadOnlyDictionary<string, FarmhandActionEffects>? declaredEffects;
+
+    /// <summary>
+    /// The declaration itself, keyed by the action id it belongs to. Declared at the END of the file for the reason
+    /// <see cref="DeclaredEffects"/> states, and kept in this class because the ids are the CATALOGUE's own and a
+    /// second file would let the two drift apart.
+    /// </summary>
+    /// <summary>
+    /// What EVERY action REQUIRES of the world and what it CHANGES, keyed by the action id it belongs to.
+    ///
+    /// <para>
+    /// WHY ONE TABLE AND NOT 106 DESCRIPTOR SUFFIXES. The facts are declared once per action and applied by
+    /// <see cref="E"/>, which throws at type initialization for a registration this table does not answer - so a new row
+    /// cannot be silently empty, which is the defect the field exists to remove. `ActionEffectDeclarationCoverageTests`
+    /// holds both directions (every registration has an entry, every entry names a registration), prints the counts, and
+    /// re-reads each entry against the handler or the receipt it names.
+    /// </para>
+    /// <para>
+    /// THE IDS ARE THE CATALOGUE'S OWN. This file already carries action-keyed declarations beside the rows they describe
+    /// (<see cref="ActionsThatChangeNothing"/>, <see cref="ModalResolvingActionIds"/>), and the thing they replace here is
+    /// not a table but a SILENCE: four Host-side patches, each a pair of action ids written where nothing could check it
+    /// against the Mod.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, FarmhandActionEffects> DeclareEffects() =>
+        new Dictionary<string, FarmhandActionEffects>(StringComparer.Ordinal)
+        {
+            ["move_to_tile"] = Effects(MovesActor("actor_position", "LocalMoveSpec")),
+            ["equip_tool"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["travel"] = Effects(MovesActor("actor_location", "warpFarmer"), RequiresPlace("warp_source_of_this_map", "RequestLocalDoorTransition")),
+            ["ride_minecart"] = Effects(MovesActor("actor_location", "MinecartWarp")),
+            ["ride_bus"] = Effects(MovesActor("actor_location", "answerDialogue")),
+            ["select_mine_elevator_floor"] = Effects(MovesActor("actor_location", "warpFarmer")),
+            ["use_raft"] = Effects(MovesActor("actor_position", "isRafting")),
+            ["mount_transport"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["enter_mine"] = Effects(MovesActor("actor_location", "Game1.enterMine")),
+            ["use_mine_ladder"] = Effects(MovesActor("actor_location", "TryAnswerLocationQuestion")),
+            ["enter_exit"] = Effects(MovesActor("actor_location", "warpFarmer"), RequiresPlace("exit_tile_of_this_map", "RequestLocalDoorTransition")),
+            ["till_soil"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["pickup_forage"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["pickup_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["water_crop"] = Effects(Consumes("watering_can_water", "watering_can_empty")),
+            ["plant_seed"] = Effects(Consumes("seed", "seed_not_owned_in_pack")),
+            ["fertilize_tile"] = Effects(Consumes("fertilizer", "fertilizer_not_owned_in_slot")),
+            ["machine_inspect"] = None(FarmhandActionEffects.ObservationOnly),
+            ["machine_load"] = Effects(Consumes("machine_input", "machine_load_input_not_owned_in_pack")),
+            ["machine_collect_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["collect_animal_product"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["feed_animal"] = Effects(Consumes("hay", "hay_not_owned_in_slot")),
+            ["use_item"] = Effects(Consumes("pack_item", "item_not_owned_in_pack")),
+            ["harvest_crop"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["place_wood_fence"] = Effects(Consumes("wood_fence", "wood_fence_not_owned_in_slot")),
+            ["place_crab_pot"] = Effects(Consumes("crab_pot", "crab_pot_not_owned_in_slot")),
+            ["bait_crab_pot"] = Effects(Consumes("bait", "bait_not_owned_in_slot")),
+            ["place_owned_object"] = Effects(Consumes("pack_item", "place_owned_object_not_owned_in_slot")),
+            ["remove_placed_item"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["move_placed_furniture"] = Effects(Produces("carried_furniture", "postcondition")),
+            ["break_container"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["rotate_furniture"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["remove_fence"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["put_item_in_fish_tank"] = Effects(Consumes("pack_item", "fish_tank_item_not_owned_in_slot")),
+            ["place_item_on_pedestal"] = Effects(Consumes("pack_item", "pedestal_item_not_owned_in_slot")),
+            ["chop_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["break_rock"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["clear_hoedirt"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["dig_artifact_spot"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["refill_watering_can"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["inspect_world_map"] = None(FarmhandActionEffects.ObservationOnly),
+            ["find_destination"] = None(FarmhandActionEffects.ObservationOnly),
+            ["observe_scene"] = None(FarmhandActionEffects.ObservationOnly),
+            ["navigate_to_destination"] = Effects(MovesActor("actor_position", "LocalMoveSpec")),
+            ["clear_debris"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["break_resource_clump"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["fish_here"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["npc_relationship"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["pet_animal"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["pet_farm_animal"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["water_pet_bowl"] = Effects(Consumes("watering_can_water", "watering_can_empty")),
+            ["water_slime_hutch_trough"] = Effects(Consumes("watering_can_water", "watering_can_empty")),
+            ["interact_npc_with_item"] = Effects(Consumes("pack_item", "item_not_owned_in_pack")),
+            ["talk_to_npc"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["express_emote"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["face_direction"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["chest_store"] = Effects(Consumes("pack_item", "item_not_owned")),
+            ["chest_retrieve"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["chop_stump"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["plant_sapling"] = Effects(Consumes("sapling", "sapling_not_owned_in_pack")),
+            ["cut_weeds"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["cut_grass"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["clear_cask"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["dress_mannequin"] = Effects(Consumes("clothing", "clothing_not_held_in_requested_slot")),
+            ["set_sign_display"] = Effects(Consumes("pack_item", "item_not_held_in_requested_slot")),
+            ["deposit_silo_hay"] = Effects(Consumes("hay", "hay_not_held_in_requested_slot")),
+            ["toggle_tool_light"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["withdraw_silo_hay"] = Effects(Produces("hay", "postcondition")),
+            ["use_obelisk"] = Effects(MovesActor("actor_location", "PerformObeliskWarp")),
+            ["toggle_animal_door"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["use_warp_item"] = Effects(Consumes("pack_item", "item_not_owned_in_slot"), MovesActor("actor_location", "performUseAction")),
+            ["pan_ore"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["claim_mail_attachment"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["load_building_chest"] = Effects(Consumes("pack_item", "item_not_owned_in_slot")),
+            ["collect_building_chest_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["scythe_crop"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["sweep_scythe"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["harvest_bush"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["harvest_fruit_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["shake_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["take_pedestal_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["toggle_fence_gate"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["craft_item"] = Effects(Consumes("craft_ingredients", "craft_ingredients_missing")),
+            ["cook_recipe"] = Effects(Consumes("recipe_ingredients", "recipe_ingredients_unavailable")),
+            ["collect_crab_pot_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["shop_purchase"] = Effects(Produces("purchased_item", "postcondition")),
+            ["ship_item"] = Effects(Consumes("pack_item", "item_not_owned_in_slot")),
+            ["equip_wearable"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["unequip_wearable"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["dismount_transport"] = None(FarmhandActionEffects.ActorBodyOnly),
+            ["dismiss_modal"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["answer_dialogue"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["respond_level_up"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["sleep"] = Effects(RequiresPlace("home_indoors", "SleepAndAdvanceDayLifecycle.HomeOf")),
+            ["send_multiplayer_chat"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["color_placed_object"] = None(FarmhandActionEffects.AddressedRowOnly),
+            ["clear_fish_pond"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["build_farm_building"] = Effects(Consumes("build_materials", "build_farm_building_insufficient_materials")),
+            ["accept_daily_quest"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["accept_special_order"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["claim_museum_reward"] = Effects(Produces("museum_rewards", "postcondition")),
+            ["name_entity"] = None(FarmhandActionEffects.GameOwnedLedger),
+            ["redeem_prize_ticket"] = Effects(Consumes("prize_ticket", "prize_ticket_unavailable")),
+            ["tailor_clothing"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["dye_clothing_with_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["open_geode"] = Effects(Consumes("geode", "geode_not_owned")),
+        };
 }

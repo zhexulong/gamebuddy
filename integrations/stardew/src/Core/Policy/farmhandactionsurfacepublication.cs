@@ -68,8 +68,42 @@ public sealed record FarmhandActionDescriptorProjection(
     /// the claim is true.
     /// </para>
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Synthetic = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Synthetic = null,
+    /// <summary>
+    /// What this action REQUIRES of the world and what it CHANGES, or the reason it has none - the four classes that decide
+    /// whether a later step in the same script can depend on it (<see cref="FarmhandActionEffectClass"/>).
+    ///
+    /// <para>
+    /// Published because the compiler that has to answer that question runs OUTSIDE the game: `body-program-script.ts`
+    /// builds a script's dependency edges from the descriptor it holds, and the tile rule it has today is the only edge its
+    /// descriptors declare. Four patches live in that file for the one blindness - a walk to a door this script's own
+    /// transition was refused for, seeds a plan plants more of than it holds, water a plan spends past its can, and steps
+    /// written for a map a refused transition never reached - and every one of them is a table of action ids the descriptor
+    /// could have answered.
+    /// </para>
+    /// <para>
+    /// Omitted when null, like `Approach`, `TargetFamily`, `NativeBinding` and `Synthetic`, so a row that is not an action
+    /// (a plan form) keeps the exact wire shape it had before. A registration never omits it: `FarmhandActionEffects.None`
+    /// with its reason is a declaration, and the empty list is what this member replaces.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionEffectsProjection? Effects = null
 );
+
+/// <summary>
+/// One action's effects as the artifact carries them: the classes it declares, or the reason it has none.
+///
+/// <para>
+/// `declared` is ALWAYS present and `none` is present only when it holds the claim, so a consumer reads one member for the
+/// count and the other for the absence; the pair is never both empty and both set (`ActionEffectDeclarationCoverageTests`).
+/// </para>
+/// </summary>
+public sealed record FarmhandActionEffectsProjection(
+    IReadOnlyList<FarmhandActionEffectProjection> Declared,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? None = null);
+
+/// <summary>One declared effect on the wire: the class, its subject, and the seam that observes it.</summary>
+public sealed record FarmhandActionEffectProjection(string Class, string Subject, string ObservedBy);
 
 /// <summary>
 /// One declared argument on the cross-language surface. <see cref="Enum"/> is the
@@ -190,7 +224,13 @@ public static class FarmhandActionSurfacePublication
                 : null,
             TargetFamily: descriptor.TargetFamily,
             NativeBinding: descriptor.NativeBinding,
-            Synthetic: descriptor.Synthetic ? true : null);
+            Synthetic: descriptor.Synthetic ? true : null,
+            Effects: descriptor.Effects is { } effects
+                ? new FarmhandActionEffectsProjection(
+                    Array.AsReadOnly(effects.Declared.Select(effect =>
+                        new FarmhandActionEffectProjection(effect.Class.ToWireValue(), effect.Subject, effect.ObservedBy)).ToArray()),
+                    effects.None)
+                : null);
     }
 
     private static void ValidateIdentity(string value, string name)

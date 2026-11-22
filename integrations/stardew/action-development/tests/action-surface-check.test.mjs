@@ -10,6 +10,7 @@ import {
   runActionSurfaceCheck,
 } from "../src/action-surface-check.mjs";
 import { readFixedPackageUtf8File } from "../src/package-safe-reader.mjs";
+import { ACTION_SURFACE_MAX_JSON_BYTES } from "../src/action-surface.mjs";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const packageDirectory = path.dirname(directory);
@@ -25,7 +26,7 @@ test("checks the exact package-relative generated action-surface artifact", asyn
   assert.equal(report.artifact, ACTION_SURFACE_ARTIFACT_RELATIVE_PATH);
   assert.ok(report.actions > 0);
   assert.equal(Buffer.byteLength(JSON.stringify(report), "utf8") <= ACTION_SURFACE_CHECK_MAX_REPORT_BYTES, true);
-  assert.equal(artifact.byteLength <= 64 * 1024, true);
+  assert.equal(artifact.byteLength <= ACTION_SURFACE_MAX_JSON_BYTES, true);
 });
 
 test("source has no parent discovery, shell, producer, runtime, or bridge boundary", async () => {

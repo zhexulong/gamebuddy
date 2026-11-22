@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ACTION_SURFACE_LIFECYCLES, ACTION_SURFACE_VISIBLE_LIFECYCLES } from "./action-surface.mjs";
+import { ACTION_SURFACE_LIFECYCLES, ACTION_SURFACE_MAX_JSON_BYTES, ACTION_SURFACE_VISIBLE_LIFECYCLES } from "./action-surface.mjs";
 
 /**
  * Stardew-owned deterministic actual-source projection producer.
@@ -108,7 +108,9 @@ const ACTION_SOURCE_PATHS = Object.freeze([
   {
     category: "canonical_action_surface",
     path: "integrations/stardew/action-development/contracts/generated/action-surface.v1.json",
-    maxBytes: 64 * 1024,
+    // The allowance is the surface's OWN derived bound, imported rather than typed: two spellings of one limit is exactly
+    // how the artifact outgrew this one while `ACTION_SURFACE_MAX_JSON_BYTES` said it still fitted.
+    maxBytes: ACTION_SURFACE_MAX_JSON_BYTES,
   },
   {
     category: "mod_bridge_session",
@@ -932,7 +934,7 @@ export async function loadSources(repositoryRoot) {
           if (resolved !== null) pending.push(resolved);
         }
       }
-      if (totalBytes > entry.maxBytes) fail(`source_too_large:${entry.category}`);
+      if (totalBytes > entry.maxBytes) fail(`source_too_large:${entry.category}:${totalBytes}>${entry.maxBytes}`);
       sources[entry.category] = JSON.stringify({
         entries,
         files: Object.fromEntries(Object.entries(files).sort(([left], [right]) => (left < right ? -1 : 1))),

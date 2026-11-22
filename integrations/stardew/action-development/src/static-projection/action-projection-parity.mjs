@@ -46,7 +46,7 @@ const PROJECTION_PARITY_ACTION_REQUIRED_KEYS = Object.freeze([
  * at the original nine while 80 of 95 published actions grew `targetFamily`. The drift is now watched by
  * `action-projection-parity-drift.test.mjs`, which CAN import both and asserts the two lists are equal.
  */
-const PROJECTION_PARITY_ACTION_OPTIONAL_KEYS = Object.freeze(["approach", "targetFamily", "nativeBinding", "synthetic"]);
+const PROJECTION_PARITY_ACTION_OPTIONAL_KEYS = Object.freeze(["approach", "targetFamily", "nativeBinding", "synthetic", "effects"]);
 const PROJECTION_PARITY_LIFECYCLE_KEYS = Object.freeze([
   "admittedLifecycles",
   "executableActionIds",
@@ -97,19 +97,32 @@ export const PROJECTION_PARITY_ABSENT_ROUTE_TOKENS = Object.freeze([
   "withdrawn",
 ]);
 // Derived from the two facts it depends on, so the three cannot drift apart
-// again: the surface bound it embeds (ACTION_SURFACE_MAX_JSON_BYTES = 64 KiB in
+// again: the surface bound it embeds (`ACTION_SURFACE_MAX_JSON_BYTES` in
 // ../action-surface.mjs) doubled to cover the pretty-printed encoding. This
 // module is a self-contained strict consumer and deliberately imports nothing,
 // so the value is restated here rather than imported.
 //
-// A small independent constant does not work. At the previous 32 KiB the bound
-// was already structurally incompatible with the declared capacity: measured
-// 45 actions give a 35070-byte snapshot (652 bytes/action plus 5741 bytes of
-// other sections), which projects to ~89 KiB at
-// PROJECTION_PARITY_MAX_REGISTRATIONS = 128 -- i.e. the register's own declared
-// capacity could never be represented. The four newest actions were simply the
-// first to reach it.
-const PROJECTION_PARITY_MAX_JSON_BYTES = 128 * 1024;
+// The surface bound is ITSELF derived (member vocabulary x descriptor allowance + effects x effect
+// allowance, over the registration capacity), which is restated here with its factors shown rather than
+// as a total: a typed total is what made the old number "no new member", measured 2026-11-22 when the
+// surface reached 73,258 bytes against a 64 KiB ceiling it could no longer grow into.
+//
+// A small independent constant does not work either. At 32 KiB the bound was already structurally
+// incompatible with the declared capacity: measured 45 actions give a 35070-byte snapshot (652
+// bytes/action plus 5741 bytes of other sections), which projects to ~89 KiB at
+// PROJECTION_PARITY_MAX_REGISTRATIONS = 128 -- i.e. the register's own declared capacity could never be
+// represented. The four newest actions were simply the first to reach it.
+const PROJECTION_PARITY_SURFACE_MEMBERS = 14;
+const PROJECTION_PARITY_SURFACE_EFFECTS = 8;
+const PROJECTION_PARITY_SURFACE_MEMBER_BYTES = 64;
+const PROJECTION_PARITY_SURFACE_ENVELOPE_BYTES = 256;
+const PROJECTION_PARITY_MAX_JSON_BYTES =
+  2 * (
+    128
+      * (PROJECTION_PARITY_SURFACE_MEMBER_BYTES * PROJECTION_PARITY_SURFACE_MEMBERS
+        + PROJECTION_PARITY_SURFACE_MEMBER_BYTES * PROJECTION_PARITY_SURFACE_EFFECTS)
+    + PROJECTION_PARITY_SURFACE_ENVELOPE_BYTES
+  );
 export { PROJECTION_PARITY_MAX_JSON_BYTES };
 const PROJECTION_PARITY_MAX_REGISTRATIONS = 128;
 const PROJECTION_PARITY_MAX_IDENTIFIER_LENGTH = 128;

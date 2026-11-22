@@ -30,6 +30,15 @@
         "effect": "write",
         "postcondition": {
           "name": "native_action_postcondition"
+        },
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_position",
+              "observedBy": "LocalMoveSpec"
+            }
+          ]
         }
       },
       {
@@ -70,7 +79,11 @@
           "name": "native_action_postcondition"
         },
         "targetFamily": "toolSlots",
-        "nativeBinding": "Game1.player.CurrentToolIndex"
+        "nativeBinding": "Game1.player.CurrentToolIndex",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "travel",
@@ -95,7 +108,21 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "warps"
+        "targetFamily": "warps",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "warpFarmer"
+            },
+            {
+              "class": "requires_place",
+              "subject": "warp_source_of_this_map",
+              "observedBy": "RequestLocalDoorTransition"
+            }
+          ]
+        }
       },
       {
         "actionId": "ride_minecart",
@@ -126,7 +153,16 @@
         "postcondition": {
           "name": "minecart_ride_completed"
         },
-        "targetFamily": "minecartTargets"
+        "targetFamily": "minecartTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "MinecartWarp"
+            }
+          ]
+        }
       },
       {
         "actionId": "ride_bus",
@@ -147,7 +183,16 @@
         "postcondition": {
           "name": "bus_arrived"
         },
-        "nativeBinding": "BusStop.checkAction+answerDialogue"
+        "nativeBinding": "BusStop.checkAction+answerDialogue",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "answerDialogue"
+            }
+          ]
+        }
       },
       {
         "actionId": "select_mine_elevator_floor",
@@ -172,7 +217,16 @@
         "postcondition": {
           "name": "mine_elevator_floor_selected"
         },
-        "targetFamily": "mineElevatorFloorTargets"
+        "targetFamily": "mineElevatorFloorTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "warpFarmer"
+            }
+          ]
+        }
       },
       {
         "actionId": "use_raft",
@@ -208,7 +262,16 @@
         "postcondition": {
           "name": "raft_launched"
         },
-        "targetFamily": "raftTargets"
+        "targetFamily": "raftTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_position",
+              "observedBy": "isRafting"
+            }
+          ]
+        }
       },
       {
         "actionId": "mount_transport",
@@ -239,7 +302,11 @@
         "postcondition": {
           "name": "horse_mounted"
         },
-        "targetFamily": "horseTargets"
+        "targetFamily": "horseTargets",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "enter_mine",
@@ -270,7 +337,16 @@
         "postcondition": {
           "name": "mine_entered"
         },
-        "targetFamily": "mineEntranceTargets"
+        "targetFamily": "mineEntranceTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "Game1.enterMine"
+            }
+          ]
+        }
       },
       {
         "actionId": "use_mine_ladder",
@@ -301,7 +377,16 @@
         "postcondition": {
           "name": "mine_left"
         },
-        "targetFamily": "mineEntranceTargets"
+        "targetFamily": "mineEntranceTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "TryAnswerLocationQuestion"
+            }
+          ]
+        }
       },
       {
         "actionId": "enter_exit",
@@ -326,7 +411,21 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "warps"
+        "targetFamily": "warps",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "warpFarmer"
+            },
+            {
+              "class": "requires_place",
+              "subject": "exit_tile_of_this_map",
+              "observedBy": "RequestLocalDoorTransition"
+            }
+          ]
+        }
       },
       {
         "actionId": "till_soil",
@@ -361,7 +460,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "soilTiles"
+        "targetFamily": "soilTiles",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "pickup_forage",
@@ -395,7 +498,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "forageTargets"
+        "targetFamily": "forageTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "pickup_item",
@@ -429,7 +536,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "itemTargets"
+        "targetFamily": "itemTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "water_crop",
@@ -467,7 +578,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "cropTargets"
+        "targetFamily": "cropTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "watering_can_water",
+              "observedBy": "watering_can_empty"
+            }
+          ]
+        }
       },
       {
         "actionId": "plant_seed",
@@ -507,7 +627,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "seedTargets"
+        "targetFamily": "seedTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "seed",
+              "observedBy": "seed_not_owned_in_pack"
+            }
+          ]
+        }
       },
       {
         "actionId": "fertilize_tile",
@@ -545,7 +674,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "fertilizerTargets"
+        "targetFamily": "fertilizerTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "fertilizer",
+              "observedBy": "fertilizer_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "machine_inspect",
@@ -578,7 +716,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "machineTargets"
+        "targetFamily": "machineTargets",
+        "effects": {
+          "declared": [],
+          "none": "observation_only"
+        }
       },
       {
         "actionId": "machine_load",
@@ -617,7 +759,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "machineTargets"
+        "targetFamily": "machineTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "machine_input",
+              "observedBy": "machine_load_input_not_owned_in_pack"
+            }
+          ]
+        }
       },
       {
         "actionId": "machine_collect_output",
@@ -648,7 +799,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "machineTargets"
+        "targetFamily": "machineTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "collect_animal_product",
@@ -683,7 +838,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "animalProductTargets"
+        "targetFamily": "animalProductTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "feed_animal",
@@ -718,7 +877,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "feedTroughTargets"
+        "targetFamily": "feedTroughTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "hay",
+              "observedBy": "hay_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "use_item",
@@ -747,7 +915,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "foodTargets"
+        "targetFamily": "foodTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned_in_pack"
+            }
+          ]
+        }
       },
       {
         "actionId": "harvest_crop",
@@ -781,7 +958,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "harvestTargets"
+        "targetFamily": "harvestTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "place_wood_fence",
@@ -820,7 +1001,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "woodFenceTargets"
+        "targetFamily": "woodFenceTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "wood_fence",
+              "observedBy": "wood_fence_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "place_crab_pot",
@@ -859,7 +1049,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "crabPotTargets"
+        "targetFamily": "crabPotTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "crab_pot",
+              "observedBy": "crab_pot_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "bait_crab_pot",
@@ -898,7 +1097,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "baitCrabPotTargets"
+        "targetFamily": "baitCrabPotTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "bait",
+              "observedBy": "bait_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "place_owned_object",
@@ -937,7 +1145,16 @@
           "name": "owned_object_placed"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "Object.placementAction"
+        "nativeBinding": "Object.placementAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "place_owned_object_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "remove_placed_item",
@@ -977,7 +1194,11 @@
           "name": "placed_item_removed"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "Object.performRemoveAction"
+        "nativeBinding": "Object.performRemoveAction",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "move_placed_furniture",
@@ -1010,7 +1231,16 @@
           "name": "placed_furniture_picked_up"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "GameLocation.removeQueuedFurniture"
+        "nativeBinding": "GameLocation.removeQueuedFurniture",
+        "effects": {
+          "declared": [
+            {
+              "class": "produces",
+              "subject": "carried_furniture",
+              "observedBy": "postcondition"
+            }
+          ]
+        }
       },
       {
         "actionId": "break_container",
@@ -1050,7 +1280,11 @@
           "name": "container_source_broken"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "BreakableContainer.performToolAction"
+        "nativeBinding": "BreakableContainer.performToolAction",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "rotate_furniture",
@@ -1083,7 +1317,11 @@
           "name": "furniture_rotated"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "Furniture.rotate"
+        "nativeBinding": "Furniture.rotate",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "remove_fence",
@@ -1120,7 +1358,11 @@
           "name": "fence_removed"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "Fence.performToolAction"
+        "nativeBinding": "Fence.performToolAction",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "put_item_in_fish_tank",
@@ -1160,7 +1402,16 @@
           "name": "fish_tank_item_deposited"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "FishTankFurniture.checkForAction"
+        "nativeBinding": "FishTankFurniture.checkForAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "fish_tank_item_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "place_item_on_pedestal",
@@ -1200,7 +1451,16 @@
           "name": "pedestal_item_placed"
         },
         "targetFamily": "worldObjectTargets",
-        "nativeBinding": "ItemPedestal.performObjectDropInAction"
+        "nativeBinding": "ItemPedestal.performObjectDropInAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "pedestal_item_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "chop_tree",
@@ -1240,7 +1500,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "treeChopSourceTargets"
+        "targetFamily": "treeChopSourceTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "break_rock",
@@ -1280,7 +1544,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "rockSourceTargets"
+        "targetFamily": "rockSourceTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "clear_hoedirt",
@@ -1319,7 +1587,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "clearHoeDirtTargets"
+        "targetFamily": "clearHoeDirtTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "dig_artifact_spot",
@@ -1358,7 +1630,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "artifactSpotTargets"
+        "targetFamily": "artifactSpotTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "refill_watering_can",
@@ -1397,7 +1673,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "refillWateringCanTargets"
+        "targetFamily": "refillWateringCanTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "inspect_world_map",
@@ -1412,6 +1692,10 @@
         "effect": "read",
         "postcondition": {
           "name": "observation_complete"
+        },
+        "effects": {
+          "declared": [],
+          "none": "observation_only"
         }
       },
       {
@@ -1427,6 +1711,10 @@
         "effect": "read",
         "postcondition": {
           "name": "observation_complete"
+        },
+        "effects": {
+          "declared": [],
+          "none": "observation_only"
         }
       },
       {
@@ -1442,6 +1730,10 @@
         "effect": "read",
         "postcondition": {
           "name": "observation_complete"
+        },
+        "effects": {
+          "declared": [],
+          "none": "observation_only"
         }
       },
       {
@@ -1468,6 +1760,15 @@
         "effect": "write",
         "postcondition": {
           "name": "arrived_at_destination"
+        },
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_position",
+              "observedBy": "LocalMoveSpec"
+            }
+          ]
         }
       },
       {
@@ -1504,7 +1805,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "debrisTargets"
+        "targetFamily": "debrisTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "break_resource_clump",
@@ -1536,7 +1841,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "debrisTargets"
+        "targetFamily": "debrisTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "fish_here",
@@ -1571,7 +1880,11 @@
         "postcondition": {
           "name": "fish_caught"
         },
-        "targetFamily": "waterTargets"
+        "targetFamily": "waterTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "npc_relationship",
@@ -1602,7 +1915,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "npcRelationshipTargets"
+        "targetFamily": "npcRelationshipTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "pet_animal",
@@ -1633,7 +1950,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "petTargets"
+        "targetFamily": "petTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "pet_farm_animal",
@@ -1664,7 +1985,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "farmAnimalPetTargets"
+        "targetFamily": "farmAnimalPetTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "water_pet_bowl",
@@ -1699,7 +2024,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "petBowlTargets"
+        "targetFamily": "petBowlTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "watering_can_water",
+              "observedBy": "watering_can_empty"
+            }
+          ]
+        }
       },
       {
         "actionId": "water_slime_hutch_trough",
@@ -1734,7 +2068,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "slimeHutchTroughTargets"
+        "targetFamily": "slimeHutchTroughTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "watering_can_water",
+              "observedBy": "watering_can_empty"
+            }
+          ]
+        }
       },
       {
         "actionId": "interact_npc_with_item",
@@ -1772,7 +2115,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "npcRelationshipTargets"
+        "targetFamily": "npcRelationshipTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned_in_pack"
+            }
+          ]
+        }
       },
       {
         "actionId": "talk_to_npc",
@@ -1803,7 +2155,11 @@
         "postcondition": {
           "name": "npc_talked"
         },
-        "targetFamily": "npcRelationshipTargets"
+        "targetFamily": "npcRelationshipTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "express_emote",
@@ -1851,7 +2207,11 @@
         "postcondition": {
           "name": "emote_started"
         },
-        "nativeBinding": "Farmer.doEmote"
+        "nativeBinding": "Farmer.doEmote",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "face_direction",
@@ -1882,7 +2242,11 @@
         "postcondition": {
           "name": "actor_facing_matches"
         },
-        "nativeBinding": "Farmer.faceDirection"
+        "nativeBinding": "Farmer.faceDirection",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "chest_store",
@@ -1912,7 +2276,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "chests"
+        "targetFamily": "chests",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned"
+            }
+          ]
+        }
       },
       {
         "actionId": "chest_retrieve",
@@ -1942,7 +2315,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "chests"
+        "targetFamily": "chests",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "chop_stump",
@@ -1982,7 +2359,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "treeStumpTargets"
+        "targetFamily": "treeStumpTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "plant_sapling",
@@ -2022,7 +2403,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "treeSaplingTargets"
+        "targetFamily": "treeSaplingTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "sapling",
+              "observedBy": "sapling_not_owned_in_pack"
+            }
+          ]
+        }
       },
       {
         "actionId": "cut_weeds",
@@ -2062,7 +2452,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "weedTargets"
+        "targetFamily": "weedTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "cut_grass",
@@ -2102,7 +2496,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "grassTargets"
+        "targetFamily": "grassTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "clear_cask",
@@ -2142,7 +2540,11 @@
           "name": "cask_cleared"
         },
         "targetFamily": "caskTargets",
-        "nativeBinding": "Cask.performToolAction"
+        "nativeBinding": "Cask.performToolAction",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "dress_mannequin",
@@ -2178,7 +2580,16 @@
           "name": "mannequin_dressed"
         },
         "targetFamily": "mannequinTargets",
-        "nativeBinding": "Mannequin.performObjectDropInAction"
+        "nativeBinding": "Mannequin.performObjectDropInAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "clothing",
+              "observedBy": "clothing_not_held_in_requested_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "set_sign_display",
@@ -2214,7 +2625,16 @@
           "name": "sign_display_set"
         },
         "targetFamily": "signTargets",
-        "nativeBinding": "Sign.checkForAction"
+        "nativeBinding": "Sign.checkForAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_held_in_requested_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "deposit_silo_hay",
@@ -2250,7 +2670,16 @@
           "name": "silo_hay_deposited"
         },
         "targetFamily": "siloTargets",
-        "nativeBinding": "GameLocation.tryToAddHay"
+        "nativeBinding": "GameLocation.tryToAddHay",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "hay",
+              "observedBy": "hay_not_held_in_requested_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "toggle_tool_light",
@@ -2287,7 +2716,11 @@
           "name": "tool_light_toggled"
         },
         "targetFamily": "lanternSlots",
-        "nativeBinding": "Lantern.DoFunction"
+        "nativeBinding": "Lantern.DoFunction",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "withdraw_silo_hay",
@@ -2319,7 +2752,16 @@
           "name": "silo_hay_taken"
         },
         "targetFamily": "siloTargets",
-        "nativeBinding": "GameLocation.GetHayFromAnySilo"
+        "nativeBinding": "GameLocation.GetHayFromAnySilo",
+        "effects": {
+          "declared": [
+            {
+              "class": "produces",
+              "subject": "hay",
+              "observedBy": "postcondition"
+            }
+          ]
+        }
       },
       {
         "actionId": "use_obelisk",
@@ -2350,7 +2792,16 @@
         "postcondition": {
           "name": "obelisk_arrived"
         },
-        "targetFamily": "obeliskTargets"
+        "targetFamily": "obeliskTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "PerformObeliskWarp"
+            }
+          ]
+        }
       },
       {
         "actionId": "toggle_animal_door",
@@ -2382,7 +2833,11 @@
           "name": "animal_door_toggled"
         },
         "targetFamily": "animalDoorTargets",
-        "nativeBinding": "Building.ToggleAnimalDoor"
+        "nativeBinding": "Building.ToggleAnimalDoor",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "use_warp_item",
@@ -2412,7 +2867,21 @@
           "name": "warp_item_arrived"
         },
         "targetFamily": "warpItemTargets",
-        "nativeBinding": "Object.performUseAction"
+        "nativeBinding": "Object.performUseAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned_in_slot"
+            },
+            {
+              "class": "moves_actor",
+              "subject": "actor_location",
+              "observedBy": "performUseAction"
+            }
+          ]
+        }
       },
       {
         "actionId": "pan_ore",
@@ -2449,7 +2918,11 @@
           "name": "ore_panned"
         },
         "targetFamily": "panSites",
-        "nativeBinding": "Pan.DoFunction"
+        "nativeBinding": "Pan.DoFunction",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "claim_mail_attachment",
@@ -2481,7 +2954,11 @@
           "name": "mail_claimed"
         },
         "targetFamily": "mailboxTargets",
-        "nativeBinding": "GameLocation.mailbox"
+        "nativeBinding": "GameLocation.mailbox",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "load_building_chest",
@@ -2517,7 +2994,16 @@
           "name": "building_chest_loaded"
         },
         "targetFamily": "buildingChestTargets",
-        "nativeBinding": "Building.PerformBuildingChestAction"
+        "nativeBinding": "Building.PerformBuildingChestAction",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "collect_building_chest_output",
@@ -2549,7 +3035,11 @@
           "name": "building_chest_output_collected"
         },
         "targetFamily": "buildingChestTargets",
-        "nativeBinding": "Building.PerformBuildingChestAction"
+        "nativeBinding": "Building.PerformBuildingChestAction",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "scythe_crop",
@@ -2589,7 +3079,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "scytheCropTargets"
+        "targetFamily": "scytheCropTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "sweep_scythe",
@@ -2621,7 +3115,11 @@
         "postcondition": {
           "name": "scythe_arc_occupancy_changed"
         },
-        "nativeBinding": "MeleeWeapon.DoDamage"
+        "nativeBinding": "MeleeWeapon.DoDamage",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "harvest_bush",
@@ -2652,7 +3150,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "bushTargets"
+        "targetFamily": "bushTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "harvest_fruit_tree",
@@ -2683,7 +3185,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "fruitTreeTargets"
+        "targetFamily": "fruitTreeTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "shake_tree",
@@ -2714,7 +3220,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "shakeTreeTargets"
+        "targetFamily": "shakeTreeTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "take_pedestal_item",
@@ -2745,7 +3255,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "pedestalTargets"
+        "targetFamily": "pedestalTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "toggle_fence_gate",
@@ -2776,7 +3290,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "fenceGateTargets"
+        "targetFamily": "fenceGateTargets",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "craft_item",
@@ -2801,7 +3319,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "craftingRecipeTargets"
+        "targetFamily": "craftingRecipeTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "craft_ingredients",
+              "observedBy": "craft_ingredients_missing"
+            }
+          ]
+        }
       },
       {
         "actionId": "cook_recipe",
@@ -2826,7 +3353,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "cookingRecipeTargets"
+        "targetFamily": "cookingRecipeTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "recipe_ingredients",
+              "observedBy": "recipe_ingredients_unavailable"
+            }
+          ]
+        }
       },
       {
         "actionId": "collect_crab_pot_output",
@@ -2857,7 +3393,11 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "crabPotCollectTargets"
+        "targetFamily": "crabPotCollectTargets",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "shop_purchase",
@@ -2888,7 +3428,16 @@
         "postcondition": {
           "name": "item_purchased"
         },
-        "targetFamily": "shopTargets"
+        "targetFamily": "shopTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "produces",
+              "subject": "purchased_item",
+              "observedBy": "postcondition"
+            }
+          ]
+        }
       },
       {
         "actionId": "ship_item",
@@ -2924,7 +3473,16 @@
         "postcondition": {
           "name": "native_action_postcondition"
         },
-        "targetFamily": "shippingBinTargets"
+        "targetFamily": "shippingBinTargets",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "pack_item",
+              "observedBy": "item_not_owned_in_slot"
+            }
+          ]
+        }
       },
       {
         "actionId": "equip_wearable",
@@ -2957,7 +3515,11 @@
           "name": "wearable_equipped"
         },
         "targetFamily": "wearableTargets",
-        "nativeBinding": "Farmer.Equip"
+        "nativeBinding": "Farmer.Equip",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "unequip_wearable",
@@ -2987,7 +3549,11 @@
           "name": "wearable_unequipped"
         },
         "targetFamily": "wearableTargets",
-        "nativeBinding": "Farmer.Equip"
+        "nativeBinding": "Farmer.Equip",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "dismount_transport",
@@ -3008,7 +3574,11 @@
         "postcondition": {
           "name": "transport_dismounted"
         },
-        "nativeBinding": "Horse.dismount"
+        "nativeBinding": "Horse.dismount",
+        "effects": {
+          "declared": [],
+          "none": "actor_body_only"
+        }
       },
       {
         "actionId": "dismiss_modal",
@@ -3029,7 +3599,11 @@
         "postcondition": {
           "name": "modal_dismissed"
         },
-        "nativeBinding": "DialogueBox.closeDialogue"
+        "nativeBinding": "DialogueBox.closeDialogue",
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
+        }
       },
       {
         "actionId": "answer_dialogue",
@@ -3054,7 +3628,11 @@
         "postcondition": {
           "name": "answer_dialogue_answered"
         },
-        "nativeBinding": "GameLocation.answerDialogue"
+        "nativeBinding": "GameLocation.answerDialogue",
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
+        }
       },
       {
         "actionId": "respond_level_up",
@@ -3091,7 +3669,11 @@
           "name": "level_up_resolved"
         },
         "targetFamily": "pendingLevelUpChoices",
-        "nativeBinding": "LevelUpMenu.okButtonClicked"
+        "nativeBinding": "LevelUpMenu.okButtonClicked",
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
+        }
       },
       {
         "actionId": "sleep",
@@ -3111,6 +3693,15 @@
         "effect": "write",
         "postcondition": {
           "name": "day_advanced"
+        },
+        "effects": {
+          "declared": [
+            {
+              "class": "requires_place",
+              "subject": "home_indoors",
+              "observedBy": "SleepAndAdvanceDayLifecycle.HomeOf"
+            }
+          ]
         }
       },
       {
@@ -3135,6 +3726,10 @@
         "effect": "write",
         "postcondition": {
           "name": "chat_message_sent"
+        },
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
         }
       },
       {
@@ -3170,7 +3765,11 @@
           "name": "placed_object_recolored"
         },
         "targetFamily": "colorTargets",
-        "nativeBinding": "DiscreteColorPicker.getColorFromSelection"
+        "nativeBinding": "DiscreteColorPicker.getColorFromSelection",
+        "effects": {
+          "declared": [],
+          "none": "addressed_row_only"
+        }
       },
       {
         "actionId": "clear_fish_pond",
@@ -3202,7 +3801,11 @@
           "name": "fish_pond_cleared"
         },
         "targetFamily": "fishPondTargets",
-        "nativeBinding": "FishPond.ClearPond"
+        "nativeBinding": "FishPond.ClearPond",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "build_farm_building",
@@ -3238,7 +3841,16 @@
         },
         "targetFamily": "farmBuildingTargets",
         "nativeBinding": "GameLocation.buildStructure",
-        "synthetic": true
+        "synthetic": true,
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "build_materials",
+              "observedBy": "build_farm_building_insufficient_materials"
+            }
+          ]
+        }
       },
       {
         "actionId": "accept_daily_quest",
@@ -3264,7 +3876,11 @@
           "name": "daily_quest_accepted"
         },
         "targetFamily": "dailyQuestTargets",
-        "nativeBinding": "Quest.accept"
+        "nativeBinding": "Quest.accept",
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
+        }
       },
       {
         "actionId": "accept_special_order",
@@ -3290,7 +3906,11 @@
           "name": "special_order_accepted"
         },
         "targetFamily": "specialOrderTargets",
-        "nativeBinding": "FarmerTeam.AddSpecialOrder"
+        "nativeBinding": "FarmerTeam.AddSpecialOrder",
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
+        }
       },
       {
         "actionId": "claim_museum_reward",
@@ -3316,7 +3936,16 @@
           "name": "museum_rewards_collected"
         },
         "targetFamily": "museumRewardTargets",
-        "nativeBinding": "LibraryMuseum.getRewardsForPlayer"
+        "nativeBinding": "LibraryMuseum.getRewardsForPlayer",
+        "effects": {
+          "declared": [
+            {
+              "class": "produces",
+              "subject": "museum_rewards",
+              "observedBy": "postcondition"
+            }
+          ]
+        }
       },
       {
         "actionId": "name_entity",
@@ -3340,6 +3969,10 @@
         "effect": "write",
         "postcondition": {
           "name": "entity_named"
+        },
+        "effects": {
+          "declared": [],
+          "none": "game_owned_ledger"
         }
       },
       {
@@ -3361,7 +3994,16 @@
         "postcondition": {
           "name": "prize_ticket_redeemed"
         },
-        "nativeBinding": "PrizeTicketMenu.getPrizeItem"
+        "nativeBinding": "PrizeTicketMenu.getPrizeItem",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "prize_ticket",
+              "observedBy": "prize_ticket_unavailable"
+            }
+          ]
+        }
       },
       {
         "actionId": "tailor_clothing",
@@ -3393,7 +4035,11 @@
           "name": "clothing_tailored"
         },
         "targetFamily": "tailoringTargets",
-        "nativeBinding": "TailoringMenu.CraftItem"
+        "nativeBinding": "TailoringMenu.CraftItem",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "dye_clothing_with_item",
@@ -3425,7 +4071,11 @@
           "name": "clothing_dyed"
         },
         "targetFamily": "tailoringTargets",
-        "nativeBinding": "TailoringMenu.DyeItems"
+        "nativeBinding": "TailoringMenu.DyeItems",
+        "effects": {
+          "declared": [],
+          "none": "resource_unproven_by_the_receipt"
+        }
       },
       {
         "actionId": "open_geode",
@@ -3454,7 +4104,16 @@
         "postcondition": {
           "name": "geode_opened"
         },
-        "nativeBinding": "GeodeMenu.receiveLeftClick"
+        "nativeBinding": "GeodeMenu.receiveLeftClick",
+        "effects": {
+          "declared": [
+            {
+              "class": "consumes",
+              "subject": "geode",
+              "observedBy": "geode_not_owned"
+            }
+          ]
+        }
       }
     ]
   },

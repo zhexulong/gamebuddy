@@ -36,9 +36,17 @@ export const ACTION_SURFACE_ACTION_KEYS = Object.freeze([
  * decision-closure drift check names any entry here that the record does not declare: a tolerance with nothing behind
  * it is a field every future reader has to re-justify.
  */
-export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze(["approach", "targetFamily", "nativeBinding", "synthetic"]);
-export const ACTION_SURFACE_MAX_JSON_BYTES = 64 * 1024;
-const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
+export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze([
+  "approach",
+  "targetFamily",
+  "nativeBinding",
+  "synthetic",
+  // What the action REQUIRES of the world and what it CHANGES. Published so a consumer without a running game can answer
+  // "can my next step depend on this one" - the script compiler reads nothing but this artifact, and the only cross-step
+  // edge its descriptors declare today is the tile it addressed.
+  "effects",
+]);
+export const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
 export const ACTION_SURFACE_MAX_IDENTIFIER_LENGTH = 128;
 /**
  * Longest prose the artifact may carry in one place: an argument's `description`.
@@ -57,6 +65,51 @@ const ACTION_SURFACE_MAX_OBJECT_KEYS = 16;
 export const ACTION_SURFACE_MAX_ARRAY_ITEMS = 128;
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
+/** The four classes a cross-step dependency can be built from (`FarmhandActionEffectClass`). */
+const EFFECT_CLASSES = new Set(["moves_actor", "requires_place", "produces", "consumes"]);
+/**
+ * The reasons a row may give for having no effect (`FarmhandActionEffects.NoneReasons`).
+ *
+ * `resource_unproven_by_the_receipt` is the one that names a GAP rather than an absence: the action does move a resource
+ * and no receipt fact names which, so nothing is declared and the gap is visible instead of being smoothed into an empty
+ * list. It is refused on a row that declares effects, and required on a row that declares none.
+ */
+const EFFECT_NONE_REASONS = new Set([
+  "observation_only",
+  "actor_body_only",
+  "addressed_row_only",
+  "game_owned_ledger",
+  "resource_unproven_by_the_receipt",
+]);
+const MAX_EFFECTS = 8;
+/** A subject word (`actor_position`, `watering_can_water`) or the dotted symbol / reason code a seam is spelled as. */
+const EFFECT_WORD = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+/**
+ * The artifact's byte allowance, DERIVED from what it publishes - never typed.
+ *
+ * WHY IT MOVED (2026-11-22). It was a flat `64 * 1024`, and by the time `effects` was added the artifact stood at 64,435
+ * bytes: 1,100 bytes under a cap it could no longer grow into. A flat number made every future member a decision about
+ * THIS constant, and a literal raise buys one member and fails the next one the same way. The allowance is therefore a
+ * DESCRIPTOR allowance times the registration bound, plus the envelope:
+ *
+ *   - `MAX_DESCRIPTOR_MEMBER_BYTES` per published member, counted from the member vocabulary this module owns
+ *     (`ACTION_SURFACE_ACTION_KEYS` + `ACTION_SURFACE_OPTIONAL_ACTION_KEYS`), so a new member raises the allowance by
+ *     construction rather than by an argument;
+ *   - `MAX_EFFECT_BYTES` per declared effect, times the effect bound, so a raised effect bound raises it too;
+ *   - 256 bytes for the envelope (`schema`, `catalogRevision`, `actions`).
+ *
+ * Measured at that date: 106 descriptors in 73,258 bytes, 691 each on average. The allowance is deliberately above the
+ * measurement - it bounds an ACCIDENT (a build that starts spending the agent's context), which is what the flat number
+ * was for, and `2026-11-22 effect vocabulary` is the incident that shows the flat one had stopped meaning that.
+ */
+const MAX_DESCRIPTOR_MEMBER_BYTES = 64;
+const MAX_EFFECT_BYTES = 64;
+const ACTION_SURFACE_MAX_ENVELOPE_BYTES = 256;
+const ACTION_SURFACE_MAX_DESCRIPTOR_BYTES =
+  MAX_DESCRIPTOR_MEMBER_BYTES * (ACTION_SURFACE_ACTION_KEYS.length + ACTION_SURFACE_OPTIONAL_ACTION_KEYS.length)
+  + MAX_EFFECTS * MAX_EFFECT_BYTES;
+export const ACTION_SURFACE_MAX_JSON_BYTES =
+  ACTION_SURFACE_MAX_REGISTRATIONS * ACTION_SURFACE_MAX_DESCRIPTOR_BYTES + ACTION_SURFACE_MAX_ENVELOPE_BYTES;
 /**
  * A snapshot FIELD name, which is a different kind of name from `IDENTIFIER` and must not borrow its rule.
  *
@@ -368,7 +421,10 @@ function scanJsonValue(text, start, depth) {
 
 function parseJsonText(text) {
   if (typeof text !== "string") fail("invalid_json_input");
-  if (Buffer.byteLength(text, "utf8") > ACTION_SURFACE_MAX_JSON_BYTES) fail("bounds");
+  const bytes = Buffer.byteLength(text, "utf8");
+  // The numbers travel with the refusal: a reader whose artifact outgrew the allowance needs the measurement and the
+  // allowance it derived, not the word "bounds".
+  if (bytes > ACTION_SURFACE_MAX_JSON_BYTES) fail(`bounds:${bytes}>${ACTION_SURFACE_MAX_JSON_BYTES}`);
   const end = scanJsonValue(text, 0, 0);
   if (skipWhitespace(text, end) !== text.length) fail("invalid_json");
   try {
@@ -452,6 +508,37 @@ function validateResourceTemplate(value) {
   }
 }
 
+/**
+ * One action's declared effects, or the reason it has none.
+ *
+ * THE PAIR IS EXCLUSIVE: `declared` empty with no `none` is the silence this member replaces, and a row that declares
+ * effects AND a reason they are absent is one row saying two things. `declared` is always present because it is the count
+ * a consumer reads; `none` is present only when it holds the claim.
+ */
+function validateEffects(value) {
+  if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) fail("invalid_action");
+  const keys = ownKeys(value, "invalid_action");
+  exactKeys(value, keys.includes("none") ? ["declared", "none"] : ["declared"], "effects");
+  const declared = dataDescriptor(value, "declared").value;
+  if (!isArray(declared) || declared.length > MAX_EFFECTS) fail("invalid_action");
+  const hasNone = keys.includes("none");
+  if (hasNone && !EFFECT_NONE_REASONS.has(dataDescriptor(value, "none").value)) fail("invalid_effect_none_reason");
+  if (declared.length === 0) {
+    if (!hasNone) fail("invalid_effect_none_reason");
+    return;
+  }
+  if (hasNone) fail("invalid_effect_none_reason");
+  for (const effect of declared) {
+    if (!isObject(effect) || isArray(effect) || prototypeOf(effect) !== Object.prototype) fail("invalid_action");
+    exactKeys(effect, ["class", "subject", "observedBy"], "effect");
+    if (!EFFECT_CLASSES.has(dataDescriptor(effect, "class").value)) fail("invalid_effect_class");
+    for (const member of ["subject", "observedBy"]) {
+      const seam = dataDescriptor(effect, member).value;
+      if (typeof seam !== "string" || !EFFECT_WORD.test(seam)) fail("invalid_effect_seam");
+    }
+  }
+}
+
 function validateAction(value, seenActionIds) {
   if (!isObject(value) || isArray(value) || prototypeOf(value) !== Object.prototype) {
     fail("invalid_action");
@@ -514,7 +601,9 @@ function validateAction(value, seenActionIds) {
   // claim" and a published `false` would be a second spelling of absent - refused rather than forwarded.
   if (value.synthetic !== undefined && value.synthetic !== true) fail("invalid_synthetic");
 
-  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }), ...(value.synthetic === undefined ? {} : { synthetic: value.synthetic }) });
+  if (value.effects !== undefined) validateEffects(value.effects);
+
+  return Object.freeze({ actionId, identityVersion, lifecycle, kind, argumentSchema, outputFacts, resourceTemplate, effect, postcondition, ...(value.sceneTarget === undefined ? {} : { sceneTarget: value.sceneTarget }), ...(value.targetFamily === undefined ? {} : { targetFamily: value.targetFamily }), ...(value.nativeBinding === undefined ? {} : { nativeBinding: value.nativeBinding }), ...(value.synthetic === undefined ? {} : { synthetic: value.synthetic }), ...(value.effects === undefined ? {} : { effects: value.effects }) });
 }
 
 /**

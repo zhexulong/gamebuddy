@@ -26,7 +26,17 @@ const DESCRIPTOR_REQUIRED_KEYS = Object.freeze([
 // derivation lives one layer up, in `tools/audit-stardew-decision-closure.test.mjs`, where both directions are asserted
 // against the published surface and `protocol.ts`'s `KNOWN_ACTION_DESCRIPTOR_KEYS` - so a member added to either side is
 // judged and named instead of silently missed.
-const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze(["approach", "sceneTarget", "targetFamily", "nativeBinding", "synthetic"]);
+const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze([
+  "approach",
+  "sceneTarget",
+  "targetFamily",
+  "nativeBinding",
+  "synthetic",
+  // What the action REQUIRES of the world and what it CHANGES, in the four classes a cross-tile dependency can be built
+  // from. Published so a consumer WITHOUT a running game can answer "can my next step depend on this one" - the compiler
+  // that has to answer it reads nothing but this artifact, and its one edge today is "the same (x, y) tile".
+  "effects",
+]);
 // `description` is the Mod's own words for what an argument MEANS, published per argument so the companion is not told
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
@@ -52,6 +62,25 @@ const PROJECTION_KEYS = new Set(["schema", "catalogRevision", "actions"]);
 const RESOURCE_TEMPLATE_KEYS = new Set(["claims"]);
 const RESOURCE_CLAIM_KEYS = new Set(["key", "value"]);
 const POSTCONDITION_KEYS = new Set(["name"]);
+// One action's effect declaration: the classes it has, or the reason it has none. `declared` is always present because it
+// is the count a consumer reads; `none` is present only when it holds the claim.
+const EFFECTS_KEYS = new Set(["declared"]);
+const EFFECTS_OPTIONAL_KEYS = new Set(["none"]);
+const EFFECT_KEYS = new Set(["class", "subject", "observedBy"]);
+const EFFECT_CLASSES = new Set(["moves_actor", "requires_place", "produces", "consumes"]);
+// The reasons a row may give for having no effect, from `FarmhandActionEffects.NoneReasons`. `resource_unproven_by_the_receipt`
+// is the one that names a GAP rather than an absence: the action does move a resource and no receipt fact names which.
+const EFFECT_NONE_REASONS = new Set([
+  "observation_only",
+  "actor_body_only",
+  "addressed_row_only",
+  "game_owned_ledger",
+  "resource_unproven_by_the_receipt",
+]);
+const MAX_EFFECTS = 8;
+// A subject is an engine/pack word in snake case (`actor_position`, `watering_can_water`), and a seam is either that or a
+// dotted symbol the handler contains (`SleepAndAdvanceDayLifecycle.HomeOf`), or a reason-code literal (`seed_not_owned_in_pack`).
+const EFFECT_WORD = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const VALUE_TYPES = new Set(["string", "integer", "boolean", "object", "destination_selector", "destination_arrival"]);
 // Three-rung ladder shared with the Mod authority: experimental -> live_verified
 // -> published. `live_verified` records that the action already passed a real run
@@ -199,6 +228,10 @@ function isValidDescriptor(descriptor) {
   // build_farm_building`. Only ever `true`, the Host's own rule: the Mod omits the member where the claim is false, so a
   // published `false` would be a second spelling of absent.
   const synthetic = ownValue(descriptor, "synthetic");
+  // What the action requires of the world and what it changes. The member is admitted by the key set above AND validated
+  // here, because admitting a field and ignoring its value is how a malformed declaration reaches a consumer as if it were
+  // a claim.
+  const effects = ownValue(descriptor, "effects");
   return typeof actionId === "string" && IDENTIFIER.test(actionId)
     && Number.isSafeInteger(identityVersion) && identityVersion >= 1
     && identityVersion <= MAX_IDENTITY_VERSION
@@ -214,7 +247,8 @@ function isValidDescriptor(descriptor) {
     && (targetFamily === INVALID || (typeof targetFamily === "string" && TARGET_FAMILY_NAME.test(targetFamily)))
     && (nativeBinding === INVALID
       || (typeof nativeBinding === "string" && nativeBinding.length > 0 && nativeBinding.length <= MAX_STRING_LENGTH))
-    && (synthetic === INVALID || synthetic === true);
+    && (synthetic === INVALID || synthetic === true)
+    && (effects === INVALID || validEffects(effects));
 }
 
 /**
@@ -260,6 +294,36 @@ function validSceneTarget(value) {
     && typeof required === "boolean"
     && isDenseArray(requiredProperties, MAX_SCENE_TARGET_PROPERTIES)
     && requiredProperties.every((property) => typeof property === "string" && SCENE_TARGET_PROPERTY.test(property));
+}
+
+/**
+ * One action's declared effects, or the reason it has none.
+ *
+ * THE PAIR IS EXCLUSIVE, exactly as `FarmhandChoreDeclaration`'s is: `declared` empty AND `none` absent is the silence this
+ * member replaces, and both set at once is a row saying two things about one question. The seam each effect carries is
+ * read by class - the state a `moves_actor` writes, the predicate a `requires_place` refuses with, the receipt fact a
+ * `produces` is proved by, the refusal a `consumes` answers - which is why the rules live one layer up, against the handler
+ * and the receipt, and this gateway only holds the shapes and the closed vocabularies.
+ */
+function validEffects(value) {
+  if (!isPlainDataObject(value) || !sameKeysOrOptional(value, EFFECTS_KEYS, EFFECTS_OPTIONAL_KEYS)) return false;
+  const declared = ownValue(value, "declared");
+  if (!isDenseArray(declared, MAX_EFFECTS)) return false;
+  const none = ownValue(value, "none");
+  if (none !== INVALID && !EFFECT_NONE_REASONS.has(none)) return false;
+  if (declared.length === 0) return none !== INVALID;
+  if (none !== INVALID) return false;
+  return declared.every((effect) => validEffect(effect));
+}
+
+function validEffect(effect) {
+  if (!isPlainDataObject(effect) || !sameKeys(effect, EFFECT_KEYS)) return false;
+  const effectClass = ownValue(effect, "class");
+  const subject = ownValue(effect, "subject");
+  const observedBy = ownValue(effect, "observedBy");
+  return EFFECT_CLASSES.has(effectClass)
+    && typeof subject === "string" && EFFECT_WORD.test(subject)
+    && typeof observedBy === "string" && EFFECT_WORD.test(observedBy);
 }
 
 function validArgumentSchema(value) {

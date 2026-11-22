@@ -68,8 +68,8 @@ import {
   REPOSITORY_ROOT,
   withoutComments,
 } from "./stardew-mod-csharp-source.mjs";
-import { TARGET_FIELD } from "../../../../../tools/audit-stardew-discovery-channels.mjs";
-import { perTurnFamilies } from "../../../../../tools/check-snapshot-field-rendering.mjs";
+import { TARGET_FIELD } from "../../../../../gates/stardew/audit-stardew-discovery-channels.mjs";
+import { perTurnFamilies } from "../../../../../gates/product/check-snapshot-field-rendering.mjs";
 import { resolveStardewDecompileRoot } from "../../../../../tools/lib/stardew-decompile-root.mjs";
 
 // ---------------------------------------------------------------------------
