@@ -146,10 +146,8 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "chop_tree", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "chop_tree", toolRefusalCode, slot));
-        ExecutionState state;
-        string reasonCode;
-        string evidence;
-        try
+        (ExecutionState state, string reasonCode, string evidence) = (ExecutionState.Uncertain, string.Empty, string.Empty);
+        LocalExecutionReceipt? refusal = this.WithRestoredTool(Game1.player, selection, () =>
         {
             if (selection.Tool is not Axe axe)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
@@ -245,13 +243,9 @@ internal sealed partial class ExecutionManager
             if (stoppedBy is not null)
                 evidence += $";stopped_by={stoppedBy};{stopEvidence}";
             (state, reasonCode) = PostconditionVerdict(felled, "tree_source_chopped", stoppedBy ?? "tree_source_chop_postcondition_unavailable");
-        }
-        finally
-        {
-            RestoreToolSelection(Game1.player, selection);
-        }
-        evidence += $";{SelectionSuffix(selection)}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+            return null;
+        });
+        return refusal ?? this.RememberTerminal(requestId, executionId, state, reasonCode, $"{evidence};{SelectionSuffix(selection)}");
     }
 
     public LocalExecutionReceipt RequestLocalBreakRockSource(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
@@ -469,10 +463,8 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "dig_artifact_spot", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "dig_artifact_spot", toolRefusalCode, slot));
-        ExecutionState state;
-        string reasonCode;
-        string evidence;
-        try
+        (ExecutionState state, string reasonCode, string evidence) = (ExecutionState.Uncertain, string.Empty, string.Empty);
+        LocalExecutionReceipt? refusal = this.WithRestoredTool(Game1.player, selection, () =>
         {
             if (selection.Tool is not Hoe hoe)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
@@ -511,13 +503,9 @@ internal sealed partial class ExecutionManager
             }
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};result_target={resultTargetId ?? "none"};tile={targetX},{targetY};tool=hoe;stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)};qualified_item_id={artifactSpot.QualifiedItemId};source_present_before={sourcePresentBefore.ToString().ToLowerInvariant()};source_present_after={sourcePresentAfter.ToString().ToLowerInvariant()};hoedirt_present_before={hoeDirtPresentBefore.ToString().ToLowerInvariant()};hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};source_removed={(!sourcePresentAfter).ToString().ToLowerInvariant()}";
             (state, reasonCode) = PostconditionVerdict(succeeded, "artifact_spot_dug", "artifact_spot_postcondition_unavailable");
-        }
-        finally
-        {
-            RestoreToolSelection(Game1.player, selection);
-        }
-        evidence += $";{SelectionSuffix(selection)}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+            return null;
+        });
+        return refusal ?? this.RememberTerminal(requestId, executionId, state, reasonCode, $"{evidence};{SelectionSuffix(selection)}");
     }
 
     public LocalExecutionReceipt RequestLocalClearHoeDirt(string requestId, int slot, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs) =>
@@ -547,10 +535,8 @@ internal sealed partial class ExecutionManager
     {
         if (!TrySelectDeclaredTool(Game1.player, "clear_hoedirt", out DeclaredToolSelection selection, out string toolRefusalCode))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, toolRefusalCode, DescribeDeclaredToolRefusal(Game1.player.Items, "clear_hoedirt", toolRefusalCode, slot));
-        ExecutionState state;
-        string reasonCode;
-        string evidence;
-        try
+        (ExecutionState state, string reasonCode, string evidence) = (ExecutionState.Uncertain, string.Empty, string.Empty);
+        LocalExecutionReceipt? refusal = this.WithRestoredTool(Game1.player, selection, () =>
         {
             if (selection.Tool is not Pickaxe pickaxe)
                 return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, $"tool_not_selected:{selection.Category}", $"slot={selection.Slot}");
@@ -567,13 +553,9 @@ internal sealed partial class ExecutionManager
             bool removed = !hoeDirtPresentAfter;
             evidence = $"location={location.NameOrUniqueName};target={expectedTargetId};tile={targetX},{targetY};tool=pickaxe;crop_before=false;hoedirt_present_before=true;hoedirt_present_after={hoeDirtPresentAfter.ToString().ToLowerInvariant()};removed={removed.ToString().ToLowerInvariant()};stamina_before={staminaBefore.ToString("0.####", CultureInfo.InvariantCulture)};stamina_after={staminaAfter.ToString("0.####", CultureInfo.InvariantCulture)};stamina_delta={staminaDelta.ToString("0.####", CultureInfo.InvariantCulture)};expected_stamina_cost={expectedStaminaCost.ToString("0.####", CultureInfo.InvariantCulture)}";
             (state, reasonCode) = PostconditionVerdict(removed, "hoedirt_cleared", "clear_hoedirt_postcondition_unavailable");
-        }
-        finally
-        {
-            RestoreToolSelection(Game1.player, selection);
-        }
-        evidence += $";{SelectionSuffix(selection)}";
-        return this.RememberTerminal(requestId, executionId, state, reasonCode, evidence);
+            return null;
+        });
+        return refusal ?? this.RememberTerminal(requestId, executionId, state, reasonCode, $"{evidence};{SelectionSuffix(selection)}");
     }
 
     public LocalExecutionReceipt RequestLocalTillSoil(string requestId, int targetX, int targetY, int charge, long requestedDeadlineMs)
@@ -1129,6 +1111,31 @@ internal sealed partial class ExecutionManager
 
     private static void RestoreToolSelection(Farmer farmer, DeclaredToolSelection selection) =>
         farmer.CurrentToolIndex = selection.PreviousSlot;
+
+    /// <summary>
+    /// Runs one tool action's body and puts the actor's own selection back however that body came out - the ONE spelling of
+    /// "no matter how the verdict came out, the selection goes back", so a swing written tomorrow cannot forget it.
+    ///
+    /// <para>
+    /// The body answers in one of two ways, and the receipt it returns says which: a receipt means it has already refused
+    /// (<c>tool_not_selected</c>, a target that moved, stamina) and is passed through unchanged once the selection is back;
+    /// <c>null</c> means it graded the outcome into the caller's <c>state</c>, <c>reasonCode</c> and <c>evidence</c>, which
+    /// the caller then answers with. The verdict stays the body's own - what is shared here is the restore, not the
+    /// decision - and the caller reads its `;tool=` suffix AFTER this returns, because `tool_restored` names what the actor
+    /// holds again and can only be written once the index is back.
+    /// </para>
+    /// </summary>
+    private LocalExecutionReceipt? WithRestoredTool(Farmer player, DeclaredToolSelection selection, Func<LocalExecutionReceipt?> body)
+    {
+        try
+        {
+            return body();
+        }
+        finally
+        {
+            RestoreToolSelection(player, selection);
+        }
+    }
 
     private static string SelectionSuffix(DeclaredToolSelection selection) =>
         ToolActionEvidence.SelectionSuffix(selection, DescribeToolCategory(Game1.player.CurrentTool));

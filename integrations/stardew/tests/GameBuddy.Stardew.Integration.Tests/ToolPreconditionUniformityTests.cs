@@ -102,6 +102,8 @@ public sealed class ToolPreconditionUniformityTests
         declared.Should().NotBeEmpty("the catalog must declare tool actions, or this gate reads nothing");
 
         var missing = new List<string>();
+        var onSeam = new List<string>();
+        var stillSpellingTheirOwn = new List<string>();
         foreach (string actionId in declared)
         {
             (string? file, int index) = SelectionCallSite(actionId);
@@ -119,9 +121,26 @@ public sealed class ToolPreconditionUniformityTests
             // The receiver is the handler's own local (`Game1.player` in most, a resolved `Farmer` in the ones that read
             // the pack through it), so the property asserted is that the actor's selection is put back - not one spelling
             // of who the actor was.
-            bodyCode.Should().Contain("RestoreToolSelection(",
-                $"{actionId} puts the index the actor held back");
-            bodyCode.Should().Contain("finally", $"{actionId} restores on EVERY exit, including the refusals after the switch");
+            //
+            // TWO SHAPES FOR ONE FACT, AND NEVER BOTH ON ONE HANDLER. `WithRestoredTool(...)` is the seam: the restore runs
+            // in a `finally` the handler cannot forget to write, and a handler that hands the seam its body may not also
+            // spell `RestoreToolSelection` itself - that copy is the one the next edit can leave behind. A handler still
+            // spelling its own `finally` is the older shape and is COUNTED below rather than absorbed, so the residue is a
+            // number this suite prints on every run instead of an assumption that the migration finished.
+            bool handsTheSeamTheRestore = bodyCode.Contains("WithRestoredTool(", StringComparison.Ordinal);
+            if (handsTheSeamTheRestore)
+            {
+                bodyCode.Should().NotContain("RestoreToolSelection(",
+                    $"{actionId} hands the restore to the one seam, so it may not keep a copy of its own that the next edit can forget");
+                onSeam.Add(actionId);
+            }
+            else
+            {
+                bodyCode.Should().Contain("RestoreToolSelection(",
+                    $"{actionId} puts the index the actor held back");
+                bodyCode.Should().Contain("finally", $"{actionId} restores on EVERY exit, including the refusals after the switch");
+                stillSpellingTheirOwn.Add(actionId);
+            }
             foreach (string spelling in HeldToolSpellings)
             {
                 bodyCode.Should().NotContain(spelling,
@@ -137,6 +156,13 @@ public sealed class ToolPreconditionUniformityTests
                 + "the actor to be holding it. An action that does not refuses a request that owns the tool, and one "
                 + "refusal kills the whole chain it was compiled into. Actions with no `TrySelectDeclaredTool` call:\n  "
                 + string.Join("\n  ", missing));
+
+        this.output.WriteLine(
+            $"restore seam: {onSeam.Count} of {declared.Count} tool handlers hand the restore to `WithRestoredTool`; "
+                + (stillSpellingTheirOwn.Count == 0
+                    ? "none still spell their own `finally`"
+                    : $"{stillSpellingTheirOwn.Count} still spell their own `finally`: "
+                        + string.Join(", ", stillSpellingTheirOwn)));
     }
 
     [Fact]
