@@ -2537,7 +2537,7 @@
         "slot",
         "x",
         "y",
-        "hayStack"
+        "bagHay"
       ],
       "properties": {
         "targetId": {
@@ -2554,7 +2554,7 @@
         "y": {
           "$ref": "#/$defs/tile"
         },
-        "hayStack": {
+        "bagHay": {
           "type": "integer",
           "minimum": 1,
           "maximum": 999

@@ -96,8 +96,8 @@ export async function runFeedAnimalSmoke(client, receipts, config) {
       evidence.native_handled === "true" &&
       evidence.trough_filled === "true" &&
       evidence.hay_consumed === "true" &&
-      Number(evidence.hay_before) === target.hayStack &&
-      Number(evidence.hay_after) === target.hayStack - 1 &&
+      Number(evidence.hay_before) === target.bagHay &&
+      Number(evidence.hay_after) === target.bagHay - 1 &&
       targetGone &&
       after.actionable &&
       after.activeExecution == null;
@@ -345,8 +345,8 @@ function chooseSingleFeedTarget(snapshot) {
       Number.isInteger(entry.slot) &&
       validTile(entry.x) &&
       validTile(entry.y) &&
-      Number.isInteger(entry.hayStack) &&
-      entry.hayStack > 0,
+      Number.isInteger(entry.bagHay) &&
+      entry.bagHay > 0,
   );
   if (targets.length === 0) throw new Error("no_live_empty_feed_trough_target");
   // An AnimalHouse can expose several independently native, empty trough

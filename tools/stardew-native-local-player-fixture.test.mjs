@@ -2073,7 +2073,7 @@ test("native-local feed-animal fixture is isolated, pre-bridge only, and require
   assert.match(runner, /targets\.sort\(\(left, right\) => left\.y - right\.y \|\| left\.x - right\.x/);
   assert.match(runner, /no_live_empty_feed_trough_target/);
   assert.match(runner, /sameIdentity\(entry, accepted\)/);
-  assert.match(runner, /evidence\.hay_after\) === target\.hayStack - 1/);
+  assert.match(runner, /evidence\.hay_after\) === target\.bagHay - 1/);
   assert.match(runner, /evidence\.trough_filled === "true"/);
   assert.match(runner, /targetGone/);
   assert.match(runner, /native_local_feed_animal_topology_invalid/);

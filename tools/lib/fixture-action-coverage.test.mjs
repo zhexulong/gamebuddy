@@ -12,6 +12,50 @@ import {
 
 const FIXTURE = readFileSync(new URL("./stardew-native-local-player-fixture.mjs", import.meta.url), "utf8");
 
+/**
+ * The play-session world the multi-day lane runs in, as the Given that builds its animal house declares it.
+ *
+ * <p>
+ * MEASURED `round92` DAY 2 (2026-11-22, `tend_the_animals`): the composed world held one adult White Chicken with
+ * `currentProduce = null` and a pack with no Milk Pail or Shears, so the observation published
+ * `animalProductTargets: []` and the day's third criterion step had nothing to address. Nothing refused: the world armed
+ * with an empty family and the task went unachieved, exactly as if the lane had never granted the action.
+ * </p>
+ *
+ * <p>
+ * A hen could not have supplied it - `FarmAnimal.CanGetProduceWithTool` answers `FarmAnimalData.HarvestTool ==
+ * tool.Name`, a hen's is null, and this action addresses tool-collected produce only - so the two properties below are
+ * the ones that keep the half reachable: the fixture asks the engine's own predicate which tool the animal takes, and it
+ * refuses BY NAME when the produce or that tool is missing. Both were absent from the shipped fixture, so this is red on
+ * its history rather than on an injected case.
+ * </p>
+ */
+const PLAY_SESSION_ANIMAL_GIVEN = readFileSync(
+  new URL("../../integrations/stardew/ModEntry.Fixtures.PlaySessionAnimal.cs", import.meta.url),
+  "utf8",
+);
+
+test("the play-session animal Given supplies the day's collect half or refuses by name", () => {
+  assert.match(
+    PLAY_SESSION_ANIMAL_GIVEN,
+    /CanGetProduceWithTool\(new MilkPail\(\)\)/u,
+    "the fixture must choose the harvesting tool with the same engine predicate the discovery admits on " +
+      "(`CanGetProduceWithTool`), so a swapped animal cannot silently disconnect the tool from its produce",
+  );
+  for (const code of [
+    "fixture_native_local_play_session_animal_product_missing",
+    "fixture_native_local_play_session_animal_not_collectable",
+    "fixture_native_local_play_session_animal_tool_missing_after_add",
+    "fixture_native_local_play_session_animal_product_inventory_full",
+  ])
+    assert.match(
+      PLAY_SESSION_ANIMAL_GIVEN,
+      new RegExp(code, "u"),
+      `${code} is how the world refuses when the collect half cannot be published; without it the day arms with an ` +
+        "empty `animalProductTargets` and nothing says so (`round92`, 2026-11-22)",
+    );
+});
+
 test("the fixture's action sets parse, including a multi-line one", () => {
   const sets = parseFixtureActionSets(`
     if (action === "equip_tool") return ["equip_tool"];

@@ -7,7 +7,7 @@ const BARN_LOCATION = "Barn3aaaaaaaa-0000-0000-0000-000000000000";
 const CAPABILITIES = ["cancel_active_execution", "inspect_self", "move_to_tile", "travel", "enter_exit", "feed_animal"];
 const FARM_WARP = { sourceX: 1, sourceY: 2, targetLocation: "Farm", targetX: 3, targetY: 4 };
 const BARN_DOOR = { sourceX: 17, sourceY: 12, targetX: 0, targetY: 0, targetLocation: BARN_LOCATION };
-const TARGET = { targetId: "trough_0123456789abcdef", slot: 1, x: 20, y: 19, hayStack: 5 };
+const TARGET = { targetId: "trough_0123456789abcdef", slot: 1, x: 20, y: 19, bagHay: 5 };
 
 function fixtureConfig(overrides = {}) {
   return {
@@ -37,8 +37,8 @@ function evidenceDetail(troughFilled = true) {
     "native_handled=true",
     `trough_filled=${troughFilled ? "true" : "false"}`,
     "hay_consumed=true",
-    `hay_before=${TARGET.hayStack}`,
-    `hay_after=${TARGET.hayStack - 1}`,
+    `hay_before=${TARGET.bagHay}`,
+    `hay_after=${TARGET.bagHay - 1}`,
   ].join(";");
 }
 
