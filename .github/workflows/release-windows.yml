@@ -18,7 +18,7 @@ jobs:
     # provider turns (Tavern management operation evidence, the Tavern release live gate, the
     # Companion memory fold gate) are gone, together with the CPA_OAI_API_KEY environment they
     # read; the claim they carried is read from the committed evidence under
-    # tools/fixtures/live-evidence, and `tools/check-release-live-evidence.mjs` validates each
+    # tools/fixtures/live-evidence, and `gates/data/check-release-live-evidence.mjs` validates each
     # surface's pin against this tree and its freshness. That is a weaker declaration than a
     # provider turn measured during this release, and the step below records it as such.
     if: >-
@@ -216,7 +216,7 @@ jobs:
       # surface whose own verdict is failed; it names every surface nobody has measured, on every
       # run, instead of reading an absent measurement as a pass.
       - name: Verify the committed live evidence
-        run: node tools/check-release-live-evidence.mjs
+        run: node gates/data/check-release-live-evidence.mjs
       # The player-visible side of the same release claim, run as the mounted gate
       # zone. The zone's corpus is the whole tests/ journey directory, so the
       # journeys the removed management/Chat shells used to carry (draft/rename,

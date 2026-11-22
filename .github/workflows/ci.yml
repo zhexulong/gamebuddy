@@ -510,7 +510,7 @@ jobs:
       - name: Stardew no-game subset matches the compiler
         id: stardew_nogame_subset_audit
         if: ${{ !cancelled() }}
-        run: node tools/audit-stardew-nogame-subset.mjs
+        run: node gates/stardew/audit-stardew-nogame-subset.mjs
       - name: Stardew no-game test subset (not the integration suite)
         id: stardew_nogame_tests
         if: ${{ !cancelled() }}
