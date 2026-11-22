@@ -1377,6 +1377,20 @@ test("the plan tool hands its compiled program to the one submission path a mode
   // carried it - a field nobody reads is a claim nobody keeps. Both halves of the same question travel together now: what
   // the snapshot answered for her, and what it could not answer at all.
   assert.match(source, /\.\.\.planReadingsNote\(compiled\),/u);
+  // AND THE HALF THAT IS A MISSING STEP RATHER THAN A REPLACED VALUE. Measured `round89` (`plan_12`): the compiler wrote
+  // a walk to a coordinate it had invented, and the world refused it - `inserted_node_failed:auto_walk_01:move_to_tile:
+  // target_not_addressable`. A walk it cannot place is now reported beside the program (`auto_walk_refused`) and is not a
+  // node at all, so the answer has to carry that list or she is left with a transition and no reason for the walk's
+  // absence.
+  // The list travels on BOTH branches that carry a program - the one where the Mod refused the candidate outright and the
+  // one where it accepted it - because the walk is missing from the program either way, and a reader of one branch must not
+  // be told less than a reader of the other.
+  assert.equal(
+    (source.match(/\.\.\.autoWalkNote\(compiled\),/gu) ?? []).length,
+    2,
+    "every program-carrying answer states the walks the compiler could not write",
+  );
+  assert.match(source, /autoWalkRefused: compiled\.autoWalkRefused,/u);
   assert.match(source, /boundFromSnapshot: compiled\.boundFromSnapshot,/u);
   assert.match(source, /boundFromSnapshotCount: compiled\.boundFromSnapshotCount,/u);
   assert.match(source, /readingsUnmeasured: compiled\.readingsUnmeasured,/u);

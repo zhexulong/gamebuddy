@@ -436,6 +436,7 @@ function createBodyProgramTools(
                 // and the detail that would let her fix the plan are all on the other side of the bridge.
                 ...planRefusalAnswer(submitted.details.verification, code),
                 ...layoutFactsNote(compiled),
+                ...autoWalkNote(compiled),
               });
             // AWAITED, because the original design says so and the shape drifted away from it.
             //
@@ -479,6 +480,7 @@ function createBodyProgramTools(
                 // than in front of it: the warning is a fact the companion learns from, and a plan that blocked on it would
                 // leave her no way to say "water them anyway".
                 ...layoutFactsNote(compiled),
+                ...autoWalkNote(compiled),
                 ...stepAccountNote(compiled),
                 ...beside,
               });
@@ -553,7 +555,11 @@ function createBodyProgramTools(
               const settled = isTerminalProgramStatus(first)
                 ? Object.freeze({
                     result: first,
-                    waited: Object.freeze({ terminality: "terminal" as const, unreadable: null, snapshotChanged: false }),
+                    waited: Object.freeze({
+                      terminality: "terminal" as const,
+                      unreadable: null,
+                      snapshotChanged: false,
+                    }),
                   })
                 : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
               // The model is being handed this settlement in the result of this call, so the pump owes no fact for it.
@@ -961,6 +967,31 @@ function planReadingsNote(compiled: CompiledPlan): Readonly<Record<string, unkno
           resolvedAfterTruncated: compiled.resolvedAfterCount > compiled.resolvedAfter.length,
         };
   return Object.freeze({ ...bound, ...unmeasured, ...resolved });
+}
+
+/**
+ * THE WALK THE COMPILER COULD NOT WRITE, named beside the program instead of becoming a node.
+ *
+ * <p>
+ * Measured `round89` (`.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine`), `plan_12`: an edge exit on the
+ * Farm (`enter_exit(40,-1)`) whose source lies one tile outside the grid, the compiler's walk clamped onto the map's top
+ * row of wall, and the receipt `inserted_node_failed:auto_walk_01:move_to_tile:target_not_addressable` - the one node
+ * whose whole purpose was to hand the body back, refused by a number the compiler had invented.
+ * </p>
+ * <p>
+ * The compiler now writes no walk it cannot place and answers with this list instead: `auto_walk_refused:<code>:<x>:<y>`,
+ * the reason and HER transition's own source tile, so the step she must write herself is named by the place she named. A
+ * plan whose walks were all written says nothing here, for the same reason `layoutFactsNote` is silent when nothing was
+ * missing.
+ * </p>
+ */
+function autoWalkNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
+  if (compiled.status === "refused" || compiled.autoWalkRefusedCount === 0) return {};
+  return Object.freeze({
+    autoWalkRefused: compiled.autoWalkRefused,
+    autoWalkRefusedCount: compiled.autoWalkRefusedCount,
+    autoWalkRefusedTruncated: compiled.autoWalkRefusedCount > compiled.autoWalkRefused.length,
+  });
 }
 
 /**
