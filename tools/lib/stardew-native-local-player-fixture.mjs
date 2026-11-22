@@ -862,6 +862,12 @@ export function fixtureActions(action) {
   // level-5 profession unchosen), so it is an action key of its own - exactly like the move-stall pair above.
   if (action === "respond_level_up_branch") return ["sleep", "respond_level_up", "move_to_tile", "observe_scene"];
   if (action === "sleep") return ["sleep"];
+  // THE NIGHT'S OWN REFUSAL, SUBMITTED FROM WHERE IT IS REFUSED. Every other sleep key arms a world the actor sleeps in,
+  // so `not_home` could only be reached by walking out of the house first - which is a step of a DIFFERENT programme. This
+  // key arms the move-ladder world, whose only Given is a plainly-open Farm tile the actor is warped to, and publishes the
+  // two calls the night's refusal is made of: `sleep` itself, and the `enter_exit` that would have walked her home. No
+  // world is created here (that fixture already owns it), and nothing grants a capability these slices do not invoke.
+  if (action === "sleep_outdoor") return ["sleep", "enter_exit"];
   throw new Error("invalid_native_local_fixture_action");
 }
 export function fixtureScenario(actions, action) {
@@ -869,6 +875,11 @@ export function fixtureScenario(actions, action) {
   // actions include `advance_day` and `observe_scene`) claimed this key and armed the ordinary world, which is why the
   // milestone gate kept reporting `milestone_not_projected:0` - the fixture never armed the branch Given at all.
   if (action === "hold_absorption") return "native_till_soil_v1";
+  // Action-keyed BEFORE the `actions.includes("sleep")` fallback below, which answers "" - the ordinary world, whose
+  // actor is asleep-capable because she is standing in her own farmhouse. That is the one world in which this pair of
+  // slices measures nothing. `native_move_ladder_v1` is the lightest scenario that puts her OUTDOORS: its only Given is a
+  // plainly-open Farm tile it warps her to.
+  if (action === "sleep_outdoor") return "native_move_ladder_v1";
   if (action === "respond_level_up_branch") return "native_level_up_branch_v1";
   // The furniture pickup asks for the ORDINARY world and nothing else: the bed it lifts is the
   // game's own starter furniture, standing where the save put it. It must be action-keyed here,

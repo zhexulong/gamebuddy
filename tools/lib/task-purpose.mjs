@@ -24,9 +24,9 @@
  * ORDER IS PART OF A CRITERION ONLY WHERE THE PURPOSE IS A CAUSE. An ordered criterion (`ordered`, the default) matches
  * its steps forward through the receipt log, so it asserts that each earlier fact is a PRECONDITION of the next - and
  * the row must name that link in `because`. A row that cannot name it is unordered. Measured 2026-11-18 (`round76`): a
- * day that cleared, sowed, watered and tilled was reported `not_achieved`, because `clear_and_cultivate` demanded the
- * chain clearing-then-tilling-then-sowing. The chain is ONE way to prepare ground; she had sown into ground that was
- * already tilled, which is what a farmhand does, so the criterion graded the drawing instead of the day.
+ * day that cleared, sowed, watered and tilled was reported `not_achieved`, because the criterion it was judged on
+ * demanded the chain clearing-then-tilling-then-sowing. The chain is ONE way to prepare ground; she had sown into
+ * ground that was already tilled, which is what a farmhand does, so the criterion graded the drawing instead of the day.
  *
  * WHAT A CRITERION MAY NOT DO. It may not read a fact the receipts do not publish, and it may not substitute a
  * readable neighbour for the purpose (clearing "one patch somewhere" is not clearing the east patch). Where the
@@ -436,14 +436,6 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
         "`chest_retrieve` can only take out of a chest what `chest_store` put in it: the two receipts are one chest's contents before and after",
     },
   ),
-  till_and_sow: criterion(
-    "the ground was tilled, then planted, then watered",
-    [step("till_soil"), step("plant_seed"), step("water_crop")],
-    {
-      because:
-        "`plant_seed` needs the HoeDirt `till_soil` turned, and `water_crop` waters the crop `plant_seed` put in it - each postcondition is the next one's precondition",
-    },
-  ),
   tidy_and_repair: criterion(
     "debris was cleared and something placed was put away",
     [step("clear_debris"), step("remove_placed_item")],
@@ -462,34 +454,12 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
         "`dress_mannequin` and `set_sign_display` both display what she is wearing or holding, so `equip_wearable` has to come first for the display to be of THAT thing",
     },
   ),
-  // UNORDERED, and it was the only row whose order was a claim about the table rather than about the world.
-  //
-  // Measured 2026-11-18 (`round76`, day 1, judged here from the run's own `timeline.jsonl`): the day cut 30 weeds and
-  // 20 grasses, broke 13 rocks, sowed two seeds on (69,20) and (69,19) (receipt #52/#53), watered those same two tiles
-  // (#54/#55), tilled four OTHER tiles (#70-#73) and felled a tree (#76, with only four more weeds cut after it) - and
-  // answered `not_achieved`, because the chain wanted a `till_soil` AFTER the clearing and the four tills all came
-  // before it.
-  //
-  // She was right and the row was wrong. She sowed into ground that was already tilled - what a farmhand does - so
-  // "clear the ground, then till it, then sow it" describes ONE way of preparing ground, not the purpose of a day that
-  // did all four kinds of work in whatever order the farm allowed: something cleared (a tree, a stump, debris), the
-  // ground tilled, a seed in it, and the crop watered. The purpose is what the day produced, not the route it took.
-  //
-  // THE ORDER DID CARRY INFORMATION IN ONE CASE, and this is what was dropped on purpose: ground that has NEVER been
-  // tilled, where the clearing and the tilling are the same dirt and a `till_soil` before the felling left that tile
-  // untouched. No receipt can show that pairing - `chop_tree`'s and `chop_stump`'s evidence key sets carry neither
-  // `location` nor `tile` (`host/src/stardew-completion-contracts.ts`), `cut_weeds` and `break_rock` declare no
-  // `location` at all (`clear_east_patch`'s claims), and `clear_debris` is the only one of the three that names the tile
-  // it cleared - so the chain was asserting a same-tile relation for all three that only one of them can describe.
-  clear_and_cultivate: criterion(
-    "a patch was cleared, and the ground was tilled, planted and watered",
-    [anyOf("chop_tree", "chop_stump", "clear_debris"), step("till_soil"), step("plant_seed"), step("water_crop")],
-    { ordered: false },
-  ),
-  // THE ONLY CRITERION THAT COUNTS TILES. `clear_east_patch` cannot say which part of the farm was cleared, and
-  // `till_and_sow` cannot say how much was tilled, because a receipt names one tile and no criterion asked for a
-  // shape. This one does: sixty tiles, all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the
-  // 13x13 window one snapshot sees, so the boundary has to survive her walking out of view.
+  // THE ONLY CRITERION THAT COUNTS TILES, and the only one that asks for a SHAPE rather than naming actions: a
+  // purpose made of steps is satisfied by one receipt per step, and "tilled, then planted, then watered" is three
+  // steps a single tile answers in three dispatches. `clear_east_patch` cannot say which part of the farm was cleared
+  // or how much of it, because a receipt names one tile and the criterion asks for none. This one does: sixty tiles,
+  // all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the 13x13 window one snapshot sees, so
+  // the boundary has to survive her walking out of view.
   clear_and_plant_long_patch: patch(
     "one long strip, three tiles wide and twenty long, was tilled and sown the whole way",
     {
@@ -499,17 +469,6 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       // `target`; `plant_seed` and `water_crop` each name the `tile` the crop is on. No other action a real patch day
       // uses - `cut_weeds`, `break_rock`, `clear_debris` - publishes a tile, which is why clearing cannot prove a
       // shape and only the tilling and sowing can.
-      tilledBy: [tileProof("till_soil", "target")],
-      croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
-    },
-  ),
-  // A second spatial + seed-shortage patch (36 tiles > 15 chest seeds, 18 > 13x13 window): fits inside starter gold
-  // even for higher-value spring crops while still forcing SeedShop planning and refill capacity.
-  plant_market_strip: patch(
-    "one spring market bed, two tiles wide and eighteen long, was tilled and sown the whole way",
-    {
-      width: 2,
-      height: 18,
       tilledBy: [tileProof("till_soil", "target")],
       croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
     },

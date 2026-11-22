@@ -114,7 +114,7 @@ test("a pack that already covers the patch produces no fact at all", () => {
 });
 
 test("a task that declares no patch has no tile count to state", () => {
-  assert.equal(taskPatchTiles("till_and_sow"), null, "a criterion made of steps declares no tile count");
+  assert.equal(taskPatchTiles("water_and_harvest"), null, "a criterion made of steps declares no tile count");
   assert.equal(taskPatchTiles(TASK), TILES);
 });
 
@@ -137,7 +137,7 @@ test("a task that declares no patch has no tile count to state", () => {
  * </p>
  */
 test("a criterion that plants carries the supply even though it declares no tile count", () => {
-  const fact = seedShortageFact({ taskId: "till_and_sow", snapshot: snapshotWith([parsnip]), locale: "zh" });
+  const fact = seedShortageFact({ taskId: "water_and_harvest", snapshot: snapshotWith([parsnip]), locale: "zh" });
 
   assert.notEqual(fact, null, "a planting day with a measured supply has something to hand over");
   assert.equal(fact.reasonCode, "seed_supply", "a supply with no declared patch is not a shortage claim");
@@ -157,7 +157,7 @@ test("a criterion that plants carries the supply even though it declares no tile
 
 /** The same day in a world where she holds no plantable seed: still a fact, and no number of tiles beside it. */
 test("a planting criterion with no seed held is a supply fact, not a shortage of an unstated number", () => {
-  const fact = seedShortageFact({ taskId: "clear_and_cultivate", snapshot: snapshotWith([]), locale: "zh" });
+  const fact = seedShortageFact({ taskId: "water_and_harvest", snapshot: snapshotWith([]), locale: "zh" });
 
   assert.equal(fact.reasonCode, "no_known_supply");
   assert.ok(fact.text.includes("手上没有可种的种子"), fact.text);
@@ -193,7 +193,7 @@ const round67 = Object.freeze({
 });
 
 test("round67's row: 80g at a shut SeedShop, and the fact says where, when and at what price", () => {
-  const fact = seedShortageFact({ taskId: "clear_and_cultivate", snapshot: snapshotWith([round67]), locale: "zh" });
+  const fact = seedShortageFact({ taskId: "water_and_harvest", snapshot: snapshotWith([round67]), locale: "zh" });
 
   assert.notEqual(fact, null, "this is the run whose day composed nothing");
   for (const fragment of ["SeedShop", "一颗 80 金币", "开门时间 TIME 0000 1659", "现在关着门", "手上 2 颗"])
@@ -257,7 +257,7 @@ test("round89's two lines carry the wallet and lose the machine tokens", () => {
     openNow: true,
   });
   const snapshot = Object.freeze({ seedSupplyTargets: [row], money: 500 });
-  const lines = [TASK, "till_and_sow"].map((taskId) => seedShortageFact({ taskId, snapshot, locale: "zh" }));
+  const lines = [TASK, "water_and_harvest"].map((taskId) => seedShortageFact({ taskId, snapshot, locale: "zh" }));
 
   assert.equal(lines[0].reasonCode, "seed_shortage", "the first line is the shortage");
   assert.equal(lines[1].reasonCode, "seed_supply", "the second is a planting day that declares no tile count");
@@ -370,7 +370,7 @@ test("no fact this module composes carries a machine token", () => {
   };
   let examined = 0;
   for (const locale of ["zh", "en"])
-    for (const taskId of [TASK, "till_and_sow"])
+    for (const taskId of [TASK, "water_and_harvest"])
       for (const [label, snapshot] of Object.entries(worlds)) {
         const fact = seedShortageFact({ taskId, snapshot, locale });
         if (fact === null) continue;
@@ -487,13 +487,7 @@ test("the fact is appended to the day's prompt once, and the prompt is untouched
   assert.equal(dayPromptWithFact(prompt, null, "zh"), prompt);
 });
 
-test("new concrete strip and shop-and-plot tasks carry seed shortage and supply facts", () => {
-  const stripFact = seedShortageFact({ taskId: "plant_market_strip", snapshot: snapshotWith([parsnip]), locale: "zh" });
-  assert.equal(taskPatchTiles("plant_market_strip"), 36);
-  assert.equal(stripFact.reasonCode, "seed_shortage");
-  assert.equal(stripFact.shortfall, 34);
-  assert.ok(stripFact.text.includes("任务 36 格"), stripFact.text);
-
+test("the shop-and-plot task carries a supply fact", () => {
   const expandFact = seedShortageFact({
     taskId: "buy_seeds_and_expand_plot",
     snapshot: snapshotWith([parsnip]),

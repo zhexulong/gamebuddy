@@ -34,6 +34,12 @@
  * it is the remainder of the artifact, grouped by the family the Mod's own registration catalog declares, and
  * `tools/check-stardew-task-action-coverage.mjs` fails when a published action is named by no task and explained by
  * no exclusion.
+ *
+ * AND A TASK THAT THE WORLD CANNOT HOLD IS NOT A DAY. Every rotation entry also declares its WORLD PRECONDITIONS
+ * (`SCENARIO_TASK_PRECONDITIONS`, and one signature per sweep group), beside the task and in the same module, so the two
+ * cannot be kept in step by memory: `tools/live-run/game/task-pool-feasibility.mjs` reads one real observation and answers
+ * the whole pool, and a task with no signature fails there by name. See `SCENARIO_TASK_PRECONDITIONS` for why that exists
+ * and what its vocabulary deliberately cannot say.
  */
 import { readdirSync, readFileSync } from "node:fs";
 
@@ -105,41 +111,20 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "craft_item",
     "place_owned_object",
   ]),
-  till_and_sow: Object.freeze(["till_soil", "plant_seed", "water_crop", "fertilize_tile"]),
   store_and_sort: Object.freeze(["chest_store", "chest_retrieve", "pickup_item"]),
   tend_the_animals: Object.freeze(["pet_animal", "feed_animal", "collect_animal_product", "water_pet_bowl"]),
   tidy_and_repair: Object.freeze(["clear_debris", "clear_hoedirt", "remove_placed_item", "break_container"]),
   dress_and_display: Object.freeze(["equip_wearable", "unequip_wearable", "dress_mannequin", "set_sign_display"]),
-  clear_and_cultivate: Object.freeze([
-    "chop_tree",
-    "chop_stump",
-    "clear_debris",
-    "till_soil",
-    "plant_seed",
-    "water_crop",
-  ]),
-  // THE ONE TASK WHOSE SHAPE IS LONGER THAN ONE VIEW. Target discovery is Chebyshev radius 6, so every snapshot is a
-  // 13x13 window and no snapshot contains this plot: 3x20 is twenty tiles long. Sixty tiles at three actions each keeps
-  // the day's cost beside `clear_and_cultivate`, and the question is one no task has ever asked - can she hold a
-  // boundary after walking out of the window she laid the far end of it in?
+  // THE ONLY TASK WHOSE SHAPE IS LONGER THAN ONE VIEW, and after the `2x18` bed was cut it is the only one whose
+  // purpose is a shape at all. Target discovery is Chebyshev radius 6, so every snapshot is a 13x13 window and no
+  // snapshot contains this plot: 3x20 is twenty tiles long. Sixty tiles at three actions each keeps the day's cost
+  // beside a day of ordinary field work, and the question is one no task has ever asked - can she hold a boundary
+  // after walking out of the window she laid the far end of it in?
   //
   // `chop_tree`/`chop_stump` are deliberately absent, and that is the only pruning: this patch is a strip of open
-  // ground, and a tile a tree stands on is not a tile you till - `clear_and_cultivate` keeps both because its patch is
-  // cut out of the woods, which is the opposite ground. Weeds, loose debris and rocks are what a clearable strip in
-  // front of the house actually holds, and all three stand between her and the first tilled tile.
+  // ground, and a tile a tree stands on is not a tile you till. Weeds, loose debris and rocks are what a clearable
+  // strip in front of the house actually holds, and all three stand between her and the first tilled tile.
   clear_and_plant_long_patch: Object.freeze([
-    "cut_weeds",
-    "clear_debris",
-    "break_rock",
-    "travel",
-    "shop_purchase",
-    "chest_retrieve",
-    "till_soil",
-    "plant_seed",
-    "water_crop",
-    "refill_watering_can",
-  ]),
-  plant_market_strip: Object.freeze([
     "cut_weeds",
     "clear_debris",
     "break_rock",
@@ -167,6 +152,142 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
   // coverage hole `enter_mine` was in: an action can be finished, gated, and never exercised because nothing asked.
   // One action, deliberately - the task is "did she go and fish", not a quota of fish.
   a_fish_from_the_water: Object.freeze(["fish_here"]),
+});
+
+/**
+ * WHAT THE WORLD MUST HOLD BEFORE A TASK CAN BE DONE AT ALL, declared beside the task it belongs to.
+ *
+ * A CRITERION SAYS WHAT A DAY MUST PRODUCE. It cannot say whether the day could have produced it, and the pool learnt that
+ * the expensive way: `dress_and_display` needs a wearable to put on and a mannequin or sign to display it on, and the
+ * opening world held neither; the `3x20` strip needs sixty tiles of untilled ground and the day found fewer; `till_soil`
+ * needed ground the Hoe had not already turned. None of those needed a turn to discover - they are facts of the opening
+ * snapshot, and discovering them on day 3 of a thirty-five-minute run costs the run. So each task declares the facts its
+ * own purpose needs before anything can start, in the closed vocabulary below, and
+ * `tools/live-run/game/task-pool-feasibility.mjs` reads one real observation and answers the whole pool at once.
+ *
+ * A DECLARATION, NOT A DESCRIPTION. Every requirement is one published fact and names it: a snapshot family (by the name
+ * the wire uses), the shape of published ground, whether the pack holds a wearable, and what a seed counter offers. Nothing
+ * here reads the fixture, invents a world, or asks a fact nothing publishes. What the vocabulary deliberately cannot say is
+ * "this task is unmeasurable": a task whose world half nobody can read would then pass by declaring its own silence, which
+ * is the failure this exists to catch. A task with NO signature is refused by name instead.
+ */
+
+/** One fact of the opening snapshot, as the wire publishes it. */
+const rowsOf = (families, { atLeast = 1 } = {}) =>
+  Object.freeze({ fact: "family_rows", families: Object.freeze([...families]), atLeast });
+
+/**
+ * Ground the task shapes: a strip of published `soilTiles` rows, by rectangle or by tile count.
+ *
+ * `hoed` is the state those rows must carry: `false` for ground the Hoe has not turned (the `3x20` strip and the twenty
+ * tiles `buy_seeds_and_expand_plot` expands onto). The EXTENT is the strip's own whole-map measurement - `blockX`,
+ * `blockY`, `blockW`, `blockH` come from a walk with no radius (`FarmableBlocks` in
+ * `integrations/stardew/farmhandexecutioncontroller.targetdiscovery.cs`), which is what makes "three wide and twenty
+ * long" a thing one snapshot can state at all.
+ *
+ * THE EXTENT IS GROUND, NOT THIS FAMILY'S ROWS. A row exists for a tile a soil action addresses NOW (under the Hoe, or
+ * ground it admits), so a rock, a weed, grass or a twig on the field is not a row - and an extent measured over rows was
+ * therefore an extent measured over BARE ground: the `3x20` day answered `largest published strip 28x19`, one row short,
+ * on a farm whose field is one rectangle. The walk now asks the permanent half of the Hoe's admission and puts up with an
+ * occupant some published action clears, so the box is the ground a patch can be opened in, while a row stays a tile an
+ * action addresses. The STATE is only known for the rows inside the six-tile window: a strip is accepted when every
+ * published row of it carries `hoed`, and a tile of that strip outside the window is not read. That ceiling is why the
+ * criterion, not this, remains the judge of a patch day.
+ */
+const soilGround = ({ width = 1, height = 1, tiles = null, hoed }) => {
+  if (typeof hoed !== "boolean") throw new Error("stardew_task_precondition_soil_needs_its_state");
+  if (tiles === null && (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1))
+    throw new Error("stardew_task_precondition_soil_needs_its_shape");
+  if (tiles !== null && (!Number.isInteger(tiles) || tiles < 1))
+    throw new Error("stardew_task_precondition_soil_tile_count_invalid");
+  return Object.freeze({ fact: "soil_ground", width, height, tiles, hoed });
+};
+
+/** A shop counter that sells a seed - and either she holds one or she can pay the price it charges. */
+const seedMarket = () => Object.freeze({ fact: "seed_market" });
+
+/**
+ * Something the pack carries that a task acts on.
+ *
+ * `wearable` is the only kind: `equip_wearable` moves a Hat, Boots, Ring or Clothing out of a pack slot
+ * (`IsWearableItem` in `integrations/stardew/farmhandexecutioncontroller.actorstateactions.cs`) and the wire publishes
+ * the pack's qualified item ids and not that judgement. The engine's own type-definition prefixes name four of those
+ * kinds - `(H)` hat, `(B)` boots, `(S)` shirt, `(P)` pants (`StardewValley.ItemTypeDefinitions`) - and a RING carries an
+ * `(O)` id, so a pack holding only a ring reads as "no wearable", which is the one direction this reading can be wrong
+ * in. Stated here rather than discovered as a false `task_precondition_unmet` nobody can explain.
+ */
+const packHolds = (kind) => {
+  if (kind !== "wearable") throw new Error(`stardew_task_precondition_pack_kind_unknown:${String(kind)}`);
+  return Object.freeze({ fact: "pack_kind", kind });
+};
+
+/** A balance the task's own price has to be paid out of. `because` is the price the number comes from. */
+const money = (atLeast, because) => {
+  if (!Number.isInteger(atLeast) || atLeast < 0) throw new Error("stardew_task_precondition_money_invalid");
+  if (typeof because !== "string" || because.length === 0)
+    throw new Error("stardew_task_precondition_money_needs_its_price");
+  return Object.freeze({ fact: "money", atLeast, because });
+};
+
+/** A signature: the facts of one task's world, in reading order. Never empty - silence is what this exists to remove. */
+const sig = (...needs) => {
+  if (needs.length === 0) throw new Error("stardew_task_precondition_signature_empty");
+  return Object.freeze(needs);
+};
+
+/**
+ * The scenario tasks' own world preconditions, keyed by the ids above.
+ *
+ * One requirement is one fact the task cannot begin without, so a signature with two requirements is a conjunction: both
+ * must hold. Where a purpose has two halves (`dress_and_display` puts something ON and puts it SOMEWHERE) the halves are
+ * separate requirements, so the finding names the half that failed instead of the pair.
+ */
+const SCENARIO_TASK_PRECONDITIONS = Object.freeze({
+  // The strip the day lays: sixty tiles of ground the Hoe has not turned, and a seed counter that will sell her what goes
+  // in it. Both were untrue when this was written, and both are opening-snapshot facts.
+  clear_and_plant_long_patch: sig(soilGround({ width: 3, height: 20, hoed: false }), seedMarket()),
+  // Twenty tiles is the count its criterion owes; the shape is not, so the ground is asked for by area.
+  buy_seeds_and_expand_plot: sig(soilGround({ tiles: 20, hoed: false }), seedMarket()),
+  // THE MINE IS NOT ON THIS MAP, and that is what the requirements say: `mineEntranceTargets` is discovered within the
+  // six-tile window of the map she stands on, so a Farm snapshot can only publish an entrance when she is already near
+  // one. The other half of the same fact is that this map has an exit to go and find one - `warps` and `doorTargets` are
+  // the map's own, whole-map, so the reading is "the mine is reachable from here", never "the mine is at her feet".
+  mine_ladder_to_depth: sig(rowsOf(["mineEntranceTargets", "warps", "doorTargets"])),
+  mine_delve: sig(rowsOf(["mineEntranceTargets", "warps", "doorTargets"])),
+  // `fish_here` casts where she stands; the water it can cast into is the family.
+  a_fish_from_the_water: sig(rowsOf(["waterTargets"])),
+  // A recipe she has learnt is the only thing `craft_item` can make, and the machine has to be put down and loaded.
+  craft_and_place_machine: sig(rowsOf(["craftingRecipeTargets"])),
+  // The day replants what a harvest day emptied: a crop to come off (or one ready for it - the whereabouts families are
+  // the location-wide count of each, and a ripe crop is a crop whose ground is owed), and a seed to put in its place.
+  water_and_harvest: sig(
+    rowsOf(["cropTargets", "harvestTargets", "harvestWhereabouts", "wateringWhereabouts"]),
+    seedMarket(),
+  ),
+  run_the_machines: sig(rowsOf(["machineTargets"])),
+  // Petting, feeding and collecting are three families because an animal that is not in any of them cannot be tended.
+  tend_the_animals: sig(
+    rowsOf(["petTargets", "farmAnimalPetTargets", "feedTroughTargets", "animalProductTargets"]),
+  ),
+  // A counter that stocks something she carries, and a box with post in it.
+  town_market: sig(rowsOf(["seedSupplyTargets"]), rowsOf(["mailboxTargets"])),
+  clear_east_patch: sig(rowsOf(["weedTargets", "grassTargets", "rockSourceTargets", "treeStumpTargets"])),
+  // THE TWO HALVES THAT WERE BOTH ABSENT. Something to put on, and somewhere to display it.
+  dress_and_display: sig(packHolds("wearable"), rowsOf(["mannequinTargets", "signTargets"])),
+  // Same shape as the mine, for the same reason: villagers are discovered around her, so a Farm snapshot holds none of
+  // them and a way off the map is the half of "there is someone to talk to" this map can state.
+  town_visit: sig(rowsOf(["npcRelationshipTargets", "warps", "doorTargets"])),
+  store_and_sort: sig(rowsOf(["chests"])),
+  // The house is arranged out of what can be crafted and what is already standing in it.
+  home_and_hearth: sig(rowsOf(["craftingRecipeTargets", "worldObjectTargets"])),
+  // Clearing is `clear_debris`, and putting something away needs something standing there to put away.
+  tidy_and_repair: sig(rowsOf(["debrisTargets"]), rowsOf(["worldObjectTargets", "clearHoeDirtTargets"])),
+  // The carpenter's first house upgrade is ten thousand gold, and the carpenter is not on the farm: the day needs the gold
+  // and a way off the map. The price is a number the game's own data holds and no receipt publishes, so it is declared
+  // here with the sentence it comes from rather than guessed at the counter.
+  home_upgrade: sig(rowsOf(["warps", "doorTargets"]), money(10_000, "the first farmhouse upgrade costs 10,000g")),
+  forage_and_trees: sig(rowsOf(["forageTargets"]), rowsOf(["shakeTreeTargets", "treeChopSourceTargets"])),
+  furnish_and_arrange: sig(rowsOf(["worldObjectTargets"]), rowsOf(["colorTargets"])),
 });
 
 /**
@@ -226,6 +347,11 @@ const SWEEP_GROUPS = Object.freeze([
     purpose: "the farm's own fixtures and the ground around them were all worked",
     missingFact:
       "no published fact says a fixture was used as a class: every receipt names one action and one target, and the grouping is a declaration in this repository, so a run can report which of these actions ran but never that the farm's fixtures were worked through.",
+    // The yard always holds something to work: the map's own exits are a published family (`warps`), so the day is never
+    // asked from a world where there is nothing at all. The rows that a farm with fixtures adds are beside them, not instead.
+    preconditions: sig(
+      rowsOf(["weedTargets", "debrisTargets", "treeChopSourceTargets", "seedTargets", "animalDoorTargets", "warps"]),
+    ),
   }),
   Object.freeze({
     id: "sweep_animals_and_company",
@@ -237,6 +363,8 @@ const SWEEP_GROUPS = Object.freeze([
     purpose: "the animals were seen to and whoever was around was spoken to",
     missingFact:
       "the receipts name one action each - `pet_animal` reports the animal it touched and `talk_to_npc` the map the words happened on - and nothing publishes whether anyone was around to talk to, so 'the animals and the company were seen to' cannot be decided from them.",
+    // A day about company needs company: an animal to look in on or a villager to speak to. The yard alone is not one.
+    preconditions: sig(rowsOf(["petTargets", "farmAnimalPetTargets", "npcRelationshipTargets"])),
   }),
   Object.freeze({
     id: "sweep_carried_things",
@@ -250,6 +378,9 @@ const SWEEP_GROUPS = Object.freeze([
     // the product published everything it needed. The sentence below is the two acts its own prompt names, each one a
     // receipt, and the criterion in `task-purpose.mjs` says the same thing once.
     purpose: "something she was carrying was used up, and something she was carrying was sold",
+    // Both halves of its criterion read the pack, and selling needs the bin: the pack's rows are the only published form
+    // of "what she is carrying" (`inventoryItemFacts`), and `ship_item` pairs a shippable slot with the Farm's bin.
+    preconditions: sig(rowsOf(["inventoryItemFacts"]), rowsOf(["shippingBinTargets"])),
   }),
 ]);
 
@@ -284,6 +415,7 @@ export function buildSweepTasks({ population, familyOf, named }) {
         prompt: group.prompt,
         purpose: group.purpose,
         missingFact: group.missingFact,
+        preconditions: group.preconditions,
       }),
     );
   }
@@ -294,6 +426,20 @@ const SWEEP_TASKS = buildSweepTasks({
   population: readExecutionPopulation(),
   familyOf: readStardewActionFamilies(),
   named: new Set(Object.values(SCENARIO_TASK_ACTION_HINTS).flat()),
+});
+
+/**
+ * Every task in the pool's world preconditions, keyed by the ids in `DAILY_TASK_ROTATION`.
+ *
+ * The union is what makes a sweep group's signature unavoidable: a group added to `SWEEP_GROUPS` tomorrow carries its own
+ * requirements into the task it builds, so the gate cannot be passed by a task nobody declared. The population of both
+ * halves - this table and the rotation - is refused in either direction: a rotation entry with no signature fails by name,
+ * and a signature for a task the pool no longer holds fails as `task_precondition_orphaned`, so a declaration cannot
+ * outlive its subject.
+ */
+export const TASK_PRECONDITIONS = Object.freeze({
+  ...SCENARIO_TASK_PRECONDITIONS,
+  ...Object.fromEntries(SWEEP_TASKS.map((task) => [task.id, task.preconditions])),
 });
 
 /**
@@ -335,22 +481,27 @@ export function sweepTaskPrompts() {
  */
 export const DAILY_TASK_ROTATION = Object.freeze([
   // Lead with concrete, decidable, economic/spatial tasks (`3x20`, autonomous seed purchase + 20-tile expansion,
-  // `2x18` market bed, mine depth, fishing, machines, harvest/replant) so default 2-3 day runs open on real
-  // planning and SeedShop trade-offs instead of unjudgeable gaps and 1-tile errands.
+  // mine depth, fishing, machines, harvest/replant) so default 2-3 day runs open on real planning and SeedShop
+  // trade-offs instead of unjudgeable gaps and errands.
+  //
+  // A TASK THAT ONE TILE CAN SATISFY IS NOT A TASK. Three farming entries were cut for that reason - the `2x18`
+  // market bed (the same shape as the `3x20` strip, smaller), `clear_and_cultivate` and `till_and_sow` (both
+  // satisfied by a single tile each: `round93` spent a whole day on the first and `round91`'s only `achieved` was
+  // the second, on one tile). In a three-day rotation that is a third of every run measuring nothing, and it teaches
+  // the planner that a single tile is enough. What each one covered by way of actions is not lost: `fertilize_tile`
+  // fell to `sweep_yard_and_work`, and the rest of their hints are named by the entries above - the coverage gate
+  // prints the count.
   "clear_and_plant_long_patch",
   "buy_seeds_and_expand_plot",
   "mine_ladder_to_depth",
-  "plant_market_strip",
   "a_fish_from_the_water",
   "craft_and_place_machine",
   "water_and_harvest",
   "mine_delve",
   "run_the_machines",
-  "till_and_sow",
   // Interleave each remaining scenario gap cleanly after a decidable day so no two scenario gaps sit adjacent.
   "tend_the_animals",
   "town_market",
-  "clear_and_cultivate",
   "clear_east_patch",
   "dress_and_display",
   "town_visit",

@@ -167,8 +167,10 @@ test("pickup_forage authoritative completion binds evidence target identity to p
     reasonCode: "forage_picked_up",
     revision: 1,
     evidence: {
+      // The shape `ForagePickupPostcondition.Describe` writes: the seven keys the verdict reads and the seven the engine
+      // account adds. A seven-key detail is a receipt no handler mints.
       detail:
-        "location=Farm;targetIdentity=forage_01;tile=3,4;item=(O)398;removed=true;inventory_before=0;inventory_after=1",
+        "location=Farm;targetIdentity=forage_01;tile=3,4;item=(O)398;container=location.objects;action_handled=true;blocked_by=none;spawned=true;object_type=Basic;removed=true;inventory_before=0;inventory_after=1;settle=game1.try_to_check_at;read=after_the_settle",
     },
   } as const;
   const execution = {

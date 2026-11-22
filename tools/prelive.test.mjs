@@ -15,12 +15,13 @@
  * checking either would fail those tests, not pass silently.
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { ARTEFACT_PRODUCERS, inputsMovedSince } from "./check-generated-artifact-reproducibility.mjs";
+import { ARTEFACT_PRODUCERS, inputsMovedSince } from "../gates/data/check-generated-artifact-reproducibility.mjs";
 import { GATE_EXEMPT_PUBLISHED_ACTIONS } from "./lib/stardew-published-action-registry.mjs";
 import {
   actionRegistryRung,
@@ -35,6 +36,8 @@ import {
   deployRung,
   firstTypeScriptError,
   format,
+  formatSchedule,
+  formatScheduleFindings,
   isInside,
   linkageRung,
   modExportBuildPreparation,
@@ -45,6 +48,7 @@ import {
   parseKnownFixtureScenarios,
   parseModDispatchScenarios,
   reachableRunnerNames,
+  readSchedule,
   recordShrinks,
   runGateRung,
   runLadder,
@@ -426,7 +430,6 @@ test("(v) a clean tree is green, end to end through every rung", () => {
       () =>
         runGateRung({
           gates: ["tools/check-a.mjs", "tools/audit-b.mjs"],
-          resolveCommand: () => ({ command: "node tools/check-a.mjs", discovered: false }),
           run: () => ({ status: 0, stdout: "", stderr: "" }),
         }),
       () => checkLinkageClosure(cleanLinkage()),
@@ -464,7 +467,6 @@ test("(v) the ladder stops at the first red rung and does not run the ones after
 test("(v) L0 reports each gate's exit code by name", () => {
   const report = runGateRung({
     gates: ["tools/green.mjs", "tools/red.mjs"],
-    resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
     run: (command) => ({ status: command.endsWith("green.mjs") ? 0 : 1, stdout: "", stderr: "" }),
   });
   assert.equal(report.status, "failed");
@@ -484,7 +486,6 @@ test("(v) a gate that could not measure is UNAVAILABLE in both dialects, and an 
   const marker = "stardew_probe_skipped: needs ref/external/StardewValleyDecompiled\n";
   const report = runGateRung({
     gates: ["tools/quiet.mjs", "tools/blocked.mjs", "tools/red-with-marker.mjs"],
-    resolveCommand: (gate) => ({ command: `node ${gate}`, discovered: false }),
     run: (command) => ({
       status: command.endsWith("quiet.mjs") ? 0 : command.endsWith("blocked.mjs") ? 2 : 1,
       stdout: marker,
@@ -523,7 +524,6 @@ test("the report prints the counts and the members the ladder names", () => {
       () =>
         runGateRung({
           gates: ["tools/check-a.mjs"],
-          resolveCommand: () => ({ command: "node tools/check-a.mjs", discovered: false }),
           run: () => ({ status: 0, stdout: "", stderr: "" }),
         }),
       () => checkLinkageClosure(cleanLinkage()),
@@ -548,6 +548,102 @@ test("the report prints the counts and the members the ladder names", () => {
   assert.match(report, /l4_skipped: needs --game/u);
   assert.match(report, /prelive: passed/u);
   assert.ok(report.includes("C:\\work\\mods") || report.includes("C:/work/mods"), "both deploy paths must print");
+});
+
+//
+// The schedule: the rung lists checked against the tree's own gate population
+//
+
+/** A `readDeclarations` reading over fabricated paths, so the schedule's rules can be driven without the real tree. */
+const declarationReading = (entries) => ({
+  examined: entries.length,
+  files: entries.map((entry) => entry.path),
+  declared: entries
+    .filter((entry) => entry.tier !== null)
+    .map(({ path: gatePath, tier }) => ({ path: gatePath, tier })),
+  undeclared: entries.filter((entry) => entry.tier === null).map((entry) => entry.path),
+  findings: [],
+});
+
+test("(schedule) a rung naming a path that is not on disk is refused, with the rung and the path in the code", async () => {
+  const schedule = await readSchedule({
+    rungs: [{ id: "l0", gates: ["gates/stardew/check-moved.mjs"] }],
+    read: async () => declarationReading([{ path: "gates/stardew/check-moved.mjs", tier: "l0" }]),
+    exists: () => false,
+  });
+  assert.deepEqual(
+    schedule.findings.map((finding) => `${finding.code}:${finding.id}`),
+    ["rung_member_missing:l0:gates/stardew/check-moved.mjs"],
+  );
+  assert.equal(schedule.rungs[0].count, 0, "a member that is not there is not counted as scheduled");
+  assert.match(formatScheduleFindings(schedule), /rung_member_missing: l0:gates\/stardew\/check-moved\.mjs/u);
+});
+
+test("(schedule) one gate scheduled twice is named, because it is a gate that runs twice", async () => {
+  const schedule = await readSchedule({
+    rungs: [
+      { id: "l0", gates: ["gates/arch/check-a.mjs", "gates/arch/check-a.mjs"] },
+      { id: "l0b", gates: ["gates/arch/check-a.mjs"] },
+    ],
+    read: async () => declarationReading([{ path: "gates/arch/check-a.mjs", tier: "l0" }]),
+    exists: () => true,
+  });
+  assert.deepEqual(
+    schedule.findings.map((finding) => `${finding.code}:${finding.id}`),
+    ["rung_member_duplicated:l0:gates/arch/check-a.mjs", "rung_member_duplicated:l0b:gates/arch/check-a.mjs"],
+  );
+});
+
+test("(schedule) every gate no rung runs is named with the tier the gate itself declares", async () => {
+  const schedule = await readSchedule({
+    rungs: [{ id: "l0", gates: ["gates/arch/check-scheduled.mjs"] }],
+    read: async () =>
+      declarationReading([
+        { path: "gates/arch/check-scheduled.mjs", tier: "l0" },
+        { path: "gates/arch/check-elsewhere.mjs", tier: "l2" },
+        { path: "tools/check-undeclared.mjs", tier: null },
+      ]),
+    exists: () => true,
+  });
+  assert.deepEqual(
+    schedule.unscheduled.map((row) => row.code),
+    [
+      "gate_tier_not_scheduled:gates/arch/check-elsewhere.mjs:l2",
+      "gate_tier_not_scheduled:tools/check-undeclared.mjs:none",
+    ],
+  );
+  assert.equal(schedule.examined, 3, "the population is the registry's scan, and every member is accounted for");
+  const listed = formatSchedule(schedule);
+  assert.match(listed, /^prelive_schedule: l0 1 · scheduled 1 of 3/mu);
+  assert.match(listed, /gate_tier_not_scheduled:gates\/arch\/check-elsewhere\.mjs:l2/u);
+});
+
+test("the real tree: every rung member resolves on disk, is scheduled once, and the population is not empty", async () => {
+  const schedule = await readSchedule();
+  assert.deepEqual(
+    schedule.findings,
+    [],
+    "a rung that names a moved gate must be fixed here, not discovered inside a child process",
+  );
+  assert.ok(
+    schedule.rungs.every((rung) => rung.count > 0),
+    "a rung with no member is a rung measuring nothing",
+  );
+  assert.ok(schedule.examined > schedule.rungs.reduce((total, rung) => total + rung.count, 0));
+  const unscheduled = new Set(schedule.unscheduled.map((row) => row.path));
+  for (const rung of schedule.rungs)
+    for (const member of rung.members)
+      assert.equal(unscheduled.has(member.path), false, `${member.path} is scheduled and reported unscheduled`);
+});
+
+test("the real tree: `--list` prints the schedule before anything runs", () => {
+  const listed = spawnSync(process.execPath, ["tools/prelive.mjs", "--list"], { encoding: "utf8" });
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /^prelive_schedule: l0 \d+ · l0b \d+ · scheduled \d+ of \d+ gate file\(s\)/mu);
+  assert.match(listed.stdout, /^rung l0: \d+ member\(s\)$/mu);
+  assert.match(listed.stdout, /^  l0 gates\/meta\/check-prelive-gate-registry\.mjs tier=l2$/mu);
+  assert.match(listed.stdout, /^gate_tier_not_scheduled:\S+:\S+$/mu);
+  assert.match(listed.stdout, /^prelive_schedule: passed$/mu);
 });
 
 test("the real tree: linkage closure is closed and the runners' shape is at its recorded baseline", () => {

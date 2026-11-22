@@ -70,8 +70,16 @@ type PreconditionClaim = Readonly<{
   declaration: Readonly<{ source: string; signature: string }>;
   /** The executor member the declaration is, so the refusal and the publication can be read for its use. */
   predicate: string;
-  /** Where the executor refuses with it. */
-  refusedIn: string;
+  /**
+   * The declared name the executor now spells this reason with, and the declaration that gives it its value.
+   *
+   * The reason code is one fact with one spelling inside the Mod (`internal const string NotHomeReason = "not_home";`)
+   * and two spellings are checked against each other here: `refusal` is the WORD the companion reads on the line, and
+   * this names the constant the executor refuses with, so neither a renamed constant nor a reworded line goes unnoticed.
+   */
+  refusalConstant: Readonly<{ name: string; source: string }>;
+  /** Where the executor refuses with it: every entry point that answers this refusal, by file. */
+  refusedIn: readonly string[];
 }>;
 
 const SLEEP: PreconditionClaim = {
@@ -84,7 +92,16 @@ const SLEEP: PreconditionClaim = {
     signature: "internal static FarmHouse? HomeOf(GameLocation? location) => location as FarmHouse;",
   },
   predicate: "HomeOf",
-  refusedIn: "integrations/stardew/SleepAndAdvanceDayLifecycle.cs",
+  refusalConstant: { name: "NotHomeReason", source: "integrations/stardew/SleepAndAdvanceDayLifecycle.cs" },
+  // BOTH ENTRY POINTS, and the dispatch is the one `round93` was missing: the request now answers `not_home` in the same
+  // call it arrives in (`RequestLocalAdvanceDay`), and the game-thread gate re-checks the same declaration when the world
+  // moves her out while the night is in flight (`TryEnterEligibility`). A projection line is only as true as the LAYER
+  // that refuses: the line stated this condition while the dispatch answered `accepted` and the refusal arrived 308 s
+  // later, which is the defect this gate was written for.
+  refusedIn: [
+    "integrations/stardew/farmhandexecutioncontroller.lifecycleactions.cs",
+    "integrations/stardew/SleepAndAdvanceDayLifecycle.cs",
+  ],
 };
 
 const PRECONDITIONS: readonly PreconditionClaim[] = [SLEEP];
@@ -131,12 +148,31 @@ const MODAL_LINE = Object.freeze({
 });
 
 /**
- * Whether the line that refuses with `refusal` reads `predicate`. Both names on ONE line: that is what makes the
+ * Whether the line that refuses with `refusal` reads `predicate`. The two names on ONE STATEMENT: that is what makes the
  * refusal and the published verdict the same condition rather than two rules that happen to agree today.
+ *
+ * <p>
+ * TWO SPELLINGS OF ONE REASON, because the Mod declares it once. `"not_home"` is the value and `NotHomeReason` is the
+ * name the refusal, the receipt and the wire all use; a reading that only knew the literal went red the moment the
+ * declaration was introduced, and one that only knew the name would accept a line refusing with a same-named constant
+ * from anywhere. Both are matched, and the refusal may sit on the line after the condition it is answered from - the
+ * Mod's own `if (<condition>) return RememberTerminal(..., <reason>, ...)` shape - which is why the statement is read as
+ * three lines rather than one.
+ * </p>
  */
-function refusalNamesDeclaration(source: string, predicate: string, refusal: string): boolean {
-  const refusing = source.split("\n").filter((line) => line.includes(`reason = "${refusal}"`));
-  return refusing.some((line) => line.includes(`${predicate}(`));
+function refusalNamesDeclaration(source: string, predicate: string, refusal: string, constant: string): boolean {
+  const lines = source.split("\n");
+  const spells = (line: string): boolean => line.includes(`"${refusal}"`) || line.includes(constant);
+  return lines.some(
+    (line, index) =>
+      spells(line) && [lines[index - 2], lines[index - 1], line].some((near) => near?.includes(`${predicate}(`)),
+  );
+}
+
+/** The value an `internal const string <name> = "<value>";` declaration gives, or `null` when it is absent. */
+function declaredConstantValue(source: string, name: string): string | null {
+  const matched = new RegExp(`internal const string ${name} = "([^"]+)";`, "u").exec(source);
+  return matched === null ? null : matched[1]!;
 }
 
 /** Whether the snapshot argument that publishes `field` reads `predicate`, rather than computing its own answer. */
@@ -238,19 +274,26 @@ test("every projection line's precondition is the executor's own", async (t) => 
     // 3. The declaration exists, as a declaration.
     if (!read(claim.declaration.source).includes(claim.declaration.signature))
       problems.push(`${claim.declaration.source} does not declare \`${claim.declaration.signature}\``);
-    // 4. And it is the decision the refusal makes.
-    if (!refusalNamesDeclaration(read(claim.refusedIn), claim.predicate, claim.refusal))
+    // 4. And it is the decision every entry point that refuses with it makes.
+    for (const refusedIn of claim.refusedIn)
+      if (!refusalNamesDeclaration(read(refusedIn), claim.predicate, claim.refusal, claim.refusalConstant.name))
+        problems.push(
+          `the \`${claim.refusal}\` refusal in ${refusedIn} does not read ${claim.predicate}: the line states a condition the executor does not enforce`,
+        );
+    // 5. The word the line states is the VALUE of the executor's own declaration, not a copy of it.
+    const declared = declaredConstantValue(read(claim.refusalConstant.source), claim.refusalConstant.name);
+    if (declared !== claim.refusal)
       problems.push(
-        `the \`${claim.refusal}\` refusal in ${claim.refusedIn} does not read ${claim.predicate}: the line states a condition the executor does not enforce`,
+        `${claim.refusalConstant.source} declares ${claim.refusalConstant.name} as \`${declared ?? "nothing"}\`, and the line states \`${claim.refusal}\``,
       );
-    // 5. The projection derives from that field rather than deciding for itself.
+    // 6. The projection derives from that field rather than deciding for itself.
     if (!projectionReads(projectionSource, claim.field))
       problems.push(`${PROJECTION} never reads ${claim.field}, so \`${claim.lineLabel}\` states its own opinion`);
 
     if (problems.length === 0) agree += 1;
     else findings.push(`${code} - ${problems.join("; ")}`);
 
-    // 6. The verdict reaches the line in all three states, and each state is distinguishable from the others.
+    // 7. The verdict reaches the line in all three states, and each state is distinguishable from the others.
     await t.test(`the ${claim.action} line follows the published verdict`, () => {
       const admits = renderedLine(withVerdict(claim.field, true), claim.lineLabel);
       const refuses = renderedLine(withVerdict(claim.field, false), claim.lineLabel);
@@ -313,9 +356,17 @@ test("the readings that decide a claim go red on a line the executor does not en
   // The pre-fix shape, verbatim: the type test inlined, so the condition is in the gate and nowhere shareable.
   const inlined = `        if (Game1.currentLocation is not FarmHouse) { reason = "not_home"; return false; }`;
   assert.equal(
-    refusalNamesDeclaration(inlined, claim.predicate, claim.refusal),
+    refusalNamesDeclaration(inlined, claim.predicate, claim.refusal, claim.refusalConstant.name),
     false,
     "an inlined type test must not satisfy the refusal check",
+  );
+  // A refusal that spells the CONSTANT but answers from some other condition says nothing about this declaration - the
+  // hole a check reading only the name would have: the reason is right and the condition it is answered from is not.
+  const elsewhere = `        if (Game1.player.passedOut) { reason = NotHomeReason; return false; }`;
+  assert.equal(
+    refusalNamesDeclaration(elsewhere, claim.predicate, claim.refusal, claim.refusalConstant.name),
+    false,
+    "a refusal answered from another condition must not satisfy the check",
   );
   // A publication that answered from the map's NAME instead of the declaration - the second rule this fix forbids.
   const named = `            SleepAdmitsHere: player.currentLocation?.Name == "FarmHouse"`;
@@ -325,6 +376,12 @@ test("the readings that decide a claim go red on a line the executor does not en
     "a publication computed from the location name must not satisfy the publication check",
   );
   // And both readings are true on this tree, so the checks are not simply always red.
-  assert.equal(refusalNamesDeclaration(read(claim.refusedIn), claim.predicate, claim.refusal), true);
+  for (const refusedIn of claim.refusedIn)
+    assert.equal(
+      refusalNamesDeclaration(read(refusedIn), claim.predicate, claim.refusal, claim.refusalConstant.name),
+      true,
+      `${refusedIn} refuses \`${claim.refusal}\` from ${claim.predicate}`,
+    );
   assert.equal(publicationReadsDeclaration(read(CONTROLLER), claim.field, claim.predicate), true);
+  assert.equal(declaredConstantValue(read(claim.refusalConstant.source), claim.refusalConstant.name), claim.refusal);
 });

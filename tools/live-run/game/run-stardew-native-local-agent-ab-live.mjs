@@ -859,17 +859,15 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   town_market: "去一趟镇上买点东西，回来把信箱里的信取出来。",
   town_visit: "去一趟镇上，找个人说说话。",
   mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
-  clear_and_cultivate: "林子东边太挤了，清出一片像样的空地（能摆下十来格庄稼），种子不够就去镇上买些回来，翻好土种上浇透水。",
   home_and_hearth: "屋里太空了，收拾一下、摆点东西，让它像个家。",
   home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
-  till_and_sow: "门前多翻出十来格空地，种子不够就去镇上买合算的春菜种子，种下去全浇透水。",
   // ONE sentence, and the size is the point of the sentence: a plot twenty tiles long cannot fit in the 13x13 window
   // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
   // hers - and no instruction about how to plan it is appended, because the shape is the task.
   clear_and_plant_long_patch: "门前横着开一条长地，三格宽、二十格长，清出来种上。",
-  plant_market_strip: "挑种回本快又合算的春菜，去镇上把种子买齐，在门前开一条两格宽、十八格长的菜畦，全翻好种上浇透水。",
-  buy_seeds_and_expand_plot: "屋前新开一块至少二十格的菜地；手头种子不够就去镇上商店挑合算的春菜种子买足，翻好、种满并浇透水。",
+  buy_seeds_and_expand_plot:
+    "屋前新开一块至少二十格的菜地；手头种子不够就去镇上商店挑合算的春菜种子买足，翻好、种满并浇透水。",
   // No number of fish and no destination: `waterTargets` is the world's own answer to "where is water I can fish",
   // and picking a spot here would be a second one.
   a_fish_from_the_water: "找片水，钓条鱼回来。",
@@ -896,15 +894,9 @@ const DAILY_TASK_PROMPT_EN = Object.freeze({
   town_market: "go into town, buy something at a shop, and bring the post in. ",
   town_visit: "go into town and talk to somebody there. ",
   mine_delve: "go down the mine and come back with some ore. ",
-  clear_and_cultivate:
-    "the woods on the east side are too thick - clear an opening big enough for a dozen crops, buy more seeds in town if short, and till, plant, and water it.",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
-  till_and_sow:
-    "turn a dozen-tile patch of bare ground out front, buy worthwhile spring seeds in town if you run short, plant them, and water them well. ",
   clear_and_plant_long_patch:
     "open up a long strip out front - three tiles wide, twenty long - clear it and plant it. ",
-  plant_market_strip:
-    "pick a profitable, fast-turning spring crop, buy enough seeds in town, and lay out a bed out front - two tiles wide, eighteen long - tilled, planted, and watered all along.",
   buy_seeds_and_expand_plot:
     "open up a new vegetable plot out front of at least twenty tiles; buy enough worthwhile spring seeds in town if what you have falls short, and get every tile tilled, planted, and watered.",
   a_fish_from_the_water: "find some water and bring a fish back from it. ",
@@ -2227,9 +2219,7 @@ async function deliverDialogueGatesForDay(day, tools, dayScope = null) {
     // A BUBBLE THAT CARRIES A FRAGMENT IS NOT AN ANSWER TO THE PLAYER, and the gate must not read it as one: the same
     // rule the turn's own record applies (`./turn-speech.mjs`) refuses it here, and the refusal travels with the delivery
     // so `result.json` says which bubble was withheld instead of the gate judging `b 十五包…` as her reply (`round89`).
-    const refusedBubbles = spoken
-      .filter((bubble) => bubble.code !== null)
-      .map((bubble) => bubble.code);
+    const refusedBubbles = spoken.filter((bubble) => bubble.code !== null).map((bubble) => bubble.code);
     dialogueDelivery.set(
       gate.id,
       Object.freeze({ ...claimed, admission: "accepted", ...(refusedBubbles.length > 0 ? { refusedBubbles } : {}) }),

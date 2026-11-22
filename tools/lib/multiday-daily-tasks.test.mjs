@@ -135,7 +135,7 @@ test("a day can be pinned to its own task, and the pin names what it cannot appl
     "a non-numeric day fails",
   );
   assert.throws(
-    () => overriddenTaskForDay("2:a_fish_from_the_water,2:till_and_sow"),
+    () => overriddenTaskForDay("2:a_fish_from_the_water,2:mine_delve"),
     /twice/u,
     "the same day pinned twice is refused: one of the two would be silently ignored",
   );
@@ -323,8 +323,11 @@ test("the_rotation_leads_with_concrete_decidable_work", (t) => {
       findings.push(`adjacent_unjudgeable_scenario_pair:${left}->${right}`);
     }
   }
+  // A POOL WITH ONE SHAPE, AND THE FLOOR IS ONE. It was two while the `2x18` market bed existed beside the `3x20`
+  // strip; the bed was cut for measuring the same shape smaller, so the floor is the shape criterion itself - zero is
+  // the red, and a rotation that drops every patch day stops asking for a plot longer than one screen.
   const patchTasks = DAILY_TASK_ROTATION.filter((task) => TASK_PURPOSE_CRITERIA[task]?.patch !== undefined);
-  if (patchTasks.length < 2) {
+  if (patchTasks.length < 1) {
     findings.push(`insufficient_patch_tasks:${String(patchTasks.length)} (${patchTasks.join(", ")})`);
   }
   const shopAndSowTasks = DAILY_TASK_ROTATION.filter((task) => {

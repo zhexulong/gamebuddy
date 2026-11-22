@@ -1,0 +1,282 @@
+/**
+ * The pool's world preconditions, and the one observation that answers all of them.
+ *
+ * The cases below are the failure classes the check exists for, in the order the pool met them: a task nobody declared a
+ * world for, a fact the Mod did not measure read as if it were an empty world, an empty pool that would otherwise agree
+ * with itself, and the two halves of `dress_and_display` - the day the opening snapshot could not have supported.
+ */
+
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+import { DAILY_TASK_ROTATION, TASK_PRECONDITIONS } from "../../lib/multiday-daily-tasks.mjs";
+import {
+  TASK_POOL_BUDGET_MS,
+  describeRequirement,
+  describeTaskPoolFeasibility,
+  evaluateTaskPoolFeasibility,
+  readRequirement,
+} from "./task-pool-feasibility.mjs";
+
+const SNAPSHOT_SAMPLE = new URL(
+  "../../../integrations/stardew/action-development/contracts/generated/snapshot-sample.v1.json",
+  import.meta.url,
+);
+
+/** The opening snapshot as the harness hands it over: a Farm, a revision, and a world with one of everything. */
+function satisfiedWorld() {
+  const block = { blockX: 60, blockY: 10, blockW: 3, blockH: 20 };
+  return {
+    revision: 7,
+    location: "Farm",
+    tile: { x: 64, y: 12 },
+    money: 12_000,
+    soilTiles: [
+      { x: 60, y: 10, hoeDirt: false, ...block },
+      { x: 61, y: 10, hoeDirt: false, ...block },
+      { x: 62, y: 10, hoeDirt: false, ...block },
+      { x: 60, y: 11, hoeDirt: false, ...block },
+      { x: 61, y: 11, hoeDirt: false, ...block },
+      { x: 62, y: 11, hoeDirt: false, ...block },
+    ],
+    warps: [{ sourceX: 66, sourceY: 15, targetLocation: "BusStop", targetX: 0, targetY: 0 }],
+    doorTargets: [{ sourceX: 64, sourceY: 12, targetLocation: "FarmHouse", targetX: 5, targetY: 9 }],
+    mineEntranceTargets: [{ targetId: "mine_entrance_1", x: 54, y: 4 }],
+    waterTargets: [{ x: 70, y: 20 }],
+    craftingRecipeTargets: [{ expectedTargetId: "craft_1", recipeName: "Scarecrow" }],
+    cropTargets: [{ targetId: "crop_1", x: 60, y: 12 }],
+    machineTargets: [{ targetId: "machine_1", x: 62, y: 12 }],
+    petTargets: [{ targetId: "pet_1", x: 63, y: 13 }],
+    farmAnimalPetTargets: [{ targetId: "animal_1", x: 64, y: 13 }],
+    feedTroughTargets: [{ targetId: "trough_1", x: 65, y: 13 }],
+    animalProductTargets: [{ targetId: "produce_1", x: 66, y: 13 }],
+    seedSupplyTargets: [
+      { qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", heldCount: 0, shopId: "SeedShop", price: 20 },
+    ],
+    mailboxTargets: [{ targetId: "mailbox_1", x: 68, y: 12, pendingCount: 1 }],
+    weedTargets: [{ targetId: "weed_1", x: 59, y: 9 }],
+    grassTargets: [{ targetId: "grass_1", x: 58, y: 9 }],
+    rockSourceTargets: [{ targetId: "rock_1", x: 57, y: 9 }],
+    treeStumpTargets: [{ targetId: "stump_1", x: 56, y: 9 }],
+    treeChopSourceTargets: [{ targetId: "tree_1", x: 55, y: 9 }],
+    shakeTreeTargets: [{ targetId: "shake_1", x: 54, y: 9 }],
+    mannequinTargets: [{ targetId: "mannequin_1", x: 5, y: 9 }],
+    signTargets: [],
+    inventoryItemFacts: [{ slot: 0, qualifiedItemId: "(H)15", displayName: "Hat", stack: 1 }],
+    npcRelationshipTargets: [{ targetId: "npc_1", npcName: "Abigail" }],
+    chests: [{ chestId: "chest_1", x: 63, y: 12 }],
+    worldObjectTargets: [{ targetId: "object_1", x: 6, y: 9 }],
+    colorTargets: [{ targetId: "color_1", x: 7, y: 9 }],
+    debrisTargets: [{ targetId: "debris_1", x: 58, y: 11 }],
+    clearHoeDirtTargets: [{ targetId: "hoedirt_1", x: 58, y: 12 }],
+    forageTargets: [{ targetId: "forage_1", x: 59, y: 13 }],
+    shippingBinTargets: [{ targetId: "bin_1", x: 0, y: 0, slot: 3 }],
+    animalDoorTargets: [{ targetId: "door_1", x: 65, y: 14 }],
+  };
+}
+
+/** Every snapshot family the pool's signatures name, emptied: a world that measured everything and holds nothing. */
+function emptyWorld() {
+  const world = satisfiedWorld();
+  for (const [key, value] of Object.entries(world)) {
+    if (Array.isArray(value)) world[key] = [];
+  }
+  return world;
+}
+
+const findingsFor = (reading, task) => reading.findings.filter((code) => code.includes(`:${task}:`));
+
+test("every task in the pool declares a world, and every declaration belongs to a task in the pool", () => {
+  const pool = DAILY_TASK_ROTATION.filter((task) => typeof task === "string");
+  assert.ok(pool.length > 0, "the rotation names no task at all");
+  const undeclared = pool.filter((task) => !Array.isArray(TASK_PRECONDITIONS[task]) || TASK_PRECONDITIONS[task].length === 0);
+  const orphaned = Object.keys(TASK_PRECONDITIONS).filter((task) => !pool.includes(task));
+  assert.deepEqual(
+    undeclared,
+    [],
+    `a task with no precondition signature is a task nobody asked the world about: ${undeclared.join(", ")}`,
+  );
+  assert.deepEqual(orphaned, [], `a signature outlived the task it was declared for: ${orphaned.join(", ")}`);
+});
+
+test("every family a signature names is a family the generated snapshot shape publishes", () => {
+  const sample = JSON.parse(readFileSync(SNAPSHOT_SAMPLE, "utf8"));
+  const published = new Set([...Object.keys(sample.real ?? {}), ...(sample.absent ?? []).map((row) => row.field)]);
+  assert.ok(published.size > 0, "the generated snapshot sample names no family: this test would agree with itself");
+  const named = [];
+  for (const [task, signature] of Object.entries(TASK_PRECONDITIONS)) {
+    for (const requirement of signature) {
+      if (requirement.fact !== "family_rows") continue;
+      for (const family of requirement.families) named.push({ task, family });
+    }
+  }
+  const unknown = named.filter((entry) => !published.has(entry.family));
+  assert.deepEqual(
+    unknown,
+    [],
+    `a signature asks for a family the snapshot does not carry, so its task could never be judged: ${unknown
+      .map((entry) => `${entry.task}:${entry.family}`)
+      .join(", ")}`,
+  );
+  assert.ok(named.length > 0, "no signature names a family at all");
+});
+
+test("a world holding one of everything makes the whole pool feasible", () => {
+  const reading = evaluateTaskPoolFeasibility({ snapshot: satisfiedWorld() });
+  assert.equal(reading.blocked, null);
+  assert.equal(reading.infeasible, 0, `unexpected infeasible tasks: ${reading.readings
+    .filter((row) => row.verdict !== "feasible")
+    .map((row) => `${row.task} ${row.findings.join(" + ")}`)
+    .join("; ")}`);
+  assert.equal(reading.undecided, 0);
+  assert.equal(reading.feasible, reading.tasks);
+  assert.match(reading.reading, /^tasks 22 · feasible 22 · infeasible 0 \(none\)$/u);
+});
+
+test("an empty world is infeasible AND NAMED, and a window's emptiness is not the world's", () => {
+  const reading = evaluateTaskPoolFeasibility({ snapshot: emptyWorld() });
+  // Decisive: the actor's own pack, her purse, the map's own exits, her recipes and the seed supply - every fact that
+  // answers for the whole map or the whole actor.
+  assert.deepEqual(reading.infeasibleTasks, [
+    "clear_and_plant_long_patch",
+    "buy_seeds_and_expand_plot",
+    "mine_ladder_to_depth",
+    "craft_and_place_machine",
+    "water_and_harvest",
+    "mine_delve",
+    "town_market",
+    "dress_and_display",
+    "town_visit",
+    "home_and_hearth",
+    "home_upgrade",
+    "sweep_yard_and_work",
+    "sweep_carried_things",
+  ]);
+  assert.deepEqual(findingsFor(reading, "dress_and_display"), [
+    "task_precondition_unmet:dress_and_display:pack:wearable",
+    "task_precondition_out_of_view:dress_and_display:mannequinTargets|signTargets>=1",
+  ]);
+  // A target family is a thirteen-tile window, so an empty one is reported and never counted against the world.
+  assert.ok(reading.undecidedTasks.includes("tend_the_animals"));
+  assert.equal(reading.verdictCode, "task_precondition_unmet:clear_and_plant_long_patch:ground:3x20:unhoed");
+  assert.match(reading.reading, /^tasks 22 · feasible 0 · infeasible 13 \(/u);
+  assert.match(reading.reading, /· undecided /u);
+});
+
+test("a family the Mod did not measure is not the same reading as a family it measured as empty", () => {
+  const unmeasured = satisfiedWorld();
+  delete unmeasured.soilTiles;
+  const reading = evaluateTaskPoolFeasibility({ snapshot: unmeasured });
+  assert.deepEqual(findingsFor(reading, "clear_and_plant_long_patch"), [
+    "task_precondition_not_measured:clear_and_plant_long_patch:ground:3x20:unhoed",
+  ]);
+  // And an empty list in the same slot is a measured emptiness, which is a different code and a different owner.
+  const measured = satisfiedWorld();
+  measured.soilTiles = [];
+  assert.deepEqual(findingsFor(evaluateTaskPoolFeasibility({ snapshot: measured }), "clear_and_plant_long_patch"), [
+    "task_precondition_unmet:clear_and_plant_long_patch:ground:3x20:unhoed",
+  ]);
+});
+
+test("the strip's STATE is read from the rows it published, and the inverse is refused by name", () => {
+  const world = satisfiedWorld();
+  world.soilTiles = world.soilTiles.map((row) => ({ ...row, hoeDirt: true }));
+  const reading = evaluateTaskPoolFeasibility({ snapshot: world });
+  const [unmet] = findingsFor(reading, "clear_and_plant_long_patch");
+  assert.equal(unmet, "task_precondition_unmet:clear_and_plant_long_patch:ground:3x20:unhoed");
+  const ground = readRequirement(world, TASK_PRECONDITIONS.clear_and_plant_long_patch[0]);
+  assert.equal(ground.satisfied, false);
+  assert.match(ground.detail, /already tilled/u, "the finding has to say which state the strip is in");
+});
+
+test("the strip is read by its whole-map extent, so a plot longer than the window can be judged", () => {
+  const world = satisfiedWorld();
+  // One published row of a 3x20 strip: the window shows a corner, the strip's own box states the shape.
+  world.soilTiles = [{ x: 60, y: 10, hoeDirt: false, blockX: 60, blockY: 10, blockW: 3, blockH: 20 }];
+  const ground = readRequirement(world, TASK_PRECONDITIONS.clear_and_plant_long_patch[0]);
+  assert.equal(ground.satisfied, true, ground.detail);
+  // A shorter strip is refused, and the refusal names the strip it did see.
+  world.soilTiles = [{ x: 60, y: 10, hoeDirt: false, blockX: 60, blockY: 10, blockW: 3, blockH: 10 }];
+  const short = readRequirement(world, TASK_PRECONDITIONS.clear_and_plant_long_patch[0]);
+  assert.equal(short.satisfied, false);
+  assert.match(short.detail, /largest published strip 3x10, wanted 3x20/u);
+  // Transposed counts: three wide and twenty long is the same ground as twenty wide and three long.
+  world.soilTiles = [{ x: 60, y: 10, hoeDirt: false, blockX: 60, blockY: 10, blockW: 20, blockH: 3 }];
+  assert.equal(readRequirement(world, TASK_PRECONDITIONS.clear_and_plant_long_patch[0]).satisfied, true);
+  // A row whose state the Mod did not publish is a missing reading, not a wrong one.
+  world.soilTiles = [{ x: 60, y: 10, blockX: 60, blockY: 10, blockW: 3, blockH: 20 }];
+  const unknown = readRequirement(world, TASK_PRECONDITIONS.clear_and_plant_long_patch[0]);
+  assert.equal(unknown.satisfied, false);
+  assert.equal(unknown.measured, false, "an unpublished hoe state must not read as tilled ground");
+  assert.match(unknown.detail, /publishes no hoe state/u);
+});
+
+test("the twentieth tile is read by area, and a purse too small for the cheapest seed is named", () => {
+  const world = satisfiedWorld();
+  world.soilTiles = [{ x: 60, y: 10, hoeDirt: false, blockX: 60, blockY: 10, blockW: 4, blockH: 5 }];
+  const expand = TASK_PRECONDITIONS.buy_seeds_and_expand_plot[0];
+  assert.equal(readRequirement(world, expand).satisfied, true);
+  world.soilTiles = [{ x: 60, y: 10, hoeDirt: false, blockX: 60, blockY: 10, blockW: 4, blockH: 4 }];
+  assert.equal(readRequirement(world, expand).satisfied, false, "sixteen tiles cannot hold a twenty-tile plot");
+
+  world.money = 5;
+  world.seedSupplyTargets = [
+    { qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", heldCount: 0, shopId: "SeedShop", price: 20 },
+  ];
+  const market = readRequirement(world, TASK_PRECONDITIONS.buy_seeds_and_expand_plot[1]);
+  assert.equal(market.satisfied, false);
+  assert.match(market.detail, /costs 20, purse 5/u);
+  // Held seeds are the other half of the same requirement: buying is not the only way to have one.
+  world.seedSupplyTargets = [{ qualifiedItemId: "(O)472", displayName: "Parsnip Seeds", heldCount: 3, shopId: "SeedShop" }];
+  assert.equal(readRequirement(world, TASK_PRECONDITIONS.buy_seeds_and_expand_plot[1]).satisfied, true);
+});
+
+test("a price the day cannot pay is the upgrade's own refusal, and a full purse is not", () => {
+  const requirement = TASK_PRECONDITIONS.home_upgrade.find((entry) => entry.fact === "money");
+  assert.equal(readRequirement({ money: 500 }, requirement).satisfied, false);
+  assert.match(describeRequirement(requirement), /^money>=10000$/u);
+  assert.equal(readRequirement({ money: 10_000 }, requirement).satisfied, true);
+  assert.equal(readRequirement({}, requirement).measured, false);
+});
+
+test("a pool of zero tasks is blocked, never a pass", () => {
+  const reading = evaluateTaskPoolFeasibility({ snapshot: satisfiedWorld(), rotation: [] });
+  assert.equal(reading.tasks, 0);
+  assert.equal(reading.feasible, 0);
+  assert.equal(reading.blocked, "task_pool_empty");
+  assert.equal(reading.verdictCode, "task_pool_empty");
+});
+
+test("a snapshot that is not an observation is blocked, not read as an empty world", () => {
+  const reading = evaluateTaskPoolFeasibility({ snapshot: {} });
+  assert.equal(reading.blocked, "opening_snapshot_unmeasured");
+  assert.equal(reading.verdictCode, "opening_snapshot_unmeasured");
+});
+
+test("an undeclared task and an orphaned signature both fail by name", () => {
+  const reading = evaluateTaskPoolFeasibility({
+    snapshot: satisfiedWorld(),
+    rotation: [...DAILY_TASK_ROTATION, "a_task_nobody_declared"],
+    signatures: { ...TASK_PRECONDITIONS, another_task_the_pool_lost: TASK_PRECONDITIONS.clear_east_patch },
+  });
+  assert.ok(reading.findings.includes("task_precondition_undeclared:a_task_nobody_declared"));
+  assert.equal(reading.blocked, "task_precondition_orphaned:another_task_the_pool_lost");
+  assert.equal(reading.verdictCode, "task_precondition_orphaned:another_task_the_pool_lost");
+});
+
+test("the reading is one line that names its population, and the half that failed", () => {
+  const world = satisfiedWorld();
+  world.inventoryItemFacts = [];
+  const reading = evaluateTaskPoolFeasibility({ snapshot: world });
+  assert.match(
+    describeTaskPoolFeasibility(reading),
+    /^tasks 22 · feasible 20 · infeasible 2 \(dress_and_display, sweep_carried_things\)$/u,
+  );
+  assert.ok(TASK_POOL_BUDGET_MS <= 15_000, "the budget is what makes this runnable at a rung");
+});
+
+test("an unknown requirement is refused by name instead of being skipped", () => {
+  assert.throws(() => describeRequirement({ fact: "a_fact_nobody_reads" }), /task_precondition_kind_unknown/u);
+  assert.equal(readRequirement(satisfiedWorld(), { fact: "a_fact_nobody_reads" }).satisfied, false);
+});

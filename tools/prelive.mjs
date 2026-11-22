@@ -47,7 +47,26 @@
  * its count, never add one or raise one, and it prints the members it refused as `added [...]`/`raised [...]` so a
  * recorder is never a way to bank new debt. See `recordShrinks`.
  *
+ * THE SCHEDULE IS READ, NOT ASSUMED. The lists below say WHICH gates each rung runs, but the population they are drawn
+ * from is derived on every run from `gates/registry.mjs` - the one scan of `GATE_DIRECTORIES` - and every member is
+ * checked against the disk before the first rung starts. A rung naming a path that is not there is
+ * `rung_member_missing:<rung>:<path>`, named with its rung and refused at startup; the 287-script move to `gates/` left
+ * every string below stale and the whole ladder died as `ERR_MODULE_NOT_FOUND` inside a child process instead. A gate
+ * scheduled twice is `rung_member_duplicated:<rung>:<path>` - it would run twice, which a hand-written list cannot show.
+ * A gate the tree publishes and no rung runs is `gate_tier_not_scheduled:<path>:<tier>`, printed as a count on every run
+ * and by name under `--list`.
+ *
+ * WHY THE MEMBERSHIP ITSELF IS NOT DERIVED FROM EACH GATE'S `tier:`. The measurement says it cannot be: the 44 L0
+ * members declare 18 `l0`, 11 `l1` and 10 `l2`, because a tier states what a gate NEEDS (static reads, an imported
+ * module, a child process) and not which rung it belongs to. Deriving `l0` from `tier: l0` would run 108 gates in one
+ * rung, 90 of them from a population no rung can run (an argument requirement, an absent mount, a build output) and
+ * drop the 21 non-l0 members the rung deliberately runs. Which rung a gate belongs to is a judgement with a reason per
+ * member, which is what the comments below are; the verdict for a gate that is NOT here belongs to
+ * `gates/meta/check-prelive-gate-registry.mjs` - the last member of L0 - which is red for one that neither runs here
+ * nor declares where else it runs.
+ *
  * USAGE:
+ *   node tools/prelive.mjs --list                         # the schedule: every rung, its members, every unscheduled gate
  *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L3 (L0b and L2 are the slow rungs)
  *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the Host build
  *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
@@ -66,7 +85,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ARTEFACT_PRODUCERS, inputsMovedSince } from "./check-generated-artifact-reproducibility.mjs";
+import { ARTEFACT_PRODUCERS, inputsMovedSince } from "../gates/data/check-generated-artifact-reproducibility.mjs";
+import { readDeclarations } from "../gates/registry.mjs";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
@@ -93,43 +113,43 @@ export const DEFAULT_GAME_INSTALL = "D:/Steam/steamapps/common/Stardew Valley";
  * runs is the defect it exists to catch.
  */
 export const L0_GATES = Object.freeze([
-  "tools/check-catalog-fact-ownership.mjs",
-  "tools/audit-stardew-discovery-channels.mjs",
+  "gates/product/check-catalog-fact-ownership.mjs",
+  "gates/stardew/audit-stardew-discovery-channels.mjs",
   // The consumer side of the same question: discovery asks whether the chain from the Mod to the tool description is
   // complete, and this one asks whether the model can ASK about the family at all - a description that names a family
   // consumes it while a full `observe` stays the only way to read its values.
-  "tools/check-stardew-observation-consumers.mjs",
+  "gates/stardew/check-stardew-observation-consumers.mjs",
   // The prose half of the same question: the consumer gate asks whether the model can ASK about a published family,
   // and this one asks whether what the Mod publishes ever reaches the text she reads. Measured 2026-11-11:
   // `wateringCanFacts` was published with `water 36/40` in every observation of a run whose companion shook the can and
   // said `壶空了正好`, because no prose rendered the field and nothing asked whether one did. Milliseconds, five reads.
-  "tools/check-snapshot-field-rendering.mjs",
+  "gates/product/check-snapshot-field-rendering.mjs",
   // The crop row's own gate: every field the engine's `Data/Crops` answer projects must be reachable from a snapshot
   // crop row or carry a stated reason, and the four copies of the row contract (Mod record, Host type, Host validator,
   // schema) must name the same keys. Milliseconds, source-only.
-  "tools/check-stardew-crop-row-derivation.mjs",
+  "gates/stardew/check-stardew-crop-row-derivation.mjs",
   // NOT `audit-totality-head.mjs`: it is a module, not a command - it exports its classes and has no entry point,
   // so as a rung it exited 0 having examined nothing, which is how four blocking findings stayed invisible. The
   // module and its test still exist and are still exercised; the rung below runs the full audit, which has a CLI.
-  "tools/check-stardew-fixture-action-coverage.mjs",
+  "gates/stardew/check-stardew-fixture-action-coverage.mjs",
   "gates/meta/check-harness-conformance.mjs",
-  "tools/check-stardew-task-action-coverage.mjs",
+  "gates/stardew/check-stardew-task-action-coverage.mjs",
   // The other half of the same question: the coverage gate asks whether a rotation task NAMES an action, this one asks
   // whether the world that receives the day actually publishes the family the action addresses. Measured 2026-11-09:
   // `tend_the_animals` was rotated into a world whose coop had been switched off, and every gate stayed green.
-  "tools/check-stardew-multiday-task-families.mjs",
-  "tools/check-game-context-pressure.mjs",
-  "tools/check-live-run-verdict-guards.mjs",
-  "tools/check-failure-reason-codes.mjs",
+  "gates/stardew/check-stardew-multiday-task-families.mjs",
+  "gates/product/check-game-context-pressure.mjs",
+  "gates/data/check-live-run-verdict-guards.mjs",
+  "gates/product/check-failure-reason-codes.mjs",
   // The receipt's own provenance: every field whose name claims a physical transition (before/after/*_removed/delta)
   // must be computed from a value read in that execution, never a literal. Measured 2026-11-10: `till_soil` wrote
   // `before = "none"` without reading the tile, and `pickup_item` reported a chunk removal it had disproved.
-  "tools/audit-stardew-receipt-transition-fields.mjs",
+  "gates/stardew/audit-stardew-receipt-transition-fields.mjs",
   // The type-level sibling of the totality question: a `switch` over a union must hand its impossible case to
   // `assertNever`, or a new member compiles and quietly answers with the fallback. Population is derived from
   // `dialogue-web/tsconfig.json`'s own `include`, so a new source file joins without an edit here. Authored
   // outside this lane and left untracked; wired here because a gate that runs in no rung cannot fail.
-  "tools/check-switch-exhaustiveness.mjs",
+  "gates/arch/check-switch-exhaustiveness.mjs",
   // The other end of the same question, and the one three lanes were bitten by in a single night: a fact that crosses a
   // process or a package boundary is declared on both sides, and only one of the two spellings is under the compiler's
   // eye. The ack keys (nine in the launcher, eleven in the writer) killed every composed launch while every test was
@@ -152,17 +172,17 @@ export const L0_GATES = Object.freeze([
   // promotion tool's own header states ("a hand-written promotion row is not a row"): the catalog rung, the gate
   // row, the runner entry and the fixture scenario must already agree, so a hand edit that moves two of the four
   // names the half-write here instead of surfacing as a symptom three gates away.
-  "tools/check-stardew-action-promotion.mjs",
+  "gates/stardew/check-stardew-action-promotion.mjs",
   // The physical half of the same question: the promotion gate refuses a postcondition that names no engine fact, and
   // this one asks whether anything is ever MEASURED - the succeeded receipt must carry a before/after of the declared
   // member, in the Mod's handler or in the Host's completion-evidence contract. It reads the real handler source and
   // the real Host switch, so it costs a file read rather than a live run.
-  "tools/check-stardew-postcondition-delta.mjs",
-  "tools/check-stardew-promotion-parity.mjs",
+  "gates/stardew/check-stardew-postcondition-delta.mjs",
+  "gates/stardew/check-stardew-promotion-parity.mjs",
   // The refusal-detail state set: one fact owned by the Mod's `MayCarryRefusalDetail`, projected by
   // `BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES`. Measured 2026-11-11: the Host half of `15a3c57c` was never written, one
   // refused status frame closed the bridge, and the run's 7th turn was lost. Milliseconds, two file reads.
-  "tools/check-refusal-detail-state-parity.mjs",
+  "gates/product/check-refusal-detail-state-parity.mjs",
   // The field-level sibling of the two above, and the wider half of the same incident class: every field the Mod puts on
   // a frame it SENDS must be a name the Host's validators accept for that frame, and every field the Host declares on a
   // request must be readable by the Mod. Frames come from the Mod's own framing calls and fields from the C# declarations,
@@ -170,7 +190,7 @@ export const L0_GATES = Object.freeze([
   // on a frame it cannot pair instead of reporting a pass over the population it happened to measure, names the frames an
   // existing gate already owns (`snapshot`, `execution_receipt`) rather than checking them twice, and carries exactly one
   // frame exemption (`body_node_admission_grant`) with the owner who owes the pairing. Milliseconds, six file reads.
-  "tools/check-cross-language-wire-parity.mjs",
+  "gates/product/check-cross-language-wire-parity.mjs",
   "integrations/stardew/action-development/tests/action-source-projection-drift.test.mjs",
   "integrations/stardew/action-development/tests/action-projection-parity-drift.test.mjs",
   // The vendored patch set. `vendor/magic-context` is a pin we do not own, and the SillyTavern preset seam
@@ -178,34 +198,34 @@ export const L0_GATES = Object.freeze([
   // gone, with no compile error to notice it. Measured 1.0 s here (it copies the touched files into a temp
   // `git init` and applies there, never into `vendor/`), so it runs on the ladder rather than in a document -
   // the same reason the totality audit is in this rung.
-  "tools/check-vendor-patches-apply.mjs",
+  "gates/arch/check-vendor-patches-apply.mjs",
   // The plan's own legality, as a FIXPOINT over two of our rules rather than either one: every body-yielding action (the
   // compiler's exported declaration) crossed with every published action (the emitted surface) must either compile into a
   // program carrying both steps, or be refused with a remedy that compiles when written. Round42 spent four programs on
   // `talk_to_npc` -> `shop_purchase` and bought nothing; this rung costs a pure compilation per pair and names the pair,
   // the code and what would have to change. It imports the compiler and drives it, so it reads the product's own admission
   // and refusal functions instead of a fifth parser of plan vocabulary.
-  "tools/check-plan-legal-fixpoint.mjs",
+  "gates/product/check-plan-legal-fixpoint.mjs",
   // One number, two parties: the deadline a gate runner writes onto `execution_request` and the window the Mod admits.
   // Measured 2026-11-10: `fish_here` publishes 60 s, its runner wrote 120 s, and the action's first live slice came back
   // `bridge_rejected:invalid_deadline` after a game launch. Reads the Mod's own export (`action-deadline-windows.v1.json`)
   // against every runner's declared window, one file read per member, so it belongs in this rung rather than after a
   // launch: it is the check that would have refused the run in milliseconds.
-  "tools/check-action-deadline-agreement.mjs",
+  "gates/stardew/check-action-deadline-agreement.mjs",
   // The shipped persona prose is the product's identity, and nothing in this tree said so: two lanes rewrote
   // `default-companion/card.json` and `amber-deepseek-v4.1.json` inside one hour (2026-11-10), the second after the
   // first rewrite had been restored and the boundary stated in bold. This rung is the refusal - the working tree
   // against `HEAD`, so a rewrite is red before it is staged, and a change needs `[persona]` plus a line in
   // `assets/tavern/presets/PERSONA-REVISION.md` in the same commit. 2.0 s here (three git spawns, batched), and it
   // names the drifting field rather than a file.
-  "tools/check-persona-prose.mjs",
+  "gates/product/check-persona-prose.mjs",
   // Where a delivered line's CEILING comes from. The delivery cut every turn's speech at 80 characters - 77 with the
   // reaction sound - while the presentation transport carries 4,000 and the bubble clamps its own two lines with `…`;
   // measured on `round62` (90 turns carried text, 70 delivered a bubble), 18 turns lost their tails for it: 533 characters,
   // 26 whole sentences. Nothing read where the number came from, and the floor restated it, so the two agreed with each
   // other and neither agreed with the wire. This rung reads the bound, its three producers and the bubble's clamp, and
   // fails when a bound states a literal instead of resolving to the transport's declaration. Pure file reads.
-  "tools/check-delivery-truncation-bound.mjs",
+  "gates/product/check-delivery-truncation-bound.mjs",
   // The FULL totality audit, because the place that could fail on its findings never did: CI runs it on every push with
   // `continue-on-error: true`, only so `--verbose` can be uploaded as an artifact, so a blocking finding reached nobody
   // - and this rung ran `audit-totality-head.mjs` above instead, whose entry guard is missing, so it exits 0 having
@@ -222,33 +242,33 @@ export const L0_GATES = Object.freeze([
   // Measured 2026-11-13: 4.0-6.2 s here, of which Biome over `host/src` is ~1.8 s and 564 C# files through
   // tree-sitter is the rest, so the number is written down rather than left as a surprise in a rung whose name says
   // milliseconds. It reads the two source trees the rungs already cover; nothing it needs comes from a game install.
-  "tools/check-cognitive-complexity.mjs",
+  "gates/arch/check-cognitive-complexity.mjs",
   // The duplication rule, for which this tree had a REPORT and no gate: `jscpd` was installed, configured with
   // `exitCode: 0`, never tokenised the C# Mod, and no rung ran it. It fails on one block of >= 40 tokens at >= 3 sites
   // whatever share of the tree that is, because a percentage is what let the eight-step admission pipeline repeated
   // under 24 method names in `integrations/stardew/farmhandexecutioncontroller.*.cs` read as "10.9% duplicated" and
   // therefore fine. ~1 s warm (4.3 s on a cold file cache), one child process, no network, no game.
-  "tools/check-code-duplication.mjs",
+  "gates/arch/check-code-duplication.mjs",
   // A terminal commit is ONE place: `ExecutionManager.RememberTerminal`. Measured here: `sites examined 917 · through the
   // seam 917 · exempt 6 · families 46`, 0.1 s. No rung read this population before, so the hand-rolled
   // `this.Remember(receipt); this.AddTrace(receipt);` this gate exists for could re-enter the tree with every other gate
   // green - and each of the four facts the seam guarantees (the bound action identity, the published fact, the trace
   // revision, the `body_idle`) has already been dropped by a copy at least once.
-  "tools/check-terminal-commit-single-entry.mjs",
+  "gates/stardew/check-terminal-commit-single-entry.mjs",
   // The third act of that seam, which nothing measured: a store-and-publish pair that says nothing about the body being
   // free again. It reuses the scan above (one file), and prints the 910 seam calls standing outside its own population
   // rather than folding them into a pass. Measured here: `sites examined 7 · silent 1`, one exemption in the ratchet, 0.1 s.
-  "tools/check-terminal-idle-publication.mjs",
+  "gates/stardew/check-terminal-idle-publication.mjs",
   // The Host test corpus read as SOURCE rather than run: an assertion that matches two code tokens across literal
   // whitespace measures where the formatter put the line breaks, and a reformat turns it red with the product unchanged
   // (measured 2026-11-12, `contained-game-runtime.internal.test.ts:205`). Measured here: `matches examined 142 · through
   // the shape reader 142 · through raw text 0`, 400 test files, 0.9 s through the workspace's `typescript`.
-  "tools/check-source-shape-readers.mjs",
+  "gates/arch/check-source-shape-readers.mjs",
   // The hang the corpus can write that no assertion sees: an `await` on a promise a listener settles, with no deadline.
   // Measured 2026-11-12: one such await ran a suite to its 600 s budget while the other thirty tests in the same file
   // summed 391 ms, and a hang reports nothing. Measured here: `awaits examined 12 · with a deadline 12`, 426 test files,
   // 1.2 s.
-  "tools/check-test-await-deadlines.mjs",
+  "gates/data/check-test-await-deadlines.mjs",
   // The third reading of the same corpus, and the one that was switched off for two days because it could not tell a
   // fixture from a population: a test that freezes a product's size with a literal (`Object.keys(TABLE).length === 12`)
   // fails when the product grows, and the failure names a number instead of the member. Measured here 2026-11-13:
@@ -256,12 +276,12 @@ export const L0_GATES = Object.freeze([
   // 69 unresolved`, with 1099 counts set aside as the test's own construction and 23 as text. The judgement is the
   // counted value's provenance, and the 110 survivors are recorded in `tools/derived-population-baseline.json` under a
   // ratchet that fails on a new site AND on a stale entry, so this rung cannot drift back to `violations 1222`.
-  "tools/check-derived-population.mjs",
+  "gates/data/check-derived-population.mjs",
   // The leak, measured: 787 Node crash reports in the repository root, 238 of them carrying a plaintext credential,
   // because `NODE_OPTIONS` on this machine fires a report into every dying child's cwd. The `.gitignore` entry that
   // covered the root is not containment - this gate reads the disk at any depth and names the variable, never the
   // value. Milliseconds here after the walk's concurrency: 591 ms for 113,061 files.
-  "tools/check-crash-report-containment.mjs",
+  "gates/data/check-crash-report-containment.mjs",
   // A gate that cannot tell "I measured nothing" from "I measured and found nothing" is the class behind every false
   // reading this tree published this month: `check:publint` passed having read no publint message, the soil-itm canary
   // reported a pass over five skips, and the wire parity gate printed six frames it could not pair BELOW a `passed`
@@ -280,12 +300,12 @@ export const L0_GATES = Object.freeze([
   // a hand-edited register its derive tool refused, a surface regenerated while a declaration lagged, and a projection
   // that drifted by three lines whose only signal was `180614 !== 180548`. Measured 0.7 s here (three `dotnet`
   // invocations and one sandboxed derive), so it runs on the ladder rather than in a document a lane reads afterwards.
-  "tools/check-generated-artifact-reproducibility.mjs",
+  "gates/data/check-generated-artifact-reproducibility.mjs",
   // The discovery half nothing measured: every family that drops a subject on a state the hold vocabulary names must
   // publish the reason it withheld it. Measured here 2026-11-13 at 449f0fb0: `discoveries 87, with exclusions 16,
   // filters without a reason 5 (filed 5)`, 0.3 s, worktree only - and it already answers `examined 0` with
   // `stardew_discovery_exclusions_skipped:`, which is the dialect this rung reads as UNAVAILABLE.
-  "tools/check-stardew-discovery-exclusions.mjs",
+  "gates/stardew/check-stardew-discovery-exclusions.mjs",
   "gates/meta/check-prelive-gate-registry.mjs",
   // The five instance family of one two days: a thing the companion can SAY that one layer accepts and the next refuses or
   // silently reinterprets - `charge` on the wire but not in the tool schema, `sweep_scythe` in three surfaces and no mount,
@@ -294,22 +314,16 @@ export const L0_GATES = Object.freeze([
   // matrix: the catalog crossed with the six surfaces that must carry each action, from each surface's own authority, with
   // every silent omission named and every unreadable reading blocked instead of green. Measured here: `actions examined 106 ·
   // surfaces 6 · pairs checked 307`, 0.1 s of file reads and no child process.
-  "tools/check-action-surface-parity.mjs",
-  // The destructive press: every call in `dialogue-web/src` that removes player content by name or by a `{clear: true}`
-  // field must spend an arm before it acts, and the arm must be this repository's own confirmation primitive. Population
-  // derived from the frontend's tsconfig and each browser-API module's declared signature, not a hand-written list: tonight
-  // five of the six such presses were guarded and three were not - the connection, the world-book entry and the companion's
-  // 8192-character performance direction, each gone on one press with nothing on the screen able to bring it back. Measured
-  // `examined 6 · armed 3 · exempt 3` in 0.2 s; zero population is blocked, not green, and an exemption that matches no site
-  // is `exemption_expired` rather than a permanent way through.
-  "tools/check-armed-destructive-actions.mjs",
+  "gates/stardew/check-action-surface-parity.mjs",
+  // NOT listed again here: `tools/check-armed-destructive-actions.mjs` is already three members up, with the
+  // measurement that put it in this rung. A second entry is a gate that runs twice - `rung_member_duplicated`.
   // One declaration for the Mod bundle: the project's own outputs (`<AssemblyName>`, each `<ProjectReference>`'s
   // assembly, the `<None Update>` copies and the dependency file) cross-checked against
   // `integrations/stardew/bundle.manifest.json`, which is what the Host deploys. Measured 2026-11-21: `declarations
   // examined 4 · manifest entries 4 · built outputs examined 2 · findings 0`, 60 ms, no install, no build and no game -
   // a renamed output that only this gate compares otherwise surfaces as a deployed Mod SMAPI will not load, at the end
   // of a 150 s launch that names nothing.
-  "tools/check-stardew-bundle-manifest.mjs",
+  "gates/stardew/check-stardew-bundle-manifest.mjs",
 ]);
 
 /**
@@ -325,18 +339,18 @@ export const L0_GATES = Object.freeze([
  */
 export const L0B_GATES = Object.freeze([
   "integrations/stardew/action-development/tests/stardew-action-inventory-reconciliation.test.mjs",
-  "tools/check-stardew-observation-gap.mjs",
+  "gates/stardew/check-stardew-observation-gap.mjs",
   // The hold algebra over `ActorWorldFacts`: every member has a row, publishes the kind `WorldModel.Classify` decides,
   // resolves in the engine, releases where the row says, and every `canMove = false` write is accompanied by a holding
   // write of a declared read or carries an adjudicated residual row. Green here 2026-11-13 at 449f0fb0: `examined 15`,
   // IFACE-1 16 reads resolved, IFACE-2 `scanned 948 files: 58 writes of the move flag, 42 accompanied, 16 orphans, 4
   // unparsed`, 1.5 s. It absorbed `check-stardew-hold-sufficiency`'s CLI, whose whole measurement was its IFACE-2.
-  "tools/check-stardew-actor-admissibility.mjs",
+  "gates/stardew/check-stardew-actor-admissibility.mjs",
   // The reach-bound half: a numeric bound in an admission predicate must be the engine's number, or sit in an expiring
   // `STATED_DEBT` row. Green here 2026-11-13 at 449f0fb0: `constants examined 72 · engine-cited 68 · debt 4 · invented
   // 0`, 0.6 s. This is the class behind the round-42 shop refusal - a reach our predicate invented - and it is the only
   // gate in the tree that compares our number against the engine's by reading the engine's line.
-  "tools/check-stardew-invented-gates.mjs",
+  "gates/stardew/check-stardew-invented-gates.mjs",
 ]);
 
 /**
@@ -358,6 +372,95 @@ export const PRELUDE_RUNGS = Object.freeze([
  * ladder a developer runs before pushing (`pnpm prelive`).
  */
 export const LADDER_RUNGS = Object.freeze(["prep", ...PRELUDE_RUNGS.map((rung) => rung.id), "l1", "l1b", "l2", "l3"]);
+
+/**
+ * The schedule, read from the tree instead of assumed from the rung lists.
+ *
+ * The rung lists state which gates the ladder runs; this states what the tree makes of that statement, and there are
+ * three ways it can disagree - each naming the member, which is the whole point:
+ *
+ *   `rung_member_missing:<rung>:<path>`      a rung names a path that is not on disk. REFUSED at startup, before the
+ *                                            first rung, because the alternative is what happened: the 287-script move
+ *                                            to `gates/` left these strings behind and the ladder died as
+ *                                            `ERR_MODULE_NOT_FOUND` three frames inside a child process.
+ *   `rung_member_duplicated:<rung>:<path>`   one gate scheduled twice, so it runs twice. Invisible in a hand-written
+ *                                            list until the derivation reads it (`tools/check-armed-destructive-actions`
+ *                                            was in L0 twice).
+ *   `gate_tier_not_scheduled:<path>:<tier>`  a gate the tree publishes and no rung runs. Printed and counted, not
+ *                                            refused: a gate whose home is CI, a suite, a hook, or a caller's argument
+ *                                            is scheduled somewhere this ladder cannot see, and the member that fails
+ *                                            for one with NO home is `gates/meta/check-prelive-gate-registry.mjs`.
+ *
+ * The population and the tier are both read from their own authority: `gates/registry.mjs` scans `GATE_DIRECTORIES`,
+ * and each gate's `gateDeclaration` is read from its syntax tree - so a gate that moves needs no edit here, and a gate
+ * that declares nothing is named with `tier=none` rather than silently dropped.
+ */
+export async function readSchedule({
+  root = REPO,
+  rungs = PRELUDE_RUNGS,
+  read = () => readDeclarations({ root }),
+  exists = (relative) => fs.existsSync(path.join(root, relative)),
+} = {}) {
+  const reading = await read();
+  const tierOf = new Map(reading.declared.map((entry) => [entry.path, entry.tier]));
+  const findings = [];
+  const scheduled = new Set();
+  const rows = rungs.map((rung) => {
+    const members = [];
+    for (const gate of rung.gates) {
+      if (scheduled.has(gate))
+        findings.push({
+          code: "rung_member_duplicated",
+          id: `${rung.id}:${gate}`,
+          detail: "scheduled twice, so the ladder runs it twice",
+        });
+      scheduled.add(gate);
+      if (!exists(gate)) {
+        findings.push({
+          code: "rung_member_missing",
+          id: `${rung.id}:${gate}`,
+          detail: "the rung names a path that is not on disk",
+        });
+        continue;
+      }
+      members.push({ path: gate, tier: tierOf.get(gate) ?? null });
+    }
+    return { id: rung.id, members, count: members.length };
+  });
+  const unscheduled = reading.files
+    .filter((file) => !scheduled.has(file))
+    .map((file) => ({ path: file, tier: tierOf.get(file) ?? null }))
+    .map((row) => ({ ...row, code: `gate_tier_not_scheduled:${row.path}:${row.tier ?? "none"}` }));  return { examined: reading.examined, rungs: rows, unscheduled, findings };
+}
+
+/** The schedule in one line, printed on every run: a move that orphans a script is visible without `--list`. */
+export function scheduleLine(schedule) {
+  const scheduled = schedule.rungs.reduce((total, rung) => total + rung.count, 0);
+  const tiered = schedule.unscheduled.filter((row) => row.tier !== null).length;
+  const rungs = schedule.rungs.map((rung) => `${rung.id} ${rung.count}`).join(" · ");
+  return (
+    `prelive_schedule: ${rungs} · scheduled ${scheduled} of ${schedule.examined} gate file(s) · ` +
+    `tiered_not_scheduled ${tiered} · unscheduled ${schedule.unscheduled.length} (--list names them)`
+  );
+}
+
+/** `--list`: every rung with its members, then every gate no rung runs, by name. */
+export function formatSchedule(schedule) {
+  const lines = [scheduleLine(schedule)];
+  for (const rung of schedule.rungs) {
+    lines.push(`rung ${rung.id}: ${rung.count} member(s)`);
+    for (const member of rung.members) lines.push(`  ${rung.id} ${member.path} tier=${member.tier ?? "none"}`);
+  }
+  for (const row of schedule.unscheduled) lines.push(row.code);
+  for (const finding of schedule.findings) lines.push(`${finding.code}: ${finding.id} - ${finding.detail}`);
+  lines.push(`prelive_schedule: ${schedule.findings.length === 0 ? "passed" : "failed"}`);
+  return `${lines.join("\n")}\n`;
+}
+
+/** The reasons the schedule refuses to start, named with the rung and the path that caused each. */
+export function formatScheduleFindings(schedule) {
+  return schedule.findings.map((finding) => `${finding.code}: ${finding.id} - ${finding.detail}\n`).join("");
+}
 
 /**
  * How a gate says it measured nothing, in the convention `gates/meta/check-ci-coverage.mjs` already counts: a whole line whose
@@ -404,33 +507,8 @@ const RULE_LABELS = Object.freeze({
 //
 
 /**
- * The command to run for one gate. A gate that has moved is discovered from `package.json` scripts starting with
- * `check:`/`audit:` and covering the same topic, and the DISCOVERED command is printed, so a missing gate can never
- * read as a pass.
- */
-export function resolveGateCommand(gatePath, { exists = fs.existsSync, scripts = readScripts() } = {}) {
-  if (exists(path.join(REPO, gatePath))) return { command: `node ${gatePath}`, discovered: false };
-  const topic = /^(?:check|audit)(?:-stardew)?-([a-z0-9]+)/.exec(path.basename(gatePath))?.[1] ?? null;
-  const candidates = Object.entries(scripts)
-    .filter(([name, value]) => (name.startsWith("check:") || name.startsWith("audit:")) && typeof value === "string")
-    .filter(([, value]) => topic !== null && value.includes(topic))
-    .map(([, value]) => value.trim())
-    .filter((value) => value.startsWith("node tools/"));
-  const found = candidates[0] ?? null;
-  return found === null ? { command: null, discovered: true, topic } : { command: found, discovered: true, topic };
-}
-
-function readScripts() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(REPO, "package.json"), "utf8")).scripts ?? {};
-  } catch {
-    return {};
-  }
-}
-
-/**
  * The generated artefacts whose producer is a BUILD OUTPUT, and the one build they share - both read from the gate's own
- * declaration rather than spelled again here: `tools/check-generated-artifact-reproducibility.mjs` owns which artefacts
+ * declaration rather than spelled again here: `gates/data/check-generated-artifact-reproducibility.mjs` owns which artefacts
  * need the Mod export assembly, which project emits it and how that project is built.
  */
 const BUILD_OUTPUT_ARTEFACTS = Object.freeze(ARTEFACT_PRODUCERS.filter((entry) => entry.resolve !== undefined));
@@ -530,6 +608,11 @@ export function modExportBuildRung({ prepare = modExportBuildPreparation, build 
  * Run one gate rung and report each exit code by name with its own wall time. All of them run (a gate that is red
  * must not hide the three that are also red), and the rung verdict is red when any is.
  *
+ * The command is the member's own path - `node <path>` - and nothing else: `readSchedule` has already refused a rung
+ * whose path is not on disk, so there is no "it has moved, run something with a similar name" fallback to get wrong. One
+ * such fallback existed and it discovered a `package.json` script by topic, which is how a moved gate could be replaced
+ * by a different gate's verdict.
+ *
  * `not_measured` has TWO dialects and they are the same fact: exit 0 with a `*_skipped:` marker (a gate that returns
  * quietly), or exit 2 with one, because 2 is this repository's blocked code for "I could not measure this"
  * (`tools/lib/blocked-input-report.mjs`, `check-stardew-actor-admissibility`, `check-stardew-invented-gates`). Accepting
@@ -540,7 +623,6 @@ export function modExportBuildRung({ prepare = modExportBuildPreparation, build 
 export function runGateRung({
   id = "l0",
   gates = L0_GATES,
-  resolveCommand = resolveGateCommand,
   run = (command) =>
     spawnSync(process.execPath, [command.replace(/^node\s+/, "")], {
       cwd: REPO,
@@ -549,29 +631,15 @@ export function runGateRung({
     }),
 } = {}) {
   const results = gates.map((gate) => {
-    const resolved = resolveCommand(gate);
-    if (resolved.command === null) {
-      return {
-        gate,
-        command: null,
-        exitCode: null,
-        missing: true,
-        ms: 0,
-        discovered: resolved.discovered,
-        outcome: "failed",
-        summary: "(no command found for this gate)",
-      };
-    }
+    const command = `node ${gate}`;
     const startedAt = Date.now();
-    const outcome = run(resolved.command);
+    const outcome = run(command);
     const stdout = outcome.stdout ?? "";
     const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
     return {
       gate,
-      command: resolved.command,
+      command,
       exitCode,
-      missing: false,
-      discovered: resolved.discovered,
       ms: Date.now() - startedAt,
       stdout,
       stderr: outcome.stderr ?? "",
@@ -1178,7 +1246,7 @@ export function siteLabel(site) {
  * THE ONE WRITE, AND ITS POWER IS DOWNWARD.
  *
  * `b6128a58` retired six runners into their contracts and dropped their entries from every baseline that had a way to
- * drop them - `tools/check-native-local-runner-scaffold.mjs --record-shrinks` deleted its two - while this baseline had
+ * drop them - `gates/stardew/check-native-local-runner-scaffold.mjs --record-shrinks` deleted its two - while this baseline had
  * no writer at all, so `shake_tree` and `take_pedestal_item` outlived their runners and `baseline_stale` named them at
  * HEAD with nobody able to discharge them. A ratchet whose only way down is a hand edit is a ratchet that stops.
  *
@@ -1437,6 +1505,7 @@ export function parseArgs(argv) {
     game: argv.includes("--game"),
     skipCompile: argv.includes("--skip-compile"),
     recordShrinks: argv.includes("--record-shrinks"),
+    list: argv.includes("--list"),
     action: value("--action"),
     modsPath: value("--mods-path"),
     gameInstall: value("--game-install"),
@@ -1459,15 +1528,28 @@ export function runLadder({ rungs, stopOnFirstRed = true }) {
   return { status: firstRed === null ? "passed" : "failed", rungs: ran, firstRed };
 }
 
-function main(argv) {
+async function main(argv) {
   const options = parseArgs(argv);
   if (options.recordShrinks) {
     process.exitCode = recordShrinksCli();
     return;
   }
+  // The schedule is read BEFORE anything runs, so a rung naming a path that has moved is one line naming the rung and
+  // the path - not an `ERR_MODULE_NOT_FOUND` from inside a child process three frames down.
+  const schedule = await readSchedule();
+  if (options.list) {
+    process.stdout.write(formatSchedule(schedule));
+    if (schedule.findings.length > 0) process.exitCode = 2;
+    return;
+  }
+  if (schedule.findings.length > 0) {
+    process.stderr.write(formatScheduleFindings(schedule));
+    process.exitCode = 2;
+    return;
+  }
   if (!options.noGame && options.action === null) {
     process.stderr.write(
-      "usage: node tools/prelive.mjs --no-game | --action <id> [--game] [--skip-compile] | --record-shrinks\n",
+      "usage: node tools/prelive.mjs --list | --no-game | --action <id> [--game] [--skip-compile] | --record-shrinks\n",
     );
     process.exitCode = 2;
     return;
@@ -1502,7 +1584,7 @@ function main(argv) {
     ],
   });
   const notice = options.action !== null && !options.game ? "l4_skipped: needs --game" : null;
-  process.stdout.write(format(ladder, { elapsedMs: Date.now() - startedAt, options, notice }));
+  process.stdout.write(format(ladder, { elapsedMs: Date.now() - startedAt, options, notice, schedule }));
   if (ladder.status !== "passed") process.exitCode = 1;
 }
 
@@ -1547,8 +1629,10 @@ function populationRungLines(rung) {
 }
 
 /** The report, as text: every rung's counts plus the member each violation names. */
-export function format(ladder, { elapsedMs, options, notice }) {
+export function format(ladder, { elapsedMs, options, notice, schedule }) {
   const lines = [`prelive: static ladder${options.noGame ? " (--no-game)" : ""}`];
+  // The schedule in one line, first: a gate that moved out of every rung is visible before any rung reports on itself.
+  if (schedule !== undefined) lines.push(scheduleLine(schedule));
   let unavailable = 0;
   for (const rung of ladder.rungs) {
     if (rung.id === "prep") {
@@ -1568,10 +1652,8 @@ export function format(ladder, { elapsedMs, options, notice }) {
       }
     } else if (rung.id === "l0" || rung.id === "l0b") {
       for (const gate of rung.gates) {
-        const where = gate.discovered ? " (discovered, not at the expected path)" : "";
-        const outcome = gate.missing ? "missing" : `exit=${gate.exitCode}`;
-        lines.push(`  ${rung.id} ${path.basename(gate.gate)} ${outcome} ${gate.ms}ms${where}`);
-        lines.push(`     command: ${gate.command ?? "(none found)"}`);
+        lines.push(`  ${rung.id} ${path.basename(gate.gate)} exit=${gate.exitCode} ${gate.ms}ms`);
+        lines.push(`     command: ${gate.command}`);
         if (gate.summary !== "") lines.push(`     | ${gate.summary}`);
       }
       unavailable += rung.unavailable.length;
@@ -1587,7 +1669,7 @@ export function format(ladder, { elapsedMs, options, notice }) {
           lines.push(`      | ${line.trimEnd()}`);
       }
       for (const gate of rung.red) {
-        lines.push(`    red: ${gate.gate} exit=${gate.exitCode ?? "missing"}`);
+        lines.push(`    red: ${gate.gate} exit=${gate.exitCode}`);
         // The gate's own words, not a summary: the member it names is the whole point of running it here.
         for (const line of `${gate.stdout ?? ""}${gate.stderr ?? ""}`
           .split("\n")
@@ -1635,4 +1717,4 @@ export function format(ladder, { elapsedMs, options, notice }) {
   return `${lines.join("\n")}\n`;
 }
 
-if (import.meta.main) main(process.argv.slice(2));
+if (import.meta.main) await main(process.argv.slice(2));

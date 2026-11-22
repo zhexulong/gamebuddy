@@ -345,20 +345,20 @@ test("a day whose task IS farm work is judged against that farm work, with its o
   const options = fixture({
     logLines: [
       `LAUNCH_PHASE {"phase":"launcher_start","atMs":${START + 1654}}`,
-      receiptLine("f-1", "till_soil", "succeeded", START + 3000),
+      receiptLine("f-1", "harvest_crop", "succeeded", START + 3000),
       receiptLine("f-2", "plant_seed", "succeeded", START + 4000),
       receiptLine("f-3", "water_crop", "rejected", START + 5000),
     ],
-    sessions: [[NOTE_ZH("till_and_sow")]],
+    sessions: [[NOTE_ZH("water_and_harvest")]],
   });
   try {
     const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
     assert.match(
       line(out, "action_breadth_day_family:"),
-      /day 1 · day_task=till_and_sow day_family=yes · attempted 3 of 4 · succeeded 2 of 3 executions \(rejected 1\)/u,
+      /day 1 · day_task=water_and_harvest day_family=yes · attempted 3 of 4 · succeeded 2 of 3 executions \(rejected 1\)/u,
       "the same row judges a farm day against the farm actions that day named",
     );
-    assert.match(line(out, "action_breadth_action: till_soil"), /day_task=till_and_sow day_family=yes/u);
+    assert.match(line(out, "action_breadth_action: harvest_crop"), /day_task=water_and_harvest day_family=yes/u);
     assert.doesNotMatch(
       out,
       /action_breadth_day_shape/u,
@@ -404,10 +404,10 @@ test("a bundle's own taskPurposes is the first authority for what each day asked
   const options = fixture({
     result: {
       scenario: "multiday_routine",
-      attemptedActionIds: ["till_soil", "plant_seed"],
-      succeededActionIds: ["till_soil"],
+      attemptedActionIds: ["harvest_crop", "plant_seed"],
+      succeededActionIds: ["harvest_crop"],
       executionTrace: { rows: 2, flat: 0 },
-      taskPurposes: [{ day: 1, task: "till_and_sow", state: "achieved", reasonCode: "task_purpose_achieved" }],
+      taskPurposes: [{ day: 1, task: "water_and_harvest", state: "achieved", reasonCode: "task_purpose_achieved" }],
     },
     logLines: null,
   });
@@ -415,12 +415,12 @@ test("a bundle's own taskPurposes is the first authority for what each day asked
     const { out } = breadth(options, ["--run", options.runDir, "--log-dir", options.logs]);
     assert.match(
       line(out, "action_breadth_day:"),
-      /^action_breadth_day: day 1 · day_task=till_and_sow · family \{till_soil,plant_seed,water_crop,fertilize_tile\} · source result\.json - the bundle's own taskPurposes$/u,
+      /^action_breadth_day: day 1 · day_task=water_and_harvest · family \{harvest_crop,scythe_crop,plant_seed,water_crop\} · source result\.json - the bundle's own taskPurposes$/u,
       "the run's own declaration answers before any session record, and a run that ended is not marked partial",
     );
     assert.match(
       line(out, "action_breadth_day_family:"),
-      /day 1 · day_task=till_and_sow day_family=yes · attempted not_measured:no_per_action_execution_count of 4 · succeeded not_measured:no_per_execution_settlement_read/u,
+      /day 1 · day_task=water_and_harvest day_family=yes · attempted not_measured:no_per_action_execution_count of 4 · succeeded not_measured:no_per_execution_settlement_read/u,
       "a bundle publishes executions without a settlement per execution and without a per-action count, and the reading says which half is missing instead of printing `0 of 4`",
     );
   } finally {

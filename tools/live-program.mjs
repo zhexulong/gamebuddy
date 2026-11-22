@@ -124,7 +124,6 @@ const WINDOW_MODES = Object.freeze(["visible", "foreground", "minimized", "hidde
 /** The Host modules this slice reads: the compiler, its readers, the one admission decision and the wire validators. */
 const HOST_MODULES = Object.freeze({
   script: "body-program-script.js",
-  forEach: "body-program-for-each.js",
   status: "program-status-wait.js",
   preflight: "body-program-preflight.js",
   protocol: "protocol.js",
@@ -417,16 +416,15 @@ function bound(text, limit) {
  * no longer writes.
  */
 export async function loadProgramHostModules({ load = loadHostTestModule } = {}) {
-  const [script, forEach, status, preflight, protocol, bridge, adapter] = await Promise.all([
+  const [script, status, preflight, protocol, bridge, adapter] = await Promise.all([
     load(HOST_MODULES.script),
-    load(HOST_MODULES.forEach),
     load(HOST_MODULES.status),
     load(HOST_MODULES.preflight),
     load(HOST_MODULES.protocol),
     load(HOST_MODULES.bridge),
     load(HOST_MODULES.adapter),
   ]);
-  return Object.freeze({ script, forEach, status, preflight, protocol, bridge, adapter });
+  return Object.freeze({ script, status, preflight, protocol, bridge, adapter });
 }
 
 /** The plan vocabulary this connection offers - the Host's own projection, not a list written here. */
@@ -549,9 +547,16 @@ export async function runOneProgram({ plan, session, modules, context = emptyCon
   const actions = modules.script.planActionsFromRegistrations(planVocabulary(session.client));
   const compiled = modules.script.compilePlanScript({ script: plan.script }, { snapshot: snapshotBefore, actions });
   context.compiled = compiled;
-  if (!compiled.ok)
+  // `status` IS THE COMPILER'S ANSWER, and it has three values that are three different answers (`CompiledPlan`):
+  // `compiled`, `partial`, `refused`. This line used to read `compiled.ok`, a boolean the compiler no longer has -
+  // so every script, refused or not, was answered `live_program_script_not_compiled:no_reason_code` and the `3x20`
+  // slice never submitted a single node. A refusal now carries the compiler's own code, which is never absent on the
+  // `refused` arm.
+  if (compiled.status === "refused")
     throw refusal(`live_program_script_not_compiled:${compiled.reasonCode}`, undefined, {
       script: { path: plan.scriptPath, chars: plan.script.length },
+      requirement: compiled.requirement ?? null,
+      missingArguments: compiled.missingArguments ?? null,
       dropped: compiled.dropped,
       droppedCount: compiled.droppedCount,
       rejected: compiled.rejected,
@@ -565,22 +570,6 @@ export async function runOneProgram({ plan, session, modules, context = emptyCon
   const programId = modules.script.planProgramId(compiled.snapshotRevision, nodes);
   context.nodes = nodes;
   context.programId = programId;
-  // A HOST PLAN FORM THE ATTACHED MOD DOES NOT PUBLISH CANNOT BE EXECUTED, and the Host says so before the wire. Derived
-  // from `PLAN_FORM_ACTION_IDS` and the Mod's own registrations, so the day the Mod publishes the form this answers empty.
-  const published = new Set(actions.map((action) => action.actionId));
-  const unavailable = nodes
-    .map((node, index) => ({ node, index }))
-    .filter(({ node }) => modules.script.PLAN_FORM_ACTION_IDS.includes(node.actionId) && !published.has(node.actionId))
-    .map(({ node, index }) => ({
-      index,
-      actionId: node.actionId,
-      reasonCode: modules.forEach.planFormExecutionUnavailableReason(node.actionId),
-    }));
-  if (unavailable.length > 0)
-    throw refusal(`live_program_script_action_unavailable:${unavailable[0].reasonCode}`, undefined, {
-      programId,
-      unavailable,
-    });
 
   // ONE admission decision, the Host's own implementation of it: `row_action_not_enabled` is the Mod's word for a loop
   // whose row names an action the live policy does not offer, which is exactly "this world cannot carry this script".

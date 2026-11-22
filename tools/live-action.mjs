@@ -113,7 +113,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { TARGET_FIELD } from "./audit-stardew-discovery-channels.mjs";
+import { TARGET_FIELD } from "../gates/stardew/audit-stardew-discovery-channels.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { evidenceDetail } from "./lib/level-up-evidence.mjs";
 import { installLiveRunInterrupt, restoreFixtureTransaction } from "./lib/live-run-teardown.mjs";

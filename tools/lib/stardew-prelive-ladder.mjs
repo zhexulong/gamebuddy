@@ -81,6 +81,12 @@ export const PRELIVE_FAILURE_CODES = Object.freeze({
   dirtyTeardown: "prelive_dirty_teardown",
   /** The run never reached rung 1 (fixture prepare, locale guard, launch, ...). */
   launchFailed: "prelive_launch_failed",
+  /**
+   * A REAL actionable snapshot was observed, and the task pool cannot be done from the world it shows. Distinct from
+   * `snapshotNotActionable`: the body can act here, and the day the harness is about to hand over still could not be
+   * finished. The detail names every infeasible task and the precondition it failed.
+   */
+  taskPoolInfeasible: "prelive_task_pool_infeasible",
 });
 
 const CONFIG_REJECTION = /GameBuddy rejected /u;
@@ -383,11 +389,15 @@ export function describePreliveProbeFailure({ error, snapshot = null, logText = 
 }
 
 /**
- * Rung 3, live: connect the way a smoke runner does, and require an actionable snapshot.
+ * Rung 3, live: connect the way a smoke runner does, require an actionable snapshot, and read the pool from it.
  *
  * The connection is retried on ENOENT because the game creates its pipe asynchronously after launch (the same
  * bounded retry every runner uses), and the client is always closed - deliberately, before the result is
  * printed - because that close IS the disconnect rung 4 examines.
+ *
+ * THE POOL IS READ FROM THAT SAME SNAPSHOT and never from a second observation: two observations would be two worlds, and
+ * the actionable one is the world the day starts in. A pool the world cannot hold fails with its own code and a detail that
+ * names every infeasible task, so the fix is visible in the boot's own line rather than three days of run later.
  */
 export async function runPreliveSnapshotProbe(
   config,
@@ -400,15 +410,24 @@ export async function runPreliveSnapshotProbe(
     session = await connectWithRetry(config, connectTimeoutMs);
     const seed = session.client.state?.snapshot ?? (await session.client.observe());
     const actionable = await waitForActionable(session.client, seed, actionableTimeoutMs);
-    result = {
-      state: "passed",
-      passed: true,
+    const pool = evaluateTaskPoolFeasibility({ snapshot: actionable });
+    const template = {
       rung: 3,
-      code: rungRow(3).passCode,
-      detail: `revision=${actionable.revision};location=${actionable.location}`,
+      detail: `revision=${actionable.revision};location=${actionable.location};${describeTaskPoolFeasibility(pool)}`,
       snapshot: summarizeSnapshot(actionable),
-      timings: { snapshotMs: Date.now() - startedAt },
+      pool,
+      timings: { snapshotMs: Date.now() - startedAt, poolMs: pool.evaluationMs },
     };
+    result =
+      pool.verdictCode === null
+        ? { state: "passed", passed: true, code: rungRow(3).passCode, ...template }
+        : {
+            state: "failed",
+            passed: false,
+            code: PRELIVE_FAILURE_CODES.taskPoolInfeasible,
+            ...template,
+            detail: `${template.detail};${pool.findings.join(",")};blocked=${pool.blocked ?? "none"}`.slice(0, 2_000),
+          };
   } catch (error) {
     // The loader refuses a stale artifact BEFORE anything is observed, so that refusal is asked of the same
     // authority here: the code must name the artifact, not a blocker nobody saw.
