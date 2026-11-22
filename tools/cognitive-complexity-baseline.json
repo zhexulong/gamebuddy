@@ -1,6 +1,6 @@
 {
   "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4867, largest ExecutionManager at 28162 lines / 938 members across 53 partial(s).",
-  "revision": "b8691b2c",
+  "revision": "2014f1c2",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -43,7 +43,7 @@
       "language": "cs",
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-      "line": 2293,
+      "line": 2328,
       "value": 63,
       "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
@@ -216,7 +216,7 @@
       "language": "cs",
       "name": "FarmhandExecutionAcceptance.IsValidArgumentValue(FarmhandActionArgument,FarmhandExecutionAcceptanceFacts,BridgeExecutionArgs,Func<BridgeNavigationDestinationSelector?, bool>?)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandExecutionAcceptance.cs",
-      "line": 133,
+      "line": 188,
       "value": 42,
       "reason": "recorded at 604844a6: 40 -> 42, and `line` -> 133. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charge/area argument checks it added to the shared admission validator. 42 is the ceiling now."
     },
@@ -1168,8 +1168,8 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 543,
-      "reason": "550 -> 558 in `a3e6eb34`, the batch-node row table reaching the model: the two new overloads `IsProofShape(string?,string?,string?)` and `IsProofShape(JsonElement)` each test the proof shape against `BODY_PROGRAM_PROOF_NODE_STATES`, and `IsValidBodyProgramNodeStatus` gained the two `MayCarryProof` state guards plus `evidence`/`postconditionVerification` in its key list. Growth in branches, not a re-partition: the type is still one part and its 143 methods include the two new ones."
+      "value": 552,
+      "reason": "Re-recorded at 2014f1c2: 543 -> 552 and methods 141 -> 142 in the same commit. THE 9 POINTS are `HasExecutionArgumentShape(JsonElement, string, string[])` - the inbound `args` shape now reads the catalogue row's own `ResolvedAtExecution` instead of the exact set `HasExactProperties` demanded, so a clearing node may leave out the slot its `tool:` claim answers for. THE METHOD is that helper: its registration lookup, the `names`/`seen` pair, the duplicate-name arm and the per-declared-name `resolvable` test are the branches. The previous arithmetic (550 -> 558 at `a3e6eb34`) is superseded by this reading, not lost: this row measured 543 on the tree that preceded this commit, which is the number that was compared, not the 558 its own reason quoted."
     },
     {
       "id": "cs:BridgeSession",
@@ -1242,9 +1242,9 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs",
       "line": 11,
-      "lines": 2119,
-      "methods": 123
-    },
+      "lines": 2149,
+      "methods": 123,
+      "reason": "Re-recorded at 2014f1c2: lines 2119 -> 2149 (+44/-14 in the file), methods 123 -> 123. The 30 net lines are `ProjectedWeedNodeWithNeitherItsToolSlotNorItsIdentityIsAdmittedAndOneThatDropsItsTileIsRefused`, which replaced `ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument`: the old fact (a weed node without a slot was `invalid_arguments:cut_weeds`) is now its inverse, so the same test drives the admitted node and one whose `y` is missing through the journal authority, and `WeedArguments` grew the `withTargetId` half. Assertions in a test class: no branches, no new member."    },
     {
       "id": "cs:BodyProgramControllerPumpTests",
       "name": "BodyProgramControllerPumpTests",
@@ -1282,9 +1282,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2439,
-      "methods": 141,
-      "reason": "lines 2421 -> 2455 and methods 141 -> 143 in `a3e6eb34` (+38/-4 in the file): the two `IsProofShape` overloads, one for the typed status row and one for a `JsonElement`, which is the wire row's other half."
+      "lines": 2474,
+      "methods": 142,
+      "reason": "Re-recorded at 2014f1c2: lines 2439 -> 2474 and methods 141 -> 142. THE METHOD is `HasExecutionArgumentShape(JsonElement args, string action, string[] declared)`, the inbound-shape door that reads the catalogue row's `ResolvedAtExecution` rather than a third list; THE LINES are that method's own span (its doc comment, the registration lookup, the two sets, the duplicate arm and the resolvable arm) and the call site that swapped `HasExactProperties` for it. The previous arithmetic (lines 2421 -> 2455, methods 141 -> 143 at `a3e6eb34`) was stale in both fields and wrong in direction on methods: this row measured 141 before this commit, so the 143 it claimed was a count its own tree never had."
     },
     {
       "id": "cs:BridgeProtocolSerializationTests",
@@ -1326,9 +1326,9 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
       "line": 634,
-      "lines": 1571,
-      "methods": 53,
-      "reason": "OWED BY A FILE IN FLIGHT (2026-11-22): `integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs` gains 13 action definitions and 267 lines in the worktree of the effects landing, which is uncommitted. This record therefore stays at HEAD's 40 methods / 1,304 lines and the gate reports it as `class_size_record_stale` until that file lands; the commit that brings it in re-records this row with `--update` and states the arithmetic. The previous arithmetic: 1083 -> 1124 lines and 30 -> 31 methods at the same single part: `c2e1a2fc` added `Charged(FarmhandActionDescriptor,string?)`, and the rest is catalogue rows and the comments that moved with them (`88d9d9d2`, `55e4a27e`, `7e0ee6e1`). Class complexity is 9, so these lines are declarations, not branches."
+      "lines": 1620,
+      "methods": 54,
+      "reason": "Re-recorded at 2014f1c2: lines 1571 -> 1620 (+334/-3 landed by 5b10e0d2, +65 by 2014f1c2) and methods 53 -> 54. The record was STALE, not current, when this pass replaced it: it predated the effects landing (5b10e0d2), which added the `effects` declarations this class publishes and the helpers that name them. THE METHOD is 2014f1c2's `ResolvesToolSlotAtExecution(FarmhandActionDescriptor)`: it throws at type initialisation for a row that declares no `tool:` claim or no `slot`, so the omission cannot be granted to a body that could not answer it. THE ROWS are the fifteen actions that now pass `AutoSelectedToolSlotMeaning` into `SlotTargetWith`. Class complexity is 9, so these lines are declarations, not branches."
     },
     {
       "id": "cs:FarmhandCapabilityPublicationProjectionMetadata",

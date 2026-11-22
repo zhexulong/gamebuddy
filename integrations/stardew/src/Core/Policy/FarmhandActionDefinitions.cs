@@ -1752,7 +1752,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// never compared to `CurrentToolIndex`. Publishing <see cref="ToolSlotMeaning"/> there demanded something nothing
     /// checks: a caller reading it would believe a mismatch is refused when it is ignored.
     /// </summary>
-    private const string AutoSelectedToolSlotMeaning = "The TOOL's backpack slot, copied from `snapshot.toolSlots`. This action selects the tool its own `tool:` claim declares and restores the actor's selection afterwards, so the number need NOT be `snapshot.currentToolSlot` - it is reported in the receipt, not validated against the held slot. It may also be LEFT OUT (`resolvedAtExecution`): the body ranks the pack by that same claim and takes the slot it selects, refusing `tool_not_owned:<claim>` (or `tool_upgrade_insufficient`/`tool_being_upgraded`) by name when nothing answers - which is what lets a plan name a tile the submit-moment snapshot holds no row for.";
+    private const string AutoSelectedToolSlotMeaning = "The TOOL's backpack slot, copied from `snapshot.toolSlots`. The action selects the tool its `tool:` claim declares and restores the selection afterwards, so it need NOT be `snapshot.currentToolSlot` - the number is reported in the receipt. Omitted (`resolvedAtExecution`), the body takes the slot the claim selects, which is what lets a plan name a tile the submit-time snapshot lacks, and refuses `tool_not_owned:<claim>` or `tool_upgrade_insufficient`/`tool_being_upgraded` by name.";
 
     /// <summary>
     /// What `slot` means on an action whose named slot must hold the exact item AND be the held one.
