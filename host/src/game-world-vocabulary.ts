@@ -266,6 +266,7 @@ export type GameEnvironmentFactsSource = Pick<
   | "currentToolSlot"
   | "toolSlots"
   | "villagerWhereabouts"
+  | "npcRelationshipTargets"
   | "wateringWhereabouts"
   | "chestsSummary"
   | "chests"
@@ -300,6 +301,23 @@ const MAX_NEARBY_VILLAGER_TILES = 6;
 const MAX_VILLAGER_FACT_BYTES = MAX_GAME_ENVIRONMENT_FACTS_BYTES / 2;
 /** One published name's share of the line; the wire allows 128 characters. */
 const MAX_ENVIRONMENT_NAME_CHARS = 16;
+
+/**
+ * The word the villager fact prints beside a name for each marker the wire publishes (`npcRelationshipTargets.marker`).
+ *
+ * `none` prints NOTHING rather than a word, because "no marker" is the ordinary case and a line that said `皮埃尔[无]`
+ * would spend its bytes stating the absence of a fact. The other three are the engine's own three states, each named for
+ * what it is: a quest in her log that wants this villager, a live special order they requested, or something the engine
+ * has queued to say.
+ *
+ * The table is a TOTAL record over the wire's own union, so a fourth marker cannot reach this line unnamed.
+ */
+export const NPC_MARKER_WORDS: Readonly<Record<"quest" | "special_order" | "dialogue" | "none", string>> = Object.freeze({
+  quest: "委托",
+  special_order: "订单",
+  dialogue: "有话",
+  none: "",
+});
 
 function boundedName(value: string): string {
   const characters = Array.from(value);
@@ -368,8 +386,12 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
   const distance = (villager: { readonly x: number; readonly y: number }): number =>
     Math.max(Math.abs(villager.x - tile.x), Math.abs(villager.y - tile.y));
   const ordered = here.sort((left, right) => distance(left) - distance(right));
+  // The marker lives on the radius-bounded family, and the three names this line prints are all inside that radius by
+  // construction (`MAX_NEARBY_VILLAGER_TILES` is the Mod's own discovery envelope). Joined by name, so the two families
+  // cannot disagree about who carries a marker - they publish the same string under `npcName`.
+  const markers = new Map((source.npcRelationshipTargets ?? []).map((row) => [row.npcName, row.marker] as const));
   const name = (villager: { readonly npcName: string; readonly displayName: string }): string =>
-    boundedName(zh ? villager.displayName : villager.npcName);
+    `${boundedName(zh ? villager.displayName : villager.npcName)}${markerSuffix(markers.get(villager.npcName), zh)}`;
   const named = ordered
     .filter((villager) => distance(villager) <= MAX_NEARBY_VILLAGER_TILES)
     .slice(0, MAX_NEARBY_VILLAGER_NAMES)
@@ -399,6 +421,19 @@ function formatNearbyVillagers(source: GameEnvironmentFactsSource, zh: boolean):
     }
   }
   return compose();
+}
+
+/**
+ * The bubble over a villager's head, as the word the wire's own marker names it.
+ *
+ * Measured `round92`: the player asked "there is a question mark over Pierre - what quest is that? does she know?", and
+ * she did not - the snapshot carried `talkedToToday`, `specialOrderTargets` and `activeSpecialOrderKeys` and no field
+ * about the villager in front of her. This is where that field reaches her, beside the name it belongs to.
+ */
+function markerSuffix(marker: string | undefined, zh: boolean): string {
+  if (marker === undefined || marker === "none") return "";
+  const word = NPC_MARKER_WORDS[marker as keyof typeof NPC_MARKER_WORDS];
+  return word === undefined || word.length === 0 ? "" : zh ? `[${word}]` : `[${marker}]`;
 }
 
 /**
@@ -1077,6 +1112,9 @@ export const NON_ROW_FAMILIES: Readonly<Record<string, string>> = Object.freeze(
 /** Tiles one family names before it counts the rest. Six fits a plan; a 64-row patch does not fit a prompt. */
 export const MAX_TARGET_TILES_SHOWN = 6;
 
+/** Strips one family names before it counts the rest: two boxes is one plan's worth, a list of them is a map. */
+const MAX_TARGET_BLOCKS_SHOWN = 2;
+
 /** Families the line names before it counts the rest. The non-empty ones are taken first. */
 export const MAX_TARGET_FAMILIES_SHOWN = 12;
 
@@ -1381,8 +1419,16 @@ function rowTileId(candidate: Record<string, unknown>): string | undefined {
 function placedTargetTiles(
   value: readonly unknown[],
   state: Readonly<{ field: string; label: string }> | undefined,
-): { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] {
-  const tiles: { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[] = [];
+): { x: number; y: number; name: string | undefined; state: string; w: number; h: number; block: TargetBlock | undefined }[] {
+  const tiles: {
+    x: number;
+    y: number;
+    name: string | undefined;
+    state: string;
+    w: number;
+    h: number;
+    block: TargetBlock | undefined;
+  }[] = [];
   for (const row of value) {
     if (row === null || typeof row !== "object") continue;
     const candidate = row as Record<string, unknown>;
@@ -1395,9 +1441,42 @@ function placedTargetTiles(
       state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
       w: extentSide(candidate.w),
       h: extentSide(candidate.h),
+      block: rowBlock(candidate),
     });
   }
   return tiles;
+}
+
+/** The connected strip one row belongs to, when the row publishes one and it is more than the row's own tile. */
+type TargetBlock = Readonly<{ x: number; y: number; w: number; h: number }>;
+
+/**
+ * The strip a row belongs to, read from the row's own `blockX`/`blockY`/`blockW`/`blockH` - the family-neutral spelling,
+ * so a second family that publishes a connected region joins this line without an entry anywhere.
+ *
+ * A 1x1 box is the row's own tile and prints nothing: the bare coordinate already said it, and repeating it beside every
+ * isolated tile would spend the line's bytes on the common case. A row that carries the pair unreadably is silence rather
+ * than a guessed box - the same rule `stateSuffix` follows.
+ */
+function rowBlock(candidate: Record<string, unknown>): TargetBlock | undefined {
+  const x = candidate.blockX;
+  const y = candidate.blockY;
+  const w = candidate.blockW;
+  const h = candidate.blockH;
+  if (!(
+    typeof x === "number" &&
+    typeof y === "number" &&
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    typeof w === "number" &&
+    typeof h === "number" &&
+    Number.isSafeInteger(w) &&
+    Number.isSafeInteger(h) &&
+    w >= 1 &&
+    h >= 1
+  ))
+    return undefined;
+  return w * h === 1 ? undefined : Object.freeze({ x, y, w, h });
 }
 
 /** The row's own name, for a family whose rows are not one thing; `undefined` rather than the word `undefined`. */
@@ -1456,7 +1535,15 @@ const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, inFlight: 0,
 function renderTargetFamily(
   label: string,
   total: number,
-  shown: readonly { x: number; y: number; name: string | undefined; state: string; w: number; h: number }[],
+  shown: readonly {
+    x: number;
+    y: number;
+    name: string | undefined;
+    state: string;
+    w: number;
+    h: number;
+    block?: TargetBlock | undefined;
+  }[],
   omitted: number,
   proved: TargetLineProof = NOTHING_PROVED,
 ): string | undefined {
@@ -1471,7 +1558,29 @@ function renderTargetFamily(
         `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
     )
     .join(" ");
-  return `${label} ${tiles}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}${targetLineFreshness(proved)}`;
+  return `${label} ${tiles}${blockSuffix(shown)}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}${targetLineFreshness(proved)}`;
+}
+
+/**
+ * The strips the named rows belong to, said ONCE per distinct box rather than beside every row of it.
+ *
+ * This is the fact the row list could not state: `soilTiles` publishes tiles, and a task asks for a rectangle - measured
+ * `round92`, one 3x20 strip was planted 34 times over an 18x10 scatter because the only shape on the line was the list's
+ * own extent. The box is the Mod's measurement of the connected ground (`blockW`/`blockH`), never this line's inference,
+ * and it prints only for a box bigger than a tile, so the common single-tile row keeps the coordinate it always had.
+ */
+function blockSuffix(shown: readonly { block?: TargetBlock | undefined }[]): string {
+  const blocks = new Map<string, TargetBlock>();
+  for (const tile of shown) {
+    if (tile.block === undefined) continue;
+    const key = `${String(tile.block.x)}:${String(tile.block.y)}:${String(tile.block.w)}:${String(tile.block.h)}`;
+    if (!blocks.has(key)) blocks.set(key, tile.block);
+  }
+  if (blocks.size === 0) return "";
+  const printed = [...blocks.values()]
+    .slice(0, MAX_TARGET_BLOCKS_SHOWN)
+    .map((block) => `${String(block.w)}×${String(block.h)}@(${String(block.x)},${String(block.y)})`);
+  return ` 块 ${printed.join(" ")}`;
 }
 
 /**

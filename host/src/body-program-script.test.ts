@@ -396,10 +396,10 @@ test("a strip of independent steps is ordered, not chained, so one failed tile s
       {
         enabledActionIds: ["till_soil"],
         soilTiles: [
-          { x: 60, y: 18 },
-          { x: 61, y: 18 },
-          { x: 62, y: 18 },
-          { x: 63, y: 18 },
+          { x: 60, y: 18, blockX: 60, blockY: 18, blockW: 4, blockH: 1 },
+          { x: 61, y: 18, blockX: 60, blockY: 18, blockW: 4, blockH: 1 },
+          { x: 62, y: 18, blockX: 60, blockY: 18, blockW: 4, blockH: 1 },
+          { x: 63, y: 18, blockX: 60, blockY: 18, blockW: 4, blockH: 1 },
         ],
       },
     ),
@@ -439,9 +439,9 @@ test("each tile's planting consumes that tile's tilling, and only that tile's", 
       {
         enabledActionIds: ["till_soil", "plant_seed"],
         soilTiles: [
-          { x: 60, y: 18 },
-          { x: 61, y: 18 },
-          { x: 62, y: 18 },
+          { x: 60, y: 18, blockX: 60, blockY: 18, blockW: 3, blockH: 1 },
+          { x: 61, y: 18, blockX: 60, blockY: 18, blockW: 3, blockH: 1 },
+          { x: 62, y: 18, blockX: 60, blockY: 18, blockW: 3, blockH: 1 },
         ],
       },
     ),
@@ -3939,8 +3939,8 @@ test("the recipe's examples are a script the compiler accepts", () => {
   const compiled = compile(example, {
     enabledActionIds: ["till_soil", "water_crop"],
     soilTiles: [
-      { x: 60, y: 18, hoeDirt: false },
-      { x: 61, y: 18, hoeDirt: false },
+      { x: 60, y: 18, hoeDirt: false, blockX: 60, blockY: 18, blockW: 2, blockH: 1 },
+      { x: 61, y: 18, hoeDirt: false, blockX: 60, blockY: 18, blockW: 2, blockH: 1 },
     ],
     cropTargets: [crop("crop_01", 11, 10)],
   });
@@ -4212,7 +4212,15 @@ function loopSourceOf(description: string, family: string): string {
 test("round81_composition: the recipe's own soil loop writes no till node over a patch already under the Hoe", () => {
   const loop = loopSourceOf(planWorkDescription(CATALOG_ACTIONS), "soilTiles");
   const patch = (hoeDirt: boolean) =>
-    Array.from({ length: 39 }, (_, index) => ({ x: 58 + (index % 13), y: 18 + Math.floor(index / 13), hoeDirt }));
+    Array.from({ length: 39 }, (_, index) => ({
+      x: 58 + (index % 13),
+      y: 18 + Math.floor(index / 13),
+      hoeDirt,
+      blockX: 58,
+      blockY: 18,
+      blockW: 13,
+      blockH: 3,
+    }));
   const worked = compile(loop, { enabledActionIds: ["till_soil"], soilTiles: patch(true) });
   assert.equal(worked.status, "refused", "a patch already under the Hoe is a loop with nothing to do");
   assert.equal(

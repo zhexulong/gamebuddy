@@ -1077,8 +1077,8 @@ test("bridge message payloads fail closed", () => {
       ...snapshot,
       doorTargets: [{ sourceX: 10, sourceY: 11, targetLocation: "FarmHouse", targetX: 9, targetY: 9 }],
       soilTiles: [
-        { x: 10, y: 12 },
-        { x: 11, y: 12 },
+        { x: 10, y: 12, blockX: 10, blockY: 12, blockW: 2, blockH: 1 },
+        { x: 11, y: 12, blockX: 10, blockY: 12, blockW: 2, blockH: 1 },
       ],
       forageTargets: [
         { targetId: "forage_deadbeef", x: 10, y: 12, qualifiedItemId: "(O)399", displayName: "Spring Onion", stack: 1 },
@@ -1134,6 +1134,7 @@ test("bridge message payloads fail closed", () => {
           talkedToToday: false,
           giftsToday: 0,
           giftsThisWeek: 0,
+          marker: "none",
         },
       ],
       villagerWhereabouts: [
@@ -2158,8 +2159,8 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     {
       ...snapshot,
       soilTiles: [
-        { x: 10, y: 12, hoeDirt: true },
-        { x: 11, y: 12, hoeDirt: false },
+        { x: 10, y: 12, hoeDirt: true, blockX: 10, blockY: 12, blockW: 2, blockH: 1 },
+        { x: 11, y: 12, hoeDirt: false, blockX: 10, blockY: 12, blockW: 2, blockH: 1 },
       ],
       soilTilesOmitted: 0,
     },

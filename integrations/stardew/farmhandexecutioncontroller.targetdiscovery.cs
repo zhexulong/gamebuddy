@@ -7,6 +7,8 @@ using Netcode;
 using StardewModdingAPI;
 using StardewValley;
 using StardewValley.Characters;
+using StardewValley.Quests;
+using StardewValley.SpecialOrders;
 using StardewValley.Tools;
 
 namespace GameBuddy.Stardew;
@@ -214,11 +216,19 @@ internal sealed partial class ExecutionManager
     /// zeroed relationship below is the state the engine is about to write, not an invention. A MET villager's own
     /// record is published untouched.
     /// </para>
+    /// <para>
+    /// <see cref="BridgeNpcRelationshipTarget.Marker"/> is the second half of the row: the relationship is what the pair
+    /// have, and the marker is what the world is SHOWING over the villager - see <see cref="DescribeNpcMarker"/>. It is
+    /// published on every row, `none` included, so a reader can tell "nothing is over their head" from "this row does not
+    /// say".
+    /// </para>
     /// </summary>
     private static IReadOnlyList<BridgeNpcRelationshipTarget> DiscoverNpcRelationshipTargets(Farmer player)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeNpcRelationshipTarget>();
+        List<string> questTargets = QuestTargetNpcNames(player);
+        List<string> orderRequesters = LiveSpecialOrderRequesters(player);
         return location.characters
             .OfType<StardewValley.NPC>()
             .Where(npc => npc.IsVillager
@@ -239,9 +249,88 @@ internal sealed partial class ExecutionManager
                     friendship.Status.ToString(),
                     friendship.TalkedToToday,
                     friendship.GiftsToday,
-                    friendship.GiftsThisWeek);
+                    friendship.GiftsThisWeek,
+                    DescribeNpcMarker(npc, questTargets, orderRequesters));
             })
             .ToArray();
+    }
+
+    /// <summary>
+    /// The <c>marker</c> values this row publishes, as a closed set. The four words are the four answers the world's own
+    /// predicates give; see <see cref="BridgeNpcRelationshipTarget"/> for which seam each one is read from, and
+    /// <see cref="DescribeNpcMarker"/> for the precedence between them.
+    /// </summary>
+    internal const string NpcMarkerQuest = "quest";
+
+    internal const string NpcMarkerSpecialOrder = "special_order";
+
+    internal const string NpcMarkerDialogue = "dialogue";
+
+    internal const string NpcMarkerNone = "none";
+
+    /// <summary>
+    /// What the world is showing over one villager's head, in the strongest of the three states the engine keeps: a
+    /// quest in the player's log that names them, a live special order they are the requester of, or a temporary message
+    /// the engine has for them.
+    ///
+    /// <para>
+    /// THE THREE ARE READ FROM THREE PLACES, which is why this is a function and not a field lookup: `Quest.target` on
+    /// the two billboard quest types that name an NPC, `SpecialOrder.requester`, and `NPC.hasTemporaryMessageAvailable`
+    /// / `NPC.TemporaryDialogue`. The order is the order a reader needs: a quest to hand in is an action she can take, a
+    /// special order is one she is partway through, and a queued line is something the villager will say. Every earlier
+    /// state is the stronger one, and a villager in none of them answers `none` - a measured absence, never silence.
+    /// </para>
+    /// <para>
+    /// `NPC.CurrentDialogue` is deliberately NOT one of them. Its getter computes and caches the day's dialogue when the
+    /// NPC has not been talked to yet (`loadCurrentDialogue`, NPC.cs:3608), so asking it here would make observation WRITE
+    /// engine state - the one thing the rest of this file's read-only discovery avoids.
+    /// </para>
+    /// </summary>
+    internal static string DescribeNpcMarker(StardewValley.NPC npc, IReadOnlyList<string> questTargets, IReadOnlyList<string> specialOrderRequesters)
+    {
+        string name = npc.Name;
+        if (questTargets.Any(target => string.Equals(target, name, StringComparison.Ordinal)))
+            return NpcMarkerQuest;
+        if (specialOrderRequesters.Any(requester => string.Equals(requester, name, StringComparison.Ordinal)))
+            return NpcMarkerSpecialOrder;
+        if (npc.hasTemporaryMessageAvailable() || npc.TemporaryDialogue is { Count: > 0 })
+            return NpcMarkerDialogue;
+        return NpcMarkerNone;
+    }
+
+    /// <summary>
+    /// The NPCs the player's own quest log is waiting on: `ItemDeliveryQuest.target` and `ResourceCollectionQuest.target`,
+    /// read off the two engine quest types that name a villager, and only while the quest is not complete.
+    /// </summary>
+    private static List<string> QuestTargetNpcNames(Farmer player)
+    {
+        List<string> names = new();
+        foreach (Quest quest in player.questLog)
+        {
+            if (quest.completed.Value) continue;
+            string? target = quest switch
+            {
+                ItemDeliveryQuest delivery => delivery.target.Value,
+                ResourceCollectionQuest collection => collection.target.Value,
+                _ => null,
+            };
+            if (!string.IsNullOrWhiteSpace(target) && !names.Contains(target, StringComparer.Ordinal))
+                names.Add(target);
+        }
+        return names;
+    }
+
+    /// <summary>The requester of every order the team is currently carrying - `SpecialOrder.requester`, the NPC the board credited it to.</summary>
+    private static List<string> LiveSpecialOrderRequesters(Farmer player)
+    {
+        List<string> names = new();
+        foreach (SpecialOrder order in player.team.specialOrders)
+        {
+            string requester = order.requester.Value;
+            if (!string.IsNullOrWhiteSpace(requester) && !names.Contains(requester, StringComparer.Ordinal))
+                names.Add(requester);
+        }
+        return names;
     }
 
     /// <summary>
@@ -1529,6 +1618,7 @@ internal sealed partial class ExecutionManager
         omitted = 0;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSoilTile>();
+        FarmableBlocks blocks = new(location);
         List<(int Distance, BridgeSoilTile Tile)> candidates = new();
         int originX = player.TilePoint.X;
         int originY = player.TilePoint.Y;
@@ -1545,7 +1635,8 @@ internal sealed partial class ExecutionManager
                 bool hoeDirt = location.GetHoeDirtAtTile(tile) is not null;
                 if (!hoeDirt && !IsTillableTile(location, x, y))
                     continue;
-                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt)));
+                (int BlockX, int BlockY, int BlockW, int BlockH) block = blocks.Of(x, y);
+                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt, block.BlockX, block.BlockY, block.BlockW, block.BlockH)));
             }
         }
         BridgeSoilTile[] ordered = candidates
@@ -1557,5 +1648,85 @@ internal sealed partial class ExecutionManager
         int published = Math.Min(ordered.Length, MaximumDiscoveredSoilTiles);
         omitted = ordered.Length - published;
         return ordered[..published];
+    }
+
+    /// <summary>
+    /// The connected strips of farmable ground of ONE location, measured lazily and once per region.
+    ///
+    /// <para>
+    /// A STRIP IS A SET OF TILES, so it can only be answered by a walk: two tiles are in the same strip when a cardinal
+    /// step reaches from one to the other through tiles the same family would publish. The membership question is the
+    /// family's own (`GetHoeDirtAtTile` present, or `IsTillableTile`) and is asked once per tile through
+    /// <see cref="IsFarmable"/>; the walk itself has no radius, because the answer it exists for - "how wide and how long
+    /// is this strip" - is exactly the fact a six-tile window cannot state: a 3x20 patch is 20 long and only 13 of it is
+    /// ever inside the window.
+    /// </para>
+    /// <para>
+    /// NOTHING IS TRUNCATED AND NOTHING IS THEREFORE WITHHELD: the walk stops at the map's own edge or at ground that is
+    /// not farmable, so a published box is the whole strip. The only bound this family still has is the ROW cap, and that
+    /// one states its own omission (`soilTilesOmitted`) rather than leaving a reader to guess which strip the budget left.
+    /// A walk per region, memoised by tile, keeps the cost proportional to the ground actually measured instead of to the
+    /// map: regions are visited once each, tiles outside every published row are visited at most once.
+    /// </para>
+    /// </summary>
+    private sealed class FarmableBlocks
+    {
+        private readonly StardewValley.GameLocation location;
+        private readonly Dictionary<(int X, int Y), bool> farmable = new();
+        private readonly Dictionary<(int X, int Y), (int BlockX, int BlockY, int BlockW, int BlockH)> blocks = new();
+
+        internal FarmableBlocks(StardewValley.GameLocation location) => this.location = location;
+
+        internal (int BlockX, int BlockY, int BlockW, int BlockH) Of(int x, int y)
+        {
+            if (this.blocks.TryGetValue((x, y), out (int BlockX, int BlockY, int BlockW, int BlockH) measured))
+                return measured;
+            List<(int X, int Y)> region = new();
+            Stack<(int X, int Y)> pending = new();
+            int minX = x, minY = y, maxX = x, maxY = y;
+            pending.Push((x, y));
+            this.blocks[(x, y)] = (x, y, 1, 1);
+            while (pending.Count > 0)
+            {
+                (int tileX, int tileY) = pending.Pop();
+                region.Add((tileX, tileY));
+                foreach ((int stepX, int stepY) in CardinalNeighbours(tileX, tileY))
+                {
+                    if (this.blocks.ContainsKey((stepX, stepY)) || !this.IsFarmable(stepX, stepY)) continue;
+                    this.blocks[(stepX, stepY)] = (stepX, stepY, 1, 1);
+                    pending.Push((stepX, stepY));
+                }
+            }
+            foreach ((int tileX, int tileY) in region)
+            {
+                if (tileX < minX) minX = tileX;
+                if (tileY < minY) minY = tileY;
+                if (tileX > maxX) maxX = tileX;
+                if (tileY > maxY) maxY = tileY;
+            }
+            (int BlockX, int BlockY, int BlockW, int BlockH) box = (minX, minY, maxX - minX + 1, maxY - minY + 1);
+            foreach ((int tileX, int tileY) in region)
+                this.blocks[(tileX, tileY)] = box;
+            return box;
+        }
+
+        /// <summary>
+        /// Whether this tile belongs to the soil family at all: ground already under the Hoe, or ground the Hoe admits.
+        /// One engine read plus one call to the family's own predicate, and the answer is kept because a walk asks about
+        /// the same neighbour from several of its members.
+        /// </summary>
+        private bool IsFarmable(int x, int y)
+        {
+            if (this.farmable.TryGetValue((x, y), out bool known)) return known;
+            if (!this.location.isTileOnMap(x, y))
+            {
+                this.farmable[(x, y)] = false;
+                return false;
+            }
+            bool answer = this.location.GetHoeDirtAtTile(new Vector2(x, y)) is not null
+                || IsTillableTile(this.location, x, y);
+            this.farmable[(x, y)] = answer;
+            return answer;
+        }
     }
 }

@@ -252,6 +252,91 @@ public sealed class SoilTilePublicationTests
     }
 
     /// <summary>
+    /// THE STRIP, read as a strip: a 3-wide, 20-long patch of tillable ground publishes its own CONNECTED BOX on every
+    /// row of it, even though the box is longer than the whole discovery window.
+    ///
+    /// This is `round92`'s reading as a case. She was asked for one 3-tile-wide, twenty-long strip and planted 34 times
+    /// scattered across x 62..79, y 17..26, because the published family named points and nothing said which rectangle the
+    /// points were the corner of - the block was arithmetic she had to invent from a 13x13 grid. The expected box is
+    /// derived from the patch this case writes, and the case asserts it is LONGER than the window: a box that only ever
+    /// covered what the radius reached would be the same defect with a box drawn round it.
+    /// </summary>
+    [Fact]
+    public void AStripIsPublishedWithTheConnectedBoxItBelongsTo()
+    {
+        using SoilHarness harness = SoilHarness.Create();
+        var strip = new List<(int X, int Y)>();
+        for (int x = 2; x < 22; x++)
+            for (int y = 8; y < 11; y++)
+            {
+                harness.SetDiggable(x, y);
+                strip.Add((x, y));
+            }
+
+        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+
+        published.Should().NotBeEmpty("the actor stands inside the strip");
+        int window = (2 * ExecutionManager.TargetDiscoveryRadius) + 1;
+        published.Should().OnlyContain(
+            row => row.BlockX == 2 && row.BlockY == 8 && row.BlockW == 20 && row.BlockH == 3,
+            "every row of the strip reports the strip it belongs to, not the window it was seen through");
+        published[0].BlockW.Should().BeGreaterThan(
+            window,
+            "twenty tiles across is longer than the {0}-tile window, which is the fact the box exists to state", window);
+        omitted.Should().Be(0, "the reachable patch fits inside the row bound, so the bound took nothing");
+
+        // One column fewer in the strip is one tile narrower in the box: the number is measured from this map, not typed.
+        for (int y = 8; y < 11; y++)
+            harness.SetNotDiggable(2, y);
+        ExecutionManager.DiscoverSoilTiles(harness.Actor, out _).Should().OnlyContain(
+            row => row.BlockX == 3 && row.BlockW == 19,
+            "the whole westmost column stopped being farmable, so the strip's own north-west corner moves with it");
+    }
+
+    /// <summary>
+    /// TWO patches are two boxes. The walk that answers "what strip is this" must stop at ground that is not farmable, or
+    /// every patch on the farm would be published as one box around all of them.
+    /// </summary>
+    [Fact]
+    public void TwoSeparatePatchesAreTwoBoxes()
+    {
+        using SoilHarness harness = SoilHarness.Create();
+        for (int y = 8; y < 11; y++)
+        {
+            harness.SetDiggable(8, y);
+            harness.SetDiggable(16, y);
+        }
+
+        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out _);
+
+        published.Should().HaveCount(6, "two columns of three tiles, both inside the window");
+        published.Where(row => row.X == 8).Should().OnlyContain(
+            row => row.BlockX == 8 && row.BlockW == 1 && row.BlockH == 3,
+            "a single column is one tile wide");
+        published.Where(row => row.X == 16).Should().OnlyContain(
+            row => row.BlockX == 16 && row.BlockW == 1 && row.BlockH == 3,
+            "and the patch three tiles away is its own box");
+    }
+
+    /// <summary>
+    /// A neighbourhood with nothing tillable publishes an EMPTY family and says so - `[]` with `omitted: 0`, never a null
+    /// family (which would mean the capability was not advertised) and never a silent absence.
+    /// </summary>
+    [Fact]
+    public void GroundWithNothingTillablePublishesAnEmptyFamilyThatSaysItLooked()
+    {
+        using SoilHarness harness = SoilHarness.Create();
+        for (int x = SoilHarness.ActorX - 2; x <= SoilHarness.ActorX + 2; x++)
+            for (int y = SoilHarness.ActorY - 2; y <= SoilHarness.ActorY + 2; y++)
+                harness.SetNotDiggable(x, y);
+
+        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+
+        published.Should().BeEmpty("there is no ground here the Hoe admits and nothing is under it");
+        omitted.Should().Be(0, "an empty answer states what the bound took, and the bound took nothing");
+    }
+
+    /// <summary>
     /// The Mod's cap is the number of rows the wire admits - read from the schema, never typed here.
     ///
     /// The bound is one fact owned by two layers: the Mod decides how many soil rows to publish and the Host

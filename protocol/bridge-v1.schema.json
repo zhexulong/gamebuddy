@@ -1579,7 +1579,12 @@
       "additionalProperties": false,
       "required": [
         "x",
-        "y"
+        "y",
+        "hoeDirt",
+        "blockX",
+        "blockY",
+        "blockW",
+        "blockH"
       ],
       "properties": {
         "x": {
@@ -1591,6 +1596,23 @@
         "hoeDirt": {
           "type": "boolean",
           "description": "`GameLocation.GetHoeDirtAtTile(tile) is not null` read when the row was published: whether a HoeDirt already occupies this tile, which is the state the row reports. `true` is a tile the actor has already hoed - the `plant_seed`/`fertilize_tile`/`water_crop` target and the record of work already done - and `till_soil` refuses it with `soil_already_tilled`; `false` is ground the Hoe still admits. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "blockX": {
+          "$ref": "#/$defs/tile",
+          "description": "The north-west tile of the CONNECTED strip this tile belongs to: every tile reachable from it by a cardinal step over the family's own population (HoeDirt present or `ExecutionManager.IsTillableTile`), measured over the whole map rather than over the six-tile discovery window. The box is a measurement of the ground, not a request: `till_soil` still admits one tile at a time."
+        },
+        "blockY": {
+          "$ref": "#/$defs/tile"
+        },
+        "blockW": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "blockH": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
         }
       }
     },
@@ -2324,7 +2346,8 @@
         "friendshipStatus",
         "talkedToToday",
         "giftsToday",
-        "giftsThisWeek"
+        "giftsThisWeek",
+        "marker"
       ],
       "properties": {
         "targetId": {
@@ -2363,6 +2386,16 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 20
+        },
+        "marker": {
+          "type": "string",
+          "enum": [
+            "quest",
+            "special_order",
+            "dialogue",
+            "none"
+          ],
+          "description": "What the world is showing over this villager, in the strongest of the three engine states: `quest` - the player's quest log holds an incomplete quest that names this NPC (`ItemDeliveryQuest.target` / `ResourceCollectionQuest.target`); `special_order` - a live order's `SpecialOrder.requester` is this NPC; `dialogue` - the engine has a temporary message for them (`NPC.hasTemporaryMessageAvailable()` or a queued `NPC.TemporaryDialogue`); `none` - none of the three, which is a measured answer and never silence. `NPC.CurrentDialogue` is deliberately not read (its getter computes and caches the day's dialogue, so asking would write engine state)."
         }
       }
     },

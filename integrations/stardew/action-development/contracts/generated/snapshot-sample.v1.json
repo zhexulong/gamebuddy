@@ -373,6 +373,7 @@
         "friendshipStatus": "Friendly",
         "giftsThisWeek": 0,
         "giftsToday": 0,
+        "marker": "none",
         "npcName": "Abigail",
         "talkedToToday": false,
         "targetId": "npc_relationship_b5586b3bf4942bb8",

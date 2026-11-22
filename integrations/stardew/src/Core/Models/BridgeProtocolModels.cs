@@ -236,7 +236,8 @@ public sealed record BridgeDoor(
 );
 
 /// <summary>
-/// One tile the Hoe can till.
+/// One tile of the soil family - ground the Hoe still admits (`HoeDirt` false) or ground already under it (true) - with
+/// the shape of the strip it belongs to.
 ///
 /// <para>
 /// <see cref="HoeDirt"/> is the engine's own presence answer for the tile
@@ -247,8 +248,19 @@ public sealed record BridgeDoor(
 /// row's existence. Measured round80: twenty-seven <c>soil_already_tilled</c> receipts in one runner log, twenty-one
 /// of them one programme walking a block it had already hoed, while every row of that block answered `hoeDirt: true`.
 /// </para>
+///
+/// <para>
+/// <see cref="BlockX"/>/<see cref="BlockY"/>/<see cref="BlockW"/>/<see cref="BlockH"/> are the bounds of the CONNECTED
+/// strip this tile belongs to: the axis-aligned box of every tile reachable from it by a cardinal step over the same
+/// population this family publishes (`HoeDirt` present or `IsTillableTile`), measured over the whole map rather than
+/// over the discovery window. They exist because a task has a SHAPE and the family published only points: measured
+/// `round92`, she was asked for one 3-tile-wide, twenty-long strip and planted 34 times scattered across x 62..79,
+/// y 17..26 - "which rectangle should I open" was arithmetic she had to invent from a 13x13 grid, and the row that
+/// would have said `3x20` said nothing. The box is a measurement of the world, never a request: `till_soil` still
+/// admits one tile at a time, and a tile outside the six-tile window is in the box without being a row.
+/// </para>
 /// </summary>
-public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt);
+public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt, int BlockX, int BlockY, int BlockW, int BlockH);
 
 /// <summary>
 /// Inbound rectangle question: every tile of <c>x..x+w-1</c> by <c>y..y+h-1</c> in the actor's current location.
@@ -537,7 +549,33 @@ public sealed record BridgeTreeChopSourceTarget(string TargetId, string Location
 
 public sealed record BridgeTreeChopResultTarget(string TargetId, string Location, int X, int Y, string TreeType, float Health, bool Stump, bool Moss, bool Tapped);
 
-public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, int FriendshipPoints, string FriendshipStatus, bool TalkedToToday, int GiftsToday, int GiftsThisWeek);
+/// <summary>
+/// One villager a plan can name, with the relationship the engine holds for them AND what the world is showing over
+/// their head.
+///
+/// <para>
+/// <see cref="Marker"/> is the thing the player reads as a bubble over the NPC and the companion had no field for.
+/// Measured `round92`: the player asked "there is a question mark over Pierre - what quest is that? does she know?", and
+/// the row carried `talkedToToday`, `specialOrderTargets` and `activeSpecialOrderKeys` and nothing that said which of
+/// them was about HIM. The engine draws no stored marker and keeps no marker field: the states a bubble is drawn for
+/// come from THREE different places, so all three are read here and the strongest is published, in this order:
+/// </para>
+/// <list type="number">
+/// <item><c>quest</c> - the player's own quest log holds a quest that NAMES this NPC and is not complete. The two engine
+/// types that name one are <c>ItemDeliveryQuest.target</c> and <c>ResourceCollectionQuest.target</c> (both `Data/Quests`
+/// rows the billboard hands out), and `completed` is the engine's own flag (`Quest.questComplete`, Quest.cs:609).</item>
+/// <item><c>special_order</c> - a live order in <c>FarmerTeam.specialOrders</c> has this NPC as its
+/// <c>SpecialOrder.requester</c> (SpecialOrder.cs:100, the same field the board's own offer screen reads).</item>
+/// <item><c>dialogue</c> - the engine has a temporary message for this NPC: `NPC.hasTemporaryMessageAvailable()`
+/// (NPC.cs:4315, an end-of-route message or the location's own override dialogue) or one already queued in
+/// `NPC.TemporaryDialogue` (NPC.cs:318). This is deliberately NOT `NPC.CurrentDialogue.Count`: that property's getter
+/// COMPUTES and caches the day's dialogue when it is not loaded yet (NPC.cs:564-585 -> `loadCurrentDialogue`, :3608),
+/// and an observation may not write engine state.</item>
+/// <item><c>none</c> - none of the three, which is a measured answer and never silence: a villager already talked to
+/// today with nothing queued carries `none`.</item>
+/// </list>
+/// </summary>
+public sealed record BridgeNpcRelationshipTarget(string TargetId, int X, int Y, string NpcName, int FriendshipPoints, string FriendshipStatus, bool TalkedToToday, int GiftsToday, int GiftsThisWeek, string Marker);
 
 /// <summary>
 /// Where one villager currently is, across the whole loaded world.

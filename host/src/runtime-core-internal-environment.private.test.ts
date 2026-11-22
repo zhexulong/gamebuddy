@@ -544,6 +544,56 @@ test("formatGameEnvironmentFacts names the villagers near her and the coordinate
 });
 
 /**
+ * THE BUBBLE OVER A VILLAGER'S HEAD, as a word on the line.
+ *
+ * Measured `round92`: the player asked "there is a question mark over Pierre - what quest is that? does she know?", and she
+ * did not - the snapshot carried `talkedToToday`, `specialOrderTargets` and `activeSpecialOrderKeys` and nothing about the
+ * villager in front of her. `npcRelationshipTargets.marker` is that field; this is where it reaches her, beside the name it
+ * belongs to, and `none` prints nothing because a line that said `皮埃尔[无]` would spend its bytes stating the absence.
+ */
+test("formatGameEnvironmentFacts prints the marker over a villager's head, and says nothing for none", () => {
+  const villager = { targetId: "npc_relationship_Pierre", npcName: "Pierre", displayName: "皮埃尔", location: "Farm", x: 51, y: 50, inCurrentLocation: true };
+  const relationship = (marker: "quest" | "special_order" | "dialogue" | "none") => ({
+    targetId: "npc_relationship_Pierre",
+    x: 51,
+    y: 50,
+    npcName: "Pierre",
+    friendshipPoints: 0,
+    friendshipStatus: "Friendly",
+    talkedToToday: false,
+    giftsToday: 0,
+    giftsThisWeek: 0,
+    marker,
+  });
+  const line = (marker: "quest" | "special_order" | "dialogue" | "none", zh: boolean) =>
+    formatGameEnvironmentFacts(
+      {
+        timeOfDay: 900,
+        dayOfMonth: 19,
+        seasonIndex: 0,
+        year: 1,
+        weather: "sunny",
+        location: "Farm",
+        tile: { x: 50, y: 50 },
+        villagerWhereabouts: [villager],
+        npcRelationshipTargets: [relationship(marker)],
+      },
+      zh,
+    );
+
+  assert.ok(line("quest", true).includes("皮埃尔[委托]"), `the quest marker names itself: ${line("quest", true)}`);
+  assert.ok(
+    line("special_order", true).includes("皮埃尔[订单]"),
+    `the special order marker names itself: ${line("special_order", true)}`,
+  );
+  assert.ok(line("dialogue", true).includes("皮埃尔[有话]"), `the dialogue marker names itself: ${line("dialogue", true)}`);
+  const none = line("none", true);
+  assert.ok(none.includes("皮埃尔"), `a villager with no marker is still named: ${none}`);
+  assert.ok(!none.includes("["), `and nothing is printed beside the name: ${none}`);
+  assert.ok(line("quest", false).includes("Pierre[quest]"), `the English line carries the wire's own word: ${line("quest", false)}`);
+});
+
+/**
  * The radius still means something: nobody inside the envelope is described as NEAR.
  *
  * What changed is only what a beyond-envelope villager becomes. He is not "with her", so he is not in the

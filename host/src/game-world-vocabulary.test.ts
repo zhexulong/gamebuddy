@@ -611,6 +611,16 @@ const ROW_NAME_FIELDS: ReadonlySet<string> = new Set(["kind", "displayName", "na
 /** The footprint and the map a row is on: printed as `[w×h]` or not at all, and never a state. */
 const ROW_FRAME_FIELDS: ReadonlySet<string> = new Set(["w", "h", "location"]);
 
+/**
+ * The connected strip a row belongs to: `blockX`/`blockY`/`blockW`/`blockH` on a `soilTiles` row.
+ *
+ * A FRAME, not a state. The four numbers say where the piece of ground is and how big it is (` 块 3×20@(62,17)`), the same
+ * kind of fact `w`/`h` state for one object - so a family that carries them is still "a place and a state" and the state
+ * is still owed a word beside the tile. Counting them as states would ask the line to print a north-west corner beside
+ * every tile of a strip, which is the repetition `blockSuffix` exists to avoid.
+ */
+const ROW_BLOCK_FIELDS: ReadonlySet<string> = new Set(["blockX", "blockY", "blockW", "blockH"]);
+
 /** The item handle a pack-shaped row copies out of itself. */
 const ROW_HANDLE_FIELDS: ReadonlySet<string> = new Set(["slot", "qualifiedItemId", "stack"]);
 
@@ -625,6 +635,7 @@ function besideTheAddress(fields: ReadonlyMap<string, string>): readonly string[
       !ROW_IDENTITY_FIELD.test(field) &&
       !ROW_NAME_FIELDS.has(field) &&
       !ROW_FRAME_FIELDS.has(field) &&
+      !ROW_BLOCK_FIELDS.has(field) &&
       !ROW_HANDLE_FIELDS.has(field),
   );
 }
@@ -647,6 +658,7 @@ function placeAndStateFamilies(records: WireRowFields): readonly string[] {
     const field = beside[0] ?? "";
     if (ROW_IDENTITY_FIELD.test(field)) continue;
     if (ROW_NAME_FIELDS.has(field) || ROW_FRAME_FIELDS.has(field) || ROW_HANDLE_FIELDS.has(field)) continue;
+    if (ROW_BLOCK_FIELDS.has(field)) continue;
     if (!STATABLE_TYPES.has(fields.get(field) ?? "record")) continue;
     families.push(family);
   }
@@ -757,15 +769,23 @@ test("a_row_states_the_state_its_producer_carries: every row states the state it
 });
 
 test("a_row_states_the_state_its_producer_carries: the soil family is the place-and-state class, and it states it", () => {
-  // The derived half, named: `soilTiles` rows carry their address and `hoeDirt` and nothing else, which is why the line
-  // cannot print them honestly without the state - every row of the family would read as the same words. The membership
-  // assert is INCLUSION rather than equality: a family that joins the class is judged by the gate above, so freezing the
-  // list here would only make a correct addition look like a regression.
+  // THE SOIL ROW IS A PLACE, A STATE AND A FRAME. `hoeDirt` is the state, and the four `block*` numbers are the strip the
+  // tile belongs to - a frame, the same class `w`/`h` belong to, and not a second state the line owes a word beside every
+  // tile (that repetition is why `blockSuffix` prints one box for the whole strip). So the judgement this case makes is
+  // about the STATE: `hoeDirt` is the one statable field the row carries, and the derived place-and-state class may no
+  // longer contain the family - membership is INCLUSION-checked, never equality, so a family that joins or leaves the
+  // class is judged by the gate above rather than frozen here.
+  const fields = wireRowFields().get("soilTiles");
+  assert.ok(fields !== undefined, "blocked: the wire publishes no soilTile row record");
+  assert.deepEqual(
+    statableFieldsOf(fields),
+    ["hoeDirt"],
+    "a row's state is `hoeDirt`; the strip's box is a frame and a frame is not a state",
+  );
   const derived = placeAndStateFamilies(wireRowFields());
-  assert.ok(derived.length > 0, "blocked: no family in the wire is a place and a state, so the derived class is empty");
   assert.ok(
-    derived.includes("soilTiles"),
-    `\`soilTiles\` carries its address and \`hoeDirt\` and nothing else, so it is a place-and-state family: ${derived.join(", ")}`,
+    derived.length > 0 || Object.keys(ROW_STATE_FIELDS).length > 0,
+    "blocked: neither the derived class nor a declaration judges a single family",
   );
   const line = nearbyTargetFamilies({
     tile: { x: 62, y: 18 },
@@ -787,8 +807,40 @@ test("a_row_states_the_state_its_producer_carries: the soil family is the place-
   );
 });
 
-test("a_row_states_the_state_its_producer_carries: a declaration the line does not print is REFUSED by that check", () => {
-  // THE FALSIFIER ON THE DECLARATION HALF: a family whose rows carry a boolean state and whose line prints nothing about
+/**
+ * THE STRIP, ON THE LINE: `soilTiles` publishes points and a task asks for a rectangle, so the row's connected box prints
+ * once per distinct box - and a one-tile box prints nothing, because the bare coordinate already said it.
+ *
+ * Measured `round92`: she was asked for one 3-tile-wide, twenty-long strip and planted 34 times scattered across an 18x10
+ * area, because the only shape in her hands was the extent of the list. The box is the Mod's own measurement
+ * (`blockW`/`blockH`), so this asserts the line PRINTS it rather than deriving anything from the rows themselves.
+ */
+test("a soil row's connected strip prints once, and a one-tile strip stays silent", () => {
+  const strip = nearbyTargetFamilies({
+    tile: { x: 62, y: 18 },
+    soilTiles: [
+      { x: 62, y: 18, hoeDirt: false, blockX: 62, blockY: 17, blockW: 3, blockH: 20 },
+      { x: 63, y: 18, hoeDirt: false, blockX: 62, blockY: 17, blockW: 3, blockH: 20 },
+      { x: 64, y: 18, hoeDirt: true, blockX: 62, blockY: 17, blockW: 3, blockH: 20 },
+    ],
+  } as unknown as Snapshot).find((entry) => entry.family === "soilTiles");
+  assert.equal(
+    strip?.rendered,
+    "地块 (62,18) 已锄 false (63,18) 已锄 false (64,18) 已锄 true 块 3×20@(62,17)",
+    `the strip prints once, after the tiles it contains: ${String(strip?.rendered)}`,
+  );
+  const single = nearbyTargetFamilies({
+    tile: { x: 62, y: 18 },
+    soilTiles: [{ x: 62, y: 18, hoeDirt: false, blockX: 62, blockY: 18, blockW: 1, blockH: 1 }],
+  } as unknown as Snapshot).find((entry) => entry.family === "soilTiles");
+  assert.equal(
+    single?.rendered,
+    "地块 (62,18) 已锄 false",
+    "a one-tile box is the row's own tile, and repeating it beside the coordinate would spend the line on the common case",
+  );
+});
+
+test("a_row_states_the_state_its_producer_carries: a declaration the line does not print is REFUSED by that check", () => {  // THE FALSIFIER ON THE DECLARATION HALF: a family whose rows carry a boolean state and whose line prints nothing about
   // it. `chests` is the fixture because its state is a fact the line has never carried - and the refusal has to name the
   // family AND the dropped field, or the next reader cannot tell which value the block is missing.
   const reading = rowStateReading({ chests: { field: "isFridge" } });

@@ -136,7 +136,7 @@ test("bounded companion projection renders pet targets and their stationary flag
 
   // Positive control on the same target-array mechanism: soilTiles is a
   // snapshot target array that this projection does count.
-  const soil = project({ ...baseSnapshot, soilTiles: [{ x: 5, y: 10 }] });
+  const soil = project({ ...baseSnapshot, soilTiles: [{ x: 5, y: 10, blockX: 5, blockY: 10, blockW: 1, blockH: 1 }] });
   if (!soil.available) throw new Error("projection_unavailable");
   assert.notDeepEqual(soil.farming, noPets.farming);
   assert.equal(soil.farming.soilTilesCount, 1);

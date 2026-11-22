@@ -55,10 +55,20 @@ test("Projection Purity Invariant: project(S) == project(S) and does not mutate 
         year: fc.constant(1),
         inventorySlots: fc.option(fc.integer({ min: 12, max: 36 }), { nil: undefined }),
         soilTiles: fc.option(
-          fc.array(fc.record({ x: fc.integer({ min: 0, max: 200 }), y: fc.integer({ min: 0, max: 200 }) }), {
-            minLength: 0,
-            maxLength: 5,
-          }),
+          fc.array(
+            fc.record({
+              x: fc.integer({ min: 0, max: 200 }),
+              y: fc.integer({ min: 0, max: 200 }),
+              blockX: fc.constant(0),
+              blockY: fc.constant(0),
+              blockW: fc.constant(1),
+              blockH: fc.constant(1),
+            }),
+            {
+              minLength: 0,
+              maxLength: 5,
+            },
+          ),
           { nil: undefined },
         ),
         toolSlots: fc.option(
@@ -145,8 +155,8 @@ test("projectFarmingContext and projectInventoryContext extract structured facts
     seasonIndex: 0,
     year: 1,
     soilTiles: [
-      { x: 5, y: 10 },
-      { x: 5, y: 11 },
+      { x: 5, y: 10, blockX: 5, blockY: 10, blockW: 1, blockH: 1 },
+      { x: 5, y: 11, blockX: 5, blockY: 10, blockW: 1, blockH: 2 },
     ],
     toolSlots: [
       { slot: 0, label: "Axe" },

@@ -1103,6 +1103,7 @@ export function isNpcRelationshipTargetFact(value: unknown): boolean {
       "talkedToToday",
       "giftsToday",
       "giftsThisWeek",
+      "marker",
     ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
@@ -1125,7 +1126,13 @@ export function isNpcRelationshipTargetFact(value: unknown): boolean {
     typeof value.giftsThisWeek === "number" &&
     Number.isSafeInteger(value.giftsThisWeek) &&
     value.giftsThisWeek >= 0 &&
-    value.giftsThisWeek <= 20
+    value.giftsThisWeek <= 20 &&
+    // The marker vocabulary is the engine's three states plus a measured absence. A word outside it is a malformed row
+    // rather than an unknown marker: the set is closed on both sides of the wire.
+    (value.marker === "quest" ||
+      value.marker === "special_order" ||
+      value.marker === "dialogue" ||
+      value.marker === "none")
   );
 }
 

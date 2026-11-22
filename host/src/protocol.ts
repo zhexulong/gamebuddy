@@ -454,8 +454,20 @@ export type Snapshot = Readonly<{
    * The actor's own neighbourhood soil, in both states a soil action acts on: `hoeDirt` true for a tile that
    * already carries a HoeDirt (the `plant_seed`/`fertilize_tile`/`water_crop` target, and the record of work the
    * actor has already done), false for ground the Hoe would still admit. Radius-bounded and nearest-first.
+   *
+   * `blockX`/`blockY`/`blockW`/`blockH` are the connected strip the tile belongs to - every tile reachable by a
+   * cardinal step over the same population, measured over the whole map. They are what makes "3 wide and 20 long" a
+   * thing the caller can read instead of arithmetic it has to invent from a 13x13 window.
    */
-  soilTiles?: readonly Readonly<{ x: number; y: number; hoeDirt?: boolean }>[];
+  soilTiles?: readonly Readonly<{
+    x: number;
+    y: number;
+    hoeDirt?: boolean;
+    blockX: number;
+    blockY: number;
+    blockW: number;
+    blockH: number;
+  }>[];
   /**
    * The soil tiles the Mod's cap left out of `soilTiles`, so a neighbourhood larger than the bound says so
    * instead of reading as a complete patch. Absent on a Mod older than the field; null when the family itself
@@ -913,6 +925,9 @@ export type Snapshot = Readonly<{
     talkedToToday: boolean;
     giftsToday: number;
     giftsThisWeek: number;
+    /** What the world shows over this villager: a quest naming them, a live special order they requested, a
+     * temporary message the engine holds for them, or `none` (measured - never silence). */
+    marker: "quest" | "special_order" | "dialogue" | "none";
   }>[];
   /**
    * Where every instantiated villager currently is, across the loaded world.
@@ -6026,12 +6041,22 @@ function validateBodyTrace(value: Record<string, unknown>): string | null {
 function isSoilTile(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["x", "y", "hoeDirt"]) &&
+    hasOnlyKeys(value, ["x", "y", "hoeDirt", "blockX", "blockY", "blockW", "blockH"]) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     // Optional at the wire: a Mod older than this field publishes no answer, and one that carries it publishes
     // `GameLocation.GetHoeDirtAtTile`, so a non-boolean is a malformed row rather than a missing measurement.
-    (value.hoeDirt === undefined || typeof value.hoeDirt === "boolean")
+    (value.hoeDirt === undefined || typeof value.hoeDirt === "boolean") &&
+    // The connected strip the tile belongs to. Every side is required: a row without a box would be a row a reader
+    // cannot plan a rectangle from, which is the defect the box exists for.
+    isTileCoordinate(value.blockX) &&
+    isTileCoordinate(value.blockY) &&
+    typeof value.blockW === "number" &&
+    Number.isSafeInteger(value.blockW) &&
+    value.blockW >= 1 &&
+    typeof value.blockH === "number" &&
+    Number.isSafeInteger(value.blockH) &&
+    value.blockH >= 1
   );
 }
 
