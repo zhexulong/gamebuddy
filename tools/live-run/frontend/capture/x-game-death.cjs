@@ -28,23 +28,23 @@
 // `restart_gamebuddy` is `second_attempt_only_restart_gamebuddy`, and an attempt the Host refuses is the
 // Host's own code in the driver's log.
 //
-// MEASURED 2026-11-23, AND THE FINDING THIS DRIVER EXISTS TO KEEP VISIBLE: after a game the Host watched end,
-// the panel offers NO staging step at all - and the phase `ended_attempt_ready` is UNREACHABLE in that shape.
-// `attachment.status: "attached"` survives the Player Host's exit (the live read:
-// `instance=crashed, playerHostExitCode=1, attachmentStatus=attached, attachmentGeneration=1,
-// connectionStatus=stopped`), and `deriveGameSessionControls` leads with the attachment
-// (`game-lifecycle-controls.ts:412`), so the surface draws the attachment's own controls (断开游戏连接 /
-// 结束游戏) and never step 1. The attachment is released in exactly two places: `settleEndedAttempt`
-// (`host/src/stardew-production-lifecycle-coordinator.internal.ts:3089`), which only `activate` calls - the
-// press this same phase withholds - and the disconnect teardown (`:2735`). That is a cycle, and it is a
-// PRODUCT defect rather than a driver gap: the only way out of a crash is to disconnect first.
+// MEASURED TWICE, AND THE TWO READINGS ARE THE POINT. At commit `09484648` (2026-11-23) a game the Host
+// watched end left the panel with NO staging step at all - `attachment.status: "attached"` outlived the Player
+// Host's exit, `deriveGameSessionControls` led with the attachment, and the surface drew only 断开游戏连接 /
+// 结束游戏, so `ended_attempt_ready` was unreachable in that shape and the only way out was to disconnect
+// first (`.tmp/lane-gen2live.md` §4c). At commit `9682e223` the derivation leads with the ending instead, and
+// this driver's own press list says so: `SECOND-ATTEMPT the panel offered "activate"; pressed
+// ["activate","launch"]`, with `activate` the only control the panel drew while `attachment: attached` was
+// still latched (`.tmp/lane-gen2end.md` §3e). What did NOT change is where the retry ends: the registration
+// issues the next instance number (1 -> 2) and the launch is quarantined before any Player Host process exists
+// (`409 game_unavailable`, `cause: stardew_player_host_launch_failed`).
 //
-// SO THE ESCAPE IS ITS OWN NAMED PRESS. When the panel's staging step is not there and its attachment release
-// is, this driver presses that release ONCE, records it as `release_attachment` beside the staging presses,
-// and says what it was. It is the player's panic escape, not the product's answer: a run that reached the
-// second attempt through it proves the staging chain still works, and proves nothing about a crash offering a
-// retry. The verdict line carries both facts (`pressed release_attachment then activate then launch`), so no
-// later reader can take one for the other.
+// SO THE ESCAPE IS STILL ITS OWN NAMED PRESS. When the panel's staging step is not there and its attachment
+// release is, this driver presses that release ONCE, records it as `release_attachment` beside the staging
+// presses, and says what it was. It is the player's panic escape, not the product's answer: a run that reached
+// the second attempt through it proves the staging chain still works, and proves nothing about a crash offering
+// a retry. The verdict line carries both facts (`pressed release_attachment then activate then launch`), so no
+// later reader can take one for the other. A panel that draws a staging step never reaches this branch.
 //
 // HOW THE GAME DIES. By killing exactly one process, by pid, that this driver's own launch created: the game
 // client under the installation this run was configured with, appearing after this run started. Never by

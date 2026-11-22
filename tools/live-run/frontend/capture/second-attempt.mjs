@@ -40,13 +40,16 @@ const refused = (code, detail, extra = {}) =>
  * `{ activate, launch, disconnect, ... }` as `{ visible, disabled, name }`, and `sentences.quarantined` is the
  * panel's quarantine paragraph.
  *
- * THE ESCAPE IS A PRESS, AND IT IS NOT THE RETRY. Measured live 2026-11-23 (driver X, stage
- * `E:\gb-lanes\gen2live`): a game the Host watched end still publishes `attachment: attached`, and
- * `deriveGameSessionControls` leads with the attachment, so the panel draws `断开游戏连接` and `结束游戏` and no
- * staging step at all - `ended_attempt_ready` is unreachable in that shape. The attachment's own release is then
+ * THE ESCAPE IS A PRESS, AND IT IS NOT THE RETRY. Measured live 2026-11-23 at commit `09484648` (driver X, stage
+ * `E:\gb-lanes\gen2live`): a game the Host watched end still published `attachment: attached`, and
+ * `deriveGameSessionControls` led with the attachment, so the panel drew `断开游戏连接` and `结束游戏` and no
+ * staging step at all - `ended_attempt_ready` was unreachable in that shape. The attachment's own release is then
  * the only control a player can press, so it is offered here as `release_attachment` - by its own name, AFTER
  * both staging steps, so a reader can never mistake it for the retry. A panel that draws a staging step gets
- * that step, because that is the press the product is offering.
+ * that step, because that is the press the product is offering. Re-measured at `9682e223`, where the derivation
+ * leads with the ending instead (`.tmp/lane-gen2end.md` §3e): the same crash shape drew `activate` alone, with
+ * `attachment: attached` still latched, and this function answered `{ step: "activate" }` without pressing the
+ * disconnect at all.
  */
 export function secondAttemptPress({ facts }) {
   if (facts?.surfacePresent !== true)
