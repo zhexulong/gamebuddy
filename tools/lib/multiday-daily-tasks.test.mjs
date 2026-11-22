@@ -276,7 +276,7 @@ const stepReceipts = (actionId, count) => {
     shop_purchase: {
       reasonCode: "item_purchased",
       detail:
-        "shop=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=25;purchased=25;unit_price=20;money_before=1060;money_after=560;owned_before=0;owned_after=25;gained=25;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=ok;drops=ok",
+        "shop=SeedShop;location=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=25;purchased=25;unit_price=20;money_before=1060;money_after=560;owned_before=0;owned_after=25;gained=25;stock_before=2147483647;stock_after=2147483647;owner_tile=4,17;menu_closed=true;clicks=ok;drops=ok",
     },
     till_soil: (x, y) => ({
       reasonCode: "soil_tilled",

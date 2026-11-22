@@ -59,8 +59,7 @@ import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
 import { bestWindow, largestFilledRectangle, windowHoldsAll } from "./tile-patch.mjs";
 
 /** A step of a criterion: one admitted postcondition, or `count` distinct receipts of it. */
-const step = (actionId, { count = 1 } = {}) =>
-  Object.freeze(count === 1 ? { actionId } : { actionId, count });
+const step = (actionId, { count = 1 } = {}) => Object.freeze(count === 1 ? { actionId } : { actionId, count });
 
 /** A step satisfied by any one of several actions - the same purpose reached by different native seams. */
 const anyOf = (...actionIds) => Object.freeze({ anyOf: Object.freeze(actionIds) });
@@ -188,16 +187,25 @@ const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField }
 export const CARRIED_ITEM_ACTIONS = Object.freeze({
   // A pack count falls: the stack named by the receipt is spent to do the thing.
   bait_crab_pot: Object.freeze({ spends: true, because: "the bait leaves the pack into the pot" }),
-  dye_clothing_with_item: Object.freeze({ spends: true, because: "the dye items the receipt names are spent on the garment" }),
+  dye_clothing_with_item: Object.freeze({
+    spends: true,
+    because: "the dye items the receipt names are spent on the garment",
+  }),
   fertilize_tile: Object.freeze({ spends: true, because: "the fertilizer stack leaves the pack onto the soil" }),
-  open_geode: Object.freeze({ spends: true, because: "the geode leaves the pack and the counter hands back what was inside" }),
+  open_geode: Object.freeze({
+    spends: true,
+    because: "the geode leaves the pack and the counter hands back what was inside",
+  }),
   place_crab_pot: Object.freeze({ spends: true, because: "the pot leaves the pack onto the water's edge" }),
   place_owned_object: Object.freeze({ spends: true, because: "the stack leaves the pack onto the ground" }),
   place_wood_fence: Object.freeze({ spends: true, because: "the fence leaves the pack onto the field" }),
   plant_sapling: Object.freeze({ spends: true, because: "the sapling leaves the pack into the ground" }),
   plant_seed: Object.freeze({ spends: true, because: "the seed stack leaves the pack into the soil" }),
   redeem_prize_ticket: Object.freeze({ spends: true, because: "the prize ticket leaves the pack into the machine" }),
-  ship_item: Object.freeze({ spends: true, because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells" }),
+  ship_item: Object.freeze({
+    spends: true,
+    because: "the stack leaves the pack into the shipping bin, which is how a farmhand sells",
+  }),
   tailor_clothing: Object.freeze({ spends: true, because: "the cloth the receipt names is spent on the garment" }),
   use_item: Object.freeze({ spends: true, because: "the food the actor was carrying is eaten" }),
   use_warp_item: Object.freeze({ spends: true, because: "the warp item is spent by arriving" }),
@@ -207,10 +215,17 @@ export const CARRIED_ITEM_ACTIONS = Object.freeze({
   claim_museum_reward: Object.freeze({ spends: false, because: "the museum's reward arrives in the pack" }),
   collect_animal_product: Object.freeze({ spends: false, because: "the product arrives in the pack" }),
   collect_crab_pot_output: Object.freeze({ spends: false, because: "the pot's catch arrives in the pack" }),
-  cook_recipe: Object.freeze({ spends: false, because: "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule" }),
+  cook_recipe: Object.freeze({
+    spends: false,
+    because:
+      "the dish arrives in the pack; what its ingredients cost is published beside it as the materials' own rule",
+  }),
   fish_here: Object.freeze({ spends: false, because: "the catch arrives in the pack" }),
   harvest_crop: Object.freeze({ spends: false, because: "the harvest arrives in the pack" }),
-  move_placed_furniture: Object.freeze({ spends: false, because: "the piece is picked UP off the floor into the pack" }),
+  move_placed_furniture: Object.freeze({
+    spends: false,
+    because: "the piece is picked UP off the floor into the pack",
+  }),
   pan_ore: Object.freeze({ spends: false, because: "the ore arrives in the pack" }),
   pickup_forage: Object.freeze({ spends: false, because: "the forage arrives in the pack" }),
   pickup_item: Object.freeze({ spends: false, because: "the item arrives in the pack" }),
@@ -369,23 +384,27 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
         "`place_owned_object` sets down the object `craft_item` produced, and `machine_load` fills that very machine - each later fact names an object the earlier one made",
     },
   ),
-  town_market: gap(
+  // WAS A GAP, AND THE GAP EXPIRED THE WAY THE RULE SAYS A GAP SHOULD: BY PUBLISHING THE FACT, NOT BY WEAKENING THE
+  // CRITERION. The entry asked for "the map the purchase happened on" and named the producer that would have to publish
+  // it (`shop_purchase: (claim) =>`); measured `round92`
+  // (`.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine`, day 3), two purchases succeeded at Pierre's
+  // counter and the day answered `unjudged · task_purpose_needs_an_unpublished_fact` because `shop=SeedShop;owner_tile=4,17`
+  // named a shop and a coordinate and never a map - `4,17` is a tile in that shop and a tile on the Farm.
+  //
+  // The receipt now carries `location` (the producer writes the map the body stood on, the same key `till_soil` and
+  // `remove_placed_item` write) and the Host's `shop_purchase` row REQUIRES it, so an admitted purchase is a purchase
+  // that names where it happened - which is what makes this purpose decidable from receipts. No step here reads the
+  // observation, and no key was added to accommodate the criterion.
+  //
+  // UNORDERED, because the post is collected whenever she is home and buying has no need to come first: the two receipts
+  // are one purchase and one collection, and either order is a day that did its errand. WHAT THIS ROW STILL CANNOT
+  // DECIDE is town-ness itself: which maps count as Town is declared nowhere in this tree (that absence is `town_visit`'s
+  // gap, and its entry here says so), so this criterion is decided by the two receipts and the map the purchase states is
+  // a fact a reader can check, not a membership test this row performs.
+  town_market: criterion(
     "something was bought in town and the post was brought in",
-    "the RECEIPT carries no location on the buying half: `shop_purchase`'s `item_purchased` evidence is exactly shop;owner;entry;item;requested;purchased;unit_price;money_before;money_after;owned_before;owned_after;gained;stock_before;stock_after;owner_tile;menu_closed;clicks;drops (`host/src/stardew-completion-contracts.ts`), which names the shop and the counter tile and never the map the actor stood on - while the mail half's `claim_mail_attachment` does carry `location` in its `mail_claimed` evidence. The observation publishes the map she is standing on, so the purchase is the half with no map of its own, and a criterion decides a task from admitted receipts rather than from an observation.",
-    {
-      reason: "prose",
-      fact: unpublishedFact(
-        "the map the purchase happened on",
-        producerAt("host/src/stardew-completion-contracts.ts", "shop_purchase: (claim) =>"),
-      ),
-      claims: [
-        absentEvidenceField("shop_purchase", "location"),
-        presentEvidenceField("claim_mail_attachment", "location"),
-        proseReason(
-          "a criterion that decides its purpose from the observation's own `location` rather than from an admitted receipt would refute the second half: `judgeTaskPurpose` in `tools/lib/task-purpose.mjs` reads receipts, and hands observations to the declared-shape criterion alone",
-        ),
-      ],
-    },
+    [step("shop_purchase"), step("claim_mail_attachment")],
+    { ordered: false },
   ),
   town_visit: gap(
     "a conversation happened in town",

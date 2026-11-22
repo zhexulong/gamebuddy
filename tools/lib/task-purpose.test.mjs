@@ -1116,6 +1116,74 @@ test("sweep_carried_things: round85's own day 1 is judged, and one receipt is no
   );
 });
 
+test("town_market: round92's day 3 is judged by its own purchase and its own letter", () => {
+  // ROUND92'S TWO PURCHASES AND ONE LETTER, from
+  // `.live-runs/game-ladder/2026-11-22T09-12-45-412Z-multiday_routine/timeline.jsonl` (indices 277, 442 and 386). The
+  // day answered `unjudged · task_purpose_needs_an_unpublished_fact` while both purchases had succeeded: the buying half
+  // named `shop=SeedShop;owner_tile=4,17` - an id and a coordinate - and never the map it happened on, so no receipt
+  // said where the purchase was. The producer now writes `location` and the Host's row requires it, which is the fact
+  // this entry used to ask for.
+  const PURCHASED = (moneyBefore, moneyAfter, purchased) =>
+    receipt("shop_purchase", {
+      reasonCode: "item_purchased",
+      evidence: {
+        detail: `shop=SeedShop;location=SeedShop;owner=Pierre;entry=npc_owner;item=(O)472;requested=${String(purchased)};purchased=${String(purchased)};unit_price=20;money_before=${String(moneyBefore)};money_after=${String(moneyAfter)};owned_before=0;owned_after=${String(purchased)};gained=${String(purchased)};stock_before=unlimited;stock_after=unlimited;owner_tile=4,17;menu_closed=true;clicks=${String(purchased)}[click${String(purchased - 1)}:row=0|cursor=0|held_after=(O)472];drops=${String(purchased)}[drop${String(purchased - 1)}:slot=10|held=(O)472->none]`,
+      },
+    });
+  const LETTER = receipt("claim_mail_attachment", {
+    reasonCode: "mail_claimed",
+    evidence: {
+      detail:
+        "target=mailbox_392f1c17e7121df2;tile=68,16;location=Farm;mail_id=spring_2_1;mail_content_known=true;" +
+        "mail_has_attachment=true;mail_attachment_commands=1;mail_recorded_natively=true;pending_before=1;" +
+        "pending_after=0;mail_removed=true;mail_recorded=true;letter_opened=true;letter_closed=true;" +
+        "collection_overflow_pending=false;mail_salvage_inventory_units=0;mail_salvage_debris_units=0;" +
+        "inventory_slots_before=15;inventory_slots_after=15;inventory_units_before=48;inventory_units_after=48",
+    },
+  });
+
+  assert.equal(
+    judgesAPublishedFact("town_market"),
+    true,
+    "the purpose is two receipts the product publishes, so this day is judged rather than excused",
+  );
+  assert.equal(
+    TASK_PURPOSE_CRITERIA.town_market.missingFact,
+    undefined,
+    "and it must not also carry the gap sentence the purchase receipt's own map refuted",
+  );
+
+  const day = judgeTaskPurpose("town_market", [PURCHASED(820, 420, 20), LETTER, PURCHASED(420, 220, 10)]);
+  assert.equal(day.state, "achieved", "a purchase and the post are the errand the day was given");
+  assert.deepEqual(day.admittedActionIds, ["claim_mail_attachment", "shop_purchase"]);
+  assert.deepEqual(day.refusedReceipts, [], "nothing the day did was refused");
+
+  // ONE ACT IS NOT THE ERRAND, whichever act it is.
+  assert.equal(
+    judgeTaskPurpose("town_market", [PURCHASED(820, 420, 20)]).state,
+    "not_achieved",
+    "a day that only bought something brought no post in",
+  );
+  assert.equal(
+    judgeTaskPurpose("town_market", [LETTER]).state,
+    "not_achieved",
+    "a day that only read the post bought nothing",
+  );
+
+  // AND A PURCHASE THAT DOES NOT SAY WHERE IS NOT A PURCHASE THIS HOST READS: the map is not decoration on the receipt,
+  // it is the clause, so a day carrying only the shape round92 shipped answers `unproven` - the run cannot tell, rather
+  // than the purchase being silently counted.
+  const withoutMap = receipt("shop_purchase", {
+    reasonCode: "item_purchased",
+    evidence: { detail: PURCHASED(820, 420, 20).evidence.detail.replace(";location=SeedShop", "") },
+  });
+  const noMap = judgeTaskPurpose("town_market", [withoutMap, LETTER]);
+  assert.equal(noMap.state, "unproven", "a purchase receipt with no map is evidence that proves nothing about where");
+  assert.deepEqual(noMap.refusedReceipts, [
+    { actionId: "shop_purchase", reasonCode: "succeeded_receipt_without_its_own_postcondition" },
+  ]);
+});
+
 test("a task with a named gap answers `unjudged` for every receipt set, however complete", () => {
   const gaps = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.missingFact !== undefined);
   assert.ok(gaps.length > 0, "the registry is expected to declare the purposes it cannot decide");
@@ -2026,74 +2094,76 @@ test("a_fish_from_the_water: a walk after the catch is not the water she fished"
  * </p>
  */
 
-const HARVESTED = Object.freeze([
+const HARVESTED = Object.freeze(
   [
-    "location=Farm",
-    "target=crop_5481d34df6f60c18",
-    "tile=58,14",
-    "crop=474",
-    "item=(O)190",
-    "native_path_return=true",
-    "native_accepted=true",
-    "regrows=false",
-    "phase_before=5",
-    "phase_after=none",
-    "day_of_phase_before=0",
-    "day_of_phase_after=none",
-    "regrow_advanced=false",
-    "inventory_before=0",
-    "inventory_after=1",
-    "inventory_gained=true",
-    "crop_present_after=false",
-    "harvest_quality=0",
-    "quality_counts_before=none",
-    "quality_counts_after=0:1",
-  ],
-  [
-    "location=Farm",
-    "target=crop_a8695598a1975c1e",
-    "tile=59,12",
-    "crop=474",
-    "item=(O)190",
-    "native_path_return=true",
-    "native_accepted=true",
-    "regrows=false",
-    "phase_before=5",
-    "phase_after=none",
-    "day_of_phase_before=0",
-    "day_of_phase_after=none",
-    "regrow_advanced=false",
-    "inventory_before=1",
-    "inventory_after=2",
-    "inventory_gained=true",
-    "crop_present_after=false",
-    "harvest_quality=0",
-    "quality_counts_before=0:1",
-    "quality_counts_after=0:2",
-  ],
-  [
-    "location=Farm",
-    "target=crop_2a7e1fd59d0206a0",
-    "tile=60,9",
-    "crop=474",
-    "item=(O)190",
-    "native_path_return=true",
-    "native_accepted=true",
-    "regrows=false",
-    "phase_before=5",
-    "phase_after=none",
-    "day_of_phase_before=0",
-    "day_of_phase_after=none",
-    "regrow_advanced=false",
-    "inventory_before=2",
-    "inventory_after=3",
-    "inventory_gained=true",
-    "crop_present_after=false",
-    "harvest_quality=0",
-    "quality_counts_before=0:2",
-    "quality_counts_after=0:3",
-  ],
-].map((fields) => receipt("harvest_crop", { reasonCode: "crop_harvested", evidence: { detail: fields.join(";") } })));
+    [
+      "location=Farm",
+      "target=crop_5481d34df6f60c18",
+      "tile=58,14",
+      "crop=474",
+      "item=(O)190",
+      "native_path_return=true",
+      "native_accepted=true",
+      "regrows=false",
+      "phase_before=5",
+      "phase_after=none",
+      "day_of_phase_before=0",
+      "day_of_phase_after=none",
+      "regrow_advanced=false",
+      "inventory_before=0",
+      "inventory_after=1",
+      "inventory_gained=true",
+      "crop_present_after=false",
+      "harvest_quality=0",
+      "quality_counts_before=none",
+      "quality_counts_after=0:1",
+    ],
+    [
+      "location=Farm",
+      "target=crop_a8695598a1975c1e",
+      "tile=59,12",
+      "crop=474",
+      "item=(O)190",
+      "native_path_return=true",
+      "native_accepted=true",
+      "regrows=false",
+      "phase_before=5",
+      "phase_after=none",
+      "day_of_phase_before=0",
+      "day_of_phase_after=none",
+      "regrow_advanced=false",
+      "inventory_before=1",
+      "inventory_after=2",
+      "inventory_gained=true",
+      "crop_present_after=false",
+      "harvest_quality=0",
+      "quality_counts_before=0:1",
+      "quality_counts_after=0:2",
+    ],
+    [
+      "location=Farm",
+      "target=crop_2a7e1fd59d0206a0",
+      "tile=60,9",
+      "crop=474",
+      "item=(O)190",
+      "native_path_return=true",
+      "native_accepted=true",
+      "regrows=false",
+      "phase_before=5",
+      "phase_after=none",
+      "day_of_phase_before=0",
+      "day_of_phase_after=none",
+      "regrow_advanced=false",
+      "inventory_before=2",
+      "inventory_after=3",
+      "inventory_gained=true",
+      "crop_present_after=false",
+      "harvest_quality=0",
+      "quality_counts_before=0:2",
+      "quality_counts_after=0:3",
+    ],
+  ].map((fields) => receipt("harvest_crop", { reasonCode: "crop_harvested", evidence: { detail: fields.join(";") } })),
+);
 
 /** The fifteen tiles `plan_96` sowed, in its node order - `n01` first, `n15` last. */
 const ROUND89_SOWN_TILES = Object.freeze([
@@ -2153,11 +2223,7 @@ const ROUND89_OVER_THE_PACK = Object.freeze([
 ]);
 
 test("round89 day 2: fifteen parsnips sown and watered are the day, and the harvest was yesterday", () => {
-  const judged = judgeTaskPurpose("water_and_harvest", [
-    ...ROUND89_SOWN,
-    ...ROUND89_OVER_THE_PACK,
-    ...ROUND89_WATERED,
-  ]);
+  const judged = judgeTaskPurpose("water_and_harvest", [...ROUND89_SOWN, ...ROUND89_OVER_THE_PACK, ...ROUND89_WATERED]);
   assert.equal(
     judged.state,
     "achieved",
@@ -2281,7 +2347,11 @@ test("round90 day 1: a swing that landed without finishing is a reading, not an 
 
   // THE FALSIFIER: take the warrant out of one of them and it is a receipt with no postcondition again, which is the
   // fact the old label was right about.
-  const withoutWarrant = [...day.slice(0, 3), receipt("break_rock", { reasonCode: "rock_source_damaged", evidence: null }), day[4]];
+  const withoutWarrant = [
+    ...day.slice(0, 3),
+    receipt("break_rock", { reasonCode: "rock_source_damaged", evidence: null }),
+    day[4],
+  ];
   assert.deepEqual(
     judgeTaskPurpose("mine_delve", withoutWarrant).refusedReceipts,
     [{ actionId: "break_rock", reasonCode: "succeeded_receipt_without_its_own_postcondition" }],
