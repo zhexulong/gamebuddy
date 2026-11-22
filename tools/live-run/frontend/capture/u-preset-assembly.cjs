@@ -39,8 +39,22 @@
 // Settings. This driver used to call `activateSurface(page, "预设装配")`, which looks for
 // `.app-bar-actions .nav-button[aria-label="预设装配"]`; on the run of 2026-11-15 that click waited its full
 // 30 s for a control the bar no longer carries. The path a player walks is walked here instead —
-// 设置 → the disclosure's summary → its one control — and every step asserts the state it asked for.
-// `preset-assembly-is-reached-through-settings.spec.ts` is the product's own statement of the same path.
+// 设置 → the tab the block sits on → the disclosure's summary → its one control — and every step asserts the
+// state it asked for. `preset-assembly-is-reached-through-settings.spec.ts` is the product's own statement of
+// that path, and it presses the tab too.
+//
+// THE TAB IS A STEP, AND SKIPPING IT IS WHAT THIS DRIVER DID (`r28`, 2026-11-22). The Settings surface was
+// split into three tabs after this driver last walked it (`management-surface-panels.tsx`, `SettingsTabPanel`:
+// "a tab is a VIEW of the surface, and not a mount of it"), so the disclosure is the last block of the THIRD
+// tab, `advanced`, while the surface opens on `connection`. A panel that is not selected is `hidden` and
+// `.settings-tabpanel[hidden] { display: none }` is what draws nothing of it, so the reading was:
+//
+//   locator resolved to <summary>…</summary>      ← the element EXISTS (it is in the document from the first frame)
+//     - element is not visible                    ← for 30 s of retries, and then a click timeout
+//
+// The driver now reads which region the block is in and presses what the surface publishes for it, the way a
+// player does, and a block no control can put on screen fails by name (`presets_unreachable`) instead of
+// waiting out a click nobody can make.
 const { readFileSync, readdirSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const { join, relative } = require("node:path");
@@ -227,13 +241,58 @@ async function readoutControl(disclosure) {
 }
 
 /**
+ * The readout's own block as the browser draws it, and the region that owns it.
+ *
+ * `checkVisibility` is the browser's own answer to "would a player see this": it is false for everything under
+ * a `display: none` ancestor, and it is the same predicate Playwright refused this driver's click on. The chain
+ * is carried beside it so a failure names every box that measured 0x0 rather than saying "not visible".
+ *
+ * The control is found by the relation the surface declares for it - the tab whose `aria-controls` names the
+ * panel the block sits in - and not by its words or its class: the words are the product's copy, which a lane
+ * may rewrite without breaking the path (see `readoutControl`), and the class is the sheet's.
+ *
+ * Self-contained: a serialized page function cannot see module scope, so the selector arrives as its argument.
+ */
+const readRegion = (selector) => {
+  const drawn = (element) => element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+  const block = document.querySelector(selector);
+  if (block === null) return { present: false };
+  const chain = [];
+  for (let node = block; node !== null && node !== document.body; node = node.parentElement) {
+    const box = node.getBoundingClientRect();
+    chain.push({
+      node: `${node.tagName.toLowerCase()}${node.id === "" ? "" : `#${node.id}`}`,
+      classes: typeof node.className === "string" ? node.className.trim() : "",
+      hidden: node.hasAttribute("hidden"),
+      drawn: drawn(node),
+      box: { w: Math.round(box.width), h: Math.round(box.height) },
+    });
+  }
+  const panel = block.closest('[role="tabpanel"]');
+  const tab =
+    panel === null || panel.id === ""
+      ? null
+      : document.querySelector(`[role="tab"][aria-controls="${CSS.escape(panel.id)}"]`);
+  return {
+    present: true,
+    drawn: drawn(block),
+    panel: panel === null ? null : { id: panel.id, hidden: panel.hasAttribute("hidden"), drawn: drawn(panel) },
+    tab:
+      tab === null
+        ? null
+        : { text: (tab.textContent ?? "").replace(/\s+/gu, " ").trim(), drawn: drawn(tab) },
+    chain,
+  };
+};
+
+/**
  * Walk to the readout the way the product publishes the path, and say what each step found.
  *
- * Settings carries one disclosure for the readout and nothing else points at it, so every step here is
- * asserted: the Settings surface's own block is present, its fold really opened (a summary that missed
- * leaves the control behind a shut `<details>`, which is the same 30 s wait by another name), the one
- * control is there and pressable, and the readout mounted. A step that cannot be taken fails this
- * driver BY NAME instead of timing out on a selector the product no longer carries.
+ * Every step is asserted: the Settings surface's own block is present, the tab that owns it is drawn and was
+ * pressed (a block on a tab nobody can reach is `presets_unreachable` by name, not a 30 s click), its fold
+ * really opened (a summary that missed leaves the control behind a shut `<details>`, which is the same wait by
+ * another name), the one control is there and pressable, and the readout mounted. A step that cannot be taken
+ * fails this driver BY NAME instead of timing out on a selector the product no longer carries.
  */
 async function openReadout(page) {
   const entered = await activateSurface(page, SETTINGS_LABEL);
@@ -243,6 +302,32 @@ async function openReadout(page) {
       `settings_carries_no_preset_disclosure: ${DISCLOSURE_SELECTOR} is not on the Settings surface (bar entry ` +
         `${JSON.stringify(SETTINGS_LABEL)} reached it as ${entered}), so the readout has no path this driver knows`,
     );
+  // The tab is a view of the surface, not a mount of it: the block is in the document from the first frame and
+  // the surface opens on another tab, so it is drawn by pressing that tab and by nothing else.
+  const region = await page.evaluate(readRegion, DISCLOSURE_SELECTOR);
+  let regionPressed = null;
+  if (region.drawn !== true) {
+    if (region.tab === null)
+      throw new Error(
+        `presets_unreachable: ${DISCLOSURE_SELECTOR} is in the document and not drawn, and no tab names the region ` +
+          `it sits in (${JSON.stringify(region.panel)}), so this driver knows no control that would put it on ` +
+          `screen: ${JSON.stringify(region.chain)}`,
+      );
+    if (region.tab.drawn !== true)
+      throw new Error(
+        `presets_unreachable: ${DISCLOSURE_SELECTOR} is on the ${JSON.stringify(region.tab.text)} tab and that tab's ` +
+          `own control is not drawn either, so nothing a player can press reaches the readout: ` +
+          `${JSON.stringify(region.chain)}`,
+      );
+    await page.locator(`[role="tab"][aria-controls="${region.panel.id}"]`).first().click();
+    regionPressed = region.tab.text;
+    const revealed = await page.evaluate(readRegion, DISCLOSURE_SELECTOR);
+    if (revealed.drawn !== true)
+      throw new Error(
+        `presets_unreachable: pressing ${JSON.stringify(regionPressed)} left ${DISCLOSURE_SELECTOR} undrawn: ` +
+          `${JSON.stringify(revealed.chain)}`,
+      );
+  }
   if ((await disclosure.evaluate((node) => node.open)) !== true) await disclosure.locator("summary").click();
   if ((await disclosure.evaluate((node) => node.open)) !== true)
     throw new Error(
@@ -257,7 +342,7 @@ async function openReadout(page) {
       `the_readout_did_not_mount: pressing ${JSON.stringify(name)} left no ` +
         `[data-testid="presets-surface"] on the page`,
     );
-  return { entered, disclosureOpen: true, control: name, back: BACK_SELECTOR };
+  return { entered, region: regionPressed, disclosureOpen: true, control: name, back: BACK_SELECTOR };
 }
 
 /** The readout's own way out, pressed and read back: it returns to the surface that opened it. */
@@ -512,7 +597,8 @@ function documentSide(document, relativePath, tracked) {
     const walked = await openReadout(page);
     say(
       `the readout reached the way the product publishes it: ${JSON.stringify(SETTINGS_LABEL)} (bar entry reached it as ` +
-        `${walked.entered}) -> ${DISCLOSURE_SELECTOR} opened -> ${JSON.stringify(walked.control)} (the product's copy, ` +
+        `${walked.entered}) -> ${walked.region === null ? "the block was already drawn on the tab the surface opens on" : `${JSON.stringify(walked.region)} (the tab that owns it, reported rather than spelled by this driver)`} -> ` +
+        `${DISCLOSURE_SELECTOR} opened -> ${JSON.stringify(walked.control)} (the product's copy, ` +
         `reported rather than spelled by this driver)`,
     );
     const settled = await waitForReadout(page, { name: `@${size.tag}` });
