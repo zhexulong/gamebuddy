@@ -32,6 +32,8 @@ type PlatformOptions = {
    * match, which is the shape an OS-level failure has.
    */
   readonly launchRefusal?: string;
+  /** The message the arm step refuses with; the default names nothing a bounded token matches. */
+  readonly armRefusal?: string;
   readonly failContain?: boolean;
   readonly failSettle?: boolean;
   readonly onArm?: () => void;
@@ -42,7 +44,7 @@ function fakePlatform(log: string[], options: PlatformOptions = {}): ContainedGa
     arm: async (input) => {
       log.push(`arm:${input.authorization.role}`);
       options.onArm?.();
-      if (options.failArm) throw new Error("arm failed");
+      if (options.failArm) throw new Error(options.armRefusal ?? "arm failed");
     },
     launch: async (input) => {
       log.push(`launch:${input.role}`);
@@ -325,6 +327,46 @@ test("arm failure is terminal and does not launch or retry", async () => {
   await assert.rejects(() => runtime.launchRole("role", launchOperation(), produce), /arm failed/);
   await assert.rejects(() => runtime.launchRole("role", launchOperation(), produce), /arm already failed/);
   assert.deepEqual(log, ["arm:player"]);
+});
+
+test("an arm refused by the Guardian wire keeps the code the wire named, and an unnamed refusal keeps its own message", async () => {
+  // The two shapes an arm refusal arrives in. The wire spells every refusal
+  // `<wrapper><code>` (`.tmp/lane-launchcause.md`), and the code after the wrapper is the whole fact
+  // about a launch that never started anything; a raw OS message is not a code at all.
+  const wireRefusal = `${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}guardian_session_closed`;
+  const wireLog: string[] = [];
+  await assert.rejects(
+    () =>
+      createContainedGameRuntime(fakePlatform(wireLog, { failArm: true, armRefusal: wireRefusal }), binding).launchRole(
+        "player_host",
+        launchOperation(),
+        produce,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "guardian_session_closed");
+      assert.equal((error.cause as Error).message, wireRefusal);
+      return true;
+    },
+  );
+  // The launch step never ran: an arm that failed started nothing, so nothing was spawned either.
+  assert.deepEqual(wireLog, ["arm:player"]);
+
+  const osLevel = "spawn E:\\Steam\\Stardew Valley\\StardewModdingAPI.exe ENOENT";
+  await assert.rejects(
+    () =>
+      createContainedGameRuntime(fakePlatform([], { failArm: true, armRefusal: osLevel }), binding).launchRole(
+        "player_host",
+        launchOperation(),
+        produce,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, osLevel);
+      assert.equal(error.cause, undefined);
+      return true;
+    },
+  );
 });
 
 test("requested role is bound into the platform launch input", async () => {

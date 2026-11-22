@@ -147,6 +147,22 @@ const refusalName = (error: unknown): string | null => {
   return BOUNDED_REFUSAL_NAME.test(name) ? name : null;
 };
 
+/**
+ * The same refusal under the bounded name it carries, or the error unchanged when it carries none.
+ *
+ * The wire spells every refusal `<wrapper><code>`, and `refusalName` above is the one reading of that
+ * spelling. The launch step reports what it decoded, but the arm step is a throw rather than an
+ * outcome, so its refusal left this layer as the wrapper-prefixed text - a message that is not a
+ * code, which the wire's own bounded-cause projection therefore drops, so a Player Host launch
+ * refused while arming could only reach the player as the generic wrapper. Nothing an arm can
+ * refuse has started a process, so the code is the whole fact; the raw refusal stays as its cause
+ * and never crosses.
+ */
+const namedRefusal = (error: unknown): unknown => {
+  const name = refusalName(error);
+  return name === null ? error : new Error(name, { cause: error });
+};
+
 export function createContainedGameRuntime(
   platform: ContainedGameRuntimePlatform,
   binding: RuntimeBinding,
@@ -220,12 +236,16 @@ export function createContainedGameRuntime(
         ensureOpen(deadlineUnixMs);
         if (!armed) {
           armAttempted = true;
-          await platform.arm({
-            ...bindingSnapshot,
-            operationWaitBudgetMs: binding.operationWaitBudgetMs,
-            armFacts: binding.armFacts,
-            authorization: authorizedValue,
-          });
+          try {
+            await platform.arm({
+              ...bindingSnapshot,
+              operationWaitBudgetMs: binding.operationWaitBudgetMs,
+              armFacts: binding.armFacts,
+              authorization: authorizedValue,
+            });
+          } catch (error) {
+            throw namedRefusal(error);
+          }
           armed = true;
         }
         ensureOpen(deadlineUnixMs);

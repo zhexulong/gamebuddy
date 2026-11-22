@@ -39,6 +39,7 @@ import type {
   StardewPlayerHostRuntimeLaunchCollaborator,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { DesktopGuardianSession } from "./containment/auth/desktop-guardian-session.internal.js";
+import { DESKTOP_BOOTSTRAP_REFUSAL_PREFIX } from "./containment/auth/desktop-guardian-session.internal.js";
 import {
   createDesktopGuardianGameRuntimePlatform,
   createStardewPlayerHostRuntimeLaunchCollaboratorFactory,
@@ -1326,4 +1327,161 @@ test("the coordinator binds the boot reconcile to the production OS probe, and b
   );
   const mainSource = readSourceShape(join(moduleRoot, "main.ts"));
   assert.match(mainSource.shape, /await coordinator\.reconcileHeldBootstrapRegistration\(\)/u);
+});
+
+/**
+ * The Desktop Guardian session whose arm step refuses with `refusal`.
+ *
+ * The Guardian is the boundary this test does not own; the arm refusal is the fact under test, so
+ * every step that must never run after it records instead of pretending to succeed.
+ */
+function sessionRefusingToArm(refusal: string, calls: string[]): DesktopGuardianSession {
+  return Object.freeze({
+    async arm() {
+      calls.push("arm");
+      throw new Error(refusal);
+    },
+    async launch() {
+      calls.push("launch");
+      throw new Error("a refused arm must never reach the launch step");
+    },
+    async contain() {
+      calls.push("contain");
+      throw new Error("a refused arm must never reach the contain step");
+    },
+    async recover() {
+      calls.push("recover");
+      throw new Error("a refused arm must never reach the recovery step");
+    },
+    async close() {
+      calls.push("close");
+    },
+  });
+}
+
+/**
+ * Presses the surface's own three steps over the composed wire - activate, prerequisites, launch -
+ * and answers the launch's refusal exactly as the panel receives it.
+ */
+async function pressLaunchOverTheWire(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+): Promise<Readonly<{ status: number; body: unknown }>> {
+  const { origin, cookie, csrfToken } = fixture.broker;
+  const base = `${origin}/api/composed-reference-game/v1`;
+  const headers = Object.freeze({
+    origin,
+    cookie,
+    "x-csrf-token": csrfToken,
+    "content-type": "application/json",
+  });
+  assert.equal((await fetch(`${base}/lifecycle/activate`, { method: "POST", headers })).status, 204);
+  assert.equal(
+    (
+      await fetch(`${base}/game/prerequisites/setup`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ apiVersion: 1, idempotencyKey: "ABEiM0RVZneImaq7zN3u_w" }),
+      })
+    ).status,
+    204,
+  );
+  const launched = await fetch(`${base}/game/launch`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      apiVersion: 1,
+      idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
+      expectedInstanceGeneration: 1,
+    }),
+  });
+  return Object.freeze({ status: launched.status, body: await launched.json() });
+}
+
+test("a Player Host launch the Guardian refused while arming names that refusal instead of only the wrapper", async () => {
+  // Measured 2026-11-23 (`.tmp/lane-gen2end.md` §3g): the retry after a crash answered
+  // `409 game_unavailable (cause: stardew_player_host_launch_failed)` and nothing else, while no
+  // game process ever appeared - so the refusal was one made before anything was started, and the
+  // surface could not say by what. The wire spells its own arm refusals
+  // `<wrapper><code>`, which is not a bounded code, so the projection above the launch dropped the
+  // one fact the refusal carried.
+  const cases = [
+    // A transport refusal is the one family "nothing was started" already has a word for.
+    {
+      refusal: `${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}guardian_pipe_unreachable`,
+      body: { code: "game_launch_unreachable" },
+    },
+    // Every other bounded refusal travels as the cause and the wrapper keeps the code.
+    {
+      refusal: `${DESKTOP_BOOTSTRAP_REFUSAL_PREFIX}guardian_command_input_invalid`,
+      body: { code: "game_unavailable", cause: "guardian_command_input_invalid" },
+    },
+  ];
+  for (const one of cases) {
+    await withWindowsPlatform(async () => {
+      const calls: string[] = [];
+      const fixture = await createFixture({
+        overrides: {
+          runtimeLaunchContained: createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+            createDesktopGuardianGameRuntimePlatform(sessionRefusingToArm(one.refusal, calls)),
+          ),
+        },
+      });
+      try {
+        const launched = await pressLaunchOverTheWire(fixture);
+        assert.equal(launched.status, 409);
+        assert.deepEqual(launched.body, one.body, `${one.refusal} must answer the name it refused under`);
+        // Nothing was launched: the arm was the only step that ran, and no game process exists.
+        assert.deepEqual(calls, ["arm"]);
+        assert.equal(fixture.playerSpawnCalls.length, 0);
+      } finally {
+        await fixture.coordinator.close();
+        await fixture.broker.close();
+      }
+    });
+  }
+});
+
+test("a Player Host launch that fails with an OS message keeps the wrapper on the wire and the text in the Host's log", async () => {
+  // The other half of the same projection: an OS message is prose, not a token that may cross. It
+  // must therefore change nothing the panel sees - and it must not be lost either, so the launch's
+  // own failure line is the reading that keeps it.
+  const osMessage = "spawn E:\\Steam\\Stardew Valley\\StardewModdingAPI.exe ENOENT";
+  const logged: string[] = [];
+  const realConsoleError = console.error;
+  console.error = ((...parts: unknown[]) => {
+    logged.push(parts.map((part) => String(part)).join(" "));
+  }) as typeof console.error;
+  try {
+    await withWindowsPlatform(async () => {
+      const calls: string[] = [];
+      const fixture = await createFixture({
+        overrides: {
+          runtimeLaunchContained: createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+            createDesktopGuardianGameRuntimePlatform(sessionRefusingToArm(osMessage, calls)),
+          ),
+        },
+      });
+      try {
+        const launched = await pressLaunchOverTheWire(fixture);
+        assert.equal(launched.status, 409);
+        assert.deepEqual(launched.body, {
+          code: "game_unavailable",
+          cause: "stardew_player_host_launch_failed",
+        });
+        const body = JSON.stringify(launched.body);
+        for (const fragment of ["Steam", "ENOENT", "spawn", "StardewModdingAPI"])
+          assert.equal(body.includes(fragment), false, `"${fragment}" reached a wire field`);
+        assert.equal(
+          logged.some((line) => line.includes(`GameBuddy Stardew Player Host launch failed: ${osMessage}`)),
+          true,
+          "the failure's text was dropped instead of written to the Host's own log",
+        );
+      } finally {
+        await fixture.coordinator.close();
+        await fixture.broker.close();
+      }
+    });
+  } finally {
+    console.error = realConsoleError;
+  }
 });

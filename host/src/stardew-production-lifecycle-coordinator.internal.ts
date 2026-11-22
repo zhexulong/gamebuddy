@@ -886,6 +886,26 @@ function containedRoleLaunchRefusal(
 }
 
 /**
+ * One operator line naming a Player Host launch failure and every cause behind it.
+ *
+ * The wrapper (`stardew_player_host_launch_failed`) is the word the surface says, and the wire's
+ * bounded-cause projection reads at most one token off this chain. A failure that names no bounded
+ * token - an OS error, a path, a transport's own prose - must not cross that boundary at all, so
+ * the chain is written down here instead. The Host's operator log is the entry's stderr, which a
+ * launched run keeps beside its own root (`<stage>/state/entry-stderr.log`).
+ */
+const PLAYER_HOST_LAUNCH_FAILURE_CHAIN_DEPTH = 6;
+function playerHostLaunchFailureLine(error: unknown): string {
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < PLAYER_HOST_LAUNCH_FAILURE_CHAIN_DEPTH && current instanceof Error; depth += 1) {
+    messages.push(current.message);
+    current = current.cause;
+  }
+  return messages.join(" <- ");
+}
+
+/**
  * Composes the coordinator-side launch decision for the contained runtime
  * path: after the core claim seam is handed over, create the invocation's
  * RoleLaunchOperation, request the contained role launch through the
@@ -2017,6 +2037,7 @@ function createCoordinator(
         launchPromise = undefined;
         transition("staged");
       }
+      console.error(`GameBuddy Stardew Player Host launch failed: ${playerHostLaunchFailureLine(error)}`);
       throw new Error("stardew_player_host_launch_failed", { cause: error });
     }
   };
