@@ -17,6 +17,10 @@
  *                   accepted): `✖ an attempt that attaches at the number it just ended is not a second attempt`
  *                   fails, because the reading then reports `measured` for a retry that asked for an instance the
  *                   registration had already spent.
+ * red-proof: inject  the `disconnect` branch removed from `secondAttemptPress` (the panel's own escape):
+ *                   `✖ a game that ended under a held attachment offers its release, named as the escape it is`
+ *                   fails with `actual: 'refused'` for the live shape, which is what the panel really drew before
+ *                   the escape press existed (`second_attempt_not_offered`).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -36,12 +40,29 @@ import {
  * panel really paints for that phase (`dialogue-web/src/components/GameStatePanel.tsx`: `restartRequired`
  * replaces the guide with `game-launch-quarantined`), so this fixture is that reading rather than an invention.
  */
-const panel = ({ activate = null, launch = null, quarantined = null, surfacePresent = true } = {}) => ({
+const panel = ({
+  activate = null,
+  launch = null,
+  disconnect = null,
+  endgame = null,
+  quarantined = null,
+  surfacePresent = true,
+} = {}) => ({
   surfacePresent,
   state: "available",
   facts: {},
   sentences: { waitingForGame: null, disconnectedWorldRunning: null, notRead: null, quarantined },
-  controls: { activate, launch, stop: null, disconnect: null, endgame: null, reopen: null, resume: null, reread: null },
+  controls: {
+    activate,
+    launch,
+    disconnect,
+    endgame,
+    stop: null,
+    endgameConfirm: null,
+    reopen: null,
+    resume: null,
+    reread: null,
+  },
 });
 
 const pressable = (name) => ({ visible: true, disabled: false, name });
@@ -79,6 +100,31 @@ test("a panel that offers no control and no sentence is refused by its own name"
   assert.equal(reading.kind, "refused");
   assert.equal(reading.code, "second_attempt_not_offered");
   assert.equal(reading.onlyStep, null);
+});
+
+/*
+ * The shape the live run met on 2026-11-23 (stage E:\gb-lanes\gen2live): `instance=crashed` with
+ * `playerHostExitCode=1` and `attachmentStatus: attached`, so the panel draws the attachment's own controls and
+ * no staging step. Both controls below are the panel's real ones, quoted from that run's facts file.
+ */
+test("a game that ended under a held attachment offers its release, named as the escape it is", () => {
+  const reading = secondAttemptPress({
+    facts: panel({
+      disconnect: pressable("断开游戏连接"),
+      endgame: pressable("结束游戏"),
+    }),
+  });
+  assert.equal(reading.kind, "press");
+  assert.equal(reading.step, "release_attachment");
+  assert.equal(reading.name, "断开游戏连接");
+  assert.match(reading.why, /ended_attempt_ready is unreachable/u);
+});
+
+test("a staging step drawn beside the release is still the press: the retry comes before the escape", () => {
+  const reading = secondAttemptPress({
+    facts: panel({ activate: pressable("启用陪玩"), disconnect: pressable("断开游戏连接") }),
+  });
+  assert.equal(reading.step, "activate");
 });
 
 test("a control the panel draws disabled is not a press this driver may make", () => {
@@ -131,7 +177,20 @@ test("an attempt that attaches at the number it just ended is not a second attem
   assert.equal(reading.reason, "second_attempt_generation_not_advanced:1->1");
 });
 
-test("an attempt that never attaches names the pair it settled at", () => {
+test("a retry reached through the panel's own escape says so, so it cannot be read as a crash offering a retry", () => {
+  const reading = classifySecondAttempt({
+    presses: ["release_attachment", "activate", "launch"],
+    staged,
+    after: attachedAt(),
+    registration: { before: held, after: next },
+    chat: intact,
+  });
+  assert.equal(reading.verdict, "measured");
+  assert.match(reading.detail, /pressed release_attachment then activate then launch/u);
+  assert.match(reading.detail, /the product still offers no retry for a crash/u);
+});
+
+test("a retry that never attaches names the pair it settled at", () => {
   const reading = classifySecondAttempt({
     presses,
     staged,

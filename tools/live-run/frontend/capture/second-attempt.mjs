@@ -37,8 +37,16 @@ const refused = (code, detail, extra = {}) =>
  * guide the player is working through - step 1 first - and not a preference.
  *
  * `facts` is `readGameFacts()` from `capture/game-surface-states.cjs`: `controls` is
- * `{ activate, launch, ... }` as `{ visible, disabled, name }`, and `sentences.quarantined` is the panel's
- * quarantine paragraph.
+ * `{ activate, launch, disconnect, ... }` as `{ visible, disabled, name }`, and `sentences.quarantined` is the
+ * panel's quarantine paragraph.
+ *
+ * THE ESCAPE IS A PRESS, AND IT IS NOT THE RETRY. Measured live 2026-11-23 (driver X, stage
+ * `E:\gb-lanes\gen2live`): a game the Host watched end still publishes `attachment: attached`, and
+ * `deriveGameSessionControls` leads with the attachment, so the panel draws `断开游戏连接` and `结束游戏` and no
+ * staging step at all - `ended_attempt_ready` is unreachable in that shape. The attachment's own release is then
+ * the only control a player can press, so it is offered here as `release_attachment` - by its own name, AFTER
+ * both staging steps, so a reader can never mistake it for the retry. A panel that draws a staging step gets
+ * that step, because that is the press the product is offering.
  */
 export function secondAttemptPress({ facts }) {
   if (facts?.surfacePresent !== true)
@@ -52,6 +60,14 @@ export function secondAttemptPress({ facts }) {
     return Object.freeze({ kind: "press", step: "activate", name: facts.controls.activate.name ?? null });
   if (pressable(facts.controls?.launch))
     return Object.freeze({ kind: "press", step: "launch", name: facts.controls.launch.name ?? null });
+
+  if (pressable(facts.controls?.disconnect))
+    return Object.freeze({
+      kind: "press",
+      step: "release_attachment",
+      name: facts.controls.disconnect.name ?? null,
+      why: "the panel draws no staging step after the game ended and its attachment release is the only control it draws: the ending did not release the attachment, so ended_attempt_ready is unreachable until it is",
+    });
   const quarantined = typeof facts.sentences?.quarantined === "string" && facts.sentences.quarantined.length > 0;
   if (quarantined)
     return refused(
@@ -92,6 +108,12 @@ export function secondAttemptPress({ facts }) {
  */
 export function classifySecondAttempt({ presses, staged, after, registration, chat }) {
   const pressesLine = presses.length === 0 ? "no press" : `pressed ${presses.join(" then ")}`;
+  // The escape is named wherever the presses are quoted, so a run that reached the staging chain by
+  // disconnecting first can never be read as a crash that offered a retry.
+  const escapeLine =
+    presses[0] === "release_attachment"
+      ? " - but only after the panel's attachment release, which was the only step it drew: the product still offers no retry for a crash, and this reading does not say otherwise"
+      : "";
   if (after?.ok !== true)
     return Object.freeze({
       verdict: "failed",
@@ -102,7 +124,7 @@ export function classifySecondAttempt({ presses, staged, after, registration, ch
     return Object.freeze({
       verdict: "failed",
       reason: `second_attempt_did_not_attach:${String(after.instanceStatus)}/${String(after.attachmentStatus)}`,
-      detail: `after ${pressesLine} the surface settled at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} (generation ${String(after.instanceGeneration)}) instead of reaching attachment=attached`,
+      detail: `after ${pressesLine} the surface settled at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} (generation ${String(after.instanceGeneration)}) instead of reaching attachment=attached${escapeLine}`,
     });
   const endedNumber = Number.isInteger(registration?.before?.instanceGeneration)
     ? registration.before.instanceGeneration
@@ -115,7 +137,7 @@ export function classifySecondAttempt({ presses, staged, after, registration, ch
     return Object.freeze({
       verdict: "not_measured",
       reason: "second_attempt_generation_unread",
-      detail: `after ${pressesLine} the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)}, but the durable instance number was not read on both sides of the press (before the press: ${describeRegistration(registration?.before)}, after it: ${describeRegistration(registration?.after)}; the state route published ${String(routeNumber)} while the attempt was staged), so "a second attempt" cannot be told from "the attempt that ended, re-read"`,
+      detail: `after ${pressesLine} the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)}, but the durable instance number was not read on both sides of the press (before the press: ${describeRegistration(registration?.before)}, after it: ${describeRegistration(registration?.after)}; the state route published ${String(routeNumber)} while the attempt was staged), so "a second attempt" cannot be told from "the attempt that ended, re-read"${escapeLine}`,
     });
   if (nextNumber !== endedNumber + 1)
     return Object.freeze({
@@ -127,18 +149,18 @@ export function classifySecondAttempt({ presses, staged, after, registration, ch
     return Object.freeze({
       verdict: "not_measured",
       reason: "second_attempt_attached_without_a_chat_reading",
-      detail: `after ${pressesLine} the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)}, and the registration moved ${String(endedNumber)} -> ${String(nextNumber)}; but no Chat reading could be taken across the attempt: ${chat.code} - ${chat.detail}`,
+      detail: `after ${pressesLine} the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)}, and the registration moved ${String(endedNumber)} -> ${String(nextNumber)}; but no Chat reading could be taken across the attempt: ${chat.code} - ${chat.detail}${escapeLine}`,
     });
   if (chat?.kind !== "intact")
     return Object.freeze({
       verdict: "failed",
       reason: chat?.code ?? "chat_reading_missing",
-      detail: `the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} with the registration moved ${String(endedNumber)} -> ${String(nextNumber)} after ${pressesLine}, but ${chat?.detail ?? "the Chat reading is missing"}`,
+      detail: `the game attached at instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} with the registration moved ${String(endedNumber)} -> ${String(nextNumber)} after ${pressesLine}, but ${chat?.detail ?? "the Chat reading is missing"}${escapeLine}`,
     });
   return Object.freeze({
     verdict: "measured",
     reason: "measured",
-    detail: `after ${pressesLine} the game reached instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} with the registration moved ${String(endedNumber)} -> ${String(nextNumber)} (a new attempt, not the ended one), and ${chat.detail}`,
+    detail: `after ${pressesLine} the game reached instance=${String(after.instanceStatus)}/attachment=${String(after.attachmentStatus)} with the registration moved ${String(endedNumber)} -> ${String(nextNumber)} (a new attempt, not the ended one), and ${chat.detail}${escapeLine}`,
   });
 }
 

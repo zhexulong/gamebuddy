@@ -139,9 +139,16 @@ async function openChatWithOneTurn({ page, say, record }) {
  * player waits for too. The cabin handoff is the guide's third step and the only path from a launched Player
  * Host to an attachment, so it is driven again here for the second attempt: the world is the same one, and a
  * companion that has to move in again is exactly what the product says it is doing.
+ *
+ * THE ESCAPE GETS ITS OWN PRESS AND ITS OWN NAME. A game the Host watched end still publishes
+ * `attachment: attached`, so the panel draws the attachment's own controls and no staging step (see this
+ * file's header). The panel's `game-disconnect` is then the only step a player can take, so this function takes
+ * it ONCE, records it as `release_attachment`, and waits for the staging step it makes reachable. A run whose
+ * presses start with `release_attachment` proves the staging chain; it does NOT prove that a crash offers a
+ * retry, and the verdict line names the difference.
  */
 async function driveSecondAttempt({ page, say, record, problems }) {
-  /** The Host's own refusal on one of the two routes this step presses, when it answered one. */
+  /** The Host's own refusal on one of the routes this step presses, when it answered one. */
   const problemLine = (route) => {
     const problem = problems?.get(route) ?? null;
     if (problem === null)
@@ -154,12 +161,31 @@ async function driveSecondAttempt({ page, say, record, problems }) {
   record("before the second attempt", { state: before, registration: registration.before });
 
   const presses = [];
+  const testIdOf = { release_attachment: "game-disconnect", activate: "game-activate", launch: "game-launch" };
   const press = async (step, name) => {
-    say(`pressing the panel's own ${step === "activate" ? "step 1" : "step 2"} through ${JSON.stringify(name)}`);
-    await page.locator(`[data-testid="${step === "activate" ? "game-activate" : "game-launch"}"]`).first().click();
+    const what =
+      step === "release_attachment"
+        ? "attachment release (the panel's own escape from a crash it will not stage)"
+        : step === "activate"
+          ? "step 1"
+          : "step 2";
+    say(`pressing the panel's own ${what} through ${JSON.stringify(name)}`);
+    await page.locator(`[data-testid="${testIdOf[step]}"]`).first().click();
     presses.push(step);
   };
   const offered = async () => SECOND.secondAttemptPress({ facts: await page.evaluate(S.readGameFacts) });
+
+  /** Poll the panel until it offers the exact step this retry needs next, or the budget runs out. */
+  const waitForStep = async (expected, budgetMs) => {
+    const began = Date.now();
+    let next = await offered();
+    while (Date.now() - began < budgetMs) {
+      if (next.kind === "press" && next.step === expected) return next;
+      await page.waitForTimeout(1000);
+      next = await offered();
+    }
+    return next;
+  };
 
   let decision = await offered();
   record("the step the panel offers after the ending", { decision, state: before });
@@ -169,18 +195,41 @@ async function driveSecondAttempt({ page, say, record, problems }) {
   }
   await press(decision.step, decision.name);
 
+  if (decision.step === "release_attachment") {
+    /*
+     * The escape, recorded for what it is. What follows is the shop for the reading's own question: with the
+     * attachment released, is the staging step there - and does the attempt it stages reach an attached world
+     * at a number above the one the ended attempt held?
+     */
+    say(
+      `${SECOND.SECOND_ATTEMPT_PREFIX} escape: the panel offered no staging step after the game ended and its attachment release was the only one it drew; that escape has been pressed once (release_attachment), and the staging step is what is waited for next - the product's answer to a crash is still missing, and this press does not stand in for it`,
+    );
+    decision = await waitForStep("activate", S.BUDGET.activationMs);
+    record("the step the release produced", {
+      decision,
+      state: await page.evaluate(S.readGameState),
+      problem: problems?.get("game/disconnect") ?? null,
+    });
+    if (decision.kind !== "press" || decision.step !== "activate") {
+      const refusal =
+        decision.kind === "refused"
+          ? decision
+          : {
+              code: "second_attempt_no_staging_step_after_the_escape",
+              detail: `the attachment release was pressed and, ${String(S.BUDGET.activationMs)}ms later, the panel still offers ${JSON.stringify(decision)} rather than the staging step${problemLine("game/disconnect")}`,
+            };
+      say(`${SECOND.SECOND_ATTEMPT_PREFIX} ${refusal.code}: ${refusal.detail}`);
+      return { kind: "refused", decision: refusal, presses, before, staged: null, after: before, registration };
+    }
+    await press(decision.step, decision.name);
+  }
+
   // Step 2 is what step 1 stages. The panel re-reads the Game projection after an activation, and while that
   // read is in flight neither control is pressable - which is a wait, not a refusal, so the budget is what ends
   // this loop and the LAST reading is what the refusal would quote.
   let staged = null;
   if (decision.step === "activate") {
-    const began = Date.now();
-    let next = decision;
-    while (Date.now() - began < S.BUDGET.activationMs) {
-      await page.waitForTimeout(1000);
-      next = await offered();
-      if (next.kind === "press" && next.step === "launch") break;
-    }
+    const next = await waitForStep("launch", S.BUDGET.activationMs);
     staged = await page.evaluate(S.readGameState);
     record("the step the activation produced", {
       decision: next,
