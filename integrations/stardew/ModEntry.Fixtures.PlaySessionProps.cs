@@ -49,10 +49,24 @@ public sealed partial class ModEntry
     /// field costs one tile of opening, the only bridge between two halves costs fifteen hundred.
     private static int PlaySessionDoorComponentFloor;
 
-    private static int WalkableComponentSize(GameLocation farm, Vector2 from)
+    private static int WalkableComponentSize(GameLocation farm, Vector2 from) =>
+        // An unknown size is treated as large: the placement guards still refuse a prop that cannot be walked
+        // to, so an over-generous budget cannot arm an unusable world - it can only make the search try harder.
+        WalkableComponentTiles(farm, from)?.Count ?? int.MaxValue;
+
+    /// <summary>
+    /// The tiles of the walkable piece <paramref name="from"/> belongs to, or null when the flood gave up before it
+    /// could answer.
+    ///
+    /// Returned as the set rather than only its size because the prop budget is asked of what is LEFT of the piece
+    /// once the start ring and the building's held tiles are taken out (see
+    /// <see cref="PlaySessionFixturePlacement.FreeTilesForProps"/>) - and the two answers must come from one flood, or
+    /// the number the budget divides and the number the arm log prints could describe two different pieces.
+    /// </summary>
+    private static HashSet<Point>? WalkableComponentTiles(GameLocation farm, Vector2 from)
     {
         var layer = farm.map.Layers[0];
-        HashSet<Point>? tiles = StardewBodyController.ReachableTiles(
+        return StardewBodyController.ReachableTiles(
             new Point((int)from.X, (int)from.Y),
             Math.Max(8000, layer.LayerWidth * layer.LayerHeight),
             tile =>
@@ -61,9 +75,6 @@ public sealed partial class ModEntry
                 && tile.X < layer.LayerWidth
                 && tile.Y < layer.LayerHeight
                 && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)));
-        // An unknown size is treated as large: the placement guards still refuse a prop that cannot be walked
-        // to, so an over-generous budget cannot arm an unusable world - it can only make the search try harder.
-        return tiles?.Count ?? int.MaxValue;
     }
 
     /// <summary>

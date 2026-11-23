@@ -764,6 +764,10 @@ public sealed partial class ModEntry : Mod
         // presenting a poorer world than the audit claims.
         var provisioned = new List<string>();
         var provisionedTiles = new List<Vector2>();
+        // WHAT THE PLACEMENT LOOPS PUT DOWN, one row per prop with the family that laid it. The post-placement sweep has
+        // to say whether a drop cost the day a target family or only scenery, and a tile alone cannot say that: measured
+        // 2026-11-23, `dropped 5 prop(s) a later placement cut off: 8,36;8,35;9,35;9,34;9,33` - five families unknown.
+        var placedProps = new List<(Vector2 Tile, string Family)>();
         // Where the session starts must be an OPEN crossroads, and the props must sit NEXT TO it. Two live runs
         // measured both halves of that: starting in the Farm's corner pocket gave `component_tiles=2` (the
         // cauliflower a few tiles away was genuinely unreachable, and the session spent turns on refusals that
@@ -840,23 +844,33 @@ public sealed partial class ModEntry : Mod
         HashSet<Point> animalHouseHeldTiles = this.nativeLocalPlaySessionAnimalHeldTiles
             ?? throw new InvalidOperationException("fixture_native_local_play_session_animal_house_tiles_unrecorded");
         Vector2? standingTile = null;
-        // The prop counts come from the ground, not from a literal. The walkable piece around the start is the
-        // budget: on the multi-day farm it is 123 tiles, not the 5200-tile map, and every literal count tried
-        // against it either starved the day or refused the world after succeeding at every single placement.
+        // The prop counts come from the ground, not from a literal. On the multi-day farm the walkable piece around the
+        // start is 123 tiles, not the 5200-tile map, and every literal count tried against it either starved the day or
+        // refused the world after succeeding at every single placement.
+        //
+        // THE GROUND IS WHAT IS LEFT, NOT WHAT THE ACTOR FIRST SEES. The barn already stands (its own arm log prints
+        // `walkable_after=`), and the props may not take its footprint, its door ring, the road to its porch or the
+        // start's own ring - 40 held tiles on the 2026-11-23 farm, plus the five-tile ring. A budget divided out of ground
+        // the world has already promised asks for props that cannot all be placed, which is a fragmentation the budget
+        // invented rather than found. `free_after_reservations` is that leftover, printed with the placed and dropped
+        // counts so the number the budget used is never a mystery.
         //
         // One measurement, three counts: stones take the largest share because they are the work; weeds and
         // crops take a share each so the day has variety; the grass stays a single prop because it is scenery
         // the session inspects rather than consumes.
-        int propBudget = PropCapacity.For(WalkableComponentSize(farm, startTile));
+        int freeAfterReservations = PlaySessionFixturePlacement.FreeTilesForProps(
+            WalkableComponentTiles(farm, startTile),
+            new Point((int)startTile.X, (int)startTile.Y),
+            animalHouseHeldTiles);
+        int propBudget = PropCapacity.For(freeAfterReservations);
         if (propBudget <= 0)
             throw new InvalidOperationException(
-                $"fixture_native_local_play_session_world_too_small:{startTile.X},{startTile.Y}");
+                $"fixture_native_local_play_session_world_too_small:{startTile.X},{startTile.Y};free_after_reservations={freeAfterReservations}");
         // THE TREES AND FORAGE COME OUT OF THE BUDGET, not on top of it.
         //
-        // `PropCapacity.For` answers how many props this ground can host, and the three ordinary families divide
-        // that number. Adding six more props afterwards overshot it by exactly six, and the post-placement sweep
-        // then had to drop five of the twenty-three - crossing the one-quarter bound and refusing the world before a
-        // turn ran (`dropped=5; kept=18`, measured twice on 2026-10-28).
+        // `PropCapacity.For` answers how many props this ground can host, and every family divides that number. Adding
+        // six more props afterwards overshot it by exactly six, and the post-placement sweep then had to take five of the
+        // twenty-three back off the ground (`dropped=5; kept=18`, measured twice on 2026-10-28).
         //
         // The budget is about ground, not about which family consumes it, so the two new families simply take their
         // share first and the other three divide what is left. If the ground is too small for a full share, the
@@ -867,6 +881,27 @@ public sealed partial class ModEntry : Mod
         int weedCount = Math.Max(1, remainingBudget / 4);
         int stoneCount = Math.Max(1, remainingBudget / 2);
         int cropCount = Math.Max(1, remainingBudget / 4);
+        // WHAT EACH FAMILY WAS ASKED FOR, by the word the world lays it with. The single grass tuft is outside the budget
+        // (it is one prop by design), so it is asked for here rather than being an implicit extra: `props_wanted` is the
+        // sum of these, which is the number the arm log prints beside what the ground took.
+        Dictionary<string, int> wantedByFamily = new(StringComparer.Ordinal)
+        {
+            [PlaySessionPropFamilies.Tree] = treesCount,
+            [PlaySessionPropFamilies.Forage] = forageCount,
+            [PlaySessionPropFamilies.Weed] = weedCount,
+            [PlaySessionPropFamilies.Grass] = 1,
+            [PlaySessionPropFamilies.Stone] = stoneCount,
+            [PlaySessionPropFamilies.Crop] = cropCount,
+        };
+        int propsWanted = wantedByFamily.Values.Sum();
+        int propsPlaced = 0;
+        int propsDropped = 0;
+        // The numbers the arm log and the fragmentation refusal both print, built once so a fragmented world reads as
+        // counts rather than as one failure message: what the budget asked for, what the ground took, what the sweep
+        // took back, and the ground the ask was divided out of.
+        string PropCounts() =>
+            $"props_wanted={propsWanted};props_placed={propsPlaced};props_dropped={propsDropped};"
+                + $"free_after_reservations={freeAfterReservations}";
 
         // TREES AND FORAGE, placed FIRST because a tree is a walkability blocker.
         //
@@ -891,7 +926,7 @@ public sealed partial class ModEntry : Mod
             StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
             tree.health.Value = 1f;
             farm.terrainFeatures.Add(treeSpot.Value.TargetTile, tree);
-            provisioned.Add($"tree={(int)treeSpot.Value.TargetTile.X},{(int)treeSpot.Value.TargetTile.Y}");
+            placedProps.Add((treeSpot.Value.TargetTile, PlaySessionPropFamilies.Tree));
             provisionedTiles.Add(treeSpot.Value.TargetTile);
             treesPlaced += 1;
         }
@@ -915,17 +950,16 @@ public sealed partial class ModEntry : Mod
                     LogLevel.Warn);
                 break;
             }
-            provisioned.Add($"forage={(int)forageSpot.Value.TargetTile.X},{(int)forageSpot.Value.TargetTile.Y}");
+            placedProps.Add((forageSpot.Value.TargetTile, PlaySessionPropFamilies.Forage));
             provisionedTiles.Add(forageSpot.Value.TargetTile);
             foragePlaced += 1;
         }
-        // The same refusal the crop family already had, for the same reason: a world budgeted forage and holding none
-        // is a world whose `forageTargets` chore cannot be answered, and the audit would read that as a capability
-        // failure. Ground too small to budget a single forage item is not this case - the loop never ran.
+        // A world budgeted forage and holding none is a world whose `forageTargets` chore cannot be answered, and the
+        // audit would read that as a capability failure. Ground too small to budget a single forage item is not this
+        // case - the loop never ran.
         if (forageCount > 0 && foragePlaced <= 0)
             throw new InvalidOperationException("fixture_native_local_play_session_forage_count_missing");
 
-        int weedsPlaced = 0;
         for (int index = 0; index < weedCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
@@ -944,27 +978,23 @@ public sealed partial class ModEntry : Mod
             if (!weed.IsWeeds())
                 throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
             farm.objects.Add(spot.Value.TargetTile, weed);
-            provisioned.Add($"weed={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Weed));
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
-            weedsPlaced += 1;
         }
-        int grassPlaced = 0;
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
             if (spot is null)
                 throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
             farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
-            provisioned.Add($"grass={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Grass));
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
-            grassPlaced += 1;
         }
         // Ten stones, because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
         // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
         // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
         // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
-        int stonesPlaced = 0;
         for (int index = 0; index < stoneCount; index += 1)
         {
             (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
@@ -980,10 +1010,9 @@ public sealed partial class ModEntry : Mod
                 break;
             }
             farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
-            provisioned.Add($"stone={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Stone));
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
-            stonesPlaced += 1;
         }
         // A few mature crops, placed explicitly (the scythe-crop fixture's recipe) rather than
         // seeded across the field, so harvesting is one of several things to do instead of the only
@@ -1018,12 +1047,18 @@ public sealed partial class ModEntry : Mod
                 || crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
                 throw new InvalidOperationException("fixture_native_local_play_session_crop_not_ready");
             farm.objects.Remove(spot.Value.TargetTile);
-            provisioned.Add($"crop={(int)spot.Value.TargetTile.X},{(int)spot.Value.TargetTile.Y}");
+            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Crop));
             provisionedTiles.Add(spot.Value.TargetTile);
             standingTile ??= spot.Value.StandingTile;
             plantedCrops += 1;
         }
-        // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the\n        // world is then missing the family the crops task needs. It used to demand exactly four, which was true\n        // only while the budget happened to divide to four - measured 2026-10-28, after trees and forage began\n        // taking their share, the division produced three and this refused a world that had every prop it needed.\n        if (plantedCrops <= 0)\n            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
+        propsPlaced = placedProps.Count;
+        // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the world is
+        // then missing the family the crops task needs. It used to demand exactly four, which was true only while the
+        // budget happened to divide to four - measured 2026-10-28, after trees and forage began taking their share, the
+        // division produced three and this refused a world that had every prop it needed.
+        if (plantedCrops <= 0)
+            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
@@ -1037,13 +1072,18 @@ public sealed partial class ModEntry : Mod
             .Cast<KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>?>()
             .FirstOrDefault();
 
-        // A prop placed early can be cut off by one placed later: each placement consumes its target and the
-        // tile an actor stands on, and a stone changes the walkable graph. The earlier check refused the WHOLE
-        // world for one such prop, which is a worse outcome than the prop not being there - the session still
-        // gets a day's work, and the arm log still says which tile was dropped and why.
+        // A PROP PLACED EARLY CAN BE CUT OFF BY ONE PLACED LATER: each placement occupies its target, and a stone changes
+        // the walkable graph. The sweep takes such a prop back off the ground - and it has to say WHICH prop it took,
+        // because those are two different worlds. Five decorative rocks is a farm with five fewer rocks; the last weed, or
+        // the only tree, is a chore the rotation names with nothing left to address.
         //
-        // Removing is bounded and named. A world where more than a quarter of the props end up unreachable is
-        // not the world the scenario describes, so that case still fails closed.
+        // MEASURED 2026-11-23: `dropped 5 prop(s) a later placement cut off: 8,36;8,35;9,35;9,34;9,33` beside
+        // `world_too_fragmented:dropped=5;kept=12` - the tiles, never a family, so nobody could say which of the two
+        // worlds that was. The verdict now names the family, and the four counts travel with it.
+        //
+        // SCENERY IS DROPPED, A DAY'S LAST PROP IS NOT. Refusing over a dropped prop made the whole run unstartable for a
+        // count no player asked for; refusing when a family loses its last member is the only version of this that is
+        // telling the truth, because that is the case where a task has nothing left to address.
         if (startAtHome)
         {
             List<Vector2> removed = new();
@@ -1055,19 +1095,30 @@ public sealed partial class ModEntry : Mod
                 farm.terrainFeatures.Remove(tile);
                 removed.Add(tile);
             }
-            foreach (Vector2 tile in removed)
+            IReadOnlyList<PlaySessionPropFamilies.DroppedProp> dropped =
+                PlaySessionPropFamilies.ClassifyDrops(placedProps, removed);
+            List<string> scenery = new();
+            List<string> loadBearing = new();
+            foreach (PlaySessionPropFamilies.DroppedProp drop in dropped)
             {
-                provisionedTiles.Remove(tile);
-                provisioned.Add($"dropped_unreachable={(int)tile.X},{(int)tile.Y}");
+                provisionedTiles.Remove(drop.Tile);
+                string at = $"{(int)drop.Tile.X},{(int)drop.Tile.Y}";
+                provisioned.Add($"dropped_unreachable={drop.Family}@{at}");
+                if (drop.LoadBearing)
+                    loadBearing.Add($"{drop.Family}@{at}>{PlaySessionPropFamilies.TargetFamilyOf(drop.Family)}");
+                else
+                    scenery.Add($"{drop.Family}@{at}");
             }
-            if (removed.Count > 0)
+            propsDropped = dropped.Count;
+            if (dropped.Count > 0)
                 this.Monitor.Log(
-                    $"GameBuddy play-session dropped {removed.Count} prop(s) a later placement cut off: "
-                        + string.Join(";", removed.Select(tile => $"{(int)tile.X},{(int)tile.Y}")),
+                    $"GameBuddy play-session dropped {dropped.Count} prop(s) a later placement cut off: "
+                        + $"scenery={(scenery.Count == 0 ? "none" : string.Join(";", scenery))}; "
+                        + $"load_bearing={(loadBearing.Count == 0 ? "none" : string.Join(";", loadBearing))}; {PropCounts()}",
                     LogLevel.Warn);
-            if (removed.Count * 4 > provisionedTiles.Count)
+            if (loadBearing.Count > 0)
                 throw new InvalidOperationException(
-                    $"fixture_native_local_play_session_world_too_fragmented:dropped={removed.Count};kept={provisionedTiles.Count}");
+                    $"fixture_native_local_play_session_world_too_fragmented:{PropCounts()};lost_family={string.Join(";", loadBearing)}");
         }
 
         // The actor STAYS where the multi-day Given armed it - at home, beside its bed - when the caller asked for a
@@ -1079,14 +1130,21 @@ public sealed partial class ModEntry : Mod
         provisioned.Add($"standing={(int)startTile.X},{(int)startTile.Y}");
         this.nativeLocalPlayerFixtureInitialized = true;
         this.Monitor.Log(
-            $"GameBuddy native-local-player initialized play-session fixture before bridge attachment: {string.Join("; ", provisioned)}; "
-                + $"ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; "
+            $"GameBuddy native-local-player initialized play-session fixture before bridge attachment: "
+                + string.Join("; ", placedProps.Select(prop => $"{prop.Family}={(int)prop.Tile.X},{(int)prop.Tile.Y}"))
+                + "; "
+                + string.Join("; ", provisioned)
+                + $"; ready_crop={(ready is null ? "none" : $"{(int)ready.Value.Key.X},{(int)ready.Value.Key.Y}")}; tools=hoe+can+scythe; seeds=2; "
                 + $"standing={(int)standingTile.Value.X},{(int)standingTile.Value.Y}; "
-                // WHAT THE PROP LOOPS ACTUALLY PLACED, counted as they ran and reported here, because "the ground ran
+                // WHAT THE PROP LOOPS ACTUALLY PLACED, counted from the placements themselves, because "the ground ran
                 // out" was previously only visible as a warning for the family that ran short.
-                + $"props=trees:{treesPlaced},forage:{foragePlaced},weeds:{weedsPlaced},grass:{grassPlaced},stones:{stonesPlaced},crops:{plantedCrops},kept:{provisionedTiles.Count}; "
-                // The tiles the house holds: its footprint and the ring its door is used from. The prop search may not
-                // take one, so this count is what says the day's road to its animals was never spent on scenery.
+                + $"props={string.Join(",", PlaySessionPropFamilies.All.Select(family => $"{family}:{placedProps.Count(prop => prop.Family == family)}"))}; "
+                // THE FOUR NUMBERS, so a fragmented world reads as counts: what the budget asked for, what the ground
+                // took, what the sweep took back, and the ground the ask was divided out of.
+                + $"{PropCounts()}; "
+                // The tiles the house holds: its footprint, the ring its door is used from and the road to its porch.
+                // The prop search may not take one, so this count is what says the day's road to its animals was never
+                // spent on scenery.
                 + $"animal_house_held={animalHouseHeldTiles.Count}; no chain is scripted and production alone acts.",
             LogLevel.Info);
     }

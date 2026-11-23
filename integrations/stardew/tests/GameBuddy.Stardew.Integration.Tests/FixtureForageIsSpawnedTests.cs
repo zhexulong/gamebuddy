@@ -111,7 +111,7 @@ public sealed class FixtureForageIsSpawnedTests
         string forageLoop = playSession[forageLoopStart..weedLoopStart];
 
         int planted = forageLoop.IndexOf("PlacePlaySessionForage(farm,", StringComparison.Ordinal);
-        int recorded = forageLoop.IndexOf("provisioned.Add($\"forage=", StringComparison.Ordinal);
+        int recorded = forageLoop.IndexOf("placedProps.Add((forageSpot.Value.TargetTile, PlaySessionPropFamilies.Forage))", StringComparison.Ordinal);
 
         planted.Should().BeGreaterThanOrEqualTo(0, "the forage loop plants through the checked path, or the path is dead code");
         recorded.Should().BeGreaterThan(planted, "the tile is recorded after the item is on it, never before");

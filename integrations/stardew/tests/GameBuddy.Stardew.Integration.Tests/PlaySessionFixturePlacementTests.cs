@@ -77,6 +77,53 @@ public sealed class PlaySessionFixturePlacementTests
         exits.Should().OnlyContain(exit => !ordered.Contains(exit));
     }
 
+    /// <summary>
+    /// THE BUDGET'S DENOMINATOR. The props are laid on what is LEFT of the walkable piece once the start's own ring and
+    /// every tile a standing building owns are taken out, so the number the budget divides is the number of tiles a prop
+    /// can actually land on. Measuring the piece as the actor first sees it asked for props the world had already
+    /// promised elsewhere.
+    /// </summary>
+    [Fact]
+    public void TheBudgetIsAskedOfTheGroundThePropsMayUseAndNotOfTheWholePiece()
+    {
+        Point start = new(5, 5);
+        List<Point> piece = Grid(10, 10);
+        HashSet<Point> held = new() { new Point(1, 1), new Point(2, 2), new Point(5, 5) };
+
+        int free = PlaySessionFixturePlacement.FreeTilesForProps(piece.ToHashSet(), start, held);
+
+        // 100 tiles, less the start and its four cardinal neighbours, less the two held tiles outside that ring. The third
+        // held tile IS the start, so it is counted once rather than twice.
+        free.Should().Be(100 - 5 - 2);
+        free.Should().BeLessThan(piece.Count, "the reservations are real ground the props cannot use");
+        // CROSS-CHECK: the budget's denominator is what the placement search can actually offer, or the two rules are
+        // about two different maps.
+        PlaySessionFixturePlacement.PlaceableCandidates(piece, start, held).Count().Should().Be(free);
+    }
+
+    [Fact]
+    public void AnUnmeasuredPieceIsNotZero()
+    {
+        // The flood can give up (`ReachableTiles` returns null), and "not measured" must not become "measured nothing":
+        // a zero here would refuse a world nobody looked at, while the placement guards still refuse a prop nothing can
+        // walk to. The convention is shared with `WalkableComponentSize`.
+        PlaySessionFixturePlacement.FreeTilesForProps(null, new Point(3, 3)).Should().Be(int.MaxValue);
+        GameBuddy.Stardew.Core.PropCapacity.For(PlaySessionFixturePlacement.FreeTilesForProps(null, new Point(3, 3)))
+            .Should()
+            .Be(GameBuddy.Stardew.Core.PropCapacity.Ceiling);
+    }
+
+    [Fact]
+    public void TheStartRingCostsFiveTilesAndNotANeighbourhood()
+    {
+        // The ring is the fixture's own reservation and nothing else: it is not a neighbourhood, so the diagonals beside
+        // the actor stay prop ground and the count says so.
+        Point start = new(3, 3);
+        HashSet<Point> piece = Grid(7, 7).ToHashSet();
+
+        PlaySessionFixturePlacement.FreeTilesForProps(piece, start).Should().Be(49 - 5);
+    }
+
     /// <summary>The tiles a 7x4 barn stands on when its top-left corner is at this origin.</summary>
     private static List<Vector2> BarnFootprint(Point origin)
     {

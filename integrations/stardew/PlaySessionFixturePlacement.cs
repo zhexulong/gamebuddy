@@ -72,6 +72,31 @@ internal static class PlaySessionFixturePlacement
             .ToHashSet();
 
     /// <summary>
+    /// The tiles of a piece a prop may still take: everything except the start's own ring and what a standing building
+    /// holds. One predicate, because the budget and the placement search must be about the same ground - a budget
+    /// measured over tiles the search then refuses asks for props the world has already promised elsewhere.
+    /// </summary>
+    internal static IEnumerable<Point> PropsMayUse(
+        IEnumerable<Point> walkable,
+        Point start,
+        IReadOnlySet<Point>? held = null) =>
+        walkable.Where(tile => !IsInStartRing(tile, start) && (held is null || !held.Contains(tile)));
+
+    /// <summary>
+    /// How much ground is left for props once the reservations are held: the walkable piece the actor starts in, less
+    /// the start's own ring and every tile a standing building owns (footprint, door ring and the road to its porch).
+    ///
+    /// <para>
+    /// An UNMEASURED piece (<paramref name="walkable"/> null) answers <see cref="int.MaxValue"/>, the same convention
+    /// <c>WalkableComponentSize</c> uses: the placement search still refuses a prop nothing can walk to, so an
+    /// over-generous budget cannot arm an unusable world - it can only make the search try harder. Answering 0 here
+    /// would refuse a world nobody measured, which is the opposite mistake.
+    /// </para>
+    /// </summary>
+    internal static int FreeTilesForProps(IReadOnlySet<Point>? walkable, Point start, IReadOnlySet<Point>? held = null) =>
+        walkable is null ? int.MaxValue : PropsMayUse(walkable, start, held).Count();
+
+    /// <summary>
     /// The tiles a fixture may place a prop on, in the order it must try them. <paramref name="held"/> is what a
     /// building already standing in this world owns; a prop may never take one of those tiles.
     /// </summary>
@@ -79,7 +104,5 @@ internal static class PlaySessionFixturePlacement
         IEnumerable<Point> allTiles,
         Point start,
         IReadOnlySet<Point>? held = null) =>
-        OrderByDistanceFrom(
-            allTiles.Where(tile => !IsInStartRing(tile, start) && (held is null || !held.Contains(tile))),
-            start);
+        OrderByDistanceFrom(PropsMayUse(allTiles, start, held), start);
 }

@@ -27,6 +27,13 @@ public static class PropCapacity
     /// <summary>
     /// The prop budget for a walkable component of <paramref name="componentTiles"/> tiles.
     ///
+    /// <para>
+    /// THE NUMBER IS WHAT THE CALLER MEASURED, so a caller that knows which of those tiles props may not take - a
+    /// building's footprint, the ring its door is used from, the road to its porch, the actor's own start ring - passes
+    /// what is LEFT of the piece rather than the piece as a whole. A budget divided out of ground the world has already
+    /// promised asks for props that cannot all be placed, and the sweep then takes them back off the map.
+    /// </para>
+    ///
     /// Returns 0 when the piece is too small for even one prop plus the tile the actor must stand on and
     /// the start's own ring - because arming a world that cannot be walked is worse than refusing it.
     /// </summary>

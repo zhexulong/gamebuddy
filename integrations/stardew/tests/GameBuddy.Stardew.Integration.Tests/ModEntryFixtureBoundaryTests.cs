@@ -30,6 +30,10 @@ public sealed class ModEntryFixtureBoundaryTests
         "IsReachableFromStartPessimistic",
         // Measures the walkable component a start belongs to, so a pocket is refused before props are placed.
         "WalkableComponentSize",
+        // The same flood as the TILES it found, because the prop budget is now asked of what is LEFT of the piece once
+        // the start's ring and the building's held tiles are taken out - one flood, so the number the budget divides and
+        // the `free_after_reservations` the arm log prints cannot describe two different pieces.
+        "WalkableComponentTiles",
         // The shared binding resolution the scenario helpers share: it belongs to this partial like every other fixture
         // member, so the boundary rule registers it rather than exempting the file.
         "ResolveBoundFarmhandId",
