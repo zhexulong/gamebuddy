@@ -75,6 +75,12 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
+// red-proof-debt: the suite builds each case's throwaway tree and asserts the gate's verdict, but
+//   no case writes the eight violations the claim lists - they were injected by hand once, on
+//   round62
+// red-proof-expiry: when a case writes round62's `maxChars: 80` ceiling into a tree and asserts the
+//   gate names the transport's real bound
+
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

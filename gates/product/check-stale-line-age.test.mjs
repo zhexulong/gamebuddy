@@ -9,6 +9,12 @@
  * </p>
  */
 
+// red-proof-debt: the claim's input is the pre-fix renderer body copied verbatim from the commit
+//   the gate was written in; no case here carries that body, so nothing in this suite performs the
+//   injection
+// red-proof-expiry: when a case writes a pre-fix renderer body into its fixture and asserts the
+//   finding names that renderer
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

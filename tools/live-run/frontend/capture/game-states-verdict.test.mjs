@@ -14,6 +14,12 @@
  * shape invented here.
  */
 
+// red-proof-debt: two mutations - the surface-code check dropped from `classifyDeath`, and
+//   `classifyDisconnect`'s `gameAliveAfter !== true` inverted - were applied by hand; the suite
+//   asserts the verdicts they change and no case re-applies them
+// red-proof-expiry: when a case drops the surface-code check in `classifyDeath` and asserts the
+//   failure it then produces
+
 import assert from "node:assert/strict";
 import { test } from "node:test";
 

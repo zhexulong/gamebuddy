@@ -12,8 +12,14 @@
 // added tomorrow enters this gate by being declared as what it is, and an empty population is a
 // failure rather than a pass.
 //
+// red-proof-debt: a chain carrying a seat step would red the seat population by its name, but no
+//   case here writes such a chain, so the injection was performed by hand once
+// red-proof-expiry: when a case adds a third chain carrying a seat step and asserts the seat
+//   population names it
+
 // red-proof: inject  a third chain carrying a seat step -> `seats.map(id)` reads `+ 'weekly-cabin-seat'`, so the seat population reds by name
 //   rather than by a count that a new member would leave satisfied.
+
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";

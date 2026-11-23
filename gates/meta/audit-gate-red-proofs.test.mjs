@@ -45,6 +45,7 @@ import {
 } from "./audit-gate-red-proofs.mjs";
 import { POPULATION_FIELDS } from "../../tools/lib/assert-non-vacuous.mjs";
 import { isGateFile } from "../../tools/lib/gate-population.mjs";
+import { describeRedProofDebtCensus, judgeRedProofDebt } from "../../tools/lib/red-proof-debt.mjs";
 
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const KEYWORD = ["red", "proof"].join("-");
@@ -89,6 +90,9 @@ const gateSource = (comment) => `#!/usr/bin/env node\n${comment}\nprocess.exit(0
 const statusOf = (reading, gate) => reading.records.find((record) => record.id === gate)?.status;
 const codesFor = (findings, gate) => findings.filter((finding) => finding.gate === gate).map((finding) => finding.code);
 const evaluateAgainst = (root, gates) => evaluate({ reading: auditGateRedProofs({ root }), baseline: { gates } });
+// The census-level finding is about the population this reading examined, not about any gate in the fixture, so the
+// fixtures below assert on what their gates earned and this helper keeps that one out of the comparison.
+const gateFindings = (findings) => findings.filter((finding) => finding.code !== "red_proof_debt_population_empty");
 
 test("a declared red proof is proven; deleting it names the gate, its aggregate, and the stale baseline entry", () => {
   const proof = marker(
@@ -123,7 +127,7 @@ test("a recorded gap holds the ratchet, and recording it as proven again fails i
   const root = makeTree({ "tools/check-a.mjs": gateSource("// no proof here") });
   try {
     const held = evaluateAgainst(root, ["check:a", "check:aggregate"]);
-    assert.deepEqual(held.findings, []);
+    assert.deepEqual(gateFindings(held.findings), []);
     assert.equal(held.held, 2);
     // The baseline only tightens: an entry that is proven now cannot keep excusing the gate.
     writeFileSync(
@@ -323,7 +327,7 @@ test("a gate file the index does not carry is inert and published; staged, it is
     assert.deepEqual(untracked.population.untrackedNotCounted, ["tools/check-planted.mjs"]);
     assert.equal(untracked.population.total, 2, "the untracked gate is not in the population");
     assert.equal(statusOf(untracked, "tools/check-planted.mjs"), undefined);
-    assert.deepEqual(evaluateAgainst(root, ["check:a", "check:aggregate"]).findings, []);
+    assert.deepEqual(gateFindings(evaluateAgainst(root, ["check:a", "check:aggregate"]).findings), []);
 
     git(root, "add", "tools/check-planted.mjs");
     const staged = auditGateRedProofs({ root });
@@ -522,10 +526,13 @@ test("a proof whose suite asserts the failure the claim names is executable; one
       "the suite that asserts its own joined string is the prose proof",
     );
     const findings = evaluate({ reading, baseline: { gates: [] } }).findings;
-    assert.deepEqual(codesFor(findings, "check:b"), ["red_proof_is_prose"]);
+    assert.deepEqual(codesFor(findings, "check:b"), ["red_proof_debt_undeclared"]);
     assert.deepEqual(codesFor(findings, "check:a"), [], "the suite that asserts the failure is executable");
     // The finding has to say which claim, or the operator has to guess which of several sentences to convert.
-    assert.match(findings.find((finding) => finding.code === "red_proof_is_prose").detail, /fixture_lane_missing/u);
+    assert.match(
+      findings.find((finding) => finding.code === "red_proof_debt_undeclared").detail,
+      /fixture_lane_missing/u,
+    );
     assert.match(
       describeExecutionLine(reading.execution.counts),
       /executable 1 · proof is prose 1 · no falsifier suite 0/u,
@@ -553,7 +560,7 @@ test("the execution baseline only shrinks: recorded prose holds, and a proof tha
   const record = { prose: ["check:b"], unexecuted: [] };
   try {
     const held = evaluate({
-      reading: auditGateRedProofs({ root }),
+      reading: auditGateRedProofs({ root, executionBaseline: record }),
       baseline: { gates: [] },
       executionBaseline: record,
     });
@@ -571,7 +578,7 @@ test("the execution baseline only shrinks: recorded prose holds, and a proof tha
       "utf8",
     );
     const stale = evaluate({
-      reading: auditGateRedProofs({ root }),
+      reading: auditGateRedProofs({ root, executionBaseline: record }),
       baseline: { gates: [] },
       executionBaseline: record,
     });
@@ -579,6 +586,110 @@ test("the execution baseline only shrinks: recorded prose holds, and a proof tha
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+// The declared-debt convention, the shape `tools/source-reading-baseline.json` already uses: a gate that owes a
+// falsifier states the reason and the condition that ends it in its OWN file, and the ledger keeps only the gates nobody
+// has stated it for. Measured 2026-11-23, when the ledger held 72 bare ids whose only expiry was "when the last one is
+// paid" - which is a debt nobody can see the end of and nobody owns.
+test("a gate that owes a falsifier is undeclared until its own file states the reason and the expiry", () => {
+  const claim = marker(
+    "inject",
+    "a lane set that omits an action -> fixture_lane_missing_required_action",
+    "tools/check-b.test.mjs",
+  );
+  const reason = "the suite asserts the joined string the claim builds instead of the failure it names";
+  const expiry = "when a case writes the omitted lane and asserts the code the gate then prints";
+  const declaration = `// red-proof-debt: ${reason}\n// red-proof-expiry: ${expiry}\n`;
+  const root = makeTree(
+    {
+      "tools/check-b.mjs": gateSource(claim),
+      "tools/check-b.test.mjs": 'assert.equal(["fixture", "lane"].join("_"), "fixture_lane");\n',
+    },
+    { scripts: { "check:b": "node tools/check-b.mjs", falsifiers: "node --test tools/check-b.test.mjs" } },
+  );
+  try {
+    // Nobody answered for it: the gate owes a falsifier and states nothing, and the finding carries the claim.
+    const undeclared = evaluateAgainst(root, []).findings.find((finding) => finding.gate === "check:b");
+    assert.equal(undeclared.code, "red_proof_debt_undeclared");
+    assert.match(undeclared.detail, /fixture_lane_missing_required_action/u);
+
+    // The declaration in the gate's own file IS the record: no ledger row, and the finding goes.
+    writeFileSync(join(root, "tools/check-b.mjs"), gateSource(`${declaration}${claim}`), "utf8");
+    git(root, "add", "tools/check-b.mjs");
+    const reading = auditGateRedProofs({ root });
+    assert.deepEqual(reading.redProofDebt.declared, ["check:b"]);
+    assert.deepEqual(reading.redProofDebt.census, {
+      owed: 1,
+      declared: 1,
+      recorded: 0,
+      undeclared: 0,
+      unanswered: 0,
+      expired: 0,
+    });
+    assert.deepEqual(evaluateAgainst(root, []).findings, []);
+    assert.match(
+      describeRedProofDebtCensus(reading.redProofDebt.census),
+      /gates that owe a falsifier 1 · declared 1 · recorded without a declaration 0/u,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The four ways a declaration stops being one a reviewer can act on, each seen red on its own judgement: a reason a
+// word long, a date behind us, a pair left on a gate that owes nothing, and a ledger row the declaration has paid.
+test("the declared debt fails by name: a one-word reason, a passed date, and a record that outlived the gate", () => {
+  const ok = "the suite asserts the joined string instead of the failure the claim names";
+  const when = "when a case writes the omitted lane and asserts the code the gate then prints";
+  const today = new Date("2026-11-23T00:00:00Z");
+  const declaration = (reason, expiry) => ({ reason, expiry });
+
+  const thin = judgeRedProofDebt({
+    owed: [{ gate: "check:a", declaration: declaration("none", when) }],
+    today,
+  });
+  assert.deepEqual(
+    thin.reasonMissing.map((entry) => entry.gate),
+    ["check:a"],
+    "a one-word reason is a marker, not a claim",
+  );
+
+  const passed = judgeRedProofDebt({ owed: [{ gate: "check:b", declaration: declaration(ok, "2026-01-01") }], today });
+  assert.deepEqual(
+    passed.expired.map((entry) => entry.gate),
+    ["check:b"],
+    "a date behind us is the review it asked for and nobody did",
+  );
+
+  const stale = judgeRedProofDebt({ declaring: [{ gate: "check:c", declaration: declaration(ok, when) }], today });
+  assert.deepEqual(
+    stale.rowStale.map((entry) => entry.gate),
+    ["check:c"],
+    "the pair outlived the falsifier gap it described",
+  );
+
+  const paid = judgeRedProofDebt({
+    owed: [{ gate: "check:d", declaration: declaration(ok, when) }],
+    baseline: new Set(["check:d"]),
+    today,
+  });
+  assert.deepEqual(paid.declared, ["check:d"]);
+  assert.deepEqual(
+    paid.rowStale.map((entry) => entry.gate),
+    ["check:d"],
+    "the row is paid and must go",
+  );
+
+  // The buckets partition the population, so the census a reader adds up is the population it names.
+  const censused = judgeRedProofDebt({
+    owed: [
+      { gate: "check:e", declaration: declaration(ok, when) },
+      { gate: "check:f", declaration: declaration(null, null) },
+    ],
+    today,
+  });
+  assert.deepEqual(censused.census, { owed: 2, declared: 1, recorded: 0, undeclared: 1, unanswered: 0, expired: 0 });
 });
 
 // `proven_but_nothing_runs` used to be a row printed beside the verdict: a gate whose falsifier no script and no workflow

@@ -104,7 +104,7 @@
  *     must contain, IN ITS OWN CODE - comment lines are stripped first, or a marker would satisfy itself - either
  *     the failure the claim names after its arrow (a backticked fragment or a finding code), or a finding code the
  *     gate's own source graph emits. When it contains neither, the injection was performed by hand once and the
- *     comment is a story: `red_proof_is_prose:<gate>:<claim>`.
+ *     comment is a story: `red_proof_debt_undeclared:<gate>`, carrying the claim.
  *   * a gate with no falsifier suite at all is `no_suite`, and it is the same finding - an artifact nothing can run.
  *   * a proof whose suite no script and no workflow runs is `red_proof_nothing_runs:<gate>:<pointer>`. That used to
  *     be a row printed beside the verdict and counted on a line; it is a finding now, because a gate nothing
@@ -119,6 +119,22 @@
  * one of unexecuted proof files - and the ratchet over it only shrinks: a gate not recorded is a finding, and a
  * recorded gate whose proof becomes executable (or whose file a runner starts running) has a stale entry that must
  * go. The same discipline as the marker baseline above, for the same reason.
+ *
+ * THE DEBT IS DECLARED BY THE GATE THAT OWES IT. Measured 2026-11-23: 81 gates carried a prose proof and the ledger held
+ * 72 of them as bare ids - a row says a debt exists and nothing about what would pay it, so every row would expire only
+ * when the last one did. A gate that owes a falsifier now states the reason and the condition in its own file, the shape
+ * `tools/source-reading-baseline.json` already uses, and the ledger keeps only the gates nobody has stated it for:
+ *
+ *   // red-proof-debt: why this gate has no falsifier of its own
+ *   // red-proof-expiry: when the case that would write the violation arrives
+ *
+ * Four ways that declaration fails: `red_proof_debt_undeclared` (owes a falsifier, states nothing and holds no row -
+ * the population nobody answered for), `red_proof_debt_reason_missing` (the pair is there and is not a claim a reviewer
+ * can act on: a reason under the floor, or an expiry carrying neither a date nor a `when …` clause),
+ * `red_proof_debt_expired` (the date it names is before today, so the review it asks for never happened) and
+ * `red_proof_debt_row_stale` (the record outlived the debt: a row whose gate declares the pair now, or a pair on a gate
+ * that owes no falsifier any more). The census is printed on every run and a zero population is a finding, because a
+ * reading with nothing in it agrees with itself.
  *
  * Usage:
  *   node gates/meta/audit-gate-red-proofs.mjs              # the ratchet; exit 1 on a new or stale entry
@@ -135,8 +151,14 @@
  *                    (gates/meta/audit-gate-red-proofs.test.mjs)
  *
  * red-proof: inject  a suite reduced to asserting its own joined string instead of the gate's code ->
- *                    `red_proof_is_prose:check:b` names the claim, while the suite that imports the gate and
+ *                    `red_proof_debt_undeclared:check:b` names the claim, while the suite that imports the gate and
  *                    asserts `fixture_lane_missing_required_action` stays executable
+ *                    (gates/meta/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  a gate whose proof is prose and whose file states no debt -> `red_proof_debt_undeclared` names
+ *                    it; the same gate with a `// red-proof-debt:` reason under the floor, or with an expiry date
+ *                    before today, reads `red_proof_debt_reason_missing` and `red_proof_debt_expired`; and the pair
+ *                    left on a gate whose proof became executable reads `red_proof_debt_row_stale`
  *                    (gates/meta/audit-gate-red-proofs.test.mjs)
  */
 
@@ -153,6 +175,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { POPULATION_FIELDS, populationFieldPattern } from "../../tools/lib/assert-non-vacuous.mjs";
 import { describeUntracked, indexedGatePopulation, repositoryFiles } from "../../tools/lib/indexed-sources.mjs";
+import {
+  describeRedProofDebtCensus,
+  judgeRedProofDebt,
+  parseRedProofDebtDeclaration,
+  statesRedProofDebt,
+} from "../../tools/lib/red-proof-debt.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
@@ -202,6 +230,8 @@ const CLAIM_ARROW = /\s*(?:-{1,2}>|→)\s*/u;
 const RELATIVE_IMPORT = /(?:from\s+|import\(\s*)["'](\.{1,2}\/[^"']+)["']/gu;
 /** The recorded set of proofs measured as prose, and of proof files nothing runs. */
 const EXECUTION_BASELINE_PATH = "tools/gate-red-proof-execution-baseline.json";
+/** The name a census-level finding carries: it is about the population, so no single gate owns it. */
+const DEBT_POPULATION = "red-proof-debt";
 
 /** A file's lines with its commentary removed: a claim written in a comment cannot be the code that performs it. */
 const withoutCommentary = (text) =>
@@ -519,6 +549,9 @@ function classify({
   const owned = [...new Set([...gate.entryFiles, ...siblingFalsifiers(root, gate.entryFiles)])]
     .filter((file) => existsSync(join(root, file)))
     .sort();
+  // A declaration belongs to the gate's own ENTRY file, not to every file it owns: a suite that sits beside a gate is
+  // that gate's falsifier, and the debt stated inside it is the suite-gate's debt, not the gate-script's.
+  const declaration = parseRedProofDebtDeclaration(gate.entryFiles.map((file) => read(join(root, file)) ?? ""));
   const declared = declarationMarker(declarations.get(gate.id));
   const markers = [
     ...owned.flatMap((file) => readRedProofMarkers({ root, file })),
@@ -533,6 +566,7 @@ function classify({
   return {
     ...gate,
     owned,
+    declaration,
     members: memberScripts(gate.id, gate.command, scriptNames),
     proofs: proofMarkers.map((marker) => ({
       kind: marker.kind,
@@ -615,7 +649,7 @@ export function zeroPopulationPass({ root, files }) {
  * carry), `malformed` (a marker that cannot be read) or `unassessed` (the command runs no file in this repo, so there
  * is nothing to read).
  */
-export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
+export function auditGateRedProofs({ root = REPOSITORY_ROOT, executionBaseline = { prose: [] } } = {}) {
   // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`, restricted to the index. A
   // `tools/check-*.mjs` a script runs is ONE gate there, and the script is its id - what an operator types and what
   // CI's derived job names - so the directory half contributes only the gates no script names at all.
@@ -637,6 +671,18 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
     )
     .map((record) => ({ ...record, execution: proofExecution({ root, record }) }));
   const status = assignStatus(records);
+  // The declared-debt population: the gates whose proof is a sentence (or has no suite to be a sentence in). What each
+  // one owes is either stated in its own file with the condition that ends it, or held as a row of the ledger - and a
+  // gate with neither is a finding, which is the only reason a new prose proof cannot arrive quietly.
+  const redProofDebt = judgeRedProofDebt({
+    owed: records
+      .filter((record) => record.proofs.length > 0 && ["prose", "no_suite"].includes(record.execution.verdict))
+      .map((record) => ({ gate: record.id, declaration: record.declaration })),
+    declaring: records
+      .filter((record) => statesRedProofDebt(record.declaration))
+      .map((record) => ({ gate: record.id, declaration: record.declaration })),
+    baseline: new Set(executionBaseline.prose),
+  });
   const gaps = records
     .filter((record) => !["proven", "external"].includes(status.get(record.id)))
     .map((record) => ({ gate: record.id, status: status.get(record.id), detail: describeGap({ record, status }) }));
@@ -665,6 +711,7 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
     // The three answers to "is the proof code?": a suite that asserts the failure, a suite that does not, and no suite
     // at all. Read once here, so the finding, the line and the ratchet cannot disagree about which gate is which.
     execution: describeExecution({ root, records, runnerText, runDirectories }),
+    redProofDebt,
     gaps,
     // A claim that cannot be read is reported whatever the baseline says. Recording it would be
     // recording the disease: the baseline exists for gates with no proof, not for proofs nobody can check.
@@ -958,10 +1005,34 @@ export function evaluate({ reading, baseline, executionBaseline = { prose: [], u
   // The execution ratchet: a proof whose injection no code performs, or whose falsifier nothing runs, is a claim with
   // no execution behind it. Recorded debt holds; a new one is a finding, and the recording only tightens.
   const recordedProse = new Set(executionBaseline.prose);
-  const proseGates = [...reading.execution.prose, ...reading.execution.noSuite];
-  for (const entry of proseGates)
-    if (!recordedProse.has(entry.gate))
-      findings.push({ code: "red_proof_is_prose", gate: entry.gate, detail: entry.detail });
+  const measured = [...reading.execution.prose, ...reading.execution.noSuite];
+  const measuredDetail = new Map(measured.map((entry) => [entry.gate, entry.detail]));
+  // The declared-debt ratchet, in the four ways it fails. `undeclared` is the population nobody answered for, and it is
+  // also where a prose proof is reported: the measured claim is appended to it, so one gate gets one finding and the
+  // operator is not sent to a second one to learn which sentence to convert.
+  const debt = reading.redProofDebt;
+  for (const entry of debt.undeclared)
+    findings.push({
+      code: "red_proof_debt_undeclared",
+      gate: entry.gate,
+      detail: `${entry.detail}; ${measuredDetail.get(entry.gate) ?? "no falsifier suite sits beside it"}`,
+    });
+  for (const entry of debt.reasonMissing)
+    findings.push({ code: "red_proof_debt_reason_missing", gate: entry.gate, detail: entry.detail });
+  for (const entry of debt.expired)
+    findings.push({ code: "red_proof_debt_expired", gate: entry.gate, detail: entry.detail });
+  for (const entry of debt.rowStale)
+    findings.push({ code: "red_proof_debt_row_stale", gate: entry.gate, detail: entry.detail });
+  // Zero owed is the healthy answer when the reading did look at proofs: it means every one of them is code. Zero is a
+  // blocked reading only when nothing with a proof was read at all, which is the state this check exists to tell apart.
+  if (debt.census.owed === 0 && reading.execution.counts.gates === 0)
+    findings.push({
+      code: "red_proof_debt_population_empty",
+      gate: DEBT_POPULATION,
+      detail:
+        "no gate with a red proof was read, so the declared-debt reading examined nothing and agrees with itself - " +
+        "report the tree this was read from instead of a green line",
+    });
   const unexecutedKey = (entry) => `${entry.gate} ${entry.pointer}`;
   const recordedUnexecuted = new Set(executionBaseline.unexecuted.map(unexecutedKey));
   for (const entry of reading.execution.unexecuted)
@@ -982,7 +1053,7 @@ export function evaluate({ reading, baseline, executionBaseline = { prose: [], u
         gate,
         detail: "this gate is proven now (or no longer declared); delete its entry so the baseline only tightens",
       });
-  const liveProse = new Set(proseGates.map((entry) => entry.gate));
+  const liveProse = new Set(measured.map((entry) => entry.gate));
   for (const gate of executionBaseline.prose)
     if (!liveProse.has(gate))
       findings.push({
@@ -1002,7 +1073,7 @@ export function evaluate({ reading, baseline, executionBaseline = { prose: [], u
   return {
     findings,
     held: reading.gaps.filter((gap) => recorded.has(gap.gate) && !unreadable.has(gap.gate)).length,
-    heldProse: proseGates.filter((entry) => recordedProse.has(entry.gate)).length,
+    heldProse: measured.filter((entry) => recordedProse.has(entry.gate)).length,
     heldUnexecuted: reading.execution.unexecuted.filter((entry) => recordedUnexecuted.has(unexecutedKey(entry))).length,
   };
 }
@@ -1085,6 +1156,7 @@ function report({ reading, held, heldProse = 0, gaps, undeclared = 0 }) {
       `${zero.invisible.map((file) => file.replace(/^tools\//u, "")).join(", ")}\n`,
   );
   process.stdout.write(`  ${describeExecutionLine({ ...reading.execution.counts, baselined: heldProse })}\n`);
+  process.stdout.write(`  ${describeRedProofDebtCensus(reading.redProofDebt.census)}\n`);
   if (gaps) {
     for (const gap of reading.gaps) process.stdout.write(`  gap:${gap.gate} status=${gap.status}\n`);
     for (const entry of reading.execution.prose) process.stdout.write(`  proof_is_prose:${entry.gate}\n`);
@@ -1093,12 +1165,20 @@ function report({ reading, held, heldProse = 0, gaps, undeclared = 0 }) {
       process.stdout.write(`  proof_file_nothing_runs:${entry.gate}:${entry.pointer}\n`);
     for (const entry of reading.unexecutedProofs)
       process.stdout.write(`  pointer_nothing_runs:${entry.gate}:${entry.pointer}\n`);
+    // The declared rows print their owner's own sentence and the condition that ends it, so a debt a gate states is
+    // read on the run rather than found by opening nine files.
+    for (const gate of reading.redProofDebt.declared) {
+      const record = reading.records.find((entry) => entry.id === gate);
+      process.stdout.write(`  debt_declared:${gate}: ${record.declaration.reason} — ${record.declaration.expiry}\n`);
+    }
   }
   process.stdout.write(
     `  ${reading.gaps.length} gate(s) still owe a red proof; ${held} of them are recorded in ${BASELINE_PATH}` +
-      `; ${reading.execution.counts.prose + reading.execution.counts.noSuite} carry a proof that is prose, ` +
-      `${reading.execution.counts.unexecuted} name a proof file nothing runs, and both are recorded in ` +
-      `${EXECUTION_BASELINE_PATH}; ${reading.external.length} are external and ` +
+      `; ${reading.execution.counts.prose + reading.execution.counts.noSuite} carry a proof that is prose or has no ` +
+      `suite, ${reading.redProofDebt.census.declared} of them declare the reason and the expiry that ends it in their ` +
+      `own file and ${reading.redProofDebt.census.recorded} are recorded in ${EXECUTION_BASELINE_PATH}` +
+      `; ${reading.execution.counts.unexecuted} name a proof file nothing runs and are recorded in the same ledger` +
+      `; ${reading.external.length} are external and ` +
       `${reading.gaps.length + reading.external.length + reading.proven.length} of ${population.total} are accounted for\n`,
   );
 }
@@ -1116,12 +1196,18 @@ function recordExecutionBaseline({ root, reading, recordUnexecuted = false }) {
   const execution = {
     schema: "gamebuddy-gate-red-proof-execution-baseline/v1",
     note:
-      "Gates whose red proof is prose at this commit: the comment describes an injection that no code performs. A record " +
-      "of measured debt, not an acceptance of it: delete an entry by making the suite write the violating input and assert " +
-      "the code the gate then prints, never by recording another gate. `unexecuted` is recorded only with " +
-      "`--record-unexecuted`; it is empty here because each one measured was a live defect and the finding names the gate " +
-      "instead of this file holding it quiet.",
-    prose: [...reading.execution.prose, ...reading.execution.noSuite].map((entry) => entry.gate).sort(),
+      "Gates that owe a falsifier and have stated neither the reason nor the expiry that ends it, at this commit. A " +
+      "record of measured debt, not an acceptance of it: delete a row by stating `// red-proof-debt:` and " +
+      "`// red-proof-expiry:` in the gate's own file, never by recording another gate. A gate that states the pair needs " +
+      "no row - the declaration is the record, and the census line counts it as declared. `unexecuted` is recorded only " +
+      "with `--record-unexecuted`; it is empty here because each one measured was a live defect and the finding names the " +
+      "gate instead of this file holding it quiet.",
+    prose: [...reading.execution.prose, ...reading.execution.noSuite]
+      .map((entry) => entry.gate)
+      // A gate that states its own reason and expiry needs no row: the declaration is the record, and the census line
+      // keeps it counted as declared rather than as debt.
+      .filter((gate) => !reading.redProofDebt.declared.includes(gate))
+      .sort(),
     unexecuted: recordUnexecuted
       ? reading.execution.unexecuted
           .map((entry) => ({ gate: entry.gate, pointer: entry.pointer }))
@@ -1137,7 +1223,9 @@ function main(argv) {
   const rootIndex = argv.indexOf("--root");
   const root =
     rootIndex >= 0 && typeof argv[rootIndex + 1] === "string" ? resolve(argv[rootIndex + 1]) : REPOSITORY_ROOT;
-  const reading = auditGateRedProofs({ root });
+  const baseline = readBaseline(root);
+  const executionBaseline = readExecutionBaseline(root);
+  const reading = auditGateRedProofs({ root, executionBaseline });
   // Its own flag, because the marker ledger and this one record different debts and a lane converting one proof must be
   // able to re-record its own without touching the other. Re-recording by hand is how a baseline stops describing a run.
   if (argv.includes("--update-execution")) {
@@ -1175,8 +1263,6 @@ function main(argv) {
     );
     return 0;
   }
-  const baseline = readBaseline(root);
-  const executionBaseline = readExecutionBaseline(root);
   const { findings, held, heldProse } = evaluate({ reading, baseline, executionBaseline });
   // `undeclared` is the half the baseline does not cover: a gate with no red proof and no record saying it owes one.
   // It is the number the conformance suite fails on, so it is counted here once and read from the same reading there.
@@ -1208,7 +1294,7 @@ function main(argv) {
         "       `red-proof: <inject|history|fixture|self-check> <the violation injected -> what the gate then said>`\n" +
         "       or, when the rule lives in another program, `red-proof: external <runner command> - <how it fails>`\n" +
         "       with that command written the way package.json or a workflow invokes it\n" +
-        "       a `red_proof_is_prose` gate has the sentence and not the statement: make its falsifier write the\n" +
+        "       a `red_proof_debt_undeclared` gate has the sentence and not the statement: make its falsifier write the\n" +
         "       violating input and assert the code the gate then prints, so the injection is code rather than a claim\n",
     );
   return all.length === 0 ? 0 : 1;

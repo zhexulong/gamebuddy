@@ -8,6 +8,12 @@
  * selector spellings its assertions still read. A checkout without that history (a shallow clone, an
  * archive) skips them with the reason named, rather than passing on an empty population.
  */
+
+// red-proof-debt: the claim is a replay of two revisions (`930a031e^` and `930a031e`): a checkout
+//   without that history skips it with the reason named, so no case here performs an injection
+// red-proof-expiry: when the replay's history becomes a fixture the suite builds, so the case runs
+//   without this checkout's log
+
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";

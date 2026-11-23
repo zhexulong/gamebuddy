@@ -21,6 +21,12 @@
  *                     `example_unclassified:早啊，粥在锅里温着，自己盛。`, which is the population being derived rather
  *                     than listed (tools/check-persona-example-behaviours.test.mjs)
  */
+
+// red-proof-debt: both claims replay incidents from cards that shipped: the suite drives the card's
+//   own text through the gate, and neither case restores the pre-permission body that made it red
+// red-proof-expiry: when a case writes the `6107a8dd` body into a copied `card.json` and asserts
+//   the two findings
+
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

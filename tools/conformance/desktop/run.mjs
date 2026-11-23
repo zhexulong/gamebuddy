@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+
+// red-proof-debt: the rule lives in a launcher this repository does not build: the run drives a
+//   published binary over its wire, so no file here can perform either injection
+// red-proof-expiry: when the conformance run builds the launcher from this tree, so the frame-cap
+//   case can be forced here
+
 // red-proof: history With `--binary` pointed at the launcher published at 04:10:55 (preserved at
 //   `D:\gamebuddy-conformance\launcher-prefix\`, the build before `bdfb8e0e`), the frame-cap case reports
 //   `known-defect desktop_frame_cap_ends_the_launch`: the re-hello after the oversized frame gets no session.
@@ -51,6 +57,7 @@
  *   GAMEBUDDY_DESKTOP_CONFORMANCE_BINARY          the launcher executable to drive
  *   GAMEBUDDY_DESKTOP_CONFORMANCE_TEMP            where the publish and the world live
  */
+
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,10 +1,21 @@
+// red-proof-debt: the two mutations move a contract row onto the wrong arm; the suite reads the
+//   real contract, and no case writes a mutated row, so the injection was performed by hand once
+// red-proof-expiry: when a case moves a row onto the `SettleWindowMs` arm and asserts the finding
+//   the mint then publishes
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { dispositionMint, mintedKinds, namedFindings, publishFindings, transientFactory } from "../../tools/lib/stardew-disposition-mint.mjs";
+import {
+  dispositionMint,
+  mintedKinds,
+  namedFindings,
+  publishFindings,
+  transientFactory,
+} from "../../tools/lib/stardew-disposition-mint.mjs";
 
 /**
  * THE READER'S OWN PROOF, because two files re-read the same mint and a disagreement between them is silent.
@@ -29,8 +40,7 @@ function contractWith(fact, mutate) {
   return document;
 }
 
-const findings = (facts, source = worldModel) =>
-  publishFindings({ where: WORLD_MODEL, worldModel: source, facts });
+const findings = (facts, source = worldModel) => publishFindings({ where: WORLD_MODEL, worldModel: source, facts });
 
 /**
  * The fact each finding names. The falsifiers below expect the row they made wrong BACK BY NAME: `rows.length === 1`
@@ -92,8 +102,9 @@ test("the_shipped_contract_agrees_with_the_classifier_and_the_census_names_each_
 
 test("falsifier: a row citing a line that mints nothing is refused, and the line it read is quoted", () => {
   const settleArm =
-    worldModel.split("\n").findIndex((line) => line.trim() === "ActorTransientKind.FreezePause => FreezePauseSettleWindowMs,") +
-    1;
+    worldModel
+      .split("\n")
+      .findIndex((line) => line.trim() === "ActorTransientKind.FreezePause => FreezePauseSettleWindowMs,") + 1;
   const { rows } = findings(contractWith(FREEZE_PAUSED, (row) => (row.classifyAt.line = settleArm)).facts);
   console.log(rows.join("\n"));
   assert.deepEqual(factsNamed(rows), [FREEZE_PAUSED], "one wrong citation is one finding, named by the row it refutes");
@@ -123,21 +134,23 @@ test("falsifier: a factory naming a member KindForWire has no word for fails by 
   const { rows } = findings(contract().facts, source);
   console.log(rows.join("\n"));
   assert.ok(
-    rows.some((row) => /^Eating: .*WorldModel\.cs:\d+ names ActorTransientKind\.Eating, which KindForWire has no word for/u.test(row)),
+    rows.some((row) =>
+      /^Eating: .*WorldModel\.cs:\d+ names ActorTransientKind\.Eating, which KindForWire has no word for/u.test(row),
+    ),
     "the member with no word is named rather than dropped",
   );
 });
 
 test("falsifier: a branch that mints through a producer this reader does not know is refused by name", () => {
-  const source = worldModel.replace(
-    "return Transient(ActorTransientKind.FreezePause);",
-    "return FreezeDisposition();",
-  );
+  const source = worldModel.replace("return Transient(ActorTransientKind.FreezePause);", "return FreezeDisposition();");
   assert.notEqual(source, worldModel, "the branch was there to replace");
   const { rows } = findings(contract().facts, source);
   console.log(rows.join("\n"));
   assert.deepEqual(factsNamed(rows), [FREEZE_PAUSED]);
-  assert.match(rows[0], /^FreezePaused: classifyAt .*WorldModel\.cs:\d+ mints no disposition - it reads "return FreezeDisposition\(\);"/u);
+  assert.match(
+    rows[0],
+    /^FreezePaused: classifyAt .*WorldModel\.cs:\d+ mints no disposition - it reads "return FreezeDisposition\(\);"/u,
+  );
 });
 
 test("FACT-3's population: every kind the classifier mints is one a row publishes, and Transient is one of them", () => {

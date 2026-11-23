@@ -12,6 +12,13 @@
  *   and `report.4` fail (the table and the located rank both stop being the product of the two numbers) while 10 of the
  *   14 cases stay green; unmodified, all fourteen pass (tools/audit-hotspots.test.mjs)
  */
+
+// red-proof-debt: the score mutation (`commits * lines` -> `commits + lines`) was applied by hand
+//   once: the fourteen cases assert the table and the located rank, and none of them re-applies the
+//   mutation
+// red-proof-expiry: when a case ranks with `commits + lines` and asserts the four rows that stop
+//   being the product
+
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
