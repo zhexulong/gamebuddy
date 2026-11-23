@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core.Routing;
@@ -94,6 +95,9 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         // that licenses `succeeded` - because a bare `Failed` is a failure the companion can only retry blind.
         if (grant.ExecutionBinding is null || !Equals(execution, grant.ExecutionBinding))
             return Failed(execution, "execution_binding_mismatch");
+        // WHICH PROGRAMME NODE THIS IS, for the cost line a dispatch prints: the binding is the only place the
+        // program id and the node id exist, and a reader who feels a hitch needs to know which node was running.
+        using GameThreadCost.NodeScope node = new($"{execution.ProgramId}/{execution.NodeId}");
 
         // A PLAN FORM IS EXPANDED, NOT DISPATCHED. Its action id names no handler and never will: one node here is one
         // pass over live rows, and each row goes through the SAME router a single node does (see `DispatchRow`).

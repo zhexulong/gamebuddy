@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
@@ -478,6 +479,10 @@ internal sealed class ExecutionAdmission
         // lifecycle passes its own ten-minute watchdog rather than forking this gate to get one.
         long maxDurationMs = FarmhandActionCatalog.OrdinaryActionCeilingMs)
     {
+        // THE GATE NAMES ITS OWN COST. Admission reads the actor's world facts, classifies its disposition and walks
+        // the body-slot table on the game thread, so it is measured here rather than at its one caller in the
+        // execution manager: the scope covers every refusal and the admitted answer alike.
+        using GameThreadCost.SeamScope admissionCost = new(GameThreadCost.AdmissionSeam);
         if (!this.TryGetBoundActor(out Farmer? boundActor, out string guardReason) || boundActor is null)
             return new AdmissionOutcome.Refused(this.commit.RememberTerminal(requestId, executionId, ExecutionState.Rejected, guardReason, null));
 

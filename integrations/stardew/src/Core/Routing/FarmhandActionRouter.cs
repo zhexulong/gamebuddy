@@ -127,9 +127,15 @@ public sealed class FarmhandActionRouter
         }
 
         using Activity? executionSpan = ModActivitySource.StartActionExecution(request, executionId);
+        // THE ONE PLACE EVERY DISPATCHED NODE PASSES, which is why the cost line is opened here: the bridge
+        // dispatches a `execution_request` frame through this table and the body-program executor dispatches a
+        // node through it, so a node is measured however it arrived.
+        long? node = GameThreadCost.BeginDispatch(request.Action, request.RequestId);
+        long dispatchStarted = GameThreadCost.BeginSeam();
         try
         {
             receipt = handler.Execute(request, ledger);
+            GameThreadCost.NoteOutcome(receipt.State.ToString(), receipt.ReasonCode);
             executionSpan?.SetTag("revision", receipt.Revision);
             executionSpan?.SetTag("state", receipt.State.ToString());
             reasonCode = "accepted";
@@ -148,8 +154,14 @@ public sealed class FarmhandActionRouter
                 ExecutionState.Uncertain,
                 "handler_exception",
                 $"handler_exception={exception.GetType().Name};never_retry=true");
+            GameThreadCost.NoteOutcome(receipt.State.ToString(), receipt.ReasonCode);
             reasonCode = "handler_exception";
             return true;
+        }
+        finally
+        {
+            GameThreadCost.NoteDispatch(dispatchStarted);
+            GameThreadCost.EndDispatch(node);
         }
     }
 }

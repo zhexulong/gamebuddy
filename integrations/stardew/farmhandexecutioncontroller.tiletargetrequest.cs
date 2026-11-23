@@ -1,4 +1,5 @@
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Policy;
 using StardewModdingAPI;
 using StardewValley;
@@ -206,7 +207,13 @@ internal sealed partial class ExecutionManager
         // restate the geometry its own row already states.
         if (!(inReach ?? IsTileWithinNativeReach)(Game1.player, answer.X, answer.Y)
             || StandsOutsideADeclaredRing(actionId, Game1.player, answer.X, answer.Y))
+        {
+            // THE APPROACH LEG IS WHERE A TOOL ACTION'S GAME-THREAD TIME GOES, so it is measured here: planning a walk
+            // floods the actor's walkable component to choose a standing tile and then asks the body controller for a
+            // route, which floods again. Each flood reports its own tile count and milliseconds to the same line.
+            using GameThreadCost.SeamScope approach = new(GameThreadCost.ApproachSeam);
             return this.TryBeginToolApproach(requestId, executionId, actionId, location, (answer.X, answer.Y), answer.Footprint ?? new[] { (answer.X, answer.Y) }, expectedTargetId, execute, nowMs, requestedDeadlineMs);
+        }
         return execute(executionId, requestId);
     }
 

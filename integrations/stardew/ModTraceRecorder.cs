@@ -41,6 +41,10 @@ internal sealed class ModTraceRecorder : IDisposable
         Directory.CreateDirectory(directory);
         this.monitor = monitor;
         this.runId = runId;
+        // ONE LINE PER EXPENSIVE DISPATCHED NODE, in the log rather than only in the trace this type writes: a hitch
+        // the owner feels is a game-thread cost, and the line names which of the Mod's own seams paid it. It is
+        // installed here because this is the Mod's timing record and the one place that already owns the monitor.
+        GameThreadCost.Report = line => monitor?.Log(line, LogLevel.Info);
         this.path = Path.Combine(directory, "gamebuddy-trace-" + runId + ".json");
         this.listener = new ActivityListener
         {
