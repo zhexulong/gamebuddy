@@ -8,7 +8,6 @@
     "dialogue-web/src/style.css": 7956,
     "dialogue-web/tests/composed-reference-game-browser-api.test.mjs": 1777,
     "gates/meta/audit-totality.mjs": 3372,
-    "gates/meta/check-prelive-gate-registry.mjs": 1703,
     "gates/product/check-refusal-informativeness.mjs": 1764,
     "host/src/body-program-script.test.ts": 5003,
     "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts": 5208,
@@ -41,7 +40,6 @@
     "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4560,
     "tools/live-run/round-verdict.mjs": 1917,
     "tools/migrate-runner-to-template.mjs": 1945,
-    "tools/prelive.mjs": 1721,
     "tools/stardew-native-local-player-fixture.test.mjs": 2533
   }
 }
