@@ -498,14 +498,20 @@ const completionFixtures: Readonly<Record<string, CompletionFixture>> = {
     fields: [
       ["modal_type", "DialogueBox"],
       ["dismissed", "true"],
-      ["cleared_modal", "DialogueBox"],
+      ["closed_modal_type", "DialogueBox"],
+      // WHO held the box: `none` is the answer the body hold's own `action_owned=false` publishes, and it is what
+      // makes the dismissal safe to have asked for.
+      ["owned_by", "none"],
       ["close_effect", "native_dialogue_close"],
+      // `advance_skipped` is the DialogueBox close's own fact: a close exits the menu without PRESENTING the pages the
+      // box still held, so the receipt says the advance did not happen. OPTIONAL - an operation menu has no pages.
+      ["advance_skipped", "false"],
       // `text` is the box's own line, which the Mod quotes whenever it could read one before the close
       // (`farmhandexecutioncontroller.modalactions.cs` BoundedModalText). It is OPTIONAL: a box with no readable
       // text (or a non-dialogue menu) publishes no such key, and neither shape may be refused for that.
       ["text", "明天的天气预报：大雨"],
     ],
-    requiredFields: ["modal_type", "dismissed", "cleared_modal", "close_effect"],
+    requiredFields: ["modal_type", "dismissed", "closed_modal_type", "owned_by", "close_effect"],
   },
   answer_dialogue: {
     reasonCode: "answer_dialogue_answered",
@@ -1352,8 +1358,10 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
       fields: [
         ["modal_type", "DialogueBox"],
         ["dismissed", "true"],
-        ["cleared_modal", "DialogueBox"],
+        ["closed_modal_type", "DialogueBox"],
+        ["owned_by", "none"],
         ["close_effect", "native_dialogue_close"],
+        ["advance_skipped", "true"],
         ["has_more_pages", "true"],
         ["next_modal_type", "DialogueBox"],
         ["text", "..."],
@@ -1367,7 +1375,8 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
       fields: [
         ["modal_type", "ShippingMenu"],
         ["dismissed", "true"],
-        ["cleared_modal", "ShippingMenu"],
+        ["closed_modal_type", "ShippingMenu"],
+        ["owned_by", "none"],
         ["clearing", "true"],
         ["close_effect", "engine_shipping_commit"],
       ],
@@ -1380,7 +1389,8 @@ test("evidence_key_not_declared: every real producer shape is read by its own ru
       fields: [
         ["modal_type", "ShippingMenu"],
         ["dismissed", "false"],
-        ["cleared_modal", "ShippingMenu"],
+        ["closed_modal_type", "ShippingMenu"],
+        ["owned_by", "none"],
         ["clearing", "true"],
         ["close_effect", "engine_shipping_commit"],
         ["commit_already_driven", "true"],
@@ -1683,7 +1693,8 @@ test("dismiss_modal: the latch's re-ask is a commit already under way, not a dis
   const reask: readonly (readonly [string, string])[] = [
     ["modal_type", "ShippingMenu"],
     ["dismissed", "false"],
-    ["cleared_modal", "ShippingMenu"],
+    ["closed_modal_type", "ShippingMenu"],
+    ["owned_by", "none"],
     ["clearing", "true"],
     ["close_effect", "engine_shipping_commit"],
     ["commit_already_driven", "true"],

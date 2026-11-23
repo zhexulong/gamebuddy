@@ -24,7 +24,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// profile; this body just performs the dismissal). Question dialogues are
 /// refused with modal_not_dismissible — answering is answer_dialogue's future
 /// seam (design 7.4.2). The receipt names the clearance it performed
-/// (`cleared_modal=`), and this action is the ONLY clearance on the action path:
+/// (`closed_modal_type=` and `owned_by=`), and this action is the ONLY clearance on the action path:
 /// the shared admission refuses a held body rather than evicting the modal, so
 /// both properties are pinned here.
 /// </summary>
@@ -55,6 +55,11 @@ public sealed class ModalDismissActionTests
     /// `EveryShapeTheCloseLeavesBehind_IsASuccess_AndTheEvidenceNamesIt` covers that reading over every shape.
     /// </para>
     /// <para>
+    /// ...AND WHOSE MODAL IT WAS, AND WHAT PRESENTATION IT SKIPPED. The hold refuses a body with `action_owned=`; the
+    /// receipt of the close that answers it states the same lease as `owned_by=`, and the box's own unpresented pages
+    /// as `advance_skipped=`, because a `DialogueBox` close exits the menu without presenting them.
+    /// </para>
+    /// <para>
     /// A source probe, like the sibling native-seam pins: the success terminal cannot be produced headless,
     /// because closeDialogue restores Farmer.CanMove through Game1.player (DialogueBox.cs:226) and a probe
     /// process has no live player - and seeding one drags in the whole net world state that `NetPosition.Get` reads
@@ -67,14 +72,17 @@ public sealed class ModalDismissActionTests
         string code = StripLineComments(ReadRepositoryText("integrations", "stardew", "farmhandexecutioncontroller.modalactions.cs"));
 
         code.Should().Contain(
-            "modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{continuation}",
-            "the receipt states the clearance next to the modal it dismissed, and what the close left behind");
+            "modal_type={modalType};dismissed=true;{ModalFamily.ClosedModalField(modalType, close.OwnedBy)};close_effect={closeEffect}{advance}{continuation}{modalTextDetail}",
+            "the receipt states the clearance next to the modal it dismissed, who held it, and what the close left behind");
         code.Should().Contain(
             ";has_more_pages=true;next_modal_type=",
             "a continuation is named rather than reported as a failure");
         code.Should().Contain(
             "string closeEffect = ModalFamily.CloseEffect(close.Path);",
             "the receipt's close effect is the verdict's own close path, so the handler cannot claim an effect the path does not have");
+        ModalFamily.ClosedModalField("DialogueBox", ModalFamily.NoOwner).Should().Be(
+            "closed_modal_type=DialogueBox;owned_by=none",
+            "what it closed and who held it are the two facts the hold's `action_owned=false` entitles the caller to read back");
         ModalFamily.CloseEffect(ModalFamily.ClosePath.Dialogue).Should().Be(
             "native_dialogue_close",
             "a DialogueBox close also advances native dialogue state, and the receipt says which effect ran");
@@ -257,9 +265,14 @@ public sealed class ModalDismissActionTests
         var rows = new List<(string Shape, ExecutionState State, string ReasonCode, string Evidence, string ExpectedNext)>();
         foreach ((string shape, IClickableMenu? standing, bool dialogueUp, string expectedNext) in shapes)
         {
-            (ExecutionState state, string reasonCode, string evidence) = ExecutionManager.DescribeDismissalOutcome(
+            var close = new ModalFamily.Dismissal.Closeable(
+                CreateDialogue(isQuestion: false),
+                ModalFamily.ClosePath.Dialogue,
                 "DialogueBox",
-                "native_dialogue_close",
+                ModalFamily.NoOwner,
+                advanceSkipped: true);
+            (ExecutionState state, string reasonCode, string evidence) = ExecutionManager.DescribeDismissalOutcome(
+                close,
                 ";text=hello",
                 standing,
                 dialogueUp);
@@ -276,8 +289,10 @@ public sealed class ModalDismissActionTests
             state.Should().Be(ExecutionState.Succeeded,
                 $"dialogue_close_is_a_failure:{shape}:{state}/{reasonCode} - the close ran, and the world's shape afterwards is not an effect it failed to produce");
             reasonCode.Should().Be("modal_dismissed", "the published postcondition name is the action's, in both terminals");
-            evidence.Should().Contain("cleared_modal=DialogueBox");
+            evidence.Should().Contain("closed_modal_type=DialogueBox");
+            evidence.Should().Contain("owned_by=none", "the box nobody owned says so: the hold's `action_owned=false` is this field's other side");
             evidence.Should().Contain("close_effect=native_dialogue_close");
+            evidence.Should().Contain("advance_skipped=true", "the close exits a box whose pages it never presented, and the receipt says so");
             evidence.Should().Contain(";text=hello", "what the box said is read before the close and stays on the receipt");
             string expectedPages = expectedNext == "none" ? "has_more_pages=false" : "has_more_pages=true";
             evidence.Should().Contain(expectedPages,
@@ -574,8 +589,8 @@ public sealed class ModalDismissActionTests
             if (state == ExecutionState.Succeeded)
             {
                 // A no-op and a real dismissal are both successes, and the evidence says which: `modal=none` when nothing
-                // was there, `cleared_modal=` when something was closed.
-                (evidence.Contains("modal=none", StringComparison.Ordinal) || evidence.Contains("cleared_modal=", StringComparison.Ordinal))
+                // was there, `closed_modal_type=` when something was closed.
+                (evidence.Contains("modal=none", StringComparison.Ordinal) || evidence.Contains("closed_modal_type=", StringComparison.Ordinal))
                     .Should().BeTrue($"a success owes the evidence ADR-006 requires, and for {kind} it must say what it did: {evidence}");
                 continue;
             }

@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Runtime.Serialization;
 using FluentAssertions;
 using GameBuddy.Stardew.Core;
+using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using Microsoft.Xna.Framework;
@@ -69,7 +70,7 @@ public sealed class LevelUpMilestoneChoiceTests
     {
         string body = StripLineComments(MethodBody(
             ReadStardewText("farmhandexecutioncontroller.cs"),
-            "private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player)"));
+            "private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player, IReadOnlyList<Point> pairs)"));
 
         // ONE derivation of the candidate pair, shared with the action that writes it. A second copy here is how the
         // companion would come to choose from one pair and the write land on another (LevelUpProfessionPairTests pins
@@ -93,7 +94,7 @@ public sealed class LevelUpMilestoneChoiceTests
     {
         string body = StripLineComments(MethodBody(
             ReadStardewText("farmhandexecutioncontroller.cs"),
-            "private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player)"));
+            "private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player, IReadOnlyList<Point> pairs)"));
 
         // A level-5 pair does not depend on an earlier choice, so the projection must leave the constraint unset
         // there. A level-10 pair does: `+2/+3` continues the left level-5 card, `+4/+5` continues the right one
@@ -137,10 +138,97 @@ public sealed class LevelUpMilestoneChoiceTests
     {
         string code = StripLineComments(ReadStardewText("farmhandexecutioncontroller.cs"));
 
-        code.Should().Contain("PendingLevelUpChoices: DescribePendingLevelUpChoices(player),");
+        // ONE list, read once at the snapshot's own call site: the pair a caller must name and the cards it chooses
+        // between are the same reading of the same menu, so they cannot describe two different level-ups.
+        code.Should().Contain("IReadOnlyList<Point> pendingLevelUpPairs = PendingLevelUpPairs(");
+        code.Should().Contain("WorldModel.AskingLevelUpMenu(Game1.activeClickableMenu));");
+        code.Should().Contain("PendingLevelUps: DescribePendingLevelUps(pendingLevelUpPairs),");
+        code.Should().Contain("PendingLevelUpChoices: DescribePendingLevelUpChoices(player, pendingLevelUpPairs),");
         code.Should().Contain("Professions: DescribeProfessions(player),");
         // The not-ready snapshot must not hand a caller a stale choice: it publishes the empty pair for both.
         code.Should().Contain("PendingLevelUps: null, PendingLevelUpChoices: null, Professions: null)");
+    }
+
+    // ------------------------------------------------------------------------------------------------
+    // Shown: the pair the STANDING menu is asking about
+    // ------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// THE PAIR A STANDING MENU ASKS ABOUT IS READ FROM THAT MENU, NOT FROM THE QUEUE IT WAS POPPED FROM.
+    ///
+    /// <para>
+    /// MEASURED 2026-11-23 (`multiday`, `dayRecords[0]`): `respond_level_up` settles its `LevelUpMenu` by dropping the
+    /// pair from `Farmer.newLevels` (`LevelUpMenu.cs:637-648`), and the menu leaves `Game1.activeClickableMenu` only on its
+    /// OWN next update (`:414-419`) - so for one update the snapshot named a `LevelUpMenu` and published
+    /// `pendingLevelUps=[]`. The watcher's next poll landed in that window, `level_up_pair_not_in_snapshot` became the
+    /// night's reason, and the run was filed `multiday_routine_blocked` for a menu it had already answered.
+    /// </para>
+    /// <para>
+    /// RED ON THE PRE-FIX TREE: the projection walked `player.newLevels` alone, so an empty queue published `[]` however
+    /// plainly the menu was asking.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AStandingMenusPairIsPublishedWhileTheQueueHasAlreadyDroppedIt()
+    {
+        Farmer actor = CreateActor(1001);
+        LevelUpMenu asking = CreateLevelUpMenu(skill: 4, level: 5, isProfessionChooser: true);
+        asking.isActive = true;
+
+        ExecutionManager.PendingLevelUpPairs(actor, asking).Should().Equal(
+            new[] { new Point(4, 5) },
+            "the menu is the object that asks the question and the object that writes the answer, so its own pair is the argument a caller has to name");
+
+        // The queue after it is still published: those are the levels the night has not raised yet.
+        SeedPendingLevelUps(actor, new Point(0, 3));
+        ExecutionManager.PendingLevelUpPairs(actor, asking).Should().Equal(
+            new[] { new Point(4, 5), new Point(0, 3) },
+            "the standing menu's pair is the head, and `newLevels` continues it");
+
+        // ...and a pair the menu already names is not published twice.
+        SeedPendingLevelUps(actor, new Point(4, 5), new Point(0, 3));
+        ExecutionManager.PendingLevelUpPairs(actor, asking).Should().Equal(new[] { new Point(4, 5), new Point(0, 3) });
+    }
+
+    /// <summary>
+    /// THE INVARIANT THE MEASURED FAILURE BROKE: the snapshot never names a `LevelUpMenu` without naming the pair it is
+    /// asking about, and it never names a pair for a menu that has stopped asking.
+    ///
+    /// <para>
+    /// The settled menu is the exact object the engine leaves behind: `okButtonClicked` granted the perk, cleared
+    /// `isActive` and ran `RemoveLevelFromLevelList` (`LevelUpMenu.cs:637-648`), and its own `update` will exit it
+    /// (`:414-419`). Reporting it as the hold is what asked the run for an argument that no longer existed; the
+    /// disposition reads the menu's own flag, so it stops naming one (`WorldModel.IsAsking`).
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void ALevelUpMenuIsAHoldOnlyWhileItStillHasAQuestionToAsk()
+    {
+        Farmer actor = CreateActor(1001);
+        LevelUpMenu asking = CreateLevelUpMenu(skill: 4, level: 5, isProfessionChooser: true);
+        asking.isActive = true;
+        LevelUpMenu settled = CreateLevelUpMenu(skill: 4, level: 5, isProfessionChooser: true);
+        settled.isActive = false;
+
+        WorldModel.MountedMenuName(asking).Should().Be("LevelUpMenu", "an active menu is the modal the run must answer");
+        WorldModel.MountedModal(asking, dialogueUp: false).Kind.Should().Be(BodyProgramModalKind.LevelUp);
+        WorldModel.MountedMenuName(settled).Should().BeNull(
+            "a `LevelUpMenu` whose `isActive` is false has granted its perk and dropped its pair already (`LevelUpMenu.cs:637-648`), "
+            + "and it exits on its own next update (`:414-419`), so nothing on screen is asking anything");
+        WorldModel.MountedModal(settled, dialogueUp: false).Kind.Should().Be(BodyProgramModalKind.None);
+
+        // THE PROPERTY, over both mounts rather than over the two code paths that produce them: named as the modal if
+        // and only if a pair is published for it. A `LevelUpMenu` with no addressable pair was ONE reachable state, and
+        // it is the state that blocked the run.
+        foreach (LevelUpMenu menu in new[] { asking, settled })
+        {
+            bool named = WorldModel.MountedMenuName(menu) is not null;
+            bool addressable = ExecutionManager.PendingLevelUpPairs(actor, WorldModel.AskingLevelUpMenu(menu)).Count > 0;
+            named.Should().Be(
+                addressable,
+                "either the menu is asking and its pair is published, or neither is said: naming the menu alone is the "
+                + "state that filed a night `level_up_menu_not_resolved:level_up_pair_not_in_snapshot`");
+        }
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -297,7 +385,7 @@ public sealed class LevelUpMilestoneChoiceTests
     private static IReadOnlyList<BridgeLevelUpChoice> DescribeChoices(Farmer actor) =>
         (IReadOnlyList<BridgeLevelUpChoice>)typeof(ExecutionManager)
             .GetMethod("DescribePendingLevelUpChoices", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object[] { actor })!;
+            .Invoke(null, new object[] { actor, ExecutionManager.PendingLevelUpPairs(actor, asking: null) })!;
 
     private static IReadOnlyList<int> DescribeProfessions(Farmer actor) =>
         (IReadOnlyList<int>)typeof(ExecutionManager)

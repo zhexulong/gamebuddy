@@ -150,6 +150,9 @@ test("the pump the composition builds reports its stale-refresh port attached, a
     publish: (fact) => {
       published.push(fact);
     },
+    // This reading is about the refresh port; the environment record has its own gate
+    // (`event-pump.environment-facts-record.test.ts`).
+    environmentFactsRecord: () => {},
   });
   assert.equal(
     loop.pump.worldStateRefresh.attached,
@@ -192,6 +195,7 @@ test("a connection with no observation route is refused by name rather than answ
     publish: (fact) => {
       published.push(fact);
     },
+    environmentFactsRecord: () => {},
   });
   await deliverTurn(loop.pump, snapshotFact(352), true);
   for (let turn = 1; turn <= LAST_PROBE_TURN; turn += 1) await deliverTurn(loop.pump, silentFact(turn));
@@ -222,6 +226,7 @@ test("one crossed reading spends its bounded probes and is refused once; the nex
     publish: (fact) => {
       refusals.push(fact);
     },
+    environmentFactsRecord: () => {},
   });
   const readings = [352, 400, 448];
   for (const [index, revision] of readings.entries()) {

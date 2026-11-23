@@ -32,7 +32,7 @@
  *
  * THE CLOCK IS THE GATE, AND IT IS THE ONLY THING THIS FACT READS. A world that has not started its day has no clock
  * (`Snapshot.timeOfDay` is 0 until it does), so the fact waits for the first reading that has actually ticked - the same
- * rule the environment-facts provider follows: absent a usable reading, say nothing. Nothing else in the snapshot is
+ * rule `<world-state>`'s environment line follows: absent a usable reading, say nothing. Nothing else in the snapshot is
  * inspected, because nothing else is stated.
  */
 

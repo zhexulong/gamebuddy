@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,11 +56,6 @@ import { protectedToolsForRun } from "./magic-context-protected-tools.js";
 import { anchorPiSessionGreeting } from "./pi-session-greeting-anchor.internal.js";
 import { alignSessionToTranscriptRows } from "./pi-session-variant-branch.internal.js";
 import type { PresentationRuntime } from "./presentation.js";
-import {
-  MAX_GAME_ENVIRONMENT_FACTS_BYTES,
-  renderGameEnvironmentFactsObservation,
-  type GameEnvironmentFactsRender,
-} from "./game-world-vocabulary.js";
 import type { ActionRegistration, ExecutionReceipt } from "./protocol.js";
 import {
   createProviderTurnHeaderScope,
@@ -232,159 +227,6 @@ export const MAGIC_CONTEXT_MEMORY_ENABLED = true;
 // the notebook's copy names the route that exists - the player asking her to keep
 // something - and claims no automatic accumulation.
 export const MAGIC_CONTEXT_AUTO_PROMOTE_ENABLED = false;
-/**
- * What the provider RENDERED, recorded once per assembled request.
- *
- * The transform asks the registered provider for the block on every request and injects the answer; the
- * session stores MESSAGES, so nothing downstream of a run can say what the model was shown. Measured
- * 2026-11-01 on round18 (24 minutes, 75 assembled plans): the bound session contained `位置:` 0 times,
- * `脚下` 0 times and `待浇水` 0 times, while `formatGameEnvironmentFacts` renders all three correctly when
- * called directly. So two verdict criteria (`tools/live-run/round-verdict.mjs` rows 2 and 5) reported
- * UNOBSERVABLE by construction - the instrument could not see the request, not the product.
- *
- * This file is a RECORD, not a durable document. It lives beside the run manifest under the runtime root,
- * is never written into the session, the transcript or player memory, no product path reads it, and it is
- * non-durable by design - exactly like the block it describes. A reader asks it: was the block rendered
- * on every request or did it vanish; what did the unwatered count say, and did it ever go non-zero; did
- * same-map villagers arrive with tiles; did the line ever reach the byte cap and what did the cap drop.
- */
-export const ENVIRONMENT_FACTS_RECORD_FILENAME = "environment-facts.jsonl";
-export const ENVIRONMENT_FACTS_RECORD_SCHEMA = "gamebuddy_environment_facts_render/v1";
-/**
- * The record's bound, sized from the measured turn count rather than guessed.
- *
- * The largest session measured in this loop is 285 turns (`round-verdict.mjs`'s own fold note) and
- * round18 assembled 75 requests in 24 minutes. A recorded line measured 309 B for a busy farm (clock,
- * date, weather, location, tile, held tool, two nearby villagers, two destinations, 24 unwatered crops
- * and stamina), so 285 turns cost ~88 KB. 1200 records is 4.2x the largest measured run and cannot
- * exceed ~740 KB even if every line used the formatter's whole 512 B fact budget. The byte cap is the
- * second net, because the record must stay bounded for a caller that registers its own provider.
- *
- * After either cap the file receives ONE truncation line and then nothing, so a runaway session cannot
- * fill a disk and a reader can see that the tail was cut rather than believe the run ended there.
- */
-export const MAX_ENVIRONMENT_FACTS_RECORD_LINES = 1200;
-export const MAX_ENVIRONMENT_FACTS_RECORD_BYTES = 1024 * 1024;
-
-/** One line of the record: what was rendered, for which snapshot, and what the cap cost it. */
-export type EnvironmentFactsRenderRecord = Readonly<{
-  schema: string;
-  /** When the transform asked, ISO-8601 - ordering one render against a game event needs a clock. */
-  at: string;
-  /** The snapshot revision the line was rendered from; `null` when no snapshot was usable. */
-  revision: number | null;
-  bytes: number;
-  /** Whether the rendered line still exceeded `MAX_GAME_ENVIRONMENT_FACTS_BYTES` after the cap ran. */
-  overCap: boolean;
-  /** Present only when the cap dropped something. */
-  dropped?: readonly string[];
-  /** The exact string the provider returned - `""` when the block rendered empty (and was stripped). */
-  text: string;
-}>;
-
-/**
- * Where this run's renders are recorded: beside the run manifest, inside the runtime root.
- *
- * The manifest is per surface session (`resolveRuntimePaths` puts it under `surface-sessions/<id>/` when
- * there is one), so a record written here belongs to one run rather than to every run that shares the
- * continuity - and it is nowhere near `<sessionDir>`, the transcript or the memory store.
- */
-export function environmentFactsRecordPath(paths: RuntimePaths): string {
-  return join(dirname(paths.runManifestPath), ENVIRONMENT_FACTS_RECORD_FILENAME);
-}
-
-/**
- * The record around one environment render: render the CURRENT snapshot, then record what was rendered.
- *
- * NOTHING MOUNTS THIS. The Game runtime stopped registering an environment-facts provider because the line it
- * rendered is already the `<world-state>` paragraph of that same turn (see the registration site in
- * `createRuntimeWithFixedToolsCore`), so `environment-facts.jsonl` no longer has a producer. The record itself is
- * kept, together with this factory, for the unit that re-points it at the render that now feeds the model:
- * `tools/live-run/round-verdict.mjs` rows 2 and 5 answer from those lines, and until it is written from
- * `<world-state>`'s own composition they answer "cannot answer from this run".
- *
- * ORDER MATTERS. The render happens first and outside every `try`, so a formatter that throws throws
- * exactly as it did before this record existed - the request path's behaviour is unchanged. Only the
- * RECORD is best-effort: a diagnostic that cannot be written must never become a failed turn, so a write
- * failure disables further writes (one bad path costs one syscall, not one per turn) and the absent file
- * is the report.
- *
- * SYNCHRONOUS, MEASURED, NOT BUFFERED. `appendFileSync` of a 309 B line on this platform (Windows,
- * Node 24) costs 0.15-0.19 ms per call over 500 calls; round18's turn cadence was 24 minutes for 75
- * assembled requests (~19 s per turn, and the provider runs once per request), so the record costs
- * ~0.001% of a turn. Buffering would buy nothing measurable and would lose precisely the interesting
- * turns - the ones immediately before a killed run - which is the failure this record exists for. An
- * `O_APPEND` handle would be cheaper (0.0035 ms) but needs a close hook this provider has none of, and a
- * leaked descriptor per runtime is a worse trade than 0.15 ms.
- */
-export function createRenderedEnvironmentFactsProvider(integration: GameConnection, recordPath: string): () => string {
-  const connection = integration as import("./game-connection.js").StardewBridgeConnection;
-  let lines = 0;
-  let bytes = 0;
-  let directoryReady = false;
-  let writable = true;
-  let sealed = false;
-
-  const append = (line: string): void => {
-    const size = Buffer.byteLength(line, "utf8");
-    try {
-      if (!directoryReady) {
-        mkdirSync(dirname(recordPath), { recursive: true });
-        directoryReady = true;
-      }
-      appendFileSync(recordPath, line, "utf8");
-    } catch {
-      writable = false;
-      return;
-    }
-    lines += 1;
-    bytes += size;
-  };
-
-  const record = (rendered: GameEnvironmentFactsRender, revision: number | null): void => {
-    if (!writable || sealed) return;
-    const at = new Date().toISOString();
-    const line = `${JSON.stringify({
-      schema: ENVIRONMENT_FACTS_RECORD_SCHEMA,
-      at,
-      revision,
-      bytes: rendered.bytes,
-      overCap: rendered.bytes > MAX_GAME_ENVIRONMENT_FACTS_BYTES,
-      ...(rendered.dropped.length === 0 ? {} : { dropped: rendered.dropped }),
-      text: rendered.text,
-    })}\n`;
-    const size = Buffer.byteLength(line, "utf8");
-    if (lines >= MAX_ENVIRONMENT_FACTS_RECORD_LINES || bytes + size > MAX_ENVIRONMENT_FACTS_RECORD_BYTES) {
-      sealed = true;
-      append(
-        `${JSON.stringify({
-          schema: ENVIRONMENT_FACTS_RECORD_SCHEMA,
-          at,
-          truncated: true,
-          lines,
-          bytes,
-          reason: "environment_facts_record_cap_reached",
-        })}\n`,
-      );
-      return;
-    }
-    append(line);
-  };
-
-  return (): string => {
-    const snapshot = connection.state?.snapshot;
-    if (snapshot === null || snapshot === undefined) {
-      // Recorded, not skipped: "the block rendered empty" and "the block was never asked for" are
-      // different facts, and only the record can tell a vanished block from a run with no snapshot.
-      record({ text: "", bytes: 0, dropped: Object.freeze([]) }, null);
-      return "";
-    }
-    const locale = snapshot.presentationLocale?.toLowerCase() ?? "";
-    const rendered = renderGameEnvironmentFactsObservation(snapshot, locale.startsWith("zh"));
-    record(rendered, Number.isSafeInteger(snapshot.revision) ? snapshot.revision : null);
-    return rendered.text;
-  };
-}
 /**
  * Magic Context's native trigger may now run the embedded-SDK, no-tool
  * Historian when its own context-pressure policy requires organization.

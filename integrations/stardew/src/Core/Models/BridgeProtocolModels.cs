@@ -1140,7 +1140,15 @@ public sealed record BridgeSnapshot(
     // Measured round87b (2026-11-21): `shop_purchase` was dispatched at 75g a unit with 35g in hand, and nothing in the
     // snapshot could have answered whether 15 of them were affordable - the wallet was on no field at all. Published as
     // a plain native read, no interpretation: what to buy, and whether to walk, stays the caller's decision.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Money = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Money = null,
+    // The world-object rows the lane's caps left out of `worldObjectTargets` - the same statement the soil, building,
+    // seed-supply and exclusion registers make beside their own lists. Its population is every kind the lane publishes
+    // (placement candidates, objects, placed furniture, empty pedestals), and the reason it had to exist: the object half
+    // publishes EVERYTHING standing in `location.objects` now, so a farmhouse or a cluttered farm routinely offers more
+    // than the sixteen object rows one budget admits, and a reader receiving sixteen cannot tell that room from one with
+    // exactly sixteen. Null when the family itself was not measured (none of its capabilities advertised).
+    // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WorldObjectTargetsOmitted = null);
 
 public sealed record BridgeActiveExecution(
     string ExecutionId,

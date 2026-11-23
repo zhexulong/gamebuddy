@@ -12,11 +12,11 @@ namespace GameBuddy.Stardew.Core.Models;
 /// classification:
 /// <c>placement_candidate</c> is a tile the item in <c>Slot</c> could be placed on now
 /// (the object does not exist yet, and <c>QualifiedItemId</c> is the item that would be
-/// placed); <c>removable_object</c> is an object the axe or pickaxe in <c>Slot</c>
-/// removes; <c>non_removable_object</c> is an object no axe or pickaxe removes, so the
-/// removal action refuses it by name instead of the Agent having to guess why it is
-/// invisible; <c>breakable_container</c> is a breakable container and <c>Slot</c> holds
-/// a heavy hitter for it; <c>placed_furniture</c> is a piece standing in
+/// placed); <c>removable_object</c> is an object an axe or a pickaxe removes, in the
+/// native guards' own terms; <c>non_removable_object</c> is an object no axe and no
+/// pickaxe removes, so the removal action refuses it by name instead of the Agent having
+/// to guess why it is invisible; <c>breakable_container</c> is a breakable container;
+/// <c>placed_furniture</c> is a piece standing in
 /// <c>location.furniture</c> - the room's own bed, sofa or rug, which never appears in
 /// <c>location.objects</c>, so none of the four object kinds can describe it - and it is
 /// named through <c>move_placed_furniture</c>.
@@ -27,6 +27,18 @@ namespace GameBuddy.Stardew.Core.Models;
 /// no tool in this lane lifts one). It is a fact about the actor's own
 /// backpack, not an instruction: the action still requires that slot to be EQUIPPED and
 /// refuses with a named code when it is not.
+/// </para>
+/// <para>
+/// THE ROW'S EXISTENCE IS THE WORLD'S, THE SLOT IS THE PACK'S. Every object standing in
+/// <c>location.objects</c> inside the discovery radius is published whether or not the
+/// pack carries a tool that could remove it: <c>slot: -1</c> against a
+/// <c>removable_object</c> says "an axe or a pickaxe would take this and she has neither",
+/// and the action names the missing tool (<c>tool_not_owned:axe_or_pickaxe</c>) rather
+/// than the radar having erased the thing. This used to be the other way round - the
+/// object walk sat inside a backpack loop that skipped every slot whose item was not a
+/// heavy hitter - so an unarmed actor's room was empty, and the seed parcel the game
+/// leaves standing in the farmhouse was in nobody's snapshot (measured 2026-11-23,
+/// <c>round95</c>).
 /// </para>
 /// <para>
 /// <c>Rotation</c> and <c>Rotations</c> are the piece's live <c>currentRotation</c> and the

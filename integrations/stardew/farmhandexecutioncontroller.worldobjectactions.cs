@@ -1028,9 +1028,39 @@ internal sealed partial class ExecutionManager
         return (ExecutionState.Succeeded, "owned_object_placed");
     }
 
-    /// <summary>Whether some axe or pickaxe removes this object, in the native guards' own terms (Object.cs:1092-1443).</summary>
+    /// <summary>
+    /// Whether some axe or pickaxe removes this object, in the native guards' own terms (Object.cs:1092-1443).
+    ///
+    /// <para>
+    /// This decides a published row's KIND - <c>removable_object</c> against <c>non_removable_object</c> - and never
+    /// whether the row exists. It used to also gate publication, which is why an object no tool removes (the seed parcel
+    /// the game leaves standing in the farmhouse) never reached the companion and nothing said it had been withheld.
+    /// </para>
+    /// </summary>
     private static bool IsRemovableByAnyLaneTool(StardewValley.Object target) =>
         RemovesThisObject(new Axe(), target) || RemovesThisObject(new Pickaxe(), target);
+
+    /// <summary>
+    /// The backpack slot whose tool the removal action can act through on this object, or -1 when the pack holds none:
+    /// any heavy hitter for a breakable container (<c>BreakableContainer.cs:118</c>), and an axe or pickaxe the object's
+    /// own native guards admit for everything else (<see cref="RemovesThisObject"/>).
+    ///
+    /// <para>
+    /// A SLOT, NOT A PROMISE. The action re-selects from the pack on the game thread and refuses by name when it is no
+    /// longer there (<c>tool_not_owned:axe_or_pickaxe</c>), so -1 states "her pack cannot do this now" rather than "this
+    /// cannot be done" - the kind beside it says which of the two it is.
+    /// </para>
+    /// </summary>
+    private static int LaneRemovalToolSlot(Farmer player, bool container, StardewValley.Object target)
+    {
+        for (int slot = 0; slot < player.Items.Count; slot++)
+        {
+            if (player.Items[slot] is not Tool owned) continue;
+            if (container ? owned.isHeavyHitter() : RemovesThisObject(owned, target))
+                return slot;
+        }
+        return -1;
+    }
 
     /// <summary>
     /// Mirrors the native removal guards of <c>Object.performToolAction</c> for the two
@@ -1161,8 +1191,9 @@ internal sealed partial class ExecutionManager
         return $"breakable_container_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    internal static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player)
+    internal static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player, out int omitted)
     {
+        omitted = 0;
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeWorldObjectTarget>();
         List<BridgeWorldObjectTarget> result = new();
@@ -1212,59 +1243,72 @@ internal sealed partial class ExecutionManager
         // of the third. Distance from the actor decides now, and the two tie-breaks make one unchanged world publish one
         // order: the backpack slot first (the one fact that tells two machines' rows on the SAME tile apart), then the
         // tile itself. Ordering removes nothing; it decides which sixteen of the rows survive the budget.
-        result.AddRange(TargetOrdering.NearestFirstByChebyshev(
+        IReadOnlyList<BridgeWorldObjectTarget> orderedPlacements = TargetOrdering.NearestFirstByChebyshev(
             placements,
             actorX,
             actorY,
-            placement => new TargetCandidate(placement.X, placement.Y, placement.Slot)).Take(WorldObjectTargetLimit));
-        int objectCount = 0;
-        for (int slot = 0; slot < player.Items.Count; slot++)
+            placement => new TargetCandidate(placement.X, placement.Y, placement.Slot));
+        int keptPlacements = Math.Min(orderedPlacements.Count, WorldObjectTargetLimit);
+        omitted += orderedPlacements.Count - keptPlacements;
+        result.AddRange(orderedPlacements.Take(keptPlacements));
+        // THE MAP IS THE SUBJECT AND THE PACK IS EVIDENCE. This walk used to sit INSIDE a backpack loop, and that loop
+        // skipped every slot whose item was not a heavy hitter - so an actor carrying no axe or pickaxe published no
+        // object row at all, and the seed parcel the game leaves standing in the farmhouse was simply not in her world.
+        // (Measured 2026-11-23, `round95` `FarmHouse`.) Whether she can swing at a thing is the ACTION's answer
+        // (`tool_not_owned:axe_or_pickaxe`, `remove_placed_item_target_not_removable`), never a reason for the radar to
+        // erase it. What the row states is the tool fact, and it prefers an owned slot:
+        //   `breakable_container`  - swingable by any heavy hitter (`BreakableContainer.cs:118`); `slot` is one she owns.
+        //   `removable_object`     - an axe or a pickaxe removes it (`IsRemovableByAnyLaneTool`); `slot` is one she owns
+        //                            THAT removes it.
+        //   `non_removable_object` - no axe and no pickaxe removes it; `slot` is -1 and the removal action names why.
+        // A tool she does not own is `slot: -1` and the action's refusal, not a row that never existed.
+        //
+        // The tile is admitted through the family-wide place rule every tile-publishing discovery here uses
+        // (`IsPublishedTargetTileInRadius`): on the map, and with a cardinal neighbour the body can stand on. That is a
+        // bound on WHERE a row may name - a cell no body can be sent beside is a coordinate, not a target - and never a
+        // filter on WHAT stands there.
+        List<BridgeWorldObjectTarget> objectCandidates = new();
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
         {
-            Tool? ownedTool = player.Items[slot] as Tool;
-            if (objectCount >= WorldObjectTargetLimit || !(ownedTool?.isHeavyHitter() ?? false))
+            Vector2 tile = pair.Key;
+            StardewValley.Object placed = pair.Value;
+            if (placed is null || !IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
-            foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-            {
-                if (objectCount >= WorldObjectTargetLimit)
-                    break;
-                Vector2 tile = pair.Key;
-                StardewValley.Object placed = pair.Value;
-                if (placed is null || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                    continue;
-                bool container = placed is BreakableContainer;
-                bool removable = !container && RemovesThisObject(ownedTool!, placed);
-                if (!container && !removable && !IsRemovableByAnyLaneTool(placed))
-                    continue;
-                // A container is this lane's subject whenever a heavy hitter is owned
-                // (BreakableContainer.cs:118), and it is published with the slot that
-                // tool occupies. Everything else is either removable by the owned
-                // axe/pickaxe or removable by neither: the second case is published too,
-                // because the alternative is an Agent that cannot tell "the Mod never
-                // advertised it" from "the Mod refuses it by name".
-                bool actionable = container || removable;
-                string targetId = container
-                    ? BuildBreakableContainerTargetId(location, (int)tile.X, (int)tile.Y, placed)
-                    : BuildPlacedItemTargetId(location, (int)tile.X, (int)tile.Y, placed);
-                if (!publishedTargetIds.Add(targetId)) continue;
-                result.Add(new BridgeWorldObjectTarget(
-                    targetId,
-                    container ? "breakable_container" : removable ? "removable_object" : "non_removable_object",
-                    location.NameOrUniqueName,
-                    (int)tile.X,
-                    (int)tile.Y,
-                    actionable ? slot : -1,
-                    placed.QualifiedItemId,
-                    string.IsNullOrEmpty(placed.DisplayName) ? placed.QualifiedItemId : placed.DisplayName,
-                    null,
-                    null,
-                    // An object in `location.objects` occupies exactly the tile it is keyed by - the engine's own
-                    // container and placement predicates read one tile - so this branch states 1x1 rather than omitting
-                    // the pair.
-                    1,
-                    1));
-                objectCount++;
-            }
+            bool container = placed is BreakableContainer;
+            bool removable = !container && IsRemovableByAnyLaneTool(placed);
+            string targetId = container
+                ? BuildBreakableContainerTargetId(location, (int)tile.X, (int)tile.Y, placed)
+                : BuildPlacedItemTargetId(location, (int)tile.X, (int)tile.Y, placed);
+            if (!publishedTargetIds.Add(targetId)) continue;
+            objectCandidates.Add(new BridgeWorldObjectTarget(
+                targetId,
+                container ? "breakable_container" : removable ? "removable_object" : "non_removable_object",
+                location.NameOrUniqueName,
+                (int)tile.X,
+                (int)tile.Y,
+                LaneRemovalToolSlot(player, container, placed),
+                placed.QualifiedItemId,
+                RequireDisplayName(placed.QualifiedItemId),
+                null,
+                null,
+                // An object in `location.objects` occupies exactly the tile it is keyed by - the engine's own
+                // container and placement predicates read one tile - so this branch states 1x1 rather than omitting
+                // the pair.
+                1,
+                1));
         }
+        // ORDER FIRST, THEN TRIM, AND STATE THE CUT: the map walk reaches tiles in the dictionary's own order, so
+        // truncating while it walks published whichever object it happened to meet first. Distance from the actor
+        // decides, the slot breaks the tie, and the count below says how many rows the budget left out - a reader that
+        // receives sixteen object rows can then tell a room with sixteen objects from one it lost the far end of.
+        IReadOnlyList<BridgeWorldObjectTarget> orderedObjects = TargetOrdering.NearestFirstByChebyshev(
+            objectCandidates,
+            actorX,
+            actorY,
+            row => new TargetCandidate(row.X, row.Y, row.Slot));
+        int keptObjects = Math.Min(orderedObjects.Count, WorldObjectTargetLimit);
+        omitted += orderedObjects.Count - keptObjects;
+        result.AddRange(orderedObjects.Take(keptObjects));
         // PLACED FURNITURE IS PART OF THE ROOM, and nothing published it.
         //
         // Furniture lives in `location.furniture`, not `location.objects`, and this Mod never read that collection - a grep
@@ -1286,14 +1330,17 @@ internal sealed partial class ExecutionManager
         int furnitureCount = 0;
         foreach (Furniture piece in location.furniture)
         {
-            if (furnitureCount >= WorldObjectTargetLimit)
-                break;
             if (piece is null) continue;
             Vector2 tile = piece.TileLocation;
-            if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+            if (!IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
             string targetId = BuildPlacedFurnitureTargetId(location, (int)tile.X, (int)tile.Y, piece);
             if (!publishedTargetIds.Add(targetId)) continue;
+            if (furnitureCount >= WorldObjectTargetLimit)
+            {
+                omitted++;
+                continue;
+            }
             result.Add(new BridgeWorldObjectTarget(
                 targetId,
                 "placed_furniture",
@@ -1302,7 +1349,7 @@ internal sealed partial class ExecutionManager
                 (int)tile.Y,
                 -1,
                 piece.QualifiedItemId,
-                string.IsNullOrEmpty(piece.DisplayName) ? piece.QualifiedItemId : piece.DisplayName,
+                RequireDisplayName(piece.QualifiedItemId),
                 piece.currentRotation.Value,
                 piece.rotations.Value,
                 // THE FOOTPRINT THE ENGINE COMPUTES, not a table here: `getTilesWide()`/`getTilesHigh()` divide the
@@ -1316,15 +1363,18 @@ internal sealed partial class ExecutionManager
         int pedestalCount = 0;
         foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
         {
-            if (pedestalCount >= WorldObjectTargetLimit)
-                break;
             if (pair.Value is not StardewValley.Objects.ItemPedestal pedestal || pedestal.heldObject.Value is not null)
                 continue;
             Vector2 tile = pair.Key;
-            if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
+            if (!IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
             string targetId = BuildPedestalDepositTargetId(location, (int)tile.X, (int)tile.Y, pedestal);
             if (!publishedTargetIds.Add(targetId)) continue;
+            if (pedestalCount >= WorldObjectTargetLimit)
+            {
+                omitted++;
+                continue;
+            }
             result.Add(new BridgeWorldObjectTarget(
                 targetId,
                 "empty_pedestal",
@@ -1333,13 +1383,21 @@ internal sealed partial class ExecutionManager
                 (int)tile.Y,
                 -1,
                 pedestal.QualifiedItemId,
-                string.IsNullOrEmpty(pedestal.DisplayName) ? pedestal.QualifiedItemId : pedestal.DisplayName,
+                RequireDisplayName(pedestal.QualifiedItemId),
                 null,
                 null,
                 1,
                 1));
             pedestalCount++;
         }
+        // THE WIRE'S OWN BOUND, LAST AND SEPARATELY COUNTED. The four caps above are fairness BETWEEN kinds (sixteen
+        // placement rows may not eat every object row); this one is the bound the Host declares for the family, and it
+        // refuses the WHOLE snapshot past it rather than trimming - `SNAPSHOT_FAMILY_RULES` holds `worldObjectTargets` at
+        // 48, so a 49-row frame is not a longer list, it is a frame the bridge closes. `WorldObjectTargetFamilyLimit` is
+        // that number, pinned to the Host's own declaration by `RadiusWindowBudgetAuthorityTests`.
+        int keptRows = Math.Min(result.Count, WorldObjectTargetFamilyLimit);
+        omitted += result.Count - keptRows;
+        if (keptRows < result.Count) result.RemoveRange(keptRows, result.Count - keptRows);
         return result;
     }
 
@@ -1359,4 +1417,11 @@ internal sealed partial class ExecutionManager
     }
 
     private const int WorldObjectTargetLimit = 16;
+
+    /// <summary>
+    /// The family's whole-row bound: the Host's declared <c>maxItems</c> for <c>worldObjectTargets</c>. Published by the
+    /// Mod only because the wire cannot carry more - the Host REFUSES a longer list rather than trimming it, so this is
+    /// the difference between a bounded family and a snapshot that closes the bridge.
+    /// </summary>
+    internal const int WorldObjectTargetFamilyLimit = 48;
 }

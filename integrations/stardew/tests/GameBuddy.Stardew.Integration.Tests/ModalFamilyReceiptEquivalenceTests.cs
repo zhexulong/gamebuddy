@@ -110,7 +110,7 @@ public sealed class ModalFamilyReceiptEquivalenceTests
         ["dismiss/unaudited_menu"] = new Published("Rejected", "modal_not_dismissible", "modal_type=GameMenuStub;dismissible=false", "<null>", "<null>", 1, false),
         ["dismiss/unaudited_level_up"] = new Published("Rejected", "modal_not_dismissible", "modal_type=LevelUpMenu;dismissible=false;pending_level_ups=1;level_up=0@1", "<null>", "<null>", 1, false),
         ["dismiss/shipping_commit"] = new Published("Uncertain", "dismiss_modal_native_exception", "modal_type=ShippingMenu;native_dispatched=false;native_exception=TargetInvocationException", "<null>", "<null>", 1, false),
-        ["dismiss/shipping_commit_in_progress"] = new Published("Succeeded", "settlement_commit_in_progress", "modal_type=ShippingMenu;dismissed=false;cleared_modal=ShippingMenu;clearing=true;close_effect=engine_shipping_commit;commit_already_driven=true", "<null>", "<null>", 2, false),
+        ["dismiss/shipping_commit_in_progress"] = new Published("Succeeded", "settlement_commit_in_progress", "modal_type=ShippingMenu;dismissed=false;closed_modal_type=ShippingMenu;owned_by=none;clearing=true;close_effect=engine_shipping_commit;commit_already_driven=true", "<null>", "<null>", 2, false),
         ["dismiss/no_bound_actor"] = new Published("Rejected", "world_not_ready", "<null>", "<null>", "<null>", 1, false),
         ["answer/no_modal"] = new Published("Rejected", "no_modal_present", "menu=none", "<null>", "<null>", 1, false),
         ["answer/not_a_question"] = new Published("Rejected", "modal_not_answerable", "modal_type=DialogueBox;question=false", "<null>", "<null>", 1, false),
@@ -248,7 +248,7 @@ public sealed class ModalFamilyReceiptEquivalenceTests
         var reached = new List<(string Mount, Type Arm, ModalFamily.ClosePath? Path)>();
         foreach ((string mount, Func<IClickableMenu> create) in mounts)
         {
-            ModalFamily.Dismissal verdict = ModalFamily.DecideDismissal(create(), actor);
+            ModalFamily.Dismissal verdict = ModalFamily.DecideDismissal(create(), actor, actionOwned: false, ownerExecutionId: null);
             reached.Add((mount, verdict.GetType(), verdict is ModalFamily.Dismissal.Closeable close ? close.Path : null));
         }
 

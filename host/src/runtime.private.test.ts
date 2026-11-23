@@ -45,7 +45,6 @@ import {
   resolveRuntimePaths,
   RUNTIME_PACKAGE_VERSIONS,
 } from "./runtime.js";
-import { createRenderedEnvironmentFactsProvider } from "./runtime-core.internal.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
 import { createMaterializedGameCompanionRuntime } from "./game-runtime-fixed-tools.internal.js";
 import type { GameConnection, StardewBridgeConnection } from "./game-connection.js";
@@ -731,13 +730,12 @@ test("a Game runtime registers no environment-facts provider: the facts reach th
           `the environment line is not inside <world-state>, so dropping the block lost it: ${environment}`,
         );
 
-        // 3. WHAT THE SECOND COPY COST, measured from the producer the mount used to register, and the control that makes
+        // 3. WHAT THE SECOND COPY COST, measured from a provider that renders the same line, and the control that makes
         //    the zero above a measurement: with a provider registered the pass does reach the first player turn.
-        const provider = createRenderedEnvironmentFactsProvider(mod.connection, join(root, "environment-facts.jsonl"));
-        setRuntimeEnvironmentFacts(provider);
+        const zh = (world.presentationLocale ?? "").toLowerCase().startsWith("zh");
+        setRuntimeEnvironmentFacts(() => formatGameEnvironmentFacts(world, zh));
         const block = renderRuntimeEnvironmentBlock();
         assert.ok(block !== undefined, "the control: a registered provider renders a block");
-        const zh = (world.presentationLocale ?? "").toLowerCase().startsWith("zh");
         assert.equal(
           block.split("\n")[1],
           formatGameEnvironmentFacts(world, zh),

@@ -403,7 +403,7 @@ test("dismiss_modal: a dismissal that found nothing is a settlement, and only wi
       state: "succeeded",
       reasonCode: "nothing_to_dismiss",
       evidence: {
-        detail: "modal_type=DialogueBox;dismissed=true;cleared_modal=DialogueBox;close_effect=native_dialogue_close",
+        detail: "modal_type=DialogueBox;dismissed=true;closed_modal_type=DialogueBox;owned_by=none;close_effect=native_dialogue_close",
       },
     }),
     false,

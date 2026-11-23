@@ -272,6 +272,42 @@ internal static class WorldModel
     internal static bool HasMountedModal(in ActorWorldFacts facts) => facts.MenuType is not null || facts.DialogueUp;
 
     /// <summary>
+    /// Whether the menu on screen still has a question in it, which is the one menu fact the disposition and the
+    /// level-up projection both have to read the same way.
+    ///
+    /// <para>
+    /// A `LevelUpMenu` ANSWERS ITSELF OUT OF `isActive`. Its own click handler runs `okButtonClicked` - which calls
+    /// `RemoveLevelFromLevelList` and clears the flag (`LevelUpMenu.cs:637-648`) - and its `update` then leaves the screen
+    /// with `exitThisMenu()` (`:414-419`); the same is true of the two profession cards (`:487-505`). So for the one
+    /// update between the settlement and the exit, `Game1.activeClickableMenu` is still that menu while `Farmer.newLevels`
+    /// no longer holds the pair - and MEASURED 2026-11-23 (`multiday`, `dayRecords[0]`): the snapshot published
+    /// `actorDispositionKind=modal;actorDispositionDetail=LevelUpMenu` beside `pendingLevelUps=[]`, so the run was handed a
+    /// menu to answer and no argument to answer it with. A menu that has already settled asks nothing, and reporting it
+    /// as the hold is the disagreement between the two reads rather than a fact about the screen.
+    /// </para>
+    /// <para>
+    /// Every other menu keeps asking for as long as it is mounted: their close paths either own no state
+    /// (`ModalFamily.DismissibleOperationMenus`) or are driven by the engine's own update.
+    /// </para>
+    /// </summary>
+    internal static bool IsAsking(IClickableMenu menu) => menu is not LevelUpMenu levelUp || levelUp.isActive;
+
+    /// <summary>
+    /// The engine's own type name for the menu holding the actor, or null when nothing is (or when the menu left its
+    /// question behind: <see cref="IsAsking"/>).
+    /// </summary>
+    internal static string? MountedMenuName(IClickableMenu? menu) =>
+        menu is not null && IsAsking(menu) ? menu.GetType().Name : null;
+
+    /// <summary>
+    /// The level-up menu that is still ASKING, or null when none is. The pair of the level-up being shown is read off
+    /// THIS object, because it is the object that names the modal (<see cref="MountedMenuName"/>) and the object that
+    /// writes the answer (`LevelUpMenu.okButtonClicked` over its own private pair).
+    /// </summary>
+    internal static LevelUpMenu? AskingLevelUpMenu(IClickableMenu? menu) =>
+        menu is LevelUpMenu levelUp && IsAsking(levelUp) ? levelUp : null;
+
+    /// <summary>
     /// The engine's own type name for the one modal a dialogue answer or close can act on. The target version declares
     /// no subclass of `DialogueBox`, so the name and the type test the handlers perform (`Game1.activeClickableMenu is
     /// DialogueBox`) are the same set.
@@ -306,6 +342,10 @@ internal static class WorldModel
     /// </summary>
     internal static BodyProgramModalFact MountedModal(IClickableMenu? menu, bool dialogueUp) => menu switch
     {
+        // A LEVEL-UP MENU THAT HAS SETTLED IS NOT A HOLD. Its answer already ran (`RemoveLevelFromLevelList`,
+        // `LevelUpMenu.cs:637-648`) and it exits on its own next update (`:414-419`), so there is nothing on screen to
+        // answer; naming it here is what handed the run a menu with no argument (see `IsAsking`).
+        LevelUpMenu settled when !IsAsking(settled) => BodyProgramModalFact.None,
         // THE BED PROMPT IS ITS OWN KIND. It is a question like any other, and the similarity is the trap: answering it is
         // the calendar crossing `sleep` exists to do WITH a receipt, so `answer_dialogue` is refused for it
         // (`native_sleep_prompt_owned_by_sleep`) and the pump must release the night's own action instead of holding it
@@ -368,7 +408,7 @@ internal static class WorldModel
     internal static ActorWorldFacts ReadFacts(Farmer? player)
     {
         bool eventUp = Game1.eventUp;
-        string? menuType = Game1.activeClickableMenu?.GetType().Name;
+        string? menuType = MountedMenuName(Game1.activeClickableMenu);
         bool dialogueUp = Game1.dialogueUp;
         int timeOfDay = Game1.timeOfDay;
         // A Game1 static like `eventUp`, not an actor field: the engine's warp flag holds the body whoever reads it,
@@ -421,6 +461,17 @@ internal static class WorldModel
     }
 
     private static bool OwnedByAction() => ModalActionOwnedCheck?.Invoke() ?? false;
+
+    /// <summary>
+    /// Whether an action currently OWNS the mounted modal, for a caller that must state whose state a close would touch.
+    ///
+    /// <para>
+    /// The ONE producer is <see cref="ModalActionOwnedCheck"/> over the modal lease (`OwnsCurrentModal`), the same
+    /// projection the disposition publishes as `action_owned=` - so a receipt that says `owned_by=none` and a hold that
+    /// says `action_owned=false` are the same reading of the same lease, not two copies of it.
+    /// </para>
+    /// </summary>
+    internal static bool ModalIsActionOwned() => OwnedByAction();
 
     /// <summary>
     /// WIA §4.2 owner arbitration, as the pure ruling the lease must satisfy: a modal belongs to an action only when the

@@ -20,7 +20,7 @@ namespace GameBuddy.Stardew;
 /// menu holds the body.
 ///
 /// <para>
-/// WHAT THIS TYPE OWNS. Three things, and nothing else:
+/// WHAT THIS TYPE OWNS. Four things, and nothing else:
 /// <list type="number">
 /// <item>The audited close-path set (<see cref="IsDismissibleOperationMenu"/>) - the menus whose native close is a
 /// pure cancel, which is the property that lets a close channel touch them at all.</item>
@@ -29,6 +29,10 @@ namespace GameBuddy.Stardew;
 /// decide the same question by POSITION. A position is the one form a decision can be misread in: the shop arm was
 /// closed by this channel once precisely because the ladder let "audited" answer a question about ownership.</item>
 /// <item>The settlement-commit latch (<c>ShippingMenu.okClicked</c> is not idempotent) and its replace rule.</item>
+/// <item>The two facts the receipt states about a close it performed: WHOSE modal it was (<see cref="Dismissal.Closeable.OwnedBy"/>
+/// over <see cref="OwnedByFact"/>) and whether it skipped presentation the box still held
+/// (<see cref="Dismissal.Closeable.AdvanceSkipped"/> over <see cref="HasPresentationLeft"/>). They live beside the
+/// verdict because both are properties of the close the verdict chose, and the handler must not re-derive either.</item>
 /// </list>
 /// </para>
 /// <para>
@@ -165,11 +169,13 @@ internal sealed class ModalFamily
         /// <summary>This channel may close the menu, through <see cref="Path"/>, and the menu it may close is <see cref="Menu"/>.</summary>
         internal sealed class Closeable : Dismissal
         {
-            internal Closeable(IClickableMenu menu, ClosePath path, string modalType)
+            internal Closeable(IClickableMenu menu, ClosePath path, string modalType, string ownedBy, bool advanceSkipped)
             {
                 this.Menu = menu;
                 this.Path = path;
                 this.ModalType = modalType;
+                this.OwnedBy = ownedBy;
+                this.AdvanceSkipped = advanceSkipped;
             }
 
             internal IClickableMenu Menu { get; }
@@ -178,6 +184,28 @@ internal sealed class ModalFamily
 
             /// <summary>The engine's own type name, which every terminal here prints as `modal_type=`.</summary>
             internal string ModalType { get; }
+
+            /// <summary>
+            /// WHO held the menu when the close ran, as <see cref="OwnedByFact"/> spells it: <see cref="NoOwner"/> when no
+            /// execution holds the modal lease, or the lease's own token.
+            ///
+            /// <para>
+            /// The hold publishes the same fact as `action_owned=` (`WorldModel.DescribeBodyHold`), and a caller told
+            /// `action_owned=false` is entitled to a receipt that says the close it got was of a modal nobody owned.
+            /// MEASURED `round95`: `cut_weeds` was refused `actor_held_by_modal` with `action_owned=false` and the receipt
+            /// vocabulary had no word for it, so the one fact the dismissal was safe on went unstated.
+            /// </para>
+            /// </summary>
+            internal string OwnedBy { get; }
+
+            /// <summary>
+            /// Whether the box still had presentation left when the close ran. `closeDialogue` does not present pages - it
+            /// exits the menu - so a close of a box that had not finished DISCARDS the rest of the dialogue, and the
+            /// `DialogueLine.SideEffects` those pages own never run. Presenting them is the dialogue pager's advance, a
+            /// different act from this close, which is why the receipt says it happened rather than calling the close a
+            /// cancel.
+            /// </summary>
+            internal bool AdvanceSkipped { get; }
         }
     }
 
@@ -190,10 +218,21 @@ internal sealed class ModalFamily
     /// `answer_dialogue`'s seam), any other dialogue box is closeable without the operation-menu audit (its close IS the
     /// audited native exit), and every other menu must be audited AND report `readyToClose` before it may be closed.
     /// </para>
+    /// <para>
+    /// OWNERSHIP IS TAKEN, NOT DECIDED HERE. <paramref name="actionOwned"/> and <paramref name="ownerExecutionId"/> are
+    /// the modal lease's own facts, read by the caller from the one producer the disposition also reads
+    /// (<see cref="WorldModel.ModalIsActionOwned"/>, over `ModalActionOwnedCheck`). The verdict carries them so the
+    /// receipt can state whose state the close touched - see <see cref="Dismissal.Closeable.OwnedBy"/>.
+    /// </para>
     /// </summary>
-    internal static Dismissal DecideDismissal(IClickableMenu modal, Farmer actor)
+    internal static Dismissal DecideDismissal(
+        IClickableMenu modal,
+        Farmer actor,
+        bool actionOwned,
+        string? ownerExecutionId)
     {
         string modalType = modal.GetType().Name;
+        string ownedBy = OwnedByFact(actionOwned, ownerExecutionId);
 
         if (modal is ShopMenu)
         {
@@ -218,7 +257,12 @@ internal sealed class ModalFamily
         if (modal is DialogueBox dialogue)
         {
             if (!dialogue.isQuestion)
-                return new Dismissal.Closeable(dialogue, ClosePath.Dialogue, modalType);
+                return new Dismissal.Closeable(
+                    dialogue,
+                    ClosePath.Dialogue,
+                    modalType,
+                    ownedBy,
+                    HasPresentationLeft(dialogue));
 
             // The refusal must carry the QUESTION, not just the fact that one is being asked.
             //
@@ -280,8 +324,50 @@ internal sealed class ModalFamily
         return new Dismissal.Closeable(
             modal,
             modal is ShippingMenu ? ClosePath.EngineShippingCommit : ClosePath.PureCancel,
-            modalType);
+            modalType,
+            ownedBy,
+            advanceSkipped: false);
     }
+
+    /// <summary>The word for a modal NO execution holds: the `owned_by=` value the hold's `action_owned=false` means.</summary>
+    internal const string NoOwner = "none";
+
+    /// <summary>
+    /// WHO holds the modal, in the one spelling the receipt publishes: <see cref="NoOwner"/>, or the lease's own token
+    /// (`execution:&lt;id&gt;`).
+    ///
+    /// <para>
+    /// `actionOwned` and the token are BOTH taken, rather than the token alone, because the lease can outlive the
+    /// execution that took it: `WorldModel.OwnsCurrentModal` counts a lease whose execution is still active, so a stale
+    /// lease publishes `action_owned=false` while `ActiveBodySlots.ModalOwnerExecutionId` is non-null. Printing the token
+    /// from the lease alone would then claim an owner the hold had just denied.
+    /// </para>
+    /// </summary>
+    internal static string OwnedByFact(bool actionOwned, string? ownerExecutionId) =>
+        actionOwned ? "execution:" + ActiveBodySlots.OwnerToken(ownerExecutionId) : NoOwner;
+
+    /// <summary>
+    /// The receipt's statement of what it closed and who held it, in ONE spelling for the handler and for the matrix that
+    /// proves the escape.
+    /// </summary>
+    internal static string ClosedModalField(string modalType, string ownedBy) =>
+        $"closed_modal_type={modalType};owned_by={ownedBy}";
+
+    /// <summary>
+    /// Whether the box has anything left to PRESENT, read from the box's own public state before the close runs.
+    ///
+    /// <para>
+    /// Both dialogue shapes are read, because they keep their remainder in different fields: a character box pushes the
+    /// current screen's remaining pages onto `characterDialoguesBrokenUp` and reports the speaker's whole dialogue through
+    /// `dialogueFinished` (`DialogueBox.cs:154-162`), while a plain string box keeps its pages in `dialogues` and never
+    /// sets `dialogueFinished` at all (`:167-179`). A `DialogueBox` a probe minted through `FormatterServices` leaves those
+    /// lists null, so each read is a pattern rather than a dereference.
+    /// </para>
+    /// </summary>
+    internal static bool HasPresentationLeft(DialogueBox box) =>
+        box.characterDialogue is not null
+            ? !box.dialogueFinished || box.characterDialoguesBrokenUp is { Count: > 1 }
+            : box.dialogues is { Count: > 1 };
 
     /// <summary>
     /// The shipping menu whose settlement commit this channel has ALREADY driven, while that same menu is still on

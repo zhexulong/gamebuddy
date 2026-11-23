@@ -3,8 +3,13 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { renderRuntimeEnvironmentBlock, setRuntimeEnvironmentFacts } from "@cortexkit/pi-magic-context/memory";
 import type { DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import {
+  createEnvironmentFactsRecord,
+  type EnvironmentFactsRenderRecord,
+  environmentFactsRecordPath,
+  MAX_ENVIRONMENT_FACTS_RECORD_LINES,
+} from "./environment-facts-record.js";
 import {
   composeGameEnvironmentFacts,
   formatGameClock,
@@ -17,15 +22,10 @@ import {
   renderGameEnvironmentFactsObservation,
 } from "./game-world-vocabulary.js";
 import {
-  createRenderedEnvironmentFactsProvider,
-  environmentFactsRecordPath,
-  type EnvironmentFactsRenderRecord,
-  MAX_ENVIRONMENT_FACTS_RECORD_LINES,
   reloadMagicContextInRuntimeRoot,
   resolveRuntimePaths,
 } from "./runtime-core.internal.js";
 import { reflectCompanionSessionOnce } from "./composition/companion-session-reflection.js";
-import type { GameConnection } from "./game-connection.js";
 import type { Snapshot } from "./protocol.js";
 import { boundObservedSnapshot } from "./stardew-observation-budget.js";
 import { DEFAULT_COMPANION_PRESET } from "./tavern/default-companion-preset.js";
@@ -984,7 +984,9 @@ test("formatGameStamina publishes the native value, including a drained negative
  * beside the run manifest that only a reader opens.
  */
 type FakeSnapshot = GameEnvironmentFactsSource & Readonly<{ revision?: number; presentationLocale?: string }>;
-type FakeConnection = { state: { snapshot: FakeSnapshot | null } };
+
+/** What a delivery with no reading yet renders: the paragraph states `世界：尚未收到观察` and carries no environment line. */
+const BLANK_RENDER = Object.freeze({ text: "", bytes: 0, dropped: Object.freeze([]) });
 
 function sampleSnapshot(revision: number, overrides: Partial<FakeSnapshot> = {}): FakeSnapshot {
   return {
@@ -1001,11 +1003,7 @@ function sampleSnapshot(revision: number, overrides: Partial<FakeSnapshot> = {})
   };
 }
 
-function fakeConnection(snapshot: FakeSnapshot | null): FakeConnection {
-  return { state: { snapshot } };
-}
-
-/** The record as a reader sees it: one parsed line per rendered request, in write order. */
+/** The record as a reader sees it: one parsed line per rendered turn, in write order. */
 function readRecords(recordPath: string): EnvironmentFactsRenderRecord[] {
   return readFileSync(recordPath, "utf8")
     .split("\n")
@@ -1013,33 +1011,27 @@ function readRecords(recordPath: string): EnvironmentFactsRenderRecord[] {
     .map((line) => JSON.parse(line) as EnvironmentFactsRenderRecord);
 }
 
-test("the block the transform injects is recorded per request, with the snapshot revision it rendered", () => {
+/**
+ * The record is driven with the observation the TURN rendered, not with a bridge read.
+ *
+ * That is the whole change the record needed: the reading a delivery states may be many turns old (`#lastSnapshot`), so a
+ * recorder that read `connection.state.snapshot` itself described a moment the prompt never carried. The population here is
+ * therefore two renders of two readings, each recorded with the revision it came from.
+ */
+test("one line per delivery, carrying the rendered line and the revision it came from", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-record-"));
   const recordPath = join(dir, "environment-facts.jsonl");
   try {
-    const connection = fakeConnection(
-      sampleSnapshot(4123, {
-        wateringWhereabouts: [{ location: "Farm", needsWaterCount: 24, nearestX: 18, nearestY: 16 }],
-      }),
-    );
-    const firstSnapshot = connection.state.snapshot as GameEnvironmentFactsSource;
-    // The factory's own contract, driven through the vendored registration the transform reads, so the test proves
-    // the provider the transform would reach is the one that records. Nothing in production registers it any more
-    // (the facts are `<world-state>`'s now); registration is process-global and locked, so this file registers
-    // exactly once here.
-    setRuntimeEnvironmentFacts(
-      createRenderedEnvironmentFactsProvider(connection as unknown as GameConnection, recordPath),
-    );
-
-    const firstBlock = renderRuntimeEnvironmentBlock();
-    connection.state.snapshot = sampleSnapshot(4124, { timeOfDay: 1500, dayOfMonth: 7 });
-    const secondBlock = renderRuntimeEnvironmentBlock();
-
-    assert.ok(firstBlock?.includes("06:00"), `the first block renders the first snapshot: ${String(firstBlock)}`);
-    assert.ok(secondBlock?.includes("15:00"), `the second block renders the second snapshot: ${String(secondBlock)}`);
+    const first = sampleSnapshot(4123, {
+      wateringWhereabouts: [{ location: "Farm", needsWaterCount: 24, nearestX: 18, nearestY: 16 }],
+    });
+    const second = sampleSnapshot(4124, { timeOfDay: 1500, dayOfMonth: 7 });
+    const record = createEnvironmentFactsRecord(recordPath);
+    record(renderGameEnvironmentFactsObservation(first, true), 4123);
+    record(renderGameEnvironmentFactsObservation(second, true), 4124);
 
     const records = readRecords(recordPath);
-    assert.equal(records.length, 2, "one record per assembled request, not one per run");
+    assert.equal(records.length, 2, "one record per delivered turn, not one per run");
     assert.deepEqual(
       records.map((record) => record.revision),
       [4123, 4124],
@@ -1047,18 +1039,17 @@ test("the block the transform injects is recorded per request, with the snapshot
     );
     const [firstRecord, secondRecord] = records;
     assert.ok(firstRecord !== undefined && secondRecord !== undefined);
-    // The record holds the string the transform injected - verbatim, not a re-render of the same snapshot.
-    assert.equal(firstRecord.text, firstBlock?.split("\n")[1]);
-    assert.equal(secondRecord.text, secondBlock?.split("\n")[1]);
-    assert.ok(firstRecord.text.includes("待浇水作物: 24（最近: 18,16）"), firstRecord.text);
     assert.equal(
       firstRecord.text,
-      formatGameEnvironmentFacts(firstSnapshot, true),
+      formatGameEnvironmentFacts(first, true),
       "the recorded line is the product's own line, so a reader is reading the prompt",
     );
+    assert.ok(firstRecord.text.includes("待浇水作物: 24（最近: 18,16）"), firstRecord.text);
+    assert.ok(secondRecord.text.includes("15:00"), secondRecord.text);
     assert.equal(firstRecord.overCap, false);
     assert.deepEqual(firstRecord.dropped, undefined, "nothing was dropped, so the key is absent");
     assert.equal(firstRecord.bytes, Buffer.byteLength(firstRecord.text, "utf8"));
+    assert.equal(firstRecord.schema, "gamebuddy_environment_facts_render/v1");
     assert.ok(Number.isFinite(Date.parse(firstRecord.at)), `the record is timestamped: ${firstRecord.at}`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1066,21 +1057,18 @@ test("the block the transform injects is recorded per request, with the snapshot
 });
 
 /**
- * "The block vanished on some turns" and "there was no snapshot to render" are different facts, and a
- * record that only wrote non-empty renders would collapse them into one absence.
+ * "The line vanished on some turns" and "there was no reading to render yet" are different facts, and a record that only
+ * wrote non-empty renders would collapse them into one absence.
  */
 test("an empty render is recorded as an empty render rather than omitted", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-empty-"));
   const recordPath = join(dir, "environment-facts.jsonl");
   try {
-    const connection = fakeConnection(null);
-    const provider = createRenderedEnvironmentFactsProvider(connection as unknown as GameConnection, recordPath);
-
-    assert.equal(provider(), "");
-    connection.state.snapshot = sampleSnapshot(77, { timeOfDay: 2100 });
-    provider();
-    connection.state.snapshot = null;
-    assert.equal(provider(), "");
+    const rendered = sampleSnapshot(77, { timeOfDay: 2100 });
+    const record = createEnvironmentFactsRecord(recordPath);
+    record(BLANK_RENDER, null);
+    record(renderGameEnvironmentFactsObservation(rendered, true), 77);
+    record(BLANK_RENDER, null);
 
     const records = readRecords(recordPath);
     assert.deepEqual(
@@ -1089,11 +1077,8 @@ test("an empty render is recorded as an empty render rather than omitted", () =>
         [null, "", 0],
         [
           77,
-          formatGameEnvironmentFacts(sampleSnapshot(77, { timeOfDay: 2100 }) as GameEnvironmentFactsSource, true),
-          Buffer.byteLength(
-            formatGameEnvironmentFacts(sampleSnapshot(77, { timeOfDay: 2100 }) as GameEnvironmentFactsSource, true),
-            "utf8",
-          ),
+          formatGameEnvironmentFacts(rendered, true),
+          Buffer.byteLength(formatGameEnvironmentFacts(rendered, true), "utf8"),
         ],
         [null, "", 0],
       ],
@@ -1151,11 +1136,11 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
     villagerWhereabouts,
     wateringWhereabouts,
   });
-  const observation = renderGameEnvironmentFactsObservation(source as GameEnvironmentFactsSource, true);
+  const observation = renderGameEnvironmentFactsObservation(source, true);
 
   assert.equal(
     observation.text,
-    formatGameEnvironmentFacts(source as GameEnvironmentFactsSource, true),
+    formatGameEnvironmentFacts(source, true),
     "one implementation: the observation cannot disagree with the prompt it describes",
   );
   assert.ok(observation.dropped.length > 0, `the cap dropped something here, and says what: ${observation.text}`);
@@ -1165,7 +1150,7 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
   );
   // Nothing about her own body is on that list, whatever the cap had to spend: the declared drop order
   // spends world facts first, so the fact she is most likely to act on survives the bound.
-  const bodyFacts = composeGameEnvironmentFacts(source as GameEnvironmentFactsSource, true)
+  const bodyFacts = composeGameEnvironmentFacts(source, true)
     .filter((fact) => fact.subject === "body")
     .map((fact) => fact.text);
   assert.deepEqual(
@@ -1186,6 +1171,21 @@ test("the record names the facts the byte cap dropped, and its text is exactly t
   // villager destinations she could walk to are still on it.
   assert.ok(observation.text.startsWith("06:00"), observation.text);
   assert.ok(observation.text.includes("本图可去: "), observation.text);
+
+  // AND THE RECORD CARRIES ALL OF IT: the byte cost, the over-cap verdict and the facts the cap spent.
+  const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-dropped-"));
+  const recordPath = join(dir, "environment-facts.jsonl");
+  try {
+    createEnvironmentFactsRecord(recordPath)(observation, 9);
+    const [line] = readRecords(recordPath);
+    assert.ok(line !== undefined, "the render reached the record");
+    assert.equal(line.text, observation.text);
+    assert.equal(line.bytes, observation.bytes);
+    assert.equal(line.overCap, observation.bytes > MAX_GAME_ENVIRONMENT_FACTS_BYTES);
+    assert.deepEqual(line.dropped, observation.dropped, "what the cap cost is in the record, in print order");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 /**
@@ -1196,11 +1196,9 @@ test("the record stops at its cap and leaves one truncation line behind", () => 
   const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-cap-"));
   const recordPath = join(dir, "environment-facts.jsonl");
   try {
-    const provider = createRenderedEnvironmentFactsProvider(
-      fakeConnection(sampleSnapshot(1)) as unknown as GameConnection,
-      recordPath,
-    );
-    for (let render = 0; render < MAX_ENVIRONMENT_FACTS_RECORD_LINES + 5; render += 1) provider();
+    const rendered = renderGameEnvironmentFactsObservation(sampleSnapshot(1), true);
+    const record = createEnvironmentFactsRecord(recordPath);
+    for (let line = 0; line < MAX_ENVIRONMENT_FACTS_RECORD_LINES + 5; line += 1) record(rendered, 1);
     const records = readRecords(recordPath);
     assert.equal(
       records.length,
@@ -1211,9 +1209,9 @@ test("the record stops at its cap and leaves one truncation line behind", () => 
     assert.equal(last.truncated, true);
     assert.equal(last.lines, MAX_ENVIRONMENT_FACTS_RECORD_LINES);
 
-    // Sealed means sealed: further requests do not reopen or grow the file.
+    // Sealed means sealed: further turns do not reopen or grow the file.
     const before = readFileSync(recordPath, "utf8");
-    for (let render = 0; render < 20; render += 1) provider();
+    for (let line = 0; line < 20; line += 1) record(rendered, 1);
     assert.equal(readFileSync(recordPath, "utf8"), before);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -1221,44 +1219,22 @@ test("the record stops at its cap and leaves one truncation line behind", () => 
 });
 
 /**
- * The record is a diagnostic on the REQUEST path, so it must not be able to fail a turn: an unwritable
- * record keeps the provider's answer exactly as it was and stops trying after the first failure.
+ * The record is a diagnostic on the turn path, so it must not be able to fail a turn: an unwritable record is one
+ * recorded miss and then silence, never a thrown turn.
  */
-test("a record that cannot be written does not change what the provider returns", () => {
+test("a record that cannot be written stays absent instead of failing the turn", () => {
   const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-unwritable-"));
   try {
     // `blocked` is a FILE, so the directory the record needs cannot exist.
     const blocked = join(dir, "blocked");
     writeFileSync(blocked, "not a directory", "utf8");
-    const provider = createRenderedEnvironmentFactsProvider(
-      fakeConnection(sampleSnapshot(31)) as unknown as GameConnection,
-      join(blocked, "environment-facts.jsonl"),
-    );
-    const rendered = provider();
-    assert.equal(rendered, formatGameEnvironmentFacts(sampleSnapshot(31) as GameEnvironmentFactsSource, true));
-    assert.ok(rendered.length > 0);
-    assert.equal(existsSync(join(blocked, "environment-facts.jsonl")), false);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/**
- * The other half of that promise, in the direction that must NOT be swallowed: whatever threw before this
- * record existed still throws, unchanged, so a bridge read failure cannot start looking like a quiet turn.
- */
-test("a provider whose snapshot read throws still throws, and records nothing", () => {
-  const dir = mkdtempSync(join(tmpdir(), "gb-environment-facts-throws-"));
-  const recordPath = join(dir, "environment-facts.jsonl");
-  try {
-    const exploding = Object.defineProperty({}, "state", {
-      get(): never {
-        throw new Error("bridge_closed");
-      },
-    });
-    const provider = createRenderedEnvironmentFactsProvider(exploding as unknown as GameConnection, recordPath);
-    assert.throws(() => provider(), /bridge_closed/);
-    assert.equal(existsSync(recordPath), false, "a thrown render is not a rendered line");
+    const recordPath = join(blocked, "environment-facts.jsonl");
+    const record = createEnvironmentFactsRecord(recordPath);
+    const rendered = renderGameEnvironmentFactsObservation(sampleSnapshot(31), true);
+    assert.doesNotThrow(() => record(rendered, 31));
+    // The second write is not even attempted: one bad path costs one syscall, not one per turn.
+    assert.doesNotThrow(() => record(rendered, 31));
+    assert.equal(existsSync(recordPath), false);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -170,7 +170,9 @@ public sealed class ClearStepBlockerNamingTests
     /// <summary>
     /// (2) THE FAMILY THAT WAS NEVER LOOKED UP. A twig is cleared by `remove_placed_item`, whose declared family is
     /// `worldObjectTargets` - a family the refusal's own list did not carry, so a twig blocker answered as if no target
-    /// could exist for it however complete the frame was. The family is now read from the declaration that clears it.
+    /// could exist for it however complete the frame was. The family is now read from the declaration that clears it, and
+    /// this world carries the row: the family publishes an object whatever the pack holds, so the twig's own
+    /// `placed_item_*` id is what the refusal names.
     /// </summary>
     [Fact]
     public void ATwigBlockerIsLookedUpInTheFamilyItsOwnClearerAddresses()
@@ -185,8 +187,8 @@ public sealed class ClearStepBlockerNamingTests
             "the fixture has to be the engine's twig litter, or this case measures nothing");
         described.Should().Contain("clears_with=remove_placed_item(",
             "the axe swing whose declaration names the twig");
-        described.Should().Contain("blocker_target=unpublished:worldObjectTargets",
-            "the family `remove_placed_item` addresses, named by the refusal - not a list beside it");
+        described.Should().Contain("blocker_target=placed_item_",
+            "the id the family `remove_placed_item` addresses carries for this very tile, not a list beside it");
     }
 
     /// <summary>

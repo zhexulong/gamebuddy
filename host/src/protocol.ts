@@ -1247,7 +1247,12 @@ export type Snapshot = Readonly<{
    * 'removable_object', 'non_removable_object', 'breakable_container', 'placed_furniture', 'empty_pedestal');
    * `slot`
    * is the backpack slot the named action must act through, or -1 when the actor owns no tool for
-   * it. */
+   * it. EXISTENCE IS THE WORLD'S, THE SLOT IS THE PACK'S: every object standing in `location.objects`
+   * inside the discovery radius is a row whether or not the pack carries a tool for it, so a
+   * `removable_object` with `slot: -1` means "an axe or a pickaxe would take this and she has
+   * neither" and the action names the missing tool. The walk used to sit inside a backpack loop that
+   * skipped every non-heavy-hitter slot, which erased an unarmed actor's whole room (2026-11-23,
+   * `round95`: the seed parcel standing in the farmhouse). */
   worldObjectTargets?: readonly Readonly<{
     targetId: string;
     kind: string;
@@ -1268,6 +1273,15 @@ export type Snapshot = Readonly<{
     w?: number;
     h?: number;
   }>[];
+  /**
+   * The world-object rows the lane's caps left out of `worldObjectTargets`, so a bounded family says
+   * so instead of reading as complete. Its population is every kind the lane publishes (placement
+   * candidates, objects, placed furniture, empty pedestals), and the object half now publishes
+   * everything standing in `location.objects`, so a farmhouse routinely offers more than the sixteen
+   * object rows one budget admits. Null when the family itself was not measured (none of its
+   * capabilities advertised).
+   */
+  worldObjectTargetsOmitted?: number | null;
   /** One farm-building fact the build_farm_building caller can name. `kind` is what the fact IS
    * for this lane: 'build_site' is a free footprint the named building type could go on now (the
    * structure does not exist yet, so `buildingId` is the literal 'none' and `daysOfConstructionLeft`
@@ -2588,6 +2602,7 @@ export const SNAPSHOT_KEYS = [
   "fenceGateTargets",
 
   "worldObjectTargets",
+  "worldObjectTargetsOmitted",
   "farmBuildingTargets",
   "dailyQuestTargets",
   "specialOrderTargets",
@@ -5276,6 +5291,15 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.farmBuildingTargetsOmitted)
   )
     return "invalid_snapshot:farmBuildingTargetsOmitted";
+  // The same count for the world-object family, whose per-kind caps are sixteen rows each and whose whole family may
+  // not exceed the 48 its rule declares: without it a room that lost the far end of its objects reads as a room with
+  // exactly the rows it received.
+  if (
+    value.worldObjectTargetsOmitted !== undefined &&
+    value.worldObjectTargetsOmitted !== null &&
+    !isNonNegativeSafeInteger(value.worldObjectTargetsOmitted)
+  )
+    return "invalid_snapshot:worldObjectTargetsOmitted";
   // The same count for the exclusion register: it says how many distinct (family, reason) rows the Mod's cap left
   // out, and without it a bounded register reads as a complete one.
   if (
@@ -5391,6 +5415,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.farmBuildingTargetsOmitted === undefined ||
       value.farmBuildingTargetsOmitted === null ||
       isNonNegativeSafeInteger(value.farmBuildingTargetsOmitted)) &&
+    (value.worldObjectTargetsOmitted === undefined ||
+      value.worldObjectTargetsOmitted === null ||
+      isNonNegativeSafeInteger(value.worldObjectTargetsOmitted)) &&
     (value.seedSupplyTargetsOmitted === undefined ||
       value.seedSupplyTargetsOmitted === null ||
       isNonNegativeSafeInteger(value.seedSupplyTargetsOmitted)) &&

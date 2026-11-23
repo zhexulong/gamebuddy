@@ -165,6 +165,11 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
       "what discovery withheld and why, one row per (family, reason). A row means something only beside the list it emptied, and the prose prints no family rows: it prints six tiles per family and a count.",
     owedBy: "host/src/snapshot-projection.ts",
   },
+  worldObjectTargetsOmitted: {
+    reason:
+      "the number of world-object rows the lane's caps left out. `worldObjectTargets` is itself withheld from the per-turn fact block - it is read through `stardew_observe` - and this count travels beside those rows in the same answer, so a bounded family says so where it is read rather than in a block that prints neither.",
+    owedBy: "host/src/snapshot-projection.ts",
+  },
   capabilities: {
     reason:
       "the Mod's advertised action ids. The companion meets this fact as the tool list she is given, not as a sentence: printing it would be a second spelling of what the tools already are.",

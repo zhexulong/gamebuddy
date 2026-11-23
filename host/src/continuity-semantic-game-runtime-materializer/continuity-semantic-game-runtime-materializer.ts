@@ -37,6 +37,11 @@ import {
   createStardewRecoveryBindingContext,
   readStardewRecoveryBindingContext,
 } from "../continuity-semantic-game-runtime-binding/continuity-semantic-game-runtime-binding.js";
+import {
+  createEnvironmentFactsRecord,
+  type EnvironmentFactsRecordPort,
+  environmentFactsRecordPath,
+} from "../environment-facts-record.js";
 import { FACT_PRODUCER, type FactProducer, type WorldFact } from "../event-pump.js";
 import type { ExpressionTurnGate } from "../expression-turn-gate.js";
 import {
@@ -465,12 +470,17 @@ function createBodyProgramTools(
              */
             const answerOf = (answer: PlanBatchAnswer, beside: Readonly<Record<string, unknown>> = {}) =>
               planDetails({
+                executionPhase: planExecutionPhase(answer.settled, compiled.status),
+                settled: answer.settled,
+                remaining: answer.remaining,
+                ...(!answer.settled || compiled.status === "partial"
+                  ? { executionStateNote: planStateNote(answer, compiled) }
+                  : {}),
+                ...stepAccountNote(compiled),
                 accepted,
                 nodeCount: nodes.length,
                 programId,
                 submitted: code,
-                settled: answer.settled,
-                remaining: answer.remaining,
                 nodes: answer.nodes,
                 // ONE LINE, IN THE HARNESS'S REGISTER: what was accepted, how much, and as which program. Measured
                 // `round43`: 29 of 96 turns were `stardew_action_program_status` calls, and the paragraph that used to
@@ -482,7 +492,6 @@ function createBodyProgramTools(
                 // leave her no way to say "water them anyway".
                 ...layoutFactsNote(compiled),
                 ...autoWalkNote(compiled),
-                ...stepAccountNote(compiled),
                 ...beside,
               });
             /**
@@ -1076,6 +1085,31 @@ function heldWaterNote(compiled: CompiledPlan): Readonly<Record<string, unknown>
  * refused a call now says `planStatus: partial` beside the names.
  * </p>
  */
+export type PlanExecutionPhase =
+  | "settled_terminal"
+  | "settled_partial_with_dropped_steps"
+  | "in_flight_not_done"
+  | "in_flight_partial_not_done";
+
+export function planExecutionPhase(settled: boolean, planStatus: "compiled" | "partial"): PlanExecutionPhase {
+  if (!settled) return planStatus === "partial" ? "in_flight_partial_not_done" : "in_flight_not_done";
+  return planStatus === "partial" ? "settled_partial_with_dropped_steps" : "settled_terminal";
+}
+
+export function planStateNote(
+  answer: Pick<PlanBatchAnswer, "settled" | "remaining" | "nodes">,
+  compiled: Extract<CompiledPlan, { status: "compiled" | "partial" }>,
+): string {
+  const total = answer.nodes.length;
+  if (!answer.settled && compiled.status === "partial") {
+    return `Partial: ${compiled.droppedCount} dropped; ${answer.remaining}/${total} still running, not done.`;
+  }
+  if (!answer.settled) {
+    return `In flight: ${answer.remaining}/${total} still running, not completed.`;
+  }
+  return `Partial: ${compiled.droppedCount} dropped before execution.`;
+}
+
 function stepAccountNote(compiled: CompiledPlan): Readonly<Record<string, unknown>> {
   if (compiled.status === "refused") return {};
   return Object.freeze({
@@ -1916,6 +1950,18 @@ export type GameCompanionLoopInput = Readonly<{
   /** This run's span recorder: the loop's delivery and turn-tail spans land in it. */
   runTrace?: RunTrace;
   /**
+   * Where each delivered turn's rendered environment line is recorded, and it is REQUIRED of every Game mount.
+   *
+   * <p>
+   * The record answers "what did the model actually read", which is exactly the question nobody can reconstruct after a
+   * run: the session stores MESSAGES, so the paragraph's own bytes are gone the moment the request is assembled. It is
+   * not optional here because a mount that skipped it left two verdict readings unanswerable (`round95`: rows 2 and 5,
+   * `NOT EXERCISED` on a file the run was supposed to write), and a constructor that can be called without one makes that
+   * silence a choice somebody has to remember not to make.
+   * </p>
+   */
+  environmentFactsRecord: EnvironmentFactsRecordPort;
+  /**
    * The gate the expression action tools already read (`RuntimeSession.expressionTurnGate`).
    *
    * It is handed here rather than minted here because the tools were mounted with it before this loop existed: the
@@ -1956,6 +2002,7 @@ export function createGameCompanionLoop(input: GameCompanionLoopInput): Companio
   // The tools were mounted with this gate before this loop existed, so binding it here is what makes the hint and the
   // account one decision instead of two.
   if (input.expressionTurnGate !== undefined) loop.attachExpressionTurnGate(input.expressionTurnGate);
+  loop.pump.attachEnvironmentFactsRecord(input.environmentFactsRecord);
   loop.pump.attachWorldStateRefresh(
     Object.freeze({
       observe: () => {
@@ -2134,6 +2181,9 @@ export function createHostGameRuntimeMaterializer(
           connection: execution.connection,
           runTrace,
           expressionTurnGate: runtime.expressionTurnGate,
+          // The run's own answer to "what did the model read": beside the run manifest, so the harness captures it with
+          // the session it describes and no product path reads it.
+          environmentFactsRecord: createEnvironmentFactsRecord(environmentFactsRecordPath(runtime.paths)),
           // The Host's Host-minted-fact route, which is the same one the settled digest rides: assigned the moment the
           // service exists, and unreachable before then because the Host is what drives a stale reading's measurement.
           publish: (fact) => announceHostFact(fact, FACT_PRODUCER.worldStateRefreshRefused),

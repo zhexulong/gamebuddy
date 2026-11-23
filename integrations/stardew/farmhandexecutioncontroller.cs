@@ -1212,6 +1212,23 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int seedSupplyTargetsOmitted = 0;
         if (advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal))
             seedSupplyTargets = DiscoverSeedSupplyTargets(player, inventoryItemFacts, shopTargetsHere, out seedSupplyTargetsOmitted);
+        int worldObjectTargetsOmitted = 0;
+        IReadOnlyList<BridgeWorldObjectTarget>? worldObjectTargets =
+            advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal)
+                ? DiscoverWorldObjectTargets(player, out worldObjectTargetsOmitted)
+                : null;
+        // THE LEVEL-UP PAIRS THE NIGHT STILL OWES AN ANSWER FOR, read ONCE here and consumed by both fields below.
+        //
+        // These used to be published straight off `Farmer.newLevels` while the modal was named from
+        // `Game1.activeClickableMenu` - two different engine objects. `respond_level_up` settles its `LevelUpMenu` by
+        // clearing `isActive` and dropping the pair from `newLevels` (`LevelUpMenu.cs:637-648`), and the menu only leaves
+        // `activeClickableMenu` on its OWN next update (`:414-419`). A snapshot taken in between named a `LevelUpMenu` and
+        // published no pair - MEASURED 2026-11-23 (`multiday`, `dayRecords[0]`), which left the run with
+        // `level_up_menu_not_resolved:level_up_pair_not_in_snapshot` for a menu it had already answered. The head is now
+        // read off the menu that is ASKING (`WorldModel.AskingLevelUpMenu`), the same object the disposition names.
+        IReadOnlyList<Point> pendingLevelUpPairs = PendingLevelUpPairs(
+            player,
+            WorldModel.AskingLevelUpMenu(Game1.activeClickableMenu));
         BridgeSnapshot snapshot = new BridgeSnapshot(
             this.revision,
             player.currentLocation?.NameOrUniqueName ?? "unknown",
@@ -1321,14 +1338,14 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
             FarmBuildingTargets: farmBuildingTargets,
             BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
-            WorldObjectTargets: advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) ? DiscoverWorldObjectTargets(player) : null,
+            WorldObjectTargets: worldObjectTargets,
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
             DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
             AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null,
-            PendingLevelUps: DescribePendingLevelUps(player),
-            PendingLevelUpChoices: DescribePendingLevelUpChoices(player),
+            PendingLevelUps: DescribePendingLevelUps(pendingLevelUpPairs),
+            PendingLevelUpChoices: DescribePendingLevelUpChoices(player, pendingLevelUpPairs),
             Professions: DescribeProfessions(player),
             SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
             ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
@@ -1342,6 +1359,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
+            WorldObjectTargetsOmitted: worldObjectTargets is null ? null : worldObjectTargetsOmitted,
             WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null,
             // The same `HomeOf` the night's own eligibility refuses `not_home` from, so the projection's Sleep line can
             // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
@@ -1484,18 +1502,46 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
     /// <summary>
-    /// The level-ups the engine will ask about at the next night boundary, as `skill@level`.
+    /// The level-ups the night still owes an answer for, as <see cref="Point"/> pairs: HEAD is the pair the STANDING
+    /// menu is asking about, and the tail is the night's own queue in `Farmer.newLevels`.
     ///
-    /// Why the product publishes this: `Game1.showEndOfNightStuff` pushes one LevelUpMenu per entry in
-    /// `player.newLevels` (Game1.cs:9130-9134), and the harness had to learn the pending pair by PARSING THE REFUSAL
-    /// receipt of `dismiss_modal` - reading a fact out of a failure. The pair is a product fact, so it is projected here,
-    /// bounded, in the same `skill@level` vocabulary the receipts already use (0 Farming … 5 Luck, matching
-    /// `getSkillNumberFromName`).
+    /// <para>
+    /// Why this fact exists at all: `Game1.showEndOfNightStuff` pushes one `LevelUpMenu` per entry in
+    /// `player.newLevels` (Game1.cs:9130-9134), `respond_level_up` binds the caller to the pair the menu shows, and the
+    /// harness once had to learn that pair by PARSING THE REFUSAL receipt of `dismiss_modal` - reading a fact out of a
+    /// failure. It is a product fact, so it is projected here.
+    /// </para>
+    /// <para>
+    /// Why the head comes from the menu: the engine pushes last entry first, so `newLevels[0]` is the menu it popped, and
+    /// that order only holds while every settlement removes the pair it answered. It does not hold for the one update in
+    /// which a settled `LevelUpMenu` still stands with its pair already gone (<see cref="WorldModel.IsAsking"/>), and
+    /// that window is exactly where the run was handed a menu with no argument. Reading the pair off the menu the
+    /// snapshot also names makes the two facts one reading of one object instead of two reads that have to agree; the
+    /// queue after it stays published, because it names the levels the night has not raised yet.
+    /// </para>
     /// </summary>
-    private static IReadOnlyList<string> DescribePendingLevelUps(Farmer player) =>
-        player.newLevels.Count == 0
+    internal static IReadOnlyList<Point> PendingLevelUpPairs(Farmer player, LevelUpMenu? asking)
+    {
+        List<Point> pairs = new();
+        if (asking is not null && ReadLevelUpMenuPair(asking) is { } pair)
+            pairs.Add(new Point(pair.Skill, pair.Level));
+        foreach (Point entry in player.newLevels)
+        {
+            if (!pairs.Contains(entry))
+                pairs.Add(entry);
+        }
+
+        return pairs.Count == 0 ? Array.Empty<Point>() : pairs.Take(8).ToArray();
+    }
+
+    /// <summary>
+    /// The same pairs in the wire vocabulary the receipts already use, `skill@level` (0 Farming … 5 Luck, matching
+    /// `getSkillNumberFromName`), bounded to the 8 the snapshot family declares.
+    /// </summary>
+    private static IReadOnlyList<string> DescribePendingLevelUps(IReadOnlyList<Point> pairs) =>
+        pairs.Count == 0
             ? Array.Empty<string>()
-            : player.newLevels.Take(8).Select(entry => $"{entry.X}@{entry.Y}").ToArray();
+            : pairs.Select(entry => $"{entry.X}@{entry.Y}").ToArray();
 
     /// <summary>
     /// The pending profession MILESTONES, each with the two candidates the engine's own rule offers, the engine's
@@ -1510,10 +1556,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// menu's private `professionsToChoose`, and the titles/descriptions come from the engine's own public statics, so
     /// the pair the companion reads and the pair `respond_level_up` writes cannot drift. Luck (skill 5) never branches.
     /// </summary>
-    private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player)
+    private static IReadOnlyList<BridgeLevelUpChoice> DescribePendingLevelUpChoices(Farmer player, IReadOnlyList<Point> pairs)
     {
         List<BridgeLevelUpChoice> choices = new();
-        foreach (Point entry in player.newLevels)
+        foreach (Point entry in pairs)
         {
             int skill = entry.X;
             int level = entry.Y;
@@ -1824,7 +1870,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             ["weedTargets"] = (player, x, y) => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             ["grassTargets"] = (player, x, y) => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             ["rockSourceTargets"] = (player, x, y) => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["worldObjectTargets"] = (player, x, y) => DiscoverWorldObjectTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["worldObjectTargets"] = (player, x, y) => DiscoverWorldObjectTargets(player, out _).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             ["debrisTargets"] = (player, x, y) => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             ["scytheCropTargets"] = (player, x, y) => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             // A standing tree and its stump are named by the refusal as occupants (`TileOccupantKind.Tree`), and both are

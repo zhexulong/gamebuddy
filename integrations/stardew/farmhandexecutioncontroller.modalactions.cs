@@ -67,9 +67,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// proved nothing, on top of the `round77` receipt that published exactly that shape.
     ///
     /// This is the clearance a caller ASKS FOR, and the receipt names it in both terminals of the call
-    /// that performed the native close: `cleared_modal=` carries the modal type name and
-    /// `close_effect=` states what that close itself changed. There is deliberately NO automatic
-    /// eviction in the shared admission: an action arriving while an
+    /// that performed the native close: `closed_modal_type=` carries the modal type name, `owned_by=` states whose
+    /// modal it was (`none` when no execution held it), `close_effect=` says what that close itself changed, and
+    /// `advance_skipped=` says whether the box still held presentation the close did not present. There is
+    /// deliberately NO automatic eviction in the shared admission: an action arriving while an
     /// informational box is up is refused with `actor_held_by_modal` plus the
     /// modal facts, and the Agent clears the box with this action and re-issues.
     /// Clearing a dialogue is a world-affecting step of its own (closeDialogue
@@ -105,7 +106,15 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 
         this.modalFamily.ObserveMountedMenu(modal);
 
-        ModalFamily.Dismissal dismissal = ModalFamily.DecideDismissal(modal, actor);
+        // WHO THE MODAL BELONGS TO, read from the one producer the hold reads. The receipt publishes it beside the close
+        // (`owned_by=`), so a caller told `action_owned=false` by the hold can read the same fact off the receipt that
+        // closed the box nobody owned.
+        bool modalOwned = WorldModel.ModalIsActionOwned();
+        ModalFamily.Dismissal dismissal = ModalFamily.DecideDismissal(
+            modal,
+            actor,
+            modalOwned,
+            this.ActiveModalOwnerExecutionId);
         if (dismissal is ModalFamily.Dismissal.Unavailable refusal)
         {
             return this.RememberTerminal(
@@ -120,6 +129,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         ModalFamily.Dismissal.Closeable close = (ModalFamily.Dismissal.Closeable)dismissal;
         string modalType = close.ModalType;
         string closeEffect = ModalFamily.CloseEffect(close.Path);
+        string closedModal = ModalFamily.ClosedModalField(modalType, close.OwnedBy);
 
         // What the close below itself changed. A whitelisted operation menu is a PURE CANCEL (no
         // exitThisMenu override; every effect it owns is on its own commit path), but a DialogueBox is not:
@@ -170,7 +180,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                         executionId,
                         ExecutionState.Succeeded,
                         "settlement_commit_in_progress",
-                        $"modal_type={modalType};dismissed=false;cleared_modal={modalType};clearing=true;close_effect={closeEffect};commit_already_driven=true{modalTextDetail}",
+                        $"modal_type={modalType};dismissed=false;{closedModal};clearing=true;close_effect={closeEffect};commit_already_driven=true{modalTextDetail}",
                         this.TryCreateLocalObservation(actor));
                 MethodInfo? commit = typeof(ShippingMenu).GetMethod(
                     "okClicked",
@@ -189,7 +199,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     executionId,
                     ExecutionState.Succeeded,
                     "modal_dismissed",
-                    $"modal_type={modalType};dismissed=true;cleared_modal={modalType};clearing=true;close_effect={closeEffect}{modalTextDetail}",
+                    $"modal_type={modalType};dismissed=true;{closedModal};clearing=true;close_effect={closeEffect}{modalTextDetail}",
                     this.TryCreateLocalObservation(actor));
             }
             else
@@ -206,8 +216,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         }
 
         (ExecutionState outcome, string outcomeCode, string outcomeEvidence) = DescribeDismissalOutcome(
-            modalType,
-            closeEffect,
+            close,
             modalTextDetail,
             Game1.activeClickableMenu,
             Game1.dialogueUp);
@@ -241,14 +250,26 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// the next dialogue holds the body. Hence one success with the continuation NAMED (`has_more_pages`,
     /// `next_modal_type`) instead of a failure, and no failure terminal on this path at all.
     /// </para>
+    /// <para>
+    /// WHAT THE CLOSE OWED THE PAGE IT DID NOT PRESENT. A DialogueBox close is not a cancel of a presentation: it exits
+    /// the menu, and the pages the box still held are never shown - their `DialogueLine.SideEffects` never run
+    /// (`DialogueLine.cs:12`), which is the reason `NpcDialoguePager` drives the native pager at all. Presenting them is
+    /// an ADVANCE, a different act from this close, so the receipt names it (`advance_skipped=`) rather than leaving the
+    /// caller to read `close_effect=native_dialogue_close` as "nothing was lost". The verdict carried the reading from
+    /// before the close ran (`ModalFamily.HasPresentationLeft`), because afterwards the box is gone.
+    /// </para>
     /// </summary>
     internal static (ExecutionState State, string ReasonCode, string Evidence) DescribeDismissalOutcome(
-        string modalType,
-        string closeEffect,
+        ModalFamily.Dismissal.Closeable close,
         string modalTextDetail,
         IClickableMenu? standing,
         bool dialogueUp)
     {
+        string modalType = close.ModalType;
+        string closeEffect = ModalFamily.CloseEffect(close.Path);
+        string advance = close.Path is ModalFamily.ClosePath.Dialogue
+            ? $";advance_skipped={(close.AdvanceSkipped ? "true" : "false")}"
+            : string.Empty;
         bool continues = standing is not null || dialogueUp;
         string continuation = continues
             ? $";has_more_pages=true;next_modal_type={(standing is null ? "dialogue_up" : standing.GetType().Name)}"
@@ -256,7 +277,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return (
             ExecutionState.Succeeded,
             "modal_dismissed",
-            $"modal_type={modalType};dismissed=true;cleared_modal={modalType};close_effect={closeEffect}{continuation}{modalTextDetail}");
+            $"modal_type={modalType};dismissed=true;{ModalFamily.ClosedModalField(modalType, close.OwnedBy)};close_effect={closeEffect}{advance}{continuation}{modalTextDetail}");
     }
 
     /// <summary>Answers the currently displayed native question dialogue.</summary>

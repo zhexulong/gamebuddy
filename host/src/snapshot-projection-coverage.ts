@@ -173,6 +173,8 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "A planning flag the daily-quest actions read from the latest observation; a boolean that changes once a day is not a per-turn fact. Delivered by `stardew_observe`.",
   activeExecution:
     "The Mod's own execution state, which the Host already owns from action receipts; publishing it into the fact block would restate execution state the Host tracks. Delivered by `stardew_observe` and program status.",
+  presentationLocale:
+    "The locale the Mod renders names in, not a fact about the world. Localized names reach the companion inside the rows that carry them, so printing a locale code would be a second spelling of what those rows already are. Delivered by `stardew_observe`.",
   artifactSpotFarmSourceCount:
     "A count used only while planning artifact-spot digs, paired with the family it counts. Delivered by `stardew_observe`.",
   fixedInteractionPointsOmitted:
@@ -181,6 +183,8 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "The number of `farmBuildingTargets` rows the Mod's cap (16) left out, paired with the family it counts. Nothing renders it: no projection reads the building family either (`farmBuildingTargets` is withheld above) and the cap is enforced Mod-side, so there is no building line in the fact block for a count to qualify. Delivered by `stardew_observe` beside the rows it counts; if a renderer ever prints a building list - `host/src/snapshot-projection.ts` has no building line today - it has to print this count with it, or a farm at the cap reads as a farm with exactly sixteen buildings.",
   soilTilesOmitted:
     "The number of soil tiles the Mod's bound left out of `soilTiles`, paired with the family it counts. The per-turn fact block reports the published count (`soilTilesCount`), and without the omission beside it a 64-row neighbourhood would read as a complete patch that happens to be 64 tiles - which is how a truncated list became a defect once already. Delivered by `stardew_observe`.",
+  worldObjectTargetsOmitted:
+    "The number of world-object rows the Mod's per-kind budgets (16 each) and the family's whole-row bound (48) left out of `worldObjectTargets`, paired with the family it counts. Nothing renders it today and `worldObjectTargets` is withheld from the fact block above, so it reaches the model through `stardew_observe` beside the rows it counts - but the count has to travel with them: the object half publishes every object standing in `location.objects`, so a farmhouse routinely offers more than the rows one budget admits, and a list of sixteen with no count beside it is a room that reads as complete.",
   discoveryExclusions:
     "What discovery withheld and why, one row per (family, reason). Delivered by `stardew_observe` beside the family lists it explains: a row only means something next to the list it emptied, and the per-turn fact block carries no family rows at all. Without it a family's `[]` answers 'there is a tree here but you cannot chop it' and 'there is no tree here' with the same value.",
   discoveryExclusionsOmitted:

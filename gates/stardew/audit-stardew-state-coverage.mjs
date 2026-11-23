@@ -176,9 +176,9 @@ export const STATE_COVERAGE = Object.freeze([
       },
     ],
     read: [
-      { file: `${MOD_DIR}/WorldModel.cs`, fragment: "string? menuType = Game1.activeClickableMenu?.GetType().Name;" },
+      { file: `${MOD_DIR}/WorldModel.cs`, fragment: "string? menuType = MountedMenuName(Game1.activeClickableMenu);" },
     ],
-    note: "`actorDispositionKind=modal` plus `actorDispositionDetail` naming the menu class, and `actorDispositionActionOwned` saying whether this Mod opened it. A settlement sheet the Mod never opened therefore reads as a modal the world owns.",
+    note: "`actorDispositionKind=modal` plus `actorDispositionDetail` naming the menu class, and `actorDispositionActionOwned` saying whether this Mod opened it. A settlement sheet the Mod never opened therefore reads as a modal the world owns. The name is read through `MountedMenuName`, so a `LevelUpMenu` that has already been answered (`isActive=false`, pair already dropped from `newLevels`) is not published as a hold the run would be told to answer.",
   },
   {
     state: "UsingTool",

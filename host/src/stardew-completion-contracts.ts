@@ -2359,6 +2359,18 @@ function hasOpaqueEvidenceValue(value: string | undefined): value is string {
   );
 }
 
+/**
+ * WHO held the modal a dismissal closed, in the Mod's one spelling (`ModalFamily.OwnedByFact`): `none` when no
+ * execution held the modal lease, or `execution:<token>` naming the lease that did.
+ *
+ * `none` is deliberately accepted here even though no other opaque field takes it: this field never claims a
+ * materialized object, it answers "whose state did the close touch" - and `none` is the answer that makes the
+ * dismissal safe to have asked for.
+ */
+function hasModalOwnerEvidenceValue(value: string | undefined): boolean {
+  return value === "none" || (value !== undefined && /^execution:[A-Za-z0-9_-]{1,128}$/.test(value));
+}
+
 function hasOpaqueIdEvidenceValue(value: string | undefined): value is string {
   // Preserve the stricter identity grammar, while rejecting every protocol
   // scalar/sentinel spelling already rejected for opaque non-ID evidence.
@@ -4071,6 +4083,17 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // quote. `clearing` is the shipping commit's own state: its close is driven inside the menu's outro
     // (ShippingMenu.cs:380-428), so the menu is still mounted when the receipt is minted.
     //
+    // AND WHAT IT CLOSED, IN THE TERMS THE HOLD USES. `closed_modal_type` is the menu this close settled and
+    // `owned_by` is WHO held it (`none`, or the execution whose modal lease made it that action's own) - the same
+    // lease the body hold publishes as `action_owned=`, stated once on the other side of the same request. Measured
+    // `round95`: `cut_weeds` was refused `actor_held_by_modal` for a `DialogueBox` with `action_owned=false`, and no
+    // receipt in the vocabulary could ever say the dismissal it asked for was of a modal nobody owned.
+    //
+    // `advance_skipped` is the DialogueBox close's own honest half, and it is why the field is optional: a close does
+    // not PRESENT the pages the box still held (`closeDialogue` exits the menu, DialogueBox.cs:192-249), so the
+    // remaining pages and the `DialogueLine.SideEffects` they own are lost where the pager's advance would have run
+    // them. Only the dialogue path can state it; an operation menu has no presentation to skip.
+    //
     // AND THE LATCH'S OWN TERMINAL. farmhandexecutioncontroller.modalactions.cs:353-359 answers a SECOND dismiss of a
     // shipping commit already under way with `settlement_commit_in_progress` instead of re-entering `okClicked`,
     // because re-entry re-arms the outro fade. That reason code means "the commit is ALREADY being driven", never
@@ -4100,26 +4123,29 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
       (claim.reasonCode === "modal_dismissed" &&
         declaredCompletionEvidence(
           claim.detail,
-          ["modal_type", "dismissed", "cleared_modal", "close_effect"],
+          ["modal_type", "dismissed", "closed_modal_type", "owned_by", "close_effect"],
           (e) =>
             hasOpaqueEvidenceValue(e.modal_type) &&
             e.dismissed === "true" &&
-            e.cleared_modal === e.modal_type &&
+            e.closed_modal_type === e.modal_type &&
+            hasModalOwnerEvidenceValue(e.owned_by) &&
             (e.close_effect === "native_dialogue_close" ||
               e.close_effect === "pure_cancel" ||
               e.close_effect === "engine_shipping_commit") &&
             (e.has_more_pages === undefined || booleanEvidenceValue(e.has_more_pages)) &&
-            (e.next_modal_type === undefined || hasOpaqueEvidenceValue(e.next_modal_type)),
-          ["text", "has_more_pages", "next_modal_type", "clearing"],
+            (e.next_modal_type === undefined || hasOpaqueEvidenceValue(e.next_modal_type)) &&
+            (e.advance_skipped === undefined || booleanEvidenceValue(e.advance_skipped)),
+          ["text", "has_more_pages", "next_modal_type", "clearing", "advance_skipped"],
         )) ||
       (claim.reasonCode === "settlement_commit_in_progress" &&
         declaredCompletionEvidence(
           claim.detail,
-          ["modal_type", "dismissed", "cleared_modal", "close_effect", "commit_already_driven"],
+          ["modal_type", "dismissed", "closed_modal_type", "owned_by", "close_effect", "commit_already_driven"],
           (e) =>
             hasOpaqueEvidenceValue(e.modal_type) &&
             e.dismissed === "false" &&
-            e.cleared_modal === e.modal_type &&
+            e.closed_modal_type === e.modal_type &&
+            hasModalOwnerEvidenceValue(e.owned_by) &&
             e.close_effect === "engine_shipping_commit" &&
             e.commit_already_driven === "true" &&
             (e.clearing === undefined || booleanEvidenceValue(e.clearing)),

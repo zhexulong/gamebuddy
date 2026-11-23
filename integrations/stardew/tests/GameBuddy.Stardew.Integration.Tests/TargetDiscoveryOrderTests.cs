@@ -164,7 +164,7 @@ public sealed class TargetDiscoveryOrderTests
         Placeable(world, slot: 2, "(BC)21", bigCraftable: true);
 
         List<BridgeWorldObjectTarget> rows = WithoutContent(
-            () => ExecutionManager.DiscoverWorldObjectTargets(world.Actor)
+            () => ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
                 .Where(row => string.Equals(row.Kind, "placement_candidate", StringComparison.Ordinal))
                 .ToList());
         string published = string.Join(" ", rows.Select(row => $"s{row.Slot}@{row.X},{row.Y}"));

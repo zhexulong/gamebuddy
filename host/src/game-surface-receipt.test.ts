@@ -4,6 +4,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { planSettlementNote } from "./body-program-script.js";
+import {
+  planExecutionPhase,
+  planStateNote,
+} from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { settledProgramAnswer, MAX_SETTLED_FAILURE_CHARS } from "./program-settlement-digest.js";
 import { type PlanAnswerNode, planBatchAnswer } from "./program-status-wait.js";
 import { BODY_PROGRAM_NODE_STATE_VERDICTS } from "./protocol.js";
@@ -353,4 +357,55 @@ test("plan answers are still the ones the mounted tools return", () => {
   const { shape } = readSourceShape(resolve(hostRoot, "src", materializerPath));
   assert.match(shape, /settlementNote: planSettlementNote\(nodes\.length, programId\)/u);
   assert.match(shape, /settlement\.settled\(params\.programId\)/u);
+  assert.match(
+    shape,
+    /executionPhase: planExecutionPhase\(answer\.settled, compiled\.status\),\s*settled: answer\.settled,\s*remaining: answer\.remaining,[\s\S]{0,200}\.\.\.stepAccountNote\(compiled\),\s*accepted,/u,
+    "unsettled/partial status fields must precede accepted in stardew_plan_work answers",
+  );
+});
+
+test("in-flight and partial plan state notes are one-line, never tell her to wait, and distinguish execution phases", () => {
+  assert.equal(planExecutionPhase(true, "compiled"), "settled_terminal");
+  assert.equal(planExecutionPhase(true, "partial"), "settled_partial_with_dropped_steps");
+  assert.equal(planExecutionPhase(false, "compiled"), "in_flight_not_done");
+  assert.equal(planExecutionPhase(false, "partial"), "in_flight_partial_not_done");
+
+  const nodes = [
+    { index: 0, actionId: "ship_item", state: "running" as const },
+    { index: 1, actionId: "ship_item", state: "pending" as const },
+    { index: 2, actionId: "ship_item", state: "pending" as const },
+  ];
+  const notes = [
+    Object.freeze({
+      site: "stardew_plan_work:in_flight",
+      text: planStateNote(
+        { settled: false, remaining: 3, nodes },
+        { status: "compiled" } as Parameters<typeof planStateNote>[1],
+      ),
+      notDone: Object.freeze([]),
+      named: Object.freeze([]),
+    }),
+    Object.freeze({
+      site: "stardew_plan_work:in_flight_partial",
+      text: planStateNote(
+        { settled: false, remaining: 1, nodes: [nodes[0]!] },
+        { status: "partial", droppedCount: 1 } as Parameters<typeof planStateNote>[1],
+      ),
+      notDone: Object.freeze([]),
+      named: Object.freeze([]),
+    }),
+    Object.freeze({
+      site: "stardew_plan_work:settled_partial",
+      text: planStateNote(
+        { settled: true, remaining: 0, nodes: [nodes[0]!] },
+        { status: "partial", droppedCount: 2 } as Parameters<typeof planStateNote>[1],
+      ),
+      notDone: Object.freeze([]),
+      named: Object.freeze([]),
+    }),
+  ];
+  const verdict = receiptVerdict(notes);
+  assert.deepEqual(verdict.findings, [], verdict.report);
+  assert.equal(verdict.tellsHerToWait, 0, verdict.report);
+  assert.equal(verdict.oneLine, 3, verdict.report);
 });

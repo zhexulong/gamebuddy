@@ -3,11 +3,16 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.Serialization;
 using System.Text.RegularExpressions;
 using FluentAssertions;
 using GameBuddy.Stardew.Core.BodyPrograms;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
+using Microsoft.Xna.Framework;
+using StardewValley;
+using StardewValley.Menus;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -55,7 +60,9 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// passes through <c>RecoveryAbandonAgeMs</c> cannot pass at all.</item>
 /// <item><b>A non-irreversible terminal is escapable.</b> For every mounted modal kind the dispatch gate must release a
 /// published action and must NAME it; and a menu the night declares is answered by an action
-/// (<see cref="SleepAndAdvanceDayLifecycle.OvernightMenus"/>) must be a kind whose hold names that action.</item>
+/// (<see cref="SleepAndAdvanceDayLifecycle.OvernightMenus"/>) must be a kind whose hold names that action; and a
+/// `DialogueBox` nobody owns that asks nothing - the shape `round95` measured - must be released, closed by the modal
+/// family's own decision, and closed with a receipt that names the modal AND its owner.</item>
 /// </list>
 ///
 /// <para>
@@ -73,7 +80,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// RED ON HEAD, one falsifier per property, each running THIS reading over the shape the pre-fix tree had and naming
 /// the round93 case in the failure: <c>sleep_not_home_exceeded_its_bound:frames=36000</c>,
 /// <c>body_program_recovery_required_has_no_request_exit:first_exit=journal_open_stale_dispatch:age_ms=610000</c>,
-/// <c>modal_kind_names_no_step:LevelUpMenu:kind=Menu;declared_answer=respond_level_up</c>.
+/// <c>modal_kind_names_no_step:LevelUpMenu:kind=Menu;declared_answer=respond_level_up</c>. The escape's OWN receipt has
+/// its falsifier in <c>ThePreFixReceiptCannotSayWhoseModalTheEscapeClosed</c>, over the `round95` vocabulary.
 /// </para>
 public sealed class BodyStateReachabilityMatrixTests
 {
@@ -169,6 +177,28 @@ public sealed class BodyStateReachabilityMatrixTests
             + $";declared_answer={levelUp.ActionId}",
             $"{Gate}: a menu the product declares an answer for must be a kind whose hold names that answer. "
             + string.Join(" | ", matrix.Violations));
+    }
+
+    /// <summary>
+    /// THE SCREEN'S RED PROOF FOR THE ESCAPE'S OWN RECEIPT. `round95`'s vocabulary could say a dismissal happened but not
+    /// whose modal it was: the pre-fix spelling carried `cleared_modal=<type>` and nothing about the lease the hold had
+    /// published as `action_owned=false`, so the one fact that made the dismissal safe to ask for never came back. This
+    /// runs the row's OWN reading over that shape, so the falsifier cannot hold a rule the green run does not exercise.
+    /// </summary>
+    [Fact]
+    public void ThePreFixReceiptCannotSayWhoseModalTheEscapeClosed()
+    {
+        const string PreFix =
+            "modal_type=DialogueBox;dismissed=true;cleared_modal=DialogueBox;close_effect=native_dialogue_close";
+
+        ReceiptNamesWhatItClosed(PreFix).Should().BeFalse(
+            "the pre-fix receipt never names the owner, so a caller told `action_owned=false` could not read the close back");
+        ReceiptNamesWhatItClosed(ModalFamily.ClosedModalField("DialogueBox", ModalFamily.NoOwner)).Should().BeTrue(
+            "the escape's own receipt says what it closed and that nobody owned it");
+        ReceiptNamesWhatItClosed(ModalFamily.ClosedModalField("DialogueBox", ModalFamily.OwnedByFact(true, "execution_1")))
+            .Should().BeTrue("a modal an execution DID own is named by that lease rather than reported as nobody's");
+        ReceiptNamesWhatItClosed("closed_modal_type=DialogueBox;owned_by=").Should().BeFalse(
+            "an empty owner names nobody, which is the absence being used as its own evidence");
     }
 
     /// <summary>
@@ -323,6 +353,91 @@ public sealed class BodyStateReachabilityMatrixTests
             violations.Add($"modal_kind_names_no_step:kind={kind};{evidence}");
         }
 
+        // ③b THE MEASURED SHAPE: a `DialogueBox` NOBODY OWNS that asks nothing.
+        //
+        // The kind loop above proves the GATE releases an action. That is not escapability: the action the gate names
+        // must also be one the family's own decision ACCEPTS, and its receipt must state what it closed and who held
+        // it. MEASURED `round95` (2026-11-23, day 6 08:30): `cut_weeds` was refused
+        // `actor_held_by_modal;modal_type=DialogueBox;action_owned=false;is_question=false` and the hold named
+        // `dismiss_it=dismiss_modal` - and no receipt in the vocabulary could say the dismissal it asked for was of a
+        // modal nobody owned. The case is driven through the product's own classifier, its own decision and its own
+        // receipt vocabulary, so the box is a real `DialogueBox` and not a kind constant.
+        {
+            states += 1;
+            DialogueBox plainBox = PlainDialogueBox();
+            BodyProgramModalFact plain = WorldModel.MountedModal(plainBox, dialogueUp: true);
+            BodyProgramHold? plainHold = BodyProgramDispatchGate.HoldOf(bodyOwning, cutsceneUp: false, modal: plain, actorCanMove: false);
+            bool released = BodyProgramDispatchGate.IsDispatchable("dismiss_modal", cutsceneUp: false, modal: plain, actorCanMove: false);
+            // The actor is the level-up arm's only input (its `newLevels`); a plain box's arm reads no actor fact.
+            ModalFamily.Dismissal verdict = ModalFamily.DecideDismissal(
+                plainBox,
+                (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer)),
+                actionOwned: false,
+                ownerExecutionId: null);
+            string closedField = verdict is ModalFamily.Dismissal.Closeable close
+                ? ModalFamily.ClosedModalField(close.ModalType, close.OwnedBy)
+                : "refused:" + ((ModalFamily.Dismissal.Unavailable)verdict).ReasonCode;
+
+            rows.Add($"modal plain_box kind={plain.Kind} released={released};hold={plainHold?.Evidence ?? "none"};receipt={closedField}");
+
+            if (plain.Kind is not BodyProgramModalKind.PlainDialogue)
+                violations.Add($"modal_plain_box_classified_as:kind={plain.Kind};type={plain.TypeName ?? "none"}");
+            else if (plainHold is not { } owned || !string.Equals(owned.Evidence, "held_by=dialogue_box;" + BodyProgramDispatchGate.DismissModalRemedy, StringComparison.Ordinal))
+                violations.Add($"modal_plain_box_hold_names_no_dismissal:kind={plain.Kind};evidence={plainHold?.Evidence ?? "none"}");
+            else if (!released)
+                violations.Add($"modal_plain_box_admits_no_dismissal:kind={plain.Kind}");
+            else if (!ReceiptNamesWhatItClosed(closedField))
+                violations.Add($"modal_plain_box_receipt_names_no_close:kind={plain.Kind};receipt={closedField}");
+            else
+                transitions += 1;
+        }
+
+        // ③c THE LEVEL-UP ARM: a menu the snapshot NAMES must carry the pair it is asking about.
+        //
+        // The declared-answerable loop below proves the gate names `respond_level_up` for the kind. It cannot prove the
+        // caller has an ARGUMENT: MEASURED 2026-11-23 (`multiday`, `dayRecords[0]`), a `LevelUpMenu` stood for a whole
+        // night while `pendingLevelUps` read `[]`, because the modal was named from `Game1.activeClickableMenu` and the
+        // pair from `Farmer.newLevels` - two reads of two engine objects, and `respond_level_up` itself empties the second
+        // (`LevelUpMenu.cs:637-648`) one update before the first lets go of the menu (`:414-419`). The population is the
+        // declaration's own level-up member, in its two engine states: the menu still asking, and the menu that has
+        // settled and is on its way off the screen.
+        SleepAndAdvanceDayLifecycle.OvernightMenu levelUpMenu = SleepAndAdvanceDayLifecycle.OvernightMenus.Single(
+            menu => menu.Forward == SleepAndAdvanceDayLifecycle.OvernightMenuForwardAction.CompanionAnswers
+                && menu.MenuType == typeof(LevelUpMenu));
+        // The actor's queue is EMPTY, which is the measured state (`newLevels` loses the pair the moment the answer
+        // lands): whatever the asking arm publishes below it must have read off the menu itself.
+        Farmer levelUpActor = LevelUpActor();
+        foreach (bool asking in new[] { true, false })
+        {
+            states += 1;
+            LevelUpMenu mounted = MountedLevelUpMenu(4, 5, asking);
+            string named = WorldModel.MountedMenuName(mounted) ?? "none";
+            BodyProgramModalKind mountedKind = WorldModel.MountedModal(mounted, dialogueUp: false).Kind;
+            int pairs = ExecutionManager.PendingLevelUpPairs(levelUpActor, WorldModel.AskingLevelUpMenu(mounted)).Count;
+            rows.Add($"modal menu={levelUpMenu.MenuType.Name} asking={asking.ToString().ToLowerInvariant()};named={named};kind={mountedKind};pairs={pairs}");
+
+            if (asking)
+            {
+                if (named != levelUpMenu.MenuType.Name)
+                    violations.Add($"level_up_menu_not_named_while_asking:menu={levelUpMenu.MenuType.Name};named={named}");
+                else if (pairs == 0)
+                    violations.Add($"level_up_menu_named_with_no_pair:menu={levelUpMenu.MenuType.Name};declared_answer={levelUpMenu.ActionId}");
+                else
+                {
+                    transitions += 1;
+                    interleavings += 1;
+                }
+            }
+            else if (named != "none" || mountedKind != BodyProgramModalKind.None || pairs != 0)
+            {
+                violations.Add($"level_up_menu_reported_after_it_settled:named={named};kind={mountedKind};pairs={pairs}");
+            }
+            else
+            {
+                transitions += 1;
+            }
+        }
+
         foreach (SleepAndAdvanceDayLifecycle.OvernightMenu menu in SleepAndAdvanceDayLifecycle.OvernightMenus
                      .Where(menu => menu.Forward == SleepAndAdvanceDayLifecycle.OvernightMenuForwardAction.CompanionAnswers))
         {
@@ -423,6 +538,69 @@ public sealed class BodyStateReachabilityMatrixTests
     private static BodyProgramModalKind[] MountedModalKinds() => Enum.GetValues<BodyProgramModalKind>()
         .Where(kind => kind != BodyProgramModalKind.None)
         .ToArray();
+
+    /// <summary>
+    /// A real `LevelUpMenu` as the engine mounts one: its pair is PRIVATE (`LevelUpMenu.cs:30/32`), so it is seeded
+    /// through those exact fields - the two the action's own reflection reads back - and `isActive` is the engine's own
+    /// "still asking" flag (`:414-419` exits it, `:637-648` clears it when the answer lands).
+    /// </summary>
+    private static LevelUpMenu MountedLevelUpMenu(int skill, int level, bool asking)
+    {
+        var menu = (LevelUpMenu)FormatterServices.GetUninitializedObject(typeof(LevelUpMenu));
+        typeof(LevelUpMenu).GetField("currentSkill", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(menu, skill);
+        typeof(LevelUpMenu).GetField("currentLevel", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(menu, level);
+        menu.isProfessionChooser = level is 5 or 10;
+        menu.isActive = asking;
+        return menu;
+    }
+
+    /// <summary>
+    /// The actor a level-up arm reads: `newLevels`, the queue `Game1.showEndOfNightStuff` pops those menus from
+    /// (`Game1.cs:9130-9134`). `NetList` is inline-initialised on a REAL `Farmer`, so an uninitialized probe has it null
+    /// and this seeds the engine's own collection type rather than a stand-in that could accept what the game would not.
+    /// </summary>
+    private static Farmer LevelUpActor(params Point[] pending)
+    {
+        var actor = (Farmer)FormatterServices.GetUninitializedObject(typeof(Farmer));
+        FieldInfo levelsField = typeof(Farmer).GetField("newLevels", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!;
+        object levels = Activator.CreateInstance(levelsField.FieldType)!;
+        MethodInfo add = levels.GetType().GetMethod("Add", new[] { typeof(Point) })!;
+        foreach (Point point in pending)
+            add.Invoke(levels, new object[] { point });
+        levelsField.SetValue(actor, levels);
+        return actor;
+    }
+
+    /// <summary>
+    /// A `DialogueBox` with no question and no pages: the mount `round95` measured. Uninitialized the way the sibling
+    /// modal suites mint one - `isQuestion` is the only field the family's decision reads for a plain box's arm.
+    /// </summary>
+    private static DialogueBox PlainDialogueBox()
+    {
+        DialogueBox box = (DialogueBox)FormatterServices.GetUninitializedObject(typeof(DialogueBox));
+        box.isQuestion = false;
+        return box;
+    }
+
+    /// <summary>
+    /// Whether a receipt's own fields say WHAT it closed and WHO held it: the two facts `round95`'s hold published
+    /// (`modal_type=`, `action_owned=`) and its receipt vocabulary could not answer back.
+    /// </summary>
+    private static bool ReceiptNamesWhatItClosed(string fields)
+    {
+        var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string field in fields.Split(';'))
+        {
+            int equals = field.IndexOf('=', StringComparison.Ordinal);
+            if (equals <= 0) continue;
+            seen[field[..equals]] = field[(equals + 1)..];
+        }
+
+        return seen.TryGetValue("closed_modal_type", out string? closed) && closed.Length > 0
+            && seen.TryGetValue("owned_by", out string? owner)
+            && (string.Equals(owner, ModalFamily.NoOwner, StringComparison.Ordinal)
+                || (owner.StartsWith("execution:", StringComparison.Ordinal) && owner.Length > "execution:".Length));
+    }
 
     /// <summary>
     /// The two program states that hold something. <see cref="BodyProgramState.Active"/> holds the body - it is the only

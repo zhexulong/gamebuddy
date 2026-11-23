@@ -336,7 +336,7 @@ public sealed class NightOwnershipCycleTests
                         FarmhandActionCatalog.DayCrossingActionId, cutsceneUp: false, modal: promptFact, actorCanMove: false);
                     otherUnderPrompt = BodyProgramDispatchGate.HoldOf(
                         "harvest_crop", cutsceneUp: false, modal: promptFact, actorCanMove: false);
-                    dismissal = ModalFamily.DecideDismissal(prompt, CreateActor(1001));
+                    dismissal = ModalFamily.DecideDismissal(prompt, CreateActor(1001), actionOwned: false, ownerExecutionId: null);
                 },
                 prompt,
                 new BedPromptLocation());

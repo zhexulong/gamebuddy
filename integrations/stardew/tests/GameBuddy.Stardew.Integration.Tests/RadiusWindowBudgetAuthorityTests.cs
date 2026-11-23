@@ -25,7 +25,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <para>
 /// WHY A GATE AND NOT TWO LITERALS. The number lives in two layers - the Mod decides how many rows to publish, the Host
 /// decides how many it admits - and two copies of one fact that agree today are a disagreement scheduled for later. The
-/// population below is the Mod's OWN declarations (the two constants), and the expectation for each is read from the
+/// population below is the Mod's OWN declarations, and the expectation for each is read from the
 /// Host's rule table, so a family the Host re-declares, or a new radius-window budget added without a rule here, fails
 /// loudly and names itself.
 /// </para>
@@ -35,16 +35,19 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <c>woodFenceTargets</c>, <c>crabPotTargets</c> or <c>fertilizerTargets</c>, so a consumer that receives sixteen rows
 /// still cannot tell a family that had sixteen from one that had more and lost the rest. Every other truncated family on
 /// this wire states its cut beside its list (<c>soilTilesOmitted</c>, <c>farmBuildingTargetsOmitted</c>,
-/// <c>fixedInteractionPointsOmitted</c>, <c>seedSupplyTargetsOmitted</c>); these three do not, and adding it is a wire
-/// change spanning the snapshot record and the Host's validator, not a change to this bound.
+/// <c>fixedInteractionPointsOmitted</c>, <c>seedSupplyTargetsOmitted</c>, <c>worldObjectTargetsOmitted</c>); these three
+/// do not, and adding it is a wire change spanning the snapshot record and the Host's validator, not a change to this
+/// bound.
 /// </para>
 /// </summary>
 public sealed class RadiusWindowBudgetAuthorityTests
 {
     /// <summary>
-    /// One radius-window budget, the family it caps, and the constant that holds the number.
+    /// One radius-window or wire budget, the family it caps, and the constant that holds the number.
     ///
-    /// The population is the two constants this Mod file declares for these lists. A third radius-window family added
+    /// The population is the constants this Mod declares for these lists: `RadiusWindowRowBudget` and
+    /// `FertilizerRowBudget` (targetdiscovery.cs), and `WorldObjectTargetFamilyLimit` (worldobjectactions.cs), whose
+    /// family is trimmed by four per-kind budgets and then by the wire's own whole-row bound. A family added
     /// without a row here is the gap this gate cannot see, which is why the row count is asserted non-zero below and
     /// every family named here is also required to exist in the Host's table.
     /// </summary>
@@ -53,6 +56,7 @@ public sealed class RadiusWindowBudgetAuthorityTests
         ("woodFenceTargets", ExecutionManager.RadiusWindowRowBudget),
         ("crabPotTargets", ExecutionManager.RadiusWindowRowBudget),
         ("fertilizerTargets", ExecutionManager.FertilizerRowBudget),
+        ("worldObjectTargets", ExecutionManager.WorldObjectTargetFamilyLimit),
     };
 
     [Fact]

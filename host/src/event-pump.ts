@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { EnvironmentFactsRecordPort } from "./environment-facts-record.js";
 import { isTerminalExecutionState } from "./execution-correlation-ledger.js";
 import {
   composeFactBrief,
@@ -9,6 +10,7 @@ import {
 } from "./fact-brief.js";
 // Which facts the player's surface can show: the ONE reading the loop's own admission reads too (`presentation-lease.ts`),
 // so "this fact can present" cannot be true in one layer and false in the other.
+import { type GameEnvironmentFactsRender, renderGameEnvironmentFactsObservation } from "./game-world-vocabulary.js";
 import { presentationSourceOf } from "./presentation-lease.js";
 import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./program-settlement-digest.js";
 // The programme's own state is one of the two authorities that decide whether her work is alive
@@ -2053,6 +2055,16 @@ type StandingStallVerdict = {
   published: boolean;
 };
 
+/**
+ * A delivery that had no reading yet still states a block (`世界：尚未收到观察`), and that block carries no environment
+ * line - which is a render of nothing rather than a turn nobody recorded.
+ */
+const NO_ENVIRONMENT_FACTS_RENDER: GameEnvironmentFactsRender = Object.freeze({
+  text: "",
+  bytes: 0,
+  dropped: Object.freeze([]),
+});
+
 export interface CompanionTurnSink {
   /**
    * Deliver one batch. The return value is how the turn ended; an adapter that cannot observe it returns
@@ -2179,6 +2191,13 @@ export class CompanionEventPump {
    * NOT reset by `clear()`: it is wiring, not one session's measurement.
    */
   #worldStateRefreshPort: WorldStateRefreshPort | undefined;
+  /**
+   * Where each delivered turn's rendered environment line is recorded.
+   *
+   * Attached once by the composition that owns the integration (`createGameCompanionLoop`) and NOT reset by `clear()`:
+   * it is wiring, not one session's measurement - the record belongs to the run, not to the session's counters.
+   */
+  #environmentFactsRecord: EnvironmentFactsRecordPort | undefined;
   /**
    * The crossed READING whose probes have been spent, whether its refusal has already been said, and how far the world had
    * said it moved when the last ask was made.
@@ -4467,6 +4486,7 @@ export class CompanionEventPump {
       this.#worldStateStated += 1;
       if (broughtObservation) this.#lastSnapshotDeliveredBatch = this.#deliveredBatches;
     }
+    this.#recordEnvironmentFacts(worldState);
 
     // Remember what the model was just told by each held progress slot, and what the batch as a whole taught it, so the
     // same content arriving again is not a turn. Recorded for what the batch actually CARRIES: a fact the byte bound
@@ -4682,6 +4702,54 @@ export class CompanionEventPump {
   public attachWorldStateRefresh(port: WorldStateRefreshPort): void {
     if (this.#worldStateRefreshPort !== undefined) throw new Error("world_state_refresh_already_attached");
     this.#worldStateRefreshPort = port;
+  }
+
+  /**
+   * Install where a delivered turn's rendered environment line is recorded.
+   *
+   * One per pump, like the refresh port: the Game composition attaches it once, at the same constructor, so a Game mount
+   * that records nothing is a wiring bug rather than a policy - "what did the model actually read" is not a question a
+   * run should be able to skip answering.
+   */
+  public attachEnvironmentFactsRecord(record: EnvironmentFactsRecordPort): void {
+    if (this.#environmentFactsRecord !== undefined) throw new Error("environment_facts_record_already_attached");
+    this.#environmentFactsRecord = record;
+  }
+
+  /** Whether anything records this run's rendered environment line (`environment-facts-record.ts`). */
+  public get environmentFactsRecord(): Readonly<{ attached: boolean }> {
+    return Object.freeze({ attached: this.#environmentFactsRecord !== undefined });
+  }
+
+  /**
+   * The environment half of the block this delivery states, recorded where it is delivered.
+   *
+   * <p>
+   * WHY HERE AND NOT WHERE THE BLOCK IS COMPOSED. The record answers "what did the model actually read", so it is taken
+   * from the reading this turn was composed from - `#lastSnapshot`, which is deliberately the reading she was TOLD about
+   * and may be many turns old - and never from the integration's live state, which is a different moment of the world. A
+   * record read from the connection described a world the turn never stated.
+   * </p>
+   * <p>
+   * The line comes from the same function `composeWorldState` calls (`formatGameEnvironmentFacts` is
+   * `renderGameEnvironmentFactsObservation(...).text`), so the recorded text IS the paragraph's, and
+   * `event-pump.environment-facts-record.test.ts` asserts it appears verbatim inside the delivered batch. A delivery that
+   * had no reading yet records an empty render, so "the block rendered empty" and "no turn was ever delivered" are
+   * different lines in the file rather than the same absence.
+   * </p>
+   * <p>
+   * ONE LINE PER TURN, counted where the turn is composed. A batch the sink threw on is retried with that exact text
+   * (`flush` keeps it in `#retry`) rather than recomposed, so a retry cannot record the same turn twice, and the
+   * population here is the one `worldStateDelivery.stated` counts.
+   * </p>
+   */
+  #recordEnvironmentFacts(reading: WorldStateReading | undefined): void {
+    const record = this.#environmentFactsRecord;
+    if (record === undefined) return;
+    record(
+      reading === undefined ? NO_ENVIRONMENT_FACTS_RENDER : renderGameEnvironmentFactsObservation(reading.snapshot, true),
+      reading === undefined ? null : reading.revision,
+    );
   }
 
   /** Whether a stale reading can be refreshed at all here, and what asking has done (`WorldStateRefreshReading`). */
