@@ -36,8 +36,8 @@
     "tools/live-action.mjs": 1709,
     "tools/live-run/frontend/capture/v-injection-claims.cjs": 999,
     "tools/live-run/frontend/capture/w-game-launch.cjs": 1939,
-    "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs": 6680,
-    "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4560,
+    "tools/live-run/game/run-stardew-native-local-agent-ab-live.mjs": 6682,
+    "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs": 4578,
     "tools/live-run/round-verdict.mjs": 1917,
     "tools/migrate-runner-to-template.mjs": 1945,
     "tools/stardew-native-local-player-fixture.test.mjs": 2533
