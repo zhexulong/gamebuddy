@@ -11,30 +11,36 @@ export function isBoundedNonEmptyString(value: unknown, maxLength: number): valu
 }
 
 /**
- * One engine clock reading: 24h minutes, `0` to `2359`, with a real minute component.
+ * One engine clock reading: 24h minutes, `0` to `2600`, with a real minute component.
  *
  * This is the unit the engine's own timetable is written in (`LockedDoorWarp ... 900 2100`, `TIME 900 1600`, and
  * `Game1.timeOfDay` itself), so a wire number outside it is not a clock and is refused here rather than printed as
- * `12:75`. One definition, because two row families publish a trading window and a bound stated twice is a bound that
- * disagrees later.
+ * `12:75`. **The upper bound is 2600, not 2359**: the engine's day runs past midnight to 2:00 am, and Town's own doors
+ * close at `2400` / `2600` - a validator that stopped at 2359 refused Town's `doorTargets`, closed the bridge with
+ * `invalid_snapshot:doorTargets`, and ended round98 the moment she crossed into town. One definition, because two row
+ * families publish a trading window and a bound stated twice is a bound that disagrees later.
  */
 export function isGameClockMinute(value: unknown): boolean {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 2359 && value % 100 <= 59;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 2600 && value % 100 <= 59;
 }
 
 /**
- * A trading window as two row members spell it: BOTH ends in the engine's clock and in order, or NEITHER.
+ * A trading window as two row members spell it: BOTH ends in the engine's clock, or NEITHER.
  *
  * One rule for the two families that publish a window (`doorTargets`, `shopTargets`), because "a pair or nothing" is the
- * whole meaning: one end alone is a number no reader can compare, and a window whose close is not after its open is not
- * one interval (the engine's own day wraps at 02:00, so a schedule that crosses it is stated by its own clause rather
- * than by two numbers here). The pair's PRESENCE is the caller's half of the question - a row with neither is a subject
- * that declares no hours, which is a fact.
+ * whole meaning: one end alone is a number no reader can compare. **The ends need NOT ascend**: the engine's day wraps at
+ * 02:00, so a saloon that opens at 12:00 and closes at 02:00 publishes `1200` and `120`, and a rule that demanded
+ * `closesAt > opensAt` refused Town's own doors and closed the bridge with `invalid_snapshot:doorTargets` (round98).
+ * A `closesAt` at or before `opensAt` therefore means the window crosses midnight; the two being equal is no window at
+ * all, and that is the only pair refused.
+ *
+ * The pair's PRESENCE is the caller's half of the question - a row with neither is a subject that declares no hours,
+ * which is a fact.
  */
 export function isDeclaredWindow(opensAt: unknown, closesAt: unknown): boolean {
   if (opensAt === undefined && closesAt === undefined) return true;
   if (typeof opensAt !== "number" || typeof closesAt !== "number") return false;
-  return isGameClockMinute(opensAt) && isGameClockMinute(closesAt) && closesAt > opensAt;
+  return isGameClockMinute(opensAt) && isGameClockMinute(closesAt) && closesAt !== opensAt;
 }
 
 /**
