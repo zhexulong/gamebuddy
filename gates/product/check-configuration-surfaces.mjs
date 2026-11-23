@@ -40,8 +40,8 @@ import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 /**
  * Resolved from THIS FILE, not from `process.cwd()`.
  *
- * The harness runs a gate with its own directory as the working directory
- * (`harness-conformance.mjs`'s `runGateDefault`), and this gate used to read `host/...` relative to the shell - so it
+ * The harness runs a gate with its own directory as the working directory (`gate-default-runs.mjs`'s `runGateDefault`),
+ * and this gate used to read `host/...` relative to the shell - so it
  * threw `node:fs:483` there and read as a broken gate rather than a gate that never ran. Which directory the caller
  * happened to stand in is not a property of the tree we are checking.
  */
