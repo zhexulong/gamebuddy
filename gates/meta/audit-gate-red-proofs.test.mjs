@@ -21,6 +21,11 @@
  * red-proof: inject  the untracked term made a suffix that disappears at zero, as this audit had it before -> "a zero
  *                    complement is a reading that has to be printed, not an absence a reader fills in", actual
  *                    `... unreadable=0 ` with no term at all (gates/meta/audit-gate-red-proofs.test.mjs)
+ *
+ * red-proof: inject  a gate's falsifier moved out of the directory its claim cites -> the claim resolves by the name it
+ *                    carries and the gate stays proven; a second copy of that name makes it `pointer_ambiguous`
+ *                    naming both files, and removing both makes it `pointer_missing`
+ *                    (gates/meta/audit-gate-red-proofs.test.mjs)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -183,6 +188,56 @@ test("a marker whose kind is not one the ledger reads is reported, not skipped a
     const reading = auditGateRedProofs({ root });
     assert.equal(statusOf(reading, "check:a"), "malformed");
     assert.deepEqual(codesFor(evaluateAgainst(root, ["check:a"]).findings, "check:a"), ["red_proof_kind_unknown"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// The defect this reading was widened for: `676127db` moved the gate scripts from `tools/` into `gates/`, and 126 claims
+// kept naming the old path, so the census counted them as pointing at nothing while every file sat two directories away.
+// A path is a position; the name a claim cites is content. The second half is the boundary: two files carrying that name
+// is a guess, and a reading that can only guess has to say so instead of picking the nearer one.
+test("a pointer resolves by the name it cites, and a name two files carry is reported as the guess it is", () => {
+  const suite =
+    'export const probe = () => assert.equal(checkMoved("omitted"), "fixture_lane_missing_required_action");\n';
+  const root = makeTree(
+    {
+      "gates/data/check-moved.mjs": gateSource(
+        marker("inject", "an omission -> fixture_lane_missing_required_action", "tools/check-moved.test.mjs"),
+      ),
+      "gates/data/check-moved.test.mjs": suite,
+    },
+    { scripts: { "check:moved": "node gates/data/check-moved.mjs" } },
+  );
+  try {
+    // The suite moved out of `tools/`; the claim names the path it had. The one file carrying that name is it.
+    const record = () => auditGateRedProofs({ root }).records.find((entry) => entry.id === "check:moved");
+    assert.equal(statusOf(auditGateRedProofs({ root }), "check:moved"), "proven");
+    assert.deepEqual(
+      record().resolutions.map((resolution) => [resolution.pointer, resolution.status, resolution.file]),
+      [["tools/check-moved.test.mjs", "moved", "gates/data/check-moved.test.mjs"]],
+      "the claim names a path that is gone and a name that is not",
+    );
+
+    // A second copy of the same name: which file the claim means can no longer be read, so it is not a proof.
+    mkdirSync(join(root, "gates/arch"), { recursive: true });
+    writeFileSync(join(root, "gates/arch/check-moved.test.mjs"), suite, "utf8");
+    assert.equal(statusOf(auditGateRedProofs({ root }), "check:moved"), "pointer_ambiguous");
+    const guess = evaluateAgainst(root, []).findings.find((finding) => finding.gate === "check:moved");
+    assert.equal(guess.code, "red_proof_pointer_ambiguous");
+    assert.match(guess.detail, /gates\/arch\/check-moved\.test\.mjs/u, {
+      message: "the ambiguity has to name one candidate, or the operator has to guess back",
+    });
+    assert.match(guess.detail, /gates\/data\/check-moved\.test\.mjs/u, { message: "and the other" });
+
+    // Both gone: a name nothing carries is the claim pointing at nothing - still red, and it says where it looked.
+    rmSync(join(root, "gates/data/check-moved.test.mjs"));
+    rmSync(join(root, "gates/arch/check-moved.test.mjs"));
+    assert.equal(statusOf(auditGateRedProofs({ root }), "check:moved"), "pointer_missing");
+    const gone = evaluateAgainst(root, []).findings.find((finding) => finding.gate === "check:moved");
+    assert.equal(gone.code, "red_proof_pointer_missing");
+    assert.match(gone.detail, /check-moved\.test\.mjs/u, { message: "the basename is what could not be found" });
+    assert.match(gone.detail, /gates, tools/u, { message: "the directories searched are named" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

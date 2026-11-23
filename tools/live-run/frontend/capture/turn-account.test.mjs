@@ -12,7 +12,7 @@
 // red-proof: inject  dropped the `held` guard in `agentAwakeOf`, so an unheld stderr read as "no turns":
 //                   `✖ a run whose stderr was never held is refused as unreadable, not read as zero turns`
 //                   fails with `turn_account_absent`, exit 1.
-// red-proof: measured  2026-11-22, the reading this file exists for: the same classifier, pointed at a real
+// red-proof: history  measured 2026-11-22, the reading this file exists for: the same classifier, pointed at a real
 //                   run's 142-byte entry stderr (`frontend--r24`/`--r25`, quoted below), answers
 //                   `turn_account_absent`; pointed at the live run's own `state/entry-stderr.log` it answers
 //                   `awake` with the counts (`.tmp/lane-agentawake.md`).

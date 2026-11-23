@@ -52,6 +52,33 @@ export function untrackedSources({ roots, root }) {
   );
 }
 
+/**
+ * Every path the repository carries: the index, plus the files git does not ignore.
+ *
+ * The index alone would miss a suite a lane has written and a marker already names, which is the one case where a claim
+ * can be right about a file no commit carries yet; ignored paths are left out because build output is not repository
+ * content. Measured 2026-11-23: a directory walk of this checkout read 99,088 paths where `git ls-files` reads 4,162 - the
+ * rest are `.live-runs/` stages, per-directory `host/dist-` output copies and another worktree under `.worktrees/`, and a
+ * name found in one of those resolves a claim to a file this repository does not have.
+ */
+export function repositoryFiles({ root }) {
+  let output = "";
+  try {
+    output = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+      cwd: root,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (error) {
+    throw new Error(`could not ask git what ${root} carries: ${error.message}`);
+  }
+  return output
+    .split("\u0000")
+    .filter(Boolean)
+    .map((file) => file.replace(/\\/gu, "/"));
+}
+
 /** `N: path, path, … and K more` - the count alone would hide which file the gate cannot see. */
 export function describeUntracked(files) {
   const sorted = [...files].sort();

@@ -45,9 +45,19 @@
  *
  * with `<kind>` one of `inject`, `history` (a real shipped defect replayed), `fixture` (a known-rejected
  * input) or `self-check` (the gate exercises its own rules on violating samples). A marker is read from
- * COMMENT LINES ONLY, so a gate cannot satisfy itself with the regex it uses to find markers; every
- * repo-relative path a marker names must exist, or the claim points at nothing; a kind outside that set
- * is reported rather than skipped.
+ * COMMENT LINES ONLY, so a gate cannot satisfy itself with the regex it uses to find markers; the path a
+ * marker names must resolve to a file (the paragraph below says how); a kind outside that set is reported
+ * rather than skipped.
+ *
+ * THE PATH IS RESOLVED BY NAME, because a path is a position and a position moves. Measured 2026-11-23:
+ * `676127db` moved the gate scripts from `tools/` into `gates/` and the markers went on naming
+ * `tools/audit-*.test.mjs`, so 126 claims that pointed at a file two directories away read as
+ * `pointer_missing` - `unreadable 3` became `unreadable 130` with not one falsifier changed. A cited path
+ * is therefore resolved by its BASENAME over the paths the index carries (`repositoryFiles`), and the path
+ * itself only first: a name one file carries is that file and the proof holds (each pointer's `resolved` or
+ * `moved` status is in `--json`); a name two files carry is `pointer_ambiguous` naming both, because a
+ * reading that can only be a guess says so instead of picking the nearer one; and only a name nothing
+ * carries is `pointer_missing`, which is what a claim pointing at nothing looks like.
  *
  * THE FIFTH KIND, `external`, is for a gate whose rule lives in another program - `dotnet test`,
  * `pnpm knip`, `depcruise --config ...`, a project runner - and behind a mount this repository does not
@@ -76,8 +86,9 @@
  *     quietly, which is the whole failure being prevented);
  *   * a baseline entry that is proven now, or whose gate no longer exists, is a finding (the baseline
  *     only tightens: add a proof, delete the entry);
- *   * a marker that cannot be read - wrong kind, or a pointer to a file that is gone - is a finding
- *     regardless of the baseline, because a claim nobody can read is a claim nobody can check.
+ *   * a marker that cannot be read - wrong kind, a pointer to a file nothing carries, or a pointer whose
+ *     basename two files carry - is a finding regardless of the baseline, because a claim nobody can read
+ *     is a claim nobody can check.
  *
  * The baseline is a record of measured debt, not a claim that the debt is acceptable: every run prints
  * the proven set, the gap count and the totals, and `--gaps` prints every gate still owing a proof.
@@ -138,10 +149,10 @@ export const gateDeclaration = {
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { POPULATION_FIELDS, populationFieldPattern } from "../../tools/lib/assert-non-vacuous.mjs";
-import { describeUntracked, indexedGatePopulation } from "../../tools/lib/indexed-sources.mjs";
+import { describeUntracked, indexedGatePopulation, repositoryFiles } from "../../tools/lib/indexed-sources.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const BASELINE_PATH = "tools/gate-red-proof-baseline.json";
@@ -158,7 +169,13 @@ const KINDS = new Set([...PROOF_KINDS, EXTERNAL_KIND]);
 const EXTERNAL_CLAIM = /^([\s\S]+?)\s+[—–]\s+([\s\S]+)$/u;
 /** A repo-relative path inside a claim that must resolve. Longest extension first, or `x.json` resolves to `x.js`. */
 const POINTER =
-  /(?:tools|host|dialogue-web|integrations|scripts|desktop|vendor|\.github|packages)\/[\w./-]+\.(?:json|mjs|cjs|tsx|yml|ps1|cs|js|ts|py)/gu;
+  /(?:gates|tools|host|dialogue-web|integrations|scripts|desktop|vendor|\.github|packages)\/[\w./-]+\.(?:json|mjs|cjs|tsx|yml|ps1|cs|js|ts|py)/gu;
+/** A finding code per unreadable status, so the status and the code a reader sees cannot drift apart. */
+const UNREADABLE_CODE = Object.freeze({
+  malformed: "red_proof_kind_unknown",
+  pointer_missing: "red_proof_pointer_missing",
+  pointer_ambiguous: "red_proof_pointer_ambiguous",
+});
 /** A marker is prose: read from a comment line only. */
 const COMMENT_LINE = /^\s*(?:\/\/|\*|\/\*|#|--)/u;
 /** A marker's claim may continue this many comment lines below its anchor. */
@@ -205,6 +222,45 @@ const read = (path) => {
     return null;
   }
 };
+
+/**
+ * Every file the repository carries, keyed by the name a claim cites rather than by the path it held at the time.
+ *
+ * A path the index carries and the worktree no longer has is left out: a claim resolved to it would be resolved to a
+ * file nobody can open, which is the claim pointing at nothing with an extra step.
+ */
+function filesByName({ root, carried }) {
+  const byName = new Map();
+  for (const file of carried) {
+    if (!existsSync(join(root, file))) continue;
+    const name = basename(file);
+    const carriers = byName.get(name);
+    if (carriers === undefined) byName.set(name, [file]);
+    else carriers.push(file);
+  }
+  return byName;
+}
+
+/** The top-level directories the name lookup covered, so a `pointer_missing` can say where it looked. */
+function searchedDirectories(carried) {
+  return [...new Set(carried.map((file) => (file.includes("/") ? file.slice(0, file.indexOf("/")) : "./")))].sort();
+}
+
+/**
+ * A cited path resolved to the file it names: by name, because a path is a position and a position moves.
+ *
+ * `resolved` is the path as written; `moved` is the one file whose basename the claim cites; `ambiguous` is two or more
+ * files carrying it, with the candidates named so the next reader does not have to guess which the claim meant; and
+ * `missing` is a name nothing in the repository carries, reported with the directories the lookup covered.
+ */
+export function resolvePointer({ root, pointer, filesByName: byName, searched }) {
+  if (existsSync(join(root, pointer))) return { pointer, status: "resolved", file: pointer };
+  const name = basename(pointer);
+  const carriers = byName.get(name) ?? [];
+  if (carriers.length === 1) return { pointer, status: "moved", file: carriers[0], name };
+  if (carriers.length > 1) return { pointer, status: "ambiguous", name, candidates: carriers };
+  return { pointer, status: "missing", name, searched };
+}
 
 /** Every `red-proof:` marker in the comment lines of one file. */
 export function readRedProofMarkers({ root, file }) {
@@ -340,10 +396,12 @@ export function claimFailures(claim) {
 /** The falsifier suites a gate's own record points at, whether the marker names them or they sit beside the entry. */
 function proofSuites(record) {
   return [
-    ...new Set([
-      ...record.proofs.flatMap((proof) => proof.pointers).filter((pointer) => SUITE_FILE.test(pointer)),
-      ...record.owned.filter((file) => SUITE_FILE.test(file)),
-    ]),
+    ...new Set(
+      [
+        ...record.resolutions.flatMap((resolution) => (resolution.file === undefined ? [] : [resolution.file])),
+        ...record.owned,
+      ].filter((file) => SUITE_FILE.test(file)),
+    ),
   ].sort();
 }
 
@@ -448,7 +506,16 @@ function packageTestDirectories(root, runnerText) {
 }
 
 /** One gate's record: what it owns, what it claims, and whether those claims can be read. */
-function classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }) {
+function classify({
+  root,
+  gate,
+  scriptNames,
+  runnerText,
+  dotnetProjects,
+  declarations,
+  filesByName: byName,
+  searched,
+}) {
   const owned = [...new Set([...gate.entryFiles, ...siblingFalsifiers(root, gate.entryFiles)])]
     .filter((file) => existsSync(join(root, file)))
     .sort();
@@ -462,6 +529,7 @@ function classify({ root, gate, scriptNames, runnerText, dotnetProjects, declara
   const proofMarkers = readable.filter((marker) => PROOF_KINDS.has(marker.kind));
   const runners = externalRunners({ markers: readable.filter((marker) => marker.kind === EXTERNAL_KIND), runnerText });
   const pointers = [...new Set(proofMarkers.flatMap((marker) => marker.claim.match(POINTER) ?? []))];
+  const resolutions = pointers.map((pointer) => resolvePointer({ root, pointer, filesByName: byName, searched }));
   return {
     ...gate,
     owned,
@@ -473,11 +541,20 @@ function classify({ root, gate, scriptNames, runnerText, dotnetProjects, declara
       line: marker.line,
       pointers: marker.claim.match(POINTER) ?? [],
     })),
+    // Each cited path and the file it names, so a claim resolved by name is visible as what it is rather than
+    // looking like a path that happened to be right.
+    resolutions,
     external: runners.external,
     unreadable: [...unreadable, ...runners.unreadable],
-    unresolved: pointers.filter((pointer) => !existsSync(join(root, pointer))),
-    // A proof nothing runs is a proof that has stopped holding; reported beside the verdict, not in it.
-    unexecuted: pointers.filter((pointer) => !isExecuted(pointer, runnerText, dotnetProjects)),
+    // A claim naming a file nothing carries points at nothing, and one naming a name two files carry is a guess:
+    // neither is a proof, whatever the baseline says.
+    unresolved: resolutions.filter((resolution) => resolution.status === "missing"),
+    ambiguous: resolutions.filter((resolution) => resolution.status === "ambiguous"),
+    // A proof nothing runs is a proof that has stopped holding; reported beside the verdict, not in it. Read on the
+    // file the pointer resolves to, or a moved suite would read as one no runner names.
+    unexecuted: resolutions
+      .flatMap((resolution) => (resolution.file === undefined ? [] : [resolution.file]))
+      .filter((file) => !isExecuted(file, runnerText, dotnetProjects)),
   };
 }
 
@@ -534,14 +611,20 @@ export function zeroPopulationPass({ root, files }) {
 /** The reading: for every declared gate, whether a red proof exists and where, or that it does not.
  *
  * `status` is one of `proven`, `unproven`, `unproven_via_members` (an aggregate with an unproven member),
- * `pointer_missing` (a proof naming a file that is gone), `malformed` (a marker that cannot be read) or
- * `unassessed` (the command runs no file in this repo, so there is nothing to read).
+ * `pointer_missing` (a proof naming a name no file carries), `pointer_ambiguous` (a proof naming a name two files
+ * carry), `malformed` (a marker that cannot be read) or `unassessed` (the command runs no file in this repo, so there
+ * is nothing to read).
  */
 export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   // One derivation, shared with the conformance suite: `tools/lib/gate-population.mjs`, restricted to the index. A
   // `tools/check-*.mjs` a script runs is ONE gate there, and the script is its id - what an operator types and what
   // CI's derived job names - so the directory half contributes only the gates no script names at all.
   const { gates, gateFiles: files, untrackedNotCounted } = indexedGatePopulation({ root });
+  // The files a cited path is resolved against: the index, not the directory, so build output and another checkout
+  // cannot answer for a file this repository does not carry.
+  const carried = repositoryFiles({ root });
+  const byName = filesByName({ root, carried });
+  const searched = searchedDirectories(carried);
   const scripts = gates.filter((gate) => gate.kind === "script");
   const scriptNames = new Set(scripts.map((gate) => gate.id));
   const runnerText = declaredRunnerText(root);
@@ -549,7 +632,9 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
   const runDirectories = [...dotnetProjects, ...packageTestDirectories(root, runnerText)];
   const declarations = declaredRedProofMarkers(root);
   const records = gates
-    .map((gate) => classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations }))
+    .map((gate) =>
+      classify({ root, gate, scriptNames, runnerText, dotnetProjects, declarations, filesByName: byName, searched }),
+    )
     .map((record) => ({ ...record, execution: proofExecution({ root, record }) }));
   const status = assignStatus(records);
   const gaps = records
@@ -583,7 +668,7 @@ export function auditGateRedProofs({ root = REPOSITORY_ROOT } = {}) {
     gaps,
     // A claim that cannot be read is reported whatever the baseline says. Recording it would be
     // recording the disease: the baseline exists for gates with no proof, not for proofs nobody can check.
-    unreadableClaims: gaps.filter((gap) => ["malformed", "pointer_missing"].includes(gap.status)),
+    unreadableClaims: gaps.filter((gap) => ["malformed", "pointer_missing", "pointer_ambiguous"].includes(gap.status)),
     unexecutedProofs: records.flatMap((record) => record.unexecuted.map((pointer) => ({ gate: record.id, pointer }))),
   };
 }
@@ -600,6 +685,7 @@ function assignStatus(records) {
       status.set(record.id, "unassessed");
     else if (record.proofs.length === 0 && record.members.length > 0) status.set(record.id, "unproven_via_members");
     else if (record.proofs.length === 0) status.set(record.id, "unproven");
+    else if (record.ambiguous.length > 0) status.set(record.id, "pointer_ambiguous");
     else if (record.unresolved.length > 0) status.set(record.id, "pointer_missing");
     else status.set(record.id, "proven");
   }
@@ -810,7 +896,22 @@ function describeGap({ record, status }) {
     const kinds = [...KINDS].join("|");
     return `the marker at ${marker.file}:${marker.line} is not readable as \`red-proof: <${kinds}> <claim>\`: ${JSON.stringify(marker.claim.slice(0, 80))}`;
   }
-  if (verdict === "pointer_missing") return `the red proof names ${record.unresolved.join(", ")}, which is not on disk`;
+  if (verdict === "pointer_ambiguous") {
+    const [ambiguous] = record.ambiguous;
+    return (
+      `the red proof names ${ambiguous.pointer}, and ${ambiguous.candidates.length} files carry the name ` +
+      `${ambiguous.name}: ${ambiguous.candidates.join(", ")} - which one the claim means is a guess, so the marker has ` +
+      "to name the path rather than a name two files answer to"
+    );
+  }
+  if (verdict === "pointer_missing") {
+    const [missing] = record.unresolved;
+    return (
+      `the red proof names ${missing.pointer}: no file carries that path, and no file named ${missing.name} is in the ` +
+      `repository either, so the claim points at nothing (searched ${missing.searched.length} top-level ` +
+      `directories: ${missing.searched.join(", ")})`
+    );
+  }
   if (verdict === "unassessed") return `\`${record.command}\` runs no file in this repository, so nothing can be read`;
   if (verdict === "unproven_via_members")
     return `delegates to ${record.members.map((member) => `${member}=${status.get(member)}`).join(", ")}`;
@@ -844,11 +945,7 @@ export function evaluate({ reading, baseline, executionBaseline = { prose: [], u
   const findings = [];
   for (const gap of reading.gaps) {
     if (unreadable.has(gap.gate)) {
-      findings.push({
-        code: gap.status === "pointer_missing" ? "red_proof_pointer_missing" : "red_proof_kind_unknown",
-        gate: gap.gate,
-        detail: gap.detail,
-      });
+      findings.push({ code: UNREADABLE_CODE[gap.status], gate: gap.gate, detail: gap.detail });
       continue;
     }
     if (recorded.has(gap.gate)) continue;
@@ -912,9 +1009,9 @@ export function evaluate({ reading, baseline, executionBaseline = { prose: [], u
 
 /** Execute each declared falsifier suite; a proof whose suite has rotted is not a proof. */
 function runProofSuites(root, proven) {
-  const files = [...new Set(proven.flatMap((record) => record.proofs.flatMap((proof) => proof.pointers)))].filter(
-    (pointer) => /\.test\.(?:mjs|ts)$/u.test(pointer),
-  );
+  const files = [...new Set(proven.flatMap((record) => record.resolutions))]
+    .flatMap((resolution) => (resolution.file === undefined ? [] : [resolution.file]))
+    .filter((file) => /\.test\.(?:mjs|ts)$/u.test(file));
   const findings = [];
   for (const file of files) {
     const result = spawnSync(process.execPath, ["--test", file], { cwd: root, stdio: "ignore", timeout: 5 * 60_000 });

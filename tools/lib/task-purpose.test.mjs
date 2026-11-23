@@ -987,7 +987,7 @@ test("mine_ladder_to_depth: the level's own exit ladder is a proven fact, so the
  * which is where "this receipt can carry a pack count" is DECLARED - and every member has to have a row.
  * </p>
  * <p>
- * red-proof: drop a row (`plant_seed`) and the gate fails naming it; declare an unpublished action and it fails naming
+ * red-proof: inject  drop a row (`plant_seed`) and the gate fails naming it; declare an unpublished action and it fails naming
  * that; declare an action outside the population as one that ADDS to the pack and it fails, because no artifact proves
  * a direction for it (tools/lib/task-purpose.test.mjs)
  * </p>

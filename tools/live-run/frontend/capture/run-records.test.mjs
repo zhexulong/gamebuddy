@@ -5,7 +5,7 @@
 // with the right spans but a foreign pid is another lane's client. The suite drives the reader over a fixture
 // root it writes itself, so each shape is red without needing a live run to produce it.
 //
-// red-proof: delete the fixture's `session/stardew-session.json` -> `session_document_absent` names every path
+// red-proof: inject  delete the fixture's `session/stardew-session.json` -> `session_document_absent` names every path
 //   it looked for; point the trace reader at a ledger whose pids are not the trace's -> `ai_client_trace_not_hers`.
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
