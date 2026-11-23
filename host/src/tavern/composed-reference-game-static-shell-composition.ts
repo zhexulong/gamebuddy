@@ -42,6 +42,7 @@ import {
   verifyTavernStaticArtifact,
 } from "./static-artifact/index.js";
 import { ownsCompanionAvatarRequest, type CompanionAvatarRequestHandler } from "./companion-avatar/face.js";
+import { projectMemoryStateV1 } from "./memory-management/memory-state-projection.js";
 
 /**
  * The immutable browser artifact is versioned independently from the mounted
@@ -419,6 +420,7 @@ async function projectComposedChatSnapshot(
 ): Promise<TavernStateSnapshotV1> {
   const state = await options.referenceStateFacade.read();
   const worldInfo = await projectComposedWorldInfo(options);
+  const memory = await projectMemoryStateV1(options.management?.profile, options.management?.memoryService);
   const tavernProfile = options.profile.tavernProfile;
   const snapshot = {
     apiVersion: 1,
@@ -439,11 +441,10 @@ async function projectComposedChatSnapshot(
       turn: state.turn,
       worldInfo,
     },
-    memory: {
-      readAvailable: false,
-      mutationAvailable: false,
-      projectionRevision: null,
-    },
+    // The Memory capability is the Memory route's own answer, from the same management service
+    // the same listener serves `GET /api/tavern/v1/memory` from - one authority for the flag and
+    // the route (`memory-state-projection.ts`).
+    memory: memory.state,
     // The additive optional v1 `voice` field belongs to the SNAPSHOT, exactly where
     // the reference projection puts it: the contract's `chat` object is a strict object
     // of six named fields and does not accept a seventh, while `voice` is an optional

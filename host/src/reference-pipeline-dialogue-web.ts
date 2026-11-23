@@ -16,6 +16,7 @@ import {
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
 import type { ChatPipelineService } from "./tavern/chat-pipeline-service.js";
+import { projectMemoryStateV1 } from "./tavern/memory-management/memory-state-projection.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 // One derived definition of the player-content body ceiling, shared with the delegated dispatcher:
 // a second copy of this number is how the two dispatch paths ended up disagreeing about the same
@@ -368,7 +369,7 @@ async function sendProjectedSnapshot(
   profile: ComposedTavernProfile,
   browser: BrowserSession,
 ): Promise<void> {
-  const state = await facade.read();
+  const [state, memory] = await Promise.all([facade.read(), projectMemoryStateV1(profile, undefined)]);
   const snapshot = {
     apiVersion: 1,
     build: {
@@ -388,11 +389,9 @@ async function sendProjectedSnapshot(
       turn: state.turn,
       worldInfo: null,
     },
-    memory: {
-      readAvailable: false,
-      mutationAvailable: false,
-      projectionRevision: null,
-    },
+    // The reference Chat profile declares no `memory.read` route, so this mount answers the one
+    // named cause instead of a literal (`memory-state-projection.ts`).
+    memory: memory.state,
     // Additive optional v1 field; projected only when a Host voice surface is attached.
     ...(state.voice === null ? {} : { voice: state.voice }),
     eventStream: profile.routeIds.includes("events") && state.eventStream !== null ? state.eventStream : null,

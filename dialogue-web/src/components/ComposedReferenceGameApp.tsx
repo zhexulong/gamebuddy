@@ -1476,6 +1476,7 @@ export function ComposedReferenceGameApp() {
                   labels={labels()}
                   locale={view.locale}
                   conversationTurn={mountedTurn}
+                  mutationAvailable={view.session.snapshot.memory.mutationAvailable}
                   restoreFocusTo={memoryEntryRef}
                 />
               )}

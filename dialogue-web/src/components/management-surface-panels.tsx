@@ -11,22 +11,19 @@
  * broker session's CSRF token and the validated read-back it must show, and
  * calls back for every mutation, exactly like `CharactersPanel`.
  *
- * Capability honesty - and the one place the two mounts genuinely differ:
+ * Capability honesty - one flag, from the one snapshot the mount serves:
  *
- * - The management surface reads its own snapshot, whose `operations`, `memory`
- *   and `chat.worldInfo` fields ARE the mounted profile's capability projection,
- *   so it passes those flags in and a control the Host did not publish stays
- *   absent.
- * - The composed shell's Chat projection is the frozen reference Chat contract:
- *   it carries `memory: { readAvailable: false, mutationAvailable: false }`,
- *   `chat.worldInfo: null` and the reference profile's own operation list, and
- *   it is not this profile's snapshot at all (its `build.profileId` is the
- *   reference profile, and it may carry an event stream this wire validator
- *   rejects). A management panel mounted there therefore cannot learn the
- *   management profile's operation availability from that snapshot: it leaves the
- *   flag `undefined`, treats a served read route as the capability, and reports a
- *   rejected mutation instead of hiding the control. That is the same contract
- *   `CharactersPanel` already uses on that surface.
+ * - Every shell's snapshot carries the Memory capability its reader answered
+ *   (`memory-state-projection.ts` on the Host: `readAvailable` from the durable
+ *   Memory read, `mutationAvailable` from the mounted `memory.mutate` route). A
+ *   panel therefore takes the flag and hides the authoring control when the Host
+ *   said it does not serve the write - it never infers the capability from a
+ *   route that merely answered.
+ * - `chat.worldInfo` and the operation list stay the mount's own: the management
+ *   surface's snapshot projects this profile's World Info and operations, while
+ *   the composed root's Chat half projects the bound World Info read beside it.
+ *   Both are passed in the same way: what a mount does not publish, it does not
+ *   hand a panel.
  *
  * A notice is the one owner decision left to the mount: when `onNotice` is given
  * the panel routes every outcome to it (the management shell's one
@@ -1192,8 +1189,9 @@ function memoryViewOf(result: MemoryReadV1): MemoryView {
  * shown as saved: a rejection re-reads the authoritative projection first and
  * only then reports the failure.
  *
- * `mutationAvailable` is the mount's durable flag where it has one; `undefined`
- * means the served read route is the capability (see the file header).
+ * `mutationAvailable` is the snapshot's own `memory.mutationAvailable`, passed in by the mount: the
+ * Host answered it from the durable Memory read and the `memory.mutate` route it mounts, so this
+ * panel never decides the capability from a route it merely managed to reach.
  */
 export function MemorySurfacePanel({
   api,
@@ -1221,7 +1219,8 @@ export function MemorySurfacePanel({
    * nothing but a read of the route ever produces a row.
    */
   conversationTurn: Readonly<{ handle: string; state: string }> | null;
-  mutationAvailable?: boolean;
+  /** The snapshot's `memory.mutationAvailable`: whether this Host serves `memory.mutate`. */
+  mutationAvailable: boolean;
   onNotice?: (notice: ManagementSurfaceNotice) => void;
 }>): ReactElement {
   const [view, setView] = useState<MemoryView>({ kind: "loading" });
@@ -1305,7 +1304,7 @@ export function MemorySurfacePanel({
         labels={labels}
         locale={locale}
         onRefresh={refresh}
-        mutationAvailable={mutationAvailable ?? (view.kind === "ready" || view.kind === "empty")}
+        mutationAvailable={mutationAvailable}
         onMutate={mutate}
       />
     </>
@@ -1647,13 +1646,7 @@ function SettingsTabPanel({
   children,
 }: Readonly<{ id: SettingsTab; selected: boolean; children: ReactNode }>): ReactElement {
   return (
-    <div
-      className="settings-tabpanel"
-      role="tabpanel"
-      id={panelId(id)}
-      aria-labelledby={tabId(id)}
-      hidden={!selected}
-    >
+    <div className="settings-tabpanel" role="tabpanel" id={panelId(id)} aria-labelledby={tabId(id)} hidden={!selected}>
       {children}
     </div>
   );

@@ -306,6 +306,14 @@ test("composed shell serves static artifact and composed broker on one origin", 
     assert.equal(stateRoot.game, null);
     // The nested chat snapshot is a valid TavernStateSnapshotV1.
     assert.equal(stateRoot.chat.build.profileId, tavernProfile.profileId);
+    // No management bundle is mounted, so this origin serves no Memory route: the snapshot says so
+    // in a named cause rather than a literal (`memory-state-projection.ts`), which is the reading the
+    // paired test below contradicts by mounting the bundle.
+    assert.deepEqual(stateRoot.chat.memory, {
+      readAvailable: false,
+      mutationAvailable: false,
+      projectionRevision: null,
+    });
     // Reference pipeline API is reachable for chat operations via broker auth.
     // The delegated handler does not serve its own bootstrap.
     const refBootstrap = await fetch(`${server.origin}/api/tavern/v1/bootstrap`, {
@@ -1568,6 +1576,70 @@ test("the composed root's Chat half carries the exact World Info the route serve
     // reads and two route reads, five in all - so a cached copy, a second read
     // path, or a projection that reads the library twice would move this number.
     assert.equal(reads, 5);
+  } finally {
+    await server.close();
+    await fixture.dispose();
+  }
+});
+
+test("the composed snapshot's memory capability is the Memory route's own answer", async () => {
+  const fixture = await artifactFixture();
+  const revision = `${"M".repeat(42)}A`;
+  const base = managementBundle();
+  let reads = 0;
+  const server = await startComposedReferenceGameStaticShellComposition({
+    profile,
+    bootstrapToken: token,
+    referenceStateFacade: fakeFacade as any,
+    eventStream,
+    artifactRoot: fixture.root,
+    inspector: inspector(),
+    management: Object.freeze({
+      ...base,
+      memoryService: Object.freeze({
+        ...base.memoryService!,
+        read: async () => {
+          reads += 1;
+          return Object.freeze({ apiVersion: 1 as const, projectionRevision: revision, memories: [], chapters: [] });
+        },
+      }),
+    }),
+  });
+  try {
+    const { cookie } = await bootstrapBroker(server);
+    const read = async (path: string) => {
+      const response = await fetch(`${server.origin}${path}`, {
+        headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+      });
+      assert.equal(response.status, 200);
+      return await response.json();
+    };
+    const snapshot = (await read("/api/composed-reference-game/v1/state")) as {
+      chat: { memory: { readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null } };
+    };
+    const route = (await read("/api/tavern/v1/memory")) as { projectionRevision: string };
+    // One authority: the flag and the revision are the read the route beside it answers from, so a
+    // hardcoded capability projection - the defect a live run printed as `memory.read=false` beside a
+    // 200 route - fails here on the field's own name.
+    assert.equal(
+      snapshot.chat.memory.readAvailable,
+      true,
+      "the snapshot projects memory.readAvailable=false while GET /api/tavern/v1/memory answered 200 on this same origin: derive it from the Memory service in memory-state-projection.ts instead of writing a capability literal",
+    );
+    assert.equal(
+      snapshot.chat.memory.mutationAvailable,
+      true,
+      "the snapshot projects memory.mutationAvailable=false while this mount serves memory.mutate: derive it from the route the Host mounts (memoryMutationServed)",
+    );
+    assert.equal(
+      snapshot.chat.memory.projectionRevision,
+      route.projectionRevision,
+      "the snapshot's Memory projection revision is not the one the Memory route answers with, so the flag is not the read it claims to be",
+    );
+    assert.equal(snapshot.chat.memory.projectionRevision, revision);
+    // One probe per projection taken - the bootstrap root, this `/state` read, and the route read
+    // beside it - so a cached copy or a flag written without reading would move this number.
+    assert.equal(reads, 3);
   } finally {
     await server.close();
     await fixture.dispose();

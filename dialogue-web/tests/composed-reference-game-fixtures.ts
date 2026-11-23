@@ -52,7 +52,10 @@ export const chat = {
     // `GET /world-info` answers from: empty is where a fresh product's library is.
     worldInfo: { state: "none", revision: handle, items: [] },
   },
-  memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
+  // The Memory capability the same-origin management route answers: the journeys serve
+  // `GET/PUT /api/tavern/v1/memory` from their own stubs, so the projection says what that
+  // route says - `readAvailable` with the revision the read returned, `memory.mutate` served.
+  memory: { readAvailable: true, mutationAvailable: true, projectionRevision: handle },
   eventStream: null,
 };
 

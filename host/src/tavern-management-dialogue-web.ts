@@ -109,6 +109,7 @@ import {
   type ChatManagementService,
 } from "./tavern/chat-management/chat-management-service.js";
 import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
+import { memoryMutationServed, projectMemoryStateV1 } from "./tavern/memory-management/memory-state-projection.js";
 import type { TavernConnectionService } from "./tavern/connection-service.js";
 import type { TavernManagementStateFacade } from "./tavern/tavern-management-state.js";
 import type {
@@ -1534,7 +1535,7 @@ export function createTavernManagementDialogueWebRequestHandler(
       path: "/api/tavern/v1/memory",
       routeId: "memory.mutate",
       operationId: "memory.mutate",
-      available: memoryService?.mutate !== undefined,
+      available: memoryMutationServed(profile, memoryService),
       maxBytes: MAX_BODY_BYTES,
       validator: memoryMutationValidator,
       answer: (body) => memoryService!.mutate!(body as MemoryMutationCommandV1),
@@ -2889,21 +2890,7 @@ async function sendProjectedSnapshot(
   memoryService?: MemoryManagementService,
   worldInfoService?: WorldInfoBindingManagementService,
 ): Promise<void> {
-  const [state, memoryResult] = await Promise.all([
-    facade.read(),
-    profile.routeIds.includes("memory.read") && memoryService !== undefined
-      ? memoryService.read().catch(() => undefined)
-      : undefined,
-  ]);
-  const memoryProjection =
-    memoryResult !== undefined
-      ? ({
-          readAvailable: true as const,
-          mutationAvailable:
-            profile.routeIds.includes("memory.mutate") && profile.operationIds.includes("memory.mutate"),
-          projectionRevision: memoryResult.projectionRevision,
-        } as const)
-      : ({ readAvailable: false as const, mutationAvailable: false as const, projectionRevision: null } as const);
+  const [state, memory] = await Promise.all([facade.read(), projectMemoryStateV1(profile, memoryService)]);
   // A World Info-capable profile always projects a validated World Info
   // state: the facade supplies it in production; handler-level stubs obtain
   // it from the bound service and it is re-validated before projection.
@@ -2927,7 +2914,7 @@ async function sendProjectedSnapshot(
     csrfToken: browser.csrf,
     browserSession: { expiresAtMs: browser.expiresAtMs },
     operations: [...state.operations],
-    navigation: profile.navigationItemIds.map((itemId) => navigationItem(itemId, memoryProjection.readAvailable)),
+    navigation: profile.navigationItemIds.map((itemId) => navigationItem(itemId, memory.state.readAvailable)),
     selection: state.selection,
     chat: {
       companion: { name: state.companionDisplayName, handle: state.companionHandle },
@@ -2937,7 +2924,7 @@ async function sendProjectedSnapshot(
       turn: state.turn,
       worldInfo,
     },
-    memory: memoryProjection,
+    memory: memory.state,
     eventStream: null,
   } satisfies TavernStateSnapshotV1;
   if (!TavernBrowserValidatorsV1.TavernStateSnapshotV1Schema.Check(snapshot))

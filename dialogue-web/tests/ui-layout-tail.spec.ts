@@ -17,6 +17,8 @@ const token = "A".repeat(43);
 const csrfToken = "C".repeat(42) + "A";
 const companionHandle = "B".repeat(42) + "A";
 const worldInfoHandle = "W".repeat(42) + "A";
+/** The Memory route's own read revision, beside the flag that says the read happened. */
+const memoryProjectionRevision = "M".repeat(42) + "A";
 const expiresAtMs = 1_900_000_000_000;
 
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
@@ -51,7 +53,7 @@ const composedRoot = {
       turn: null,
       worldInfo: null,
     },
-    memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
+    memory: { readAvailable: true, mutationAvailable: true, projectionRevision: memoryProjectionRevision },
     eventStream: null,
   },
   game: {
@@ -1204,7 +1206,7 @@ test("item 6: every multi-line authoring field shows whole lines, and a scrollin
   await page.setViewportSize({ width: 1440, height: 900 });
   await stubShell(page);
   await page.route("**/api/tavern/v1/memory", (route) =>
-    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: worldInfoHandle, memories: [], chapters: [] })),
+    route.fulfill(jsonOk({ apiVersion: 1, projectionRevision: memoryProjectionRevision, memories: [], chapters: [] })),
   );
   await page.goto(`/#profile=composed-reference-game&boot=${token}&panel=characters`);
   await expect(page.locator("[data-opening-editor]")).toBeVisible();

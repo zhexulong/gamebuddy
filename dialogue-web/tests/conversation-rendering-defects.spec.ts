@@ -90,7 +90,7 @@ function composedRoot(options: Readonly<{ transcript?: readonly Message[]; title
         turn: null,
         worldInfo: null,
       },
-      memory: { readAvailable: false, mutationAvailable: false, projectionRevision: null },
+      memory: { readAvailable: true, mutationAvailable: true, projectionRevision },
       eventStream: null,
     },
     game: {

@@ -10,8 +10,8 @@ import { SurfaceView } from "./SurfaceView";
  * panel over `memory.mutate`.
  *
  * It takes only what it renders: the management client and its CSRF token, the
- * display language, the labels and the control focus returns to when this
- * surface is replaced. The panel owns its own read/mutation revisions, so the
+ * display language, the labels, the snapshot's `memory.mutationAvailable`, and the control focus
+ * returns to when this surface is replaced. The panel owns its own read/mutation revisions, so the
  * shell holds nothing of Memory's state.
  */
 export function MemorySurface({
@@ -20,6 +20,7 @@ export function MemorySurface({
   labels,
   locale,
   conversationTurn,
+  mutationAvailable,
   restoreFocusTo,
 }: {
   api: ManagementPipelineApi;
@@ -28,6 +29,8 @@ export function MemorySurface({
   locale: Locale;
   /** The mounted conversation's turn as the shell committed it; see `MemorySurfacePanel`. */
   conversationTurn: Readonly<{ handle: string; state: string }> | null;
+  /** The snapshot's `memory.mutationAvailable`: whether this Host serves `memory.mutate`. */
+  mutationAvailable: boolean;
   restoreFocusTo: RefObject<HTMLElement | null>;
 }) {
   return (
@@ -44,6 +47,7 @@ export function MemorySurface({
         labels={labels}
         locale={locale}
         conversationTurn={conversationTurn}
+        mutationAvailable={mutationAvailable}
       />
     </SurfaceView>
   );
