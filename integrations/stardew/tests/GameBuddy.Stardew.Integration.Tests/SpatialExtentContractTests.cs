@@ -142,7 +142,7 @@ public sealed class SpatialExtentContractTests
     [Fact]
     public void BothContentBoundExtentsAreReadFromTheEngine()
     {
-        string furniture = Source("farmhandexecutioncontroller.worldobjectactions.cs");
+        string furniture = Source("farmhandexecutioncontroller.worldobjectactions.cs") + ControllerPartials.Declaring("DiscoverWorldObjectTargets");
         furniture.Should().Contain("piece.getTilesWide()", "a furniture row's width is the engine's own sprite-derived footprint");
         furniture.Should().Contain("piece.getTilesHigh()");
         assertNoLiteral(furniture, "the furniture row");

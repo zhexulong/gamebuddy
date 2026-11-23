@@ -499,8 +499,8 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
 
         // THE DISPLAY TARGET IS CHOSEN BY ASKING THE PUBLISHER. A mannequin in a room the wire does not publish is a target
         // the day cannot name, and re-deriving "in radius and addressable" here would be a second copy of that rule.
-        given.Should().Contain("ExecutionManager.DiscoverMannequinTargets(");
-        given.Should().Contain("ExecutionManager.DiscoverSignTargets(");
+        given.Should().Contain("FarmhandTargetDiscovery.DiscoverMannequinTargets(");
+        given.Should().Contain("FarmhandTargetDiscovery.DiscoverSignTargets(");
         given.Should().Contain("player.currentLocation is not FarmHouse room", "the room is the actor's own, or nothing is published");
         given.Should().Contain("fixture_native_local_play_session_display_target_missing");
 

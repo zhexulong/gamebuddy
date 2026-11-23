@@ -298,53 +298,7 @@ internal sealed partial class ExecutionManager
         return false;
     }
 
-    private static IReadOnlyList<BridgeRecipeTarget> DiscoverCookingRecipeTargets(Farmer player)
-    {
-        Dictionary<string, string>? table = CraftingRecipe.cookingRecipes;
-        if (table is null) return Array.Empty<BridgeRecipeTarget>();
-        List<BridgeRecipeTarget> result = new();
-        foreach (string recipeKey in player.cookingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
-        {
-            if (!table.ContainsKey(recipeKey)) continue;
-            if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
-            CraftingRecipe recipe = new(recipeKey, isCookingRecipe: true);
-            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(null), MissingRecipeIngredients(player, recipe)));
-        }
-        return result
-            .OrderByDescending(target => target.IngredientsAvailable)
-            .Take(64)
-            .ToArray();
-    }
-
-    private static IReadOnlyList<BridgeCookingStationTarget> DiscoverCookingStationTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeCookingStationTarget>();
-        List<BridgeCookingStationTarget> result = new();
-        if (!location.IsOutdoors)
-        {
-            int width = location.map.Layers[0].LayerWidth;
-            int height = location.map.Layers[0].LayerHeight;
-            for (int x = 0; x < width && result.Count < 16; x++)
-            for (int y = 0; y < height && result.Count < 16; y++)
-            {
-                string actionToken = location.doesTileHaveProperty(x, y, "Action", "Buildings")?.Split(' ')[0] ?? string.Empty;
-                if (!string.Equals(actionToken, "kitchen", StringComparison.Ordinal)
-                    && !string.Equals(actionToken, "Kitchen", StringComparison.Ordinal))
-                    continue;
-                result.Add(new BridgeCookingStationTarget(BuildCookingStationTargetId(location, x, y, "kitchen"), location.NameOrUniqueName, x, y, "kitchen"));
-            }
-        }
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            if (result.Count >= 16) break;
-            if (pair.Value.QualifiedItemId != "(BC)278") continue;
-            result.Add(new BridgeCookingStationTarget(BuildCookingStationTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, "cookout_kit"), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, "cookout_kit"));
-        }
-        return result;
-    }
-
-    private static string BuildCookingStationTargetId(GameLocation location, int x, int y, string stationKind)
+    internal static string BuildCookingStationTargetId(GameLocation location, int x, int y, string stationKind)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{stationKind}";
         return $"cooking_station_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";

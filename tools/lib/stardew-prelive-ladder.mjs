@@ -29,6 +29,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { describeTaskPoolAtOpening, estimateTaskPoolAtOpening } from "../live-run/game/task-pool-feasibility.mjs";
 import { loadHostTestModule } from "./host-test-module.mjs";
 import { REBUILD_COMMAND, assessLiveRunArtifactFreshness } from "./live-run-artifact-freshness.mjs";
 import {
@@ -410,10 +411,10 @@ export async function runPreliveSnapshotProbe(
     session = await connectWithRetry(config, connectTimeoutMs);
     const seed = session.client.state?.snapshot ?? (await session.client.observe());
     const actionable = await waitForActionable(session.client, seed, actionableTimeoutMs);
-    const pool = evaluateTaskPoolFeasibility({ snapshot: actionable });
+    const pool = estimateTaskPoolAtOpening({ snapshot: actionable });
     const template = {
       rung: 3,
-      detail: `revision=${actionable.revision};location=${actionable.location};${describeTaskPoolFeasibility(pool)}`,
+      detail: `revision=${actionable.revision};location=${actionable.location};${describeTaskPoolAtOpening(pool)}`,
       snapshot: summarizeSnapshot(actionable),
       pool,
       timings: { snapshotMs: Date.now() - startedAt, poolMs: pool.evaluationMs },

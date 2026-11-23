@@ -266,8 +266,8 @@ public sealed partial class ModEntry
                     + $"tile={(int)target.Tile.X},{(int)target.Tile.Y}");
         // The count is the publisher's own answer after the placement, not a 1 this Given asserts about itself.
         int familyTargets = target.Kind == "mannequin"
-            ? ExecutionManager.DiscoverMannequinTargets(player).Count
-            : ExecutionManager.DiscoverSignTargets(player).Count;
+            ? FarmhandTargetDiscovery.DiscoverMannequinTargets(player).Count
+            : FarmhandTargetDiscovery.DiscoverSignTargets(player).Count;
         Point displayTile = new((int)target.Tile.X, (int)target.Tile.Y);
         this.Monitor.Log(
             "GameBuddy native-local-player initialized dress-and-display target Given before bridge attachment: "
@@ -290,8 +290,8 @@ public sealed partial class ModEntry
                     : new StardewValley.Objects.Sign(tile, "Sign");
                 room.objects.Add(tile, target);
                 bool published = mannequin
-                    ? ExecutionManager.DiscoverMannequinTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y)
-                    : ExecutionManager.DiscoverSignTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y);
+                    ? FarmhandTargetDiscovery.DiscoverMannequinTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y)
+                    : FarmhandTargetDiscovery.DiscoverSignTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y);
                 IReadOnlyList<Point> severed = published
                     ? PlaySessionFixturePlacement.TilesSeveredByPlacing(CanStand, actorTile, candidate, roomNeeds)
                     : Array.Empty<Point>();

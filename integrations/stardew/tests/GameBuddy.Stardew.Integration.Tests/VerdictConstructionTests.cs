@@ -182,6 +182,7 @@ public sealed class VerdictConstructionTests
         if (root is null) return ControllerPartials.Sources().ToArray();
         return Directory
             .GetFiles(root, "farmhandexecutioncontroller*.cs", SearchOption.TopDirectoryOnly)
+            .Concat(Directory.GetFiles(root, "farmhandtargetdiscovery*.cs", SearchOption.TopDirectoryOnly))
             .OrderBy(path => path, StringComparer.Ordinal)
             .Select(path => (Path.GetFileName(path), File.ReadAllText(path)))
             .ToArray();

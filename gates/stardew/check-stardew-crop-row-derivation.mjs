@@ -14,8 +14,13 @@
 //     engine's own `Data/Crops` answer.
 //   - SNAPSHOT: the field names the Mod publishes on a crop row (`BridgeCropTarget` in
 //     `integrations/stardew/src/Core/Models/BridgeProtocolModels.cs`), normalised to wire camelCase.
-//   `examined N worker fields, M snapshot fields, K shared` is printed, and a zero population is `blocked` - a gate
-//   whose population is empty agrees with itself.
+//   - DECLARATION: the TYPE that declares `DiscoverCropTargets`, found by reading that member's own declaration across
+//     every `.cs` file under `integrations/stardew` - never by naming a file. Measured twice: the gate first read
+//     `farmhandexecutioncontroller.cs`, then the `farmhandexecutioncontroller.*.cs` partials, and each time the
+//     discovery functions were extracted into a type of their own the gate reported a CORRECT move as
+//     `crop_row_discovery_not_declared`. A filename is not an owner.
+//   `examined N worker fields, M snapshot fields, K shared` and `discovery declared in <type> (<n> functions examined)`
+//   are printed, and a zero population is `blocked` - a gate whose population is empty agrees with itself.
 //
 // ASSERTIONS
 //   1. reachable: every worker field is either published by a snapshot crop row, or carries a stated reason here
@@ -32,11 +37,22 @@
 //      `GameLocation.isCollidingPosition(...)` - the call `PathFindController.cs:222` itself makes - and NOT by
 //      `GameLocation.isTilePassable` (GameLocation.cs:2898), which reads only the map's Back and Buildings layers and
 //      reports a trellis crop as open ground. The two disagree on exactly the tile this field exists for, so the
-//      source that builds the field is read rather than trusted.
+//      source that builds the field is read rather than trusted - and it is read from the type that OWNS the helper
+//      the row calls, resolved by declaration like assertion 4's type, not from a file this gate names.
+//   4. derived: every key of the row record is set, by name, at the ONE `new BridgeCropTarget(...)` inside the type
+//      that declares the discovery. A key the record declares and the discovery never derives is a key the row cannot
+//      have measured; it is named rather than averaged away. The construction is looked for in the whole type, not in
+//      one function, so extracting it into a helper does not read as a missing derivation.
 //
 // red-proof: inject  deleting `bool? IsRaised` from a copy of `BridgeProtocolModels.cs`, so the crop row stops
 //   publishing a field `ContentDataQuery.CropRow` still projects -> `not_reachable:isRaised` and three
-//   `wire_extra:isRaised`, `blocked (4 finding(s))`, exit 1 (tools/check-stardew-crop-row-derivation.test.mjs)
+//   `wire_extra:isRaised`, `blocked`, exit 1 (gates/stardew/check-stardew-crop-row-derivation.test.mjs)
+// red-proof: inject  deleting `IsRaised: data?.IsRaised,` from the construction inside `DiscoverCropTargets`, so the
+//   row keeps a key nothing derives -> `field_not_derived:isRaised`, `blocked`, exit 1, and the same fixture with the
+//   discovery moved into another type stays green (gates/stardew/check-stardew-crop-row-derivation.test.mjs)
+// red-proof: inject  moving the whole `DiscoverCropTargets` body into another type's partial -> verdict stays `passed`,
+//   and the population line names the new owner (`discovery declared in ExecutionManager (...)`) instead of
+//   `crop_row_discovery_not_declared` (gates/stardew/check-stardew-crop-row-derivation.test.mjs)
 
 export const gateDeclaration = {
   id: "check-stardew-crop-row-derivation",
@@ -45,7 +61,7 @@ export const gateDeclaration = {
   kind: "contract",
 };
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -58,7 +74,6 @@ const gate = "stardew_crop_row_derivation/v1";
 const BRIDGE_MODELS_PATH = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
 const ACTION_DEFINITIONS_PATH = "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs";
 const CONTENT_DATA_PATH = "integrations/stardew/ContentDataQuery.cs";
-const EXECUTION_CONTROLLER_PATH = "integrations/stardew/farmhandexecutioncontroller.cs";
 const PROTOCOL_PATH = "host/src/protocol.ts";
 const VALIDATOR_PATH = "host/src/protocol-target-facts.ts";
 /**
@@ -75,6 +90,21 @@ const SCHEMA_PATH = "protocol/bridge-v1.schema.json";
 /** The row record (`BridgeCropTarget`) and the data answer (`CropRow`) this gate joins. */
 const ROW_RECORD = "BridgeCropTarget";
 const ROW_DISCOVERY_FUNCTION = "DiscoverCropTargets";
+
+/**
+ * Where the Mod's own types live, and which directories under it are not the Mod's types.
+ *
+ * The population is the DIRECTORY: a type that moves to a new file must not need this gate edited to keep seeing it.
+ */
+const MOD_SOURCE_ROOT = "integrations/stardew";
+const NOT_MOD_TYPE_DIRECTORIES = new Set(["tests", "obj", "bin", "node_modules"]);
+
+/** A member DECLARATION: an access modifier opening the line, then the signature. A call site cannot imitate it. */
+const memberDeclaration = (member) =>
+  new RegExp(`^[ \\t]*(?:internal|public|private|protected)\\b[^\\n;={]*\\b${member}[ \\t]*\\(`, "mu");
+
+/** Any member declaration, with the name captured - the type's own vocabulary, counted rather than assumed. */
+const DECLARED_MEMBER = /^[ \t]*(?:internal|public|private|protected)\b[^\n;={]*?\b([A-Za-z_]\w*)[ \t]*\(/gmu;
 
 /**
  * Worker fields the crop row deliberately does not repeat, each with the reason and the class.
@@ -217,23 +247,138 @@ export function extractWorkerCropRowFields(source) {
   return Object.freeze(names);
 }
 
-/** The body of `private static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(...)` at brace depth 0. */
-export function extractRowDiscoveryBody(source) {
-  // Anchored on the RETURN TYPE, not on the name: the name also appears at call sites (one of them a ternary inside the
-  // snapshot builder), and a reader that took the first hit framed a call expression as the declaration.
-  const signature = source.indexOf("BridgeCropTarget> DiscoverCropTargets(");
-  if (signature < 0) throw new Error(`row_discovery_missing: ${ROW_DISCOVERY_FUNCTION} not found`);
-  const open = source.indexOf("{", signature);
-  if (open < 0) throw new Error(`row_discovery_unterminated: ${ROW_DISCOVERY_FUNCTION} has no body`);
+// ---------------------------------------------------------------------------
+// Source reading: which type declares what
+// ---------------------------------------------------------------------------
+
+/** The index of the delimiter closing the one at `open`, or -1. */
+function matchingDelimiter(source, open, openCharacter, closeCharacter) {
   let depth = 0;
   for (let index = open; index < source.length; index += 1) {
-    if (source[index] === "{") depth += 1;
-    else if (source[index] === "}") {
+    if (source[index] === openCharacter) depth += 1;
+    else if (source[index] === closeCharacter) {
       depth -= 1;
-      if (depth === 0) return source.slice(open, index + 1);
+      if (depth === 0) return index;
     }
   }
-  throw new Error(`row_discovery_unterminated: ${ROW_DISCOVERY_FUNCTION} body is unterminated`);
+  return -1;
+}
+
+/** Every `.cs` file under the Mod tree, as repository-relative paths with `/` separators. */
+function modSourcePaths(root) {
+  const found = [];
+  const walk = (relativeDirectory) => {
+    let entries;
+    try {
+      entries = readdirSync(path.join(root, relativeDirectory), { withFileTypes: true });
+    } catch {
+      throw new Error(`crop_row_source_tree_unreadable: ${relativeDirectory} could not be listed`);
+    }
+    for (const entry of entries) {
+      const relativePath = `${relativeDirectory}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (!NOT_MOD_TYPE_DIRECTORIES.has(entry.name)) walk(relativePath);
+      } else if (entry.name.endsWith(".cs")) {
+        found.push(relativePath);
+      }
+    }
+  };
+  walk(MOD_SOURCE_ROOT);
+  return found.sort();
+}
+
+/** The type declarations in `source`, as matches whose first group is the type's name. */
+function typeDeclarations(source) {
+  return source.matchAll(
+    /^[ \t]*(?:(?:internal|public|private|protected|static|sealed|abstract|partial|readonly|unsafe|file|new)[ \t]+)*(?:class|interface|struct|record(?:[ \t]+(?:class|struct))?)[ \t]+([A-Za-z_]\w*)/gmu,
+  );
+}
+
+/** Whether `source` declares the type `type`. */
+function declaresType(source, type) {
+  for (const declaration of typeDeclarations(source)) if (declaration[1] === type) return true;
+  return false;
+}
+
+/** The INNERMOST type whose body contains `at`, or null. An outer class is not the owner of a nested one's members. */
+function enclosingTypeName(source, at) {
+  let name = null;
+  for (const declaration of typeDeclarations(source)) {
+    if (declaration.index > at) break;
+    const open = source.indexOf("{", declaration.index);
+    if (open < 0 || open > at) continue;
+    const close = matchingDelimiter(source, open, "{", "}");
+    // The type must still be OPEN at the member: a declaration whose body ended earlier is a sibling, not the owner.
+    if (close < at) continue;
+    name = declaration[1];
+  }
+  return name;
+}
+
+/**
+ * The TYPE that declares `member`, the file its declaration is in, and every file declaring that type.
+ *
+ * A filename is not an owner, and this gate has twice reported a correct extraction as a missing declaration: it read
+ * `farmhandexecutioncontroller.cs`, then the `farmhandexecutioncontroller.*.cs` partials, and the discovery functions
+ * moved out of both. So the file is asked for by the member's own DECLARATION - an access modifier opening a line, then
+ * the signature, which a call site cannot imitate - and the type is read from that declaration. A member declared
+ * nowhere, or in two files, blocks by name rather than by silence.
+ */
+export function resolveMemberType(root, member, read) {
+  const sources = modSourcePaths(root).map((file) => ({ file, source: read(file) }));
+  const declarations = [];
+  for (const { file, source } of sources) {
+    const declaration = memberDeclaration(member).exec(source);
+    if (declaration === null) continue;
+    const type = enclosingTypeName(source, declaration.index);
+    if (type === null)
+      throw new Error(`crop_row_member_type_unknown: ${member} in ${file} is declared outside any type`);
+    declarations.push({ file, type, at: declaration.index });
+  }
+  if (declarations.length === 0)
+    throw new Error(`crop_row_member_not_declared: no type in ${MOD_SOURCE_ROOT} declares ${member}`);
+  if (declarations.length > 1)
+    throw new Error(
+      `crop_row_member_ambiguous: ${member} is declared in ${declarations
+        .map((entry) => entry.file)
+        .sort()
+        .join(", ")}`,
+    );
+  const [{ file, type, at }] = declarations;
+  const typeFiles = sources.filter(({ source }) => declaresType(source, type));
+  return Object.freeze({
+    type,
+    file,
+    at,
+    files: Object.freeze(typeFiles.map(({ file: typeFile }) => typeFile)),
+    sources: Object.freeze(typeFiles),
+  });
+}
+
+/** The `Discover*` member names a type's files declare, so its vocabulary is printed rather than assumed. */
+function declaredDiscoveries(typeFiles) {
+  const names = new Set();
+  for (const { source } of typeFiles)
+    for (const declaration of source.matchAll(DECLARED_MEMBER))
+      if (/^Discover[A-Z]/u.test(declaration[1])) names.add(declaration[1]);
+  return Object.freeze([...names].sort());
+}
+
+/** The body of the `DiscoverCropTargets` declaration found at `at`, by brace matching. */
+export function extractRowDiscoveryBody(source, at) {
+  const open = source.indexOf("{", at);
+  if (open < 0) throw new Error(`row_discovery_unterminated: ${ROW_DISCOVERY_FUNCTION} has no body`);
+  const close = matchingDelimiter(source, open, "{", "}");
+  if (close < 0) throw new Error(`row_discovery_unterminated: ${ROW_DISCOVERY_FUNCTION} body is unterminated`);
+  return source.slice(open, close + 1);
+}
+
+/** The labelled arguments (`Property: value`) of the call opening at `open`, as property names. */
+function labelledArguments(source, open) {
+  const close = matchingDelimiter(source, open, "(", ")");
+  if (close < 0) return [];
+  const body = source.slice(open, close + 1);
+  return [...body.matchAll(/(?:^|[\s({,])([A-Za-z_]\w*):(?!:)/gu)].map((match) => match[1]);
 }
 
 /** The body of the method named `name` in one source: expression-bodied (`=> ...;`) or block-bodied. */
@@ -284,16 +429,24 @@ export function methodBody(source, name) {
 /**
  * The source that ANSWERS the row's `TileBlockedNow`, and the name it was answered by.
  *
- * The row publishes a named helper rather than an inline expression, for the same reason every other row does; reading
- * only the discovery body would report the call site as the answer and never see the test inside it. A name this file
- * cannot resolve falls back to the discovery body, which then has to pass the same assertions on its own.
+ * The row publishes a named helper rather than an inline expression, for the same reason every other row does, and it
+ * calls it through its owner (`ExecutionManager.IsTileBlockedForFarmer`), so reading only the discovery body would
+ * report the call site as the answer and check an expression that is not the answer. `resolve` is asked for the owning
+ * type's file, by declaration; a name that resolves nowhere is reported as unresolved rather than passing as inline.
  */
-export function passabilityAnswer(discoveryBody, source) {
-  const argument = /TileBlockedNow:\s*([A-Za-z_][\w]*)\s*\(/u.exec(discoveryBody);
-  if (argument === null) return { snippet: discoveryBody, via: "<inline>" };
+export function passabilityAnswer(discoveryBody, resolve) {
+  const argument = /TileBlockedNow:[ \t]*(?:[A-Za-z_]\w*[ \t]*\.[ \t]*)*([A-Za-z_]\w*)[ \t]*\(/u.exec(discoveryBody);
+  if (argument === null) return { snippet: discoveryBody, via: "<inline>", owner: null, unresolved: null };
   const name = argument[1];
-  const body = methodBody(source, name);
-  return body === null ? { snippet: discoveryBody, via: name } : { snippet: body, via: name };
+  const owner = resolve(name);
+  if (owner === null) return { snippet: discoveryBody, via: name, owner: null, unresolved: name };
+  const body = methodBody(owner.source, name);
+  return {
+    snippet: body === null ? discoveryBody : body,
+    via: `${owner.type}.${name}`,
+    owner,
+    unresolved: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -374,34 +527,22 @@ function defaultRead(root, relativePath) {
 }
 
 /**
- * The controller partial that DECLARES `member`, resolved from the family instead of assumed.
+ * The declaration of `member` in the Mod's own types, and the type that owns it.
  *
- * This gate used to read `farmhandexecutioncontroller.cs` by name, and a filename is not an owner: when the target
- * discovery members were extracted into their own partial the file was still there and the body was not, so the gate
- * reported `row_discovery_missing` for a move that changed no behaviour. The second hardcoded path is the same defect
- * one move later, so the file is asked for by the member's DECLARATION - a signature line carrying a modifier, which a
- * call site cannot imitate - and a member declared nowhere, or in two partials, blocks the gate by name.
+ * A declaration that cannot be found is a finding, not an exception: the gate's whole subject is that the row's facts
+ * are DERIVED somewhere, so "the function this gate read the derivation out of is gone" has to fail the run by name.
  */
-function controllerPartialDeclaring(root, member, read) {
-  const directory = "integrations/stardew";
-  let names = [];
+function resolveOrPush(root, member, read, push) {
   try {
-    names = readdirSync(path.join(root, directory));
-  } catch {
-    throw new Error(`crop_row_controller_family_unreadable: ${directory} could not be listed`);
-  }
-  const declaration = new RegExp(`^ {4}(?:private|internal|public|protected)[^;=]*\\b${member}\\s*\\(`, "mu");
-  const declaring = names
-    .filter((name) => /^farmhandexecutioncontroller.*\.cs$/u.test(name))
-    .filter((name) => declaration.test(read(`${directory}/${name}`)))
-    .sort();
-  if (declaring.length !== 1)
-    throw new Error(
-      declaring.length === 0
-        ? `crop_row_discovery_not_declared: no controller partial declares ${member}`
-        : `crop_row_discovery_ambiguous: ${member} is declared in ${declaring.join(", ")}`,
+    return resolveMemberType(root, member, read);
+  } catch (error) {
+    push(
+      "declaration_unresolved",
+      member,
+      `${error?.message ?? "unknown"}; this gate reads the ownership of ${member} from its declaration, so a move it cannot see is a reading it cannot make`,
     );
-  return `${directory}/${declaring[0]}`;
+    return null;
+  }
 }
 
 const sorted = (values) => [...values].sort();
@@ -423,7 +564,10 @@ export function checkStardewCropRowDerivation({
   const protocolFields = extractProtocolRowFields(read(PROTOCOL_PATH));
   const validatorFields = extractValidatorRowFields(read(VALIDATOR_PATH));
   const schemaFields = extractSchemaRowFields(read(SCHEMA_PATH));
-  const discoveryBody = extractRowDiscoveryBody(read(controllerPartialDeclaring(root, ROW_DISCOVERY_FUNCTION, read)));
+
+  const discovery = resolveOrPush(root, ROW_DISCOVERY_FUNCTION, read, push);
+  const discoveryBody = discovery === null ? null : extractRowDiscoveryBody(read(discovery.file), discovery.at);
+  const discoveryFunctions = discovery === null ? Object.freeze([]) : declaredDiscoveries(discovery.sources);
 
   // 0. A NULLABLE wire key must be OMITTED when null, never sent as `null`.
   //
@@ -508,7 +652,7 @@ export function checkStardewCropRowDerivation({
   }
 
   // 2. Wire parity, both directions: four copies of one contract.
-  const checkSameSet = (member, layerFields, layerName) => {
+  const checkSameSet = (layerFields, layerName) => {
     const layer = new Set(layerFields);
     for (const field of snapshotFields)
       if (!layer.has(field)) push("wire_missing", field, `${layerName} does not name a field the Mod publishes`);
@@ -516,34 +660,92 @@ export function checkStardewCropRowDerivation({
       if (!snapshotSet.has(field))
         push("wire_extra", field, `${layerName} names a field the Mod's row does not publish`);
   };
-  checkSameSet("cropTarget", protocolFields, `${PROTOCOL_PATH} cropTargets row type`);
-  checkSameSet("cropTarget", validatorFields, `${VALIDATOR_PATH} isCropTargetFact`);
-  checkSameSet("cropTarget", schemaFields, `${SCHEMA_PATH} $defs.cropTarget`);
+  checkSameSet(protocolFields, `${PROTOCOL_PATH} cropTargets row type`);
+  checkSameSet(validatorFields, `${VALIDATOR_PATH} isCropTargetFact`);
+  checkSameSet(schemaFields, `${SCHEMA_PATH} $defs.cropTarget`);
   if (!snapshotSet.has("cropId"))
     push("crop_id_missing", "cropId", "the row cannot be joined to a data answer without the crop's own id");
 
-  // 3. The passability fact is the pathfinder's own test.
-  if (snapshotSet.has("tileBlockedNow")) {
-    const answer = passabilityAnswer(discoveryBody, read(EXECUTION_CONTROLLER_PATH));
-    if (!answer.snippet.includes("isCollidingPosition"))
+  // 3. The passability fact is the pathfinder's own test, read from the type that OWNS the helper the row calls.
+  let passability = null;
+  if (snapshotSet.has("tileBlockedNow") && discoveryBody !== null) {
+    const answer = passabilityAnswer(discoveryBody, (name) => {
+      try {
+        const owner = resolveMemberType(root, name, read);
+        return { type: owner.type, file: owner.file, source: read(owner.file) };
+      } catch {
+        return null;
+      }
+    });
+    if (answer.unresolved !== null) {
       push(
-        "passability_not_pathfinder",
+        "passability_answer_unresolved",
         "tileBlockedNow",
-        `${answer.via} never calls GameLocation.isCollidingPosition, the call PathFindController.cs:222 makes; a cheaper ` +
-          "test here answers a different question",
+        `the row answers this key with \`${answer.unresolved}(...)\`, and no type in ${MOD_SOURCE_ROOT} declares it; the test that decides the answer was not read`,
       );
-    if (answer.snippet.includes("isTilePassable"))
-      push(
-        "passability_map_only",
-        "tileBlockedNow",
-        `${answer.via} calls isTilePassable, which reads only the map's Back and Buildings layers (GameLocation.cs:2898) ` +
-          "and reports a trellis crop as open ground",
-      );
+    } else {
+      passability = answer.owner === null ? null : { via: answer.via, file: answer.owner.file };
+      if (!answer.snippet.includes("isCollidingPosition"))
+        push(
+          "passability_not_pathfinder",
+          "tileBlockedNow",
+          `${answer.via} never calls GameLocation.isCollidingPosition, the call PathFindController.cs:222 makes; a cheaper ` +
+            "test here answers a different question",
+        );
+      if (answer.snippet.includes("isTilePassable"))
+        push(
+          "passability_map_only",
+          "tileBlockedNow",
+          `${answer.via} calls isTilePassable, which reads only the map's Back and Buildings layers (GameLocation.cs:2898) ` +
+            "and reports a trellis crop as open ground",
+        );
+    }
+  }
+
+  // 4. The row's keys are DERIVED: every key of the record is set by name, at one construction site, inside the type
+  // that declares the discovery. A key the record declares and the discovery never derives is a key the row cannot have
+  // measured - which is the whole subject of this gate and was, until this assertion existed, only asserted from the
+  // worker side. The site is looked for across the whole TYPE, so a construction extracted into a helper does not read
+  // as a missing derivation; two sites block, because then this gate cannot say which derivation it measured.
+  const constructionSites = [];
+  if (discovery !== null) {
+    const pattern = new RegExp(`new[ \\t]+${ROW_RECORD}[ \\t]*\\(`, "gu");
+    for (const file of discovery.files) {
+      const source = read(file);
+      for (const match of source.matchAll(pattern))
+        constructionSites.push({ file, source, open: source.indexOf("(", match.index) });
+    }
+  }
+  if (discovery !== null && constructionSites.length === 0) {
+    push(
+      "crop_row_construction_missing",
+      discovery.type,
+      `no \`new ${ROW_RECORD}(...)\` inside \`${discovery.type}\`, the type that declares ${ROW_DISCOVERY_FUNCTION}; a row built somewhere this gate cannot read is a derivation it cannot measure`,
+    );
+  } else if (constructionSites.length > 1) {
+    push(
+      "crop_row_construction_ambiguous",
+      discovery.type,
+      `${ROW_RECORD} is built in ${constructionSites.map((site) => site.file).join(", ")}; one row has one construction site, or this gate cannot say which derivation it measured`,
+    );
+  } else {
+    for (const site of constructionSites) {
+      const labels = new Set(labelledArguments(site.source, site.open));
+      for (const field of snapshotFields) {
+        const property = `${field.charAt(0).toUpperCase()}${field.slice(1)}`;
+        if (labels.has(property)) continue;
+        push(
+          "field_not_derived",
+          field,
+          `the row publishes this key and \`new ${ROW_RECORD}(...)\` in ${site.file} sets no \`${property}:\` argument; the discovery reads nothing that becomes this key`,
+        );
+      }
+    }
   }
 
   const exempted = workerFields.filter((field) => !snapshotSet.has(field));
 
-  // 4. The gaps this row does not close, and the proof that the real path carries what it does.
+  // 5. The gaps this row does not close, and the proof that the real path carries what it does.
   const actionDefinitions = read(ACTION_DEFINITIONS_PATH);
   for (const actionId of Object.keys(NOT_COVERED)) {
     if (!actionDefinitions.includes(`E("${actionId}",`))
@@ -578,6 +780,14 @@ export function checkStardewCropRowDerivation({
       shared: shared.length,
       exempted: exempted.length,
     }),
+    declaration: Object.freeze({
+      discovery: Object.freeze({
+        type: discovery?.type ?? null,
+        file: discovery?.file ?? null,
+        functionsExamined: discoveryFunctions.length,
+      }),
+      passability: passability === null ? null : Object.freeze(passability),
+    }),
     exempted: Object.freeze(exempted),
     workerFields: Object.freeze(workerFields),
     snapshotFields: Object.freeze(snapshotFields),
@@ -586,13 +796,21 @@ export function checkStardewCropRowDerivation({
 }
 
 function report(result) {
+  const { discovery, passability } = result.declaration;
   const lines = [
     `stardew_crop_row_derivation: examined ${result.examined.workerFields} worker fields, ` +
       `${result.examined.snapshotFields} snapshot fields, ${result.examined.shared} shared` +
       (result.exempted.length === 0
         ? ""
         : `; exempted ${result.exempted.length} (${sorted(result.exempted).join(",")})`),
+    // The population line the next mover needs: whether a function moved, this names the type it expects to declare the
+    // discovery family and how many of its functions were read, instead of a filename to update.
+    discovery.type === null
+      ? "stardew_crop_row_derivation: discovery declared nowhere this gate could read"
+      : `stardew_crop_row_derivation: discovery declared in ${discovery.type} (${discovery.functionsExamined} functions examined): ${discovery.file}`,
   ];
+  if (passability !== null)
+    lines.push(`stardew_crop_row_derivation: tileBlockedNow answered by ${passability.via}: ${passability.file}`);
   for (const finding of result.findings)
     lines.push(`stardew_crop_row_derivation_${finding.code}: ${finding.member} - ${finding.detail}`);
   for (const [actionId, gap] of Object.entries(NOT_COVERED))

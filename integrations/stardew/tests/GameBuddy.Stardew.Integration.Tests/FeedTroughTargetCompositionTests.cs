@@ -222,10 +222,8 @@ public sealed class FeedTroughTargetCompositionTests
 
         internal IReadOnlyList<BridgeFeedTroughTarget> Troughs()
         {
-            MethodInfo discovery = typeof(ExecutionManager).GetMethod(
-                "DiscoverFeedTroughTargets",
-                BindingFlags.Instance | BindingFlags.NonPublic)!;
-            return (IReadOnlyList<BridgeFeedTroughTarget>)discovery.Invoke(this.Executions, new object[] { this.Actor })!;
+            MethodInfo discovery = DiscoveryMembers.Method("DiscoverFeedTroughTargets");
+            return (IReadOnlyList<BridgeFeedTroughTarget>)discovery.Invoke(DiscoveryMembers.Target(discovery, this.Executions), new object[] { this.Actor })!;
         }
 
         internal void PutInPackSlot(int slot, string qualifiedItemId, int stack)

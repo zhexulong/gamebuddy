@@ -41,9 +41,9 @@ namespace GameBuddy.Stardew;
 // that; it only reports its own before/after `waterSpots` observation.
 internal sealed partial class ExecutionManager
 {
-    private const int SlimeHutchTroughColumn = 16;
-    private const int SlimeHutchTroughFirstRow = 6;
-    private const int SlimeHutchTroughLastRow = 9;
+    internal const int SlimeHutchTroughColumn = 16;
+    internal const int SlimeHutchTroughFirstRow = 6;
+    internal const int SlimeHutchTroughLastRow = 9;
 
     /// <summary>Water the built-in Slime Hutch trough through the native watering path.</summary>
     public LocalExecutionReceipt RequestLocalWaterSlimeHutchTrough(string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)

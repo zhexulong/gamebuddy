@@ -5,7 +5,10 @@
 //
 // red-proof: inject  one shared field removed in memory (`bool? IsRaised` deleted from the row) -> the real checker's
 //   `not_reachable:isRaised` and three `wire_extra:isRaised`, verdict `blocked`, asserted by "one shared field
-//   removed" below (tools/check-stardew-crop-row-derivation.test.mjs)
+//   removed" below (gates/stardew/check-stardew-crop-row-derivation.test.mjs)
+// red-proof: inject  one derived field removed in memory (`IsRaised: data?.IsRaised,` deleted from the construction
+//   inside `DiscoverCropTargets`) -> `field_not_derived:isRaised`, verdict `blocked`, while the same fixture with the
+//   discovery moved into another FILE keeps the verdict at `passed` (gates/stardew/check-stardew-crop-row-derivation.test.mjs)
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -25,10 +28,16 @@ const sourceOf = (relativePath) => readFileSync(path.join(root, relativePath), "
 const BRIDGE_MODELS_PATH = "integrations/stardew/src/Core/Models/BridgeProtocolModels.cs";
 const CONTENT_DATA_PATH = "integrations/stardew/ContentDataQuery.cs";
 const EXECUTION_CONTROLLER_PATH = "integrations/stardew/farmhandexecutioncontroller.cs";
+const TARGET_DISCOVERY_PARTIAL_PATH = "integrations/stardew/farmhandexecutioncontroller.targetdiscovery.cs";
+const DISCOVERY_PATH = "integrations/stardew/farmhandtargetdiscovery.cs";
 const PROTOCOL_PATH = "host/src/protocol.ts";
 const VALIDATOR_PATH = "host/src/protocol-target-facts.ts";
 const DEPLOYED_VALIDATOR_PATH = "host/dist-test/protocol-target-facts.js";
 const SCHEMA_PATH = "protocol/bridge-v1.schema.json";
+
+/** The `DiscoverCropTargets` declaration and its body, as one block, out of the file that declares it. */
+const ROW_DISCOVERY_DECLARATION =
+  /^ {4}internal static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets\([\s\S]*?\n {4}\}\n/mu;
 
 /** The tree as it is, with one source replaced by an in-memory edit. */
 const withEdit = (relativePath, edit) => ({ [relativePath]: edit(sourceOf(relativePath)) });
@@ -46,6 +55,18 @@ test("the two populations are read from source, and every worker field is reacha
   });
   assert.deepEqual(report.workerFields.length, 13);
   assert.ok(report.snapshotFields.includes("tileBlockedNow"));
+  // The population line the next mover reads: WHICH type declares the discovery, read from its declaration rather than
+  // from a filename this gate would have to keep in step. Measured 2026-11-09 on the real tree - the discovery functions
+  // extracted out of `ExecutionManager` were reported as a missing declaration until the file was asked for by
+  // declaration.
+  assert.equal(report.declaration.discovery.type, "FarmhandTargetDiscovery");
+  assert.equal(report.declaration.discovery.file, DISCOVERY_PATH);
+  assert.ok(
+    report.declaration.discovery.functionsExamined > 1,
+    "the discovery family is a population, not one function the gate guessed",
+  );
+  assert.equal(report.declaration.passability.via, "ExecutionManager.IsTileBlockedForFarmer");
+  assert.equal(report.declaration.passability.file, EXECUTION_CONTROLLER_PATH);
 });
 
 test("one shared field removed from the row is named, not averaged away", () => {
@@ -83,19 +104,66 @@ test("a schema that forgot a published field is red", () => {
 });
 
 test("a map-only passability answer is named, because it cannot report a trellis", () => {
-  const report = checkStardewCropRowDerivation({
-    overrides: withEdit(EXECUTION_CONTROLLER_PATH, (source) =>
-      source.replace(
-        /private static bool IsTileBlockedForFarmer\([\s\S]*?skipCollisionEffects: true\);/u,
-        "private static bool IsTileBlockedForFarmer(StardewValley.GameLocation location, Farmer player, int x, int y) =>\n        !location.isTilePassable(new Vector2(x, y));",
-      ),
-    ),
-  });
+  const source = sourceOf(EXECUTION_CONTROLLER_PATH);
+  const mapOnly = source.replace(
+    /(?:private|internal) static bool IsTileBlockedForFarmer\([\s\S]*?skipCollisionEffects: true\);/u,
+    "private static bool IsTileBlockedForFarmer(StardewValley.GameLocation location, Farmer player, int x, int y) =>\n        !location.isTilePassable(new Vector2(x, y));",
+  );
+  assert.notEqual(mapOnly, source, "the fixture must actually replace the helper's body, or this proves nothing");
+  const report = checkStardewCropRowDerivation({ overrides: { [EXECUTION_CONTROLLER_PATH]: mapOnly } });
   assert.equal(report.verdict, "blocked");
   assert.ok(
     codes(report).includes("passability_map_only:tileBlockedNow"),
     `the finding must name the field: ${codes(report).join(", ")}`,
   );
+});
+
+test("a field the discovery no longer derives is named, not averaged away", () => {
+  // The gate's subject: a key on the row says "this is a fact about this tile". A key nothing in the discovery sets is
+  // a key the row cannot have measured, and removing it must fail by name.
+  const source = sourceOf(DISCOVERY_PATH);
+  const underived = source.replace(/[^\n]*IsRaised: data\?\.IsRaised,\n/u, "");
+  assert.notEqual(underived, source, "the fixture must actually remove the derivation, or this proves nothing");
+  const report = checkStardewCropRowDerivation({ overrides: { [DISCOVERY_PATH]: underived } });
+  assert.equal(report.verdict, "blocked");
+  assert.ok(
+    codes(report).includes("field_not_derived:isRaised"),
+    `the finding must name the key: ${codes(report).join(", ")}`,
+  );
+});
+
+test("a discovery that moves to another file is read there, not reported as missing", () => {
+  // Measured 2026-11-09: `DiscoverCropTargets` moved out of `ExecutionManager`'s partials into `FarmhandTargetDiscovery`
+  // and this gate reported `crop_row_discovery_not_declared` for a move that changed no behaviour. The same move is
+  // replayed here, into a real partial of a DIFFERENT type, and must stay green with a new owner named.
+  const declaration = ROW_DISCOVERY_DECLARATION.exec(sourceOf(DISCOVERY_PATH));
+  assert.notEqual(declaration, null, "the fixture must find the declaration it moves, or this proves nothing");
+  const target = sourceOf(TARGET_DISCOVERY_PARTIAL_PATH);
+  const moved = `${target.slice(0, target.lastIndexOf("}"))}\n${declaration[0]}}`;
+  const source = sourceOf(DISCOVERY_PATH);
+  const report = checkStardewCropRowDerivation({
+    overrides: {
+      [DISCOVERY_PATH]: source.replace(ROW_DISCOVERY_DECLARATION, ""),
+      [TARGET_DISCOVERY_PARTIAL_PATH]: moved,
+    },
+  });
+  assert.equal(report.verdict, "passed", JSON.stringify(report.findings));
+  assert.equal(report.declaration.discovery.type, "ExecutionManager");
+  assert.equal(report.declaration.discovery.file, TARGET_DISCOVERY_PARTIAL_PATH);
+  assert.ok(report.declaration.discovery.functionsExamined > 1);
+});
+
+test("a discovery that no file declares is blocked by name, never passed", () => {
+  const source = sourceOf(DISCOVERY_PATH);
+  const deleted = source.replace(ROW_DISCOVERY_DECLARATION, "");
+  assert.notEqual(deleted, source, "the fixture must actually delete the declaration, or this proves nothing");
+  const report = checkStardewCropRowDerivation({ overrides: { [DISCOVERY_PATH]: deleted } });
+  assert.equal(report.verdict, "blocked");
+  assert.ok(
+    codes(report).includes("declaration_unresolved:DiscoverCropTargets"),
+    `a missing declaration must be named: ${codes(report).join(", ")}`,
+  );
+  assert.equal(report.declaration.discovery.type, null);
 });
 
 test("an exemption for a field the row now publishes is red, so the table cannot rot", () => {

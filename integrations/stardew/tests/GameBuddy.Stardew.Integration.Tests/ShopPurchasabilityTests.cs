@@ -77,7 +77,7 @@ public sealed class ShopPurchasabilityTests
     {
         // The wiring: shop discovery asks the one verdict and records the closed vocabulary's token, so the empty list
         // and "the counter is here but shut" never answer the same way.
-        string source = File.ReadAllText(RepositorySourcePath(
+        string source = ControllerPartials.Declaring("DiscoverShopTargets") + File.ReadAllText(RepositorySourcePath(
             Path.Combine("integrations", "stardew", "farmhandexecutioncontroller.shopactions.cs")));
 
         source.Should().Contain("OpensNow(resolvedOwner)", "discovery asks the engine's own verdict on the entry that runs the counter");

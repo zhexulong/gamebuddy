@@ -68,7 +68,7 @@ import {
   readPrimitiveExports,
   readRunner,
   runnerFiles,
-} from "./check-native-local-runner-scaffold.mjs";
+} from "../gates/stardew/check-native-local-runner-scaffold.mjs";
 import * as PRIMITIVE_MODULE from "./lib/native-local-runner-primitives.mjs";
 import {
   ADOPTED_FIXTURE_PROBES,

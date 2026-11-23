@@ -156,24 +156,7 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    private static IReadOnlyList<BridgeFruitTreeTarget> DiscoverFruitTreeTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeFruitTreeTarget>();
-        List<BridgeFruitTreeTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-        {
-            if (pair.Value is not StardewValley.TerrainFeatures.FruitTree fruitTree ||
-                !fruitTree.IsInSeasonHere() || !fruitTree.fruit.Any(item => item is not null)
-                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeFruitTreeTarget(BuildFruitTreeTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, fruitTree), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
-    private static string BuildFruitTreeTargetId(GameLocation location, int x, int y, StardewValley.TerrainFeatures.FruitTree tree)
+    internal static string BuildFruitTreeTargetId(GameLocation location, int x, int y, StardewValley.TerrainFeatures.FruitTree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:fruit_tree:{tree.treeId.Value}:{tree.growthStage.Value}:{tree.fruit.Count}";
         return $"fruit_tree_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -225,48 +208,13 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    private static IReadOnlyList<BridgeShakeTreeTarget> DiscoverShakeTreeTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeShakeTreeTarget>();
-        List<BridgeShakeTreeTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-        {
-            if (pair.Value is not StardewValley.TerrainFeatures.Tree tree || tree.stump.Value || !tree.hasSeed.Value || tree.wasShakenToday.Value
-                || (int)pair.Key.X < 0 || (int)pair.Key.X > 1000 || (int)pair.Key.Y < 0 || (int)pair.Key.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeShakeTreeTarget(BuildShakeTreeTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, tree), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
-    private static string BuildShakeTreeTargetId(GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    internal static string BuildShakeTreeTargetId(GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:shake_tree:{tree.treeType.Value}:{tree.growthStage.Value}";
         return $"shake_tree_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// Every harvestable bush around the actor, from BOTH collections a bush can stand in.
-    ///
-    /// A bush is a `LargeTerrainFeature` placed by a map property (`GameLocation.cs:17403-17421`: 24/25/26/33 add
-    /// `new Bush(...)` to `largeTerrainFeatures`) and a `TerrainFeature` in older saves, so reading one collection
-    /// would hide half the bushes. Both loops publish through the same filter.
-    /// </summary>
-    private static IReadOnlyList<BridgeBushTarget> DiscoverBushTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeBushTarget>();
-        List<BridgeBushTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
-            PublishBushTarget(location, player, pair.Key, pair.Value, result);
-        foreach (StardewValley.TerrainFeatures.LargeTerrainFeature large in location.largeTerrainFeatures)
-            PublishBushTarget(location, player, large.Tile, large, result);
-        return result;
-    }
-
-    private static void PublishBushTarget(GameLocation location, Farmer player, Vector2 tile, StardewValley.TerrainFeatures.TerrainFeature feature, List<BridgeBushTarget> published)
+    internal static void PublishBushTarget(GameLocation location, Farmer player, Vector2 tile, StardewValley.TerrainFeatures.TerrainFeature feature, List<BridgeBushTarget> published)
     {
         if (published.Count >= 32) return;
         if (feature is not StardewValley.TerrainFeatures.Bush bush || !IsReadyBush(bush)) return;

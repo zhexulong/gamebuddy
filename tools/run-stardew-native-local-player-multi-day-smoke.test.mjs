@@ -142,7 +142,7 @@ function createFake({ scenario = "native_multi_day_v1", plan = [] } = {}) {
       state: "succeeded",
       reasonCode: "modal_dismissed",
       revision,
-      evidence: "modal_type=ShippingMenu;dismissed=true;cleared_modal=ShippingMenu;close_effect=pure_cancel",
+      evidence: "modal_type=ShippingMenu;dismissed=true;closed_modal_type=ShippingMenu;owned_by=none;close_effect=pure_cancel",
     };
     publish(dismissed);
     completeNight();

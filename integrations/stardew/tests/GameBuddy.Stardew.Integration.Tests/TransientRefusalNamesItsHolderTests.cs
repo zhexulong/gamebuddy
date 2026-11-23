@@ -22,11 +22,12 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// </para>
 ///
 /// <para>
-/// THE POPULATION IS THE MOD'S OWN SET OF TRANSIENT HOLDS. The named kinds are read out of <see cref="WorldModel"/>'s own
-/// mint sites (`ActorDispositionKind.Transient, null, false, "&lt;kind&gt;"`), so a kind added to that ladder is in this
-/// gate the moment it exists; the two shapes the closed set cannot name are the `CanMove` tail, which is the other half
-/// of the same producer (<c>ExecutionManager.ProjectAdmissionDisposition</c>). The third check holds the population's
-/// OWNER: only <c>WorldModel.cs</c> constructs a disposition, so a new producer can only publish a sentence through
+/// THE POPULATION IS THE MOD'S OWN SET OF TRANSIENT HOLDS. The named kinds are <see cref="ActorTransientKind"/>'s members,
+/// the closed set <see cref="WorldModel.Classify"/> mints from and <see cref="WorldModel.KindForWire"/> spells, so a kind added
+/// to that declaration is in this gate the moment it exists and a word `Classify` mints outside it fails by name; the two
+/// shapes the closed set cannot name are the `CanMove` tail, which is the other half of the same producer
+/// (<c>ExecutionManager.ProjectAdmissionDisposition</c>). The third check holds the population's OWNER: only
+/// <c>WorldModel.cs</c> constructs a disposition, so a new producer can only publish a sentence through
 /// <see cref="WorldModel.DescribeHeldBody"/> - the door that names the holder.
 /// </para>
 ///
@@ -65,14 +66,6 @@ public sealed class TransientRefusalNamesItsHolderTests
 
     /// <summary>The holder-word family of the three declared native body timers (<see cref="BodyHold"/>).</summary>
     private const string BodyPauseHolderPrefix = "body_pause:";
-
-    /// <summary>
-    /// The transient kinds `Classify` mints, in its own words: every branch that returns a
-    /// <see cref="ActorDispositionKind.Transient"/> names its cause as the fourth constructor argument.
-    /// </summary>
-    private static readonly Regex TransientMint = new(
-        "ActorDispositionKind\\.Transient,\\s*null,\\s*false,\\s*\"([A-Za-z0-9_]+)\"",
-        RegexOptions.Compiled);
 
     /// <summary>The two ways a disposition is created rather than read - the producer side of the population.</summary>
     private static readonly string[] DispositionConstructions = { "new ActorDisposition(", "with { Kind = ActorDispositionKind." };
@@ -144,7 +137,7 @@ public sealed class TransientRefusalNamesItsHolderTests
 
         code.Should().Be("transient_busy", "round86's code is what callers already handle; the HOLDER was what was missing");
         evidence.Should().Contain($"held_by={BodyHold.EmoteHolder}");
-        evidence.Should().Contain("body_pause_remaining_ms=");
+        evidence.Should().Contain("hold_remaining_ms=");
         Judge(new[] { (code, evidence) }, NamedTransientKinds()).Should().BeEmpty();
     }
 
@@ -214,7 +207,7 @@ public sealed class TransientRefusalNamesItsHolderTests
                 findings.Add($"{code}: no `held_by=`, so the sentence names no holder: {evidence}");
             else if (heldBy.StartsWith(BodyPauseHolderPrefix, StringComparison.Ordinal))
             {
-                if (FieldOf(evidence, "body_pause_remaining_ms") is null or "0")
+                if (FieldOf(evidence, "hold_remaining_ms") is null or "0")
                     findings.Add($"{code}: held_by={heldBy} publishes no remainder, so its window is a guess: {evidence}");
             }
             else if (heldBy != stalled && kind is null)
@@ -228,26 +221,19 @@ public sealed class TransientRefusalNamesItsHolderTests
             if (step is null || !WorldModel.NextStepEndsTheHold(step))
                 findings.Add($"{code}: next_step={step ?? "<none>"} is not a step that ends the hold: {evidence}");
             if (heldBy == stalled
-                && (FieldOf(evidence, "retry_window_ms") is not null || FieldOf(evidence, "body_pause_remaining_ms") is not null))
+                && (FieldOf(evidence, "retry_window_ms") is not null || FieldOf(evidence, "hold_remaining_ms") is not null))
                 findings.Add($"{code}: nothing is running, so nothing honours a window: {evidence}");
         }
 
         return findings;
     }
 
-    /// <summary>The transient kinds the classifier mints, read out of its own source.</summary>
-    private static string[] NamedTransientKinds()
-    {
-        string source = string.Join(
-            '\n',
-            File.ReadAllLines(Path.Combine(RepositoryRoot(), OwnerFile)).Select(DecompiledSource.WithoutComment));
-        return TransientMint
-            .Matches(source)
-            .Select(match => match.Groups[1].Value)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(kind => kind, StringComparer.Ordinal)
-            .ToArray();
-    }
+    /// <summary>The transient kinds the classifier mints, in the declaration's own words.</summary>
+    private static string[] NamedTransientKinds() => Enum
+        .GetValues<ActorTransientKind>()
+        .Select(WorldModel.KindForWire)
+        .OrderBy(kind => kind, StringComparer.Ordinal)
+        .ToArray();
 
     /// <summary>
     /// The production files that CONSTRUCT a disposition rather than read one. The set is the population's owner: the

@@ -59,7 +59,7 @@ public sealed class MailboxDiscoveryAndApproachTests
         harness.StandAt(FarTileX, FarTileY);
         harness.QueueLetters("probeLetter");
 
-        IReadOnlyList<BridgeMailboxTarget> targets = ExecutionManager.DiscoverMailboxTargets(Game1.player);
+        IReadOnlyList<BridgeMailboxTarget> targets = FarmhandTargetDiscovery.DiscoverMailboxTargets(Game1.player);
 
         targets.Should().ContainSingle("the farm has one mailbox and it is published from anywhere on the farm");
         BridgeMailboxTarget mailbox = targets[0];
@@ -85,13 +85,13 @@ public sealed class MailboxDiscoveryAndApproachTests
         harness.QueueLetters("probeLetter");
 
         harness.StandAt(FarTileX, FarTileY);
-        string far = ExecutionManager.DiscoverMailboxTargets(Game1.player).Single().TargetId;
+        string far = FarmhandTargetDiscovery.DiscoverMailboxTargets(Game1.player).Single().TargetId;
 
         harness.StandAt(4, 4);
-        string elsewhere = ExecutionManager.DiscoverMailboxTargets(Game1.player).Single().TargetId;
+        string elsewhere = FarmhandTargetDiscovery.DiscoverMailboxTargets(Game1.player).Single().TargetId;
 
         harness.StandAt(MailboxTileX, MailboxTileY + 1);
-        string adjacent = ExecutionManager.DiscoverMailboxTargets(Game1.player).Single().TargetId;
+        string adjacent = FarmhandTargetDiscovery.DiscoverMailboxTargets(Game1.player).Single().TargetId;
 
         elsewhere.Should().Be(far);
         adjacent.Should().Be(far, "a landmark does not appear or disappear because the companion walked");

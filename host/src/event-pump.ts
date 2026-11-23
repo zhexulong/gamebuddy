@@ -17,9 +17,9 @@ import { PROGRAM_SETTLED_DIGEST_SEMANTIC_KIND, settledProgramOk } from "./progra
 // (`ExecutionLivenessReading`); it is a READ of the journal ledger the submit echo, the settlement watch and every status
 // call already write, so the pump asks it rather than keeping a second account of what is running.
 import {
-  inFlightTargets,
   type InFlightProgramme,
   type InFlightProgrammeReading,
+  inFlightTargets,
   readInFlightProgrammes,
 } from "./program-status-wait.js";
 import {
@@ -1536,6 +1536,14 @@ export const AUTO_OBSERVE_UNAVAILABLE_REASONS = Object.freeze(Object.values(AUTO
 export type AutoObserveUnavailableReason = (typeof AUTO_OBSERVE_UNAVAILABLE_REASONS)[number];
 
 /**
+ * The two reasons a fresh observation is declined BEFORE it is asked: no route, or this reading's budget spent.
+ *
+ * A narrower list than `AutoObserveUnavailableReason` on purpose: `refused` is the route's own answer to a question that was
+ * asked, so a predicate deciding whether to ask cannot return it.
+ */
+type UnaskedFreshObservation = typeof AUTO_OBSERVE_UNAVAILABLE.noBridge | typeof AUTO_OBSERVE_UNAVAILABLE.attemptsSpent;
+
+/**
  * The two signals that earn a spent refresh budget again, one spelling each.
  *
  * <p>
@@ -1588,6 +1596,39 @@ export const AUTO_OBSERVE_UNAVAILABLE_TOKEN = "auto_observe_unavailable";
 export function autoObserveUnavailableToken(reason: AutoObserveUnavailableReason): string {
   return `${AUTO_OBSERVE_UNAVAILABLE_TOKEN}:${reason}`;
 }
+
+/**
+ * What this pump's read path can still do about the reading the session is owed: the idle arm's own question.
+ *
+ * <p>
+ * MEASURED 2026-11-21 (`round94`, one 535 s gap between two programmes): `wait.idle (reason: "nothing_owed")` read 509.7 s
+ * of it - 171.1 s waiting for a fresh reading, 217.4 s for the world's next fact, 121.2 s with no wait named at all - and
+ * the task was unfinished through all of it. `nothing_owed` reported the journal's node count, so between two programmes it
+ * said that no plan had a node left and nothing about the picture the next plan would be composed from. THESE ARE WHAT THE
+ * IDLE LINE SAYS INSTEAD, and `available` is the one member a look may act on: it names a read the pump would DO - one pipe
+ * round-trip that opens no turn - while every other member says that asking again asks the question the last ask asked.
+ * </p>
+ *
+ * <p>
+ * IT IS THE CURE'S OWN PREDICATE, not a second copy: `#freshObservationAsk` answers both this reading and the ask
+ * itself, so "the idle arm may look" and "this flush asks" cannot disagree about the port, the budget
+ * (`WORLD_STATE_REFRESH_ATTEMPTS`) or whether the world said it moved since the last ask (`AUTO_OBSERVE_REARM.worldMoved`).
+ * </p>
+ */
+export const WORLD_READING_ASK = Object.freeze({
+  /** The next flush would ask the world for a reading of a picture she has already been shown. */
+  available: "available",
+  /** This reading has spent its asks and the world has said nothing since: asking again asks the same question. */
+  attemptsSpent: "attempts_spent",
+  /** No observation route is attached: this composition cannot read the world at all. */
+  unattached: "unattached",
+  /** The pump would not ask: it has never read the world, or it holds a reading she has not been handed yet. */
+  nothingToAsk: "nothing_to_ask",
+});
+
+export const WORLD_READING_ASKS = Object.freeze(Object.values(WORLD_READING_ASK));
+
+export type WorldReadingAsk = (typeof WORLD_READING_ASKS)[number];
 
 /**
  * The printed name of the population the refresh serves: `aged readings N`, one per examined flush that reached its
@@ -4747,7 +4788,9 @@ export class CompanionEventPump {
     const record = this.#environmentFactsRecord;
     if (record === undefined) return;
     record(
-      reading === undefined ? NO_ENVIRONMENT_FACTS_RENDER : renderGameEnvironmentFactsObservation(reading.snapshot, true),
+      reading === undefined
+        ? NO_ENVIRONMENT_FACTS_RENDER
+        : renderGameEnvironmentFactsObservation(reading.snapshot, true),
       reading === undefined ? null : reading.revision,
     );
   }
@@ -4759,6 +4802,44 @@ export class CompanionEventPump {
       probes: this.#worldStateRefreshProbes,
       refusals: this.#worldStateRefreshRefusals,
     });
+  }
+
+  /**
+   * What the read path would do about the reading this session is owed, without asking (`WorldReadingAsk`).
+   *
+   * <p>
+   * READING, NOT ASKING: it spends no probe and publishes nothing, exactly as `worldStateRefresh` reports the asks already
+   * taken. The idle arm is its one caller, and what it needs is not a second opinion about the budget but the answer the ask
+   * would give: `available` means a look has something to DO, and every other member means a look would be a sentence
+   * repeated. `nothing_to_ask` is the pump's own statement that no ask exists - never a reading, so a session that has not
+   * been shown a picture yet is not read here either (`#agedReadingBeforeComposition` returns `undefined` for it).
+   * </p>
+   */
+  public get worldReadingAsk(): WorldReadingAsk {
+    const aged = this.#agedReadingBeforeComposition();
+    if (aged === undefined) return WORLD_READING_ASK.nothingToAsk;
+    const allowed = this.#freshObservationAsk(aged.identity);
+    if ("port" in allowed) return WORLD_READING_ASK.available;
+    return allowed.declined === AUTO_OBSERVE_UNAVAILABLE.noBridge
+      ? WORLD_READING_ASK.unattached
+      : WORLD_READING_ASK.attemptsSpent;
+  }
+
+  /**
+   * Whether the engine is holding the actor right now: a menu, a native performance, or a transition it has not finished.
+   *
+   * <p>
+   * A HELD BODY IS NOT SILENCE (`IDLE_WAIT_REASON.heldBody`). The three ways are the Mod's own three, and each of them
+   * publishes the fact that ends it: `actionable: false` is the engine's admission gate (a menu, a pass-out, an animation),
+   * `actorDispositionKind: "event"` is a performance absorbing the actor (`#nativePerformancePlaying`, the same reading
+   * `#waitsForThePerformanceToEnd` holds a wake on), and a world transition is a body owned by a warp it has not got through
+   * (`#worldTransition`, ended by the owner's own receipt or by a reading that shows the body free). Nothing here reads a
+   * clock, so "held" can only be answered by the game saying so - which is what makes the wait invokable rather than timed.
+   * </p>
+   */
+  public get bodyHeldByEngine(): boolean {
+    if (this.#worldTransition !== null) return true;
+    return this.#bodyHeld() || this.#nativePerformancePlaying();
   }
 
   /**
@@ -4821,16 +4902,12 @@ export class CompanionEventPump {
    * </p>
    */
   #askForFreshObservation(identity: string, reading: WorldStateReading): FreshObservationAsk {
-    const port = this.#worldStateRefreshPort;
-    if (port === undefined) return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.noBridge });
+    const allowed = this.#freshObservationAsk(identity);
+    if ("declined" in allowed) return Object.freeze(allowed);
+    const port = allowed.port;
+    const probes = allowed.probes;
     const episode = this.#worldStateRefreshFor;
     const same = episode !== undefined && episode.identity === identity;
-    const probes = same ? episode.probes : 0;
-    // The world said it moved after the last ask: `#worldChangesSinceReading` is the SAME count `world_state_stale` names
-    // as its evidence, so "the world moved" has one spelling in this pump rather than two that can disagree.
-    const worldMoved = same && this.#worldChangesSinceReading > episode.worldChanges;
-    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS && !worldMoved)
-      return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.attemptsSpent });
     // Which signal earned this budget, counted where it is decided rather than inferred from two counters later.
     if (episode !== undefined && episode.probes >= WORLD_STATE_REFRESH_ATTEMPTS) {
       this.#autoObserveRearmed[same ? AUTO_OBSERVE_REARM.worldMoved : AUTO_OBSERVE_REARM.readingMoved] += 1;
@@ -4860,6 +4937,33 @@ export class CompanionEventPump {
       this.#autoObserveLastAgeTurns = reading.ageTurns;
     })();
     return Object.freeze({ inFlight });
+  }
+
+  /**
+   * Whether the world may be asked for a fresh observation of this reading, and the route to ask it on.
+   *
+   * <p>
+   * ONE PREDICATE, TWO READERS: the ask below spends the budget here, and `worldReadingAsk` reports the same answer to the
+   * idle arm - so "the idle arm may look" and "this flush asks" cannot disagree about the route, the per-reading budget
+   * (`WORLD_STATE_REFRESH_ATTEMPTS`), or whether the world said it moved since the last ask (`AUTO_OBSERVE_REARM`). The
+   * only two members it can decline with are the two an UNASKED question has; `refused` is the route's answer after the ask
+   * is made, so it is not a state of this predicate.
+   * </p>
+   */
+  #freshObservationAsk(
+    identity: string,
+  ): Readonly<{ port: WorldStateRefreshPort; probes: number }> | Readonly<{ declined: UnaskedFreshObservation }> {
+    const port = this.#worldStateRefreshPort;
+    if (port === undefined) return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.noBridge });
+    const episode = this.#worldStateRefreshFor;
+    const same = episode !== undefined && episode.identity === identity;
+    const probes = same ? episode.probes : 0;
+    // The world said it moved after the last ask: `#worldChangesSinceReading` is the SAME count `world_state_stale` names
+    // as its evidence, so "the world moved" has one spelling in this pump rather than two that can disagree.
+    const worldMoved = same && this.#worldChangesSinceReading > episode.worldChanges;
+    if (probes >= WORLD_STATE_REFRESH_ATTEMPTS && !worldMoved)
+      return Object.freeze({ declined: AUTO_OBSERVE_UNAVAILABLE.attemptsSpent });
+    return Object.freeze({ port, probes });
   }
 
   /**

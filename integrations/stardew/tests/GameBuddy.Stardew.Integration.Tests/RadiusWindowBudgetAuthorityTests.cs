@@ -13,8 +13,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <c>SNAPSHOT_FAMILY_RULES</c> rather than trusted as a number somebody picked.
 ///
 /// <para>
-/// WHAT THIS BOUND IS. <see cref="ExecutionManager.RadiusWindowRowBudget"/> and
-/// <see cref="ExecutionManager.FertilizerRowBudget"/> truncate a discovery family before it reaches the wire. That
+/// WHAT THIS BOUND IS. <see cref="FarmhandTargetDiscovery.RadiusWindowRowBudget"/> and
+/// <see cref="FarmhandTargetDiscovery.FertilizerRowBudget"/> truncate a discovery family before it reaches the wire. That
 /// truncation is not a fact about the farm - the crab-pot shore under one actor is routinely larger than sixteen tiles,
 /// and the fence list can never reach sixteen at all because <c>Utility.playerCanPlaceItemHere</c> admits the radius-1
 /// ring only. It is a fact about what ONE OBSERVATION CAN CARRY: the Host refuses the whole snapshot past
@@ -46,16 +46,16 @@ public sealed class RadiusWindowBudgetAuthorityTests
     /// One radius-window or wire budget, the family it caps, and the constant that holds the number.
     ///
     /// The population is the constants this Mod declares for these lists: `RadiusWindowRowBudget` and
-    /// `FertilizerRowBudget` (targetdiscovery.cs), and `WorldObjectTargetFamilyLimit` (worldobjectactions.cs), whose
+    /// `FertilizerRowBudget` (farmhandtargetdiscovery.cs), and `WorldObjectTargetFamilyLimit` (worldobjectactions.cs), whose
     /// family is trimmed by four per-kind budgets and then by the wire's own whole-row bound. A family added
     /// without a row here is the gap this gate cannot see, which is why the row count is asserted non-zero below and
     /// every family named here is also required to exist in the Host's table.
     /// </summary>
     private static readonly (string Family, int Cap)[] BudgetedFamilies =
     {
-        ("woodFenceTargets", ExecutionManager.RadiusWindowRowBudget),
-        ("crabPotTargets", ExecutionManager.RadiusWindowRowBudget),
-        ("fertilizerTargets", ExecutionManager.FertilizerRowBudget),
+        ("woodFenceTargets", FarmhandTargetDiscovery.RadiusWindowRowBudget),
+        ("crabPotTargets", FarmhandTargetDiscovery.RadiusWindowRowBudget),
+        ("fertilizerTargets", FarmhandTargetDiscovery.FertilizerRowBudget),
         ("worldObjectTargets", ExecutionManager.WorldObjectTargetFamilyLimit),
     };
 

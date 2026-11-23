@@ -27,6 +27,12 @@
  * `dayTaskSchedule` applies the rule that two such days are never scheduled next to each other (see its own note), and
  * `task-purpose.mjs`'s `readScheduledJudgement` prints what a run was given and how much of it the evidence can judge.
  *
+ * AND THE DAYS IT GIVES ARE NOT ALL THE SAME PART OF THE GAME. `TASK_PILLARS` groups the pool into the three parts of the
+ * game it holds - the fields, the water and the town, the mine and the machines its ore feeds - and the rotation is the WALK
+ * that takes one of them per day, so a three-day run measures three capabilities instead of two days of one. Measured on
+ * `round96`: the flat list handed that run the `3x20` strip on day 2 and the seed plot on day 3, one pillar for two thirds
+ * of the run. See `TASK_PILLARS`, `readPillarWindows` and `describeScheduledPillars`.
+ *
  * THE SCENARIO LIST ABOVE WAS NOT ENOUGH, so it is now followed by SWEEP TASKS derived from the published surface
  * itself. Measured when they were added: the eighteen scenario tasks named 50 of the 95 published execution
  * actions, so 45 could be finished, gated, and never once asked for - and a run stays green through that, which is
@@ -56,7 +62,6 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "set_sign_display",
     "craft_item",
   ]),
-  home_upgrade: Object.freeze(["travel", "shop_purchase"]),
   clear_east_patch: Object.freeze(["cut_weeds", "cut_grass", "break_rock", "chop_stump"]),
   water_and_harvest: Object.freeze(["harvest_crop", "scythe_crop", "plant_seed", "water_crop"]),
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree"]),
@@ -236,11 +241,12 @@ const soilGround = ({ width = 1, height = 1, tiles = null, hoed }) => {
  * not be held. Asked at boot it answers feasible and is right about the world it read.
  * </p>
  * <p>
- * SO THE DEFECT IS THE MOMENT, NOT THE READING, and the fix belongs to the layer that decides a DAY: a task whose
- * purpose sows must be asked this question on the snapshot the day opens on (`tools/live-run/game/task-pool-feasibility.mjs`
- * already answers it for a whole pool, and `seedShortageFact` in `seed-shortage.mjs` already states the same thing to her
- * as \`no_known_supply\` every morning), and a day the world cannot hold must not be filed as her failure. Nothing in
- * this file can do that - a precondition here is read once, at the launch it belongs to.
+ * SO THE DEFECT IS THE MOMENT, NOT THE READING, and the fix belongs to the layer that decides a DAY - which now asks
+ * again: `rereadDaySeedMarket` in `tools/live-run/game/task-pool-feasibility.mjs` reads THIS requirement, through the same
+ * `readSeedMarket`, on the snapshot the day is standing in, and the day loop publishes the answer at the minute it changes
+ * (`task_precondition_broken_at:<gameMinutes>:seed_market:<rows>`). `seedShortageFact` in `seed-shortage.mjs` states the
+ * same supply to her in her own words every morning. A declaration here is still read once, at the launch it belongs to,
+ * which is why the re-ask lives beside the gate and not in this file.
  * </p>
  */
 const seedMarket = () => Object.freeze({ fact: "seed_market" });
@@ -311,9 +317,7 @@ const SCENARIO_TASK_PRECONDITIONS = Object.freeze({
   ),
   run_the_machines: sig(rowsOf(["machineTargets"])),
   // Petting, feeding and collecting are three families because an animal that is not in any of them cannot be tended.
-  tend_the_animals: sig(
-    rowsOf(["petTargets", "farmAnimalPetTargets", "feedTroughTargets", "animalProductTargets"]),
-  ),
+  tend_the_animals: sig(rowsOf(["petTargets", "farmAnimalPetTargets", "feedTroughTargets", "animalProductTargets"])),
   // A counter that stocks something she carries, and a box with post in it.
   town_market: sig(rowsOf(["seedSupplyTargets"]), rowsOf(["mailboxTargets"])),
   clear_east_patch: sig(rowsOf(["weedTargets", "grassTargets", "rockSourceTargets", "treeStumpTargets"])),
@@ -327,10 +331,6 @@ const SCENARIO_TASK_PRECONDITIONS = Object.freeze({
   home_and_hearth: sig(rowsOf(["craftingRecipeTargets", "worldObjectTargets"])),
   // Clearing is `clear_debris`, and putting something away needs something standing there to put away.
   tidy_and_repair: sig(rowsOf(["debrisTargets"]), rowsOf(["worldObjectTargets", "clearHoeDirtTargets"])),
-  // The carpenter's first house upgrade is ten thousand gold, and the carpenter is not on the farm: the day needs the gold
-  // and a way off the map. The price is a number the game's own data holds and no receipt publishes, so it is declared
-  // here with the sentence it comes from rather than guessed at the counter.
-  home_upgrade: sig(rowsOf(["warps", "doorTargets"]), money(10_000, "the first farmhouse upgrade costs 10,000g")),
   forage_and_trees: sig(rowsOf(["forageTargets"]), rowsOf(["shakeTreeTargets", "treeChopSourceTargets"])),
   furnish_and_arrange: sig(rowsOf(["worldObjectTargets"]), rowsOf(["colorTargets"])),
 });
@@ -516,50 +516,249 @@ export function sweepTaskPrompts() {
 }
 
 /**
+ * WHAT EACH DAY OF THE POOL IS ABOUT: three PILLARS, and the entries no pillar can honestly hold.
+ *
+ * <p>
+ * THE DEFECT THIS ANSWERS. The rotation used to be a flat list ordered by one rule - "no two scenario gaps sit adjacent" -
+ * and the two farm days happened to open it: `clear_and_plant_long_patch` at position 1 and `buy_seeds_and_expand_plot` at
+ * position 2. So a three-day run could open on the `3x20` strip and follow it with the seed plot, which is what `round96`
+ * did (`day2=clear_and_plant_long_patch, day3=buy_seeds_and_expand_plot`), and the criteria lane measured the cost: one
+ * pillar of the game's work took two of the run's three days, so two thirds of the evidence covered one capability.
+ * </p>
+ * <p>
+ * A PILLAR IS A PART OF THE GAME, NOT A TAXONOMY somebody invented to sort ids. `farm` is the fields, `water` is the water
+ * and the town and the foraging that goes with them, `mine` is the mine and the machines its ore feeds. Every id below was
+ * already in the rotation and every one is filed once: the grouping only says which of them are the same part of the game,
+ * so the walk can promise one of each instead of whatever the list's order happened to give.
+ * </p>
+ * <p>
+ * `forage_and_trees` IS THE WATER HALF and not one of the leftovers, because foraging is what she does on the way to the
+ * water and in the forest the town road runs through. That reading is stated here rather than left to the order, because
+ * the tail below is described elsewhere as "the remaining entries" and a reader is owed the one place that decides which
+ * group an id is in.
+ * </p>
+ * <p>
+ * THE GROUPS ARE NOT THE SAME SIZE AND ARE NOT MADE SO: `water` holds three days and the other two hold four, because that
+ * is what this game's work is. The walk fills a missing pillar slot with `any` rather than filing a fourth water day that
+ * is not about water, which is the same rule that keeps `home_upgrade` out of the farm pillar.
+ * </p>
+ */
+export const TASK_PILLARS = Object.freeze({
+  // The fields: the strip, the plot, the crop day that harvests and replants, and the east patch that keeps the ground
+  // open. Both of the days that draw a shape longer than one view are here, which is what a farm pillar is for.
+  farm: Object.freeze([
+    "clear_and_plant_long_patch",
+    "buy_seeds_and_expand_plot",
+    "water_and_harvest",
+    "clear_east_patch",
+  ]),
+  // The water and the town: a cast, a counter with post in it, and the forage and trees on the way back.
+  water: Object.freeze(["a_fish_from_the_water", "town_market", "forage_and_trees"]),
+  // The mine and the machines: a recipe crafted and put down, the ladder down, the delve, and the machines loaded.
+  mine: Object.freeze(["craft_and_place_machine", "mine_ladder_to_depth", "mine_delve", "run_the_machines"]),
+});
+
+/**
+ * The order the walk takes the pillars in, ONE PILLAR PER DAY: day 1 farm, day 2 water, day 3 mine, then round again from
+ * each group's next member.
+ *
+ * <p>
+ * A THREE-DAY RUN THEREFORE OPENS ON ONE OF EACH, at every offset inside the pillar block, and `readPillarWindows` is the
+ * reading that refuses any schedule where it does not. The order is the declaration a reader argues with; the promise is
+ * the window rule, and the two are separate so a reordering cannot quietly weaken it.
+ * </p>
+ */
+export const TASK_PILLAR_ORDER = Object.freeze(["farm", "water", "mine"]);
+
+/**
+ * THE ENTRIES NO PILLAR CAN HOLD, in the order the tail walks them.
+ *
+ * <p>
+ * THE HONEST PLACE FOR A TASK THAT BELONGS NOWHERE IS ITS OWN GROUP. Filing a leftover under a pillar would make that
+ * pillar promise a kind of work it does not measure - a house day is not field work - and would move the repetition defect
+ * somewhere else instead of removing it. So `home_and_hearth`, `dress_and_display`, `furnish_and_arrange`,
+ * `home_upgrade`, `store_and_sort`, `tidy_and_repair`, `tend_the_animals` and `town_visit` are filed as `any`, they fill
+ * the slots a pillar group can no longer take, and a day drawn from them prints `any` beside its id.
+ * </p>
+ * <p>
+ * ALTERNATING DECIDABLE AND GAP, because the other rule the rotation keeps is that no two days the evidence cannot judge
+ * sit adjacent: `tend_the_animals` (decidable), `home_and_hearth` (gap), `dress_and_display` (decidable),
+ * `furnish_and_arrange` (gap), and so on to the end. `dayTaskSchedule`'s substitution is the rail that catches a pool
+ * holding nothing judgeable; this order is what keeps that rail from having to fire on the shipped pool.
+ * </p>
+ * <p>
+ * `home_upgrade` IS NOT HERE, AND NOT ANYWHERE. It needs ten thousand gold and the carpenter, and nothing publishes whether the
+ * house grew - so its criterion is a gap, and a day drawn from it can only ever read `unjudged`. A gap task is not a lean day,
+ * it is a third of a run measuring nothing (`round93` spent a whole day on an entry one tile could satisfy; this is the same
+ * arithmetic with a different cause). Its two actions, `travel` and `shop_purchase`, are named by tasks that are decidable.
+ * </p>
+ */
+export const TASK_ANY_TASKS = Object.freeze([
+  "tend_the_animals",
+  "home_and_hearth",
+  "dress_and_display",
+  "furnish_and_arrange",
+  "store_and_sort",
+  "town_visit",
+  "tidy_and_repair",
+]);
+
+/**
+ * The rotation as the WALK that produces it, rather than a list somebody ordered by hand.
+ *
+ * <p>
+ * ONE GROUP PER DAY in `order`, repeated: day 1 farm, day 2 water, day 3 mine, then round again from each group's next
+ * member. THE `any` GROUP FILLS THE SLOT A PILLAR GROUP CAN NO LONGER TAKE, in place and not only at the end - so the
+ * walk keeps its three-day rhythm after `water` runs out instead of degrading to a two-day cycle, which is not a detail:
+ * a shorter cycle repeats a pillar two days apart at every rank that remains (measured: the first version of this walk put
+ * `mine_delve` and `run_the_machines` two days apart at offset 8, and the gate below named it). The sweep tasks follow,
+ * because remaining published actions stay covered without displacing a pillar.
+ * </p>
+ * <p>
+ * PURE OVER ITS INPUTS, so the two refusals can be seen to fire on a grouping the repository does not have - a rotation
+ * whose `water` group is empty, or an id filed under two groups. The declared grouping is walked at module load and any
+ * finding THROWS: an empty pillar silently promises a pillar the walk cannot draw, and every run afterwards measures two
+ * thirds of the game without saying so.
+ * </p>
+ */
+export function buildTaskRotation({
+  pillars = TASK_PILLARS,
+  order = TASK_PILLAR_ORDER,
+  anyTasks = TASK_ANY_TASKS,
+  sweepTasks = SWEEP_TASKS,
+} = {}) {
+  const findings = [];
+  for (const pillar of order) {
+    if (!Array.isArray(pillars?.[pillar]) || pillars[pillar].length === 0) findings.push(`task_pillar_empty:${pillar}`);
+  }
+  const rotation = [];
+  const filed = new Map();
+  const file = (task, group) => {
+    const already = filed.get(task);
+    if (already !== undefined) {
+      findings.push(`task_filed_under_two_groups:${task}:${already}:${group}`);
+      return;
+    }
+    filed.set(task, group);
+    rotation.push(task);
+  };
+  const queued = new Map(order.map((pillar) => [pillar, [...(pillars?.[pillar] ?? [])]]));
+  const queuedAny = [...anyTasks];
+  let filled = true;
+  while (filled) {
+    filled = false;
+    for (const pillar of order) {
+      const members = queued.get(pillar);
+      const next = members.length > 0 ? { task: members.shift(), group: pillar } : undefined;
+      const fallingBack = next ?? (queuedAny.length > 0 ? { task: queuedAny.shift(), group: "any" } : undefined);
+      if (fallingBack === undefined) continue;
+      file(fallingBack.task, fallingBack.group);
+      filled = true;
+    }
+  }
+  for (const task of queuedAny) file(task, "any");
+  for (const task of sweepTasks) file(task.id, "any");
+  return Object.freeze({ rotation: Object.freeze(rotation), findings: Object.freeze(findings) });
+}
+
+const DECLARED_TASK_ROTATION = buildTaskRotation();
+
+if (DECLARED_TASK_ROTATION.findings.length > 0) {
+  throw new Error(`stardew_daily_task_rotation_invalid:${DECLARED_TASK_ROTATION.findings.join("|")}`);
+}
+
+/**
  * The rotation, in the order a run walks it. Stable ids; the prompts live in the runner because they are
  * player-facing text and the framing has to change with the day.
  *
  * ORDER IS THE COVERAGE PLAN. Consecutive days get consecutive entries, and `runOffsetFor` shifts the first day by one
- * per completed run, so a series of runs walks the whole list. The first five are what the world can already satisfy with
- * certainty on a bare farm; the second group asks for things the play-session fixture may not contain, and those are
- * allowed to end in "there is nothing here to do" - which is a true observation, not a failed task.
+ * per completed run, so a series of runs walks the whole list. The pillar block opens it - one pillar per day, so a
+ * three-day run covers one of each part of the game - and the `any` tail plus the sweep tasks follow once the pillar
+ * groups are exhausted, which is also where the days that ask for things the play-session fixture may not contain live.
+ * Those are allowed to end in "there is nothing here to do", which is a true observation and not a failed task.
  */
-export const DAILY_TASK_ROTATION = Object.freeze([
-  // Lead with concrete, decidable, economic/spatial tasks (`3x20`, autonomous seed purchase + 20-tile expansion,
-  // mine depth, fishing, machines, harvest/replant) so default 2-3 day runs open on real planning and SeedShop
-  // trade-offs instead of unjudgeable gaps and errands.
-  //
-  // A TASK THAT ONE TILE CAN SATISFY IS NOT A TASK. Three farming entries were cut for that reason - the `2x18`
-  // market bed (the same shape as the `3x20` strip, smaller), `clear_and_cultivate` and `till_and_sow` (both
-  // satisfied by a single tile each: `round93` spent a whole day on the first and `round91`'s only `achieved` was
-  // the second, on one tile). In a three-day rotation that is a third of every run measuring nothing, and it teaches
-  // the planner that a single tile is enough. What each one covered by way of actions is not lost: `fertilize_tile`
-  // fell to `sweep_yard_and_work`, and the rest of their hints are named by the entries above - the coverage gate
-  // prints the count.
-  "clear_and_plant_long_patch",
-  "buy_seeds_and_expand_plot",
-  "mine_ladder_to_depth",
-  "a_fish_from_the_water",
-  "craft_and_place_machine",
-  "water_and_harvest",
-  "mine_delve",
-  "run_the_machines",
-  // Interleave each remaining scenario gap cleanly after a decidable day so no two scenario gaps sit adjacent.
-  "tend_the_animals",
-  "town_market",
-  "clear_east_patch",
-  "dress_and_display",
-  "town_visit",
-  "store_and_sort",
-  "home_and_hearth",
-  "tidy_and_repair",
-  "home_upgrade",
-  "forage_and_trees",
-  "furnish_and_arrange",
-  // The sweep tasks stay at the tail of the rotation so remaining published actions stay covered without
-  // displacing flagship scenario work.
-  ...SWEEP_TASKS.map((task) => task.id),
-]);
+export const DAILY_TASK_ROTATION = DECLARED_TASK_ROTATION.rotation;
+
+/**
+ * Which group a rotation entry was filed under: `farm`/`water`/`mine`, or `any` for the entries no pillar can hold.
+ *
+ * Derived from the declaration above, so an id added to a group tomorrow answers here without a second list.
+ */
+const PILLAR_OF_TASK = new Map();
+for (const pillar of TASK_PILLAR_ORDER) for (const task of TASK_PILLARS[pillar]) PILLAR_OF_TASK.set(task, pillar);
+for (const task of TASK_ANY_TASKS) PILLAR_OF_TASK.set(task, "any");
+for (const task of SWEEP_TASKS) PILLAR_OF_TASK.set(task.id, "any");
+
+export function pillarOfTask(taskId) {
+  return PILLAR_OF_TASK.get(taskId) ?? null;
+}
+
+/**
+ * NEVER TWO DAYS OF ONE PILLAR IN A THREE-DAY RUN, read from the schedule a run actually got.
+ *
+ * <p>
+ * THE PROPERTY, NOT THE ORDER. `round96` is what the order alone produced: day 2 `clear_and_plant_long_patch`, day 3
+ * `buy_seeds_and_expand_plot`, two farm days inside the three-day window that run lived - and this reading answers that
+ * schedule with `task_pillar_repeats_in_three_day_run:farm:day2=...->day3=...`, naming both days, rather than with a
+ * comment about adjacency. It is a WINDOW rule and not a list rule, so a pin, a first-day override and
+ * `dayTaskSchedule`'s substitution all land in it: whatever the days were, this decides whether one pillar took two.
+ * </p>
+ * <p>
+ * The three pillars are subject to it and `any` is exempt, because `any` is what a slot falls back to when the pillar
+ * groups are exhausted - a run of three such days is a run covering the remainder, and refusing it would make the
+ * fallback unusable. A scheduled task the declaration does not hold at all is `task_pillar_undeclared:<task>`: a schedule
+ * that has quietly grown an id nobody filed is not a run measured against a pillar.
+ * </p>
+ */
+export function readPillarWindows({ scheduled = [], pillarOf = pillarOfTask, window = 3 } = {}) {
+  const days = [];
+  const findings = [];
+  for (const entry of scheduled) {
+    if (!Number.isInteger(entry?.day) || typeof entry?.task !== "string" || entry.task.length === 0) continue;
+    const pillar = pillarOf(entry.task);
+    if (pillar === null || pillar === undefined) findings.push(`task_pillar_undeclared:${entry.task}`);
+    days.push(Object.freeze({ day: entry.day, task: entry.task, pillar: pillar ?? null }));
+  }
+  let pairs = 0;
+  for (let index = 0; index < days.length; index += 1) {
+    for (let ahead = 1; ahead < window && index + ahead < days.length; ahead += 1) {
+      pairs += 1;
+      const left = days[index];
+      const right = days[index + ahead];
+      if (left.pillar === null || right.pillar === null) continue;
+      if (left.pillar === "any" || right.pillar === "any") continue;
+      if (left.pillar !== right.pillar) continue;
+      findings.push(
+        `task_pillar_repeats_in_three_day_run:${left.pillar}:` +
+          `day${String(left.day)}=${left.task}->day${String(right.day)}=${right.task}`,
+      );
+    }
+  }
+  const drawn = [...new Set(days.map((day) => day.pillar))].filter((pillar) => pillar !== null);
+  return Object.freeze({
+    days: Object.freeze(days),
+    pairs,
+    drawn: Object.freeze(drawn),
+    findings: Object.freeze(findings),
+    reading: `days ${String(days.length)} · pairs ${String(pairs)} · drew ${drawn.length === 0 ? "none" : drawn.join(",")}`,
+  });
+}
+
+/**
+ * WHICH PILLAR EACH DAY DREW, in the one line a run's own log answers "which pillar did this run measure" with:
+ * `day 1: farm/clear_and_plant_long_patch · day 2: water/a_fish_from_the_water · day 3: mine/craft_and_place_machine`.
+ *
+ * The line travels with the schedule rather than being composed at the print site, so the runner's log and the gate that
+ * holds the schedule to `readPillarWindows` cannot spell the same three days two ways.
+ */
+export function describeScheduledPillars(scheduled = []) {
+  const entries = [];
+  for (const entry of scheduled) {
+    if (!Number.isInteger(entry?.day) || typeof entry?.task !== "string" || entry.task.length === 0) continue;
+    entries.push(`day ${String(entry.day)}: ${pillarOfTask(entry.task) ?? "unfiled"}/${entry.task}`);
+  }
+  return entries.length === 0 ? "(no day scheduled)" : entries.join(" · ");
+}
 
 /**
  * Which task a given day of a given run gets.

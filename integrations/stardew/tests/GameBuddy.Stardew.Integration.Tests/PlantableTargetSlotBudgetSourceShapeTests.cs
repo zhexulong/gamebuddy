@@ -30,8 +30,8 @@ namespace GameBuddy.Stardew.Integration.Tests;
 public sealed class PlantableTargetSlotBudgetSourceShapeTests
 {
     [Theory]
-    [InlineData("private static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(")]
-    [InlineData("private static IReadOnlyList<BridgeTreeSaplingTarget> DiscoverTreeSaplingTargets(")]
+    [InlineData("internal static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(")]
+    [InlineData("internal static IReadOnlyList<BridgeTreeSaplingTarget> DiscoverTreeSaplingTargets(")]
     public void EachHeldStackGetsItsOwnWindowRatherThanAPlaceInAFamilyBudget(string signature)
     {
         string source = Source();

@@ -30,7 +30,7 @@ public sealed class MachineAcceptancePublicationTests
     [Fact]
     public void DiscoveryPublishesWhatTheMachineAcceptsAndNotJustThatItIsAMachine()
     {
-        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverMachineTargets"), "private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverMachineTargets"), "internal static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(");
 
         discovery.Should().Contain(
             "Accepts: ReadMachineInputAcceptance(machine)",
@@ -122,7 +122,7 @@ public sealed class MachineAcceptancePublicationTests
         rules.Should().Contain("trigger.RequiredCount");
         rules.Should().Contain("trigger.Condition", "a row gated on a game-state query is published as conditional, not as a promise");
 
-        MethodBody(source, "private static MachineInputAcceptance? ReadMachineInputAcceptance(")
+        MethodBody(source, "internal static MachineInputAcceptance? ReadMachineInputAcceptance(")
             .Should().Contain("MachineInputAcceptance.Derive(ReadMachineInputTriggerRules(machine))",
                 "the published acceptance is derived from the rows, never from a table beside them");
 

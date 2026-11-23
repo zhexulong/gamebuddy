@@ -121,7 +121,11 @@ test("a flush that leaves nothing owed opens ONE named idle wait, and the next f
     ],
     "each wait is measured up to the moment the next turn is owed, and close() ends the last one",
   );
-  assert.equal(idle[0]!.attributes.reason, "nothing_owed");
+  assert.equal(
+    idle[0]!.attributes.reason,
+    "a_fresh_reading",
+    "the wait names the condition the run was in: nothing held the body, no plan was running, and the next plan needs a read",
+  );
 });
 
 test("a flush that still owes a turn does not open an idle wait", async () => {

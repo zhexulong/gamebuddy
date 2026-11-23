@@ -12,20 +12,8 @@ namespace GameBuddy.Stardew;
 
 internal sealed partial class ExecutionManager
 {
-    private static IReadOnlyList<BridgeRaftTarget> DiscoverRaftTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location?.map is null)
-            return Array.Empty<BridgeRaftTarget>();
 
-        return AdjacentCardinalTiles(player)
-            .Where(tile => location.isWaterTile((int)tile.X, (int)tile.Y))
-            .Take(16)
-            .Select(tile => new BridgeRaftTarget(BuildRaftTargetId(location, (int)tile.X, (int)tile.Y), (int)tile.X, (int)tile.Y))
-            .ToArray();
-    }
-
-    private static IEnumerable<Vector2> AdjacentCardinalTiles(Farmer player)
+    internal static IEnumerable<Vector2> AdjacentCardinalTiles(Farmer player)
     {
         Vector2 origin = player.Tile;
         yield return origin + new Vector2(0, -1);
@@ -34,24 +22,10 @@ internal sealed partial class ExecutionManager
         yield return origin + new Vector2(-1, 0);
     }
 
-    private static string BuildRaftTargetId(GameLocation location, int x, int y) =>
+    internal static string BuildRaftTargetId(GameLocation location, int x, int y) =>
         $"raft_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}"))).ToLowerInvariant()[..16]}";
 
-    private static IReadOnlyList<BridgeHorseTarget> DiscoverHorseTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeHorseTarget>();
-        return location.characters.OfType<Horse>()
-            .Where(horse => !string.IsNullOrWhiteSpace(horse.Name)
-                && !string.Equals(horse.Name, "Horse", StringComparison.Ordinal)
-                && horse.rider is null
-                && IsTileWithinChebyshevRadius(player, (int)horse.Tile.X, (int)horse.Tile.Y, TargetDiscoveryRadius))
-            .Take(16)
-            .Select(horse => new BridgeHorseTarget(BuildHorseTargetId(location, horse), (int)horse.Tile.X, (int)horse.Tile.Y, horse.Name))
-            .ToArray();
-    }
-
-    private static string BuildHorseTargetId(GameLocation location, Horse horse) =>
+    internal static string BuildHorseTargetId(GameLocation location, Horse horse) =>
         $"horse_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{horse.HorseId}"))).ToLowerInvariant()[..16]}";
 
     /// <summary>The mine entrance map's own <c>Action</c> selector.</summary>
@@ -78,46 +52,6 @@ internal sealed partial class ExecutionManager
     /// <summary>Where `ExitMine_Leave` lands an actor leaving an ordinary mine level.</summary>
     internal const int MineExitTileX = 23;
     internal const int MineExitTileY = 8;
-
-    private static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location?.map is null) return Array.Empty<BridgeMineEntranceTarget>();
-
-        // Inside a mine level this family publishes that level's own LADDER tiles, in both directions:
-        //
-        //  - the way OUT is tile 115, which the level's shipped Buildings layer carries at its stairs, so it
-        //    exists whether or not anything has been cleared. Measured 2026-11-03 (round30): a companion that
-        //    entered level 1 was published `warps: 0`, `doorTargets: 0` and no descent ladder, so every way out
-        //    was unnamable and it stayed in the mine until it passed out at 02:00;
-        //  - the way DOWN is tile 173, which exists only after a stone is broken or a level is cleared
-        //    (`createLadderDown`, MineShaft.cs:3587-3612).
-        //
-        // A shaft has no `Mine` Action tile, so reporting the entrance scan here would report nothing at all.
-        if (location is MineShaft shaft)
-        {
-            List<BridgeMineEntranceTarget> ladders = new();
-            if (TryFindMineExitLadderTile(shaft, out int exitX, out int exitY))
-                ladders.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, MineExitLadderSelector), exitX, exitY));
-            if (TryFindMineLadderTile(shaft, out int ladderX, out int ladderY))
-                ladders.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector), ladderX, ladderY));
-            return ladders;
-        }
-
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        List<BridgeMineEntranceTarget> result = new();
-        for (int x = Math.Max(0, player.TilePoint.X - TargetDiscoveryRadius); x <= Math.Min(width - 1, player.TilePoint.X + TargetDiscoveryRadius); x++)
-        for (int y = Math.Max(0, player.TilePoint.Y - TargetDiscoveryRadius); y <= Math.Min(height - 1, player.TilePoint.Y + TargetDiscoveryRadius); y++)
-        {
-            string? action = location.doesTileHaveProperty(x, y, "Action", "Buildings");
-            if (action is null || !string.Equals(action.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(), MineEntranceSelector, StringComparison.Ordinal))
-                continue;
-            result.Add(new BridgeMineEntranceTarget(BuildMineEntryTargetId(location.NameOrUniqueName, x, y, MineEntranceSelector), x, y));
-            if (result.Count == 16) return result;
-        }
-        return result;
-    }
 
     /// <summary>
     /// The descent tile of a mine level, found the same way the elevator tile is: a

@@ -259,35 +259,6 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The warp totems the actor owns right now, projected read-only from the live
-    /// inventory: every object slot whose item the product can actually route. Only the
-    /// slot and the item are published -- the destination is derived by the same helper
-    /// the action executes with, so the projection and the execution cannot disagree.
-    /// </summary>
-    internal static IReadOnlyList<BridgeWarpItemTarget> DiscoverWarpItemTargets(Farmer player)
-    {
-        List<BridgeWarpItemTarget> result = new();
-        for (int slot = 0; slot < player.Items.Count; slot++)
-        {
-            if (player.Items[slot] is not StardewValley.Object candidate)
-                continue;
-            if (!TryGetWarpTotemDestination(candidate.QualifiedItemId, out string destination, out int destinationX, out int destinationY))
-                continue;
-            result.Add(new BridgeWarpItemTarget(
-                slot,
-                candidate.QualifiedItemId,
-                candidate.DisplayName,
-                candidate.Stack,
-                destination,
-                destinationX,
-                destinationY));
-            if (result.Count >= 16)
-                break;
-        }
-        return result;
-    }
-
-    /// <summary>
     /// Activates one owned warp totem through the native branch and hands the arrival to
     /// the shared travel completion path. Admission is instantaneous and named in the
     /// branch's own terms; the terminal is minted only by
@@ -457,25 +428,6 @@ internal sealed partial class ExecutionManager
     };
 
     /// <summary>
-    /// The live panning sites of the actor's current location. The game owns exactly one
-    /// per location (`GameLocation.orePanPoint`), and `performOrePanTenMinuteUpdate` is
-    /// its only creator, so this is a read of the game's own state and not a coordinate
-    /// table: nothing is advertised while the point is unset.
-    /// </summary>
-    internal static IReadOnlyList<BridgePanSiteTarget> DiscoverPanSites(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null)
-            return Array.Empty<BridgePanSiteTarget>();
-        BridgePanSiteTarget? site = ReadLivePanSite(location);
-        if (site is null)
-            return Array.Empty<BridgePanSiteTarget>();
-        if (!IsTileWithinChebyshevRadius(player, site.X, site.Y, PanNativeReachTiles))
-            return Array.Empty<BridgePanSiteTarget>();
-        return new[] { site };
-    }
-
-    /// <summary>
     /// Pans the one live ore-pan site, re-resolved on the game thread, and proves the
     /// postcondition from the two world facts the seam itself writes. See the file header
     /// for why `x,y` has to be re-resolved and why the site is not required to end empty.
@@ -633,48 +585,6 @@ internal sealed partial class ExecutionManager
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:mailbox:{pendingCount.ToString(CultureInfo.InvariantCulture)}:{headMailId ?? "none"}";
         return $"mailbox_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    /// <summary>
-    /// One mailbox the actor can name right now, projected read-only from the location's
-    /// own map layer plus the actor's own pending-mail queue. A location with no mailbox
-    /// tile advertises none, and the count is published even when it is zero so "there is
-    /// a mailbox here and nothing to claim" stays distinguishable from "there is no
-    /// mailbox here".
-    ///
-    /// The actor's DISTANCE from the mailbox is deliberately not part of this question: the
-    /// mailbox does not move and does not stop existing because the companion is across the
-    /// farm, and the claim closes the gap by walking.
-    /// </summary>
-    internal static IReadOnlyList<BridgeMailboxTarget> DiscoverMailboxTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null)
-            return Array.Empty<BridgeMailboxTarget>();
-        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
-        if (buildings is null)
-            return Array.Empty<BridgeMailboxTarget>();
-
-        int pending = Game1.mailbox.Count;
-        string? head = pending > 0 ? Game1.mailbox[0] : null;
-        List<BridgeMailboxTarget> result = new();
-        for (int y = 0; y < buildings.LayerHeight; y++)
-        {
-            for (int x = 0; x < buildings.LayerWidth; x++)
-            {
-                if (!IsMailboxTile(location, x, y))
-                    continue;
-                result.Add(new BridgeMailboxTarget(
-                    BuildMailboxTargetId(location, x, y, pending, head),
-                    location.NameOrUniqueName,
-                    x,
-                    y,
-                    pending));
-                if (result.Count >= 4)
-                    return result;
-            }
-        }
-        return result;
     }
 
     /// <summary>

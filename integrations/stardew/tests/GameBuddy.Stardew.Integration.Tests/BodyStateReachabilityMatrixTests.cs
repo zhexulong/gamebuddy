@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -63,6 +64,10 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// (<see cref="SleepAndAdvanceDayLifecycle.OvernightMenus"/>) must be a kind whose hold names that action; and a
 /// `DialogueBox` nobody owns that asks nothing - the shape `round95` measured - must be released, closed by the modal
 /// family's own decision, and closed with a receipt that names the modal AND its owner.</item>
+/// <item><b>A transient hold's own deadline fires.</b> The four other properties are about states this Mod drives; this
+/// one is about a state the WORLD owns and its own producer ends. Every transient kind the classifier can mint declares the
+/// window its producer is allowed, and the sentence stops promising a wait the instant that window passes - the shape
+/// `round97` spent four minutes of a stopped clock in (see the section ④ facts below).</item>
 /// </list>
 ///
 /// <para>
@@ -754,4 +759,225 @@ public sealed class BodyStateReachabilityMatrixTests
         int end = source.IndexOf("\n    private ", start + signature.Length, StringComparison.Ordinal);
         return end < 0 ? source[start..] : source[start..end];
     }
+
+    // -----------------------------------------------------------------------------------------------------------------
+    // ④ THE BODY: every transient kind, and the deadline that ends its claim to be waitable
+    // -----------------------------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// `round97`, verbatim: the holder reading of the run's frozen window (`.live-runs/game-ladder/`
+    /// `2026-11-23T13-28-54-415Z-multiday_routine`, `warp_replan_grace_expired` at 21:39:08 and the same sentence in the
+    /// snapshot of every turn until the run ended with the clock still at 1140, four minutes later). Kept as the text it
+    /// was, because this reading's falsifier is that run and not one the author invented.
+    /// </summary>
+    private static readonly string Round97Evidence =
+        "held_by=transient_busy;transient_kind=warping;retry_window_ms="
+        + WorldModel.TransientRetryWindowMs.ToString(CultureInfo.InvariantCulture)
+        + ";can_move=false;admissible_actions=none;next_step=wait_for_retry_window";
+
+    /// <summary>How far past its window a producer may be when the reading looks, in ms.</summary>
+    private const long LateMs = 60_000;
+
+    /// <summary>The instant a kind's window is armed at, in ms: any monotonic value, because only differences are read.</summary>
+    private const long ArmedAtMs = 1_000;
+
+    /// <summary>
+    /// THE BODY'S HALF, and the reason it is in this matrix: the other three properties can all be green while the world
+    /// holds the body in a transient nobody bounded. MEASURED `round97` (day 6 11:40): `transient_kind=warping` was the
+    /// hold for four minutes while the game clock stood at 1140 - `Game1._isWarping` never came down
+    /// (`onFadeToBlackComplete` is its only release, Game1.cs:6271), so `CanMove` stayed false and `shouldTimePass()`
+    /// (`:9307-9310`) held the clock with it. The sentence promised `retry_window_ms=2000` on every read, so the one
+    /// caller that could have stopped kept waiting.
+    ///
+    /// <para>
+    /// THE POPULATION IS THE CLASSIFIER'S OWN INPUT: one flag of <see cref="ActorWorldFacts"/> at a time, enumerated from
+    /// that record's constructor rather than listed here, driven through <see cref="WorldModel.Classify"/>. A flag added to
+    /// the record joins this reading by existing, and a word `Classify` mints that no member of
+    /// <see cref="ActorTransientKind"/> declares fails BY NAME - nothing declares what would end it.
+    /// </para>
+    ///
+    /// <para>
+    /// THE PROPERTY: the deadline fires, driven at its own two boundaries through the production sentence builder - the
+    /// frame before it publishes what is left of the window and the step that waits it out, the frame it reaches publishes
+    /// the overrun and the step that ends the attempt. A sentence that promotes a wait without a measured remainder is the
+    /// `round97` shape and is the violation this half names.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryTransientKindTheClassifierMintsDeclaresADeadlineThatFires()
+    {
+        (string Word, ActorWorldFacts Facts)[] minted = MintedTransientKinds();
+        this.output.WriteLine(
+            $"{Gate}: transient kinds {minted.Length} ({string.Join(",", minted.Select(entry => entry.Word))}) · examined {minted.Length}");
+
+        minted.Should().NotBeEmpty(
+            $"{Gate}: drove no transient out of `Classify`, so this reading examined nothing at all and agrees with itself");
+
+        var violations = new List<string>();
+        var rows = new List<string>();
+        foreach ((string word, ActorWorldFacts facts) in minted)
+        {
+            if (WorldModel.DeclaredKindOf(word) is not ActorTransientKind kind)
+            {
+                violations.Add($"transient_kind_has_no_settle_window:{word}");
+                continue;
+            }
+
+            int windowMs = WorldModel.SettleWindowMs(kind);
+            if (windowMs <= 0)
+            {
+                violations.Add($"transient_settle_window_is_not_a_window:{word};window_ms={windowMs}");
+                continue;
+            }
+
+            ActorDisposition disposition = WorldModel.Classify(facts);
+            var armed = new BodyHoldFact(
+                BodyHoldState.Held,
+                WorldModel.TransientHolder(word),
+                BodyHold.NativeTransientReason,
+                ArmedAtMs + windowMs);
+            (string _, string inside) = WorldModel.DescribeTransientHold(disposition, armed, ArmedAtMs + windowMs - 1);
+            (string _, string atBoundary) = WorldModel.DescribeTransientHold(disposition, armed, ArmedAtMs + windowMs);
+            (string _, string late) = WorldModel.DescribeTransientHold(disposition, armed, ArmedAtMs + windowMs + LateMs);
+            (string _, string unarmed) = WorldModel.DescribeTransientHold(disposition, BodyHoldFact.Free, ArmedAtMs);
+
+            rows.Add($"transient kind={word} window_ms={windowMs} inside={inside} at={atBoundary} unarmed={unarmed}");
+
+            if (FieldOf(inside, "hold_remaining_ms") != "1" || FieldOf(inside, "next_step") != WorldModel.WaitForRetryWindowStep)
+                violations.Add($"transient_inside_its_window_publishes_no_remainder:{word};{inside}");
+            else if (FieldOf(atBoundary, "hold_overrun_ms") != "0"
+                     || FieldOf(atBoundary, "next_step") != WorldModel.ReportTheStalledBodyStep)
+                violations.Add($"transient_deadline_does_not_fire:{word};window_ms={windowMs};{atBoundary}");
+            else if (FieldOf(late, "hold_overrun_ms") != LateMs.ToString(CultureInfo.InvariantCulture))
+                violations.Add($"transient_overrun_is_not_measured:{word};{late}");
+            else if (FieldOf(unarmed, "hold_remaining_ms") is not null
+                     || FieldOf(unarmed, "next_step") != WorldModel.ReportTheStalledBodyStep)
+                violations.Add($"unarmed_transient_promises_a_wait:{word};{unarmed}");
+            else if (JudgeTransientSentence(inside) is { } insideFinding)
+                violations.Add($"{word}:inside:{insideFinding}");
+            else if (JudgeTransientSentence(atBoundary) is { } atFinding)
+                violations.Add($"{word}:at_window:{atFinding}");
+            else if (JudgeTransientSentence(unarmed) is { } unarmedFinding)
+                violations.Add($"{word}:unarmed:{unarmedFinding}");
+        }
+
+        foreach (string row in rows) this.output.WriteLine(row);
+        violations.Should().BeEmpty(
+            $"{Gate}: a transient kind whose producer runs out of time has to stop promising a wait - "
+            + string.Join(" | ", violations));
+    }
+
+    /// <summary>
+    /// THE FALSIFIER, on the run it was measured by: `round97`'s own sentence promotes a wait beside no remainder, and the
+    /// reading names it. Run through the same judge as the green loop above, so the falsifier cannot hold a rule the green
+    /// run does not exercise.
+    /// </summary>
+    [Fact]
+    public void TheSentenceRound97WasHeldWithPromisesAWaitItNeverMeasured()
+    {
+        WorldModel.DeclaredKindOf(FieldOf(Round97Evidence, "transient_kind")).Should().NotBeNull(
+            "the word that run was held by has to be a kind this build declares, or the falsifier is about a vocabulary that no longer exists");
+
+        string? finding = JudgeTransientSentence(Round97Evidence);
+        this.output.WriteLine($"{Gate}: falsifier -> {finding ?? "<passed>"}");
+
+        finding.Should().NotBeNull("the shape a live run was held with is not a shape this gate may pass");
+        finding.Should().Contain("transient_promises_a_wait_it_did_not_measure", "and it has to say WHICH promise was unmeasured");
+    }
+
+    /// <summary>
+    /// THE ANCHOR IS TAKEN ONCE. The window belongs to the transient that opened it: a reader that re-armed it, or a new
+    /// kind inheriting the previous kind's window, is the shape in which a deadline can never arrive - the same defect
+    /// the navigation path records one layer up (`Update`'s `warp_replan_retry` note).
+    /// </summary>
+    [Fact]
+    public void TheArmedDeadlineIsTakenOnceAndDoesNotFollowTheNextKind()
+    {
+        WorldModel.ResetTransientSettle();
+        try
+        {
+            WorldModel.NoteObservedTransient(ActorTransientKind.Warping);
+            BodyHoldFact first = WorldModel.TransientSettle(ActorTransientKind.Warping);
+            WorldModel.NoteObservedTransient(ActorTransientKind.Warping);
+            BodyHoldFact again = WorldModel.TransientSettle(ActorTransientKind.Warping);
+
+            first.State.Should().Be(BodyHoldState.Held);
+            again.EndsAtMs.Should().Be(first.EndsAtMs, "a frame that re-armed the window could never let it expire");
+
+            WorldModel.NoteObservedTransient(ActorTransientKind.ScreenFade);
+            WorldModel.TransientSettle(ActorTransientKind.Warping).State.Should().Be(
+                BodyHoldState.Free, "the window was armed by a producer that is no longer the one holding the body");
+        }
+        finally
+        {
+            WorldModel.ResetTransientSettle();
+        }
+    }
+
+    /// <summary>
+    /// What a transient sentence promises, judged: a wait is honest only beside the remainder it is waiting out, and every
+    /// other shape names a step that ends the attempt. This is the `round97` defect stated once, and the sentence builder
+    /// is the only thing it is applied to.
+    /// </summary>
+    private static string? JudgeTransientSentence(string sentence)
+    {
+        string? step = FieldOf(sentence, "next_step");
+        bool measured = FieldOf(sentence, "hold_remaining_ms") is { } remaining
+            && remaining != "0"
+            && remaining != "unknown";
+        if (step == WorldModel.WaitForRetryWindowStep && !measured)
+            return $"transient_promises_a_wait_it_did_not_measure:{sentence}";
+        if (step is null || !WorldModel.NextStepEndsTheHold(step))
+            return $"transient_names_no_step_that_ends_it:{step ?? "<none>"};{sentence}";
+        return null;
+    }
+
+    /// <summary>
+    /// Every transient kind `Classify` can mint, DERIVED from the classifier's own input: one flag of
+    /// <see cref="ActorWorldFacts"/> raised at a time, enumerated from that record's constructor rather than listed here.
+    /// The classifier alone decides which word a flag produces - nothing in this reading says a flag and a kind are the
+    /// same fact.
+    /// </summary>
+    private static (string Word, ActorWorldFacts Facts)[] MintedTransientKinds()
+    {
+        ParameterInfo[] parameters = typeof(ActorWorldFacts).GetConstructors().Single().GetParameters();
+        var minted = new List<(string Word, ActorWorldFacts Facts)>();
+        foreach (ParameterInfo flag in parameters.Where(parameter => parameter.ParameterType == typeof(bool)))
+        {
+            var facts = (ActorWorldFacts)Activator.CreateInstance(typeof(ActorWorldFacts), NeutralFacts(parameters, flag))!;
+            ActorDisposition disposition = WorldModel.Classify(facts);
+            if (disposition.Kind == ActorDispositionKind.Transient
+                && disposition.TransientKind is { } word
+                && minted.All(seen => !string.Equals(seen.Word, word, StringComparison.Ordinal)))
+                minted.Add((word, facts));
+        }
+
+        return minted.OrderBy(entry => entry.Word, StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>
+    /// One fact's arguments with <paramref name="flag"/> raised and every other flag down. `TimeOfDay`, `Stamina` and
+    /// `MenuType` are held away from the pass-out and modal rulings, so the flag under examination is what the classifier
+    /// answers about - the other twelve are the record's own default.
+    /// </summary>
+    private static object?[] NeutralFacts(ParameterInfo[] parameters, ParameterInfo flag) => parameters
+        .Select(parameter => parameter.Name switch
+        {
+            "TimeOfDay" => (object?)1200,
+            "Stamina" => 200f,
+            "MenuType" => null,
+            _ => (object)(parameter == flag),
+        })
+        .ToArray();
+
+    /// <summary>
+    /// One <c>key=value</c> field of an evidence sentence, read the way the wire reads it: split on <c>;</c> and then on
+    /// <c>=</c>, so a field is a field and never a substring of another.
+    /// </summary>
+    private static string? FieldOf(string evidence, string key) => evidence
+        .Split(';')
+        .Select(field => field.Split('='))
+        .Where(parts => parts.Length == 2 && parts[0] == key)
+        .Select(parts => parts[1])
+        .FirstOrDefault();
 }

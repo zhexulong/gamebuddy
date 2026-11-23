@@ -261,12 +261,12 @@ public sealed class BreakResourceClumpActionTests
     public void DiscoveryReadsTheResourceClumpCollectionAndRunsWhenThisActionIsAdvertised()
     {
         string controller = Read(Controller);
-        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "internal static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(");
 
         discovery.Should().Contain("location.resourceClumps");
         // The capability word is the ACTION ID. A family keyed on an id nobody advertises publishes nothing in any
         // snapshot, and every gate stays green because the field is simply absent.
-        int guard = controller.IndexOf("DiscoverDebrisTargets(player, discoveryExclusions) : null", StringComparison.Ordinal);
+        int guard = controller.IndexOf("FarmhandTargetDiscovery.DiscoverDebrisTargets(player, discoveryExclusions) : null", StringComparison.Ordinal);
         guard.Should().BeGreaterThanOrEqualTo(0, "the clump family must be projected into the snapshot");
         string window = controller[Math.Max(0, guard - 400)..guard];
         window.Should().Contain("\"break_resource_clump\"", "this action must publish the family it addresses");
@@ -300,7 +300,7 @@ public sealed class BreakResourceClumpActionTests
     {
         // Furniture was invisible because a family read `objects`; mine rocks because a guard named the wrong id. This
         // action's entities are `ResourceClump`s and they live in exactly one collection.
-        MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "private static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(")
+        MethodBody(ControllerPartials.Declaring("DiscoverDebrisTargets"), "internal static IReadOnlyList<BridgeDebrisTarget> DiscoverDebrisTargets(")
             .Should().Contain("for (int index = 0; index < location.resourceClumps.Count");
     }
 

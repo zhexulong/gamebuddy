@@ -114,16 +114,6 @@ internal sealed class StardewBodyController
     /// </summary>
     internal const string TargetOffMapReasonCode = "target_off_map";
 
-    /// <summary>WIA §4.4 transient self-healing window: a short-lived body lock
-    /// (freezePause, tool animation) keeps the execution running while inside it
-    /// and only falls through to the regular rulings once it expires.</summary>
-    /// <summary>
-    /// How long a transient body lock is tolerated before it stops being "will pass on its own". Sourced from
-    /// the World Model so the retry window a refusal REPORTS to the Agent is the same number the body loop
-    /// actually waits - an Agent told to wait 2000 ms while the loop waits 1500 would retry into a live lock.
-    /// </summary>
-    private const int TransientWindowMs = WorldModel.TransientRetryWindowMs;
-
     /// <summary>
     /// Upper bound for the derived reachability probe. A target is reported as
     /// enclosed only after the actor's whole component has been enumerated, and an
@@ -1271,17 +1261,17 @@ internal sealed class StardewBodyController
         // equivalent of Lane A's WorldModel.ComputeDisposition (wia-contract
          // frozen type), computed here through the shared WorldModel.Classify
          // authority; no local disposition precedence is maintained in this loop.
-        LocalDispositionKind disposition = ClassifyLocalDisposition(localPlayer);
+        LocalDispositionKind disposition = ClassifyLocalDisposition(localPlayer, out ActorTransientKind? transient);
 
         switch (disposition)
         {
             case LocalDispositionKind.Transient:
                 // WIA §4.4: a transient body lock keeps the execution running and
                 // reports no new reasonCode while inside the window; a lock that
-                // outlives the window falls through to the regular rulings below
-                // (modal/event/pass-out/non-actionable) instead of earning a
-                // transient-specific terminal of its own.
-                if (this.KeepRunningWithinTransientWindow(nowMs))
+                // outlives it falls through to the regular rulings below. The window
+                // is the classified KIND's own, so this loop waits exactly what the
+                // refusal published to the Agent (`freezePause` is guarded for 20 s).
+                if (this.KeepRunningWithinTransientWindow(nowMs, transient))
                     return;
                 break;
             case LocalDispositionKind.Modal:
@@ -1638,7 +1628,7 @@ internal sealed class StardewBodyController
         if (location is null || !location.isTileOnMap(tile))
             return false;
         return location.isTilePassable(tile)
-            || ExecutionManager.IsTargetTileAddressable(location, (int)tile.X, (int)tile.Y);
+            || FarmhandTargetDiscovery.IsTargetTileAddressable(location, (int)tile.X, (int)tile.Y);
     }
 
     /// <summary>
@@ -2994,11 +2984,15 @@ internal sealed class StardewBodyController
     /// the CLASSIFICATION to <see cref="WorldModel.Classify"/> but pinned two facts to false
     /// (`DialogueUp`, `Eating`) because its caller took loose flags - so a dialogue that outlived its
     /// menu, which is the window <see cref="WorldModel"/> documents, classified as Idle here while
-    /// admission saw Modal. Reading the facts removes that divergence at its source.
+    /// admission saw Modal. Reading the facts removes that divergence at its source. <paramref name="transient"/>
+    /// is the transient those same facts named, or null when they named none (the `!CanMove` tail declares no producer
+    /// and therefore has no window of its own).
     /// </summary>
-    internal static LocalDispositionKind ClassifyLocalDisposition(Farmer actor)
+    internal static LocalDispositionKind ClassifyLocalDisposition(Farmer actor, out ActorTransientKind? transient)
     {
-        LocalDispositionKind disposition = WorldModel.Classify(WorldModel.ReadFacts(actor)).Kind switch
+        ActorDisposition classified = WorldModel.Classify(WorldModel.ReadFacts(actor));
+        transient = WorldModel.DeclaredKindOf(classified.TransientKind);
+        LocalDispositionKind disposition = classified.Kind switch
         {
             ActorDispositionKind.Event => LocalDispositionKind.Event,
             ActorDispositionKind.Modal => LocalDispositionKind.Modal,
@@ -3029,10 +3023,11 @@ internal sealed class StardewBodyController
 
     /// <summary>Applies the WIA §4.4 transient window for one frame. True while
     /// the frame stays inside the window (keep running, no new reasonCode); false
-    /// once the window expired, so the caller falls through to the regular rulings.</summary>
-    private bool KeepRunningWithinTransientWindow(long nowMs)
+    /// once it expired, so the caller falls through to the regular rulings. The
+    /// window is the one the kind declares - the number the refusal publishes.</summary>
+    private bool KeepRunningWithinTransientWindow(long nowMs, ActorTransientKind? transient)
     {
-        long? anchor = AssessTransientWindow(this.transientSinceMs, nowMs, TransientWindowMs);
+        long? anchor = AssessTransientWindow(this.transientSinceMs, nowMs, WorldModel.SettleWindowMs(transient));
         this.transientSinceMs = anchor ?? 0;
         return anchor is not null;
     }

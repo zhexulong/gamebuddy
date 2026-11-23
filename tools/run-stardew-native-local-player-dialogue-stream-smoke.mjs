@@ -15,7 +15,7 @@
 import { connectNativeLocalClient, readNativeClientConfig } from "./lib/stardew-native-smoke-harness-v1.mjs";
 import { loadHostTestModule } from "./lib/host-test-module.mjs";
 import { runTalkToNpcSmoke } from "./run-stardew-native-local-player-talk-to-npc-smoke.mjs";
-import { dialoguePayloadOf } from "./check-stardew-dialogue-stream.mjs";
+import { dialoguePayloadOf } from "../gates/stardew/check-stardew-dialogue-stream.mjs";
 
 const DIALOGUE_KIND = "npc_dialogue_presented";
 

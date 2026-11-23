@@ -40,9 +40,11 @@ namespace GameBuddy.Stardew.Integration.Tests;
 ///
 /// <para>
 /// WHAT THIS GATE CANNOT SEE, said out loud: an effect the catalogue does NOT declare. A row that hides a real resource
-/// movement behind `resource_unproven_by_the_receipt` is telling the truth about the receipt - the fact that the receipt
-/// does not name it - and no reading of the handler can decide what a receipt ought to have proved. That is the gap the
-/// reason exists to name, and closing it is a receipt change rather than a declaration change.
+/// movement behind `resource_unproven_by_the_receipt:&lt;resource&gt;` is telling the truth about the receipt - the fact
+/// that the receipt does not name WHICH resource - and no reading of the handler can decide what a receipt ought to have
+/// proved. That is the gap the reason exists to name, and closing it is a receipt change rather than a declaration change.
+/// What the marker may not do is leave the resource out: `TheGapMarkerNamesTheResourceItsReceiptCannotProve` refuses a bare
+/// marker, so every row of that population names a fact a receipt change would have to publish.
 /// </para>
 /// </summary>
 public sealed class ActionEffectDeclarationCoverageTests
@@ -84,7 +86,7 @@ public sealed class ActionEffectDeclarationCoverageTests
                 findings.Add($"{registration.ActionId}: declares no effect and no reason - the empty list that says nothing");
             if (effects.None is { } reason)
             {
-                if (!FarmhandActionEffects.NoneReasons.Contains(reason, StringComparer.Ordinal))
+                if (!FarmhandActionEffects.IsAdmitted(reason))
                     findings.Add($"{registration.ActionId}: '{reason}' is not an admitted reason");
                 reasonCounts[reason] = reasonCounts.TryGetValue(reason, out int seen) ? seen + 1 : 1;
             }
@@ -120,9 +122,60 @@ public sealed class ActionEffectDeclarationCoverageTests
                 + $"them:\n  {string.Join("\n  ", findings)}");
         Assert.True(declaredRows > 0, $"{report} - no action declares an effect, so the four classes are unreachable");
         Assert.True(
-            reasonCounts.ContainsKey(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            reasonCounts.Keys.Any(reason => reason.StartsWith(FarmhandActionEffects.ResourceUnprovenByTheReceiptPrefix + ":", StringComparison.Ordinal)),
             $"{report} - no row names the receipt gap, so either the receipts grew the facts this reason reports missing "
                 + "or the declaration stopped telling the truth about them");
+    }
+
+    /// <summary>
+    /// EVERY ROW THAT NAMES THE RECEIPT GAP NAMES THE RESOURCE IT CANNOT PROVE, because a bare
+    /// `resource_unproven_by_the_receipt` is the same hole wearing a word: it tells the next reader that something is
+    /// unproven and not what, which is exactly the silence <see cref="FarmhandActionEffects"/> exists to replace.
+    ///
+    /// <para>
+    /// THE RULE IS THE DECLARATION'S, not this file's: `FarmhandActionEffects.IsAdmitted` refuses the bare marker, so a
+    /// row written without a resource fails `EveryRegistrationStatesItsEffectsOrWhyItHasNone` too. What this fact adds is
+    /// the two directions a reader needs - the population is printed, the bare marker is refused HERE on a real value, and
+    /// the resource is the same lower-snake word an effect's `subject` uses, so the day the receipt names it the word is
+    /// already in the vocabulary the row will declare with.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheGapMarkerNamesTheResourceItsReceiptCannotProve()
+    {
+        const string prefix = FarmhandActionEffects.ResourceUnprovenByTheReceiptPrefix + ":";
+        var resources = new SortedDictionary<string, List<string>>(StringComparer.Ordinal);
+        var findings = new List<string>();
+        foreach (FarmhandActionRegistration registration in FarmhandActionCatalog.Registrations)
+        {
+            if (registration.Descriptor?.Effects?.None is not { } reason) continue;
+            if (!reason.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                if (string.Equals(reason, FarmhandActionEffects.ResourceUnprovenByTheReceiptPrefix, StringComparison.Ordinal))
+                    findings.Add($"{registration.ActionId}: carries the bare marker, which names no resource");
+                continue;
+            }
+
+            string resource = reason[prefix.Length..];
+            resources.TryGetValue(resource, out List<string>? actions);
+            resources[resource] = actions ?? new List<string>();
+            resources[resource].Add(registration.ActionId);
+            if (!FarmhandActionEffects.IsAdmitted(reason))
+                findings.Add($"{registration.ActionId}: '{reason}' is not a resource word");
+        }
+
+        string report = $"gap rows {resources.Values.Sum(actions => actions.Count)} · resources {resources.Count} · "
+            + string.Join(", ", resources.Select(pair => $"{pair.Key}={pair.Value.Count}"));
+        this.output.WriteLine(report);
+        Assert.True(
+            resources.Count > 0,
+            $"{report} - no row names a resource its receipt cannot prove, so either every receipt was closed or the "
+                + "declaration stopped saying which");
+        findings.Should().BeEmpty(
+            "a gap row has to name the resource it cannot prove, because 'unproven' on its own is the same hole wearing "
+                + "a word:\n  " + string.Join("\n  ", findings));
+        FarmhandActionEffects.IsAdmitted(FarmhandActionEffects.ResourceUnprovenByTheReceiptPrefix).Should().BeFalse(
+            "the bare marker is the one spelling this rule excludes, so it cannot be admitted by accident");
     }
 
     [Fact]

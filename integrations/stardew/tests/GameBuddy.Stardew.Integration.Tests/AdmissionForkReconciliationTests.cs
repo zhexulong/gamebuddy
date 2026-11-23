@@ -151,7 +151,7 @@ public sealed class AdmissionForkReconciliationTests
     private static IEnumerable<(string FileName, string Source)> HandlerSources()
     {
         string directory = Path.Combine(RepositoryRoot(), "integrations", "stardew");
-        foreach (string file in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").OrderBy(f => f, StringComparer.Ordinal))
+        foreach (string file in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").Concat(Directory.GetFiles(directory, "farmhandtargetdiscovery*.cs")).OrderBy(f => f, StringComparer.Ordinal))
             yield return (Path.GetFileName(file), File.ReadAllText(file));
     }
     [Fact]

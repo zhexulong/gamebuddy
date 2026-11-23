@@ -52,7 +52,7 @@ public sealed class WorldObjectRowExistenceTests
         world.PutToolInPackSlot(0, typeof(WateringCan), "(T)WateringCan", upgradeLevel: 0);
         world.PlaceObjectAt(7, 8, GiftQualifiedItemId, "Parsnip Seeds", StardewValley.Object.SeedsCategory);
 
-        IReadOnlyList<BridgeWorldObjectTarget> rows = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out int omitted);
+        IReadOnlyList<BridgeWorldObjectTarget> rows = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out int omitted);
 
         BridgeWorldObjectTarget gift = rows.Should().ContainSingle(row => row.QualifiedItemId == GiftQualifiedItemId,
             "the parcel is standing on the floor of the room, and being unarmed does not move it").Subject;
@@ -79,7 +79,7 @@ public sealed class WorldObjectRowExistenceTests
         world.PutToolInPackSlot(0, typeof(Axe), "(T)Axe", upgradeLevel: 0);
         world.PlaceObjectAt(7, 8, GiftQualifiedItemId, "Parsnip Seeds", StardewValley.Object.SeedsCategory);
 
-        BridgeWorldObjectTarget gift = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
+        BridgeWorldObjectTarget gift = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out _)
             .Should().ContainSingle(row => row.QualifiedItemId == GiftQualifiedItemId).Subject;
 
         gift.Kind.Should().Be("non_removable_object", "the axe does not remove a seed parcel, and the row says so");
@@ -99,7 +99,7 @@ public sealed class WorldObjectRowExistenceTests
         world.PutToolInPackSlot(1, typeof(Axe), "(T)Axe", upgradeLevel: 0);
         world.PlaceObjectAt(8, 7, TwigQualifiedItemId, "Twig", category: -999);
 
-        BridgeWorldObjectTarget twig = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
+        BridgeWorldObjectTarget twig = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out _)
             .Should().ContainSingle(row => row.QualifiedItemId == TwigQualifiedItemId).Subject;
 
         twig.Kind.Should().Be("removable_object", "an axe removes it, in the native guards' own terms");
@@ -118,7 +118,7 @@ public sealed class WorldObjectRowExistenceTests
         world.PutToolInPackSlot(0, typeof(WateringCan), "(T)WateringCan", upgradeLevel: 0);
         world.PlaceObjectAt(8, 7, TwigQualifiedItemId, "Twig", category: -999);
 
-        BridgeWorldObjectTarget twig = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
+        BridgeWorldObjectTarget twig = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out _)
             .Should().ContainSingle(row => row.QualifiedItemId == TwigQualifiedItemId).Subject;
         twig.Kind.Should().Be("removable_object");
         twig.Slot.Should().Be(-1, "the pack holds no axe, which is a fact about HER and not about the twig");
@@ -147,7 +147,7 @@ public sealed class WorldObjectRowExistenceTests
         world.PutToolInPackSlot(0, typeof(Axe), "(T)Axe", upgradeLevel: 0);
         world.PlaceObjectAt(7, 8, GiftQualifiedItemId, "Parsnip Seeds", StardewValley.Object.SeedsCategory);
 
-        BridgeWorldObjectTarget gift = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
+        BridgeWorldObjectTarget gift = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out _)
             .Should().ContainSingle(row => row.QualifiedItemId == GiftQualifiedItemId).Subject;
         LocalExecutionReceipt receipt = world.NewExecutionManager("remove_placed_item").RequestLocalRemovePlacedItem(
             "gift_not_removable",
@@ -183,7 +183,7 @@ public sealed class WorldObjectRowExistenceTests
         for (int index = 0; index < tiles.Length; index++)
             world.PlaceObjectAt(tiles[index].X, tiles[index].Y, GiftQualifiedItemId, "Parsnip Seeds", StardewValley.Object.SeedsCategory);
 
-        IReadOnlyList<BridgeWorldObjectTarget> rows = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out int omitted);
+        IReadOnlyList<BridgeWorldObjectTarget> rows = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out int omitted);
         string published = string.Join(" ", rows.Select(row => $"{row.X},{row.Y}"));
 
         rows.Should().HaveCount(ObjectRowBudget, $"twenty objects in the window against a budget of {ObjectRowBudget}: {published}");

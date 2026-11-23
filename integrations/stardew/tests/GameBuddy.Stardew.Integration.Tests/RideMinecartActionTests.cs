@@ -140,7 +140,7 @@ public sealed class RideMinecartActionTests
         // snapshot: a `travel`-only surface must not advertise minecart rides.
         string discovery = File.ReadAllText(DiscoverySourcePath());
         discovery.Should().Contain("DiscoverMinecartTargets");
-        discovery.Should().Contain("advertisedCapabilities.Contains(\"ride_minecart\", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null");
+        discovery.Should().Contain("advertisedCapabilities.Contains(\"ride_minecart\", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMinecartTargets(player) : null");
     }
 
     [Fact]

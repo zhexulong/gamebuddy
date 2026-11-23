@@ -306,7 +306,8 @@ public sealed class ApproachBeforeRefusalTests
     private static IReadOnlyDictionary<string, string> HandlerSources(IReadOnlyDictionary<string, string>? overrides)
     {
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs"))
+        foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs")
+            .Concat(Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandtargetdiscovery*.cs")))
             sources[Path.GetFileName(file)] = ReadSource(file, overrides);
         foreach (string file in Directory.GetFiles(RepositorySourcePath(HandlersDirectory), "*.cs"))
             sources[$"{HandlersDirectory}/{Path.GetFileName(file)}"] = ReadSource(file, overrides);

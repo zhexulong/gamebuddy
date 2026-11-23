@@ -148,7 +148,7 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
         // the same two native statements against the building's OWN Data/Buildings entry.
         executed.Should().Contain("Game1.player.Money -= data.BuildCost");
         executed.Should().Contain("Game1.player.Items.ReduceId(qualifiedItemId, amount)");
-        MethodBody(source, "private static IReadOnlyList<(string QualifiedItemId, int Amount)> BuildFarmBuildingMaterials(")
+        MethodBody(source, "internal static IReadOnlyList<(string QualifiedItemId, int Amount)> BuildFarmBuildingMaterials(")
             .Should().Contain("ItemRegistry.Create(material.ItemId, material.Amount)");
     }
 
@@ -216,7 +216,7 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
         string projection = publication[start..end];
         projection.Should().Contain("advertisedCapabilities.Contains(\"build_farm_building\", StringComparer.Ordinal)",
             "the site list is published under the action's own capability gate");
-        projection.Should().Contain("? DiscoverBuildFarmBuildingTargets(player",
+        projection.Should().Contain("? FarmhandTargetDiscovery.DiscoverBuildFarmBuildingTargets(player",
             "and it is the same discovery the fixture's Given asks");
         projection.Should().Contain(": null", "a snapshot that does not advertise the action publishes no site at all");
     }
@@ -230,7 +230,7 @@ public sealed class BuildFarmBuildingActionSourceShapeTests
         // The advertisement moved to the RUNNER: the published site is a function of where the actor STANDS while
         // the fixture's warp is queued, so asserting it in the fixture raced between two correct searches. The runner
         // reads `farmBuildingTargets` from a fresh observation, which is the only honest moment to check it.
-        fixture.Should().NotContain("ExecutionManager.DiscoverBuildFarmBuildingTargets(",
+        fixture.Should().NotContain("FarmhandTargetDiscovery.DiscoverBuildFarmBuildingTargets(",
             "and through the same discovery the snapshot publishes");
         fixture.Should().Contain("ExecutionManager.FindFarmBuildingSite(", "the fixture must ask the SAME search the product advertises from");
         fixture.Should().Contain("ExecutionManager.IsFarmBuildingFootprintFree(", "and the ONE predicate, not a second copy of the rule");

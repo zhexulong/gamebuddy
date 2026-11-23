@@ -242,9 +242,10 @@ public sealed class PublishedTargetTileAddressabilityTests
     /// walked onto.
     /// </summary>
     private static IReadOnlyList<MethodInfo> TilePublishingDiscoveries() =>
-        typeof(ExecutionManager)
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+        new[] { typeof(ExecutionManager), typeof(FarmhandTargetDiscovery) }
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             .Where(method => method.Name.StartsWith("Discover", StringComparison.Ordinal))
+            .Where(method => method.IsStatic)
             .Where(method => !method.IsGenericMethodDefinition && method.GetParameters().All(Drivable))
             .Where(method => RowType(method.ReturnType) is { } row
                 && row.GetProperty("X", typeof(int)) is not null

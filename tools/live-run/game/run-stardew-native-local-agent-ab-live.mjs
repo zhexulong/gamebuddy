@@ -63,6 +63,7 @@ import {
 import {
   countPriorMultidayRuns,
   dayTaskSchedule,
+  describeScheduledPillars,
   overriddenFirstDayTask,
   overriddenTaskForDay,
   readTaskDelivery,
@@ -96,6 +97,7 @@ import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-ha
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { judgesAPublishedFact, judgeTaskPurpose, readScheduledJudgement } from "../../lib/task-purpose.mjs";
 import { turnSettled } from "../../lib/turn-settled.mjs";
+import { rereadDaySeedMarket } from "./task-pool-feasibility.mjs";
 import {
   launchVoiceGatewayChild,
   pickVoiceGatewayPort,
@@ -614,6 +616,14 @@ let bodyProgramJournal = null;
  * would have folded them into dispatch latency. The categories are the mounted surface's tools, spelled one by one, so
  * a new tool has to be classified on purpose instead of landing in whichever bucket its name resembles.
  *
+ * AND A CATEGORY IS THE WHOLE CALL, WHICH IS WHY IT IS NAMED AFTER ITS TOOL. The category for the plan builder was
+ * called `plan_compile`, and a call of that tool is four stages: the script's compilation, the submit to the Mod, the
+ * window in which the call holds its own turn waiting for the program to settle, and the world re-read the held arm
+ * answers with. Measured `round94` (2026-11-23): 128.6 s under that name, of which the settlement wait was 122.9 s and
+ * the compiler at most 0.67 s - a reader optimising "plan compile" from that number would have worked in the wrong
+ * layer, which is the defect this file keeps finding elsewhere. The name is the tool's, and the stage split is read
+ * from the artifacts that own each stage (`tools/live-run/analysis/plan-work-timing.mjs`), never re-derived here.
+ *
  * Nothing is published unless it is a MEASUREMENT OF THIS RUN: `sessionJsonlPath` is the record bound to this run's own
  * surface session, and `unboundReason` is what the binding reported when there was none. When the counts disagree with
  * the frames the run sent, the categories come back `null` and the violation is the only number published.
@@ -628,15 +638,17 @@ const TOOL_TIMING_INVARIANT_VIOLATED = "TOOL_TIMING_INVARIANT_VIOLATED";
 const TOOL_TIMING_CATEGORIES = Object.freeze([
   "delegate",
   "plan_shape",
-  "plan_compile",
+  "plan_work",
   "program_submit",
   "program_status",
   "flat_dispatch",
 ]);
 const DELEGATE_TOOL_NAME = "delegate_game_task";
-// The planning tools: one answers what a step must supply, one compiles a written script and submits the result.
+// The planning tools: one answers what a step must supply, one compiles a written script into a program, submits it and
+// (for a short plan) holds its own turn until that program settles. `plan_work` is therefore named after the TOOL, not
+// after one stage of it: the stage split lives in `tools/live-run/analysis/plan-work-timing.mjs`.
 const PLAN_SHAPE_TOOL_NAMES = Object.freeze(["stardew_plan_shape"]);
-const PLAN_COMPILE_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
+const PLAN_WORK_TOOL_NAMES = Object.freeze(["stardew_plan_work"]);
 // The program tools: a submission waits on the compile + native accept, a status/event read waits on the journal.
 const PROGRAM_SUBMIT_TOOL_NAMES = Object.freeze(["stardew_submit_action_program"]);
 const PROGRAM_STATUS_TOOL_NAMES = Object.freeze(["stardew_action_program_status", "stardew_action_program_events"]);
@@ -645,7 +657,7 @@ const ACTION_TOOL_NAMES = new Set(Object.values(STARDEW_ACTION_TOOL_NAMES));
 // category above deliberately folds it together with the event log because both are bridge reads of one journal.
 const PLAN_TOOL_NAMES = new Set([
   ...PLAN_SHAPE_TOOL_NAMES,
-  ...PLAN_COMPILE_TOOL_NAMES,
+  ...PLAN_WORK_TOOL_NAMES,
   ...PROGRAM_SUBMIT_TOOL_NAMES,
   ...PROGRAM_STATUS_TOOL_NAMES,
 ]);
@@ -864,7 +876,6 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
   town_visit: "去一趟镇上，找个人说说话。",
   mine_delve: "下一趟矿，敲点矿石，看到箱子就打开，累了就坐矿车或电梯上去。",
   home_and_hearth: "屋里太空了，收拾一下、摆点东西，让它像个家。",
-  home_upgrade: "房子有点挤了，去木匠那儿问问扩建的事。",
   store_and_sort: "把背包里的东西归置到箱子里，用时再拿回来。",
   // ONE sentence, and the size is the point of the sentence: a plot twenty tiles long cannot fit in the 13x13 window
   // one snapshot sees, so the far end is only ever in her head after the first walk. No crop is named - choosing it is
@@ -888,7 +899,6 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
-  home_upgrade: "the house is cramped - go ask the carpenter about extending it.",
   clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
   water_and_harvest:
     "harvest everything ripe in the field and ship it for gold, buy more seeds in town if needed, and replant and water the ground. ",
@@ -999,6 +1009,10 @@ const dayTasksScheduled = [];
 // world as it stood then. It is recorded because "she was handed the supply and still did not go" and "nothing ever
 // told her" are different findings, and only this list tells them apart.
 const seedFacts = [];
+// THE DAY'S SEED COUNTER, RE-ASKED WHERE THE DAY RAN. The opening gate reads one snapshot at boot and speaks only for that
+// moment; each day asks the same requirement again on the world it is standing in (`rereadDaySeedMarket`), and every
+// state that market publishes lands here at the minute it changed.
+const seedMarketReadings = [];
 // EVERY PROMPT THE HARNESS ISSUED, BY WHY IT WAS ISSUED, and every settlement it deliberately did not turn into one.
 //
 // These two counts cannot be reconstructed from a session: a prompt that was never sent leaves no record there, and the
@@ -1412,7 +1426,7 @@ function toolTimingCategory(toolName) {
   if (typeof toolName !== "string") return undefined;
   if (toolName === DELEGATE_TOOL_NAME) return "delegate";
   if (PLAN_SHAPE_TOOL_NAMES.includes(toolName)) return "plan_shape";
-  if (PLAN_COMPILE_TOOL_NAMES.includes(toolName)) return "plan_compile";
+  if (PLAN_WORK_TOOL_NAMES.includes(toolName)) return "plan_work";
   if (PROGRAM_SUBMIT_TOOL_NAMES.includes(toolName)) return "program_submit";
   if (PROGRAM_STATUS_TOOL_NAMES.includes(toolName)) return "program_status";
   if (ACTION_TOOL_NAMES.has(toolName)) return "flat_dispatch";
@@ -4424,6 +4438,12 @@ try {
           // task it was not asked to do.
           const dayTask = taskForDay(day);
           dayTasksScheduled.push(Object.freeze({ day, task: dayTask }));
+          // The market this day opened on, the STATE last published (one line per state, not per poll), and the same answer
+          // in her words held until the next turn she is given - a fact repeated every turn is an instruction.
+          const openedSupply = client.state?.snapshot?.seedSupplyTargets;
+          const seedMarketAtOpen = Array.isArray(openedSupply) ? openedSupply.length : null;
+          let seedMarketPublished = null;
+          let seedMarketFactPending = null;
           // Whether this day's day-end offer has been made. ONE per day: an offer repeated until answered is the ping
           // this change exists to remove.
           let dayEndOffered = false;
@@ -4441,6 +4461,27 @@ try {
             if (noteBridgeClosure(bridgeClosure ?? bridgeClosureStop({ bridgeDisconnections })) !== null) break;
             const clock = readWorldClock();
             const nowMs = Date.now();
+            // THE MARKET, ASKED AGAIN WHERE SHE STANDS, so a day whose premise broke at 14:00 says so at 14:00:
+            // `task_precondition_broken_at:<minutes>:seed_market:<rows>` when it stops holding what the day needs,
+            // `seed_market_changed:<minutes>:<atOpen>-><rows>` when it moved and still holds.
+            const seedMarket = rereadDaySeedMarket({
+              taskId: dayTask,
+              snapshot: client.state?.snapshot ?? null,
+              gameMinutes: clock.unknown === true ? null : clock.minutes,
+              rowsAtOpen: seedMarketAtOpen,
+            });
+            if (seedMarket !== null && seedMarket.code !== null && seedMarket.key !== seedMarketPublished) {
+              seedMarketPublished = seedMarket.key;
+              seedMarketReadings.push(Object.freeze({ day, ...seedMarket }));
+              process.stderr.write(`${seedMarket.code}\n`);
+              // The first turn already carries the day's opening supply fact; this is for every turn after it.
+              if (seedMarket.broken === true && turns > 0)
+                seedMarketFactPending = seedShortageFact({
+                  taskId: dayTask,
+                  snapshot: client.state?.snapshot ?? null,
+                  locale: localeKey,
+                });
+            }
             // Whether the model is woken at all is decided BEFORE anything is asked of her, from facts and never from
             // the fact that a turn just settled. A settlement only says that what the harness was waiting for stopped;
             // the facts below say whether that stop left her anything to decide.
@@ -4526,13 +4567,15 @@ try {
                   : wake.reason === WAKE_REASON.stallWake
                     ? promptForStall(stallFacts.at(-1) ?? null)
                     : promptForStaleWorld(staleFacts.at(-1) ?? null);
-            // WHAT REACHES HER: the prompt above, plus the harness's own statement when the wait expired. The prompt
-            // itself is untouched - the fix for a blind day is the observation being handed over, not a sentence telling
-            // her to go and look.
+            // WHAT REACHES HER: the prompt above, plus the world fact the day has lost since it opened (appended once, then
+            // cleared), plus the harness's own statement when the wait expired. The prompt itself is untouched - the fix for
+            // a blind day is the observation being handed over, not a sentence telling her to go and look.
+            const statedPrompt = withDayFact(prompt, seedMarketFactPending);
+            seedMarketFactPending = null;
             const deliveredPrompt =
               opening !== null && opening.observed !== true
-                ? dayPromptWithoutObservation(prompt, opening, localeKey)
-                : prompt;
+                ? dayPromptWithoutObservation(statedPrompt, opening, localeKey)
+                : statedPrompt;
             const spokenBefore = presentationPieces.length;
             const dispatchBefore = dispatchMarkers(actionTrace, programSubmissions);
             promptTurnStarts.push(Date.now());
@@ -4736,6 +4779,9 @@ try {
     // What each day was asked for versus what was delivered, and the tasks it never asked for, in one line.
     const taskDelivery = readTaskDelivery({ scheduled: dayTasksScheduled, delivered: taskPurposes });
     console.error("MULTIDAY_TASKS", taskDelivery.reading, taskDelivery.notDelivered.join(","));
+    // WHICH PILLAR EACH DAY DREW, in one line: the run's own answer to "which part of the game did this run measure",
+    // printed beside the tasks rather than left to be reconstructed by a reader who has to know the groups by heart.
+    console.error("MULTIDAY_PILLARS", describeScheduledPillars(dayTasksScheduled));
     // WHAT WAS SCHEDULED AND HOW MUCH OF IT CAN BE JUDGED, before any day's verdict exists: `days 3 · judgedable 2 ·
     // gap 1 (day1=...)`. The purpose line counts the verdicts that exist; this one says whether the run ever could.
     console.error("MULTIDAY_TASK_JUDGEABLE", readScheduledJudgement(dayTasksScheduled).reading);
@@ -5635,6 +5681,10 @@ try {
     // task verdicts because "she was handed the supply and did not go" and "nothing ever told her" are different
     // findings about the same run, and a reader must be able to tell which one it is looking at.
     seedFacts,
+    // THE SEED COUNTER RE-ASKED INSIDE EACH DAY, per published state, with the minute it changed and the rows it found.
+    // Published beside `seedFacts` because a day that lost its market after the morning fact was handed over is a different
+    // finding from a day nothing ever told her about.
+    seedMarketReadings,
     // The scheduled player lines, judged by the gate module, and what happened to each of them: a gate that was never
     // delivered is a different finding from one that was delivered and answered badly, and both are different from a
     // gate that reported a pass without ground truth (which the module cannot do: it reports `not_judgeable`).

@@ -180,7 +180,17 @@ internal sealed partial class ExecutionManager
             bool targetGone = target is null;
             string chunkRemoved = targetGone ? "true" : "false";
             string chunkReason = targetGone ? "" : ";reason=chunk_still_present";
-            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
+            // THE RESOURCE THIS ACTION MOVED, IN THREE NUMBERS, because `stack` and `chunk_removed` alone do not say how
+            // much of the published drop the pack took: `stack` is the stack the request published and `chunk_removed`
+            // is a boolean about one identity, while the count that left is what a reader needs to check the pair beside
+            // it. `object_consumed` is measured from the published stack, never from the pack delta - the magnet also
+            // collects chunks of the same item this request never named, so `inventory_after - inventory_before` is not
+            // this drop's count.
+            // `object_after` is `none` wherever this pass cannot say: a chunk of the identity is still on the ground and
+            // the published stack need not be the stack that chunk holds.
+            int groundConsumed = inventoryGained ? specification.Stack : 0;
+            string groundAfter = targetGone ? "0" : "none";
+            string pickupEvidence = $"location={specification.Location};target={specification.TargetId};tile={specification.TargetX},{specification.TargetY};item={specification.QualifiedItemId};stack={specification.Stack};object_consumed={groundConsumed.ToString(CultureInfo.InvariantCulture)};object_after={groundAfter};native_auto_collect=true;chunk_removed={chunkRemoved}{chunkReason};inventory_before={specification.InventoryBefore};inventory_after={inventoryAfter}";
             string pickupReach = target is null
                 ? string.Empty
                 : $"{DescribeItemPickupReach(Game1.player, GetChunkTile(target.Value.Chunk), MagneticPickupReach.Subject(target.Value.Debris))};";

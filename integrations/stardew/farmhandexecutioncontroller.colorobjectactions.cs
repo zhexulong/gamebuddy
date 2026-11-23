@@ -326,37 +326,7 @@ internal sealed partial class ExecutionManager
         return new ColorTargetResolution(true, "accepted", string.Empty, identity, chest);
     }
 
-    /// <summary>
-    /// The chests she may recolour right now, projected read-only from live state: every chest
-    /// <see cref="TryDescribeColorableChest"/> admits in the current location within the shared discovery radius, with the
-    /// colour it currently carries. Nothing is synthesized: whatever the game placed and made hers is published, and the
-    /// caller reads the same colour the write will change.
-    /// </summary>
-    internal static IReadOnlyList<BridgeColorTarget> DiscoverColorTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeColorTarget>();
-        List<BridgeColorTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            if (result.Count >= ColorTargetLimit)
-                break;
-            Vector2 tile = pair.Key;
-            if (pair.Value is null || !TryDescribeColorableChest(pair.Value, out Chest? chest))
-                continue;
-            if (!IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                continue;
-            result.Add(new BridgeColorTarget(
-                BuildColorTargetId(location, (int)tile.X, (int)tile.Y, chest!),
-                location.NameOrUniqueName,
-                (int)tile.X,
-                (int)tile.Y,
-                FormatColor(chest!.playerChoiceColor.Value)));
-        }
-        return result;
-    }
-
-    private const int ColorTargetLimit = 16;
+    internal const int ColorTargetLimit = 16;
 
     internal sealed record ColorTargetResolution(
         bool Accepted,

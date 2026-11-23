@@ -760,7 +760,7 @@ test("pickup_forage completion evidence requires the contract tile, item, remova
 
 test("pickup_item completion evidence requires the native auto-collect and an accounted-for chunk removal", () => {
   const valid =
-    "location=Farm;target=item_abcdef0123456789;tile=12,9;item=(O)78;stack=1;native_auto_collect=true;chunk_removed=true;inventory_before=0;inventory_after=1";
+    "location=Farm;target=item_abcdef0123456789;tile=12,9;item=(O)78;stack=1;object_consumed=1;object_after=0;native_auto_collect=true;chunk_removed=true;inventory_before=0;inventory_after=1";
   const receipt = {
     state: "succeeded",
     reasonCode: "item_picked_up",
@@ -770,7 +770,9 @@ test("pickup_item completion evidence requires the native auto-collect and an ac
   // The invisible pickup: a chunk of this identity is still on the ground while the backpack grew by exactly the
   // stack. The inventory is the authority for the pickup and the location is the authority for the removal, so this
   // shape is a completion - and it must say WHY the chunk is still there rather than claim it is gone.
-  const chunkSurvived = valid.replace("chunk_removed=true", "chunk_removed=false;reason=chunk_still_present");
+  const chunkSurvived = valid
+    .replace("chunk_removed=true", "chunk_removed=false;reason=chunk_still_present")
+    .replace("object_after=0", "object_after=none");
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_item", {
       ...receipt,
@@ -780,6 +782,7 @@ test("pickup_item completion evidence requires the native auto-collect and an ac
   );
   const multiStack = valid
     .replace("stack=1;", "stack=3;")
+    .replace("object_consumed=1;object_after=0", "object_consumed=3;object_after=0")
     .replace("inventory_before=0;inventory_after=1", "inventory_before=5;inventory_after=8");
   assert.equal(
     STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_item", {
@@ -801,6 +804,13 @@ test("pickup_item completion evidence requires the native auto-collect and an ac
     valid.replace("target=item_abcdef0123456789", "target=item bad id"),
     valid.replace("tile=12,9", "tile=12.5,9"),
     `${valid};chunk_removed=true`,
+    // The movement pair is a subtraction, so a pair that does not reach the remainder is not this receipt's shape.
+    valid.replace("object_after=0", "object_after=1"),
+    valid.replace("object_consumed=1", "object_consumed=2"),
+    valid.replace("object_consumed=1", "object_consumed=-1"),
+    // A remainder with no consumption, or a consumption with no remainder, is half a movement.
+    valid.replace("object_after=0;", ""),
+    valid.replace("object_consumed=1;", ""),
   ])
     assert.equal(
       STARDEW_GAME_INTEGRATION_ADAPTER.actionCatalog.hasCompletionEvidence("pickup_item", {

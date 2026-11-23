@@ -273,7 +273,7 @@ public sealed class BodyHoldAttributionTests
         (string pauseCode, string pause) = WorldModel.DescribeHeldBody(movementLock, facts, canMove: false, hold: emote);
         pauseCode.Should().Be("transient_busy");
         pause.Should().Contain($"held_by={BodyHold.EmoteHolder}");
-        pause.Should().Contain("body_pause_remaining_ms=");
+        pause.Should().Contain("hold_remaining_ms=");
         pause.Should().Contain($"next_step={WorldModel.WaitForRetryWindowStep}");
         pause.Should().NotContain("movement_lock");
     }
@@ -290,8 +290,8 @@ public sealed class BodyHoldAttributionTests
         BodyHoldFact overrun = new(BodyHoldState.Held, BodyHold.EmoteHolder, BodyHold.NativeTimerReason, BodyHold.NowMs() - 1_000);
         string expired = WorldModel.DescribeHeldBody(idle, Facts(), canMove: false, hold: overrun).Evidence;
         expired.Should().Contain($"held_by={BodyHold.EmoteHolder}");
-        expired.Should().Contain("overrun_ms=");
-        expired.Should().NotContain("body_pause_remaining_ms", "nothing is left of a window that has passed");
+        expired.Should().Contain("hold_overrun_ms=");
+        expired.Should().NotContain("hold_remaining_ms", "nothing is left of a window that has passed");
         expired.Should().Contain($"next_step={WorldModel.ReportTheStalledBodyStep}");
         WorldModel.NextStepEndsTheHold(WorldModel.ReportTheStalledBodyStep).Should().BeTrue();
 

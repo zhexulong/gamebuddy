@@ -9,7 +9,7 @@ import {
   CHAT_TAVERN_LIVE_PROFILE,
   checkTavernReleasePrerequisites,
   DEFAULT_TAVERN_RELEASE_PROFILE,
-} from "./check-tavern-release-prerequisites.mjs";
+} from "../gates/product/check-tavern-release-prerequisites.mjs";
 
 import { NARRATIVE_RUN_FAILURE_CODES, prepareReportTarget, writeReport } from "./run-tavern-narrative-gate.mjs";
 import { readMountedTavernManagementProfile } from "./lib/tavern-mounted-operation-vocabulary.mjs";

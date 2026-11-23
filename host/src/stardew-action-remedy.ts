@@ -197,6 +197,18 @@ const REFUSAL_ANSWERS: readonly RefusalAnswer[] = Object.freeze([
     guidance: (detail: string | null) => {
       const held = evidenceField(detail, "held_by");
       const destination = evidenceField(detail, "destination");
+      // A HOLD THAT OUTLIVED ITS OWN WINDOW IS NOT CLEARING BY ITSELF. MEASURED `round97` (day 6, 11:40): this sentence
+      // answered a `held_by=transient_busy;transient_kind=warping;retry_window_ms=2000` hold for four minutes while the
+      // engine's warp flag never came down, and "This clears by itself ... make the same request again then" was the whole
+      // plan it left open. Which of the two it is, is the Mod's own verdict (`next_step=`).
+      if (evidenceField(detail, "next_step") === "report_the_stalled_body") {
+        const overrunMs = evidenceField(detail, "hold_overrun_ms");
+        return (
+          `The way to ${destination ?? "the named destination"} exists, and ${held === null ? "a hold on the body" : held} has outlived ` +
+          `the window its own producer allows${overrunMs === null ? "" : ` (${overrunMs} ms past it)`}, so it is not clearing by itself any more. ` +
+          `Read the world once with stardew_observe; if it still reports the body held, report the blockage instead of re-issuing the request.`
+        );
+      }
       return (
         `The way to ${destination ?? "the named destination"} exists and cannot be taken this instant: ${held === null ? "the game is holding the body" : `${held} holds it`}. ` +
         `This clears by itself when that hold ends, so make the same request again then; retrying now answers the same lock.`
@@ -556,6 +568,40 @@ function tileOf(value: string | null): string | null {
 }
 
 /**
+ * The countermeasure for a WORLD transient, from the deadline the Mod publishes rather than from a number of ours.
+ *
+ * A transient is a hold whose own producer ends it, and the Mod publishes both halves: what is left of the window that
+ * producer is allowed (`hold_remaining_ms`), and `next_step=report_the_stalled_body` from the instant it has passed - the
+ * pair a declared `body_pause` hold publishes. MEASURED `round97` (day 6 11:40): this case read
+ * `transient_kind=warping;retry_window_ms=2000` for four minutes while `Game1._isWarping` never came down and the game clock
+ * stood at 1140, and answered "this clears on its own ... re-issue after about 2000 ms" every time it was asked - so the one
+ * caller that could have stopped kept waiting.
+ */
+function transientBusyGuidance(detail: string | null): StardewActionRemedy {
+  const kind = evidenceField(detail, "transient_kind") ?? "a short animation";
+  if (evidenceField(detail, "next_step") !== "wait_for_retry_window") {
+    const overrunMs = evidenceField(detail, "hold_overrun_ms");
+    return {
+      action: null,
+      guidance:
+        `The farmhand is held by ${kind}, and that hold's own producer has not ended it inside the window it is ` +
+        `allowed${overrunMs === null ? "" : ` (${overrunMs} ms past it)`}, so waiting is not a plan. ` +
+        `Read the world once with stardew_observe; if it still reports the body held, report the blockage instead ` +
+        `of re-issuing the request.`,
+    };
+  }
+  const remainingMs = evidenceField(detail, "hold_remaining_ms");
+  return {
+    action: null,
+    guidance:
+      `The farmhand is briefly busy with ${kind}; this clears on its own and no tool can shorten it. ` +
+      `Re-issue the SAME request ` +
+      `${remainingMs === null ? "after a moment" : `in about ${remainingMs} ms, all that is left of its window`} ` +
+      `rather than changing the target.`,
+  };
+}
+
+/**
  * The countermeasure for a refusal, or null when this reason code is not one this module knows.
  *
  * Returning null matters: a remedy attached to a code it does not understand would tell the Agent to close a
@@ -594,21 +640,8 @@ export function remedyForRefusal(reasonCode: string | null, detail: string | nul
           `close, and if it refuses, report the blockage instead of retrying the original request.`,
       };
     }
-    case "transient_busy": {
-      const kind = evidenceField(detail, "transient_kind") ?? "a short animation";
-      // The bound belongs to the Mod (`WorldModel.TransientRetryWindowMs`), which publishes it as
-      // `retry_window_ms` in the refusal evidence. A default here would be a second owner of that number -
-      // the duplicated-authority class - so when the evidence is silent the guidance stays honest and
-      // names no figure at all.
-      const windowMs = evidenceField(detail, "retry_window_ms");
-      return {
-        action: null,
-        guidance:
-          `The farmhand is briefly busy with ${kind}; this clears on its own and no tool can shorten it. ` +
-          `Re-issue the SAME request ${windowMs === null ? "after a moment" : `after about ${windowMs} ms`} ` +
-          `rather than changing the target.`,
-      };
-    }
+    case "transient_busy":
+      return transientBusyGuidance(detail);
     // The cutscene hold. The evidence decides whether there is anything to ACT ON, because a cutscene is not one
     // state: two modal-family handlers act on its own dialogue box (`dismiss_modal` closes it and the native close
     // advances the event; `answer_dialogue` answers a question raised inside it), and with no box on screen no action

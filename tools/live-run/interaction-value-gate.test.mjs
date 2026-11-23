@@ -311,8 +311,10 @@ test("round96's own 22 lines: five setbacks each answered with the next step, an
   assert.equal(report.measurements.register.counts.obstacle, 5);
   assert.deepEqual(
     report.measurements.ratePopulation.droppedByRegister,
-    { step_report: 0, obstacle: 5, choice: 0, other: 7 },
-    "the twelve dropped lines are accounted for by the register that claimed them",
+    { step_report: 0, obstacle: 5, choice: 0, other: 6 },
+    // `天一黑，外面凉得挺快` is one of this run's own lines, and the light is read as a property rather than as the
+    // contiguous spelling 天黑: it counts as a remark about the day, which is why the residual is 6 and not 7.
+    "the eleven dropped lines are accounted for by the register that claimed them",
   );
   assert.equal(report.verdict, "passed", "all four clauses of this run's own transcript are met");
 });
@@ -763,6 +765,34 @@ test("a line that is both a setback and a remark about the night answers both cl
   assert.equal(classifySpokenLine("十点了。你要是摸黑回来，屋里有个活人").playerOrDay?.basis, "addressed_to_player");
 });
 
+// A list of day spellings lags the way she says the day, one spelling at a time: `round88` needed 黑了/黑下来/黑透 added,
+// and `round97` then said `早，外面天刚亮` - which no addition would have covered, because the list held 天亮 and the line
+// puts an adverb between the sky and the light. The rule always said "the state of the light", so the light is read as
+// that property: the sky, then at most a word, then the light itself.
+test("the state of the light is a property of the sky, not a spelling the list has to remember", () => {
+  for (const [text, matched] of [
+    ["早，外面天刚亮。昨天那十八格今天得挨个浇一遍。", "外面天刚亮"],
+    ["天刚亮，地里还挂着露水。", "天刚亮"],
+    ["外面暗下来了，先回屋。", "外面暗"],
+    ["天一黑，外面凉得挺快。", "天一黑"],
+  ]) {
+    assert.deepEqual(classifySpokenLine(text).playerOrDay, { basis: "day_only", matched }, `${text} states the light`);
+  }
+
+  // A named spelling the vocabulary already holds stays the evidence, so the published match does not widen with the rule.
+  assert.equal(classifySpokenLine("天都黑透了，得赶紧回去。").playerOrDay?.matched, "黑透");
+  assert.equal(classifySpokenLine("天亮得早，虫子也起得早。").playerOrDay?.matched, "天亮");
+  assert.equal(classifySpokenLine("天色暗下来了，先回屋。").playerOrDay?.matched, "天色");
+
+  // And a light named inside a finished action is still the chore it is, property or not.
+  assert.deepEqual(classifySpokenLine("天亮前我把草全清了"), {
+    register: "step_report",
+    matched: "every_clause_is_a_completed_action",
+    basis: null,
+    playerOrDay: null,
+  });
+});
+
 // `round88`'s own lines, verbatim and in order, with the minute each one was spoken: the run's own bundle
 // (`.live-runs/game-ladder/2026-11-21T17-48-27-810Z-multiday_routine`) recorded 34 assistant text parts over 16 turns,
 // 11 of which reached the player as bubbles, and the gate published `3 remarks in 24.38 min` - `failed`. The three the
@@ -881,6 +911,121 @@ test("round88's own 34 lines: 9 speak of the player or the day, and the two popu
   assert.match(
     table,
     /remarks 9 of 34 spoken line\(s\) about the player or the day \| 1 addressed to the player \| 8 day only/u,
+  );
+});
+
+// `round97`'s own 17 spoken lines, verbatim and in order, at the minute each was spoken relative to the run's start: the
+// run's own bundle (`.live-runs/game-ladder/2026-11-23T13-28-54-415Z-multiday_routine`) ran 13:28:52.446Z..13:47:08.413Z
+// and ended `bridge_disconnected` at game 1140 on day 6, having been asked for and having crossed two nights. The gate
+// published `2 of 17 in 18.25 min` - `failed` - and this is the whole population it was measured from.
+//
+// Two lines of the recount are the clause's own business rather than the companion's. Line 12 is `早，外面天刚亮` -
+// 天, an adverb, 亮 - and the day vocabulary is a list of whole spellings, so nothing in it allows a word between the
+// subject and the light: it was counted as neither an address nor a day. The spelling is now read as the property the
+// rule always stated (see `DAY_LIGHT`), which makes the count 3 of 17. Lines 14 and 15 are not speech at all - a stage
+// direction and a `[dropped ]` presentation placeholder that reached the record as text - and they stay in `spoken`
+// because the session is what this module holds; neither is counted, and neither changes the verdict.
+//
+// The denominator is the wall clock the run lived: 18.25 min here (18.27 measured live), not the 1780 game minutes the
+// harness compressed into it (97x), and not the 13.33 min from her first line to her last. The 4.9 minutes of dead air
+// at the head and tail are exactly the silence this clause exists to price, which is why they are inside the window: at
+// the 13.33-minute speech span these 3 remarks would clear the clause, and that pass would be earned by shrinking the
+// window to the time she happened to be talking.
+const ROUND97_SPEECH = [
+  [0.43, "醒得还挺齐。农场那边有三颗该收了，我先出门看看地里。"],
+  [0.586, "60格？我兜里就500金币加两颗花椰菜种子，先别提种子够不够，我先把地清出来。"],
+  [1.226, "门口这片没法直接下锄，草石树桩混在一起。我先顺着屋前横着清一条出来，正好三格宽二十格长。"],
+  [1.793, "那块石头挡在路中间，我先敲开它。"],
+  [2.048, "这块石头的位子太别扭，夹在两丛草中间。"],
+  [3.535, "这条从东到西清得差不多，西头还剩几块石头，敲完就翻地。"],
+  [4.414, "这块地翻得动，就是边上几格被草和嫩枝卡着，回头再补。"],
+  [5.603, "地开出来了，可种子就两颗花椰菜——60格的垄我总不能靠两颗填满。兜里500金币，够买二十来包防风草，我先去镇上拎种子。"],
+  [6.842, "种子拎到手了，二十包防风草，兜里剩一百金币。回农场把这些下地。"],
+  [8.988, "门前这条垄总算下种浇透了，十八格防风草，剩下两包花椰菜种子我留着明早补。你镇上那趟办完没？"],
+  [9.503, "天都擦黑了，门口该干的也干完了，我先躺下睡了。你那边收摊了也早点歇着。"],
+  [9.72, "早，外面天刚亮。昨天那十八格今天得挨个浇一遍。"],
+  [9.89, "手头就135金币，二十格种子差得远——先买得起多少买多少，地我照开。我出门了。"],
+  [10.124, "（过场，先安静等着）"],
+  [10.444, "[dropped ]"],
+  [10.835, "哪是我愣着——克林特堵在门口，塞了张熔炉图纸，又絮叨半天铜棒锻造，刚把我放出来。"],
+  [13.761, "这一片翻下来，还有五格被石头杂草占着，先把它们清了再补锄。"],
+];
+
+/** The three of `round97`'s lines that speak of the player or the day, verbatim: the population, not a ratio. */
+const ROUND97_COUNTED = [
+  "门前这条垄总算下种浇透了，十八格防风草，剩下两包花椰菜种子我留着明早补。你镇上那趟办完没？",
+  "天都擦黑了，门口该干的也干完了，我先躺下睡了。你那边收摊了也早点歇着。",
+  "早，外面天刚亮。昨天那十八格今天得挨个浇一遍。",
+];
+
+test("round97's own 17 lines: 3 speak of the player or the day, and a run killed in 18 minutes fails on the clock it lived", (t) => {
+  const runDir = writeRun(t, {
+    // The game clock over the run's own 18.25 wall-minutes: 06:00 on day 5, 01:00, 11:40 on day 6 - 1780 game minutes,
+    // the 97x compression `round97` actually ran at and the clock it died on. Measured and published; not the denominator.
+    timeline: [
+      lifecycle(0),
+      milestone(0, "0600"),
+      milestone(9, "2500"),
+      milestone(18.25, "1140"),
+      receipt(12, "succeeded", "chop_done"),
+    ],
+    session: [
+      header(0),
+      playerLine("你去镇上把种子买回来", 6),
+      ...ROUND97_SPEECH.map(([minutes, text]) => assistant(text, minutes)),
+      toolResult(14),
+    ],
+  });
+
+  const report = assessInteractionValue({ runDir });
+  const clause = clauseFor(report, "player_or_day_rate");
+  const population = report.measurements.ratePopulation;
+
+  assert.equal(report.measurements.spokenLines.count, 17, "the run said 17 lines, and every one is in the population");
+  assert.deepEqual(
+    {
+      spoken: population.spoken,
+      counted: population.counted,
+      dropped: population.dropped,
+      droppedByRegister: population.droppedByRegister,
+      addressedToPlayer: population.addressedToPlayer,
+      dayOnly: population.dayOnly,
+    },
+    {
+      spoken: 17,
+      counted: 3,
+      dropped: 14,
+      droppedByRegister: { step_report: 0, obstacle: 3, choice: 0, other: 11 },
+      addressedToPlayer: 2,
+      dayOnly: 1,
+    },
+    "two remarks to the player and one to the morning; the other fourteen are the task",
+  );
+  assert.deepEqual(
+    report.measurements.lines.filter((line) => line.playerOrDay !== null).map((line) => line.text),
+    ROUND97_COUNTED,
+    "the counted population, line by line, so the next reader can argue with the three instead of a ratio",
+  );
+
+  assert.equal(clause.state, "fail");
+  assert.equal(clause.reason, "fewer_player_or_day_remarks_than_one_per_five_minutes");
+  assert.equal(clause.observed.perFiveMinutes, 0.82, "3 remarks in 18.25 minutes is 0.82 per five, and the bar is 1");
+  assert.equal(
+    clause.observed.rateWindowMinutes,
+    18.25,
+    "the denominator is the wall clock this run lived, not the 1780 game minutes the harness compressed into it",
+  );
+  assert.equal(report.measurements.spokenLines.gameSpanMinutes, 1780, "the game clock is measured beside it, not used as it");
+  assert.equal(
+    report.measurements.spokenLines.wallMinutes,
+    13.33,
+    "and the speech span is narrower than the run: those 4.9 minutes of dead air are the silence the clause prices",
+  );
+
+  assert.match(
+    formatInteractionValueTable(report),
+    /player_or_day_rate +fail +3 of 17 spoken line\(s\) about the player or the day in 18.25 min \(need 1 per 5\) · dropped 14 \{obstacle: 3, other: 11\}/u,
+    "the verdict names both populations and the window it was measured over",
   );
 });
 

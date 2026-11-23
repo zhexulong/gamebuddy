@@ -614,9 +614,11 @@ test("the attach boundary is called before the first prompt, and both first turn
   // Both ways a run reaches its first turn go through the wait, and neither can reach `runAgentTurn` with the raw prompt.
   assert.match(RUNNER_SOURCE, /const opening = turns === 1 \? await dayOpeningFor\(day\) : null;/u);
   assert.match(RUNNER_SOURCE, /const firstOpening = await dayOpeningFor\(1\);/u);
+  // The prompt that reaches her is the STATED one - the day's prompt plus any world fact the day has lost since it opened
+  // (`statedPrompt`) - and the raw prompt is the input to that composition, never the thing dispatched.
   assert.match(
     RUNNER_SOURCE,
-    /opening !== null && opening\.observed !== true\n\s+\? dayPromptWithoutObservation\(prompt, opening, localeKey\)\n\s+: prompt;/u,
+    /const statedPrompt = withDayFact\(prompt, seedMarketFactPending\);\n\s+seedMarketFactPending = null;\n\s+const deliveredPrompt =\n\s+opening !== null && opening\.observed !== true\n\s+\? dayPromptWithoutObservation\(statedPrompt, opening, localeKey\)\n\s+: statedPrompt;/u,
   );
   assert.match(
     RUNNER_SOURCE,

@@ -654,15 +654,20 @@
           },
           "effect": "write",
           "postcondition": {
-            "name": "native_action_postcondition"
+            "name": "forage_picked_up"
           },
           "approach": {
             "relation": "self_walked"
           },
           "targetFamily": "forageTargets",
           "effects": {
-            "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "declared": [
+              {
+                "class": "produces",
+                "subject": "pack_item",
+                "observedBy": "postcondition"
+              }
+            ]
           }
         },
         "handlerGroup": null
@@ -702,15 +707,20 @@
           },
           "effect": "write",
           "postcondition": {
-            "name": "native_action_postcondition"
+            "name": "item_picked_up"
           },
           "approach": {
             "relation": "self_walked"
           },
           "targetFamily": "itemTargets",
           "effects": {
-            "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "declared": [
+              {
+                "class": "produces",
+                "subject": "pack_item",
+                "observedBy": "postcondition"
+              }
+            ]
           }
         },
         "handlerGroup": null
@@ -1033,7 +1043,7 @@
           "targetFamily": "machineTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:machine_output"
           }
         },
         "handlerGroup": null
@@ -1082,7 +1092,7 @@
           "targetFamily": "animalProductTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:animal_product"
           }
         },
         "handlerGroup": null
@@ -1229,7 +1239,7 @@
           "targetFamily": "harvestTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:crop_produce"
           }
         },
         "handlerGroup": null
@@ -1623,7 +1633,7 @@
           "nativeBinding": "BreakableContainer.performToolAction",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:container_loot"
           }
         },
         "handlerGroup": null
@@ -1894,7 +1904,7 @@
           "targetFamily": "treeChopSourceTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:wood"
           }
         },
         "handlerGroup": null
@@ -1949,7 +1959,7 @@
           "targetFamily": "rockSourceTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:stone"
           }
         },
         "handlerGroup": null
@@ -2057,7 +2067,7 @@
           "targetFamily": "artifactSpotTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:artifact"
           }
         },
         "handlerGroup": null
@@ -2111,7 +2121,7 @@
           "targetFamily": "refillWateringCanTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:watering_can_water"
           }
         },
         "handlerGroup": null
@@ -2281,7 +2291,7 @@
           "targetFamily": "debrisTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:resource_clump_drop"
           }
         },
         "handlerGroup": null
@@ -2327,7 +2337,7 @@
           "targetFamily": "debrisTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:resource_clump_drop"
           }
         },
         "handlerGroup": null
@@ -2376,7 +2386,7 @@
           "targetFamily": "waterTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:fish"
           }
         },
         "handlerGroup": null
@@ -2915,7 +2925,7 @@
           "targetFamily": "chests",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:pack_item"
           }
         },
         "handlerGroup": null
@@ -2970,7 +2980,7 @@
           "targetFamily": "treeStumpTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:wood"
           }
         },
         "handlerGroup": null
@@ -3084,7 +3094,7 @@
           "targetFamily": "weedTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:weed_fiber"
           }
         },
         "handlerGroup": null
@@ -3139,7 +3149,7 @@
           "targetFamily": "grassTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:grass_fiber"
           }
         },
         "handlerGroup": null
@@ -3194,7 +3204,7 @@
           "nativeBinding": "Cask.performToolAction",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:cask_product"
           }
         },
         "handlerGroup": null
@@ -3656,7 +3666,7 @@
           "nativeBinding": "Pan.DoFunction",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:ore"
           }
         },
         "handlerGroup": null
@@ -3702,7 +3712,7 @@
           "nativeBinding": "GameLocation.mailbox",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:mail_attachment"
           }
         },
         "handlerGroup": null
@@ -3803,7 +3813,7 @@
           "nativeBinding": "Building.PerformBuildingChestAction",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:building_chest_output"
           }
         },
         "handlerGroup": null
@@ -3858,7 +3868,7 @@
           "targetFamily": "scytheCropTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:crop_produce"
           }
         },
         "handlerGroup": null
@@ -3904,7 +3914,7 @@
           "nativeBinding": "MeleeWeapon.DoDamage",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:swept_ground_item"
           }
         },
         "handlerGroup": null
@@ -3949,7 +3959,7 @@
           "targetFamily": "bushTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:bush_produce"
           }
         },
         "handlerGroup": null
@@ -3994,7 +4004,7 @@
           "targetFamily": "fruitTreeTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:fruit"
           }
         },
         "handlerGroup": null
@@ -4039,7 +4049,7 @@
           "targetFamily": "shakeTreeTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:tree_seed"
           }
         },
         "handlerGroup": null
@@ -4084,7 +4094,7 @@
           "targetFamily": "pedestalTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:pedestal_item"
           }
         },
         "handlerGroup": null
@@ -4256,7 +4266,7 @@
           "targetFamily": "crabPotCollectTargets",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:crab_pot_catch"
           }
         },
         "handlerGroup": null
@@ -4757,7 +4767,7 @@
           "nativeBinding": "FishPond.ClearPond",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:pond_fish"
           }
         },
         "handlerGroup": null
@@ -5043,7 +5053,7 @@
           "nativeBinding": "TailoringMenu.CraftItem",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:clothing"
           }
         },
         "handlerGroup": null
@@ -5086,7 +5096,7 @@
           "nativeBinding": "TailoringMenu.DyeItems",
           "effects": {
             "declared": [],
-            "none": "resource_unproven_by_the_receipt"
+            "none": "resource_unproven_by_the_receipt:clothing"
           }
         },
         "handlerGroup": null

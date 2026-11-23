@@ -28,7 +28,7 @@ internal sealed partial class ExecutionManager
             inReach: IsTileWithinNativeReach,
             execute: (executionId, admittedRequestId) => this.ExecuteMachineLoad(executionId, admittedRequestId, slot, targetX, targetY, expectedQualifiedItemId, expectedTargetId));
 
-    private readonly record struct MachineLoadRequirement(int ConsumedCount, int? ProcessingMinutes);
+    internal readonly record struct MachineLoadRequirement(int ConsumedCount, int? ProcessingMinutes);
 
     /// <summary>
     /// Why this machine cannot take this item as a load right now, or null when it can.
@@ -70,7 +70,7 @@ internal sealed partial class ExecutionManager
     /// which that branch never reaches is refused by name rather than reported as an uncertain postcondition after a
     /// native no-op.
     /// </summary>
-    private static bool IsMachineInteractionObject(StardewValley.Object machine) => machine.Type is "Crafting" or "interactive";
+    internal static bool IsMachineInteractionObject(StardewValley.Object machine) => machine.Type is "Crafting" or "interactive";
 
     private const string UnavailableAcceptedInputs = "unavailable_in_machine_data";
 
@@ -108,7 +108,7 @@ internal sealed partial class ExecutionManager
         return rules;
     }
 
-    private static MachineInputAcceptance? ReadMachineInputAcceptance(StardewValley.Object machine)
+    internal static MachineInputAcceptance? ReadMachineInputAcceptance(StardewValley.Object machine)
     {
         return MachineInputAcceptance.Derive(ReadMachineInputTriggerRules(machine));
     }
@@ -170,7 +170,7 @@ internal sealed partial class ExecutionManager
     /// machine): which output rule and trigger rule match, how many items that trigger consumes, and the processing
     /// window.
     /// </summary>
-    private static bool TryReadMachineLoadRequirement(StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location, out MachineLoadRequirement requirement)
+    internal static bool TryReadMachineLoadRequirement(StardewValley.Object machine, StardewValley.Object input, Farmer who, GameLocation location, out MachineLoadRequirement requirement)
     {
         requirement = default;
         MachineData? machineData = machine.GetMachineData();

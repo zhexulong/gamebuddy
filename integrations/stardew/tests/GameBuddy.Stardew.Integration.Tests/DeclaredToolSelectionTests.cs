@@ -589,8 +589,7 @@ public sealed class DeclaredToolSelectionTests
 
     /// <summary>The category a snapshot tool slot publishes for one tool, through the Mod's own slot projection.</summary>
     private static string ToolCategoryOfSlot(Tool tool) =>
-        ((IReadOnlyList<BridgeToolSlot>)typeof(ExecutionManager)
-            .GetMethod("DiscoverToolSlots", BindingFlags.NonPublic | BindingFlags.Static)!
+        ((IReadOnlyList<BridgeToolSlot>)DiscoveryMembers.Method("DiscoverToolSlots")
             .Invoke(null, new object?[] { new List<Item?> { tool } })!)[0].Category;
 
     private static string MethodBody(string source, string signature)

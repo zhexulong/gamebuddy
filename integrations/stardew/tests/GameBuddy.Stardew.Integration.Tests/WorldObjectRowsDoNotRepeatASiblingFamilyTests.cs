@@ -70,7 +70,7 @@ public sealed class WorldObjectRowsDoNotRepeatASiblingFamilyTests
         }
         world.PlaceObjectAt(TwigX, TwigY, TwigQualifiedItemId, "Twig", category: -999);
 
-        IReadOnlyList<BridgeWorldObjectTarget> published = ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out int omitted);
+        IReadOnlyList<BridgeWorldObjectTarget> published = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out int omitted);
 
         List<string> examined = new();
         List<string> failures = new();

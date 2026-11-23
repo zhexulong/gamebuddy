@@ -332,7 +332,14 @@ private long nativeLocalPlayerFixtureLastHeartbeatUnixMs;
         // The clock RATE belongs beside the clock itself: 471 s of wall time bought 540 in-game minutes on the run of
         // 2026-10-25 when the engine's own rate says it should have bought 673, and nothing in any artifact said why.
         // With the rate published, that question is arithmetic instead of inference.
-        string engineState = $";new_day={Game1.newDay.ToString().ToLowerInvariant()};game_mode={Game1.gameMode};saving={Game1.game1.IsSaving.ToString().ToLowerInvariant()};fade={Game1.fadeToBlackAlpha.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)};clock_rate_ms={Game1.realMilliSecondsPerGameMinute};game_time={Game1.timeOfDay};paused={Game1.paused.ToString().ToLowerInvariant()};freeze_controls={Game1.freezeControls.ToString().ToLowerInvariant()}";
+        //
+        // `warping` is the ENGINE's location-transition flag beside the fade alpha, because the two readings are what
+        // tell the two stalls apart and only one of them was being printed. MEASURED `round97` (day 6 11:40): this line
+        // read `fade=-0.03;game_time=1140;can_move=False` for four minutes - the fade CLEAR was within two frames of the
+        // `<-0.1` write that restores `CanMove` (`ScreenFade.cs:55-59`, `Game1.cs:6429`) - and nothing in the artifact
+        // could say whether `_isWarping` was still up beside it (`fadeIn=false` is written by `onFadeToBlackComplete`,
+        // which also lowers the flag, `Game1.cs:6269-6271`), which is the one question the next occurrence needs answered.
+        string engineState = $";new_day={Game1.newDay.ToString().ToLowerInvariant()};game_mode={Game1.gameMode};saving={Game1.game1.IsSaving.ToString().ToLowerInvariant()};fade={Game1.fadeToBlackAlpha.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)};warping={Game1.isWarping.ToString().ToLowerInvariant()};clock_rate_ms={Game1.realMilliSecondsPerGameMinute};game_time={Game1.timeOfDay};paused={Game1.paused.ToString().ToLowerInvariant()};freeze_controls={Game1.freezeControls.ToString().ToLowerInvariant()}";
         this.Monitor.Log($"[DEBUG-native-local-readiness] state={state}{engineState};location={Game1.player.currentLocation?.NameOrUniqueName ?? "unknown"};tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};can_move={Game1.player.CanMove};event_up={Game1.eventUp};menu={Game1.activeClickableMenu?.GetType().Name ?? "none"}.", LogLevel.Trace);
     }
 

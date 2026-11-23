@@ -114,12 +114,13 @@
               }
             },
             "none": {
-              "enum": [
-                "observation_only",
-                "actor_body_only",
-                "addressed_row_only",
-                "game_owned_ledger",
-                "resource_unproven_by_the_receipt"
+              "anyOf": [
+                { "enum": ["observation_only", "actor_body_only", "addressed_row_only", "game_owned_ledger"] },
+                {
+                  "type": "string",
+                  "pattern": "^resource_unproven_by_the_receipt:[a-z][a-z0-9_]{1,63}$",
+                  "description": "The action moves a resource and no receipt fact names which: the marker names the resource, because a bare marker is the same hole wearing a word."
+                }
               ]
             }
           }

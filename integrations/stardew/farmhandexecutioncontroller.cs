@@ -39,6 +39,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     private readonly ExecutionReceiptStore ledger;
     private IReadOnlyDictionary<string, LocalExecutionReceipt> receiptsByRequestId => this.ledger.ByRequestId;
     private readonly GroundItemPickupLedger groundItemTargets = new();
+
+    /// <summary>
+    /// The discovery seam this body reads a world through. ONE instance for the manager's life, because the ground-item
+    /// ledger it writes is the same ledger the pickup action reads back, and the tick it stamps a publication with is
+    /// this frame's - never a construction-time copy.
+    /// </summary>
+    internal FarmhandTargetDiscovery TargetDiscovery { get; }
     private readonly StardewBodyController controller;
     private readonly ActiveBodySlots slots;
     private readonly ExecutionAdmission admission;
@@ -260,6 +267,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         BridgeScope? executionScope = null)
     {
         this.monitor = monitor;
+        this.TargetDiscovery = new FarmhandTargetDiscovery(monitor, this.groundItemTargets, () => this.tick);
         this.capabilityPublicationProvider = capabilityPublicationProvider ?? throw new ArgumentNullException(nameof(capabilityPublicationProvider));
         this.receiptPublished = receiptPublished;
         if ((executionJournal is null) != (executionScope is null))
@@ -1186,27 +1194,27 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         DiscoveryExclusionRecorder discoveryExclusions = new();
         bool containerActionsAdvertised = advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal);
-        IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? DiscoverChestStates(player) : null;
+        IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? FarmhandTargetDiscovery.DiscoverChestStates(player) : null;
         BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
         int soilTilesOmitted = 0;
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
-            ? DiscoverSoilTiles(player, out soilTilesOmitted)
+            ? FarmhandTargetDiscovery.DiscoverSoilTiles(player, out soilTilesOmitted)
             : null;
         int farmBuildingTargetsOmitted = 0;
         IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =
             advertisedCapabilities.Contains("build_farm_building", StringComparer.Ordinal)
-                ? DiscoverBuildFarmBuildingTargets(player, out farmBuildingTargetsOmitted)
+                ? FarmhandTargetDiscovery.DiscoverBuildFarmBuildingTargets(player, out farmBuildingTargetsOmitted)
                 : null;
         bool exclusionFamilyAdvertised = ExclusionReportingCapabilities
             .Any(entry => advertisedCapabilities.Contains(entry.Capability, StringComparer.Ordinal));
         IReadOnlyList<BridgeInventoryItemFact>? inventoryItemFacts =
             advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("redeem_prize_ticket", StringComparer.Ordinal) || advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal) || advertisedCapabilities.Contains("open_geode", StringComparer.Ordinal)
-                ? DiscoverInventoryItemFacts(player)
+                ? FarmhandTargetDiscovery.DiscoverInventoryItemFacts(player)
                 : null;
         IReadOnlyList<BridgeShopTarget>? shopTargetsHere =
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal)
-                ? this.DiscoverShopTargets(player, discoveryExclusions)
+                ? FarmhandTargetDiscovery.DiscoverShopTargets(player, discoveryExclusions)
                 : null;
         IReadOnlyList<BridgeSeedSupplyTarget>? seedSupplyTargets = null;
         int seedSupplyTargetsOmitted = 0;
@@ -1215,7 +1223,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         int worldObjectTargetsOmitted = 0;
         IReadOnlyList<BridgeWorldObjectTarget>? worldObjectTargets =
             advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal)
-                ? DiscoverWorldObjectTargets(player, out worldObjectTargetsOmitted)
+                ? FarmhandTargetDiscovery.DiscoverWorldObjectTargets(player, out worldObjectTargetsOmitted)
                 : null;
         // ONE OBJECT, ONE FAMILY, SAID OUT LOUD: the rows that list withheld because a sibling family already names the
         // subject (`SubjectsOwnedBySiblingFamilies`) are inside `worldObjectTargetsOmitted` beside the rows the caps
@@ -1258,69 +1266,69 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 .Select(warp => new BridgeWarp(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY,
                     Game1NavigationWorldSource.IsLocationAccessible(warp.TargetName)))
                 .ToArray(),
-            advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? DiscoverDoorTargets(player) : null,
+            advertisedCapabilities.Contains("enter_exit", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverDoorTargets(player) : null,
             soilTiles,
-            DiscoverToolSlots(player.Items),
-            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverWateringCanFacts(player) : null,
-            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? DiscoverRefillWateringCanTargets(player) : null,
-            advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? DiscoverForageTargets(player) : null,
-            advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null,
-            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? DiscoverCropTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? DiscoverPetBowlTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? DiscoverSlimeHutchTroughTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? DiscoverHarvestTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? DiscoverSeedTargets(player) : null,
-            advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? DiscoverFertilizerTargets(player) : null,
-            advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? DiscoverWoodFenceTargets(player) : null,
+            FarmhandTargetDiscovery.DiscoverToolSlots(player.Items),
+            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWateringCanFacts(player) : null,
+            advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverRefillWateringCanTargets(player) : null,
+            advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverForageTargets(player) : null,
+            advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? this.TargetDiscovery.DiscoverItemTargets(player) : null,
+            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCropTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverPetBowlTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSlimeHutchTroughTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverHarvestTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSeedTargets(player) : null,
+            advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFertilizerTargets(player) : null,
+            advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWoodFenceTargets(player) : null,
             advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? this.DiscoverWoodFenceResultTargets(player) : null,
-            advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? DiscoverCrabPotTargets(player) : null,
+            advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCrabPotTargets(player) : null,
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? this.DiscoverCrabPotResultTargets(player) : null,
-            advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? DiscoverCrabPotCollectTargets(player) : null,
-            advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("collect_crab_pot_output", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCrabPotCollectTargets(player) : null,
+            advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverBaitCrabPotTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
-            (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? DiscoverDebrisTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? DiscoverRockSourceTargets(player) : null,
-            advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? DiscoverClearHoeDirtTargets(player) : null,
-            advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? DiscoverArtifactSpotTargets(player) : null,
+            (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? FarmhandTargetDiscovery.DiscoverDebrisTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverRockSourceTargets(player) : null,
+            advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverClearHoeDirtTargets(player) : null,
+            advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverArtifactSpotTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? this.DiscoverArtifactSpotResultTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? CountArtifactSpotFarmSources() : null,
-            (advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_load", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_collect_output", StringComparer.Ordinal)) ? DiscoverMachineTargets(player) : null,
-            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? DiscoverTreeChopSourceTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? DiscoverTreeChopResultTargets(player) : null,
-            advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? DiscoverTreeStumpTargets(player) : null,
-            advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? DiscoverTreeSaplingTargets(player) : null,
-            advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? DiscoverWeedTargets(player) : null,
-            advertisedCapabilities.Contains("cut_grass", StringComparer.Ordinal) ? DiscoverGrassTargets(player) : null,
-            advertisedCapabilities.Contains("clear_cask", StringComparer.Ordinal) ? DiscoverCaskTargets(player) : null,
-            advertisedCapabilities.Contains("dress_mannequin", StringComparer.Ordinal) ? DiscoverMannequinTargets(player) : null,
-            advertisedCapabilities.Contains("set_sign_display", StringComparer.Ordinal) ? DiscoverSignTargets(player) : null,
-            advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) || advertisedCapabilities.Contains("withdraw_silo_hay", StringComparer.Ordinal) ? DiscoverSiloTargets(player) : null,
-            advertisedCapabilities.Contains("toggle_tool_light", StringComparer.Ordinal) ? DiscoverLanternSlots(player) : null,
-            advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? DiscoverScytheCropTargets(player) : null,
-            (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("talk_to_npc", StringComparer.Ordinal)) ? DiscoverNpcRelationshipTargets(player) : null,
-            DiscoverVillagerWhereabouts(),
-            DiscoverHarvestWhereabouts(discoveryExclusions),
-            DiscoverWateringWhereabouts(discoveryExclusions),
-            advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? DiscoverPetTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? DiscoverAnimalProductTargets(player) : null,
-            advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? DiscoverFeedTroughTargets(player) : null,
+            (advertisedCapabilities.Contains("machine_inspect", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_load", StringComparer.Ordinal) || advertisedCapabilities.Contains("machine_collect_output", StringComparer.Ordinal)) ? FarmhandTargetDiscovery.DiscoverMachineTargets(player) : null,
+            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverTreeChopSourceTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("chop_tree", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverTreeChopResultTargets(player) : null,
+            advertisedCapabilities.Contains("chop_stump", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverTreeStumpTargets(player) : null,
+            advertisedCapabilities.Contains("plant_sapling", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverTreeSaplingTargets(player) : null,
+            advertisedCapabilities.Contains("cut_weeds", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWeedTargets(player) : null,
+            advertisedCapabilities.Contains("cut_grass", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverGrassTargets(player) : null,
+            advertisedCapabilities.Contains("clear_cask", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCaskTargets(player) : null,
+            advertisedCapabilities.Contains("dress_mannequin", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMannequinTargets(player) : null,
+            advertisedCapabilities.Contains("set_sign_display", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSignTargets(player) : null,
+            advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) || advertisedCapabilities.Contains("withdraw_silo_hay", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSiloTargets(player) : null,
+            advertisedCapabilities.Contains("toggle_tool_light", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverLanternSlots(player) : null,
+            advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverScytheCropTargets(player) : null,
+            (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("talk_to_npc", StringComparer.Ordinal)) ? FarmhandTargetDiscovery.DiscoverNpcRelationshipTargets(player) : null,
+            FarmhandTargetDiscovery.DiscoverVillagerWhereabouts(),
+            FarmhandTargetDiscovery.DiscoverHarvestWhereabouts(discoveryExclusions),
+            FarmhandTargetDiscovery.DiscoverWateringWhereabouts(discoveryExclusions),
+            advertisedCapabilities.Contains("pet_animal", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverPetTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("pet_farm_animal", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("collect_animal_product", StringComparer.Ordinal) ? this.TargetDiscovery.DiscoverAnimalProductTargets(player) : null,
+            advertisedCapabilities.Contains("feed_animal", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFeedTroughTargets(player) : null,
             chests,
             chestsSummary,
             inventoryItemFacts,
-            advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? DiscoverFoodTargets(player) : null,
-            advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? this.DiscoverShippingBinTargets(player) : null,
-            advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? DiscoverCraftingRecipeTargets(player) : null,
-            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingRecipeTargets(player) : null,
-            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? DiscoverCookingStationTargets(player) : null,
-            advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? DiscoverMinecartTargets(player) : null,
-            advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? DiscoverMineElevatorFloors() : null,
+            advertisedCapabilities.Contains("use_item", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFoodTargets(player) : null,
+            advertisedCapabilities.Contains("ship_item", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverShippingBinTargets(player) : null,
+            advertisedCapabilities.Contains("craft_item", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCraftingRecipeTargets(player) : null,
+            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCookingRecipeTargets(player) : null,
+            advertisedCapabilities.Contains("cook_recipe", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCookingStationTargets(player) : null,
+            advertisedCapabilities.Contains("ride_minecart", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMinecartTargets(player) : null,
+            advertisedCapabilities.Contains("select_mine_elevator_floor", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMineElevatorFloors() : null,
             advertisedCapabilities.Contains("shop_purchase", StringComparer.Ordinal) ? shopTargetsHere : null,
-            advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? DiscoverBushTargets(player) : null,
-            advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? DiscoverFruitTreeTargets(player) : null,
-            advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? DiscoverShakeTreeTargets(player) : null,
-            advertisedCapabilities.Contains("take_pedestal_item", StringComparer.Ordinal) ? DiscoverPedestalTargets(player) : null,
-            advertisedCapabilities.Contains("toggle_fence_gate", StringComparer.Ordinal) ? DiscoverFenceGateTargets(player) : null,
+            advertisedCapabilities.Contains("harvest_bush", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverBushTargets(player) : null,
+            advertisedCapabilities.Contains("harvest_fruit_tree", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFruitTreeTargets(player) : null,
+            advertisedCapabilities.Contains("shake_tree", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverShakeTreeTargets(player) : null,
+            advertisedCapabilities.Contains("take_pedestal_item", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverPedestalTargets(player) : null,
+            advertisedCapabilities.Contains("toggle_fence_gate", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFenceGateTargets(player) : null,
 
             // Macro time context. Game1.Date/Game1.timeOfDay are the same values the
             // native behaviour code reads, so publishing them lets the companion
@@ -1331,43 +1339,43 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             Year: Game1.Date?.Year ?? 0,
             Weather: ProjectWeather(),
             PresentationLocale: string.Empty,
-            RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? DiscoverRaftTargets(player) : null,
-            HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? DiscoverHorseTargets(player) : null,
-            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? DiscoverMineEntranceTargets(player) : null,
-            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? DiscoverObeliskTargets(player, discoveryExclusions) : null,
-                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? DiscoverAnimalDoorTargets(player, discoveryExclusions) : null,
-        FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? DiscoverFishPondTargets(player, discoveryExclusions) : null,
+            RaftTargets: advertisedCapabilities.Contains("use_raft", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverRaftTargets(player) : null,
+            HorseTargets: advertisedCapabilities.Contains("mount_transport", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverHorseTargets(player) : null,
+            MineEntranceTargets: advertisedCapabilities.Contains("enter_mine", StringComparer.Ordinal) || advertisedCapabilities.Contains("use_mine_ladder", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMineEntranceTargets(player) : null,
+            ObeliskTargets: advertisedCapabilities.Contains("use_obelisk", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverObeliskTargets(player, discoveryExclusions) : null,
+                    AnimalDoorTargets: advertisedCapabilities.Contains("toggle_animal_door", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverAnimalDoorTargets(player, discoveryExclusions) : null,
+        FishPondTargets: advertisedCapabilities.Contains("clear_fish_pond", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFishPondTargets(player, discoveryExclusions) : null,
     TailoringTargets: advertisedCapabilities.Contains("tailor_clothing", StringComparer.Ordinal) || advertisedCapabilities.Contains("dye_clothing_with_item", StringComparer.Ordinal) ? DiscoverTailoringTargets(player) : null,
-            WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? DiscoverWarpItemTargets(player) : null,
-            PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? DiscoverPanSites(player) : null,
-            MailboxTargets: advertisedCapabilities.Contains("claim_mail_attachment", StringComparer.Ordinal) ? DiscoverMailboxTargets(player) : null,
+            WarpItemTargets: advertisedCapabilities.Contains("use_warp_item", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWarpItemTargets(player) : null,
+            PanSites: advertisedCapabilities.Contains("pan_ore", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverPanSites(player) : null,
+            MailboxTargets: advertisedCapabilities.Contains("claim_mail_attachment", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMailboxTargets(player) : null,
 
-            WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? DiscoverWearableTargets(player) : null,
+            WearableTargets: advertisedCapabilities.Contains("equip_wearable", StringComparer.Ordinal) || advertisedCapabilities.Contains("unequip_wearable", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWearableTargets(player) : null,
             FarmBuildingTargets: farmBuildingTargets,
-            BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
+            BuildingChestTargets: advertisedCapabilities.Contains("load_building_chest", StringComparer.Ordinal) || advertisedCapabilities.Contains("collect_building_chest_output", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverBuildingChestTargets(player, discoveryExclusions) : null,
             WorldObjectTargets: worldObjectTargets,
             ActorDispositionKind: WorldModel.KindForWire(this.disposition.Kind),
             ActorDispositionDetail: this.disposition.ModalType ?? this.disposition.TransientKind,
             ActorDispositionActionOwned: this.disposition.ModalActionOwned,
-            DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? DiscoverDailyQuestTargets() : null,
+            DailyQuestTargets: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverDailyQuestTargets() : null,
             AcceptedDailyQuest: advertisedCapabilities.Contains("accept_daily_quest", StringComparer.Ordinal) ? Game1.player.acceptedDailyQuest.Value : null,
             PendingLevelUps: DescribePendingLevelUps(pendingLevelUpPairs),
             PendingLevelUpChoices: DescribePendingLevelUpChoices(player, pendingLevelUpPairs),
             Professions: DescribeProfessions(player),
-            SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverSpecialOrderTargets() : null,
-            ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? DiscoverActiveSpecialOrderKeys() : null,
-            MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? DiscoverMuseumRewardTargets(player) : null,
-            ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? DiscoverColorTargets(player) : null,
+            SpecialOrderTargets: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSpecialOrderTargets() : null,
+            ActiveSpecialOrderKeys: advertisedCapabilities.Contains("accept_special_order", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverActiveSpecialOrderKeys() : null,
+            MuseumRewardTargets: advertisedCapabilities.Contains("claim_museum_reward", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverMuseumRewardTargets(player) : null,
+            ColorTargets: advertisedCapabilities.Contains("color_placed_object", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverColorTargets(player) : null,
             CurrentToolSlot: player.CurrentToolIndex,
             CurrentToolSlotItem: DescribeSlotItem(player.Items, player.CurrentToolIndex),
-            FixedInteractionPoints: DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
+            FixedInteractionPoints: FarmhandTargetDiscovery.DiscoverFixedInteractionPoints(player, out int fixedInteractionPointsOmitted),
             FixedInteractionPointsOmitted: fixedInteractionPointsOmitted,
             SoilTilesOmitted: soilTiles is null ? null : soilTilesOmitted,
             FarmBuildingTargetsOmitted: farmBuildingTargets is null ? null : farmBuildingTargetsOmitted,
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
             WorldObjectTargetsOmitted: worldObjectTargets is null ? null : worldObjectTargetsOmitted,
-            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? DiscoverWaterTargets(player) : null,
+            WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWaterTargets(player) : null,
             // The same `HomeOf` the night's own eligibility refuses `not_home` from, so the projection's Sleep line can
             // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
             // it is one type test, and a line that needed the `sleep` capability to be advertised would be silent on
@@ -1640,7 +1648,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    private static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)
+    internal static StardewValley.Warp? ResolveDoorWarp(StardewValley.GameLocation location, Microsoft.Xna.Framework.Point point)
     {
         StardewValley.Warp? warp = location.getWarpFromDoor(point, Game1.player);
         if (warp is not null)
@@ -1665,7 +1673,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <c>Action</c>. 
     /// </para>
     /// </summary>
-    private static BridgeDoor? DescribeDoor(
+    internal static BridgeDoor? DescribeDoor(
         StardewValley.GameLocation? location,
         int sourceX,
         int sourceY,
@@ -1688,7 +1696,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     }
 
 
-    private static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, string npcName)
+    internal static string BuildNpcRelationshipTargetId(StardewValley.GameLocation location, string npcName)
     {
         string raw = $"{location.NameOrUniqueName}:npc:{npcName}";
         return $"npc_relationship_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1743,7 +1751,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     internal static bool CropNeedsWater(StardewValley.TerrainFeatures.HoeDirt dirt) =>
         dirt.crop is not null && dirt.needsWatering() && !dirt.isWatered();
 
-    private static string BuildPetTargetId(StardewValley.GameLocation location, int x, int y, Pet pet)
+    internal static string BuildPetTargetId(StardewValley.GameLocation location, int x, int y, Pet pet)
     {
         string raw = $"{location.NameOrUniqueName}:pet:{pet.petId.Value:N}";
         return $"pet_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1759,13 +1767,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// re-resolved from the actor's CURRENT location on the game thread.
     /// </para>
     /// </summary>
-    private static string BuildFarmAnimalPetTargetId(StardewValley.GameLocation location, FarmAnimal animal)
+    internal static string BuildFarmAnimalPetTargetId(StardewValley.GameLocation location, FarmAnimal animal)
     {
         string raw = $"{location.NameOrUniqueName}:farmAnimal:{animal.myID.Value}";
         return $"farm_animal_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildMachineTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
+    internal static string BuildMachineTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"machine_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1832,7 +1840,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_chop_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static bool CanPlantWildTreeSeedAt(StardewValley.GameLocation location, string qualifiedItemId, int x, int y)
+    internal static bool CanPlantWildTreeSeedAt(StardewValley.GameLocation location, string qualifiedItemId, int x, int y)
     {
         Vector2 tile = new(x, y);
         // Mirror of Object.canPlaceWildTreeSeed (target version 1.6): no-spawn
@@ -1896,18 +1904,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private static readonly IReadOnlyDictionary<string, Func<Farmer, int, int, string?>> BlockerTargetRows =
         new Dictionary<string, Func<Farmer, int, int, string?>>(StringComparer.Ordinal)
         {
-            ["weedTargets"] = (player, x, y) => DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["grassTargets"] = (player, x, y) => DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["rockSourceTargets"] = (player, x, y) => DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["worldObjectTargets"] = (player, x, y) => DiscoverWorldObjectTargets(player, out _).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["debrisTargets"] = (player, x, y) => DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["scytheCropTargets"] = (player, x, y) => DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["weedTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverWeedTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["grassTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverGrassTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["rockSourceTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverRockSourceTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["worldObjectTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverWorldObjectTargets(player, out _).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["debrisTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverDebrisTargets(player, null).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["scytheCropTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverScytheCropTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
             // A standing tree and its stump are named by the refusal as occupants (`TileOccupantKind.Tree`), and both are
             // cleared by an action with a family of its own. `OccupantAt` names no tree today - a chop addresses the
             // trunk through its own family - so these two answer for the vocabulary the gate holds this map against
             // rather than for a caller that reaches them: a map total over the declarations is what the gate is FOR.
-            ["treeChopSourceTargets"] = (player, x, y) => DiscoverTreeChopSourceTargets(player, new DiscoveryExclusionRecorder()).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
-            ["treeStumpTargets"] = (player, x, y) => DiscoverTreeStumpTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["treeChopSourceTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverTreeChopSourceTargets(player, new DiscoveryExclusionRecorder()).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
+            ["treeStumpTargets"] = (player, x, y) => FarmhandTargetDiscovery.DiscoverTreeStumpTargets(player).FirstOrDefault(row => row.X == x && row.Y == y)?.TargetId,
         };
 
     /// <summary>The families this blocker read can ask, as data, so a gate can compare them with the catalogue's own.</summary>
@@ -1915,17 +1923,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private static bool IsTreeSaplingTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, 1);
 
-    private static string BuildCaskTargetId(GameLocation location, int x, int y, StardewValley.Objects.Cask cask)
+    internal static string BuildCaskTargetId(GameLocation location, int x, int y, StardewValley.Objects.Cask cask)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:cask:{cask.QualifiedItemId}:{cask.heldObject.Value?.QualifiedItemId ?? "empty"}:{cask.MinutesUntilReady}";
         return $"cask_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildMannequinTargetId(GameLocation location, int x, int y) => $"mannequin_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:mannequin"))).ToLowerInvariant()[..16]}";
+    internal static string BuildMannequinTargetId(GameLocation location, int x, int y) => $"mannequin_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:mannequin"))).ToLowerInvariant()[..16]}";
 
-    private static string BuildSignTargetId(GameLocation location, int x, int y, StardewValley.Objects.Sign sign) => $"sign_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:sign:{sign.displayItem.Value?.QualifiedItemId ?? "empty"}"))).ToLowerInvariant()[..16]}";
+    internal static string BuildSignTargetId(GameLocation location, int x, int y, StardewValley.Objects.Sign sign) => $"sign_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{x},{y}:sign:{sign.displayItem.Value?.QualifiedItemId ?? "empty"}"))).ToLowerInvariant()[..16]}";
 
-    private static string BuildSiloTargetId(GameLocation location, StardewValley.Buildings.Building building) => $"silo_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{building.tileX.Value},{building.tileY.Value}:silo"))).ToLowerInvariant()[..16]}";
+    internal static string BuildSiloTargetId(GameLocation location, StardewValley.Buildings.Building building) => $"silo_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{location.NameOrUniqueName}:{building.tileX.Value},{building.tileY.Value}:silo"))).ToLowerInvariant()[..16]}";
 
     /// <summary>
     /// The identity of one grass tuft. It names the TILE and the SPECIES, never the count.
@@ -1993,7 +2001,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <see cref="ResolveLiveSlot"/>: the slot is where the sapling happened to be when the row was minted, and binding a
     /// position into the identity made a re-resolved sapling look like a moved target.
     /// </summary>
-    private static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
+    internal static string BuildTreeSaplingTargetId(StardewValley.GameLocation location, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"tree_sapling_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2005,19 +2013,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"tree_stump_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
+    internal static string BuildTreeChopResultTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.TerrainFeatures.Tree tree)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:tree-chop-result:{tree.treeType.Value}";
         return $"tree_chop_result_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildClearHoeDirtTargetId(GameLocation location, int x, int y)
+    internal static string BuildClearHoeDirtTargetId(GameLocation location, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:ground-empty-hoedirt";
         return $"clear_hoedirt_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildArtifactSpotTargetId(GameLocation location, int x, int y, string qualifiedItemId)
+    internal static string BuildArtifactSpotTargetId(GameLocation location, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{qualifiedItemId}";
         return $"artifact_spot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2094,7 +2102,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"rock_source_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
+    internal static bool IsDebrisTargetWithinPlayerRadius(StardewValley.TerrainFeatures.ResourceClump clump, Farmer player)
     {
         int left = (int)clump.Tile.X;
         int top = (int)clump.Tile.Y;
@@ -2109,9 +2117,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// The cap on published refill tiles. Equal to the Host's `maxItems` for `refillWateringCanTargets`;
     /// one entry past it would close the bridge rather than shorten the list.
     /// </summary>
-    private const int MaximumRefillWateringCanTargets = 8;
+    internal const int MaximumRefillWateringCanTargets = 8;
 
-    private static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)
+    internal static string BuildRefillWateringCanTargetId(GameLocation location, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:watering_can_refill";
         return $"watering_can_refill_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2122,7 +2130,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// fills it. `bag_hay` is the ACTOR's count and is named for the actor - the trough this id names holds none - so the
     /// raw string, which is hashed and never published, carries the same spelling as the row's `bagHay` field.
     /// </summary>
-    private static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int bagHay)
+    internal static string BuildFeedTroughTargetId(AnimalHouse location, int slot, int x, int y, int bagHay)
     {
         string raw = $"{location.NameOrUniqueName}:trough:{x},{y}:slot:{slot}:bag_hay:{bagHay}";
         return $"feed_trough_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2227,7 +2235,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// and not colourable, so neither of these two answers may stand in for it.
     /// </para>
     /// </summary>
-    private static bool IsStorageContainer(StardewValley.Objects.Chest chest)
+    internal static bool IsStorageContainer(StardewValley.Objects.Chest chest)
     {
         if (chest.GlobalInventoryId is not null) return false;
         return chest.SpecialChestType is not (
@@ -2251,12 +2259,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// what stands there.
     /// </para>
     /// </summary>
-    private static string DescribeContainerName(StardewValley.Objects.Chest chest) =>
+    internal static string DescribeContainerName(StardewValley.Objects.Chest chest) =>
         chest.giftbox.Value ? chest.Name : RequireDisplayName(chest.QualifiedItemId);
 
-    private static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
+    internal static List<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> OrderedStorageContainers(
         Farmer player, StardewValley.GameLocation location) =>
-        DiscoverStorageContainers(player, location)
+        FarmhandTargetDiscovery.DiscoverStorageContainers(player, location)
             .OrderBy(container => ChebyshevDistance(player, container.X, container.Y))
             .ThenBy(container => container.X)
             .ThenBy(container => container.Y)
@@ -2282,7 +2290,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"fridge_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius);
+    internal static bool IsChestTargetInRange(Farmer player, int x, int y) => IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius);
 
     private static string BuildChestTargetId(StardewValley.GameLocation location, int x, int y, StardewValley.Objects.Chest chest)
     {
@@ -2290,13 +2298,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"chest_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildAnimalProductTargetId(StardewValley.GameLocation location, int slot, FarmAnimal animal, Tool tool)
+    internal static string BuildAnimalProductTargetId(StardewValley.GameLocation location, int slot, FarmAnimal animal, Tool tool)
     {
         string raw = $"{location.NameOrUniqueName}:animal:{animal.myID.Value}:slot:{slot}:tool:{tool.QualifiedItemId}:produce:{animal.currentProduce.Value}";
         return $"animal_product_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)
+    internal static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)
     {
         return IsTileWithinChebyshevRadius(player, targetX, targetY, AnimalProductActionRadius);
     }
@@ -2311,17 +2319,17 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return IsTileWithinChebyshevRadius(player, targetX, targetY, 1);
     }
 
-    private static bool IsTileWithinChebyshevRadius(Farmer player, int targetX, int targetY, int radius)
+    internal static bool IsTileWithinChebyshevRadius(Farmer player, int targetX, int targetY, int radius)
     {
         return Math.Abs(targetX - (int)player.Tile.X) <= radius
             && Math.Abs(targetY - (int)player.Tile.Y) <= radius;
     }
 
-    private static int ChebyshevDistance(Farmer player, int targetX, int targetY)
+    internal static int ChebyshevDistance(Farmer player, int targetX, int targetY)
     {
         return Math.Max(Math.Abs(targetX - (int)player.Tile.X), Math.Abs(targetY - (int)player.Tile.Y));
     }
-    private static IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> NearestFirst<T>(
+    internal static IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> NearestFirst<T>(
         IEnumerable<KeyValuePair<Microsoft.Xna.Framework.Vector2, T>> pairs, Farmer player) =>
         pairs.OrderBy(pair => ChebyshevDistance(player, (int)pair.Key.X, (int)pair.Key.Y))
             .ThenBy(pair => pair.Key.X)
@@ -2627,7 +2635,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    private static int CountQualifiedItem(Farmer player, string qualifiedItemId) => player.Items.OfType<StardewValley.Object>()
+    internal static int CountQualifiedItem(Farmer player, string qualifiedItemId) => player.Items.OfType<StardewValley.Object>()
         .Where(item => string.Equals(item.QualifiedItemId, qualifiedItemId, StringComparison.Ordinal))
         .Sum(item => item.Stack);
 
@@ -2637,9 +2645,9 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"forage_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static Point GetChunkTile(Chunk chunk) => new((int)((chunk.position.Value.X + 32f) / 64f), (int)((chunk.position.Value.Y + 32f) / 64f));
+    internal static Point GetChunkTile(Chunk chunk) => new((int)((chunk.position.Value.X + 32f) / 64f), (int)((chunk.position.Value.Y + 32f) / 64f));
 
-    private static string BuildItemTargetId(StardewValley.GameLocation location, int debrisIndex, int chunkIndex, Debris debris, string qualifiedItemId)
+    internal static string BuildItemTargetId(StardewValley.GameLocation location, int debrisIndex, int chunkIndex, Debris debris, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:debris:{debrisIndex}:chunk:{chunkIndex}:item:{qualifiedItemId}:stack:{Math.Max(1, debris.item?.Stack ?? 1)}:type:{debris.debrisType.Value}:quality:{debris.itemQuality}:item_id:{debris.itemId.Value ?? ""}:dropped_by:{debris.DroppedByPlayerID.Value}:chunks:{debris.Chunks.Count}";
         return $"item_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2728,7 +2736,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return $"seed_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static bool IsLegalEmptyFarmFenceTile(Farm farm, Vector2 tile, StardewValley.Object source)
+    internal static bool IsLegalEmptyFarmFenceTile(Farm farm, Vector2 tile, StardewValley.Object source)
     {
         return farm.isTileOnMap(tile)
             && !farm.objects.ContainsKey(tile)
@@ -2739,7 +2747,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
                 .Any(stance => StardewBodyController.IsStandableTile(farm, Game1.player, stance));
     }
 
-    private static string BuildWoodFenceTargetId(Farm farm, int slot, int x, int y)
+    internal static string BuildWoodFenceTargetId(Farm farm, int slot, int x, int y)
     {
         string raw = $"{farm.NameOrUniqueName}:{slot}:{x},{y}:(O)322:wood-fence";
         return $"wood_fence_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2954,19 +2962,19 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// </summary>
     internal const int AreaToolScanRadius = 5;
 
-    private static string BuildBaitCrabPotTargetId(GameLocation location, int slot, int x, int y)
+    internal static string BuildBaitCrabPotTargetId(GameLocation location, int slot, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:(O)710:(O)685:bait-crab-pot";
         return $"bait_crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildCrabPotTargetId(Farm farm, int slot, int x, int y)
+    internal static string BuildCrabPotTargetId(Farm farm, int slot, int x, int y)
     {
         string raw = $"{farm.NameOrUniqueName}:{slot}:{x},{y}:(O)710:crab-pot";
         return $"crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildFertilizerTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
+    internal static string BuildFertilizerTargetId(StardewValley.GameLocation location, int slot, int x, int y, string qualifiedItemId)
     {
         string raw = $"{location.NameOrUniqueName}:{slot}:{x},{y}:{qualifiedItemId}";
         return $"fertilizer_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -2994,7 +3002,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// later re-observes rather than reusing it.
     /// </para>
     /// </summary>
-    private static bool IsTileBlockedForFarmer(StardewValley.GameLocation location, Farmer player, int x, int y) =>
+    internal static bool IsTileBlockedForFarmer(StardewValley.GameLocation location, Farmer player, int x, int y) =>
         location.isCollidingPosition(
             new Microsoft.Xna.Framework.Rectangle((x * 64) + 1, (y * 64) + 1, 62, 62),
             Game1.viewport,
@@ -3069,7 +3077,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// the record of work already done, so it is a row like any other.
     /// </para>
     /// </summary>
-    private const int SoilTileDiscoveryRadius = TargetDiscoveryRadius;
+    internal const int SoilTileDiscoveryRadius = TargetDiscoveryRadius;
 
     /// <summary>
     /// Bounded by what the wire admits (<c>protocol/bridge-v1.schema.json</c> <c>soilTiles.maxItems</c>, asserted
@@ -4274,7 +4282,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private bool HasOwnership(string executionId) => this.slots.OwnsAny(executionId);
 
-    private static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
+    internal static string? DescribeTool(Tool? tool) => tool is null ? null : tool.QualifiedItemId ?? tool.Name;
 
     private static string? DescribeSlotItem(IList<Item?> items, int slot) =>
         slot >= 0 && slot < items.Count ? items[slot]?.QualifiedItemId : null;

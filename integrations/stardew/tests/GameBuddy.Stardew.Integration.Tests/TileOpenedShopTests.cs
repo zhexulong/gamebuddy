@@ -90,7 +90,7 @@ public sealed class TileOpenedShopTests
         path.Should().NotBeNull($"the shop_purchase body must exist at {ImplementationRelativePath}");
         string text = File.ReadAllText(path!);
 
-        text.Should().Contain("DiscoverTileShopTargets(location)");
+        text.Should().Contain("FarmhandTargetDiscovery.DiscoverTileShopTargets(location)");
         text.Should().Contain("ShopTargetId(shopId, string.Empty, x, y)");
         // Fixed selectors: the exact native string-overload call with a null owner.
         text.Should().Contain("Utility.TryOpenShopMenu(shopId: target.ShopId, ownerName: null!)");

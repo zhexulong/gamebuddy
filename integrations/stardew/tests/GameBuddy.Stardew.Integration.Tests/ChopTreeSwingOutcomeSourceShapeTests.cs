@@ -83,7 +83,7 @@ public sealed class ChopTreeSwingOutcomeSourceShapeTests
         // reported "the discovery family must be findable" for a function that was findable all along.
         Match discovery = Regex.Match(
             ControllerPartials.Declaring("DiscoverTreeChopSourceTargets"),
-            @"private static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets\([^)]*\)[\s\S]*?\n    \}",
+            @"internal static IReadOnlyList<BridgeTreeChopSourceTarget> DiscoverTreeChopSourceTargets\([^)]*\)[\s\S]*?\n    \}",
             RegexOptions.None,
             TimeSpan.FromSeconds(2));
         discovery.Success.Should().BeTrue("the discovery family must be findable");

@@ -508,34 +508,66 @@ export function inFlightTargets(reading: InFlightProgrammeReading): ReadonlySet<
 }
 
 /**
- * Why the Host is waiting, in the two conditions it can tell apart.
+ * Why the Host is idle, in the conditions an idle companion can actually be in.
  *
  * <p>
- * `nothing_owed` was the ONLY idle reason, and it answered two different situations with one word: the pump held nothing
- * that owed a turn (a quiet world), or her own body still had nodes the settlement had not answered yet (her own
- * executor). Measured 2026-11-17 (`round65`, the run's own account line): `turns opened 26` over a median 35 s, every one
- * of them `adapter_ingress` - so the run could say she decided once per 35 s and could not say WHAT she was waiting on.
- * A reader joining that bundle by hand could not separate "the world said nothing" from "our executor was still working",
- * and those are the two halves of "the work is too little" that need different answers.
+ * MEASURED 2026-11-21 (`round94`, one 535 s gap between two programmes, the run's own account): `wait.idle (reason:
+ * "nothing_owed")` read 509.7 s of it - 171.1 s waiting for a fresh reading, 217.4 s waiting for the world's next fact,
+ * 121.2 s with no wait named at all - and a task was unfinished through all of it. The word was the defect: `nothing_owed`
+ * was computed from the journal's node count (`remaining === 0`), so between two programmes it answered NO PLAN HAS A NODE
+ * LEFT - a statement about the executor's ledger - and a reader took it for a statement about the task. Those are not the
+ * same fact, and the answer pooled three situations that need three different next steps.
  * </p>
  * <p>
- * `body_still_working` claims nothing about time and nothing about progress: it is the journal's own statement that a
- * plan has nodes that have not happened (`InFlightProgramme.remaining`, filled by the settlement watch and every status
- * call). The reading expires (`IN_FLIGHT_READING_MAX_AGE_MS`), so a watch that died does not keep saying this.
+ * THE THREE ARE THE ONES THAT DECIDE WHETHER ANYTHING SHOULD HAPPEN, in the order that decides it:
+ * </p>
+ * <ol>
+ *   <li>`run_quiet` - the run is quiet by its own decision (STOP, an ended run, admission sealed). Nothing is owed because
+ *     nothing may happen, and the honest reading is the decision, not a silence. STAY QUIET.</li>
+ *   <li>`body_still_working` - her own plan still has nodes the journal has not seen settle. The wait is our executor's, and
+ *     its settlement is the turn that carries it.</li>
+ *   <li>`a_held_body` - the engine holds the actor: a menu, a native performance, an animation, a transition. Wait for the
+ *     NATIVE actionable fact that ends it (`bodyHeldByEngine`), and do not wake: nothing a turn could do would be admitted.
+ *     (`round84`: eleven `DialogueBox` facts each bought a turn in a cutscene and `lost 21 {no_presentation_lease}`.)</li>
+ *   <li>`a_fresh_reading` - none of the above, and the pump holds a picture she has already been shown: the next plan would
+ *     be composed from a world nobody has read since. The read path owns the ask, and one pipe round-trip that opens no turn
+ *     is what this member authorizes. This is the member the other three used to be pooled under.</li>
+ * </ol>
+ * <p>
+ * WHAT THE LIST DOES NOT SAY is how long to wait: no member names a duration, and none of them is a wake. A name is a
+ * reason a run can print and a moment at which a condition can be acted on.
  * </p>
  */
 export const IDLE_WAIT_REASON = Object.freeze({
-  /** The pump owed no turn and the journal shows no plan with a node left: the wait is the world's. */
-  nothingOwed: "nothing_owed",
-  /** The pump owed no turn while her own plan still had nodes left: the wait is our executor's. */
+  /** Her own plan still has nodes left: the wait is our executor's, not the world's. */
   bodyStillWorking: "body_still_working",
+  /** The engine holds the actor (a menu, a performance, an animation): wait for the native actionable fact, do not wake. */
+  heldBody: "a_held_body",
+  /** The pump holds a picture she has already been shown: the next plan needs a world that has been read again. */
+  freshReading: "a_fresh_reading",
+  /** The run is quiet by its own decision (STOP, an ended run, sealed admission): stay quiet, and say so. */
+  runQuiet: "run_quiet",
 });
 
 export const IDLE_WAIT_REASONS = Object.freeze(Object.values(IDLE_WAIT_REASON));
 
 export type IdleWaitReason = (typeof IDLE_WAIT_REASONS)[number];
 
-/** One idle wait: which of the two it was, and the population the answer was taken on. */
+/**
+ * The two facts about the world an idle decision needs, named rather than passed as bare booleans.
+ *
+ * <p>
+ * BOTH ARE OTHER LAYERS' READINGS, COPIED NOWHERE: `heldBody` is the pump's own `bodyHeldByEngine` (the engine's admission
+ * gate, the Mod's `actorDispositionKind`, and the transition hold, each of which publishes the fact that ends it), and
+ * `runQuiet` is the Host's own decision (`#runTermination`). The journal reading this module already owns answers the third.
+ * </p>
+ */
+export type IdleCondition = Readonly<{
+  heldBody: boolean;
+  runQuiet: boolean;
+}>;
+
+/** One idle wait: which of the four it was, and the population the answer was taken on. */
 export interface IdleWaitReading {
   readonly reason: IdleWaitReason;
   readonly programmes: number;
@@ -543,19 +575,32 @@ export interface IdleWaitReading {
 }
 
 /**
- * The idle reason for one ledger reading, so the span and any test asking the same question cannot disagree.
+ * The idle reason for one reading, so the span and any test asking the same question cannot disagree.
  *
  * `remaining` is summed over the programmes the reading shows; `programmes` is that same population's size. Both are
  * printed beside the reason because a wait of 35 s behind one node and one behind four plans are different facts, and a
  * bare word would answer neither.
+ *
+ * <p>
+ * THE ORDER IS THE DECISION. `runQuiet` first because a session that will not make another turn is not waiting for anything
+ * else, whatever the ledger still shows - and after it the two waits with a fact that ends them (`remaining > 0` is a
+ * settlement, `heldBody` is the native actionable fact) come before the one that is ours to act on. The last member is not a
+ * residual: it states the positive condition that the pump holds a picture she has already been shown
+ * (`worldReadingAsk` is what the read path can still do about it).
+ * </p>
  */
-export function idleWaitReading(reading: InFlightProgrammeReading = readInFlightProgrammes()): IdleWaitReading {
+export function idleWaitReading(
+  condition: IdleCondition,
+  reading: InFlightProgrammeReading = readInFlightProgrammes(),
+): IdleWaitReading {
   const programmes = reading.programmes.length;
   const remaining = reading.programmes.reduce((total, programme) => total + programme.remaining, 0);
+  if (condition.runQuiet) return Object.freeze({ reason: IDLE_WAIT_REASON.runQuiet, programmes, remaining });
   // A plan whose last node has happened is not work left to wait for: its settlement is one watch interval away, and
   // `body_still_working` would say the executor had something in front of it when the only thing left is the answer.
-  if (remaining === 0) return Object.freeze({ reason: IDLE_WAIT_REASON.nothingOwed, programmes, remaining });
-  return Object.freeze({ reason: IDLE_WAIT_REASON.bodyStillWorking, programmes, remaining });
+  if (remaining > 0) return Object.freeze({ reason: IDLE_WAIT_REASON.bodyStillWorking, programmes, remaining });
+  if (condition.heldBody) return Object.freeze({ reason: IDLE_WAIT_REASON.heldBody, programmes, remaining });
+  return Object.freeze({ reason: IDLE_WAIT_REASON.freshReading, programmes, remaining });
 }
 
 /**
@@ -884,7 +929,7 @@ function planNodeTile(arguments_: PlanAnswerNode["arguments"]): Readonly<{ x: nu
   if (x.canonicalValue === undefined || y.canonicalValue === undefined) return undefined;
   const xValue = Number(x.canonicalValue);
   const yValue = Number(y.canonicalValue);
-  if (!Number.isSafeInteger(xValue) || !Number.isSafeInteger(yValue)) return undefined;
+  if (!(Number.isSafeInteger(xValue) && Number.isSafeInteger(yValue))) return undefined;
   return Object.freeze({ x: xValue, y: yValue });
 }
 

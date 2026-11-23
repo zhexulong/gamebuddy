@@ -65,24 +65,7 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    private static IReadOnlyList<BridgePedestalTarget> DiscoverPedestalTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgePedestalTarget>();
-        List<BridgePedestalTarget> result = new();
-        foreach ((Vector2 tile, StardewValley.Object placed) in location.objects.Pairs)
-        {
-            if (placed is not StardewValley.Objects.ItemPedestal pedestal || pedestal.heldObject.Value is not StardewValley.Object held
-                || (int)tile.X < 0 || (int)tile.X > 1000 || (int)tile.Y < 0 || (int)tile.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgePedestalTarget(BuildPedestalTargetId(location, (int)tile.X, (int)tile.Y, pedestal, held),
-                location.NameOrUniqueName, (int)tile.X, (int)tile.Y, held.QualifiedItemId, held.Stack));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
-    private static string BuildPedestalTargetId(GameLocation location, int x, int y, StardewValley.Objects.ItemPedestal pedestal, StardewValley.Object held)
+    internal static string BuildPedestalTargetId(GameLocation location, int x, int y, StardewValley.Objects.ItemPedestal pedestal, StardewValley.Object held)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:pedestal:{held.QualifiedItemId}:{held.Stack}";
         return $"pedestal_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -134,24 +117,7 @@ internal sealed partial class ExecutionManager
         return true;
     }
 
-    private static IReadOnlyList<BridgeFenceGateTarget> DiscoverFenceGateTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeFenceGateTarget>();
-        List<BridgeFenceGateTarget> result = new();
-        foreach ((Vector2 tile, StardewValley.Object placed) in location.objects.Pairs)
-        {
-            if (placed is not StardewValley.Fence fence || !fence.isGate.Value || fence.getDrawSum() == 0 || (fence.gatePosition.Value != 0 && fence.gatePosition.Value != 88)
-                || (int)tile.X < 0 || (int)tile.X > 1000 || (int)tile.Y < 0 || (int)tile.Y > 1000
-                || !IsTileWithinChebyshevRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeFenceGateTarget(BuildFenceGateTargetId(location, (int)tile.X, (int)tile.Y, fence), location.NameOrUniqueName,
-                (int)tile.X, (int)tile.Y, fence.gatePosition.Value == 88));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
-    private static string BuildFenceGateTargetId(GameLocation location, int x, int y, StardewValley.Fence fence)
+    internal static string BuildFenceGateTargetId(GameLocation location, int x, int y, StardewValley.Fence fence)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:fence_gate:{(fence.obsolete_whichType ?? 1)}";
         return $"fence_gate_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";

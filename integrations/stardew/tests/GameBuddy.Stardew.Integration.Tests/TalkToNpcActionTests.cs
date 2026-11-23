@@ -285,7 +285,7 @@ public sealed class TalkToNpcActionTests
         publication.Should().Contain("advertisedCapabilities.Contains(\"npc_relationship\"");
         publication.Should().Contain("advertisedCapabilities.Contains(\"interact_npc_with_item\"");
         publication.Should().Contain("advertisedCapabilities.Contains(\"talk_to_npc\"");
-        Regex.IsMatch(publication, "^\\s*\\(.*\\)\\s*\\?\\s*DiscoverNpcRelationshipTargets\\(player\\)\\s*:\\s*null,\\s*$")
+        Regex.IsMatch(publication, "^\\s*\\(.*\\)\\s*\\?\\s*FarmhandTargetDiscovery\\.DiscoverNpcRelationshipTargets\\(player\\)\\s*:\\s*null,\\s*$")
             .Should().BeTrue($"the target list must be gated on the advertised capabilities: {publication}");
     }
 

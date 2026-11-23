@@ -211,52 +211,6 @@ internal sealed partial class ExecutionManager
         return $"special_order_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The offers the actor can accept right now, projected read-only: each live available order whose
-    /// board has not been used, that is not already active, and whose data id still resolves. Nothing is
-    /// synthesized - the published set is exactly the set the action's own precondition accepts, so a
-    /// published target is one a request will take.
-    /// </summary>
-    internal static IReadOnlyList<BridgeSpecialOrderTarget> DiscoverSpecialOrderTargets()
-    {
-        FarmerTeam team = Game1.player.team;
-        List<BridgeSpecialOrderTarget> result = new();
-        foreach (SpecialOrder order in team.availableSpecialOrders)
-        {
-            string orderType = order.orderType.Value;
-            if (team.acceptedSpecialOrderTypes.Contains(orderType))
-                continue;
-            if (team.specialOrders.Any(candidate => string.Equals(candidate.questKey.Value, order.questKey.Value, StringComparison.Ordinal)))
-                continue;
-            if (SpecialOrder.GetSpecialOrder(order.questKey.Value, order.generationSeed.Value) is null)
-                continue;
-            result.Add(new BridgeSpecialOrderTarget(
-                BuildSpecialOrderTargetId(order),
-                order.questKey.Value,
-                order.orderType.Value,
-                order.generationSeed.Value));
-            if (result.Count >= 4)
-                break;
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// The order keys the team currently holds, projected read-only so a caller can see the accept change
-    /// the published fact without any other authority. Bounded; the keys are `Data/SpecialOrders` ids.
-    /// </summary>
-    internal static IReadOnlyList<string> DiscoverActiveSpecialOrderKeys()
-    {
-        List<string> keys = new();
-        foreach (SpecialOrder order in Game1.player.team.specialOrders)
-        {
-            keys.Add(order.questKey.Value);
-            if (keys.Count >= 8)
-                break;
-        }
-        return keys;
-    }
-
     private static string DescribeAvailableSpecialOrders(FarmerTeam team)
     {
         List<string> keys = new();

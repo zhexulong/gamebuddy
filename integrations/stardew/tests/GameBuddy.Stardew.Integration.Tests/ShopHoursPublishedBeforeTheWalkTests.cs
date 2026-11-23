@@ -60,7 +60,7 @@ public sealed class ShopHoursPublishedBeforeTheWalkTests
         world.SetDoorAction(9, 12, SeedShopDoorAction);
         world.Location.warps.Add(new Warp(9, 12, "SeedShop", 3, 11, flipFarmer: false));
 
-        IReadOnlyList<BridgeDoor> doors = ExecutionManager.DiscoverDoorTargets(Game1.player);
+        IReadOnlyList<BridgeDoor> doors = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player);
 
         doors.Should().ContainSingle("one doorway was drawn and one warp leads out of it")
             .Which.Should().Be(
@@ -91,7 +91,7 @@ public sealed class ShopHoursPublishedBeforeTheWalkTests
         world.SetDoorAction(9, 12, SeedShopDoorAction);
         world.Location.warps.Add(new Warp(9, 12, "SeedShop", 3, 11, flipFarmer: false));
 
-        BridgeDoor door = ExecutionManager.DiscoverDoorTargets(Game1.player).Single();
+        BridgeDoor door = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player).Single();
 
         WindowAdmits(door, 800).Should().BeFalse(
             "08:00 is before the published opening hour, so the two door_gate_refused receipts of round96 are now a fact the observation states");
@@ -111,7 +111,7 @@ public sealed class ShopHoursPublishedBeforeTheWalkTests
         using DoorWorld world = DoorWorld.Create();
         world.Location.warps.Add(new Warp(6, 12, "Farm", 64, 15, flipFarmer: false));
 
-        BridgeDoor door = ExecutionManager.DiscoverDoorTargets(Game1.player).Single();
+        BridgeDoor door = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player).Single();
 
         door.OpensAt.Should().BeNull();
         door.ClosesAt.Should().BeNull("a window is a pair or it is nothing");
@@ -129,7 +129,7 @@ public sealed class ShopHoursPublishedBeforeTheWalkTests
         world.SetDoorAction(9, 12, "LockedDoorWarp 9 12 SeedShop morning evening");
         world.Location.warps.Add(new Warp(9, 12, "SeedShop", 3, 11, flipFarmer: false));
 
-        BridgeDoor door = ExecutionManager.DiscoverDoorTargets(Game1.player).Single();
+        BridgeDoor door = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player).Single();
 
         door.OpensAt.Should().BeNull();
         door.ClosesAt.Should().BeNull();

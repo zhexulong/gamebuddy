@@ -1037,7 +1037,7 @@ internal sealed partial class ExecutionManager
     /// the game leaves standing in the farmhouse) never reached the companion and nothing said it had been withheld.
     /// </para>
     /// </summary>
-    private static bool IsRemovableByAnyLaneTool(StardewValley.Object target) =>
+    internal static bool IsRemovableByAnyLaneTool(StardewValley.Object target) =>
         RemovesThisObject(new Axe(), target) || RemovesThisObject(new Pickaxe(), target);
 
     /// <summary>
@@ -1051,7 +1051,7 @@ internal sealed partial class ExecutionManager
     /// cannot be done" - the kind beside it says which of the two it is.
     /// </para>
     /// </summary>
-    private static int LaneRemovalToolSlot(Farmer player, bool container, StardewValley.Object target)
+    internal static int LaneRemovalToolSlot(Farmer player, bool container, StardewValley.Object target)
     {
         for (int slot = 0; slot < player.Items.Count; slot++)
         {
@@ -1185,7 +1185,7 @@ internal sealed partial class ExecutionManager
         return $"placed_item_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string BuildBreakableContainerTargetId(GameLocation location, int x, int y, StardewValley.Object container)
+    internal static string BuildBreakableContainerTargetId(GameLocation location, int x, int y, StardewValley.Object container)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:{container.QualifiedItemId}:{container.GetType().Name}:breakable-container";
         return $"breakable_container_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1222,13 +1222,13 @@ internal sealed partial class ExecutionManager
     internal static readonly IReadOnlyList<(string Family, string Discovery, Func<StardewValley.Object, bool> Owns)> SubjectsOwnedBySiblingFamilies =
         Array.AsReadOnly(new (string Family, string Discovery, Func<StardewValley.Object, bool> Owns)[]
         {
-            ("chests", nameof(DiscoverChestStates), subject => subject is StardewValley.Objects.Chest chest && IsStorageContainer(chest)),
-            ("mannequinTargets", nameof(DiscoverMannequinTargets), subject => subject is StardewValley.Objects.Mannequin),
-            ("signTargets", nameof(DiscoverSignTargets), subject => subject is StardewValley.Objects.Sign),
+            ("chests", nameof(FarmhandTargetDiscovery.DiscoverChestStates), subject => subject is StardewValley.Objects.Chest chest && IsStorageContainer(chest)),
+            ("mannequinTargets", nameof(FarmhandTargetDiscovery.DiscoverMannequinTargets), subject => subject is StardewValley.Objects.Mannequin),
+            ("signTargets", nameof(FarmhandTargetDiscovery.DiscoverSignTargets), subject => subject is StardewValley.Objects.Sign),
         });
 
     /// <summary>The family that already publishes this subject, or null when this lane is its only address.</summary>
-    private static string? OwningSiblingFamily(StardewValley.Object subject) =>
+    internal static string? OwningSiblingFamily(StardewValley.Object subject) =>
         SubjectsOwnedBySiblingFamilies
             .Where(entry => entry.Owns(subject))
             .Select(entry => entry.Family)
@@ -1248,231 +1248,10 @@ internal sealed partial class ExecutionManager
         {
             if (pair.Value is null) continue;
             if (OwningSiblingFamily(pair.Value) is not { } family) continue;
-            if (!IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)) continue;
+            if (!FarmhandTargetDiscovery.IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)) continue;
             owned.Add($"{family}:{pair.Value.QualifiedItemId}@{(int)pair.Key.X},{(int)pair.Key.Y}");
         }
         return owned;
-    }
-
-    internal static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player, out int omitted)
-    {
-        omitted = 0;
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeWorldObjectTarget>();
-        List<BridgeWorldObjectTarget> result = new();
-        HashSet<string> publishedTargetIds = new(StringComparer.Ordinal);
-        int actorX = (int)player.Tile.X;
-        int actorY = (int)player.Tile.Y;
-        List<BridgeWorldObjectTarget> placements = new();
-        for (int slot = 0; slot < player.Items.Count; slot++)
-        {
-            if (player.Items[slot] is not StardewValley.Object owned
-                || owned.Stack <= 0
-                || !(owned.bigCraftable.Value || owned is Furniture))
-                continue;
-            for (int x = Math.Max(0, actorX - TargetDiscoveryRadius); x <= actorX + TargetDiscoveryRadius; x++)
-            for (int y = Math.Max(0, actorY - TargetDiscoveryRadius); y <= actorY + TargetDiscoveryRadius; y++)
-            {
-                Vector2 tile = new(x, y);
-                if (!IsTileWithinChebyshevRadius(player, x, y, TargetDiscoveryRadius)) continue;
-                if (!location.isTileOnMap(tile) || location.objects.ContainsKey(tile)) continue;
-                if (!Utility.playerCanPlaceItemHere(location, owned, x * 64 + 32, y * 64 + 32, player) || !owned.canBePlacedHere(location, tile)) continue;
-                // ONE IDENTITY, MANY TILES: the id names the piece in this slot (see `BuildOwnedObjectPlacementTargetId`),
-                // so every tile the piece may lawfully go to is its own ROW carrying the same id. The dedupe key is
-                // therefore the row - id and tile - not the id alone, or the first placeable tile would be the only one
-                // ever advertised.
-                string placementTargetId = BuildOwnedObjectPlacementTargetId(location, slot, owned.QualifiedItemId);
-                if (!publishedTargetIds.Add($"{placementTargetId}@{x},{y}")) continue;
-                placements.Add(new BridgeWorldObjectTarget(
-                    placementTargetId,
-                    "placement_candidate",
-                    location.NameOrUniqueName,
-                    x,
-                    y,
-                    slot,
-                    owned.QualifiedItemId,
-                    RequireDisplayName(owned.QualifiedItemId),
-                    null,
-                    null,
-                    // The object does not exist yet: the row names a TILE it may be put on, so the extent is the tile.
-                    1,
-                    1));
-            }
-        }
-        // ORDER FIRST, THEN TRIM. The scan above reaches tiles west-to-east from the map's own corner, so truncating while
-        // it walks published whichever tiles the loops hit first: with three placeable machines over the same nine tiles -
-        // the engine offers no more than the radius-1 ring (`Utility.playerCanPlaceItemHere` -> `isWithinTileWithLeeway`,
-        // Utility.cs:5718-5750) - the sixteen-row budget held every tile of the first machine, six of the second and none
-        // of the third. Distance from the actor decides now, and the two tie-breaks make one unchanged world publish one
-        // order: the backpack slot first (the one fact that tells two machines' rows on the SAME tile apart), then the
-        // tile itself. Ordering removes nothing; it decides which sixteen of the rows survive the budget.
-        IReadOnlyList<BridgeWorldObjectTarget> orderedPlacements = TargetOrdering.NearestFirstByChebyshev(
-            placements,
-            actorX,
-            actorY,
-            placement => new TargetCandidate(placement.X, placement.Y, placement.Slot));
-        int keptPlacements = Math.Min(orderedPlacements.Count, WorldObjectTargetLimit);
-        omitted += orderedPlacements.Count - keptPlacements;
-        result.AddRange(orderedPlacements.Take(keptPlacements));
-        // THE MAP IS THE SUBJECT AND THE PACK IS EVIDENCE. This walk used to sit INSIDE a backpack loop, and that loop
-        // skipped every slot whose item was not a heavy hitter - so an actor carrying no axe or pickaxe published no
-        // object row at all, and the seed parcel the game leaves standing in the farmhouse was simply not in her world.
-        // (Measured 2026-11-23, `round95` `FarmHouse`.) Whether she can swing at a thing is the ACTION's answer
-        // (`tool_not_owned:axe_or_pickaxe`, `remove_placed_item_target_not_removable`), never a reason for the radar to
-        // erase it. What the row states is the tool fact, and it prefers an owned slot:
-        //   `breakable_container`  - swingable by any heavy hitter (`BreakableContainer.cs:118`); `slot` is one she owns.
-        //   `removable_object`     - an axe or a pickaxe removes it (`IsRemovableByAnyLaneTool`); `slot` is one she owns
-        //                            THAT removes it.
-        //   `non_removable_object` - no axe and no pickaxe removes it; `slot` is -1 and the removal action names why.
-        // A tool she does not own is `slot: -1` and the action's refusal, not a row that never existed.
-        //
-        // The tile is admitted through the family-wide place rule every tile-publishing discovery here uses
-        // (`IsPublishedTargetTileInRadius`): on the map, and with a cardinal neighbour the body can stand on. That is a
-        // bound on WHERE a row may name - a cell no body can be sent beside is a coordinate, not a target - and never a
-        // filter on WHAT stands there.
-        //
-        // AND A SUBJECT ITS OWN FAMILY ALREADY NAMES IS NOT A SECOND ROW HERE (`SubjectsOwnedBySiblingFamilies`). The
-        // existence rule above is about what the WORLD holds, not about who gets to describe it: the container family
-        // publishes the farmhouse's starter gift box by name and contents, so a second row about the same box here
-        // states nothing new - it only states it with an id the registry cannot resolve. That row is COUNTED rather
-        // than dropped: `omitted` says a subject the room holds is not in this list.
-        List<BridgeWorldObjectTarget> objectCandidates = new();
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            Vector2 tile = pair.Key;
-            StardewValley.Object placed = pair.Value;
-            if (placed is null || !IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                continue;
-            if (OwningSiblingFamily(placed) is not null)
-            {
-                omitted++;
-                continue;
-            }
-            bool container = placed is BreakableContainer;
-            bool removable = !container && IsRemovableByAnyLaneTool(placed);
-            string targetId = container
-                ? BuildBreakableContainerTargetId(location, (int)tile.X, (int)tile.Y, placed)
-                : BuildPlacedItemTargetId(location, (int)tile.X, (int)tile.Y, placed);
-            if (!publishedTargetIds.Add(targetId)) continue;
-            objectCandidates.Add(new BridgeWorldObjectTarget(
-                targetId,
-                container ? "breakable_container" : removable ? "removable_object" : "non_removable_object",
-                location.NameOrUniqueName,
-                (int)tile.X,
-                (int)tile.Y,
-                LaneRemovalToolSlot(player, container, placed),
-                placed.QualifiedItemId,
-                RequireDisplayName(placed.QualifiedItemId),
-                null,
-                null,
-                // An object in `location.objects` occupies exactly the tile it is keyed by - the engine's own
-                // container and placement predicates read one tile - so this branch states 1x1 rather than omitting
-                // the pair.
-                1,
-                1));
-        }
-        // ORDER FIRST, THEN TRIM, AND STATE THE CUT: the map walk reaches tiles in the dictionary's own order, so
-        // truncating while it walks published whichever object it happened to meet first. Distance from the actor
-        // decides, the slot breaks the tie, and the count below says how many rows the budget left out - a reader that
-        // receives sixteen object rows can then tell a room with sixteen objects from one it lost the far end of.
-        IReadOnlyList<BridgeWorldObjectTarget> orderedObjects = TargetOrdering.NearestFirstByChebyshev(
-            objectCandidates,
-            actorX,
-            actorY,
-            row => new TargetCandidate(row.X, row.Y, row.Slot));
-        int keptObjects = Math.Min(orderedObjects.Count, WorldObjectTargetLimit);
-        omitted += orderedObjects.Count - keptObjects;
-        result.AddRange(orderedObjects.Take(keptObjects));
-        // PLACED FURNITURE IS PART OF THE ROOM, and nothing published it.
-        //
-        // Furniture lives in `location.furniture`, not `location.objects`, and this Mod never read that collection - a grep
-        // for it finds one comment. So a house's bed, sofa, rug and paintings were literally invisible to the companion
-        // while `place_owned_object` could ADD to the same invisible collection (Game1.cs:7033-7043). Measured 2026-11-03
-        // (`round30`): it crafted a stone sign and planted it in front of the farmhouse door, and the frame it was reading
-        // carried one door, three placement candidates and one colour target - no furniture at all, so "there is nothing
-        // here yet" was the truthful reading of its own snapshot.
-        //
-        // Published as `placed_furniture` with `Slot: -1`: this lane has no tool that picks furniture up, and advertising a
-        // slot would promise one. The removal action refuses a furniture tile by name (see
-        // `remove_placed_item_furniture_move_unsupported`) rather than `target_not_found`, so the companion learns the
-        // difference between "not there" and "there, but I cannot move it".
-        //
-        // The piece also carries its own `currentRotation` and `rotations`, because those are the two facts an action on
-        // it needs and the only place they exist: `rotations < 2` is why `rotate_furniture` refuses by name instead of
-        // turning nothing, and `currentRotation` before/after is the only witness that a turn happened. A caller cannot
-        // derive either - the target id deliberately excludes anything the piece's own use changes.
-        int furnitureCount = 0;
-        foreach (Furniture piece in location.furniture)
-        {
-            if (piece is null) continue;
-            Vector2 tile = piece.TileLocation;
-            if (!IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                continue;
-            string targetId = BuildPlacedFurnitureTargetId(location, (int)tile.X, (int)tile.Y, piece);
-            if (!publishedTargetIds.Add(targetId)) continue;
-            if (furnitureCount >= WorldObjectTargetLimit)
-            {
-                omitted++;
-                continue;
-            }
-            result.Add(new BridgeWorldObjectTarget(
-                targetId,
-                "placed_furniture",
-                location.NameOrUniqueName,
-                (int)tile.X,
-                (int)tile.Y,
-                -1,
-                piece.QualifiedItemId,
-                RequireDisplayName(piece.QualifiedItemId),
-                piece.currentRotation.Value,
-                piece.rotations.Value,
-                // THE FOOTPRINT THE ENGINE COMPUTES, not a table here: `getTilesWide()`/`getTilesHigh()` divide the
-                // piece's own sprite-derived `boundingBox` by 64 (Furniture.cs:1413-1421), which is why a 2x3 bed and a
-                // 1x1 chair arrive as different rows. `Math.Max(1, ...)` only because a piece whose bounding box this
-                // process never calculated would divide to 0, and 0 tiles is not a footprint any caller can use.
-                Math.Max(1, piece.getTilesWide()),
-                Math.Max(1, piece.getTilesHigh())));
-            furnitureCount++;
-        }
-        int pedestalCount = 0;
-        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
-        {
-            if (pair.Value is not StardewValley.Objects.ItemPedestal pedestal || pedestal.heldObject.Value is not null)
-                continue;
-            Vector2 tile = pair.Key;
-            if (!IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
-                continue;
-            string targetId = BuildPedestalDepositTargetId(location, (int)tile.X, (int)tile.Y, pedestal);
-            if (!publishedTargetIds.Add(targetId)) continue;
-            if (pedestalCount >= WorldObjectTargetLimit)
-            {
-                omitted++;
-                continue;
-            }
-            result.Add(new BridgeWorldObjectTarget(
-                targetId,
-                "empty_pedestal",
-                location.NameOrUniqueName,
-                (int)tile.X,
-                (int)tile.Y,
-                -1,
-                pedestal.QualifiedItemId,
-                RequireDisplayName(pedestal.QualifiedItemId),
-                null,
-                null,
-                1,
-                1));
-            pedestalCount++;
-        }
-        // THE WIRE'S OWN BOUND, LAST AND SEPARATELY COUNTED. The four caps above are fairness BETWEEN kinds (sixteen
-        // placement rows may not eat every object row); this one is the bound the Host declares for the family, and it
-        // refuses the WHOLE snapshot past it rather than trimming - `SNAPSHOT_FAMILY_RULES` holds `worldObjectTargets` at
-        // 48, so a 49-row frame is not a longer list, it is a frame the bridge closes. `WorldObjectTargetFamilyLimit` is
-        // that number, pinned to the Host's own declaration by `RadiusWindowBudgetAuthorityTests`.
-        int keptRows = Math.Min(result.Count, WorldObjectTargetFamilyLimit);
-        omitted += result.Count - keptRows;
-        if (keptRows < result.Count) result.RemoveRange(keptRows, result.Count - keptRows);
-        return result;
     }
 
     /// <summary>
@@ -1490,7 +1269,7 @@ internal sealed partial class ExecutionManager
         return $"placed_furniture_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private const int WorldObjectTargetLimit = 16;
+    internal const int WorldObjectTargetLimit = 16;
 
     /// <summary>
     /// The family's whole-row bound: the Host's declared <c>maxItems</c> for <c>worldObjectTargets</c>. Published by the

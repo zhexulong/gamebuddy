@@ -286,7 +286,8 @@ public sealed class ShopCounterReachTests
             .Should()
             .Be("shop=Joja;owner=none;owner_tile=2,3;actor_tile=2,4");
 
-        string source = File.ReadAllText(RepositorySourcePath(ImplementationRelativePath));
+        string source = ControllerPartials.Declaring("DiscoverShopTargets")
+            + File.ReadAllText(RepositorySourcePath(ImplementationRelativePath));
         int discoveryAt = source.IndexOf("exclusions.Record(\"shopTargets\", DiscoveryExclusionReasons.ShopClosedToday)", StringComparison.Ordinal);
         int purchaseAt = source.IndexOf("DiscoveryExclusionReasons.ShopClosedToday,", StringComparison.Ordinal);
         discoveryAt.Should().BeGreaterThanOrEqualTo(0, "discovery names the withheld counter in the family's exclusions");

@@ -322,9 +322,9 @@ public sealed class PickupRetriesATileTheItemHasLeftTests
     /// </summary>
     private static IReadOnlyList<BridgeItemTarget> DiscoveredItemTargets(TargetFamilyWorld world, ExecutionManager manager)
     {
-        var rows = (IEnumerable)typeof(ExecutionManager)
-            .GetMethod("DiscoverItemTargets", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(manager, new object[] { world.Actor })!;
+        MethodInfo discovery = DiscoveryMembers.Method("DiscoverItemTargets");
+        var rows = (IEnumerable)discovery
+            .Invoke(DiscoveryMembers.Target(discovery, manager), new object[] { world.Actor })!;
         List<BridgeItemTarget> targets = rows.Cast<BridgeItemTarget>().ToList();
         targets.Should().NotBeEmpty(
             $"the drop has to be published or this attempt measures nothing ({world.Describe("itemTargets")})");

@@ -811,7 +811,7 @@ internal sealed partial class ExecutionManager
         string adjacentApproach = string.Empty;
         if (warp is null || warp.TargetName is null or "")
         {
-            IReadOnlyList<BridgeDoor> exits = DiscoverExitTiles(Game1.player);
+            IReadOnlyList<BridgeDoor> exits = FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player);
             // Measured 2026-11-14 (`round42`, day 6): she stood on `(3,11)`, the farmhouse door was at `(3,12)`, and she
             // named her own tile. One step was all that stood between her and the way out, so that request is the
             // transition rather than a refusal - and the rule is the GOAL ("leave this location"), not the coordinate she
@@ -956,44 +956,6 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// Every tile this location actually offers as a way out, in the one shape both published families use.
-    ///
-    /// <para>
-    /// The two families are asked rather than re-walked: <see cref="DiscoverDoorTargets"/> is the request-path owner of
-    /// the <c>doorTargets</c> family (the door table <c>updateDoors</c> builds, building human doors, and the
-    /// farmhouse/cabin exit), and <c>location.warps</c> is what the <c>warps</c> family publishes under
-    /// <see cref="FarmhandWarpCoordinateRange"/>. Which table holds a transition tile is an artefact of map authoring,
-    /// so a caller reading this list is reading "the tiles I could leave from", not "the table the map used".
-    /// </para>
-    /// </summary>
-    internal static IReadOnlyList<BridgeDoor> DiscoverExitTiles(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeDoor>();
-
-        List<BridgeDoor> exits = new();
-        HashSet<(int X, int Y)> named = new();
-        foreach (BridgeDoor door in DiscoverDoorTargets(player))
-        {
-            if (named.Add((door.SourceX, door.SourceY)))
-                exits.Add(door);
-        }
-
-        foreach (StardewValley.Warp warp in location.warps)
-        {
-            if (warp is null || warp.npcOnly.Value || string.IsNullOrWhiteSpace(warp.TargetName))
-                continue;
-            if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
-                || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
-                continue;
-            if (named.Add((warp.X, warp.Y)))
-                exits.Add(new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY));
-        }
-
-        return exits;
-    }
-
-    /// <summary>
     /// How far a refusal measures: Chebyshev, the radius <see cref="NativeInteractionRadius"/> and
     /// <c>Utility.tileWithinRadiusOfPlayer</c> are measured in, so "distance=1" means the same thing to a reader as it
     /// does to the gate that admits the transition.
@@ -1071,7 +1033,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal static bool IsTileOfCurrentMap(Farmer player, int x, int y) =>
         (player.currentLocation is { } location && location.isTileOnMap(new Vector2(x, y)))
-        || DiscoverExitTiles(player).Any(exit => exit.SourceX == x && exit.SourceY == y);
+        || FarmhandTargetDiscovery.DiscoverExitTiles(player).Any(exit => exit.SourceX == x && exit.SourceY == y);
 
     /// <summary>One tile's edge in pixels: `Character.Tile` is `StandingPixel / 64` (Character.cs:361-373), so this is
     /// the pixel width the radius of one tile is measured in.</summary>
@@ -1303,7 +1265,7 @@ internal sealed partial class ExecutionManager
         {
             if (candidate is null || ReferenceEquals(candidate, here) || string.IsNullOrWhiteSpace(candidate.NameOrUniqueName))
                 continue;
-            foreach (BridgeDoor exit in DiscoverDoorTargets(candidate, Game1.player))
+            foreach (BridgeDoor exit in FarmhandTargetDiscovery.DiscoverDoorTargets(candidate, Game1.player))
             {
                 if (exit.SourceX == tileX && exit.SourceY == tileY
                     && string.Equals(exit.TargetLocation, here.NameOrUniqueName, StringComparison.Ordinal))

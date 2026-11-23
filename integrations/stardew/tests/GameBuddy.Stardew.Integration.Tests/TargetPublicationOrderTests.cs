@@ -70,7 +70,7 @@ public sealed class TargetPublicationOrderTests
         {
             // The DEFINITION is `private static IReadOnlyList<BridgeX> Name(`; call sites are bare `Name(`. Anchoring
             // on the full signature avoids the call-site trap that made an earlier version read a lambda body.
-            Match definition = Regex.Match(source, @"private static IReadOnlyList<Bridge\w+> " + name + @"\(");
+            Match definition = Regex.Match(source, @"internal static IReadOnlyList<Bridge\w+> " + name + @"\(");
             definition.Success.Should().BeTrue($"{name} must be defined");
 
             string body = BracedBody(source, definition.Index);

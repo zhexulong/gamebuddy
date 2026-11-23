@@ -62,7 +62,7 @@ public sealed class SoilTilePublicationTests
                 tilled.Add((x, y));
             }
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omitted);
 
         tilled.Should().HaveCount(60, "the fixture is the measured case: sixty tilled tiles");
         foreach ((int x, int y) in tilled)
@@ -111,7 +111,7 @@ public sealed class SoilTilePublicationTests
             "thirty-two was the cap this case was written against: a list that stops there is seven tiles short of "
             + "the ground under the actor, and the reader could not tell");
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omitted);
 
         published.Select(row => row.Y * SoilHarness.Width + row.X).OrderBy(tile => tile).Should().Equal(
             reachable,
@@ -135,11 +135,11 @@ public sealed class SoilTilePublicationTests
             for (int y = 8; y < 11; y++)
                 harness.SetDiggable(x, y);
 
-        IReadOnlyList<BridgeSoilTile> before = ExecutionManager.DiscoverSoilTiles(harness.Actor, out _);
+        IReadOnlyList<BridgeSoilTile> before = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out _);
         var tilled = before.Take(15).Select(row => (row.X, row.Y)).ToArray();
         foreach ((int x, int y) in tilled)
             harness.PlaceHoeDirt(x, y);
-        IReadOnlyList<BridgeSoilTile> after = ExecutionManager.DiscoverSoilTiles(harness.Actor, out _);
+        IReadOnlyList<BridgeSoilTile> after = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out _);
 
         after.Select(row => (row.X, row.Y)).Should().Equal(
             before.Select(row => (row.X, row.Y)),
@@ -175,11 +175,11 @@ public sealed class SoilTilePublicationTests
                 block.Add((x, y));
             }
 
-        IReadOnlyList<BridgeSoilTile> bare = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int bareOmitted);
+        IReadOnlyList<BridgeSoilTile> bare = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int bareOmitted);
         (int X, int Y)[] bareNeedingWork = NeedsWork(harness, bare);
         foreach ((int x, int y) in block)
             harness.PlaceHoeDirt(x, y);
-        IReadOnlyList<BridgeSoilTile> worked = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int workedOmitted);
+        IReadOnlyList<BridgeSoilTile> worked = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int workedOmitted);
         (int X, int Y)[] workedNeedingWork = NeedsWork(harness, worked);
 
         bare.Select(row => (row.X, row.Y)).Should().BeEquivalentTo(
@@ -230,7 +230,7 @@ public sealed class SoilTilePublicationTests
                 window.Add((x, y));
             }
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omitted);
 
         window.Should().HaveCount(
             (2 * radius + 1) * (2 * radius + 1),
@@ -247,7 +247,7 @@ public sealed class SoilTilePublicationTests
         // this map, not typed.
         (int droppedX, int droppedY) = window[^1];
         harness.SetNotDiggable(droppedX, droppedY);
-        ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omittedAfterOneFewer);
+        FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omittedAfterOneFewer);
         omittedAfterOneFewer.Should().Be(omitted - 1, "one fewer tillable tile inside the radius is one fewer omission");
     }
 
@@ -273,7 +273,7 @@ public sealed class SoilTilePublicationTests
                 strip.Add((x, y));
             }
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omitted);
 
         published.Should().NotBeEmpty("the actor stands inside the strip");
         int window = (2 * ExecutionManager.TargetDiscoveryRadius) + 1;
@@ -288,7 +288,7 @@ public sealed class SoilTilePublicationTests
         // One column fewer in the strip is one tile narrower in the box: the number is measured from this map, not typed.
         for (int y = 8; y < 11; y++)
             harness.SetNotDiggable(2, y);
-        ExecutionManager.DiscoverSoilTiles(harness.Actor, out _).Should().OnlyContain(
+        FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out _).Should().OnlyContain(
             row => row.BlockX == 3 && row.BlockW == 19,
             "the whole westmost column stopped being farmable, so the strip's own north-west corner moves with it");
     }
@@ -307,7 +307,7 @@ public sealed class SoilTilePublicationTests
             harness.SetDiggable(16, y);
         }
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out _);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out _);
 
         published.Should().HaveCount(6, "two columns of three tiles, both inside the window");
         published.Where(row => row.X == 8).Should().OnlyContain(
@@ -330,7 +330,7 @@ public sealed class SoilTilePublicationTests
             for (int y = SoilHarness.ActorY - 2; y <= SoilHarness.ActorY + 2; y++)
                 harness.SetNotDiggable(x, y);
 
-        IReadOnlyList<BridgeSoilTile> published = ExecutionManager.DiscoverSoilTiles(harness.Actor, out int omitted);
+        IReadOnlyList<BridgeSoilTile> published = FarmhandTargetDiscovery.DiscoverSoilTiles(harness.Actor, out int omitted);
 
         published.Should().BeEmpty("there is no ground here the Hoe admits and nothing is under it");
         omitted.Should().Be(0, "an empty answer states what the bound took, and the bound took nothing");

@@ -116,7 +116,7 @@ public sealed class WaterTargetApproachTests
         using TargetFamilyWorld world = TargetFamilyWorld.Create();
         BuildPonds(world);
 
-        IReadOnlyList<BridgeWaterTarget> published = ExecutionManager.DiscoverWaterTargets(world.Actor);
+        IReadOnlyList<BridgeWaterTarget> published = FarmhandTargetDiscovery.DiscoverWaterTargets(world.Actor);
         Census(world, published, out string examined, out IReadOnlyList<string> violations);
 
         this.output.WriteLine(examined);
@@ -132,7 +132,7 @@ public sealed class WaterTargetApproachTests
     {
         using TargetFamilyWorld world = TargetFamilyWorld.Create();
         BuildPonds(world);
-        IReadOnlyList<BridgeWaterTarget> published = ExecutionManager.DiscoverWaterTargets(world.Actor);
+        IReadOnlyList<BridgeWaterTarget> published = FarmhandTargetDiscovery.DiscoverWaterTargets(world.Actor);
 
         Census(world, published.Append(Row(world, IslandWaterX, IslandWaterY)).ToArray(), out _, out IReadOnlyList<string> wallViolations);
         wallViolations.Should().Contain(
@@ -156,7 +156,7 @@ public sealed class WaterTargetApproachTests
         using TargetFamilyWorld world = TargetFamilyWorld.Create();
         BuildPonds(world);
 
-        HashSet<(int X, int Y)> before = Tiles(ExecutionManager.DiscoverWaterTargets(world.Actor));
+        HashSet<(int X, int Y)> before = Tiles(FarmhandTargetDiscovery.DiscoverWaterTargets(world.Actor));
         before.Should().Contain((6, 5), "the open-shore pond is castable-from and must be published");
         before.Should().NotContain((IslandWaterX, IslandWaterY), "its only shore tile is an island she cannot reach");
         before.Should().NotContain((BlockedWaterX, BlockedWaterY), "every tile beside it carries debris");
@@ -164,7 +164,7 @@ public sealed class WaterTargetApproachTests
         world.RemoveResourceClump(BlockedGateX, BlockedGateY);
         world.ClearWall(IslandGateX, IslandGateY);
 
-        HashSet<(int X, int Y)> after = Tiles(ExecutionManager.DiscoverWaterTargets(world.Actor));
+        HashSet<(int X, int Y)> after = Tiles(FarmhandTargetDiscovery.DiscoverWaterTargets(world.Actor));
         after.Should().Contain((IslandWaterX, IslandWaterY), "one cleared ring tile is a shore she can walk to");
         after.Should().Contain((BlockedWaterX, BlockedWaterY), "clearing the debris makes the shore tile standable");
     }

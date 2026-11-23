@@ -43,14 +43,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 352,
+        "line": 589,
         "expression": "Game1.eventUp",
         "argument": "eventUp",
-        "argumentLine": 384
+        "argumentLine": 621
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 167,
+        "line": 333,
         "condition": "facts.EventUp"
       },
       "release": {
@@ -103,14 +103,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 354,
-        "expression": "Game1.activeClickableMenu?.GetType().Name",
+        "line": 590,
+        "expression": "MountedMenuName(Game1.activeClickableMenu)",
         "argument": "menuType",
-        "argumentLine": 385
+        "argumentLine": 622
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 184,
+        "line": 350,
         "condition": "facts.MenuType is { } menuType"
       },
       "release": {
@@ -162,14 +162,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 355,
+        "line": 591,
         "expression": "Game1.dialogueUp",
         "argument": "dialogueUp",
-        "argumentLine": 386
+        "argumentLine": 623
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 191,
+        "line": 357,
         "condition": "HasMountedModal(facts)"
       },
       "release": {
@@ -222,14 +222,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 356,
+        "line": 592,
         "expression": "Game1.timeOfDay",
         "argument": "timeOfDay",
-        "argumentLine": 387
+        "argumentLine": 624
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 196,
+        "line": 362,
         "condition": "facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime"
       },
       "release": {
@@ -282,14 +282,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 388,
+        "line": 625,
         "expression": "player.Stamina",
         "argument": "player.Stamina",
-        "argumentLine": 388
+        "argumentLine": 625
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 196,
+        "line": 362,
         "condition": "facts.Stamina <= PassOutStaminaFloor || facts.TimeOfDay >= PassOutDayEndTime"
       },
       "release": {
@@ -341,14 +341,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 389,
+        "line": 626,
         "expression": "player.freezePause > 0",
         "argument": "player.freezePause > 0",
-        "argumentLine": 389
+        "argumentLine": 626
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 240,
+        "line": 406,
         "condition": "facts.FreezePaused"
       },
       "release": {
@@ -401,14 +401,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 390,
+        "line": 627,
         "expression": "player.isEating",
         "argument": "player.isEating",
-        "argumentLine": 390
+        "argumentLine": 627
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 245,
+        "line": 411,
         "condition": "facts.Eating"
       },
       "release": {
@@ -461,14 +461,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 391,
+        "line": 628,
         "expression": "player.UsingTool",
         "argument": "player.UsingTool",
-        "argumentLine": 391
+        "argumentLine": 628
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 250,
+        "line": 416,
         "condition": "facts.UsingTool || facts.ToolCharged"
       },
       "release": {
@@ -521,14 +521,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 392,
+        "line": 629,
         "expression": "player.toolPower is { Value: not 0 }",
         "argument": "player.toolPower is { Value: not 0 }",
-        "argumentLine": 392
+        "argumentLine": 629
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 250,
+        "line": 416,
         "condition": "facts.UsingTool || facts.ToolCharged"
       },
       "release": {
@@ -581,14 +581,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 393,
+        "line": 634,
         "expression": "player.FarmerSprite.PauseForSingleAnimation",
         "argument": "player.FarmerSprite.PauseForSingleAnimation",
-        "argumentLine": 393
+        "argumentLine": 634
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 259,
+        "line": 425,
         "condition": "facts.SelfAnimation"
       },
       "release": {
@@ -641,14 +641,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 357,
+        "line": 597,
         "expression": "Game1.isWarping",
         "argument": "warping",
-        "argumentLine": 398
+        "argumentLine": 635
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 226,
+        "line": 392,
         "condition": "facts.Warping"
       },
       "release": {
@@ -714,14 +714,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 362,
+        "line": 602,
         "expression": "Game1.newDay || Game1.farmEvent is not null",
         "argument": "dayTransition",
-        "argumentLine": 399
+        "argumentLine": 636
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 206,
+        "line": 372,
         "condition": "facts.DayTransition"
       },
       "release": {
@@ -782,14 +782,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 367,
+        "line": 607,
         "expression": "Game1.freezeControls",
         "argument": "controlsFrozen",
-        "argumentLine": 400
+        "argumentLine": 637
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 216,
+        "line": 382,
         "condition": "facts.ControlsFrozen"
       },
       "release": {
@@ -842,14 +842,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 372,
+        "line": 611,
         "expression": "Game1.currentMinigame is not null",
         "argument": "minigame",
-        "argumentLine": 401
+        "argumentLine": 638
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 177,
+        "line": 343,
         "condition": "facts.Minigame"
       },
       "release": {
@@ -901,14 +901,14 @@
       },
       "readAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 376,
+        "line": 615,
         "expression": "Game1.globalFade",
         "argument": "screenFade",
-        "argumentLine": 402
+        "argumentLine": 639
       },
       "classifyAt": {
         "file": "integrations/stardew/WorldModel.cs",
-        "line": 235,
+        "line": 401,
         "condition": "facts.ScreenFade"
       },
       "release": {

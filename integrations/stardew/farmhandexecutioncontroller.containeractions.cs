@@ -297,7 +297,7 @@ internal sealed partial class ExecutionManager
     /// </summary>
     internal const string ContainerNotStorage = "container_not_storage";
 
-    private static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> LocationStorageContainers(StardewValley.GameLocation location)
+    internal static IEnumerable<(StardewValley.Objects.Chest Chest, int X, int Y, bool IsFridge)> LocationStorageContainers(StardewValley.GameLocation location)
     {
         foreach (StardewValley.Object obj in location.objects.Values)
         {

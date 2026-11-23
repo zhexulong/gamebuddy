@@ -353,7 +353,7 @@ public sealed partial class ModEntry
         // The runner never picks an inventory slot: it reads the slot the Mod itself
         // publishes for a routable totem, so the projection and the Given must agree here or
         // the runner would name a slot that holds something else.
-        BridgeWarpItemTarget? published = ExecutionManager.DiscoverWarpItemTargets(farmhand)
+        BridgeWarpItemTarget? published = FarmhandTargetDiscovery.DiscoverWarpItemTargets(farmhand)
             .FirstOrDefault(candidate => candidate.QualifiedItemId == totemId);
         if (published is null
             || published.Slot != totemSlot

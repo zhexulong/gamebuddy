@@ -1458,7 +1458,7 @@ internal sealed partial class ExecutionManager
         return null;
     }
 
-    private static string BuildDebrisTargetId(StardewValley.GameLocation location, int index, StardewValley.TerrainFeatures.ResourceClump clump)
+    internal static string BuildDebrisTargetId(StardewValley.GameLocation location, int index, StardewValley.TerrainFeatures.ResourceClump clump)
     {
         string raw = $"{location.NameOrUniqueName}:{index}:{(int)clump.Tile.X},{(int)clump.Tile.Y}:{clump.parentSheetIndex.Value}:{clump.width.Value}x{clump.height.Value}";
         return $"debris_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
@@ -1679,7 +1679,7 @@ internal sealed partial class ExecutionManager
         return toolKind != "unsupported";
     }
 
-    private static bool IsValidDebrisTool(StardewValley.TerrainFeatures.ResourceClump clump, Tool tool, out string toolKind, out int requiredUpgrade)
+    internal static bool IsValidDebrisTool(StardewValley.TerrainFeatures.ResourceClump clump, Tool tool, out string toolKind, out int requiredUpgrade)
     {
         if (!TryGetDebrisToolRequirement(clump, out toolKind, out requiredUpgrade))
             return false;

@@ -287,6 +287,10 @@ export function readPublishedActions({ compiler, root = REPOSITORY_ROOT } = {}) 
               argumentSchema: action.argumentSchema,
               outputFacts: action.outputFacts ?? {},
               ...(action.resourceTemplate === undefined ? {} : { resourceTemplate: action.resourceTemplate }),
+              // Carried because the compiler reads it: `requires_place` and `moves_actor` are the declarations its
+              // cross-step dependencies are built from, and a rebuild that dropped them would measure a compiler whose
+              // vocabulary declares no effects - green through the rule this gate exists to exercise.
+              ...(action.effects === undefined ? {} : { effects: action.effects }),
             },
           }),
     }),

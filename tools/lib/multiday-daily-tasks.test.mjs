@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  buildTaskRotation,
   DAILY_TASK_ACTION_HINTS,
   DAILY_TASK_ROTATION,
   dailyTaskFor,
   dayTaskSchedule,
+  describeScheduledPillars,
   describeTaskDelivery,
   overriddenTaskForDay,
+  pillarOfTask,
+  readPillarWindows,
   readTaskDelivery,
   runOffsetFor,
   SWEEP_DAILY_TASKS,
+  TASK_ANY_TASKS,
+  TASK_PILLAR_ORDER,
+  TASK_PILLARS,
 } from "./multiday-daily-tasks.mjs";
 import { judgesAPublishedFact, judgeTaskPurpose, TASK_PURPOSE_CRITERIA } from "./task-purpose.mjs";
 
@@ -178,11 +186,13 @@ test("a task pinned to a later day is scheduled and delivered on that day (2026-
       "tasks_delivered: day1=clear_and_plant_long_patch, day2=a_fish_from_the_water",
     "the line states both halves side by side",
   );
-  // With no pin and no first-day override, day 1 is the rotation's and day 2 is not the pinned task - the pin is not a
-  // rotation change, which is what keeps a series of runs covering different days.
+  // With no pin and no first-day override, every day is the rotation's own answer: the pin moves the day it names and
+  // nothing else. `a_fish_from_the_water` is now the rotation's own second day - the water pillar opens there - so the pin
+  // agrees with the walk instead of overriding it, and the days on either side are left where the rotation put them.
   const rotationOnly = dayTaskSchedule({ runOffset: 0, judgesAPublishedFact: () => true });
   assert.equal(rotationOnly(1), day1);
-  assert.notEqual(rotationOnly(2), "a_fish_from_the_water");
+  assert.equal(rotationOnly(2), dailyTaskFor(0, 2));
+  assert.equal(rotationOnly(3), dailyTaskFor(0, 3), "a pin on day 2 leaves day 3 where the rotation put it");
 });
 
 /**
@@ -334,7 +344,9 @@ test("the_rotation_leads_with_concrete_decidable_work", (t) => {
     const entry = TASK_PURPOSE_CRITERIA[task];
     const steps = entry?.steps ?? [];
     const sows = entry?.sownBy ?? [];
-    const buys = steps.some((candidate) => candidate.actionId === "shop_purchase") || (entry?.boughtBy ?? []).includes("shop_purchase");
+    const buys =
+      steps.some((candidate) => candidate.actionId === "shop_purchase") ||
+      (entry?.boughtBy ?? []).includes("shop_purchase");
     // The scale is the same fact in either shape: a counted `plant_seed` step, or a plot of tiles the sowing has to fill.
     const sowsScaled =
       steps.some((candidate) => candidate.actionId === "plant_seed" && (candidate.count ?? 1) >= 15) ||
@@ -380,7 +392,9 @@ test("a_step_with_a_count_is_not_satisfied_by_fewer_receipts", (t) => {
       const short = judgeTaskPurpose(task, plotReceipts(entry, declared - 1));
       if (short.state !== "not_achieved")
         findings.push(`${task}: a plot of ${String(declared - 1)}/${String(declared)} tiles answered ${short.state}`);
-      else if (!String(short.detail ?? "").includes(`${String(declared - 1)}/${String(declared)} tiles sown and watered`))
+      else if (
+        !String(short.detail ?? "").includes(`${String(declared - 1)}/${String(declared)} tiles sown and watered`)
+      )
         findings.push(`${task}: short verdict detail missed the tile count: ${String(short.detail ?? "")}`);
       const full = judgeTaskPurpose(task, plotReceipts(entry, declared));
       if (full.state !== "achieved")
@@ -414,4 +428,188 @@ test("a_step_with_a_count_is_not_satisfied_by_fewer_receipts", (t) => {
   }
   t.diagnostic(`counted_criteria ${String(countedTasks.length)}: ${countedTasks.join(", ")}`);
   assert.deepEqual(findings, [], findings.join("\n"));
+});
+
+/**
+ * THE PILLAR GATE: `the_rotation_walks_one_pillar_per_day`.
+ *
+ * <p>
+ * THE DEFECT. The rotation was a flat list, and the two farm days opened it, so a three-day run could spend two of its
+ * three days in one part of the game. Measured on `round96` (`tools/_multiday_routine-round96.result.json`): day 2
+ * `clear_and_plant_long_patch`, day 3 `buy_seeds_and_expand_plot` - the `3x20` strip and then the seed plot, one pillar
+ * for two thirds of the run.
+ * </p>
+ * <p>
+ * THE PROPERTY, NOT AN ORDER. A schedule of up to three days never draws one pillar twice, read from the days a run
+ * would actually get - `dayTaskSchedule`, so a pin, a first-day override and the substitution rule for unjudgeable days
+ * are inside the population rather than beside it. `any` is exempt: it is what a slot falls back to when the pillar
+ * groups are exhausted.
+ * </p>
+ * <p>
+ * red-proof: inject  a rotation with the two farm days adjacent (the pre-pillar order, `round96`'s own days below) -> the
+ *                   window reading names `task_pillar_repeats_in_three_day_run:farm:...`;
+ *                   hand `buildTaskRotation` a grouping with an empty `water` group -> `task_pillar_empty:water`
+ *                   (tools/lib/multiday-daily-tasks.test.mjs)
+ * </p>
+ */
+const PILLAR_GATE = "the_rotation_walks_one_pillar_per_day";
+
+/** The day counts a short run can have. A run of N nights ends N+1 days (`multiday-loop.mjs`); two and three are the
+ * window this rule exists for, and a run that dies on day one cannot repeat a pillar at all. */
+const PILLAR_WINDOW_DAY_COUNTS = Object.freeze([2, 3]);
+
+test(PILLAR_GATE, (t) => {
+  const schedules = [];
+  for (const days of PILLAR_WINDOW_DAY_COUNTS) {
+    for (let runOffset = 0; runOffset < DAILY_TASK_ROTATION.length; runOffset += 1) {
+      const taskForDay = dayTaskSchedule({ runOffset, judgesAPublishedFact });
+      const scheduled = Array.from({ length: days }, (_, index) => ({ day: index + 1, task: taskForDay(index + 1) }));
+      schedules.push(Object.freeze({ runOffset, days, ...readPillarWindows({ scheduled }) }));
+    }
+  }
+  const findings = schedules.flatMap((schedule) =>
+    schedule.findings.map((code) => `${code} @offset_${String(schedule.runOffset)}/${String(schedule.days)}days`),
+  );
+  const pairs = schedules.reduce((total, schedule) => total + schedule.pairs, 0);
+  const anyEntries = DAILY_TASK_ROTATION.filter((task) => pillarOfTask(task) === "any");
+  const reading =
+    `schedules ${String(schedules.length)} (${PILLAR_WINDOW_DAY_COUNTS.join("/")} days x ` +
+    `${String(DAILY_TASK_ROTATION.length)} offsets) · pairs ${String(pairs)} · ` +
+    `pillars ${TASK_PILLAR_ORDER.join("/")} · any ${String(anyEntries.length)}`;
+  t.diagnostic(reading);
+  assert.ok(pairs > 0, `${reading} - no pair of days was examined, so this gate cannot fail`);
+  assert.deepEqual(findings, [], `${reading}\n${findings.join("\n")}`);
+});
+
+/**
+ * THE TWO REFUSALS, ON A GROUPING THE REPOSITORY DOES NOT HAVE.
+ *
+ * A gate over a correct declaration can only ever pass, so both halves are falsified here: the builder is pure over the
+ * groups it is handed, and an empty pillar is the shape that would silently promise a pillar the walk cannot draw.
+ */
+test("an empty pillar and an id filed twice are refused by name", (t) => {
+  const refused = buildTaskRotation({ pillars: { ...TASK_PILLARS, water: [] } });
+  assert.ok(
+    refused.findings.includes("task_pillar_empty:water"),
+    `an empty water group has to be refused by name; got ${refused.findings.join(",") || "(no finding)"}`,
+  );
+  assert.ok(refused.rotation.includes("clear_and_plant_long_patch"), "the other groups are still walked");
+
+  const twice = buildTaskRotation({
+    pillars: { ...TASK_PILLARS, mine: [...TASK_PILLARS.mine, TASK_PILLARS.farm[0]] },
+  });
+  assert.ok(
+    twice.findings.includes(`task_filed_under_two_groups:${TASK_PILLARS.farm[0]}:farm:mine`),
+    `an id filed under two groups makes the printed pillar a coin toss; got ${twice.findings.join(",") || "(no finding)"}`,
+  );
+
+  // The control: a grouping the walk can state, and the day order it produces.
+  const control = buildTaskRotation({
+    pillars: { farm: ["farm_day"], water: ["water_day"], mine: ["mine_day"] },
+    anyTasks: ["any_day"],
+    sweepTasks: [],
+  });
+  assert.deepEqual(control.findings, []);
+  assert.deepEqual(control.rotation, ["farm_day", "water_day", "mine_day", "any_day"]);
+  t.diagnostic(
+    `refusals examined ${String(refused.findings.length + twice.findings.length)} · control ${control.rotation.join(",")}`,
+  );
+});
+
+/** The schedule a recorded run actually got, from its own artifact: `multiday.tasks.scheduled`, in day order. */
+function recordedSchedule(run) {
+  const artifact = JSON.parse(
+    readFileSync(new URL(`../_multiday_routine-round${String(run)}.result.json`, import.meta.url), "utf8"),
+  );
+  const scheduled = artifact?.multiday?.tasks?.scheduled ?? {};
+  return Object.entries(scheduled)
+    .map(([dayKey, task]) => ({ day: Number(dayKey.slice("day".length)), task }))
+    .filter((entry) => Number.isInteger(entry.day))
+    .sort((left, right) => left.day - right.day);
+}
+
+/**
+ * THE THREE RECORDED RUNS, READ BY THE SAME RULE, SO THE CHANGE IS VISIBLE.
+ *
+ * `round95/96/97` are the last three multi-day runs on disk and their artifacts hold the schedules the old flat rotation
+ * handed them. Read by the pillar rule, two of the three name the defect the criteria lane measured, and the third shows
+ * the other half of the old list's shape - two `any` days - which the rule deliberately permits.
+ */
+test("the_recorded_runs_that_measured_one_pillar_twice_are_named", (t) => {
+  const runs = [95, 96, 97].map((run) => ({
+    run,
+    scheduled: recordedSchedule(run),
+    ...readPillarWindows({ scheduled: recordedSchedule(run) }),
+  }));
+  assert.ok(
+    runs.every((entry) => entry.scheduled.length >= 2),
+    `every run examined has at least two days on record; got ${runs.map((entry) => `${String(entry.run)}:${String(entry.scheduled.length)}`).join(",")}`,
+  );
+  const findingsOf = (run) => runs.find((entry) => entry.run === run)?.findings ?? [];
+  assert.deepEqual(
+    findingsOf(96),
+    ["task_pillar_repeats_in_three_day_run:farm:day2=clear_and_plant_long_patch->day3=buy_seeds_and_expand_plot"],
+    "round96 is the run the criteria lane measured: two of its three days were the farm pillar",
+  );
+  assert.deepEqual(
+    findingsOf(97),
+    ["task_pillar_repeats_in_three_day_run:farm:day1=clear_and_plant_long_patch->day2=buy_seeds_and_expand_plot"],
+    "round97 opened on the same pair, on the two days it lived",
+  );
+  assert.deepEqual(findingsOf(95), [], "round95's two repeated days were the fallback group, not a pillar");
+  for (const entry of runs) t.diagnostic(`round${String(entry.run)} ${describeScheduledPillars(entry.scheduled)}`);
+  // THE CHANGE, SIDE BY SIDE: the same three-day run under the walk says which pillar each day drew.
+  const taskForDay = dayTaskSchedule({ runOffset: 0, judgesAPublishedFact });
+  t.diagnostic(`pillar walk ${describeScheduledPillars([1, 2, 3].map((day) => ({ day, task: taskForDay(day) })))}`);
+});
+
+test("the_schedule_prints_the_pillar_each_day_drew", () => {
+  const taskForDay = dayTaskSchedule({ runOffset: 0, judgesAPublishedFact });
+  const scheduled = [1, 2, 3].map((day) => ({ day, task: taskForDay(day) }));
+  assert.equal(
+    describeScheduledPillars(scheduled),
+    "day 1: farm/clear_and_plant_long_patch · day 2: water/a_fish_from_the_water · " +
+      "day 3: mine/craft_and_place_machine",
+    "a run's own log has to answer which pillar it measured, in the pillars' own names",
+  );
+  // A day the declaration does not hold is `unfiled` rather than silently printed as one of the pillars.
+  assert.equal(describeScheduledPillars([{ day: 1, task: "no_such_task" }]), "day 1: unfiled/no_such_task");
+  assert.equal(describeScheduledPillars([]), "(no day scheduled)");
+});
+
+/**
+ * EVERY ENTRY IS FILED ONCE, AND NOTHING IS LOST BY THE GROUPING.
+ *
+ * Population derived from the declaration: the three pillar groups plus `any` plus the sweep tail must be exactly the
+ * rotation, with no id missing and none filed twice. A leftover the tail forgets is a day a run can never be given, which
+ * is the `enter_mine` shape this pool has been caught in before.
+ */
+test("every rotation entry is filed under exactly one group, and the tail keeps its coverage", () => {
+  const declared = [
+    ...TASK_PILLAR_ORDER.flatMap((pillar) => TASK_PILLARS[pillar].map((task) => ({ task, pillar }))),
+    ...TASK_ANY_TASKS.map((task) => ({ task, pillar: "any" })),
+    ...SWEEP_DAILY_TASKS.map((task) => ({ task: task.id, pillar: "any" })),
+  ];
+  assert.ok(declared.length > 0, "the declaration holds no id at all, so this test would agree with itself");
+  assert.deepEqual(
+    declared
+      .filter((entry) => DAILY_TASK_ROTATION.filter((task) => task === entry.task).length !== 1)
+      .map((entry) => entry.task),
+    [],
+    "every declared id has to appear in the rotation exactly once",
+  );
+  assert.deepEqual(
+    DAILY_TASK_ROTATION.filter((task) => pillarOfTask(task) === null),
+    [],
+    "a rotation entry no group holds is a day whose pillar the log would have to guess",
+  );
+  assert.deepEqual(
+    [...DAILY_TASK_ROTATION].sort(),
+    declared.map((entry) => entry.task).sort(),
+    "the grouping and the rotation have to be the same population, not two lists that agree today",
+  );
+  for (const pillar of TASK_PILLAR_ORDER) {
+    assert.ok(TASK_PILLARS[pillar].length > 0, `pillar ${pillar} is declared with no members`);
+    assert.equal(pillarOfTask(TASK_PILLARS[pillar][0]), pillar, `a ${pillar} day prints its own pillar`);
+  }
 });

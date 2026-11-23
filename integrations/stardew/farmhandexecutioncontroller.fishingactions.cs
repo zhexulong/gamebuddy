@@ -54,74 +54,9 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed partial class ExecutionManager
 {
-    private const int MaximumWaterTargets = 32;
+    internal const int MaximumWaterTargets = 32;
 
     private LocalFishingCastSpec? activeFishing => this.slots.Fishing.Peek();
-
-    /// <summary>
-    /// The tiles a rod may be cast at here, WHOLE MAP, nearest first - and only the ones a cast can be MADE FROM.
-    ///
-    /// <para>
-    /// The water predicate is the engine's own pair, asked exactly as the cast asks it (`FishingRod.cs:411`):
-    /// <c>location.canFishHere()</c> and <c>location.isTileFishable(tileX, tileY)</c>. `isTileFishable` is where a
-    /// `NoFishing` tile, a water tile under a building, and a fishable building (a FishPond) all arrive as the engine's
-    /// answer rather than as a second reading of the map.
-    /// </para>
-    ///
-    /// <para>
-    /// THE SECOND QUESTION IS THE WALK'S, AND IT IS ASKED WITH THE WALK'S OWN FUNCTION. A water tile is never stood on:
-    /// the body stands beside it and swings, so the row is only a target while some tile in the water's ring is one the
-    /// approach leg would send her to. Discovery used to answer a weaker version of that - "is any CARDINAL neighbour
-    /// standable" - which is not the question the walk is refused on, and the two disagreed for twenty dispatches:
-    /// measured `round63`, every `fish_here` receipt was `no_reachable_approach:&lt;x&gt;:&lt;y&gt;` with
-    /// <c>standable_neighbour=unreachable;standable_tiles=1..4</c> and not one cast. A row that no walk can reach is a
-    /// target the companion can only re-aim at, so it is not published at all; the shore becoming walkable (a weed cut,
-    /// a wall opened) publishes it on the next snapshot, which is what makes the clearing a precondition rather than a
-    /// refusal.
-    /// </para>
-    ///
-    /// <para>
-    /// `SelectToolApproachTile` is the SAME choice `TryBeginToolApproach` makes, with the same two predicates, so
-    /// this cannot publish a row the walk would refuse. Reachability is undecided when the flood exceeds its budget
-    /// (<see cref="StardewBodyController.BuildWalkableComponent"/> answers null), and undecided is not "nothing is
-    /// reachable": no filter is applied, exactly as the leg lets the native planner decide.
-    /// </para>
-    ///
-    /// <para>
-    /// WHY NEAREST FIRST AND CAPPED. Every dropped row is strictly farther than every published one, which is the one
-    /// truncation a fishing plan cannot be misled by. Reachability is decided by the WALK, never by this list.
-    /// </para>
-    /// </summary>
-    internal static IReadOnlyList<BridgeWaterTarget> DiscoverWaterTargets(Farmer player)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location?.map is null || location.map.Layers.Count == 0) return Array.Empty<BridgeWaterTarget>();
-        if (!location.canFishHere()) return Array.Empty<BridgeWaterTarget>();
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        (int X, int Y) actor = ((int)player.Tile.X, (int)player.Tile.Y);
-        Func<(int X, int Y), bool> isStandable = tile =>
-            StardewBodyController.IsStandableTile(location, player, new Vector2(tile.X, tile.Y))
-            && !IsWarpBufferTile(location, tile);
-        Func<(int X, int Y), bool> isReachable = StardewBodyController.BuildWalkableComponent(location, player) is { } component
-            ? tile => component(new Vector2(tile.X, tile.Y))
-            : _ => true;
-        List<(int X, int Y)> candidates = new();
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-        {
-            if (!location.isTileFishable(x, y)) continue;
-            if (SelectToolApproachTile((x, y), actor, isStandable, isReachable) is null) continue;
-            candidates.Add((x, y));
-        }
-        return candidates
-            .OrderBy(tile => ChebyshevDistance(player, tile.X, tile.Y))
-            .ThenBy(tile => tile.X)
-            .ThenBy(tile => tile.Y)
-            .Take(MaximumWaterTargets)
-            .Select(tile => new BridgeWaterTarget(BuildWaterTargetId(location, tile.X, tile.Y), tile.X, tile.Y))
-            .ToArray();
-    }
 
     /// <summary>
     /// The address one water tile is bound with, recomputed by the handler before it casts. `internal` for the same reason

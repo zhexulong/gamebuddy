@@ -159,7 +159,7 @@ public sealed class FarmAnimalPetActionTests
     [Fact]
     public void TheTargetIdCarriesTheLocationAndTheAnimal_AndNoCoordinate()
     {
-        string identity = MethodBody(Read(ControllerFile), "private static string BuildFarmAnimalPetTargetId(");
+        string identity = MethodBody(Read(ControllerFile), "internal static string BuildFarmAnimalPetTargetId(");
 
         identity.Should().Contain("{location.NameOrUniqueName}:farmAnimal:{animal.myID.Value}");
         identity.Should().NotContain(".Tile.X");
@@ -167,7 +167,7 @@ public sealed class FarmAnimalPetActionTests
 
         // The same id shape the household Pet uses (`location:pet:<id>`) with its own noun, so the two families cannot
         // collide on a location that holds both.
-        string petIdentity = MethodBody(Read(ControllerFile), "private static string BuildPetTargetId(");
+        string petIdentity = MethodBody(Read(ControllerFile), "internal static string BuildPetTargetId(");
         petIdentity.Should().Contain(":pet:");
         identity.Should().NotContain(":pet:");
     }
@@ -188,7 +188,7 @@ public sealed class FarmAnimalPetActionTests
     [Fact]
     public void DiscoveryPublishesOnlyAnimalsThisActorHasNotPettedToday()
     {
-        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverFarmAnimalPetTargets"), "private static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverFarmAnimalPetTargets"), "internal static IReadOnlyList<BridgeFarmAnimalPetTarget> DiscoverFarmAnimalPetTargets(");
 
         discovery.Should().Contain("location.animals.Values", "farm animals live in the farm AND inside every barn/coop");
         // The day marker is still the engine's own per-farmer, per-day `wasPet` - read as the GUARD it now is, and
@@ -209,7 +209,7 @@ public sealed class FarmAnimalPetActionTests
         string controller = Read(ControllerFile);
 
         controller.Should().Contain(
-            "advertisedCapabilities.Contains(\"pet_farm_animal\", StringComparer.Ordinal) ? DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null",
+            "advertisedCapabilities.Contains(\"pet_farm_animal\", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFarmAnimalPetTargets(player, discoveryExclusions) : null",
             "a family published without its capability is a target the caller cannot address");
         // And the world-not-ready snapshot answers null for it, like every other family, so no consumer plans from it.
         controller.Should().Contain("FarmAnimalPetTargets: null");

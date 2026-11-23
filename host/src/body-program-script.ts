@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import { isExpressionOnlyAction } from "./action-registry.js";
-import { planSecondSowRefusal } from "./body-program-planting.js";
 import {
   footprintTiles,
   type PackingResult,
@@ -10,6 +9,8 @@ import {
   TOOL_FOOTPRINT_TILES_BY_CHARGE,
   toolChargeCeilingForClaim,
 } from "./body-program-packing.js";
+import { planSecondSowRefusal } from "./body-program-planting.js";
+import type { StardewTileRead } from "./game-connection.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
@@ -17,7 +18,6 @@ import {
   readDestinationSelector,
   type Snapshot,
 } from "./protocol.js";
-import type { StardewTileRead } from "./game-connection.js";
 import { isNonNegativeSafeInteger, isRecord, isTileCoordinate } from "./protocol-target-facts.js";
 
 /**
@@ -145,6 +145,26 @@ export type PublishedPlanAction = Readonly<{
    * refused.
    */
   targetFamily: string | null;
+  /**
+   * What the action requires of the world and what it changes, exactly as the Mod declares it - the only cross-step fact a
+   * descriptor carries that is not the tile it addresses (`FarmhandActionEffect`).
+   *
+   * <p>
+   * Carried because a plan's dependency cannot be read off a tile alone: `enter_exit(64,14); sleep()` is two steps on two
+   * different tiles, and what the second one waits for is not the first one's tile but the MAP the first one was meant to
+   * reach. The classes that answer that here are `requires_place` (the body must already be somewhere, and its own handler
+   * is what refuses otherwise) and `moves_actor` (this step puts the body somewhere). Both spellings and every subject are
+   * the Mod's, so a refusal can name the place and the predicate behind it without this file owning a word of it.
+   * </p>
+   */
+  effects: readonly PublishedPlanEffect[];
+}>;
+
+/** One declared effect: its class, its subject in the Mod's words, and the seam that observes it. */
+export type PublishedPlanEffect = Readonly<{
+  class: "moves_actor" | "requires_place" | "produces" | "consumes";
+  subject: string;
+  observedBy: string;
 }>;
 
 /**
@@ -614,6 +634,27 @@ function planNodeId(prefix: string, position: number): string {
 export const TRANSITION_SOURCE_PLAN_ACTION_IDS: readonly string[] = Object.freeze(["enter_exit", "travel"]);
 
 /**
+ * The places whose verdict the MOD publishes on the snapshot, by the place `requires_place` names, and the reading that
+ * answers it.
+ *
+ * <p>
+ * A place is a PREDICATE in the Mod (`SleepAndAdvanceDayLifecycle.HomeOf` decides `home_indoors`), so no layer on this side
+ * can evaluate one: what arrives instead is the predicate's own answer, published on the snapshot. `sleepAdmitsHere` is
+ * that answer for `home_indoors` (`protocol.ts` names the same `HomeOf` declaration), and this table is the ONE join
+ * between a declared place and its published verdict.
+ * </p>
+ * <p>
+ * A PLACE ABSENT FROM THIS TABLE IS UNREAD, NOT FALSE. `travel` and `enter_exit` declare places too
+ * (`warp_source_of_this_map`, `exit_tile_of_this_map`), and they are about the TILE the call names rather than about where
+ * the body stands - decided by the exit tables (`planExitTileRefusal`), not by a reading of her surroundings. So the rule
+ * below says nothing about them: an unread place is the world not having spoken, which is never the same statement as the
+ * world having said no, and a refusal invented from it would ground a plan nobody can act on.
+ */
+export const PLAN_PLACE_READINGS: ReadonlyMap<string, (snapshot: Snapshot) => boolean | null> = Object.freeze(
+  new Map([["home_indoors", (snapshot: Snapshot) => snapshot.sleepAdmitsHere ?? null] as const]),
+);
+
+/**
  * The one transition whose source tile must be a way out of the map she is standing on, and whose tables are checked.
  *
  * IT IS A NAME AND NOT A FAMILY, which is the whole reason the check below did not exist: `enter_exit` declares
@@ -1001,6 +1042,7 @@ export function planActionsFromRegistrations(
         toolRequirement: declaredToolRequirementOf(registration),
         approachRequirement: declaredApproachRequirementOf(registration),
         targetFamily: declaredTargetFamilyOf(registration),
+        effects: declaredEffectsOf(registration),
       }),
     );
   }
@@ -1107,6 +1149,20 @@ const TOOL_UPGRADE_LEVELS: Readonly<
 function declaredTargetFamilyOf(registration: ActionRegistration): string | null {
   const declared = registration.descriptor?.targetFamily;
   return typeof declared === "string" && declared.length > 0 ? declared : null;
+}
+
+/**
+ * What the surface declares this action requires and changes, read from the descriptor verbatim.
+ *
+ * An action whose descriptor carries no `effects` answers an EMPTY list, and the empty list is the surface's silence
+ * rather than a claim: the artifact says why it has none (`none: addressed_row_only`, `actor_body_only`, …) and this
+ * compiler reads that as "nothing a later step can consume", which is exactly what those reasons mean. Nothing here is
+ * inferred from an action id, so a newly published effect joins the rules below in the change that declares it.
+ */
+function declaredEffectsOf(registration: ActionRegistration): readonly PublishedPlanEffect[] {
+  const declared = registration.descriptor?.effects?.declared;
+  if (declared === undefined) return Object.freeze([]);
+  return Object.freeze(declared.map((effect) => Object.freeze({ ...effect })));
 }
 
 function declaredApproachRequirementOf(registration: ActionRegistration): PublishedPlanApproachRequirement {
@@ -1660,7 +1716,7 @@ function planWaterBudget(
   if (row === undefined) return unmeasured(`slot_not_published=${String(slot)}`);
   const water = row.water;
   const maximum = row.max;
-  if (!isNonNegativeSafeInteger(water) || !isNonNegativeSafeInteger(maximum))
+  if (!(isNonNegativeSafeInteger(water) && isNonNegativeSafeInteger(maximum)))
     return unmeasured(`can_reading_invalid=${String(slot)}`);
   // The cost of one node is the engine's own: `WaterLeft -= power + 1`, where `power` is the `charge` the request names -
   // an action that declares no `charge` swings at power 0 and spends one. A charge this compiler cannot read is priced at
@@ -2086,6 +2142,7 @@ function newPlanScriptState(
     argumentOwners: planArgumentOwners(actions),
     worldTileByNode: new Map(),
     callOfNode: new Map(),
+    movesActorActionIds: planMovedActorActionIds(actions),
   };
 }
 
@@ -2376,6 +2433,14 @@ type PlanScriptState = {
    * a node names off the node itself for exactly that reason.
    */
   worldTileByNode: Map<string, string>;
+  /**
+   * The published actions whose effects declare `moves_actor`: the steps a place-requiring step can be waiting on.
+   *
+   * Read from the surface's own declaration rather than from an id list here (`planActionsFromRegistrations`), so an
+   * action that starts moving the body joins the rule in the change that declares it, and one that stops is out of it
+   * there - which is the whole reason the effect classes exist.
+   */
+  movesActorActionIds: ReadonlySet<string>;
 };
 
 /**
@@ -3696,6 +3761,12 @@ function emitPlanNode(
   state: PlanScriptState,
 ): void {
   const tile = announcedTileOf(action, arguments_);
+  // A PLACE THE PLAN NEVER REACHES IS ANSWERED BEFORE THE ORPHAN RULE, because it is the fact she has to fix: the night
+  // answered `not_home` because no step of her plan moved the body home, and a code that only named a refused predecessor
+  // would send her to the transition instead of to the walk. The orphan rule below still answers the steps that are about
+  // the MAP the refused transition led to (`emitPlanNode`).
+  const reach = planPlaceReach(action, snapshot, state);
+  if (reach.refusal !== undefined) rejectPlanCall(reach.refusal, state, requirementOf(action));
   const predecessor =
     state.refusedTransitions[0] ??
     (tile === null ? undefined : state.refusedTiles.find((entry) => entry.tile === tile));
@@ -3706,7 +3777,7 @@ function emitPlanNode(
       requirementOf(action),
     );
   try {
-    emitPlanStep(action, arguments_, snapshot, actions, state);
+    emitPlanStep(action, arguments_, snapshot, actions, state, reach.providerNodeId);
   } catch (error) {
     // Recorded on the way out, where the refusal and the action that was being written are both in hand: `atPlanCall`
     // records the rejection, and only this boundary knows whether the call that failed was THE STEP ITSELF or the
@@ -3721,6 +3792,100 @@ function emitPlanNode(
     }
     throw error;
   }
+}
+
+/**
+ * The place a step needs of the world before it can happen, and the seam that decides it - both the Mod's words.
+ *
+ * `place` is what the refusal names, and `expectedBy` is the predicate (`SleepAndAdvanceDayLifecycle.HomeOf`) whose "no"
+ * the surface publishes as a reading. The pair travels together because one is the fact and the other is who answers for it:
+ * a refusal naming only `home_indoors` would leave the caller looking for a rule this side does not own.
+ */
+type PlanRequiredPlace = Readonly<{ place: string; expectedBy: string }>;
+
+/** The places a step declares it must already be in, read off the surface's `requires_place` effects. */
+function planRequiredPlaces(action: PublishedPlanAction): readonly PlanRequiredPlace[] {
+  return action.effects
+    .filter((effect) => effect.class === "requires_place")
+    .map((effect) => Object.freeze({ place: effect.subject, expectedBy: effect.observedBy }));
+}
+
+/** The actions whose effects declare `moves_actor`: the population a place-requiring step may depend on. */
+function planMovedActorActionIds(actions: readonly PublishedPlanAction[]): ReadonlySet<string> {
+  return new Set(
+    actions
+      .filter((action) => action.effects.some((effect) => effect.class === "moves_actor"))
+      .map((action) => action.actionId),
+  );
+}
+
+/** Whether the world says this place holds where the body stands now; `null` when no reading answers for it. */
+function planPlaceVerdict(place: string, snapshot: Snapshot): boolean | null {
+  const reading = PLAN_PLACE_READINGS.get(place);
+  return reading === undefined ? null : reading(snapshot);
+}
+
+/**
+ * The nearest earlier node whose action declares `moves_actor`: the step this one's place would have been reached by.
+ *
+ * Nearest rather than all of them, for the reason the tile rule gives (`planProducerNodeOnTile`): a node carries one
+ * consumption edge, and a skip names one producer to read.
+ */
+function planNearestMovedActorNode(state: PlanScriptState): string | undefined {
+  for (let index = state.nodes.length - 1; index >= 0; index -= 1) {
+    const candidate = state.nodes[index]!;
+    if (state.movesActorActionIds.has(candidate.actionId)) return candidate.nodeId;
+  }
+  return undefined;
+}
+
+/**
+ * WHAT A PLACE-REQUIRING STEP OWES THE STEPS BEFORE IT, and what it is refused with when none of them can have delivered it.
+ *
+ * <p>
+ * THE MEASUREMENT IS `round93` (`plan_463`, 2026-11-22). Standing in Town she wrote `enter_exit({x:64,y:14}); sleep();` -
+ * `(64,14)` being the FARMHOUSE door spelled in the town's frame, so the transition was refused and dropped. The `sleep`
+ * was KEPT, because one refused call stops only itself, and the plan that ran was `sleep()` ALONE from Town: the night
+ * answered `not_home` for **308 s** and the engine's 2:00 AM pass-out ended the run. Her plan had the walk home in it; the
+ * one that ran did not.
+ * </p>
+ * <p>
+ * TWO ANSWERS, AND WHICH ONE APPLIES IS THE PLAN'S OWN SHAPE. An earlier step that declares `moves_actor` is the step the
+ * place is reached by, so this step CONSUMES it: `dependsOn` it, and a note that failed is skipped rather than run from a
+ * place the plan never reached. With no such step at all, nothing in this plan can move the body, so the place is never
+ * reached and the call is refused by name - the place, and the predicate that would have answered for it.
+ * </p>
+ * <p>
+ * THE DECLARATIONS CARRY THIS, NOT A TABLE OF ACTION PAIRS: the consumer side is "this action declares `requires_place`"
+ * and the provider side is "that one declares `moves_actor`", both read from the surface (`planActionsFromRegistrations`),
+ * so `express_emote` (`none: actor_body_only`) and `chest_store` (a `consumes` effect only) consume no moved actor and stay
+ * independent. A pair of action ids would have to be edited for every action added on either side.
+ * </p>
+ * <p>
+ * THE LIMIT OF THE RULE, STATED WHERE IT CAN BE READ: `moves_actor` says the body is put somewhere and NOT WHERE, so a walk
+ * within the map she stands on counts as a provider for a place that only another MAP can hold. `move_to_tile(5,5);
+ * sleep()` written in Town therefore compiles, `sleep` depends on the walk, and the walk succeeding still leaves her in Town
+ * - where the night answers `not_home` in about two seconds rather than in 308. The cost of the coarseness is one dispatch
+ * with an answer she can read; the cost of the alternative would be a second spelling of `HomeOf` on this side, which is
+ * the table this rule exists to replace. The direction it must never err in is the one it does not: acting as if a step
+ * that was REFUSED had moved her.
+ * </p>
+ */
+function planPlaceReach(
+  action: PublishedPlanAction,
+  snapshot: Snapshot,
+  state: PlanScriptState,
+): Readonly<{ providerNodeId?: string; refusal?: string }> {
+  const unmet = planRequiredPlaces(action).filter((required) => planPlaceVerdict(required.place, snapshot) === false);
+  // Nothing is declared, or the world did not say (or said yes): a place that already holds needs no step, and an unread
+  // one is the world's silence rather than a "no".
+  if (unmet.length === 0) return Object.freeze({});
+  const provider = planNearestMovedActorNode(state);
+  if (provider !== undefined) return Object.freeze({ providerNodeId: provider });
+  const first = unmet[0]!;
+  return Object.freeze({
+    refusal: `plan_script_requires_a_place_the_plan_never_reaches:${planStepName(state.builderCalls)}:${first.place}:expected_by=${first.expectedBy}`,
+  });
 }
 
 /**
@@ -3752,6 +3917,8 @@ function emitPlanStep(
   snapshot: Snapshot,
   actions: readonly PublishedPlanAction[],
   state: PlanScriptState,
+  /** The step whose `moves_actor` this step's `requires_place` waits on, when the world does not already hold the place. */
+  placeProvider: string | undefined,
 ): void {
   state.calls += 1;
   if (state.calls > MAX_PLAN_BUILDER_CALLS) refusePlan(`plan_script_call_cap:${state.calls}`, state);
@@ -3941,8 +4108,14 @@ function emitPlanStep(
   // earlier step only READ (`machine_inspect` of the machine a later step loads) is treated as a consumer and skipped
   // with it. That errs toward leaving a tile alone after the step written on it failed; the direction it must never err
   // in is acting as if a failed step had produced something.
+  // A PLACE THE PLAN REACHES IS A FACT THIS STEP CONSUMES, and it is the second producer besides the tile above: `round93`
+  // ran `sleep()` alone from Town because nothing in the plan was ordered before it, and what it was missing was not a
+  // tile but the map the dropped transition led to. See `planPlaceReach` for the rule, its declarations and its limit.
   const tile = planWorldTileOf(action, canonical);
   const producer = tile === null ? undefined : planProducerNodeOnTile(state, tile)?.nodeId;
+  const consumed = Object.freeze([
+    ...new Set([producer, placeProvider].filter((nodeId): nodeId is string => nodeId !== undefined)),
+  ]);
   const previous = state.nodes[state.nodes.length - 1]?.nodeId;
   if (tile !== null) state.worldTileByNode.set(authorNodeId, tile);
   state.nodes.push(
@@ -3950,10 +4123,10 @@ function emitPlanStep(
       nodeId: authorNodeId,
       actionId: action.actionId,
       arguments: Object.freeze(canonical),
-      dependsOn: Object.freeze(producer === undefined ? [] : [producer]),
+      dependsOn: consumed,
       // Absent rather than `[]` when there is no ordering edge: absent is the empty edge on the wire, and the first
       // node (or one that follows the very step it consumes) has nothing to wait for.
-      ...(previous === undefined || previous === producer ? {} : { orderedAfter: Object.freeze([previous]) }),
+      ...(previous === undefined || consumed.includes(previous) ? {} : { orderedAfter: Object.freeze([previous]) }),
       bindings: Object.freeze({}),
     }),
   );

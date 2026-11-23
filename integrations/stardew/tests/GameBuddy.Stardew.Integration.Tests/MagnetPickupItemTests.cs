@@ -434,12 +434,13 @@ public sealed class MagnetPickupItemTests
         receipt.ReasonCode.Should().NotBe("item_target_changed");
 
         // ADR-006: a success is proved by action-specific evidence, and for this action the Host decides it by
-        // parsing exactly these nine keys (host/src/stardew-completion-contracts.ts,
-        // hasPickupItemCompletionEvidence) with stack >= 1, both flags true and after >= before + stack.
+        // parsing exactly these eleven keys (host/src/stardew-completion-contracts.ts,
+        // hasPickupItemCompletionEvidence) with stack >= 1, both flags true, after >= before + stack, and the
+        // movement pair `stack - object_consumed = object_after` agreeing with the published stack.
         Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
         evidence.Keys.Should().BeEquivalentTo(new[]
         {
-            "location", "target", "tile", "item", "stack",
+            "location", "target", "tile", "item", "stack", "object_consumed", "object_after",
             "native_auto_collect", "chunk_removed", "inventory_before", "inventory_after",
         });
         evidence["location"].Should().Be("Farm");
@@ -447,6 +448,10 @@ public sealed class MagnetPickupItemTests
         evidence["tile"].Should().Be("2,2");
         evidence["item"].Should().Be(DroppedItemId);
         evidence["stack"].Should().Be("1");
+        evidence["object_consumed"].Should().Be(
+            "1", "the whole published stack left the ground and the pack took it");
+        evidence["object_after"].Should().Be(
+            "0", "no chunk of this identity is left, so the identity's own remainder is nothing");
         evidence["native_auto_collect"].Should().Be("true", "the magnet, not a click, delivered this chunk");
         evidence["chunk_removed"].Should().Be("true", "no chunk of this identity is left anywhere in the location");
         evidence["inventory_before"].Should().Be(
@@ -488,6 +493,9 @@ public sealed class MagnetPickupItemTests
             "false", "a chunk of this identity is still lying in the location, which is the fact this field claims");
         evidence["reason"].Should().Be(
             "chunk_still_present", "a surviving chunk names itself instead of the receipt claiming a removal");
+        evidence["object_consumed"].Should().Be("1", "the pack took the published stack");
+        evidence["object_after"].Should().Be(
+            "none", "the location still holds a chunk of this identity, so the remainder of the published stack is not a number this pass can state");
         evidence["inventory_before"].Should().Be("0");
         evidence["inventory_after"].Should().Be("1");
     }
@@ -1057,10 +1065,10 @@ public sealed class MagnetPickupItemTests
     public void TheSnapshotPublishesThroughTheRecordingDiscovery()
     {
         string controller = Read("farmhandexecutioncontroller.cs");
-        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverItemTargets"), "private IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverItemTargets"), "internal IReadOnlyList<BridgeItemTarget> DiscoverItemTargets(");
 
         controller.Should().Contain(
-            "advertisedCapabilities.Contains(\"pickup_item\", StringComparer.Ordinal) ? DiscoverItemTargets(player) : null",
+            "advertisedCapabilities.Contains(\"pickup_item\", StringComparer.Ordinal) ? this.TargetDiscovery.DiscoverItemTargets(player) : null",
             "the snapshot's item channel must be this discovery, or no published target id is ever recorded");
         discovery.Should().Contain("this.groundItemTargets.Record(", "the discovery records what it published");
         discovery.Should().Contain(
@@ -1306,9 +1314,9 @@ public sealed class MagnetPickupItemTests
         /// <summary>The target id the snapshot publishes for the drop, through the production discovery.</summary>
         internal string PublishTargetId()
         {
-            IReadOnlyList<BridgeItemTarget> targets = (IReadOnlyList<BridgeItemTarget>)typeof(ExecutionManager)
-                .GetMethod("DiscoverItemTargets", Any)!
-                .Invoke(this.Manager, new object[] { this.Actor })!;
+            MethodInfo discovery = DiscoveryMembers.Method("DiscoverItemTargets");
+            IReadOnlyList<BridgeItemTarget> targets = (IReadOnlyList<BridgeItemTarget>)discovery
+                .Invoke(DiscoveryMembers.Target(discovery, this.Manager), new object[] { this.Actor })!;
             if (targets.Count == 0)
                 throw new InvalidOperationException(
                     $"the discovery published nothing: debris={this.Farm.debris.Count};"

@@ -229,35 +229,4 @@ internal sealed partial class ExecutionManager
         return new FishPondTargetResolution(true, "accepted", string.Empty, identity, (FishPond)building);
     }
 
-    private static IReadOnlyList<BridgeFishPondTarget> DiscoverFishPondTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeFishPondTarget>();
-        List<BridgeFishPondTarget> result = new();
-        foreach (Building building in location.buildings)
-        {
-            if (building is null) continue;
-            // A pond under construction is not a pond the engine will open: `Building.doAction` answers it with the
-            // `UnderConstruction` dialogue and performs nothing else (Building.cs:937-940).
-            if (building.daysOfConstructionLeft.Value > 0)
-            {
-                exclusions.Record("fishPondTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            if (!TryDescribeFishPond(building, out bool hasFish, out int occupants) || !hasFish) continue;
-            Point door = building.getPointForHumanDoor();
-            if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeFishPondTarget(
-                BuildFishPondTargetId(location, building),
-                location.NameOrUniqueName,
-                door.X,
-                door.Y,
-                building.buildingType.Value,
-                occupants,
-                ((FishPond)building).fishType.Value ?? string.Empty));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
 }

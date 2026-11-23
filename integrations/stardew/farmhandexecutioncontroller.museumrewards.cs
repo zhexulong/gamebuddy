@@ -251,24 +251,4 @@ internal sealed partial class ExecutionManager
         return $"museum_reward_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    /// <summary>
-    /// The museum's current reward set as the actor may collect it right now, projected read-only. At most
-    /// one entry: the museum is a location, not a set of places, and the target names the whole set at
-    /// once. A museum with nothing to collect advertises nothing, because there is nothing to claim.
-    /// </summary>
-    internal static IReadOnlyList<BridgeMuseumRewardTarget> DiscoverMuseumRewardTargets(Farmer player)
-    {
-        if (Game1.getLocationFromName(MuseumLocationName) is not LibraryMuseum museum)
-            return Array.Empty<BridgeMuseumRewardTarget>();
-        List<(string RewardKey, Item Item)> collectable = ReadCollectableMuseumRewards(museum, player);
-        if (collectable.Count == 0)
-            return Array.Empty<BridgeMuseumRewardTarget>();
-        return new[]
-        {
-            new BridgeMuseumRewardTarget(
-                BuildMuseumRewardTargetId(museum.NameOrUniqueName, collectable.Select(entry => entry.RewardKey).ToArray()),
-                museum.NameOrUniqueName,
-                collectable.Count),
-        };
-    }
 }

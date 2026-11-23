@@ -201,7 +201,7 @@ public sealed class ItemTileActionTests
         body.Should().Contain("PanNativeReachTiles");
         source.Should().Contain("internal const int PanNativeReachTiles = 2;");
         // Discovery reads the same predicate the action admits with.
-        string discovery = MethodBody(source, "internal static IReadOnlyList<BridgePanSiteTarget> DiscoverPanSites(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverPanSites"), "internal static IReadOnlyList<BridgePanSiteTarget> DiscoverPanSites(");
         discovery.Should().Contain("ReadLivePanSite(location)");
         discovery.Should().NotContain("new BridgePanSiteTarget(");
         string site = MethodBody(source, "internal static BridgePanSiteTarget? ReadLivePanSite(");
@@ -257,7 +257,7 @@ public sealed class ItemTileActionTests
         identity.Should().Contain("pendingCount");
         identity.Should().Contain("headMailId ?? \"none\"");
         // Discovery does not hardcode a coordinate: it scans the game's own layer.
-        string discovery = MethodBody(source, "internal static IReadOnlyList<BridgeMailboxTarget> DiscoverMailboxTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverMailboxTargets"), "internal static IReadOnlyList<BridgeMailboxTarget> DiscoverMailboxTargets(");
         discovery.Should().Contain("location.map?.GetLayer(\"Buildings\")");
         discovery.Should().Contain("IsMailboxTile(location, x, y)");
         // And it is presence-scoped, not reach-scoped: the mailbox is a fixed landmark of the farm,

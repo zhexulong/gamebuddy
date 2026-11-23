@@ -426,27 +426,6 @@ internal sealed partial class ExecutionManager
     }
 
     /// <summary>
-    /// The actor's own wearable body slots, projected read-only from live state. Every slot of the
-    /// fixed set is published, empty or not, because an EMPTY slot is exactly the target an equip
-    /// into a free slot names; the occupant fields say which are filled. Nothing is synthesized:
-    /// the occupant is the item the game itself holds in that slot.
-    /// </summary>
-    internal static IReadOnlyList<BridgeWearableTarget> DiscoverWearableTargets(Farmer player)
-    {
-        List<BridgeWearableTarget> result = new(WearableBodySlots.Length);
-        foreach (string bodySlot in WearableBodySlots)
-        {
-            if (!TryReadWearableBodySlot(player, bodySlot, out Item? occupant)) continue;
-            result.Add(new BridgeWearableTarget(
-                BuildWearableTargetId(player, bodySlot),
-                bodySlot,
-                occupant?.QualifiedItemId,
-                occupant?.DisplayName));
-        }
-        return result;
-    }
-
-    /// <summary>
     /// The opaque id of one wearable body slot OF THIS ACTOR: the slot name plus a digest of the
     /// slot's current occupant. The slot name is readable so a stale id can still be attributed to
     /// the slot it names; the state is hashed so it cannot be forged. See the file header for why

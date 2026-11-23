@@ -93,9 +93,59 @@ public readonly record struct ActorDisposition(
     ActorDispositionKind Kind,
     string? ModalType,        // "DialogueBox" | "LetterViewer" | "ReadyCheck" | "GameMenu" | ...
     bool ModalActionOwned,    // L0 binary: actionOwned(newestExecutionId) vs worldOwned
-    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation" | "warping" | "screenFade"
+    string? TransientKind)    // "freezePause" | "eating" | "toolAnimation" | "selfAnimation" | "warping" | "screenFade" | "unnamed"
 {
     public static readonly ActorDisposition Idle = new(ActorDispositionKind.Idle, null, false, null);
+}
+
+/// <summary>
+/// The transient body holds <see cref="WorldModel.Classify"/> can name, one member per native producer.
+///
+/// <para>
+/// A transient is a PROMISE: the world holds the body for a moment and then ends the hold itself, so an action only has
+/// to wait. The promise is honest only while its producer is still running, and the failure this closed set exists for is
+/// a promise with no producer left. MEASURED `round97` (day 6 11:40): `held_by=transient_busy;transient_kind=warping;`
+/// `retry_window_ms=2000;can_move=false;admissible_actions=none;next_step=wait_for_retry_window` was the answer for four
+/// minutes while the game clock stood at 1140 - the engine's `_isWarping` never came down (`onFadeToBlackComplete` is its
+/// only release, Game1.cs:6271), so `CanMove` stayed false and `shouldTimePass()` (`:9307-9310`) held the clock with it.
+/// Nothing in the sentence knew how long the producer was allowed, so it promised the wait again on every read.
+/// </para>
+/// <para>
+/// SO EVERY MEMBER DECLARES ITS PRODUCER'S OWN WINDOW (<see cref="WorldModel.SettleWindowMs"/>) and the tick arms it once
+/// (<see cref="WorldModel.NoteObservedTransient"/>). Inside the window the sentence publishes what is left of it; from the
+/// instant it passes the SAME sentence stops promising a wait and names the step that ends the attempt - the pair a
+/// declared `body_pause` hold already publishes (<see cref="WorldModel.DescribeCanMoveHold"/>), with no new field and no
+/// second deadline mechanism. The compiler refuses a member without a window (both switches are exhaustive under
+/// `TreatWarningsAsErrors`), and the state matrix refuses a kind `Classify` mints outside this set and a kind whose
+/// deadline does not fire.
+/// </para>
+/// </summary>
+internal enum ActorTransientKind
+{
+    /// <summary>`_isWarping`, raised by `performWarpFarmer` (Game1.cs:10031) and lowered in `onFadeToBlackComplete`
+    /// (:6271). The fade runs 1.1 alpha up and back down at 0.0019/ms (ScreenFade.cs:38, :70), i.e. ~1.2 s both ways.</summary>
+    Warping,
+
+    /// <summary>`Game1.globalFade`, the other half of the engine's control-input gate (:4286), cleared at both ends by
+    /// `UpdateGlobalFade` (ScreenFade.cs:134, :154) at the caller's own `fadeSpeed` (:149).</summary>
+    ScreenFade,
+
+    /// <summary>`Farmer.freezePause`, a native countdown the engine owns. The longest guard the target version arms is the
+    /// eating path's own (`freezePause = 20000`, Farmer.cs:9145), released by the universal `forceCanMove()`
+    /// (:7090-7105) - which is why this member's window is not the shared transient window.</summary>
+    FreezePause,
+
+    /// <summary>`Farmer.isEating`, armed by `performEatAnimation`/`performDrinkAnimation` (Farmer.cs:9220, :9157) as
+    /// `animateOnce` with eight frames at 80 ms.</summary>
+    Eating,
+
+    /// <summary>`Farmer.UsingTool`/`toolPower`, the swing whose release is the engine's own animation end.
+    /// </summary>
+    ToolAnimation,
+
+    /// <summary>`Farmer.FarmerSprite.PauseForSingleAnimation`, raised by `animateOnce` (FarmerSprite.cs:673) and lowered in
+    /// its own release writes (:792, :1024).</summary>
+    SelfAnimation,
 }
 
 /// <summary>Single-authority per-tick world/body projection. Mod-side
@@ -160,6 +210,122 @@ internal static class WorldModel
         ActorDispositionKind.Transient => "transient",
     };
 
+    /// <summary>
+    /// The wire spelling of a transient kind, beside the disposition kind's for the same reason: a CLOSED set spelled
+    /// once, with no catch-all arm, so a kind added to <see cref="ActorTransientKind"/> without a word here is a build
+    /// error that names the member (`CS8509`, promoted by `TreatWarningsAsErrors`).
+    /// </summary>
+    internal static string KindForWire(ActorTransientKind kind) => kind switch
+    {
+        ActorTransientKind.Warping => "warping",
+        ActorTransientKind.ScreenFade => "screenFade",
+        ActorTransientKind.FreezePause => "freezePause",
+        ActorTransientKind.Eating => "eating",
+        ActorTransientKind.ToolAnimation => "toolAnimation",
+        ActorTransientKind.SelfAnimation => "selfAnimation",
+    };
+
+    /// <summary>
+    /// How long each transient's producer is allowed before the hold stops being "will pass on its own". ONE number per
+    /// kind, read by every side of the deadline: the armed instant (<see cref="TransientSettle"/>), the sentence's
+    /// `retry_window_ms`, and the body loop's WIA §4.4 tolerance - an Agent told a window the loop does not wait (or the
+    /// reverse) retries into a live lock.
+    ///
+    /// <para>
+    /// `null` is the `!CanMove` tail: a hold `Classify` cannot name, whose producer declared nothing, so the only window
+    /// worth publishing is the one the Mod does own.
+    /// </para>
+    /// </summary>
+    internal static int SettleWindowMs(ActorTransientKind? kind) => kind switch
+    {
+        ActorTransientKind.Warping => TransientRetryWindowMs,
+        ActorTransientKind.ScreenFade => TransientRetryWindowMs,
+        ActorTransientKind.Eating => TransientRetryWindowMs,
+        ActorTransientKind.ToolAnimation => TransientRetryWindowMs,
+        ActorTransientKind.SelfAnimation => TransientRetryWindowMs,
+        // The one member whose producer declares its own bound, far above the shared window: the eating path arms
+        // `freezePause = 20000` before it starts its eight-frame animation (Farmer.cs:9145), and only the universal
+        // `forceCanMove()` takes it back (:7090-7105). Publishing 2000 ms for this kind would accuse a producer that is
+        // still running of having stalled.
+        ActorTransientKind.FreezePause => FreezePauseSettleWindowMs,
+        null => TransientRetryWindowMs,
+    };
+
+    /// <summary>`Farmer.freezePause = 20000` in `eatItem` (Farmer.cs:9145): the longest guard the target version arms.</summary>
+    internal const int FreezePauseSettleWindowMs = 20000;
+
+    /// <summary>
+    /// The declared kind a wire word names, or null when the word names none of them (the `unnamed` hole, or a mint that
+    /// bypassed <see cref="ActorTransientKind"/>). A word nothing declares cannot have a declared window, and the caller
+    /// that reads it treats the transient as unarmed - the safe direction, which stops promising rather than waiting.
+    ///
+    /// <para>
+    /// The pairs are built ONCE from the enum through <see cref="KindForWire"/>, so this is not a second spelling of the
+    /// words and the per-tick caller allocates nothing: <see cref="ComputeDisposition"/> asks this on every frame.
+    /// </para>
+    /// </summary>
+    internal static ActorTransientKind? DeclaredKindOf(string? kindWord)
+    {
+        foreach ((string word, ActorTransientKind kind) in DeclaredTransientWords)
+        {
+            if (string.Equals(word, kindWord, StringComparison.Ordinal))
+                return kind;
+        }
+
+        return null;
+    }
+
+    private static readonly (string Word, ActorTransientKind Kind)[] DeclaredTransientWords = Enum
+        .GetValues<ActorTransientKind>()
+        .Select(kind => (Word: KindForWire(kind), Kind: kind))
+        .ToArray();
+
+    /// <summary>The holder word a transient publishes: <see cref="BodyHold.TransientHolderPrefix"/> and its kind.</summary>
+    internal static string TransientHolder(string kindWord) => BodyHold.TransientHolderPrefix + kindWord;
+
+    /// <summary>
+    /// The transient the body is in and the instant its producer's window runs out - the ONE armed deadline, game thread
+    /// only, advanced once per tick by <see cref="ComputeDisposition"/>.
+    ///
+    /// <para>
+    /// It is armed by the tick rather than by the reader because a reader can be the admission, the body loop or a
+    /// refusal, and each of them asking on its own would re-arm the window from its own read: the window could never
+    /// expire, which is the bug `round86` took four minutes of a stopped clock to teach
+    /// (`Update_...`'s navigation path says the same thing one layer up).
+    /// </para>
+    /// </summary>
+    internal static void NoteObservedTransient(ActorTransientKind? kind)
+    {
+        if (observedTransient == kind)
+            return;
+
+        observedTransient = kind;
+        observedTransientAtMs = BodyHold.NowMs();
+    }
+
+    /// <summary>
+    /// The declared settle hold for <paramref name="kind"/>, in the shape the ONE deadline mechanism already carries
+    /// (<see cref="BodyHoldFact"/>): `held(transient:&lt;kind&gt;, native_world_transient, armedAt + window)`. Free when the
+    /// tick never armed this kind - a caller with no measurement owes no wait.
+    /// </summary>
+    internal static BodyHoldFact TransientSettle(ActorTransientKind kind) => observedTransient == kind
+        ? new BodyHoldFact(
+            BodyHoldState.Held,
+            TransientHolder(KindForWire(kind)),
+            BodyHold.NativeTransientReason,
+            observedTransientAtMs + SettleWindowMs(kind))
+        : BodyHoldFact.Free;
+
+    /// <summary>Forgets the armed transient. Test-only: production has one body and one tick.</summary>
+    internal static void ResetTransientSettle()
+    {
+        observedTransient = null;
+        observedTransientAtMs = 0;
+    }
+
+    private static ActorTransientKind? observedTransient;
+    private static long observedTransientAtMs;
+
     internal static ActorDisposition Classify(in ActorWorldFacts facts)
     {
         if (facts.EventUp)
@@ -223,7 +389,7 @@ internal static class WorldModel
         // alpha at 0.0019/ms (ScreenFade.cs:38, :70), i.e. ~580 ms, and released by the engine rather than by us.
         if (facts.Warping)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "warping");
+            return Transient(ActorTransientKind.Warping);
         }
 
         // The other fade, and the honest place to put it is right behind the warp's: the two flags are mutually exclusive
@@ -232,22 +398,22 @@ internal static class WorldModel
         // (the caller's `fadeSpeed`, :149) is inside `TransientRetryWindowMs`.
         if (facts.ScreenFade)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "screenFade");
+            return Transient(ActorTransientKind.ScreenFade);
         }
 
         if (facts.FreezePaused)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "freezePause");
+            return Transient(ActorTransientKind.FreezePause);
         }
 
         if (facts.Eating)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "eating");
+            return Transient(ActorTransientKind.Eating);
         }
 
         if (facts.UsingTool || facts.ToolCharged)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "toolAnimation");
+            return Transient(ActorTransientKind.ToolAnimation);
         }
 
         // Last among the transients, because a tool swing raises the same flag: `UsingTool` is the more specific
@@ -256,11 +422,18 @@ internal static class WorldModel
         // whose release is the engine's `CanMove = true` (FarmerSprite.cs:789), inside `TransientRetryWindowMs`.
         if (facts.SelfAnimation)
         {
-            return new ActorDisposition(ActorDispositionKind.Transient, null, false, "selfAnimation");
+            return Transient(ActorTransientKind.SelfAnimation);
         }
 
         return ActorDisposition.Idle;
     }
+
+    /// <summary>
+    /// A transient disposition, minted from the declaration rather than from a literal here: the word and the settle
+    /// window then come from the same place, which is the only way a kind can exist without the other half.
+    /// </summary>
+    private static ActorDisposition Transient(ActorTransientKind kind) =>
+        new(ActorDispositionKind.Transient, null, false, KindForWire(kind));
 
     /// <summary>
     /// Whether something modal is on screen: a menu, or a dialogue the engine still reports as up.
@@ -396,9 +569,15 @@ internal static class WorldModel
     internal const string DialogueAnswerActionId = "answer_dialogue";
 
     /// <summary>Computes the actor's disposition ONCE per tick on the game
-    /// thread. The common (Idle) path allocates nothing.</summary>
+    /// thread, and arms the transient it names (<see cref="NoteObservedTransient"/>): the
+    /// settle deadline has one anchor per transient, taken here, so a reader that asks
+    /// twice cannot move it. The common (Idle) path allocates nothing.</summary>
     public static ActorDisposition ComputeDisposition(Farmer? player)
-        => Classify(ReadFacts(player));
+    {
+        ActorDisposition disposition = Classify(ReadFacts(player));
+        NoteObservedTransient(DeclaredKindOf(disposition.TransientKind));
+        return disposition;
+    }
 
     /// <summary>The thin adapter: reads the raw facts off the live game thread
     /// object. The Game1 statics are always safe to read. The actor-derived
@@ -552,9 +731,12 @@ internal static class WorldModel
             // mints one any more - the two `CanMove` shapes name their holder in `DescribeHeldBody` - and
             // `TransientRefusalNamesItsHolderTests` fails by name on this word if one comes back, rather than letting a
             // bucket within a bucket read as a holder.
+            //
+            // THE WINDOW IS THE KIND'S OWN, not one number for all six: a producer that declares a longer bound than
+            // the shared window would otherwise be accused of stalling while it is still running (see `SettleWindowMs`).
             ActorDispositionKind.Transient =>
                 $"transient_kind={disposition.TransientKind ?? UnnamedTransientKind}"
-                + $";retry_window_ms={TransientRetryWindowMs};can_move={canMoveText}",
+                + $";retry_window_ms={SettleWindowMs(DeclaredKindOf(disposition.TransientKind))};can_move={canMoveText}",
             ActorDispositionKind.Idle => $"can_move={canMoveText}",
         };
     }
@@ -589,10 +771,11 @@ internal static class WorldModel
     /// does not ask twice, and every shape this Mod can mint can be examined without a game.
     /// </param>
     /// <param name="hold">
-    /// The declared hold, read from the live ledger by <see cref="DescribeCurrentHeldBody"/>. It is taken rather than
-    /// looked up here because a caller examining a shape must be able to STATE the shape it examines, and because
-    /// <see cref="ActorWorldFacts"/> is the closed set of holds the fact FLAGS can name - a body timer declares none of
-    /// them while it writes <c>CanMove = false</c>.
+    /// The declared hold, read from the live ledger by <see cref="DescribeCurrentHeldBody"/> - or, for a
+    /// <see cref="ActorDispositionKind.Transient"/>, that transient's OWN settle hold (<see cref="TransientSettle"/>). It is
+    /// taken rather than looked up here because a caller examining a shape must be able to STATE the shape it examines,
+    /// and because <see cref="ActorWorldFacts"/> is the closed set of holds the fact FLAGS can name - a body timer
+    /// declares none of them while it writes <c>CanMove = false</c>.
     /// </param>
     internal static (string ReasonCode, string Evidence) DescribeHeldBody(
         in ActorDisposition disposition,
@@ -609,6 +792,17 @@ internal static class WorldModel
         string code = HoldReasonCode(
             disposition.Kind != ActorDispositionKind.Idle ? disposition.Kind : ActorDispositionKind.Transient);
         string factsBlock = DescribeBodyHold(disposition, facts, canMove, modalIsQuestion);
+
+        // A WORLD transient names its HOLDER rather than the code (`held_by=transient:warping`, not the bucket
+        // `transient_busy`) and publishes its own deadline, so a caller is never told to wait for a producer that has
+        // already run out of time. See `DescribeTransientHold`.
+        if (disposition.Kind == ActorDispositionKind.Transient)
+        {
+            (string transientHolder, string transientCountermeasure) =
+                DescribeTransientHold(disposition, hold, BodyHold.NowMs());
+            return (code, $"held_by={transientHolder};{factsBlock}{transientCountermeasure}");
+        }
+
         if (disposition.Kind != ActorDispositionKind.Idle)
             return (code, $"held_by={HoldReasonCode(disposition.Kind)};{factsBlock}{HoldCountermeasure(disposition.Kind)}");
 
@@ -621,6 +815,54 @@ internal static class WorldModel
         // The engine's flag is UP and no hold is declared: she is free, and the sentence says so rather than naming a
         // holder a caller could wait out.
         return (code, $"held_by={FreeBodyHolder};{factsBlock}");
+    }
+
+    /// <summary>
+    /// The holder and the countermeasure for a <see cref="ActorDispositionKind.Transient"/> - a hold the WORLD owns and
+    /// its own producer ends.
+    ///
+    /// <para>
+    /// THE SAME DEADLINE A DECLARED `body_pause` HOLDS: <paramref name="settle"/> is a <see cref="BodyHoldFact"/>, so a
+    /// bounded window publishes what is left of it and the wait that window earns, and the instant it passes the sentence
+    /// publishes the OVERRUN and the step that ends the attempt - exactly the two arms
+    /// <see cref="DescribeCanMoveHold"/> publishes for the native body timer. There is no second deadline mechanism and no
+    /// transient-only field: what differs is only WHO the holder is.
+    /// </para>
+    /// <para>
+    /// A transient this process never armed - a describe from a caller that did not tick, a word no member of
+    /// <see cref="ActorTransientKind"/> spells, or a hold armed for a DIFFERENT kind (the body moved on, and the previous
+    /// producer's window says nothing about this one) - publishes no window at all and the step that ends the attempt.
+    /// That is the safe direction, and it is the one `round97` needed: a sentence with no measurement must stop promising
+    /// a wait rather than promise the window it was configured with.
+    /// </para>
+    /// </summary>
+    /// <param name="nowMs">The instant the deadline is judged at, so the boundary crossing can be driven without a clock.</param>
+    internal static (string Holder, string Countermeasure) DescribeTransientHold(
+        in ActorDisposition disposition,
+        BodyHoldFact settle,
+        long nowMs)
+    {
+        string holder = TransientHolder(disposition.TransientKind ?? UnnamedTransientKind);
+        bool ownedByThisKind = settle.Holder is { } declared
+            && string.Equals(declared, holder, StringComparison.Ordinal);
+        if (!ownedByThisKind)
+            return (holder, $";ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}");
+
+        // One unguarded arm per state, so a state added to the ledger fails here at build time instead of being waited
+        // out on a window it does not have.
+        return settle.State switch
+        {
+            BodyHoldState.Held when settle.RemainingMs(nowMs) is long remaining && remaining > 0 =>
+                (holder, $";hold_reason={settle.Reason};hold_remaining_ms={remaining};admissible_actions=none;next_step={WaitForRetryWindowStep}"),
+            BodyHoldState.Held when settle.RemainingMs(nowMs) is long overrun =>
+                (holder, $";hold_reason={settle.Reason};hold_overrun_ms={-overrun};admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+            BodyHoldState.HeldOpen =>
+                (holder, $";hold_reason={settle.Reason};ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+            BodyHoldState.Held =>
+                (holder, $";hold_reason={settle.Reason};ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+            BodyHoldState.Free =>
+                (holder, $";ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+        };
     }
 
     /// <summary>
@@ -651,9 +893,9 @@ internal static class WorldModel
         return hold.State switch
         {
             BodyHoldState.Held when hold.RemainingMs(now) is long remaining && remaining > 0 =>
-                (holder, $";hold_reason={hold.Reason};body_pause_remaining_ms={remaining};admissible_actions=none;next_step={WaitForRetryWindowStep}"),
+                (holder, $";hold_reason={hold.Reason};hold_remaining_ms={remaining};admissible_actions=none;next_step={WaitForRetryWindowStep}"),
             BodyHoldState.Held when hold.RemainingMs(now) is long overrun =>
-                (holder, $";hold_reason={hold.Reason};overrun_ms={-overrun};admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
+                (holder, $";hold_reason={hold.Reason};hold_overrun_ms={-overrun};admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
             BodyHoldState.HeldOpen =>
                 (holder, $";hold_reason={hold.Reason};ends_at=none;admissible_actions=none;next_step={ReportTheStalledBodyStep}"),
             BodyHoldState.Held => unheld,
@@ -673,20 +915,33 @@ internal static class WorldModel
         => DescribeHeldBody(Classify(facts), facts, canMove, hold, modalIsQuestion);
 
     /// <summary>
-    /// The live held body, with the two facts only a live farmer has: the mounted modal (a cutscene's own dialogue box is
+    /// The live held body, with the three facts only a live read has: the mounted modal (a cutscene's own dialogue box is
     /// reachable no other way, and guessing `is_question` would tell the caller to dismiss a box that is waiting for an
-    /// answer) and the declared hold <see cref="BodyHold"/> has recorded.
+    /// answer), the declared hold <see cref="BodyHold"/> has recorded for the `CanMove` write, and - for a transient - the
+    /// settle deadline the tick armed for the kind the world is holding her in.
     /// </summary>
     internal static (string ReasonCode, string Evidence) DescribeCurrentHeldBody(Farmer? player)
     {
         ActorWorldFacts facts = ReadFacts(player);
+        ActorDisposition disposition = Classify(facts);
         return DescribeHeldBody(
-            Classify(facts),
+            disposition,
             facts,
             player?.CanMove ?? false,
-            BodyHold.DescribeBodyHold(),
+            DeclaredHoldOf(disposition),
             LiveModalQuestion());
     }
+
+    /// <summary>
+    /// WHICH declared hold the sentence describes. A transient's own settle deadline when the world holds her in one, and
+    /// otherwise the ledger's record of who wrote <c>CanMove</c> - they are two different questions ("which producer is
+    /// taking its time" vs "which native site took the flag"), answered from two different declarations, and neither
+    /// stands in for the other.
+    /// </summary>
+    private static BodyHoldFact DeclaredHoldOf(in ActorDisposition disposition) =>
+        DeclaredKindOf(disposition.TransientKind) is ActorTransientKind kind
+            ? TransientSettle(kind)
+            : BodyHold.DescribeBodyHold();
 
     /// <summary>
     /// The live held body as the SENTENCE alone, for the navigation refusal, which carries its own code
@@ -761,6 +1016,12 @@ internal static class WorldModel
     /// names its own answer (the event-acting family, or `none` plus the one step left), so a cutscene is not answered
     /// twice; every other hold names either the modal-resolving family - whose working precondition IS an open modal -
     /// or `none` plus the one step that remains.
+    ///
+    /// <para>
+    /// <see cref="ActorDispositionKind.Transient"/> is answered by <see cref="DescribeTransientHold"/> instead, because a
+    /// transient's step depends on how much of its own window is left - the arm here is what a transient with NO declared
+    /// window earns when nothing else speaks for it, and it is deliberately not reachable from `DescribeHeldBody`.
+    /// </para>
     /// </summary>
     private static string HoldCountermeasure(ActorDispositionKind kind) => kind switch
     {

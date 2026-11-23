@@ -22,26 +22,6 @@ internal sealed partial class ExecutionManager
 
     private const int MaximumFixedInteractionPointActionWordLength = 64;
 
-    internal static IReadOnlyList<BridgeFixedInteractionPoint> DiscoverFixedInteractionPoints(Farmer player, out int omitted)
-    {
-        omitted = 0;
-        GameLocation? location = player.currentLocation;
-        if (location?.map is null) return Array.Empty<BridgeFixedInteractionPoint>();
-        if (location.map.Layers.Count == 0) return Array.Empty<BridgeFixedInteractionPoint>();
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        List<BridgeFixedInteractionPoint> result = new();
-        for (int y = 0; y < height; y++)
-        for (int x = 0; x < width; x++)
-        {
-            if (!TryDescribeFixedInteractionPoint(location, x, y, out string kind, out string? actionWord)) continue;
-            if (result.Count < MaximumFixedInteractionPoints) result.Add(new BridgeFixedInteractionPoint(x, y, kind, actionWord));
-            else omitted++;
-        }
-
-        return result;
-    }
-
     /// <summary>
     /// What the map fixes at one tile, or false when it fixes nothing there.
     ///
@@ -55,7 +35,7 @@ internal sealed partial class ExecutionManager
     /// point and the count means points rather than properties.
     /// </para>
     /// </summary>
-    private static bool TryDescribeFixedInteractionPoint(GameLocation location, int x, int y, out string kind, out string? actionWord)
+    internal static bool TryDescribeFixedInteractionPoint(GameLocation location, int x, int y, out string kind, out string? actionWord)
     {
         kind = string.Empty;
         actionWord = null;

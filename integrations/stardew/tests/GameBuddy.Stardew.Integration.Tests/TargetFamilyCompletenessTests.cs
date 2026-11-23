@@ -1825,8 +1825,7 @@ public sealed class TargetFamilyCompletenessTests
             // discovery method. Named here rather than widening `Discover` with an optional parameter that no other
             // family would use.
             family == "toolSlots"
-                ? (IReadOnlyList<object>)typeof(ExecutionManager)
-                    .GetMethod("DiscoverToolSlots", BindingFlags.NonPublic | BindingFlags.Static)!
+                ? (IReadOnlyList<object>)DiscoveryMembers.Method("DiscoverToolSlots")
                     .Invoke(null, new object?[] { this.Actor.Items })!
                 : (IReadOnlyList<object>)Discover(DiscoveryMethodFor(family));
 
@@ -1924,7 +1923,7 @@ public sealed class TargetFamilyCompletenessTests
         {
             var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "chest_store", "chest_retrieve" });
             var executions = new ExecutionManager(new DummyMonitor(), () => publication);
-            MethodInfo method = typeof(ExecutionManager).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static)!;
+            MethodInfo method = DiscoveryMembers.Method(name);
             // The argument list comes from the method's OWN parameters rather than a hard-coded `{ Actor }`: a family that
             // gained a parameter (the exclusion recorder, which reports what the family WITHHELD) must not turn this probe
             // into `TargetParameterCountException`, and a probe that assumed the shape would report the family as
@@ -1936,7 +1935,7 @@ public sealed class TargetFamilyCompletenessTests
                     : parameter.ParameterType == typeof(IList<Item?>) ? this.Actor.Items
                     : recorder)
                 .ToArray();
-            object targets = method.Invoke(method.IsStatic ? null : executions, arguments)!;
+            object targets = method.Invoke(DiscoveryMembers.Target(method, executions), arguments)!;
             exclusions = recorder.Publish(out _);
             return targets;
         }

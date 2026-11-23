@@ -6,8 +6,10 @@
  *
  *   THE FACT ALGEBRA (the contract + the Mod + the decompiled tree):
  *     FACT-1 population    every member of `ActorWorldFacts` has a row, in declaration order, and no row is stale
- *     FACT-2 publishes     each row's kind / wire spelling / reason code / transient kind is the one `WorldModel`
- *                          decides - checked against `Classify`, `KindForWire` and `HoldReasonCode`, not trusted
+ *     FACT-2 publishes     each row's kind / wire spelling / reason code / transient word is the one the mint its
+ *                          `classifyAt` names decides - re-read from `Classify` (inline, or through the private
+ *                          transient factory), `KindForWire` and `HoldReasonCode`, not trusted. The headline counts
+ *                          the rows per producer, so a reader sees which function owns what
  *     FACT-3 named         every kind `Classify` can return is either `Idle` (the word for a body that is NOT held) or
  *                          published by at least one fact, and `Idle` carries the fallback code
  *     IFACE-1 reads        every declared read resolves to a real member declaration in the decompiled tree
@@ -40,9 +42,25 @@
  * cannot measure the hold algebra" instead of red, and a person running the file by hand gets the same line and a
  * non-zero exit rather than a green reading over nothing.
  *
+ * WHERE A TRANSIENT'S WORD COMES FROM, so the next reader looks in the right place. A disposition's transient word is
+ * not a string a branch spells any more: `Classify` names an `ActorTransientKind` member and the private factory beside
+ * it mints `new(ActorDispositionKind.Transient, null, false, KindForWire(kind))`, so the WORD (`KindForWire`'s overload
+ * over `ActorTransientKind`) and the SETTLE WINDOW (`SettleWindowMs`, read by `NoteObservedTransient` /
+ * `TransientSettle`) of one transient come from the one declaration the member sits in - a word that cannot exist
+ * without the ending it promises. That is why `Classify` mints FOUR kinds even though only three branches spell a
+ * `new ActorDisposition(...)` inline, and why a FACT-2 row for a transient fact cites a `return
+ * Transient(ActorTransientKind.X)` line. The reader for both forms is `tools/lib/stardew-disposition-mint.mjs`, shared
+ * with the generator that wrote the rows: the two halves disagreed once, and the cost was seven rows citing lines that
+ * mint nothing.
+ *
  * red-proof: inject  the Idle hold reason given a code the Mod never mints (`player_busy_probe`) ->
  *   `FAIL  FACT-3 named`, report status failed at examined 15 with detail `Idle carries player_busy_probe; a body
  *   that is not held must not carry a hold code`, exit 1
+ * red-proof: inject  a row's `classifyAt.line` moved off its mint (the FreezePaused row pointed at WorldModel.cs:250,
+ *   the `SettleWindowMs` arm) -> `FAIL  FACT-2 publishes` at `15 fact(s) re-read from the mint their row names:
+ *   Classify 8 · Transient 6` with detail `FreezePaused: classifyAt integrations/stardew/WorldModel.cs:250 mints no
+ *   disposition - it reads "ActorTransientKind.FreezePause => FreezePauseSettleWindowMs,", not \`return new
+ *   ActorDisposition(...)\` nor \`return Transient(ActorTransientKind.X)\``, exit 1
  */
 
 export const gateDeclaration = {
@@ -61,6 +79,7 @@ import {
   writeEstablishes,
 } from "../../tools/lib/stardew-actor-holds.mjs";
 import { reportBlockedInput } from "../../tools/lib/blocked-input-report.mjs";
+import { mintedKinds, namedFindings, publishFindings } from "../../tools/lib/stardew-disposition-mint.mjs";
 import { basename, join, relative } from "node:path";
 
 const ROOT = repoRoot();
@@ -132,22 +151,6 @@ function resolveRead(member) {
   return null;
 }
 
-/** The `ActorDispositionKind` a `return new ActorDisposition(...)` line names. */
-const kindOfReturnLine = (line) =>
-  /return new ActorDisposition\(ActorDispositionKind\.([A-Za-z_]\w*)/.exec(line)?.[1] ?? null;
-
-/** The arms of a `kind switch` expression (`KindForWire`, `HoldReasonCode`). */
-function kindSwitchArms(signature) {
-  const at = worldModel.indexOf(signature);
-  if (at < 0) return { arms: new Map(), fallback: undefined };
-  const end = worldModel.indexOf("};", at);
-  const body = worldModel.slice(worldModel.indexOf("{", at), end < 0 ? undefined : end);
-  const arms = new Map();
-  for (const match of body.matchAll(/ActorDispositionKind\.([A-Za-z_]\w*)\s*=>\s*"([^"]+)"/g))
-    arms.set(match[1], match[2]);
-  return { arms, fallback: /_\s*=>\s*"([^"]+)"/.exec(body)?.[1] };
-}
-
 // ---------------------------------------------------------------- FACT-1 population
 const unionAt = worldModel.indexOf("record struct ActorWorldFacts(");
 const unionList = unionAt < 0 ? "" : worldModel.slice(worldModel.indexOf("(", unionAt));
@@ -184,62 +187,19 @@ const unionMembers = [];
 
 // ---------------------------------------------------------------- FACT-2 publishes
 {
-  const rows = [];
-  const wire = kindSwitchArms("public static string KindForWire(ActorDispositionKind kind) => kind switch");
-  const reason = kindSwitchArms("public static string HoldReasonCode(ActorDispositionKind kind) => kind switch");
-  for (const fact of model.facts ?? []) {
-    const line = worldModelLines[(fact.classifyAt?.line ?? 0) - 1] ?? "";
-    const kind = kindOfReturnLine(line);
-    if (kind === null) {
-      rows.push(
-        `${fact.fact}: classifyAt ${WORLD_MODEL}:${fact.classifyAt?.line} is not a \`return new ActorDisposition\``,
-      );
-      continue;
-    }
-    if (kind !== fact.publishes.kind)
-      rows.push(
-        `${fact.fact}: Classify returns ${kind} at ${WORLD_MODEL}:${fact.classifyAt.line}, the contract says ${fact.publishes.kind}`,
-      );
-    if (wire.arms.get(kind) !== fact.publishes.wire)
-      rows.push(
-        `${fact.fact}: KindForWire(${kind}) = ${wire.arms.get(kind)}, the contract says ${fact.publishes.wire}`,
-      );
-    const code = reason.arms.get(kind) ?? reason.fallback;
-    if (code !== fact.publishes.reasonCode)
-      rows.push(`${fact.fact}: HoldReasonCode(${kind}) = ${code}, the contract says ${fact.publishes.reasonCode}`);
-    if ((fact.classifyAt?.condition ?? "").length > 0) {
-      const conditionSeen = worldModelLines
-        .slice(Math.max(0, fact.classifyAt.line - 20), fact.classifyAt.line)
-        .some((text) => text.includes(fact.classifyAt.condition.slice(0, 60)));
-      if (!conditionSeen)
-        rows.push(
-          `${fact.fact}: the branch condition "${fact.classifyAt.condition}" no longer precedes ${WORLD_MODEL}:${fact.classifyAt.line}`,
-        );
-    }
-  }
+  const { rows, census } = publishFindings({ where: WORLD_MODEL, worldModel, facts: model.facts ?? [] });
   record(
     "FACT-2 publishes",
     rows.length === 0,
-    `${(model.facts ?? []).length} kind(s) re-read from Classify/KindForWire/HoldReasonCode`,
+    `${(model.facts ?? []).length} fact(s) re-read from the mint their row names: ${census}`,
     rows,
   );
 }
 
 // ---------------------------------------------------------------- FACT-3 named
 {
-  const rows = [];
-  const kinds = [...new Set(worldModelLines.map(kindOfReturnLine).filter((kind) => kind !== null))];
-  const published = new Set((model.facts ?? []).map((fact) => fact.publishes.kind));
-  for (const kind of kinds)
-    if (kind !== "Idle" && !published.has(kind)) rows.push(`${kind} is returned by Classify and published by no fact`);
-  const idle = (model.holdReasons ?? []).find((entry) => entry.kind === "Idle");
-  if (idle === undefined) rows.push("no Idle row: the word for a body that is NOT held is missing");
-  else if (idle.reasonCode !== "player_not_actionable")
-    rows.push(`Idle carries ${idle.reasonCode}; a body that is not held must not carry a hold code`);
-  const kindsWithFacts = (model.holdReasons ?? []).filter(
-    (entry) => entry.kind !== "Idle" && entry.publishedBy.length === 0,
-  );
-  for (const entry of kindsWithFacts) rows.push(`${entry.kind} is published by no fact, so nothing can name it`);
+  const kinds = mintedKinds(worldModel);
+  const rows = namedFindings({ kinds, facts: model.facts ?? [], holdReasons: model.holdReasons ?? [] });
   record("FACT-3 named", rows.length === 0, `${kinds.length} kind(s) the classifier returns, each named or Idle`, rows);
 }
 

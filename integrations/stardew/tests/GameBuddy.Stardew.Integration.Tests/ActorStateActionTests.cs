@@ -268,9 +268,9 @@ public sealed class ActorStateActionTests
 
         // Discovery publishes every slot of the fixed set, empty or not: an EMPTY slot is exactly
         // the target an equip into a free slot names.
-        string discovery = MethodBody(source, "internal static IReadOnlyList<BridgeWearableTarget> DiscoverWearableTargets(");
-        discovery.Should().Contain("foreach (string bodySlot in WearableBodySlots)");
-        discovery.Should().Contain("BuildWearableTargetId(player, bodySlot)");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverWearableTargets"), "internal static IReadOnlyList<BridgeWearableTarget> DiscoverWearableTargets(");
+        discovery.Should().Contain("foreach (string bodySlot in ExecutionManager.WearableBodySlots)");
+        discovery.Should().Contain("ExecutionManager.BuildWearableTargetId(player, bodySlot)");
         discovery.Should().Contain("occupant?.QualifiedItemId");
     }
 

@@ -335,7 +335,7 @@ public sealed class TileTargetRequestSeamTests
     {
         List<Site> sites = new();
         string directory = Path.Combine(RepositoryRoot(), "integrations", "stardew");
-        foreach (string path in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").OrderBy(name => name, StringComparer.Ordinal))
+        foreach (string path in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").Concat(Directory.GetFiles(directory, "farmhandtargetdiscovery*.cs")).OrderBy(name => name, StringComparer.Ordinal))
         {
             string source = File.ReadAllText(path);
             int from = 0;

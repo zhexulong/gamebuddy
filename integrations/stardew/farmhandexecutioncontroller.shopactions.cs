@@ -54,8 +54,8 @@ namespace GameBuddy.Stardew;
 /// </summary>
 internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExecutionLedger
 {
-    private const int MaxShopTargets = 32;
-    private const int MaxTileShopTargets = 8;
+    internal const int MaxShopTargets = 32;
+    internal const int MaxTileShopTargets = 8;
 
     /// <summary>The most counters one refusal spells before it says how many it did not print.</summary>
     private const int MaxSpelledCounters = 3;
@@ -144,10 +144,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// room - which is the defect `round84` measured.
     /// </para>
     /// </summary>
-    private const string DesertVendorAction = "DesertVendor";
+    internal const string DesertVendorAction = "DesertVendor";
 
     /// <summary>The shop-id family <see cref="DesertVendorAction"/> builds: `"DesertFestival_" + vendor.Name`.</summary>
-    private const string DesertVendorShopPrefix = "DesertFestival_";
+    internal const string DesertVendorShopPrefix = "DesertFestival_";
 
     internal static string ShopTargetId(string shopId, string ownerName, int counterX, int counterY) =>
         $"shop_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(shopId + "\u0000" + ownerName + "\u0000" + counterX + "," + counterY))).ToLowerInvariant()[..16]}";
@@ -314,11 +314,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// not an owner name several shops share.
     /// </para>
     /// </summary>
-    private static List<DiscoveredShopCounter> EnumerateShopCounters(GameLocation location)
+    internal static List<DiscoveredShopCounter> EnumerateShopCounters(GameLocation location)
     {
         List<DiscoveredShopCounter> counters = new();
         bool roomSellsThroughVendorStalls = false;
-        counters.AddRange(DiscoverVendorStallTargets(location, out roomSellsThroughVendorStalls));
+        counters.AddRange(FarmhandTargetDiscovery.DiscoverVendorStallTargets(location, out roomSellsThroughVendorStalls));
         foreach ((string shopId, ShopData shopData) in DataLoader.Shops(Game1.content))
         {
             if (roomSellsThroughVendorStalls && shopId.StartsWith(DesertVendorShopPrefix, StringComparison.Ordinal))
@@ -358,7 +358,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
         }
 
-        counters.AddRange(DiscoverTileShopTargets(location));
+        counters.AddRange(FarmhandTargetDiscovery.DiscoverTileShopTargets(location));
         return counters;
     }
 
@@ -377,7 +377,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// lists cannot drift, and no price here is a second measurement of the number the seed family carries.
     /// </para>
     /// </summary>
-    private static BridgeShopTarget PublishShopCounter(DiscoveredShopCounter counter, GameLocation location, Farmer player)
+    internal static BridgeShopTarget PublishShopCounter(DiscoveredShopCounter counter, GameLocation location, Farmer player)
     {
         ReadShopStock(
             counter.ShopId,
@@ -406,27 +406,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             window?.OpensAt,
             window?.ClosesAt,
             window is null ? OwnerWindowUnknown(counter.Owner) : null);
-    }
-
-    private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null)
-            return Array.Empty<BridgeShopTarget>();
-
-        List<BridgeShopTarget> targets = new();
-        foreach (DiscoveredShopCounter counter in EnumerateShopCounters(location))
-        {
-            if (!counter.OpensNow)
-            {
-                if (exclusions is not null)
-                    exclusions.Record("shopTargets", DiscoveryExclusionReasons.ShopClosedToday);
-                continue;
-            }
-            targets.Add(PublishShopCounter(counter, location, player));
-        }
-
-        return targets.Take(MaxShopTargets).ToArray();
     }
 
     private static void ReadShopStock(
@@ -476,137 +455,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             stockCount = 0;
             stockItemIds.Clear();
             priceByQualifiedItemId.Clear();
-        }
-    }
-
-    /// <summary>
-    /// The passive-festival stalls this ROOM declares: one <c>DesertVendor</c> Action tile per stall, whose shop id is
-    /// <see cref="DesertVendorShopPrefix"/> + the name of the NPC standing one tile above it.
-    ///
-    /// <para>
-    /// THE STALL IS THE COUNTER, so the tile is what this returns and the shop id is what the tile BUILDS - the same
-    /// concatenation `DesertFestival.performAction` performs (:751). The identity has three candidates and this is why
-    /// it is this one: the shop id alone names a `Data/Shops` row that exists for every villager in the season, the
-    /// owner name alone is shared by the stall and the same villager's shop elsewhere, and only the tile says which
-    /// stall a body can stand at. A stall with no vendor behind it is not a counter (nothing would open), which is why
-    /// it yields nothing; a stall on a day the festival is shut is published CLOSED, so discovery withholds it with the
-    /// same exclusion every shut counter gets (`DesertFestival.performAction`:744 refuses it natively).
-    /// </para>
-    /// </summary>
-    /// <param name="roomDeclaresStalls">Whether this room has any <see cref="DesertVendorAction"/> tile at all - the fact
-    /// that says "this room sells through stalls", which is what stops the owner-name rule from inventing a counter per
-    /// villager name.</param>
-    private static List<DiscoveredShopCounter> DiscoverVendorStallTargets(GameLocation location, out bool roomDeclaresStalls)
-    {
-        roomDeclaresStalls = false;
-        List<DiscoveredShopCounter> counters = new();
-        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
-        if (buildings is null)
-            return counters;
-
-        Dictionary<string, ShopData> shops;
-        try
-        {
-            shops = DataLoader.Shops(Game1.content);
-        }
-        catch (Exception)
-        {
-            return counters;
-        }
-
-        bool festivalOpen = Utility.IsPassiveFestivalOpen("DesertFestival");
-        for (int y = 0; y < buildings.LayerHeight && counters.Count < MaxTileShopTargets; y++)
-        {
-            for (int x = 0; x < buildings.LayerWidth && counters.Count < MaxTileShopTargets; x++)
-            {
-                var tile = buildings.Tiles[x, y];
-                if (tile is null || !tile.Properties.TryGetValue("Action", out var actionValue))
-                    continue;
-                if (!string.Equals(
-                        ArgUtility.SplitBySpace(actionValue.ToString()).FirstOrDefault(),
-                        DesertVendorAction,
-                        StringComparison.Ordinal))
-                    continue;
-                roomDeclaresStalls = true;
-                // The engine's own occupant rule: the vendor is the character on the tile ABOVE the stall's action tile
-                // (`new Rectangle(tile_location.X, tile_location.Y - 1, 1, 1)`, DesertFestival.cs:748-751).
-                NPC? vendor = location.characters.FirstOrDefault(
-                    character => character is not null && character.TilePoint.X == x && character.TilePoint.Y == y - 1);
-                if (vendor is null)
-                    continue;
-                string shopId = DesertVendorShopPrefix + vendor.Name;
-                if (!shops.TryGetValue(shopId, out ShopData? shopData) || shopData is null)
-                    continue;
-                ShopOwnerData? resolvedOwner = ResolveCurrentShopOwner(shopData, vendor.Name);
-                counters.Add(new DiscoveredShopCounter(
-                    ShopTargetId(shopId, vendor.Name, x, y),
-                    shopId,
-                    shopData,
-                    vendor.Name,
-                    x,
-                    y,
-                    festivalOpen && OpensNow(resolvedOwner),
-                    festivalOpen ? resolvedOwner?.ClosedMessage : null,
-                    resolvedOwner));
-            }
-        }
-
-        return counters;
-    }
-
-    /// <summary>
-    /// Shops opened by a Buildings-layer Action tile instead of by an NPC in the room. Their execution seam is exactly
-    /// the one this action already dispatches (<c>Utility.TryOpenShopMenu</c>), but their owner entry is not a named NPC
-    /// in the room, so the owner scan above can never see them.
-    ///
-    /// The tile IS the counter: <c>ownerTileX/Y</c> is the tile the actor has to stand within the native click radius of
-    /// (Game1.cs:11509), and <c>ownerName</c> is empty because no NPC owns the stall. That empty name is not a missing
-    /// fact -- every one of these native cases opens the shop with a null owner, which the game documents as "no NPC
-    /// portrait/dialogue" (Utility.cs:4174).
-    /// </summary>
-    private static IEnumerable<DiscoveredShopCounter> DiscoverTileShopTargets(GameLocation location)
-    {
-        xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
-        if (buildings is null)
-            yield break;
-
-        Dictionary<string, ShopData> shops;
-        try
-        {
-            shops = DataLoader.Shops(Game1.content);
-        }
-        catch (Exception)
-        {
-            yield break;
-        }
-
-        HashSet<string> seen = new(StringComparer.Ordinal);
-        int found = 0;
-        for (int y = 0; y < buildings.LayerHeight && found < MaxTileShopTargets; y++)
-        {
-            for (int x = 0; x < buildings.LayerWidth && found < MaxTileShopTargets; x++)
-            {
-                var tile = buildings.Tiles[x, y];
-                if (tile is null || !tile.Properties.TryGetValue("Action", out var actionValue))
-                    continue;
-                string action = actionValue.ToString();
-                if (!TryResolveTileShop(action, out string shopId)
-                    || !shops.TryGetValue(shopId, out ShopData? shopData) || shopData is null
-                    || !seen.Add(shopId))
-                    continue;
-
-                found++;
-                yield return new DiscoveredShopCounter(
-                    ShopTargetId(shopId, string.Empty, x, y),
-                    shopId,
-                    shopData,
-                    string.Empty,
-                    x,
-                    y,
-                    OpensNow: true,
-                    ClosedMessage: null,
-                    Owner: null);
-            }
         }
     }
 

@@ -261,7 +261,7 @@ public sealed class HeldToolProjectionTests
     }
 
     private static IReadOnlyList<BridgeToolSlot> ToolSlots(IList<Item?> items) =>
-        (IReadOnlyList<BridgeToolSlot>)Invoke("DiscoverToolSlots", items)!;
+        (IReadOnlyList<BridgeToolSlot>)DiscoveryMembers.Method("DiscoverToolSlots").Invoke(null, new object?[] { items })!;
 
     private static string? SlotItem(IList<Item?> items, int slot) => (string?)Invoke("DescribeSlotItem", items, slot);
 

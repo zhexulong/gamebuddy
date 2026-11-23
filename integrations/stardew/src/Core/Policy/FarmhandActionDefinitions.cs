@@ -497,18 +497,53 @@ public sealed record FarmhandActionEffects(IReadOnlyList<FarmhandActionEffect> D
     /// THE HONEST GAP, declared rather than smoothed over: the action really does move a resource in or out of the pack,
     /// and no receipt fact names WHICH. Its postcondition is the generic `native_action_postcondition` and it publishes no
     /// `outputFact`, so `produces` could only be backed by prose. Giving the row a receipt fact is what closes it.
+    ///
+    /// <para>
+    /// AND IT NAMES THE RESOURCE IT CANNOT PROVE, because a bare `resource_unproven_by_the_receipt` is the same hole
+    /// wearing a word: it says a gap exists without saying where to stand to close it, and the next reader cannot tell two
+    /// rows apart - `chop_tree` whose receipt never names the wood it drops and `refill_watering_can` whose receipt
+    /// already carries `water_before`/`water_after`/`water_max` and only lacks the name. The resource is the engine's or
+    /// the pack's own word for it (`pack_item`, `crop_produce`, `watering_can_water`), spelled as
+    /// <c>resource_unproven_by_the_receipt:&lt;resource&gt;</c>, so the reason a row gives IS the fact a receipt change
+    /// would have to publish.
+    /// </para>
     /// </summary>
-    public const string ResourceUnprovenByTheReceipt = "resource_unproven_by_the_receipt";
+    public const string ResourceUnprovenByTheReceiptPrefix = "resource_unproven_by_the_receipt";
 
-    /// <summary>Every admitted reason, so the gates compare against one set instead of a hand-written copy.</summary>
-    public static readonly IReadOnlyList<string> NoneReasons = Array.AsReadOnly(new[]
+    /// <summary>The gap marker for ONE action: the resource that action moves and its receipt cannot name.</summary>
+    public static string ResourceUnprovenByTheReceipt(string resource) =>
+        IsResourceWord(resource)
+            ? $"{ResourceUnprovenByTheReceiptPrefix}:{resource}"
+            : throw new InvalidOperationException($"'{resource}' is not a resource word, so it cannot say which resource a receipt fails to prove.");
+
+    /// <summary>The absence reasons: what a row declares when it has NO resource to prove.</summary>
+    public static readonly IReadOnlyList<string> AbsenceReasons = Array.AsReadOnly(new[]
     {
         ObservationOnly,
         ActorBodyOnly,
         AddressedRowOnly,
         GameOwnedLedger,
-        ResourceUnprovenByTheReceipt,
     });
+
+    /// <summary>
+    /// Whether a row may carry this reason for having no effect: one of the four absences, or the gap marker with the
+    /// resource it names - never the marker alone.
+    /// </summary>
+    public static bool IsAdmitted(string reason)
+    {
+        if (AbsenceReasons.Contains(reason, StringComparer.Ordinal)) return true;
+        string prefix = ResourceUnprovenByTheReceiptPrefix + ":";
+        return reason.StartsWith(prefix, StringComparison.Ordinal) && IsResourceWord(reason[prefix.Length..]);
+    }
+
+    /// <summary>
+    /// The shape a resource word has: lower snake case, 2 to 64 characters - the same shape an effect's `subject` uses,
+    /// so the resource named here is the word a `produces`/`consumes` row would declare once the receipt names it.
+    /// </summary>
+    private static bool IsResourceWord(string value) =>
+        value.Length is >= 2 and <= 64
+        && value[0] is >= 'a' and <= 'z'
+        && value.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '_');
 }
 
 /// <summary>Versioned descriptor contract owned exclusively by Mod registration.</summary>
@@ -842,11 +877,17 @@ public static class FarmhandActionCatalog
     private static FarmhandActionEffects Effects(params FarmhandActionEffect[] declared) =>
         new(Array.AsReadOnly(declared), null);
 
-    /// <summary>One descriptor's answer that it has no effect, with the reason from <see cref="FarmhandActionEffects.NoneReasons"/>.</summary>
+    /// <summary>One descriptor's answer that it has no effect, with an admitted reason from <see cref="FarmhandActionEffects.IsAdmitted"/>.</summary>
     private static FarmhandActionEffects None(string reason) =>
-        FarmhandActionEffects.NoneReasons.Contains(reason, StringComparer.Ordinal)
+        FarmhandActionEffects.IsAdmitted(reason)
             ? new FarmhandActionEffects(Array.AsReadOnly(Array.Empty<FarmhandActionEffect>()), reason)
             : throw new InvalidOperationException($"effect reason '{reason}' is not in the declared set");
+
+    /// <summary>
+    /// The gap marker for one action: it moves <paramref name="resource"/> and its receipt does not say so. The resource
+    /// is the word a `produces`/`consumes` row would declare, which is what makes the marker a to-do rather than a shrug.
+    /// </summary>
+    private static string Unproven(string resource) => FarmhandActionEffects.ResourceUnprovenByTheReceipt(resource);
 
     /// <summary>Her place changed: `writtenBy` is the symbol the executor writes it through.</summary>
     private static FarmhandActionEffect MovesActor(string subject, string writtenBy) =>
@@ -932,7 +973,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         // declaration is what keeps from arriving after a walk - measured 2026-11-22, the same shape `sweep_scythe` had in
         // `round92`, and `ChargedFootprintDeclarationTests` holds this pairing over every row that accepts a charge.
         E("till_soil", "farming_crops", FarmhandActionHandlerGroup.Farming, Charged(SelfWalked(TileA(null, ToolResource("hoe", FarmhandResourceTemplateValue.AnyUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("charge","integer")), ApproachStance.Cardinal)), FarmhandActionLifecycle.Published, "soilTiles"),
-        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, Finishes(SelfWalked(PickupForage())), FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, Finishes(SelfWalked(TargetItem())), FarmhandActionLifecycle.Published, "itemTargets"),
+        E("pickup_forage", "resource_gathering", FarmhandActionHandlerGroup.Gathering, Finishes(SelfWalked(PickupForage())), FarmhandActionLifecycle.Published, "forageTargets"), E("pickup_item", "inventory_items", FarmhandActionHandlerGroup.Gathering, Finishes(SelfWalked(TargetItem("item_picked_up"))), FarmhandActionLifecycle.Published, "itemTargets"),
         // water_crop drives the actor's own WateringCan: the handler selects the can its claim names before watering
         // (`tool_not_owned:watering_can` when the pack holds none), so the can is an unconditional requirement.
         // Which can is NOT declared: the handler accepts any upgrade level (its `watering_can_empty` refusal is about
@@ -1813,7 +1854,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     private static FarmhandActionDescriptor TargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade) => TileA(null, ToolResource(toolCategory, toolUpgrade), "native_action_postcondition", ("x","integer"),("y","integer"),("expectedTargetId","string"));
 
     private static FarmhandActionDescriptor SlotTargetWith(string toolCategory, FarmhandResourceTemplateValue toolUpgrade, string slotMeaning) => ResolvesToolSlotAtExecution(new(new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("slot", "integer", null, slotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), ToolResource(toolCategory, toolUpgrade), "write", "native_action_postcondition"));
-    private static FarmhandActionDescriptor TargetItem() => TileA(null, null, "native_action_postcondition", ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
+    private static FarmhandActionDescriptor TargetItem(string postcondition = "native_action_postcondition") => TileA(null, null, postcondition, ("x","integer"),("y","integer"),("expectedQualifiedItemId","string"),("expectedTargetId","string"));
     private static FarmhandActionDescriptor PickupForage() => new(
         new[]
         {
@@ -1825,7 +1866,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
         new Dictionary<string, string>(),
         EmbodiedActorResource,
         "write",
-        "native_action_postcondition",
+        "forage_picked_up",
         null,
         new FarmhandActionObservationBindingDescriptor("ObservationBinding", 1, true, new[] { "observationId", "ref" }));
     private static FarmhandActionDescriptor SlotTarget(string slotMeaning) => new(new[] { new FarmhandActionArgument("x", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("y", "integer", TileSpace: FarmhandTileSpace.CurrentMap), new FarmhandActionArgument("slot", "integer", null, slotMeaning), new FarmhandActionArgument("expectedTargetId", "string") }, new Dictionary<string, string>(), EmbodiedActorResource, "write", "native_action_postcondition");
@@ -2155,41 +2196,41 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             ["use_mine_ladder"] = Effects(MovesActor("actor_location", "TryAnswerLocationQuestion")),
             ["enter_exit"] = Effects(MovesActor("actor_location", "warpFarmer"), RequiresPlace("exit_tile_of_this_map", "RequestLocalDoorTransition")),
             ["till_soil"] = None(FarmhandActionEffects.AddressedRowOnly),
-            ["pickup_forage"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["pickup_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["pickup_forage"] = Effects(Produces("pack_item", "postcondition")),
+            ["pickup_item"] = Effects(Produces("pack_item", "postcondition")),
             ["water_crop"] = Effects(Consumes("watering_can_water", "watering_can_empty")),
             ["plant_seed"] = Effects(Consumes("seed", "seed_not_owned_in_pack")),
             ["fertilize_tile"] = Effects(Consumes("fertilizer", "fertilizer_not_owned_in_slot")),
             ["machine_inspect"] = None(FarmhandActionEffects.ObservationOnly),
             ["machine_load"] = Effects(Consumes("machine_input", "machine_load_input_not_owned_in_pack")),
-            ["machine_collect_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["collect_animal_product"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["machine_collect_output"] = None(Unproven("machine_output")),
+            ["collect_animal_product"] = None(Unproven("animal_product")),
             ["feed_animal"] = Effects(Consumes("hay", "hay_not_owned_in_slot")),
             ["use_item"] = Effects(Consumes("pack_item", "item_not_owned_in_pack")),
-            ["harvest_crop"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["harvest_crop"] = None(Unproven("crop_produce")),
             ["place_wood_fence"] = Effects(Consumes("wood_fence", "wood_fence_not_owned_in_slot")),
             ["place_crab_pot"] = Effects(Consumes("crab_pot", "crab_pot_not_owned_in_slot")),
             ["bait_crab_pot"] = Effects(Consumes("bait", "bait_not_owned_in_slot")),
             ["place_owned_object"] = Effects(Consumes("pack_item", "place_owned_object_not_owned_in_slot")),
             ["remove_placed_item"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["move_placed_furniture"] = Effects(Produces("carried_furniture", "postcondition")),
-            ["break_container"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["break_container"] = None(Unproven("container_loot")),
             ["rotate_furniture"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["remove_fence"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["put_item_in_fish_tank"] = Effects(Consumes("pack_item", "fish_tank_item_not_owned_in_slot")),
             ["place_item_on_pedestal"] = Effects(Consumes("pack_item", "pedestal_item_not_owned_in_slot")),
-            ["chop_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["break_rock"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["chop_tree"] = None(Unproven("wood")),
+            ["break_rock"] = None(Unproven("stone")),
             ["clear_hoedirt"] = None(FarmhandActionEffects.AddressedRowOnly),
-            ["dig_artifact_spot"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["refill_watering_can"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["dig_artifact_spot"] = None(Unproven("artifact")),
+            ["refill_watering_can"] = None(Unproven("watering_can_water")),
             ["inspect_world_map"] = None(FarmhandActionEffects.ObservationOnly),
             ["find_destination"] = None(FarmhandActionEffects.ObservationOnly),
             ["observe_scene"] = None(FarmhandActionEffects.ObservationOnly),
             ["navigate_to_destination"] = Effects(MovesActor("actor_position", "LocalMoveSpec")),
-            ["clear_debris"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["break_resource_clump"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["fish_here"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["clear_debris"] = None(Unproven("resource_clump_drop")),
+            ["break_resource_clump"] = None(Unproven("resource_clump_drop")),
+            ["fish_here"] = None(Unproven("fish")),
             ["npc_relationship"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["pet_animal"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["pet_farm_animal"] = None(FarmhandActionEffects.AddressedRowOnly),
@@ -2200,12 +2241,12 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             ["express_emote"] = None(FarmhandActionEffects.ActorBodyOnly),
             ["face_direction"] = None(FarmhandActionEffects.ActorBodyOnly),
             ["chest_store"] = Effects(Consumes("pack_item", "item_not_owned")),
-            ["chest_retrieve"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["chop_stump"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["chest_retrieve"] = None(Unproven("pack_item")),
+            ["chop_stump"] = None(Unproven("wood")),
             ["plant_sapling"] = Effects(Consumes("sapling", "sapling_not_owned_in_pack")),
-            ["cut_weeds"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["cut_grass"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["clear_cask"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["cut_weeds"] = None(Unproven("weed_fiber")),
+            ["cut_grass"] = None(Unproven("grass_fiber")),
+            ["clear_cask"] = None(Unproven("cask_product")),
             ["dress_mannequin"] = Effects(Consumes("clothing", "clothing_not_held_in_requested_slot")),
             ["set_sign_display"] = Effects(Consumes("pack_item", "item_not_held_in_requested_slot")),
             ["deposit_silo_hay"] = Effects(Consumes("hay", "hay_not_held_in_requested_slot")),
@@ -2214,20 +2255,20 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             ["use_obelisk"] = Effects(MovesActor("actor_location", "PerformObeliskWarp")),
             ["toggle_animal_door"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["use_warp_item"] = Effects(Consumes("pack_item", "item_not_owned_in_slot"), MovesActor("actor_location", "performUseAction")),
-            ["pan_ore"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["claim_mail_attachment"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["pan_ore"] = None(Unproven("ore")),
+            ["claim_mail_attachment"] = None(Unproven("mail_attachment")),
             ["load_building_chest"] = Effects(Consumes("pack_item", "item_not_owned_in_slot")),
-            ["collect_building_chest_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["scythe_crop"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["sweep_scythe"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["harvest_bush"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["harvest_fruit_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["shake_tree"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["take_pedestal_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["collect_building_chest_output"] = None(Unproven("building_chest_output")),
+            ["scythe_crop"] = None(Unproven("crop_produce")),
+            ["sweep_scythe"] = None(Unproven("swept_ground_item")),
+            ["harvest_bush"] = None(Unproven("bush_produce")),
+            ["harvest_fruit_tree"] = None(Unproven("fruit")),
+            ["shake_tree"] = None(Unproven("tree_seed")),
+            ["take_pedestal_item"] = None(Unproven("pedestal_item")),
             ["toggle_fence_gate"] = None(FarmhandActionEffects.AddressedRowOnly),
             ["craft_item"] = Effects(Consumes("craft_ingredients", "craft_ingredients_missing")),
             ["cook_recipe"] = Effects(Consumes("recipe_ingredients", "recipe_ingredients_unavailable")),
-            ["collect_crab_pot_output"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["collect_crab_pot_output"] = None(Unproven("crab_pot_catch")),
             ["shop_purchase"] = Effects(Produces("purchased_item", "postcondition")),
             ["ship_item"] = Effects(Consumes("pack_item", "item_not_owned_in_slot")),
             ["equip_wearable"] = None(FarmhandActionEffects.ActorBodyOnly),
@@ -2239,15 +2280,15 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
             ["sleep"] = Effects(RequiresPlace("home_indoors", "SleepAndAdvanceDayLifecycle.HomeOf")),
             ["send_multiplayer_chat"] = None(FarmhandActionEffects.GameOwnedLedger),
             ["color_placed_object"] = None(FarmhandActionEffects.AddressedRowOnly),
-            ["clear_fish_pond"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["clear_fish_pond"] = None(Unproven("pond_fish")),
             ["build_farm_building"] = Effects(Consumes("build_materials", "build_farm_building_insufficient_materials")),
             ["accept_daily_quest"] = None(FarmhandActionEffects.GameOwnedLedger),
             ["accept_special_order"] = None(FarmhandActionEffects.GameOwnedLedger),
             ["claim_museum_reward"] = Effects(Produces("museum_rewards", "postcondition")),
             ["name_entity"] = None(FarmhandActionEffects.GameOwnedLedger),
             ["redeem_prize_ticket"] = Effects(Consumes("prize_ticket", "prize_ticket_unavailable")),
-            ["tailor_clothing"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
-            ["dye_clothing_with_item"] = None(FarmhandActionEffects.ResourceUnprovenByTheReceipt),
+            ["tailor_clothing"] = None(Unproven("clothing")),
+            ["dye_clothing_with_item"] = None(Unproven("clothing")),
             ["open_geode"] = Effects(Consumes("geode", "geode_not_owned")),
         };
 }

@@ -68,19 +68,32 @@ const IDENTIFIER = /^[a-z][a-z0-9_]{1,127}$/;
 /** The four classes a cross-step dependency can be built from (`FarmhandActionEffectClass`). */
 const EFFECT_CLASSES = new Set(["moves_actor", "requires_place", "produces", "consumes"]);
 /**
- * The reasons a row may give for having no effect (`FarmhandActionEffects.NoneReasons`).
- *
- * `resource_unproven_by_the_receipt` is the one that names a GAP rather than an absence: the action does move a resource
- * and no receipt fact names which, so nothing is declared and the gap is visible instead of being smoothed into an empty
- * list. It is refused on a row that declares effects, and required on a row that declares none.
+ * The reasons a row may give for having no effect (`FarmhandActionEffects.AbsenceReasons`): each names an absence, not a
+ * gap - the action reads, or changes only the actor's own body, or the row it addressed, or a record the game owns.
  */
 const EFFECT_NONE_REASONS = new Set([
   "observation_only",
   "actor_body_only",
   "addressed_row_only",
   "game_owned_ledger",
-  "resource_unproven_by_the_receipt",
 ]);
+/**
+ * The gap marker, and the rule that it must name the resource: `resource_unproven_by_the_receipt:<resource>`.
+ *
+ * A BARE MARKER IS THE SAME HOLE WEARING A WORD. It says something is unproven and not what, so two rows that fail for
+ * different reasons read as one, and the next reader cannot tell which receipt change would close either. The resource is
+ * the lower-snake word an effect's `subject` uses (`pack_item`, `crop_produce`, `watering_can_water`), so the marker is
+ * answered by declaring the resource once the receipt names it.
+ *
+ * The authority is `FarmhandActionEffects.IsAdmitted`; this is the producer-side reading of the same rule, kept to the one
+ * line the wire value can be checked against.
+ */
+const UNPROVEN_BY_THE_RECEIPT = "resource_unproven_by_the_receipt:";
+const RESOURCE_WORD = /^[a-z][a-z0-9_]{1,63}$/;
+function isAdmittedNoneReason(value) {
+  if (EFFECT_NONE_REASONS.has(value)) return true;
+  return value.startsWith(UNPROVEN_BY_THE_RECEIPT) && RESOURCE_WORD.test(value.slice(UNPROVEN_BY_THE_RECEIPT.length));
+}
 const MAX_EFFECTS = 8;
 /** A subject word (`actor_position`, `watering_can_water`) or the dotted symbol / reason code a seam is spelled as. */
 const EFFECT_WORD = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
@@ -522,7 +535,7 @@ function validateEffects(value) {
   const declared = dataDescriptor(value, "declared").value;
   if (!isArray(declared) || declared.length > MAX_EFFECTS) fail("invalid_action");
   const hasNone = keys.includes("none");
-  if (hasNone && !EFFECT_NONE_REASONS.has(dataDescriptor(value, "none").value)) fail("invalid_effect_none_reason");
+  if (hasNone && !isAdmittedNoneReason(dataDescriptor(value, "none").value)) fail("invalid_effect_none_reason");
   if (declared.length === 0) {
     if (!hasNone) fail("invalid_effect_none_reason");
     return;

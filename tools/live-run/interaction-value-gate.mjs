@@ -85,6 +85,14 @@
  * being a reason the moment one line could be both.
  * </p>
  *
+ * <p>
+ * The light is read as a property for the same reason: a list of whole spellings lags the way she says the day, one
+ * spelling at a time. `round97` (2026-11-23) said `早，外面天刚亮` - 天, the adverb 刚, 亮 - and every alternative in the
+ * list missed it, because the list knew the contiguous 天亮 and the line puts a word inside it. So the sky, at most a
+ * word, and the light itself is a day reference, asked of every clause that is not already a finished action; a spelling
+ * the list does hold is still tried first, so the evidence published for a line stays the narrow word it named.
+ * </p>
+ *
  * <h2>Clauses: `not_exercised` is not a pass</h2>
  *
  * <p>
@@ -185,6 +193,16 @@ const PLAN = /先|然后|接着|再|换个|绕|去拿|回头|一会儿|待会|�
  */
 const DAY_REFERENCE =
   /清早|早上|早晨|上午|中午|下午|傍晚|夜里|半夜|深夜|凌晨|今晚|昨儿晚|昨晚|明早|天亮|擦黑|天色|入夜|天黑|黑了|黑下来|黑透|晚安|早点(?:睡|歇|休息)|(?:十|十一|十二|[一二三四五六七八九两])点(?:了|半|钟|整)/u;
+
+/**
+ * The state of the light, read as the property the rule states instead of as another spelling to keep in the list.
+ *
+ * A list of whole spellings cannot cover a sky with a word in it: `round97` said `早，外面天刚亮` - 天, the adverb 刚, 亮 -
+ * and every alternative above missed it, because 天亮 is contiguous there and 亮 alone means nothing. The rule itself has
+ * never been a list ("the state of the light"), so the light is asked for structurally: the sky, at most a word, the
+ * light. Checked after the list so a spelling the list does hold stays the evidence the clause publishes.
+ */
+const DAY_LIGHT = /(?:天|天色|外面)[^，。！？；]{0,3}(?:亮|黑|暗)/u;
 
 /** The clause boundary every rule in this file splits on. */
 const CLAUSE_SEPARATOR = /[，,、。；;！!？?\n]+/u;
@@ -485,12 +503,15 @@ function playerAddress(line) {
  * The day word that locates the time, or null when the line is about the task.
  *
  * Only a clause that is not itself a finished action counts: "擦黑前我把草清了" is a report of a chore that happens
- * to name the hour, and counting it would let a run of pure narration pass the clause it exists to fail.
+ * to name the hour, and counting it would let a run of pure narration pass the clause it exists to fail. The named
+ * spellings are tried first and the light is asked for as a property after them, so `天都黑透了` publishes `黑透` while
+ * `外面天刚亮` publishes the sky it named.
  */
 function dayReference(line) {
   for (const clause of clausesOf(line)) {
-    const match = DAY_REFERENCE.exec(clause);
-    if (match !== null && !STEP_ACTION_COMPLETION.test(clause)) return match[0];
+    if (STEP_ACTION_COMPLETION.test(clause)) continue;
+    const match = DAY_REFERENCE.exec(clause) ?? DAY_LIGHT.exec(clause);
+    if (match !== null) return match[0];
   }
   return null;
 }

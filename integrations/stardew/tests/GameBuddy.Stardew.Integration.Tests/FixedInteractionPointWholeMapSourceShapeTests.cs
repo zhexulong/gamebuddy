@@ -45,7 +45,7 @@ public sealed class FixedInteractionPointWholeMapSourceShapeTests
     [Fact]
     public void TheScanSpansTheMapsOwnExtentsRatherThanAnActorCentredRadius()
     {
-        string source = StripLineComments(Read(FixedPointsRelativePath));
+        string source = StripLineComments(ControllerPartials.Declaring("DiscoverFixedInteractionPoints") + Read(FixedPointsRelativePath));
         string body = Body(source);
 
         body.Should().Contain(
@@ -72,7 +72,7 @@ public sealed class FixedInteractionPointWholeMapSourceShapeTests
     [Fact]
     public void TheCeilingIsTheNamedCapAndEveryDroppedPointIsCounted()
     {
-        string source = StripLineComments(Read(FixedPointsRelativePath));
+        string source = StripLineComments(ControllerPartials.Declaring("DiscoverFixedInteractionPoints") + Read(FixedPointsRelativePath));
         string body = Body(source);
 
         source.Should().Contain(

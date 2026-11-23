@@ -157,7 +157,7 @@ public sealed class FurnitureIdentityReplayTests
         world.PlaceCarriedFurnitureInSlot(0);
         world.StandAt(4, 4);
 
-        IReadOnlyList<BridgeWorldObjectTarget> targets = ExecutionManager.DiscoverWorldObjectTargets(Game1.player, out _);
+        IReadOnlyList<BridgeWorldObjectTarget> targets = FarmhandTargetDiscovery.DiscoverWorldObjectTargets(Game1.player, out _);
         List<BridgeWorldObjectTarget> candidates = targets
             .Where(target => string.Equals(target.Kind, "placement_candidate", StringComparison.Ordinal)
                 && target.Slot == 0

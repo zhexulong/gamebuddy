@@ -116,11 +116,46 @@ test("an unreadable answer state is honest rather than promising a close that ma
 });
 
 test("a transient hold tells the Agent to wait and to keep the SAME target", () => {
-  const remedy = remedyForRefusal("transient_busy", "transient_kind=toolAnimation;retry_window_ms=2000;can_move=false");
+  const remedy = remedyForRefusal(
+    "transient_busy",
+    "transient_kind=toolAnimation;retry_window_ms=2000;hold_remaining_ms=1800;next_step=wait_for_retry_window;can_move=false",
+  );
   assert.equal(remedy?.action, null, "no tool can shorten a transient, so none may be named");
   assert.match(remedy?.guidance ?? "", /toolAnimation/);
-  assert.match(remedy?.guidance ?? "", /2000/);
+  assert.match(remedy?.guidance ?? "", /1800/, "the remainder the Mod measured is what is left to wait");
   assert.match(remedy?.guidance ?? "", /SAME request/, "changing the target is the failure mode this prevents");
+});
+
+test("a transient whose own window has passed is not a wait any more", () => {
+  // `round97`: `transient_kind=warping` was the answer for four minutes while the engine's `_isWarping` never came down
+  // and the game clock stood still, because this module read the WINDOW (`retry_window_ms=2000`) and promised it again on
+  // every read. The Mod now publishes the verdict in `next_step` and the overrun it measured.
+  const remedy = remedyForRefusal(
+    "transient_busy",
+    "transient_kind=warping;retry_window_ms=2000;hold_overrun_ms=238000;next_step=report_the_stalled_body;can_move=false",
+  );
+  assert.equal(remedy?.action, null);
+  assert.match(remedy?.guidance ?? "", /warping/);
+  assert.match(remedy?.guidance ?? "", /238000/, "how far past its window the producer is has to travel");
+  assert.match(remedy?.guidance ?? "", /report the blockage/, "the run has to be told to stop waiting");
+  assert.doesNotMatch(remedy?.guidance ?? "", /SAME request/, "re-issuing is the loop this prevents");
+});
+
+test("a navigation lock whose hold outlived its window stops saying it clears by itself", () => {
+  // The receipt `round97` actually carried (`nav-settle-marker`, 21:39:08): the code was `destination_locked` and the
+  // sentence was "This clears by itself when that hold ends". The Mod's verdict rides in the same evidence, so the
+  // sentence has to read it rather than promise the wait again.
+  const remedy = remedyForRefusal(
+    "destination_locked",
+    "destination=Farm;phase=awaiting_warp;actionable=false;held_by=transient:warping;transient_kind=warping;" +
+      "retry_window_ms=2000;hold_overrun_ms=241000;next_step=report_the_stalled_body;can_move=false",
+  );
+  assert.equal(remedy?.action, null);
+  assert.match(remedy?.guidance ?? "", /Farm/);
+  assert.match(remedy?.guidance ?? "", /transient:warping/, "the holder the Mod named has to travel");
+  assert.match(remedy?.guidance ?? "", /241000/);
+  assert.match(remedy?.guidance ?? "", /report the blockage/);
+  assert.doesNotMatch(remedy?.guidance ?? "", /clears by itself/);
 });
 
 test("a hold with no countermeasure says so instead of naming a tool", () => {

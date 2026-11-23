@@ -98,7 +98,7 @@ public sealed class TileAreaQueryTests
         harness.PlaceObject(5, 6, new StardewValley.Objects.Chest());
         harness.SetWater(6, 6);
 
-        IReadOnlyList<BridgeSoilTile> discovered = ExecutionManager.DiscoverSoilTiles(Game1.player, out int omitted);
+        IReadOnlyList<BridgeSoilTile> discovered = FarmhandTargetDiscovery.DiscoverSoilTiles(Game1.player, out int omitted);
         omitted.Should().Be(0, "the block inside the window is far below the 64-row cap, so the discovery published it all");
         int windowEast = 8 + radius;
         discovered.Select(row => (row.X, row.Y)).Should().NotContain(

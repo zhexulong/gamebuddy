@@ -394,7 +394,8 @@ public sealed class BuildingChestActionTests
     // ---------------------------------------------------------------------------------
 
     private static string ReadHandlerSource() =>
-        ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile));
+        ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile))
+        + ControllerPartials.Declaring("DiscoverBuildingChestTargets");
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>
     private static string MethodBody(string source, string declaration)

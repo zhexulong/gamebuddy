@@ -272,34 +272,4 @@ internal sealed partial class ExecutionManager
         return new AnimalDoorTargetResolution(true, "accepted", string.Empty, building, liveOpen);
     }
 
-    private static IReadOnlyList<BridgeAnimalDoorTarget> DiscoverAnimalDoorTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeAnimalDoorTarget>();
-        List<BridgeAnimalDoorTarget> result = new();
-        foreach (Building building in location.buildings)
-        {
-            if (building is null) continue;
-            // `Building.doAction` answers an under-construction building with the `UnderConstruction` dialogue and
-            // nothing else (Building.cs:937-940), and the animal door's own toggle is gated on the same countdown
-            // (`daysOfConstructionLeft.Value <= 0`, Building.cs:976). The door exists on the map and the engine refuses it.
-            if (building.daysOfConstructionLeft.Value > 0)
-            {
-                exclusions.Record("animalDoorTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            if (!TryDescribeAnimalDoor(building, out string buildingType, out bool isOpen)) continue;
-            Point door = building.getPointForHumanDoor();
-            if (!IsTileWithinChebyshevRadius(player, door.X, door.Y, TargetDiscoveryRadius)) continue;
-            result.Add(new BridgeAnimalDoorTarget(
-                BuildAnimalDoorTargetId(location, building, isOpen),
-                location.NameOrUniqueName,
-                door.X,
-                door.Y,
-                buildingType,
-                isOpen));
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
 }

@@ -28,6 +28,9 @@ internal static class ControllerPartials
     /// <summary>The dispatcher: the ledger, the frame update and the snapshot assembly.</summary>
     internal const string Main = "farmhandexecutioncontroller.cs";
 
+    /// <summary>The discovery type the dispatcher reads a world through: the `Discover*` family and the caps it applies.</summary>
+    internal const string Discovery = "farmhandtargetdiscovery.cs";
+
     private const string Directory = "integrations/stardew";
 
     /// <summary>The file NAME of the partial that declares <paramref name="member"/>.</summary>
@@ -59,7 +62,8 @@ internal static class ControllerPartials
     internal static IEnumerable<(string File, string Source)> Sources()
     {
         string directory = Path.Combine(RepositoryRoot(), Directory);
-        return System.IO.Directory.EnumerateFiles(directory, "farmhandexecutioncontroller*.cs")
+        return new[] { "farmhandexecutioncontroller*.cs", "farmhandtargetdiscovery*.cs" }
+            .SelectMany(pattern => System.IO.Directory.EnumerateFiles(directory, pattern))
             .OrderBy(path => path, StringComparer.Ordinal)
             .Select(path => (Path.GetFileName(path), File.ReadAllText(path)));
     }

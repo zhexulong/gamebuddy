@@ -161,7 +161,7 @@ public sealed class SlimeHutchTroughActionTests
     /// </summary>
     private static string ToolExecuteBody(string executeName, string wrapper)
     {
-        string source = File.ReadAllText(NativeActionSourcePath());
+        string source = NativeActionSource();
         int start = source.IndexOf($"private LocalExecutionReceipt {executeName}(", StringComparison.Ordinal);
         start.Should().BeGreaterThanOrEqualTo(0, $"{executeName} must exist (design 5.2 shares one body per action)");
         wrapper.Should().Contain($"this.{executeName}(");
@@ -194,7 +194,7 @@ public sealed class SlimeHutchTroughActionTests
     [Fact]
     public void Resolution_UsesTheFixedNativeCoordinates_NotBuildingPropertyArithmetic()
     {
-        string source = File.ReadAllText(NativeActionSourcePath());
+        string source = NativeActionSource();
 
         // The native gate compares literal interior coordinates, so resolution must
         // too. Pinning the predicate keeps a future edit from silently substituting
@@ -227,7 +227,7 @@ public sealed class SlimeHutchTroughActionTests
     {
         // The three WateringCan actions share a native seam but must not share a
         // terminal vocabulary: their postconditions describe different world state.
-        string source = File.ReadAllText(NativeActionSourcePath());
+        string source = NativeActionSource();
         foreach (string code in TroughReasonCodes)
             source.Should().Contain($"\"{code}\"");
         source.Should().NotContain("\"pet_bowl_watered\"");
@@ -296,6 +296,9 @@ public sealed class SlimeHutchTroughActionTests
 
     private static string NativeActionSourcePath() => RepositorySourcePath(Path.Combine(
         "integrations", "stardew", "farmhandexecutioncontroller.slimehutchtroughactions.cs"));
+
+    /// <summary>The family's own discovery text, wherever it is declared.</summary>
+    private static string NativeActionSource() => File.ReadAllText(NativeActionSourcePath()) + ControllerPartials.Declaring("DiscoverSlimeHutchTroughTargets");
 
     /// <summary>
     /// The body of the one shared native tool-use seam, read from the main

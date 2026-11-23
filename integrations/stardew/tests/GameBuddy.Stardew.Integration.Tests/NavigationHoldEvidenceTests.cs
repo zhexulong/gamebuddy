@@ -138,7 +138,7 @@ public sealed class NavigationHoldEvidenceTests
         string hold = WorldModel.DescribeHeldBody(Facts(), canMove: false, hold: declared).Evidence;
 
         hold.Should().Contain($"held_by={BodyHold.EmoteHolder}");
-        hold.Should().Contain("body_pause_remaining_ms=");
+        hold.Should().Contain("hold_remaining_ms=");
         hold.Should().Contain("admissible_actions=none");
         hold.Should().Contain($"next_step={WorldModel.WaitForRetryWindowStep}");
 
@@ -186,43 +186,59 @@ public sealed class NavigationHoldEvidenceTests
 
     /// <summary>
     /// A body taken by its own animation says so, and says how long it lasts: the navigation refusal's countermeasure
-    /// (`next_step=wait_for_retry_window`) is the one thing the caller can act on, and it must not be a retry.
+    /// (`next_step=wait_for_retry_window`) is the one thing the caller can act on, and it must not be a retry. The window
+    /// it publishes is the one the tick armed for that kind, so what is LEFT is what the caller reads - and once it has
+    /// passed, the same sentence ends the attempt (see the matrix's section ④).
     /// </summary>
     [Fact]
     public void ASingleAnimationHoldSaysToWaitForTheWindowRatherThanToRetry()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(selfAnimation: true), canMove: false, hold: BodyHoldFact.Free).Evidence;
+        string hold = WorldModel.DescribeHeldBody(
+            Facts(selfAnimation: true), canMove: false, hold: Armed(ActorTransientKind.SelfAnimation)).Evidence;
 
-        hold.Should().Contain("held_by=transient_busy");
+        hold.Should().Contain("held_by=transient:selfAnimation");
         hold.Should().Contain("transient_kind=selfAnimation");
-        hold.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        hold.Should().Contain("hold_remaining_ms=");
+        hold.Should().Contain($"retry_window_ms={WorldModel.SettleWindowMs(ActorTransientKind.SelfAnimation)}");
         hold.Should().Contain("admissible_actions=none");
         hold.Should().Contain("next_step=wait_for_retry_window");
 
         NavigationOutcome outcome = Decide(hold);
         outcome.TerminalReasonCode.Should().Be("destination_locked");
-        outcome.Evidence.Should().Contain("held_by=transient_busy");
+        outcome.Evidence.Should().Contain("held_by=transient:selfAnimation");
     }
 
     /// <summary>
     /// A body taken by a location transition says so, and says how long it lasts: the caller's one option is to wait the
-    /// engine's own fade out, not to re-issue the request.
+    /// engine's own fade out, not to re-issue the request - for as long as the fade's own window runs.
     /// </summary>
     [Fact]
     public void AWarpHoldSaysToWaitForTheWindowRatherThanToRetry()
     {
-        string hold = WorldModel.DescribeHeldBody(Facts(warping: true), canMove: false, hold: BodyHoldFact.Free).Evidence;
+        string hold = WorldModel.DescribeHeldBody(
+            Facts(warping: true), canMove: false, hold: Armed(ActorTransientKind.Warping)).Evidence;
 
-        hold.Should().Contain("held_by=transient_busy");
+        hold.Should().Contain("held_by=transient:warping");
         hold.Should().Contain("transient_kind=warping");
-        hold.Should().Contain($"retry_window_ms={WorldModel.TransientRetryWindowMs}");
+        hold.Should().Contain("hold_remaining_ms=");
+        hold.Should().Contain($"retry_window_ms={WorldModel.SettleWindowMs(ActorTransientKind.Warping)}");
         hold.Should().Contain("admissible_actions=none");
         hold.Should().Contain("next_step=wait_for_retry_window");
 
         NavigationOutcome outcome = Decide(hold);
         outcome.TerminalReasonCode.Should().Be("destination_locked");
-        outcome.Evidence.Should().Contain("held_by=transient_busy");
+        outcome.Evidence.Should().Contain("held_by=transient:warping");
     }
+
+    /// <summary>
+    /// The settle hold the tick arms for a kind (`WorldModel.TransientSettle`), stated here so the shape this test examines is
+    /// the shape production arms: `held(transient:&lt;kind&gt;, native_world_transient, now + that kind's window)`.
+    /// </summary>
+    private static BodyHoldFact Armed(ActorTransientKind kind) => new(
+        BodyHoldState.Held,
+        WorldModel.TransientHolder(WorldModel.KindForWire(kind)),
+        BodyHold.NativeTransientReason,
+        BodyHold.NowMs() + WorldModel.SettleWindowMs(kind));
 
     /// <summary>An actionable player is not locked: the new branch must not swallow the walk it guards.</summary>
     [Fact]

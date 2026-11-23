@@ -21,14 +21,22 @@
  * </ul>
  *
  * <p>
+ * THE PLAN BUILDER GETS A STAGE SPLIT OF ITS OWN, under the Time section. Its category used to be called `plan_compile`
+ * and read as if it timed the compiler, while one call of that tool is four stages and measured `round94` (2026-11-23)
+ * put 95.6% of its 128.6 s in the settlement wait and at most 649 ms in compilation. The stages live in
+ * `../live-run/analysis/plan-work-timing.mjs`, each read from the artifact that owns it, and the total stays the round
+ * trip the runner published - this report moves time into the stage that owns it and never makes a total smaller.
+ * </p>
+ *
+ * <p>
  * Sources: `<run>/result.json` for what the harness recorded, and the bound session `.jsonl` for per-turn provider usage -
  * the latter is where `cacheRead`/`cacheWrite` live, because the harness narrows `usage` to four keys and drops them.
  * </p>
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-
+import { formatPlanWork, readPlanWorkTiming } from "../live-run/analysis/plan-work-timing.mjs";
 // The session-record parse lives in one module because a second reader now needs it: the Chat live loop publishes
 // this same reading on its run, and two spellings of it would quote different numbers for one run.
 import { cacheBreaks, peakContext, readUsages, sumOf } from "./run-cost-usage.mjs";
@@ -140,6 +148,9 @@ function report(runDirectory) {
     context: { ...context, hitRate, peak, peakAt: at, cacheBreaks: cacheBreaks(usages) },
     prompt: { source: sessionPath ?? "not found", toolDefinitions: promptBytes },
     time: toolTime(result),
+    // WHERE THE PLAN BUILDER'S OWN TIME WENT, beside the category total that made a reader ask: the stages are read
+    // from the trace and the answer that measured them, and `not_measured` is the value when one of them is absent.
+    planWork: readPlanWorkTiming({ runDirectory, sessionPath }),
     harness: {
       // What the harness itself published, so a reader can see the gap this report fills rather than having to trust it.
       agentTurnOutcome: result.agentTurnOutcome ?? null,
@@ -191,6 +202,9 @@ function writeText(document) {
       `  ${row.name.padEnd(20)} ${String(row.calls).padStart(6)} ${`${row.sumMs}ms`.padStart(9)} ` +
         `${String(row.medianMs ?? "-").padStart(8)} ${String(row.maxMs ?? "-").padStart(8)}`,
     );
+  out.push("");
+  out.push("PLAN WORK  (the plan builder's round trip: each stage beside the artifact that measured it)");
+  for (const line of formatPlanWork(document.planWork)) out.push(`  ${line}`);
   out.push("");
   out.push(`HARNESS  (what result.json publishes, for comparison)`);
   out.push(`  agentTurnOutcome      ${JSON.stringify(document.harness.agentTurnOutcome)}`);

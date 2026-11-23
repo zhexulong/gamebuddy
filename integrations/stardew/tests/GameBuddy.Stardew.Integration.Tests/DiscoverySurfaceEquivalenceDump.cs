@@ -55,10 +55,11 @@ public sealed class DiscoverySurfaceEquivalenceDump
         string? tag = Environment.GetEnvironmentVariable("GAMEBUDDY_DISCOVERY_DUMP");
         if (string.IsNullOrWhiteSpace(tag)) return;
 
-        MethodInfo[] discoveries = typeof(ExecutionManager)
-            .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+        MethodInfo[] discoveries = new[] { typeof(ExecutionManager), typeof(FarmhandTargetDiscovery) }
+            .SelectMany(type => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly))
             .Where(method => method.Name.StartsWith("Discover", StringComparison.Ordinal))
             .OrderBy(method => method.Name, StringComparer.Ordinal)
+            .ThenBy(Signature, StringComparer.Ordinal)
             .ToArray();
 
         var report = new StringBuilder();
@@ -68,7 +69,9 @@ public sealed class DiscoverySurfaceEquivalenceDump
             using TargetFamilyCompletenessTests.TargetFamilyWorld world = TargetFamilyCompletenessTests.TargetFamilyWorld.Create();
             if (family != "bare") world.PopulateFor(family);
             var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
-            var manager = new ExecutionManager(new DummyMonitor(), () => publication);
+            var monitor = new DummyMonitor();
+            var manager = new ExecutionManager(monitor, () => publication);
+            var discovery = manager.TargetDiscovery;
 
             report.Append("===== family: ").Append(family).AppendLine(" =====");
             foreach (MethodInfo method in discoveries)
@@ -80,7 +83,8 @@ public sealed class DiscoverySurfaceEquivalenceDump
                 object?[] arguments = parameters.Select(parameter => ArgumentFor(parameter, world)).ToArray();
                 try
                 {
-                    object? result = method.Invoke(method.IsStatic ? null : manager, arguments);
+                    object? target = method.IsStatic ? null : method.DeclaringType == typeof(ExecutionManager) ? manager : discovery;
+                    object? result = method.Invoke(target, arguments);
                     foreach (ParameterInfo parameter in parameters.Where(p => p.IsOut))
                         report.Append("out ").Append(parameter.Name).Append(" = ").AppendLine(Format(arguments[parameter.Position], 0));
                     if (Render(result, report, 0) > 0) withRows.Add($"{family}:{method.Name}");
@@ -102,8 +106,15 @@ public sealed class DiscoverySurfaceEquivalenceDump
         Assert.True(withRows.Count >= 40, $"only {withRows.Count} (family, member) pairs produced rows");
     }
 
+    /// <summary>The parameter list as text, so two overloads of one name keep one order in the dump.</summary>
+    private static string Signature(MethodInfo method) =>
+        string.Join(",", method.GetParameters().Select(p => SimpleName(p.ParameterType)));
+
+    /// <summary>An `out` parameter is an in/out slot; its default is whatever its element type's zero is.</summary>
+    private static object? Zero(Type type) => type.IsValueType ? Activator.CreateInstance(type) : null;
+
     private static object? ArgumentFor(ParameterInfo parameter, TargetFamilyCompletenessTests.TargetFamilyWorld world) =>
-        parameter.IsOut ? 0
+        parameter.IsOut ? Zero(parameter.ParameterType.GetElementType()!)
         : parameter.ParameterType == typeof(Farmer) ? world.Actor
         : parameter.ParameterType == typeof(StardewValley.GameLocation) ? world.Farm
         : parameter.ParameterType == typeof(DiscoveryExclusionRecorder) ? new DiscoveryExclusionRecorder()

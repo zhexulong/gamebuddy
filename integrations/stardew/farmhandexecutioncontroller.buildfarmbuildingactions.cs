@@ -108,7 +108,7 @@ namespace GameBuddy.Stardew;
 // (`action_past_cancel_point`) and the Agent waits for the terminal.
 internal sealed partial class ExecutionManager
 {
-    private const int BuildFarmBuildingTargetLimit = 8;
+    internal const int BuildFarmBuildingTargetLimit = 8;
 
     /// <summary>
     /// Commission one farm building through the game's own construction path. Refusals are
@@ -332,7 +332,7 @@ internal sealed partial class ExecutionManager
     /// (`ItemRegistry.Create(material.ItemId, material.Amount)`, CarpenterMenu.cs:427) so the
     /// debit can never target a different item than the one the game would charge.
     /// </summary>
-    private static IReadOnlyList<(string QualifiedItemId, int Amount)> BuildFarmBuildingMaterials(BuildingData data)
+    internal static IReadOnlyList<(string QualifiedItemId, int Amount)> BuildFarmBuildingMaterials(BuildingData data)
     {
         List<(string, int)> materials = new();
         foreach (BuildingMaterial material in data.BuildMaterials ?? new List<BuildingMaterial>())
@@ -343,7 +343,7 @@ internal sealed partial class ExecutionManager
         return materials;
     }
 
-    private static int CountBuildFarmBuildingMaterials(IReadOnlyList<(string QualifiedItemId, int Amount)> materials) =>
+    internal static int CountBuildFarmBuildingMaterials(IReadOnlyList<(string QualifiedItemId, int Amount)> materials) =>
         materials.Sum(material => CountQualifiedItem(Game1.player, material.QualifiedItemId));
 
     private static string DescribeFarmBuildingMaterials(IReadOnlyList<(string QualifiedItemId, int Amount)> materials) =>
@@ -536,86 +536,6 @@ internal sealed partial class ExecutionManager
             CultureInfo.InvariantCulture,
             $"{location.NameOrUniqueName}:{buildingType}:{x},{y}:build-site");
         return $"build_site_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
-    }
-
-    internal static IReadOnlyList<BridgeFarmBuildingTarget> DiscoverBuildFarmBuildingTargets(Farmer player, out int omitted)
-    {
-        omitted = 0;
-        GameLocation? location = player.currentLocation;
-        if (location is null || !location.IsBuildableLocation() || Game1.buildingData is null)
-            return Array.Empty<BridgeFarmBuildingTarget>();
-
-        List<BridgeFarmBuildingTarget> result = new();
-        int siteCount = 0;
-        int builtCount = 0;
-
-        foreach (KeyValuePair<string, BuildingData> entry in Game1.buildingData)
-        {
-            if (siteCount >= BuildFarmBuildingTargetLimit) break;
-            BuildingData data = entry.Value;
-            if (string.IsNullOrEmpty(entry.Key) || data is null || data.Size.X <= 0 || data.Size.Y <= 0) continue;
-            if (!string.IsNullOrEmpty(data.BuildingToUpgrade)) continue;
-            if (Game1.player.Money < data.BuildCost) continue;
-            if (CountBuildFarmBuildingMaterials(BuildFarmBuildingMaterials(data)) < BuildFarmBuildingMaterials(data).Sum(material => material.Amount)) continue;
-
-            Vector2? site = FindFarmBuildingSite(player, location, data);
-            if (site is null) continue;
-            (int x, int y) = ((int)site.Value.X, (int)site.Value.Y);
-            result.Add(new BridgeFarmBuildingTarget(
-                BuildFarmBuildingSiteTargetId(location, entry.Key, x, y),
-                "build_site",
-                location.NameOrUniqueName,
-                x,
-                y,
-                entry.Key,
-                string.IsNullOrEmpty(data.Name) ? entry.Key : data.Name,
-                data.BuildCost,
-                data.BuildDays,
-                "none",
-                -1,
-                // The type's own declared size - the tiles the commission will take. The structure does not exist yet,
-                // so `Building.tilesWide` has nothing to answer for; `Data/Buildings`' `Size` is the same declaration the
-                // engine copies into those fields when the building goes up (Building.cs:499-501).
-                data.Size.X,
-                data.Size.Y));
-            siteCount++;
-        }
-
-        List<Building> standing = location.buildings
-            .Where(static building => building is not null)
-            .OrderByDescending(static building => building.daysOfConstructionLeft.Value > 0)
-            .ThenBy(static building => building.id.Value)
-            .ToList();
-        foreach (Building building in standing)
-        {
-            if (builtCount >= BuildFarmBuildingTargetLimit)
-            {
-                omitted += 1;
-                continue;
-            }
-            // The countdown is a PUBLISHED FIELD of the `built` row, not a filter: a building still being built is a
-            // building standing on the farm, and `Building.dayUpdate` only ever decrements this while it is above zero
-            // (Building.cs:1582-1590), so a negative value names no state the engine can produce.
-            BuildingData? data = building.GetData();
-            result.Add(new BridgeFarmBuildingTarget(
-                $"built_{building.id.Value:N}",
-                "built",
-                location.NameOrUniqueName,
-                building.tileX.Value,
-                building.tileY.Value,
-                building.buildingType.Value,
-                string.IsNullOrEmpty(building.buildingType.Value) ? "none" : building.buildingType.Value,
-                data?.BuildCost ?? 0,
-                data?.BuildDays ?? 0,
-                building.id.Value.ToString("D"),
-                building.daysOfConstructionLeft.Value,
-                // The standing building's own footprint (Building.cs:64-68), which is what `occupiesTile` reads.
-                Math.Max(1, building.tilesWide.Value),
-                Math.Max(1, building.tilesHigh.Value)));
-            builtCount++;
-        }
-
-        return result;
     }
 
     /// <summary>

@@ -54,7 +54,7 @@ public sealed class FixedInteractionPointSnapshotTests
         harness.SetWater(30, 4);
         harness.SetWater(12, 20);
 
-        IReadOnlyList<BridgeRefillWateringCanTarget> targets = ExecutionManager.DiscoverRefillWateringCanTargets(harness.Actor);
+        IReadOnlyList<BridgeRefillWateringCanTarget> targets = FarmhandTargetDiscovery.DiscoverRefillWateringCanTargets(harness.Actor);
 
         targets.Select(target => $"{target.X},{target.Y}").Should().BeEquivalentTo(
             new[] { "30,4", "12,20" },
@@ -79,8 +79,8 @@ public sealed class FixedInteractionPointSnapshotTests
         for (int x = 0; x < FixedPointHarness.Width; x++)
             harness.SetWater(x, FixedPointHarness.Height - 1);
 
-        IReadOnlyList<BridgeRefillWateringCanTarget> first = ExecutionManager.DiscoverRefillWateringCanTargets(harness.Actor);
-        IReadOnlyList<BridgeRefillWateringCanTarget> second = ExecutionManager.DiscoverRefillWateringCanTargets(harness.Actor);
+        IReadOnlyList<BridgeRefillWateringCanTarget> first = FarmhandTargetDiscovery.DiscoverRefillWateringCanTargets(harness.Actor);
+        IReadOnlyList<BridgeRefillWateringCanTarget> second = FarmhandTargetDiscovery.DiscoverRefillWateringCanTargets(harness.Actor);
 
         first.Should().NotBeEmpty("the map carries water on its south row");
         first.Select(target => (target.X, target.Y)).Should().Equal(
@@ -112,7 +112,7 @@ public sealed class FixedInteractionPointSnapshotTests
         }
 
         IReadOnlyList<BridgeFixedInteractionPoint> points =
-            ExecutionManager.DiscoverFixedInteractionPoints(harness.Actor, out int omitted);
+            FarmhandTargetDiscovery.DiscoverFixedInteractionPoints(harness.Actor, out int omitted);
 
         omitted.Should().Be(0);
         points.Should().HaveCount(
@@ -145,7 +145,7 @@ public sealed class FixedInteractionPointSnapshotTests
         harness.SetTouchActionTile(2, 21, "BuyBackpack 1701");
 
         IReadOnlyList<BridgeFixedInteractionPoint> points =
-            ExecutionManager.DiscoverFixedInteractionPoints(harness.Actor, out _);
+            FarmhandTargetDiscovery.DiscoverFixedInteractionPoints(harness.Actor, out _);
 
         points.Should().BeEquivalentTo(new[]
         {
@@ -174,7 +174,7 @@ public sealed class FixedInteractionPointSnapshotTests
         }
 
         IReadOnlyList<BridgeFixedInteractionPoint> points =
-            ExecutionManager.DiscoverFixedInteractionPoints(harness.Actor, out int omitted);
+            FarmhandTargetDiscovery.DiscoverFixedInteractionPoints(harness.Actor, out int omitted);
 
         points.Should().HaveCount(ExecutionManager.MaximumFixedInteractionPoints);
         omitted.Should().Be(placed - ExecutionManager.MaximumFixedInteractionPoints);
@@ -188,7 +188,7 @@ public sealed class FixedInteractionPointSnapshotTests
             "the family is topology, so it is published in the map's own order and truncates at the end of it");
 
         harness.SetActionTile(placed % FixedPointHarness.Width, placed / FixedPointHarness.Width, "Shop");
-        ExecutionManager.DiscoverFixedInteractionPoints(harness.Actor, out int omittedAfterOneMore);
+        FarmhandTargetDiscovery.DiscoverFixedInteractionPoints(harness.Actor, out int omittedAfterOneMore);
         omittedAfterOneMore.Should().Be(omitted + 1, "one more point past the cap is one more stated omission");
     }
 

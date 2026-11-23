@@ -16,6 +16,7 @@ import {
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
   PLAN_ITERATION_CONDITIONS,
+  PLAN_PLACE_READINGS,
   PLAN_SCRIPT_BUDGET_MS,
   PLAN_SNAPSHOT_DISCOVERY_RADIUS,
   PLAN_SNAPSHOT_READINGS,
@@ -29,9 +30,9 @@ import {
   planWorkDescription,
   TRANSITION_SOURCE_PLAN_ACTION_IDS,
 } from "./body-program-script.js";
+import type { StardewTileRead } from "./game-connection.js";
 import { GAME_SURFACE_INPUT_HEADER } from "./game-surface-prompt-floor.js";
 import { GAME_SURFACE_PROMPT_FLOOR as READING } from "./game-surface-prompt-floor.test-support.js";
-import type { StardewTileRead } from "./game-connection.js";
 import { ROW_STATE_FIELDS } from "./game-world-vocabulary.js";
 import { type ActionRegistration, type Snapshot, validateBodyProgramCandidateRequest } from "./protocol.js";
 import { SLEEP_DAY_END_TEXT } from "./snapshot-projection.js";
@@ -66,6 +67,20 @@ type SurfaceAction = Readonly<{
    * itself). A fixture that drops it would publish `approach_requirement_undeclared` for an action the Mod declares.
    */
   approach?: Readonly<{ relation: string; withinTiles?: number }>;
+  /**
+   * What the action requires of the world and what it changes, as the surface declares it.
+   *
+   * Carried because the compiler reads it: `requires_place` is what a step written after a move is waiting for, and
+   * `moves_actor` is the step it waits on. A fixture that dropped it would make the whole rule below unreachable.
+   */
+  effects?: Readonly<{
+    declared: readonly Readonly<{
+      class: "moves_actor" | "requires_place" | "produces" | "consumes";
+      subject: string;
+      observedBy: string;
+    }>[];
+    none?: string;
+  }>;
 }>;
 
 const SURFACE = (
@@ -92,6 +107,7 @@ const REGISTRATIONS: readonly ActionRegistration[] = SURFACE.map((action) =>
             // (`move_to_tile` declares none), and the consumer rule in `body-program-script.ts` is built on it.
             ...(action.targetFamily === undefined ? {} : { targetFamily: action.targetFamily }),
             ...(action.approach === undefined ? {} : { approach: action.approach }),
+            ...(action.effects === undefined ? {} : { effects: action.effects }),
           },
         }),
   }),
@@ -983,6 +999,242 @@ test("the steps written BEFORE a refused transition still run, and only the orph
     "n02:plan_script_door_not_on_this_map:64:14:map=Town:warps=0:doors=0",
     "n03:plan_script_orphaned_by_a_refused_predecessor:n03:sleep:n02:enter_exit",
   ]);
+});
+
+/**
+ * ROUND93'S SUBMITTED PROGRAMME, which is the one that ran: `sleep()` ALONE, from Town.
+ *
+ * <p>
+ * The orphan rule above answers her SCRIPT - a call written after a refused transition went with it - and it cannot answer
+ * this one at all, because there is nothing before the `sleep` to have been refused: her plan, as submitted, was one step
+ * that the world had already said no to. Measured 2026-11-22 (`round93`, `plan_463`): that plan dispatched, the night
+ * answered `not_home` for 308 s, and the engine's 2:00 AM pass-out ended the run.
+ * </p>
+ * <p>
+ * The place is not this file's opinion: `sleep` declares `requires_place: home_indoors`, the predicate that decides it is
+ * `SleepAndAdvanceDayLifecycle.HomeOf`, and the Mod publishes its verdict on the snapshot (`sleepAdmitsHere`). A plan that
+ * never moves the body home is therefore refused before dispatch, and the refusal names the place and the predicate so the
+ * correction is "write the walk home", not "try again".
+ * </p>
+ */
+test("a bare `sleep()` from Town is refused, naming the place the plan never reaches", () => {
+  const away = { location: "Town", sleepAdmitsHere: false };
+  const result = compile("builder.sleep();", away);
+
+  assert.equal(
+    refusalOf(result),
+    "plan_script_requires_a_place_the_plan_never_reaches:n01:home_indoors:expected_by=SleepAndAdvanceDayLifecycle.HomeOf",
+    "the place and the predicate that would have answered for it, in the Mod's own words",
+  );
+  assert.equal(accountOf(result).dropped.length, 1, "her one call is dropped, not the plan silently kept");
+  // THE OTHER SIDE OF THE SAME READING, which is what keeps this from being "refuse sleep": at home the call compiles
+  // with no edge at all, because the place already holds and no step has to reach it.
+  const home = compile("builder.sleep();", { location: "FarmHouse", sleepAdmitsHere: true });
+  assert.equal(home.status, "compiled", "a place that already holds needs no step in the plan");
+  assert.deepEqual(
+    nodesOf(home).map((node) => node.dependsOn),
+    [[]],
+    "and nothing is consumed to reach it",
+  );
+  // AND THE THIRD ANSWER: no verdict published is the world NOT HAVING SPOKEN. Older Mod snapshots omit the field, and an
+  // unread place must not become a refusal - the difference between "nobody said" and "the world said no".
+  const unmeasured = compile("builder.sleep();", { location: "Town" });
+  assert.equal(unmeasured.status, "compiled", "an unread place is silence, which is never a refusal");
+});
+
+/**
+ * ROUND93'S OWN TWO CALLS, with the world's verdict published: either the door step is kept, or the `sleep` is refused
+ * for the place it never reaches - and here the door is not on this map, so the refusal is the place.
+ *
+ * <p>
+ * WHY THE PLACE ANSWERS BEFORE THE ORPHAN RULE. The orphan code names the predecessor, which here would send her to the
+ * transition she already knows is wrong; what she has to fix is that nothing in her plan walks her home. The orphan rule
+ * still answers every step whose dependency is the MAP the refused transition led to (see the tests above), and the pair of
+ * this test with that one is the difference between a predecessor and a place: without a published verdict the same script
+ * answers `plan_script_orphaned_by_a_refused_predecessor`, because silence is not a "no".
+ * </p>
+ */
+test("round93 plan_463: with the place read as unmet, the sleep is refused for home_indoors, not for its predecessor", () => {
+  const result = compile("builder.enter_exit({ x: 64, y: 14 });\nbuilder.sleep();", {
+    location: "Town",
+    warps: [],
+    doorTargets: [],
+    sleepAdmitsHere: false,
+  });
+
+  assert.deepEqual(
+    rejectionsOf(result).map((call) => [call.call, call.actionId, call.reasonCode]),
+    [
+      [1, "enter_exit", "plan_script_door_not_on_this_map:64:14:map=Town:warps=0:doors=0"],
+      [
+        2,
+        "sleep",
+        "plan_script_requires_a_place_the_plan_never_reaches:n02:home_indoors:expected_by=SleepAndAdvanceDayLifecycle.HomeOf",
+      ],
+    ],
+    "the door is refused for the tile it named and the sleep for the place her plan never reached",
+  );
+  assert.equal("program" in result, false, "nothing dispatches: the plan that ran at round93 was this one step");
+});
+
+/**
+ * THE SUCCESS SIDE OF THE SAME EDGE: a door this map publishes compiles, and the `sleep` after it CONSUMES the door step
+ * rather than merely following it.
+ *
+ * <p>
+ * `dependsOn` is the difference between "wait for it" and "I cannot happen without it": a transition that fails at
+ * runtime leaves the body on the map it started on, so the step written home-of-that-transition must be SKIPPED, not run
+ * from where it is. `orderedAfter` would wait for the failure and run anyway - the 308 s again, in about two seconds.
+ * </p>
+ */
+test("a sleep written after a transition that compiled depends on the transition's success", () => {
+  const result = compile("builder.enter_exit({ x: 3, y: 12 });\nbuilder.sleep();", {
+    location: "Farm",
+    warps: [exitRow(3, 12, "FarmHouse")],
+    sleepAdmitsHere: false,
+  });
+
+  assert.equal(result.status, "compiled", "the door is on this map, so nothing is refused");
+  assert.deepEqual(
+    nodesOf(result).map((node) => [node.actionId, node.dependsOn, node.orderedAfter ?? []]),
+    [
+      ["move_to_tile", [], []],
+      ["enter_exit", [], ["auto_walk_01"]],
+      ["sleep", ["n02"], []],
+    ],
+    "the walk, the door she wrote, and a sleep that cannot run if the door did not",
+  );
+});
+
+/**
+ * THE BOUNDARY, WHICH IS THE HALF THAT KEEPS THIS FROM BEING A CHAIN OF EVERYTHING: an action that does not consume the
+ * moved actor stays independent and still runs.
+ *
+ * <p>
+ * `chest_store` declares one `consumes` effect (the pack item it moves) and nothing about the body's place, so a plan that
+ * walks home, stores something and sleeps is three sentences and the middle one owes nothing to the walk. The classes come
+ * from the surface (`PublishedPlanAction.effects`), never from a list of ids here, so the next published action that
+ * declares no `requires_place` is outside this rule without an edit - and `express_emote`, whose effect is
+ * `actor_body_only`, is not a plan step at all (`EXPRESSION_ONLY_ACTION_IDS`).
+ * </p>
+ */
+test("an action that consumes no moved actor keeps its independence beside the sleep that does", () => {
+  const result = compile(
+    "builder.enter_exit({ x: 3, y: 12 });\nbuilder.chest_store({ chestId: 'chest_01', expectedQualifiedItemId: '(O)24' });\nbuilder.sleep();",
+    { location: "Farm", warps: [exitRow(3, 12, "FarmHouse")], sleepAdmitsHere: false },
+  );
+
+  assert.equal(result.status, "compiled");
+  assert.deepEqual(
+    nodesOf(result).map((node) => [node.actionId, node.dependsOn]),
+    [
+      ["move_to_tile", []],
+      ["enter_exit", []],
+      ["chest_store", []],
+      ["sleep", ["n02"]],
+    ],
+    "the store owes nothing to the walk and is written with no edge; the sleep owes the door its success",
+  );
+  assert.deepEqual(
+    accountOf(result).acceptedSteps,
+    ["n01", "n02", "n03"],
+    "all three of her calls are steps of the plan, so nothing was dropped to keep the sleep honest",
+  );
+});
+
+/**
+ * THE COST OF THE RULE BEING DECLARATION-SHAPED RATHER THAN PRECISE: one dispatch, not a night.
+ *
+ * <p>
+ * `moves_actor` says the body is put somewhere and never says where, so a walk WITHIN the map she stands on is a provider
+ * like any other. Written in Town, `move_to_tile(5,5); sleep()` compiles with `sleep` depending on the walk, and when the
+ * walk succeeds she is still in Town: the night answers `not_home` **in about two seconds** (that refusal was measured at
+ * 308 s before the Mod began releasing it, which is the difference this test is named for). The alternative - deciding
+ * which moves can reach which places - would be a second spelling of `HomeOf` in this file, and that predicate is the
+ * Mod's.
+ * </p>
+ */
+test("a walk within the map is a provider too, so the cost is one dispatch and an answer, not 308 s", () => {
+  const result = compile("builder.move_to_tile({ x: 5, y: 5 });\nbuilder.sleep();", {
+    location: "Town",
+    sleepAdmitsHere: false,
+  });
+
+  assert.equal(
+    result.status,
+    "compiled",
+    "a step that moves the body exists, so the place rule has a provider to name",
+  );
+  assert.deepEqual(
+    nodesOf(result).map((node) => [node.actionId, node.dependsOn]),
+    [
+      ["move_to_tile", []],
+      ["sleep", ["n01"]],
+    ],
+    "the sleep is written on the walk's success: if the walk failed it is skipped rather than run from Town",
+  );
+});
+
+/**
+ * The same rule over every published action, with its population DERIVED FROM THE SURFACE rather than written here.
+ *
+ * <p>
+ * Two halves, from one reading of `action-surface.v1.json`: an action that declares a place THIS COMPILER CAN READ is
+ * refused by that place's name when it is written alone in a world where the place does not hold, and an action that
+ * declares none - or a place whose verdict nobody publishes - is never refused for a place at all. A hand-written list of
+ * "the place actions" would agree with the artifact today and stop being true in the change that publishes the next one;
+ * the print line says how many actions each half examined, and zero blocks.
+ * </p>
+ */
+test("every step that declares a place this compiler can read is answered by that reading, and no other step is", () => {
+  const planning = ACTIONS.filter((action) => !PLAN_FORM_ACTION_IDS.includes(action.actionId));
+  // One reading of the compiler's own table rather than a second list of "the place actions" here: the population is
+  // "declares `requires_place` AND the place has a published verdict", both read from declarations.
+  const refusalOfAlone = (actionId: string): string | null => {
+    const result = compile(builderCall(actionId), { location: "Town", sleepAdmitsHere: false });
+    if (result.status === "compiled") return null;
+    const placeRefusal = result.rejected.find((call) => call.reasonCode.startsWith("plan_script_requires_a_place_"));
+    return placeRefusal === undefined ? null : placeRefusal.reasonCode;
+  };
+  const placeActions = planning.filter((action) =>
+    action.effects.some((effect) => effect.class === "requires_place" && PLAN_PLACE_READINGS.has(effect.subject)),
+  );
+  const otherActions = planning.filter((action) => !placeActions.includes(action));
+  const namedRefusal = (action: PublishedPlanAction): Readonly<{ place: string; expectedBy: string }> => {
+    const declared = action.effects.find(
+      (effect) => effect.class === "requires_place" && PLAN_PLACE_READINGS.has(effect.subject),
+    );
+    return Object.freeze({ place: declared!.subject, expectedBy: declared!.observedBy });
+  };
+  const unanswered = placeActions
+    .map((action) => {
+      const expected = namedRefusal(action);
+      const reasonCode = refusalOfAlone(action.actionId);
+      const code = `plan_script_requires_a_place_the_plan_never_reaches:n01:${expected.place}:expected_by=${expected.expectedBy}`;
+      return reasonCode === code ? null : `${action.actionId}: ${String(reasonCode)} (expected ${code})`;
+    })
+    .filter((finding): finding is string => finding !== null);
+  const refusedWithoutAPlace = otherActions
+    .map((action) => [action.actionId, refusalOfAlone(action.actionId)] as const)
+    .filter(([, reasonCode]) => reasonCode !== null)
+    .map(([actionId, reasonCode]) => `${actionId}: ${String(reasonCode)}`);
+
+  console.log(
+    `place_rule: actions examined ${String(planning.length)} · declaring a readable place ${String(placeActions.length)} ` +
+      `(${placeActions.map((action) => action.actionId).join(",")}) · declaring none ${String(otherActions.length)} · ` +
+      `unanswered ${String(unanswered.length)} · refused without a place ${String(refusedWithoutAPlace.length)}`,
+  );
+  assert.ok(placeActions.length > 0, "blocked: no published action declares a place this compiler can read");
+  assert.deepEqual(
+    unanswered,
+    [],
+    "an action whose place is unmet and whose plan cannot reach it must be refused, by name",
+  );
+  assert.deepEqual(
+    refusedWithoutAPlace,
+    [],
+    "a step that declares no readable place must stay independent: the rule is about the place, not about the plan",
+  );
 });
 
 /**
@@ -3387,6 +3639,7 @@ const PLAN_SHAPE_FIELDS_A_CALLER_CAN_ACT_ON: Readonly<Record<string, string>> = 
   toolRequirement: "the tool, upgrade level and range a step needs before it can run",
   approachRequirement: "where the actor must stand first",
   targetFamily: "the snapshot family whose rows carry this action's targets",
+  effects: "what this step requires of the world and what it changes - the fact a later step's dependency is made of",
 });
 
 /**

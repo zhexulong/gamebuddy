@@ -36,6 +36,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { balanced, dispositionMint, splitTopLevel, transientFactory } from "./lib/stardew-disposition-mint.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const WORLD_MODEL = "integrations/stardew/WorldModel.cs";
@@ -46,40 +47,13 @@ const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
 const normalize = (line) => line.replace(/\s+/gu, " ").trim();
 const lineAt = (text, index) => text.slice(0, index).split("\n").length;
 
-/** The text between the bracket at `open` and its match, and the index of that match. */
-function balanced(text, open) {
-  const opener = text[open];
-  const closer = opener === "(" ? ")" : opener === "{" ? "}" : "]";
-  let depth = 0;
-  for (let i = open; i < text.length; i += 1) {
-    if (text[i] === opener) depth += 1;
-    else if (text[i] === closer) {
-      depth -= 1;
-      if (depth === 0) return { text: text.slice(open + 1, i), start: open + 1, end: i };
-    }
-  }
-  throw new Error(`unbalanced ${opener} at ${open}`);
-}
-
-/** Split a parameter/argument list on its top-level commas, with each part's offset. */
-function splitTopLevel(text, base) {
-  const parts = [];
-  let depth = 0;
-  let from = 0;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i];
-    // Angle brackets are NOT counted: a comparison inside an argument (`player.freezePause > 0`) would
-    // otherwise close a bracket that was never opened and silently merge every later argument.
-    if (ch === "(" || ch === "{" || ch === "[") depth += 1;
-    else if (ch === ")" || ch === "}" || ch === "]") depth -= 1;
-    else if (ch === "," && depth === 0) {
-      parts.push({ text: text.slice(from, i), at: base + from });
-      from = i + 1;
-    }
-  }
-  if (text.slice(from).trim() !== "") parts.push({ text: text.slice(from), at: base + from });
-  return parts;
-}
+/**
+ * The line a written token SITS ON - the token, not the newline and indentation in front of it.
+ *
+ * `part.at` and a `^\s*` match both land on the character before the token (the `(` of a call, a comma, the previous
+ * line's newline), so citing that offset names the line ABOVE the one a reader would look at.
+ */
+const tokenLine = (text, at, token) => lineAt(text, at + token.length - token.trimStart().length);
 
 /**
  * Blank `//` comments so a commented-out parameter is not read as a member.
@@ -119,7 +93,10 @@ function readFacts(source, factNames) {
   const stripped = withoutLineComments(body.text);
   const locals = new Map();
   for (const match of stripped.matchAll(/^\s*(?:bool|int|float|string\??)\s+([A-Za-z_]\w*)\s*=\s*([^;]+);/gmu))
-    locals.set(match[1], { expression: match[2].trim(), line: lineAt(source, body.start + match.index) });
+    locals.set(match[1], {
+      expression: match[2].trim(),
+      line: tokenLine(source, body.start + match.index, match[0]),
+    });
 
   const calls = [];
   for (let i = stripped.indexOf("new ActorWorldFacts("); i >= 0; i = stripped.indexOf("new ActorWorldFacts(", i + 1)) {
@@ -127,7 +104,7 @@ function readFacts(source, factNames) {
     calls.push(
       splitTopLevel(args.text, args.start).map((part) => ({
         expression: part.text.trim(),
-        line: lineAt(source, body.start + part.at),
+        line: tokenLine(source, body.start + part.at, part.text),
       })),
     );
   }
@@ -252,10 +229,16 @@ function factsInCondition(condition, source) {
  * transient kind it names. A return is attributed to the INNERMOST enclosing `if` that names a fact, which is what
  * makes the nested `facts.MenuType is { } menuType` inside a `HasMountedModal(facts)` branch read as `MenuType`
  * while the branch's own fallback return reads as both modal facts.
+ *
+ * WHAT A RETURN MINTS is `dispositionMint`'s to decide (tools/lib/stardew-disposition-mint.mjs), not this walk's: an
+ * inline `return new ActorDisposition(...)` states its kind itself, and `return Transient(ActorTransientKind.X)`
+ * resolves through the private factory to `ActorDispositionKind.Transient` plus that member's `KindForWire` word. The
+ * two forms are read by one reader because the contract and the gate that re-reads it must agree to the byte.
  */
 function classifyBranches(source) {
   const at = source.indexOf("internal static ActorDisposition Classify(in ActorWorldFacts facts)");
   if (at < 0) throw new Error("Classify is not declared in WorldModel.cs");
+  const factory = transientFactory(source);
   const body = balanced(source, source.indexOf("{", at));
   const text = withoutLineComments(body.text);
   const stack = [];
@@ -280,21 +263,19 @@ function classifyBranches(source) {
       stack.pop();
       continue;
     }
-    if (text.startsWith("return new ActorDisposition(", i)) {
-      const call = balanced(text, i + "return new ActorDisposition".length);
-      const args = splitTopLevel(call.text, call.start);
-      const kind = /ActorDispositionKind\.([A-Za-z_]\w*)/u.exec(args[0].text)?.[1];
-      const transient = /^\s*"([^"]+)"\s*$/u.exec(args[3]?.text ?? "")?.[1] ?? null;
+    if (text.startsWith("return ", i)) {
+      const mint = dispositionMint(text, i, factory);
+      if (mint === null) continue;
       const frame = [...stack].reverse().find((entry) => entry.facts.length > 0);
       branches.push({
         precedence: branches.length + 1,
         condition: normalize(frame?.condition ?? ""),
         facts: frame?.facts ?? [],
-        kind,
-        transientKind: transient,
-        line: lineAt(source, body.start + call.start),
+        kind: mint.kind,
+        transientKind: mint.transientKind,
+        line: lineAt(source, body.start + i),
       });
-      i = call.end;
+      i = mint.end;
     }
   }
   return branches;

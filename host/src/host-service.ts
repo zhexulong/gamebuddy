@@ -14,7 +14,10 @@ import {
   type CompanionTurnOutcome,
   FACT_PRODUCER,
   type FactProducer,
+  MEASURED_TURN_CADENCE_MS,
+  WORLD_READING_ASK,
   type WorldFact,
+  type WorldReadingAsk,
 } from "./event-pump.js";
 import type { IntegrationEventSource, IntegrationLifecycleEvent } from "./integration-launcher.js";
 import { NativeNoticeLedger } from "./native-notice-fact.js";
@@ -23,15 +26,15 @@ import type {
   GameCompanionTextExpression,
   HostPresentationAdmissionProvider,
 } from "./presentation.js";
+import { IDLE_WAIT_REASON, type IdleWaitReason, idleWaitReading } from "./program-status-wait.js";
 import type { ExecutionReceipt } from "./protocol.js";
 import {
   boundProviderFailureLine,
   classifyProviderFailure,
   type ProviderFailureClass,
 } from "./provider-failure-classification.js";
-import { idleWaitReading } from "./program-status-wait.js";
-import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
 import type { RunTrace, RunTraceSpanHandle } from "./run-trace.js";
+import { RUN_WAIT_NAMES } from "./run-trace-budget.js";
 import {
   resolveProviderFailureSystemNotice,
   resolveProviderWaitSystemNotice,
@@ -1543,26 +1546,54 @@ export class CompanionHostService {
   }
 
   /**
-   * The idle wait: the pump owed no turn, and the reason is one of two - the world said nothing, or her own executor
-   * still had nodes to run (`idleWaitReading`).
+   * The idle wait: the pump owed no turn, and the reason is one of four (`idleWaitReading`).
    *
-   * The reason used to be the literal `nothing_owed`, which was true of both and therefore told a reader of the bundle
-   * nothing: round65's `turns opened 26` at a median 35 s could not be attributed by anything the run wrote down.
-   *
-   * AND IT NOW CARRIES THE WAIT THE PUMP NAMED. `70f83b4f` gave the turn that closed with nothing a name and a moment
-   * (`ClosedWithNothingWait`) and `round84`'s silence was 741.9 s of `wait.idle (reason: "nothing_owed")`: the interval
-   * had a reason and the artifact did not. `waitingFor` and `lookAgainInMs` are the pump's own words, copied here, so the
-   * span a run exports says what the silence waited on and when it was looked at.
+   * <p>
+   * THE WORD THIS LINE NO LONGER PRINTS IS `nothing_owed`. It was computed from the journal's node count, so between two
+   * programmes it answered "no plan has a node left" - a statement about the executor's ledger - and a reader took it for a
+   * statement about the task. `round94` spent 509.7 s of one 535 s gap under it with a task unfinished, split across a read
+   * nobody took, a world nobody heard from, and 121.2 s that named nothing at all. The three conditions are named now, and
+   * `body_still_working` keeps the executor's own answer beside them.
+   * </p>
    */
   #beginIdle(): void {
     if (this.runTrace === undefined || this.#idleSpan !== undefined || this.#closed) return;
-    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, { ...idleWaitReading(), ...this.#namedWaitLine() });
+    const idle = idleWaitReading({
+      heldBody: this.loop.pump.bodyHeldByEngine === true,
+      runQuiet: this.#runQuiet(),
+    });
+    // THE READ PATH'S OWN ANSWER, printed on the same line as the reason: a reason that says a reading is owed is only
+    // actionable beside what the ask can still do about it (`WORLD_READING_ASK`).
+    this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, {
+      ...idle,
+      ask: this.#readAsk(),
+      ...this.#namedWaitLine(),
+    });
+    this.#armReadingLook(idle.reason);
+  }
+
+  /** What the pump's read path would do about the reading this session is owed, or `nothing_to_ask` for a partial pump. */
+  #readAsk(): WorldReadingAsk {
+    return this.loop.pump.worldReadingAsk ?? WORLD_READING_ASK.nothingToAsk;
+  }
+
+  /**
+   * The run is quiet by its own decision: the turn loop has ended this session (`#runTermination`), or the Host is closed.
+   *
+   * This is the idling arm's third case (`IDLE_WAIT_REASON.runQuiet`) and it is the Host's own fact: no other layer knows
+   * that this session will not make another turn, and a run that has stopped by decision is not waiting for the world.
+   */
+  #runQuiet(): boolean {
+    return this.#closed || this.#runTermination !== undefined;
   }
 
   /** The pump's named wait as the idle span's own attributes; nothing when the last turn acted. */
   #namedWaitLine(): Readonly<{ waitingFor?: ClosedWithNothingWaitFor; lookAgainInMs?: number }> {
     const wait = this.loop.pump.closedWithNothing;
-    if (wait.waitingFor === undefined || wait.lookAgainInMs === undefined) return {};
+    // `?.` on the wait itself for the reason `#takeNamedWaitLook` says: a partial pump double has no `closedWithNothing`,
+    // and a throw here would be swallowed by the flush's own `catch` - leaving the silence this line exists to name with no
+    // line at all.
+    if (wait?.waitingFor === undefined || wait.lookAgainInMs === undefined) return {};
     return { waitingFor: wait.waitingFor, lookAgainInMs: wait.lookAgainInMs };
   }
 
@@ -1598,7 +1629,11 @@ export class CompanionHostService {
   #takeNamedWaitLook(): boolean {
     if (this.#closed || !this.#integrationAdmissionOpen || this.#runTermination !== undefined) return false;
     const wait = this.loop.pump.closedWithNothing;
-    if (wait.turn === undefined || wait.waitingFor === undefined || wait.lookAgainInMs === undefined) return false;
+    // `?.` for the same reason `wakeReason` reads `narrationWithoutWork` that way: the Host's own test doubles provide a
+    // partial pump, while the TYPE still requires the getter - so a real pump that loses it fails the build instead of
+    // quietly never taking a look. Without it the throw below is swallowed by the flush's own `catch`, and the idle line a
+    // double produces is no line at all (`run-trace-between-call.private.test.ts` reads exactly that).
+    if (wait?.turn === undefined || wait.waitingFor === undefined || wait.lookAgainInMs === undefined) return false;
     if (this.#namedWaitLook?.turn === wait.turn) return false;
     this.#namedWaitLook = Object.freeze({
       turn: wait.turn,
@@ -1620,6 +1655,42 @@ export class CompanionHostService {
       this.#lookTimer = undefined;
       void this.flushSoon().catch(() => undefined);
     }, lookAgainInMs);
+  }
+
+  /**
+   * The baton for the wait this run is owed a READING for: taken again at the pump's own cadence until the pump says it is spent.
+   *
+   * <p>
+   * MEASURED 2026-11-21 (`round94`): `a_fresh_reading` held 171.1 s of one 535 s gap between two programmes, and the look the
+   * pump's wait had named was taken ONCE - `#namedWaitLook.turn` is the delivered turn the wait belongs to, so a second look
+   * for the same turn is refused by construction - while a gap whose last turn ACTED has no wait to look at at all (121.2 s
+   * of the same gap named nothing). The picture therefore aged for the whole gap, and every turn that opened inside it was
+   * composed from a reading she had already been shown: `world_stale`, speech, and nothing done.
+   * </p>
+   *
+   * <p>
+   * WHAT IS TAKEN HERE IS A READ, NOT A TURN. One flush against an aged reading is one pipe round-trip
+   * (`#beginAgedReadingAsk`) that opens no batch and costs no provider token, so repeating it is not the periodic model wake
+   * this layer forbids. What bounds it is the pump's own budget, not a number here: `WORLD_STATE_REFRESH_ATTEMPTS` per
+   * reading, re-armed by the reading moving or by the world saying it moved. The moment `worldReadingAsk` stops answering
+   * `available` the arm stops, and `attempts_spent` / `unattached` / `nothing_to_ask` then stays on the idle line as the
+   * run's own statement that the read could not be taken.
+   * </p>
+   *
+   * <p>
+   * ONE REASON, ONE TIMER. `a_held_body` waits for the native actionable fact and `run_quiet` waits for nothing, so both
+   * idle exactly as they did before this method existed. The timer is the field the named wait's look already uses, so the
+   * two can never be armed at once, and `#endIdle` (every real flush, and `close`) disarms whichever is.
+   * </p>
+   */
+  #armReadingLook(reason: IdleWaitReason): void {
+    if (this.#closed || this.#lookTimer !== undefined) return;
+    if (reason !== IDLE_WAIT_REASON.freshReading) return;
+    if (this.#readAsk() !== WORLD_READING_ASK.available) return;
+    this.#lookTimer = setTimeout(() => {
+      this.#lookTimer = undefined;
+      void this.flushSoon().catch(() => undefined);
+    }, MEASURED_TURN_CADENCE_MS);
   }
 
   /** The named wait and its look belong to a turn the session no longer has (a STOP, and `close`). */

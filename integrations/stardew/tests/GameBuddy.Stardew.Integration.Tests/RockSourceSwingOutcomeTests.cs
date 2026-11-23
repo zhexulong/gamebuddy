@@ -227,7 +227,7 @@ public sealed class RockSourceSwingOutcomeTests
 
     private static string DiscoveryBody(string controller)
     {
-        const string declaration = "private static IReadOnlyList<BridgeRockSourceTarget> DiscoverRockSourceTargets(Farmer player)";
+        const string declaration = "internal static IReadOnlyList<BridgeRockSourceTarget> DiscoverRockSourceTargets(Farmer player)";
         int at = controller.IndexOf(declaration, StringComparison.Ordinal);
         at.Should().BeGreaterThanOrEqualTo(0, "the rock radar must be findable by its declaration");
         return BracedBody(controller, at, "DiscoverRockSourceTargets");

@@ -446,74 +446,7 @@ internal sealed partial class ExecutionManager
         return BuildingChestResolution.Reject("building_chest_target_changed", $"{identity};declared_chests={data.Chests.Count};live_match=none");
     }
 
-    /// <summary>
-    /// The chests this actor can name right now, projected read-only from live state: every
-    /// finished building in the current location whose data declares a Load or Collect chest
-    /// it actually owns a live inventory for, with the tile the game itself maps a click on
-    /// this chest to. Nothing is synthesized — a chest that is not there is not advertised —
-    /// and the Chest type is deliberately absent, because a target that can only open a menu
-    /// is not a target this Mod can serve.
-    ///
-    /// `stackCount` is the number of occupied slots and `itemCount` the number of items,
-    /// both read from the live chest. They are published because the two branches' own
-    /// preconditions are stated in those terms — collect auto-collects exactly ONE slot
-    /// (Utility.cs:2055-2063) while a load moves a whole number of `RequiredCount` quanta —
-    /// so an Agent that could not see them would have to guess whether a call can succeed.
-    /// The same rule the `animalDoorTargets` projection follows: publish the state the
-    /// action's own outcome is measured against.
-    ///
-    /// A Load chest ALSO publishes the inventory slot that currently holds an item its own
-    /// conversion accepts and that carries at least one whole `RequiredCount` quantum — the
-    /// `slot` argument `load_building_chest` requires — or omits all three hint fields when the
-    /// actor holds nothing that could be loaded. That is the same shape `machineTargets` publishes
-    /// for the machine load input (farmhandexecutioncontroller.cs:2193-2203).
-    /// </summary>
-    private static IReadOnlyList<BridgeBuildingChestTarget> DiscoverBuildingChestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        GameLocation? location = player.currentLocation;
-        if (location is null) return Array.Empty<BridgeBuildingChestTarget>();
-        List<BridgeBuildingChestTarget> result = new();
-        foreach (Building building in location.buildings)
-        {
-            if (building is null) continue;
-            // An under-construction building has no chest the engine will open: `Building.doAction` answers it with the
-            // `UnderConstruction` dialogue and performs nothing else (Building.cs:937-940).
-            if (building.daysOfConstructionLeft.Value > 0)
-            {
-                exclusions.Record("buildingChestTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            BuildingData? data = building.GetData();
-            if (data?.Chests is null) continue;
-            foreach (BuildingChest declared in data.Chests)
-            {
-                if (result.Count >= 16) break;
-                if (declared is null || string.IsNullOrWhiteSpace(declared.Id)) continue;
-                if (declared.Type is not (BuildingChestType.Load or BuildingChestType.Collect)) continue;
-                Chest? chest = building.GetBuildingChest(declared.Id);
-                if (chest is null) continue;
-                if (!TryFindBuildingChestInteractionTile(building, declared.Id, out int tileX, out int tileY)) continue;
-                if (!IsTileWithinChebyshevRadius(player, tileX, tileY, TargetDiscoveryRadius)) continue;
-                BridgeBuildingChestTarget target = new(
-                    BuildBuildingChestTargetId(location, building, declared.Id, declared.Type, tileX, tileY),
-                    location.NameOrUniqueName,
-                    tileX,
-                    tileY,
-                    building.buildingType.Value,
-                    declared.Id,
-                    DescribeBuildingChestBranch(declared.Type),
-                    BuildingChestSlotCount(chest),
-                    BuildingChestItemCount(chest));
-                if (declared.Type == BuildingChestType.Load && TryFindLoadableInventorySlot(building, chest, out int slot, out string itemId, out int stack))
-                    target = target with { LoadInputSlot = slot, LoadInputQualifiedItemId = itemId, LoadInputStack = stack };
-                result.Add(target);
-            }
-            if (result.Count >= 16) break;
-        }
-        return result;
-    }
-
-    private static bool TryFindLoadableInventorySlot(Building building, Chest chest, out int slot, out string itemId, out int stack)
+    internal static bool TryFindLoadableInventorySlot(Building building, Chest chest, out int slot, out string itemId, out int stack)
     {
         slot = -1;
         itemId = string.Empty;
@@ -585,7 +518,7 @@ internal sealed partial class ExecutionManager
         return $"building_chest_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static string DescribeBuildingChestBranch(BuildingChestType type) => type switch
+    internal static string DescribeBuildingChestBranch(BuildingChestType type) => type switch
     {
         BuildingChestType.Load => "load",
         BuildingChestType.Collect => "collect",
@@ -608,10 +541,10 @@ internal sealed partial class ExecutionManager
     /// before it decides between auto-collecting and opening a menu: it counts NON-NULL
     /// slots and stops at the second one (Utility.cs:2047-2065).
     /// </summary>
-    private static int BuildingChestSlotCount(Chest chest) =>
+    internal static int BuildingChestSlotCount(Chest chest) =>
         chest.GetItemsForPlayer().Where(item => item is not null).Count();
 
-    private static int BuildingChestItemCount(Chest chest) =>
+    internal static int BuildingChestItemCount(Chest chest) =>
         chest.GetItemsForPlayer().Where(item => item is not null).Sum(item => item.Stack);
 
     /// <summary>

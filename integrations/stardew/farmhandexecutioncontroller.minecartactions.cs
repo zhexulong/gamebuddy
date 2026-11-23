@@ -38,67 +38,9 @@ namespace GameBuddy.Stardew;
 // picks a destination for the player.
 internal sealed partial class ExecutionManager
 {
-    private const int MinecartTargetDiscoveryRadius = 12;
+    internal const int MinecartTargetDiscoveryRadius = 12;
 
-    private IReadOnlyList<BridgeMinecartTarget> DiscoverMinecartTargets(Farmer player)
-    {
-        StardewValley.GameLocation? location = player.currentLocation;
-        if (location is null || location.map is null)
-            return Array.Empty<BridgeMinecartTarget>();
-
-        IReadOnlyDictionary<string, MinecartNetworkData>? networks = TryLoadMinecartNetworks();
-        if (networks is null)
-            return Array.Empty<BridgeMinecartTarget>();
-
-        List<BridgeMinecartTarget> result = new();
-        foreach ((int x, int y, string networkId) in DiscoverMinecartStations(player, location))
-        {
-            if (!networks.TryGetValue(networkId, out MinecartNetworkData? network) || network.Destinations is null)
-                continue;
-            if (!IsMinecartNetworkUnlocked(network, location))
-                continue;
-
-            foreach (MinecartDestinationData destination in network.Destinations)
-            {
-                if (destination is null || !IsMinecartDestinationAvailable(destination, location))
-                    continue;
-                result.Add(BuildMinecartTarget(networkId, destination, x, y));
-                if (result.Count >= 24) return result;
-            }
-        }
-        return result;
-    }
-
-    /// <summary>
-    /// Station tiles in discovery range: map tiles whose `Action` property is
-    /// the native `MinecartTransport` selector. The network ID is the first
-    /// argument, exactly as `performAction` reads it (`ArgUtility.Get(action, 1)`),
-    /// defaulting to "Default" when omitted.
-    /// </summary>
-    private static IEnumerable<(int X, int Y, string NetworkId)> DiscoverMinecartStations(
-        Farmer player, StardewValley.GameLocation location)
-    {
-        int width = location.map.Layers[0].LayerWidth;
-        int height = location.map.Layers[0].LayerHeight;
-        int minX = Math.Max(0, player.TilePoint.X - MinecartTargetDiscoveryRadius);
-        int maxX = Math.Min(width - 1, player.TilePoint.X + MinecartTargetDiscoveryRadius);
-        int minY = Math.Max(0, player.TilePoint.Y - MinecartTargetDiscoveryRadius);
-        int maxY = Math.Min(height - 1, player.TilePoint.Y + MinecartTargetDiscoveryRadius);
-        for (int x = minX; x <= maxX; x++)
-        {
-            for (int y = minY; y <= maxY; y++)
-            {
-                string? action = location.doesTileHaveProperty(x, y, "Action", "Buildings");
-                if (action is null || !action.StartsWith("MinecartTransport", StringComparison.Ordinal))
-                    continue;
-                string[] parts = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                string networkId = parts.Length > 1 && !string.IsNullOrWhiteSpace(parts[1]) ? parts[1] : "Default";
-                yield return (x, y, networkId);
-            }
-        }
-    }
-
-    private static IReadOnlyDictionary<string, MinecartNetworkData>? TryLoadMinecartNetworks()
+    internal static IReadOnlyDictionary<string, MinecartNetworkData>? TryLoadMinecartNetworks()
     {
         try
         {
@@ -110,7 +52,7 @@ internal sealed partial class ExecutionManager
         }
     }
 
-    private static bool IsMinecartNetworkUnlocked(MinecartNetworkData network, StardewValley.GameLocation location)
+    internal static bool IsMinecartNetworkUnlocked(MinecartNetworkData network, StardewValley.GameLocation location)
     {
         if (string.IsNullOrWhiteSpace(network.UnlockCondition))
             return true;
@@ -124,7 +66,7 @@ internal sealed partial class ExecutionManager
         }
     }
 
-    private static bool IsMinecartDestinationAvailable(MinecartDestinationData destination, StardewValley.GameLocation location)
+    internal static bool IsMinecartDestinationAvailable(MinecartDestinationData destination, StardewValley.GameLocation location)
     {
         if (string.IsNullOrWhiteSpace(destination.TargetLocation) || string.IsNullOrWhiteSpace(destination.Id))
             return false;
@@ -140,7 +82,7 @@ internal sealed partial class ExecutionManager
         }
     }
 
-    private static BridgeMinecartTarget BuildMinecartTarget(
+    internal static BridgeMinecartTarget BuildMinecartTarget(
         string networkId, MinecartDestinationData destination, int stationX, int stationY)
     {
         string displayName = ParseMinecartDisplayName(destination);

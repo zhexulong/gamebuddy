@@ -266,7 +266,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.PlaceActorAt(3, 11);
 
         string evidence = ExecutionManager.DescribeExitRefusal(
-            (3, 11), world.Location.warps.Count, (3, 11), ExecutionManager.DiscoverExitTiles(Game1.player));
+            (3, 11), world.Location.warps.Count, (3, 11), FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player));
 
         evidence.Should().Be("source=3,11;warps=1;you=3,11;nearest=3,12;distance=1;doors=3,12->Farm");
     }
@@ -283,7 +283,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(3, 12, "Farm", 64, 15, flipFarmer: false));
         world.PlaceActorAt(3, 11);
 
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+        ExecutionManager.AdjacentExitStep(FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().Be((3, 12, 1), "enter_exit means leave this location, and the way out is one step south of her");
     }
 
@@ -321,7 +321,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
         world.Location.warps.Add(new Warp(41, 65, "Forest", 56, 33, flipFarmer: false));
         world.PlaceActorAt(41, 64);
 
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+        ExecutionManager.AdjacentExitStep(FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().Be((41, 65, 1), "round19's tile is an edge warp; the actor stands one tile north of it");
 
         // The naming half of the same shape, from a tile she could not step from: five rows away, so the refusal
@@ -354,7 +354,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
         Utility.tileWithinRadiusOfPlayer(3, 12, 1, Game1.player).Should().BeTrue(
             "the engine's own click gate admits the diagonal tile; this is the fact the refusal was measured against");
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+        ExecutionManager.AdjacentExitStep(FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().Be((3, 12, 1), "a diagonal door is one Chebyshev step away and the player can click it");
     }
 
@@ -372,7 +372,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
         Utility.tileWithinRadiusOfPlayer(4, 13, 1, Game1.player).Should().BeFalse(
             "the engine does not admit a tile two columns and two rows away either");
-        ExecutionManager.AdjacentExitStep(ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player)
+        ExecutionManager.AdjacentExitStep(FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player), Game1.player)
             .Should().BeNull("two Chebyshev steps is an approach, not this transition");
     }
 
@@ -403,7 +403,7 @@ public sealed class EnterExitAdjacentExitRefusalTests
 
                 bool engine = Utility.tileWithinRadiusOfPlayer(10 + dx, 10 + dy, 1, Game1.player);
                 bool mod = ExecutionManager.AdjacentExitStep(
-                    ExecutionManager.DiscoverExitTiles(Game1.player), Game1.player) is not null;
+                    FarmhandTargetDiscovery.DiscoverExitTiles(Game1.player), Game1.player) is not null;
                 if (engine) admitted += 1;
                 if (engine != mod)
                 {

@@ -295,18 +295,21 @@ test("a tool call's duration names its owner: nested agent, planning, program, o
   // 1. One category per real thing, spelled once.
   assert.match(
     SOURCE,
-    /const TOOL_TIMING_CATEGORIES = Object\.freeze\(\[\n\s+"delegate",\n\s+"plan_shape",\n\s+"plan_compile",\n\s+"program_submit",\n\s+"program_status",\n\s+"flat_dispatch",\n\]\);/,
+    /const TOOL_TIMING_CATEGORIES = Object\.freeze\(\[\n\s+"delegate",\n\s+"plan_shape",\n\s+"plan_work",\n\s+"program_submit",\n\s+"program_status",\n\s+"flat_dispatch",\n\]\);/,
   );
   assert.match(SOURCE, /if \(toolName === DELEGATE_TOOL_NAME\) return "delegate";/);
   assert.match(SOURCE, /if \(PLAN_SHAPE_TOOL_NAMES\.includes\(toolName\)\) return "plan_shape";/);
-  assert.match(SOURCE, /if \(PLAN_COMPILE_TOOL_NAMES\.includes\(toolName\)\) return "plan_compile";/);
+  assert.match(SOURCE, /if \(PLAN_WORK_TOOL_NAMES\.includes\(toolName\)\) return "plan_work";/);
   assert.match(SOURCE, /if \(PROGRAM_SUBMIT_TOOL_NAMES\.includes\(toolName\)\) return "program_submit";/);
   assert.match(SOURCE, /if \(PROGRAM_STATUS_TOOL_NAMES\.includes\(toolName\)\) return "program_status";/);
   assert.match(SOURCE, /if \(ACTION_TOOL_NAMES\.has\(toolName\)\) return "flat_dispatch";/);
   // The tools are named from the mounted vocabulary, one by one: a renamed tool would otherwise land in NO category and
   // silently disappear from the breakdown. `stardew_plan_work` compiles a script and `stardew_plan_shape` reads a step's
-  // shape - neither dispatches, so neither may fall through to dispatch latency.
-  assert.match(SOURCE, /const PLAN_COMPILE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_work"\]\);/);
+  // shape - neither dispatches, so neither may fall through to dispatch latency. The plan builder's category is its
+  // TOOL's name because one call is four stages (compile, submit, settlement hold, world re-read) and a name taken from
+  // any one of them is a claim about where the time went that this record cannot make
+  // (`tools/live-run/analysis/plan-work-timing.mjs` reads that split from the artifacts that own each stage).
+  assert.match(SOURCE, /const PLAN_WORK_TOOL_NAMES = Object\.freeze\(\["stardew_plan_work"\]\);/);
   assert.match(SOURCE, /const PLAN_SHAPE_TOOL_NAMES = Object\.freeze\(\["stardew_plan_shape"\]\);/);
   assert.match(SOURCE, /const PROGRAM_SUBMIT_TOOL_NAMES = Object\.freeze\(\["stardew_submit_action_program"\]\);/);
   // Formatting-insensitive: what is asserted is the two names in ONE list, not how the formatter wrapped it (the

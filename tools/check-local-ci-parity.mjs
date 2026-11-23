@@ -79,7 +79,7 @@ import { dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAsEntry } from "./lib/process-entry.mjs";
 
-import { deriveCiCoverage, stripYamlComments, workflowCoveredScripts } from "./check-ci-coverage.mjs";
+import { deriveCiCoverage, stripYamlComments, workflowCoveredScripts } from "../gates/meta/check-ci-coverage.mjs";
 import { LADDER_RUNGS, PRELUDE_RUNGS } from "./prelive.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");

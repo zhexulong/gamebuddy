@@ -179,16 +179,6 @@ internal sealed partial class ExecutionManager
         return $"daily_quest_{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
-    private static IReadOnlyList<BridgeDailyQuestTarget> DiscoverDailyQuestTargets()
-    {
-        if (!Game1.CanAcceptDailyQuest() || Game1.questOfTheDay is not Quest quest)
-            return Array.Empty<BridgeDailyQuestTarget>();
-        return new[]
-        {
-            new BridgeDailyQuestTarget(BuildDailyQuestTargetId(quest), quest.questType.Value, quest.questTitle),
-        };
-    }
-
     private static int CountQuestLogEntries(Farmer player, Quest quest)
     {
         int count = 0;

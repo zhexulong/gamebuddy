@@ -79,13 +79,13 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     internal const string ObeliskIslandFarmTileRoute = "island_farm_tile";
 
     /// <summary>The action string IslandWest.performAction handles itself (IslandWest.cs:186).</summary>
-    private const string IslandFarmObeliskAction = "FarmObelisk";
+    internal const string IslandFarmObeliskAction = "FarmObelisk";
     /// <summary>The map the island obelisk warps to (IslandWest.cs:209).</summary>
     internal const string IslandFarmObeliskDestination = "Farm";
-    private const string IslandFarmObeliskDisplayName = "Island Farm Obelisk";
-    private const int ObeliskTargetDiscoveryRadius = 12;
+    internal const string IslandFarmObeliskDisplayName = "Island Farm Obelisk";
+    internal const int ObeliskTargetDiscoveryRadius = 12;
 
-    private const int MaximumPublishedObeliskTargets = 32;
+    internal const int MaximumPublishedObeliskTargets = 32;
 
     /// <summary>
     /// The building-type -> destination mapping, read from
@@ -196,7 +196,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         return new ObeliskFixtureProbe(inRing, resolution.Route, tileX, tileY);
     }
 
-    private static bool IsFarmObeliskAction(string action)
+    internal static bool IsFarmObeliskAction(string action)
     {
         string[] parts = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length > 0 && string.Equals(parts[0], IslandFarmObeliskAction, StringComparison.Ordinal);
@@ -241,73 +241,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         tileX = parsed.X;
         tileY = parsed.Y;
         return true;
-    }
-
-    private IReadOnlyList<BridgeObeliskTarget> DiscoverObeliskTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
-    {
-        if (player is null || player.currentLocation is not StardewValley.GameLocation location)
-            return Array.Empty<BridgeObeliskTarget>();
-
-        List<BridgeObeliskTarget> targets = new();
-
-        foreach (Building building in location.buildings)
-        {
-            if (building is null)
-                continue;
-            // An obelisk under construction cannot be used: `Building.doAction` answers it with the `UnderConstruction`
-            // dialogue and performs nothing else (Building.cs:937-940).
-            if (building.daysOfConstructionLeft.Value > 0)
-            {
-                exclusions.Record("obeliskTargets", DiscoveryExclusionReasons.NotReady);
-                continue;
-            }
-            if (!TryGetObeliskWarp(building.buildingType.Value, out string destination, out _, out _, out bool forceDismount))
-                continue;
-            targets.Add(new BridgeObeliskTarget(
-                BuildObeliskTargetId(ObeliskBuildingRoute, location.NameOrUniqueName, building.buildingType.Value, building.tileX.Value, building.tileY.Value),
-                ObeliskBuildingRoute,
-                location.NameOrUniqueName,
-                building.tileX.Value,
-                building.tileY.Value,
-                building.buildingType.Value,
-                destination,
-                forceDismount));
-        }
-
-        // Route B: IslandWest's own "FarmObelisk" tile. The tile exists only after
-        // the Island_W_Obelisk override is applied (IslandWest.cs:425-440), so an
-        // island without the upgrade advertises nothing here.
-        if (location is StardewValley.Locations.IslandWest islandWest && islandWest.farmObelisk.Value)
-        {
-            xTile.Layers.Layer? buildings = location.map?.GetLayer("Buildings");
-            if (buildings is not null)
-            {
-                int minX = Math.Max(0, player.TilePoint.X - ObeliskTargetDiscoveryRadius);
-                int maxX = Math.Min(buildings.LayerWidth - 1, player.TilePoint.X + ObeliskTargetDiscoveryRadius);
-                int minY = Math.Max(0, player.TilePoint.Y - ObeliskTargetDiscoveryRadius);
-                int maxY = Math.Min(buildings.LayerHeight - 1, player.TilePoint.Y + ObeliskTargetDiscoveryRadius);
-                for (int x = minX; x <= maxX; x++)
-                {
-                    for (int y = minY; y <= maxY; y++)
-                    {
-                        string? action = location.doesTileHaveProperty(x, y, "Action", "Buildings");
-                        if (action is null || !IsFarmObeliskAction(action))
-                            continue;
-                        targets.Add(new BridgeObeliskTarget(
-                            BuildObeliskTargetId(ObeliskIslandFarmTileRoute, location.NameOrUniqueName, IslandFarmObeliskAction, x, y),
-                            ObeliskIslandFarmTileRoute,
-                            location.NameOrUniqueName,
-                            x,
-                            y,
-                            IslandFarmObeliskDisplayName,
-                            IslandFarmObeliskDestination,
-                            false));
-                    }
-                }
-            }
-        }
-
-        return targets.Take(MaximumPublishedObeliskTargets).ToArray();
     }
 
     private sealed record ObeliskTargetResolution(

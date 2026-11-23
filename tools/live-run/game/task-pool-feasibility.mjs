@@ -1,5 +1,6 @@
 /**
- * Whether the world one observation shows can hold EVERY task in the pool - decided before a model is asked anything.
+ * Whether the world one OPENING observation shows can hold EVERY task in the pool - and, inside the day, the one
+ * requirement a day can still lose.
  *
  * <p>
  * THE DEFECT THIS ANSWERS. The pool used to discover impossibility on day 3 of a thirty-five-minute run: a
@@ -8,6 +9,28 @@
  * those needed a model to find - each is a fact of the opening snapshot, and the run paid several days to learn it. So
  * every task declares the world preconditions its purpose needs (`TASK_PRECONDITIONS` in
  * `tools/lib/multiday-daily-tasks.mjs`) and this module evaluates the whole pool against ONE observation.
+ * </p>
+ *
+ * <p>
+ * THE MOMENT IS PART OF THE ANSWER, so every reading here is stamped with its own. `estimateTaskPoolAtOpening` answers
+ * "can this pool be held from the world visible in this snapshot, now" - the boot's reading, taken before a model is
+ * asked anything - and the line it prints begins with `opening_snapshot` because that is the whole of what it can claim.
+ * A day five hours later is a different world, and the reading must not be quoted as if it spoke for it. Measured
+ * 2026-11-23 (`round96`): the launch snapshot carried three stocked seed rows and 500g, so both sowing tasks read
+ * feasible; on day 2 the same family published ZERO rows with the purse at 1060, she walked to a Pierre's that was
+ * carrying the desert festival's stalls - 「店里摆的全是沙漠节那些摊子，连防风草种子都没上架」 - came back empty-handed, and the
+ * day's criterion filed twenty tilled tiles of a sixty-tile strip against her. The opening reading was right about the
+ * world it read and could not speak for the day, which is a defect of the MOMENT and not of the reading.
+ * </p>
+ *
+ * <p>
+ * SO ONE REQUIREMENT IS ASKED AGAIN WHERE THE DAY RUNS. A task's seed counter is knowable again every time the Mod
+ * refreshes `seedSupplyTargets` (`DiscoverSeedSupplyTargets`, from `Data/Shops` and the shop the game actually opened),
+ * so `rereadDaySeedMarket` reads the SAME requirement the opening gate read, through the same `readSeedMarket`, on the
+ * snapshot the day is standing in - and the answer is published at the minute it changed:
+ * `task_precondition_broken_at:<gameMinutes>:seed_market:<rows>` when the counter stops holding what the day needs, and
+ * `seed_market_changed:<gameMinutes>:<rowsAtOpen>-><rows>` when the market moved and still holds. The day then has a
+ * fact to act on at 14:00 instead of a failure to explain at dusk.
  * </p>
  *
  * <p>
@@ -35,12 +58,14 @@
  * </p>
  *
  * <p>
- * WHERE IT RUNS. Two entry points, and neither is a script nobody calls:
+ * WHERE IT RUNS. Three entry points, and none is a script nobody calls:
  * </p>
  * <ul>
  *   <li>the prelive ladder's snapshot rung (`tools/lib/stardew-prelive-ladder.mjs`, `--mode snapshot`), which already
  *       connects, waits for an actionable snapshot and disconnects with no model and no action dispatched - so a
- *       `-PreliveOnly` fixture boot (about twenty seconds) answers the pool as part of the boot it already pays for; and</li>
+ *       `-PreliveOnly` fixture boot (about twenty seconds) answers the pool as part of the boot it already pays for;</li>
+ *   <li>the multi-day runner's day loop, which re-asks the seed counter on the world it is standing in
+ *       (`rereadDaySeedMarket`) rather than trusting the boot's answer for a day that opened hours later; and</li>
  *   <li>this module's own command, for a fixture change that needs no ladder:
  *       `node tools/live-run/game/task-pool-feasibility.mjs --client-config <path>` (a running fixture) or
  *       `--snapshot <recorded.json>` (a replay). Exit 0 all feasible, 1 any infeasible task, 2 blocked.</li>
@@ -320,7 +345,8 @@ function readMoney(snapshot, requirement) {
 }
 
 /**
- * The whole pool against one observation, and the line a boot prints.
+ * The whole pool against ONE OPENING observation, and the line the boot prints - led by `opening_snapshot`, because that
+ * is the only moment this reading speaks for.
  *
  * THREE ANSWERS PER TASK, and the difference is the difference between a world and a window: `infeasible` is a
  * requirement a WHOLE-WORLD fact refused, `undecided` is a requirement whose only witness is a family discovered within
@@ -330,7 +356,7 @@ function readMoney(snapshot, requirement) {
  * `<task>` findings are per requirement, so the reader sees WHICH half failed: `dress_and_display` names
  * `pack:wearable` or `mannequinTargets|signTargets` and never just the task.
  */
-export function evaluateTaskPoolFeasibility({
+export function estimateTaskPoolAtOpening({
   snapshot,
   rotation = DAILY_TASK_ROTATION,
   signatures = TASK_PRECONDITIONS,
@@ -383,6 +409,17 @@ export function evaluateTaskPoolFeasibility({
   const undecided = inVerdict("undecided").length;
   const blocked = readBlocked(snapshot, tasks.length, findings);
   const evaluationMs = Date.now() - startedAtMs;
+  // THE MOMENT, spelled before anything else in the line: this is the reading of ONE opening snapshot, taken before a
+  // model was asked anything, and every number after it is a statement about that moment only.
+  const moment =
+    `opening_snapshot r${Number.isInteger(snapshot?.revision) ? String(snapshot.revision) : "?"} ` +
+    `${typeof snapshot?.location === "string" && snapshot.location.length > 0 ? snapshot.location : "?"}`;
+  // The two readings `round96`'s two worlds differed in, printed with the population so the same pool cannot look the
+  // same on a market of three stocked rows and on a market of none.
+  const seedRows = Array.isArray(snapshot?.seedSupplyTargets)
+    ? String(snapshot.seedSupplyTargets.length)
+    : "not measured";
+  const purse = Number.isFinite(snapshot?.money) ? String(snapshot.money) : "not measured";
   return Object.freeze({
     tasks: tasks.length,
     feasible,
@@ -392,13 +429,16 @@ export function evaluateTaskPoolFeasibility({
     findings: Object.freeze(findings),
     infeasibleTasks: Object.freeze(inVerdict("infeasible")),
     undecidedTasks: Object.freeze(inVerdict("undecided")),
-    // The population line, then the named tasks: `tasks 22 · feasible 9 · infeasible 2 (dress_and_display, home_upgrade)`.
-    // A count nobody can act on is the reading this replaces; the undecided half is printed only when there is one, because
-    // a window's emptiness is a reading of the gate's own reach and not of the farm.
+    // The moment, the population, the named tasks, and the seed counter's own numbers:
+    // `opening_snapshot r7 Farm · tasks 22 · feasible 9 · infeasible 2 (dress_and_display, home_upgrade) · seed_market
+    // rows 3 · purse 500`. A count nobody can act on is the reading this replaces; the undecided half is printed only
+    // when there is one, because a window's emptiness is a reading of the gate's own reach and not of the farm.
     reading:
-      `tasks ${String(tasks.length)} · feasible ${String(feasible)} · infeasible ${String(infeasible)} ` +
+      `${moment}` +
+      ` · tasks ${String(tasks.length)} · feasible ${String(feasible)} · infeasible ${String(infeasible)} ` +
       `(${infeasible === 0 ? "none" : inVerdict("infeasible").join(", ")})` +
-      (undecided === 0 ? "" : ` · undecided ${String(undecided)} (${inVerdict("undecided").join(", ")})`),
+      (undecided === 0 ? "" : ` · undecided ${String(undecided)} (${inVerdict("undecided").join(", ")})`) +
+      ` · seed_market rows ${seedRows} · purse ${purse}`,
     blocked,
     evaluationMs,
     // The verdict code is the first DECISIVE failure - blocking first, then an unmet requirement. An out-of-view finding
@@ -429,10 +469,82 @@ function readBlocked(snapshot, taskCount, findings) {
 }
 
 /** One line for a boot's log, with the same numbers the payload carries. */
-export function describeTaskPoolFeasibility(reading) {
+export function describeTaskPoolAtOpening(reading) {
   if (reading?.blocked !== null && reading?.blocked !== undefined)
     return `${reading.reading} · blocked=${reading.blocked}`;
-  return reading?.reading ?? "tasks 0 · feasible 0 · infeasible 0 (none)";
+  return reading?.reading ?? "opening_snapshot r? ? · tasks 0 · feasible 0 · infeasible 0 (none)";
+}
+
+/**
+ * The day's seed counter, asked again on the world she is standing in.
+ *
+ * <p>
+ * WHY A SECOND READING EXISTS AT ALL. The opening estimate reads ONE snapshot and answers for it, and a day does not open
+ * on that snapshot: `round96` read three stocked rows and 500g at launch, and on day 2 the same family published zero
+ * rows with the purse at 1060 - a Pierre's carrying the desert festival's stalls, no parsnip seed, twenty tilled tiles and
+ * nothing sown. `seedSupplyTargets` is the Mod's answer to "where is a seed she holds sold today", so it is knowable
+ * again every time it is refreshed: the day can be re-checked at the minute the market changes instead of at dusk.
+ * </p>
+ *
+ * <p>
+ * THE SAME READER, A DIFFERENT MOMENT. This calls `readSeedMarket` - the reader the opening gate calls - so the two
+ * answers cannot disagree about a shape, only about a world. `rowsAtOpen` is the population the day opened on: it makes
+ * "the market moved" a different fact from "the market is what it was", and both different from "the market says she
+ * cannot hold this day".
+ * </p>
+ *
+ * <p>
+ * ONE REQUIREMENT, BY NAME, AND NOT THE WHOLE SIGNATURE. `soil_ground` INVERTS as a day works it (a strip the Hoe has
+ * turned is the day succeeding, not its premise breaking) and `money` is spent by the day on purpose, so re-reading a
+ * whole signature would refuse a day for doing its own work. A second requirement earns its own re-ask with its own
+ * measured incident; until then this one is read by name.
+ * </p>
+ *
+ * <p>
+ * `key` is the STATE the reading found (`broken:0`, `holds:3`), so a caller publishes once per state rather than once per
+ * poll: the market that answers "no seed" at 09:00 and at 14:00 is one market, and a line per poll would be a clock
+ * wearing a fact's name. `code` carries the minute it was read, because the incident is the moment the day learned.
+ * </p>
+ */
+export function rereadDaySeedMarket({
+  taskId,
+  snapshot,
+  gameMinutes = null,
+  rowsAtOpen = null,
+  signatures = TASK_PRECONDITIONS,
+} = {}) {
+  const signature = signatures?.[taskId];
+  const declared = Array.isArray(signature) ? signature.some((requirement) => requirement?.fact === "seed_market") : false;
+  // A day whose declared world holds no seed counter has nothing to re-ask, and asking anyway would publish a fact about a
+  // task nobody was given.
+  if (!declared) return null;
+  const rows = Array.isArray(snapshot?.seedSupplyTargets) ? snapshot.seedSupplyTargets.length : null;
+  const minutes = Number.isInteger(gameMinutes) ? gameMinutes : null;
+  const at = Number.isInteger(rowsAtOpen) ? rowsAtOpen : null;
+  const read = readSeedMarket(snapshot);
+  const measured = read.measured === true;
+  const broken = measured && read.satisfied !== true;
+  const minute = minutes === null ? "unknown" : String(minutes);
+  // An unmeasured family is not an answer: `task_precondition_not_measured` already owns that state at the opening, and a
+  // re-ask that spoke here would turn "nothing looked" into "the seed is not in town".
+  const code = !measured
+    ? null
+    : broken
+      ? `task_precondition_broken_at:${minute}:seed_market:${String(rows)}`
+      : at !== null && rows !== null && at !== rows
+        ? `seed_market_changed:${minute}:${String(at)}->${String(rows)}`
+        : null;
+  return Object.freeze({
+    task: taskId,
+    gameMinutes: minutes,
+    rows,
+    rowsAtOpen: at,
+    measured,
+    broken,
+    detail: read.detail,
+    key: `${broken ? "broken" : "holds"}:${rows === null ? "not_measured" : String(rows)}`,
+    code,
+  });
 }
 
 async function main(argv) {
@@ -463,7 +575,7 @@ async function main(argv) {
     }
     observeMs = Date.now() - startedAtMs;
   }
-  const reading = evaluateTaskPoolFeasibility({ snapshot });
+  const reading = estimateTaskPoolAtOpening({ snapshot });
   const payload = {
     tasks: reading.tasks,
     feasible: reading.feasible,
@@ -475,7 +587,7 @@ async function main(argv) {
     blocked: reading.blocked,
     verdictCode: reading.verdictCode,
     reading: reading.reading,
-    report: `task_pool_feasibility · ${describeTaskPoolFeasibility(reading)}`,
+    report: `task_pool_feasibility · ${describeTaskPoolAtOpening(reading)}`,
     evaluationMs: reading.evaluationMs,
     observeMs,
     budgetMs,

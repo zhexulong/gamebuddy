@@ -172,7 +172,7 @@ internal sealed partial class ExecutionManager
         return this.SettlePostcondition(requestId, executionId, collected, "crab_pot_output_collected", "crab_pot_output_collect_postcondition_unavailable", evidence);
     }
 
-    private static string BuildCollectCrabPotTargetId(StardewValley.GameLocation location, int x, int y)
+    internal static string BuildCollectCrabPotTargetId(StardewValley.GameLocation location, int x, int y)
     {
         string raw = $"{location.NameOrUniqueName}:{x},{y}:(O)710:collect-crab-pot";
         return $"collect_crab_pot_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";

@@ -164,7 +164,7 @@ public sealed class TargetDiscoveryOrderTests
         Placeable(world, slot: 2, "(BC)21", bigCraftable: true);
 
         List<BridgeWorldObjectTarget> rows = WithoutContent(
-            () => ExecutionManager.DiscoverWorldObjectTargets(world.Actor, out _)
+            () => FarmhandTargetDiscovery.DiscoverWorldObjectTargets(world.Actor, out _)
                 .Where(row => string.Equals(row.Kind, "placement_candidate", StringComparison.Ordinal))
                 .ToList());
         string published = string.Join(" ", rows.Select(row => $"s{row.Slot}@{row.X},{row.Y}"));
@@ -255,8 +255,7 @@ public sealed class TargetDiscoveryOrderTests
 
     /// <summary>One of the discovery methods, through reflection because they are private to the execution manager.</summary>
     private static List<TTarget> Discover<TTarget>(string method) =>
-        WithoutContent(() => ((IEnumerable<TTarget>)typeof(ExecutionManager)
-            .GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!
+        WithoutContent(() => ((IEnumerable<TTarget>)DiscoveryMembers.Method(method)
             .Invoke(null, new object[] { Game1.player })!).ToList());
 
     /// <summary>

@@ -1761,7 +1761,14 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
   ];
   // `reason` is the ONE optional key, and it exists only to explain `chunk_removed=false`.
   if (!expectedKeys.every((key) => key in evidence)) return false;
-  if (!hasOnlyDeclaredEvidenceFields(evidence, [...expectedKeys, "reason"])) return false;
+  // `object_consumed`/`object_after` are the movement the drop itself went through: the published stack is `stack`, so
+  // the pair states how much of THAT stack left and how much of it is left, and neither number is the pack's delta (the
+  // magnet also collects chunks of the same item this request never named). They are declared here so a receipt that
+  // carries them is readable, and checked when they are present - a pair that disagrees with `stack` is refused rather
+  // than ignored. A receipt recorded before they existed still decides its own success, which is the same footing
+  // `reason` has: the verdict is the world facts below.
+  if (!hasOnlyDeclaredEvidenceFields(evidence, [...expectedKeys, "reason", "object_consumed", "object_after"]))
+    return false;
   const stack = integerEvidenceValue(evidence.stack);
   const before = integerEvidenceValue(evidence.inventory_before);
   const after = integerEvidenceValue(evidence.inventory_after);
@@ -1774,10 +1781,35 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
     stack >= 1 &&
     evidence.native_auto_collect === "true" &&
     chunkRemovalAccountedFor(evidence) &&
+    pickupMovementAccountedFor(evidence, stack) &&
     before !== null &&
     after !== null &&
     after >= before + stack
   );
+}
+
+/**
+ * Whether the receipt's movement pair agrees with the stack the request published, or says nothing.
+ *
+ * `object_consumed` is how much of the PUBLISHED stack left the ground and `object_after` is what is left of that
+ * identity (`0` when the location no longer holds one, `none` when this pass cannot say). The identity
+ * `stack - object_consumed = object_after` is therefore checkable exactly where `object_after` is a number, and a pair
+ * that claims a consumption larger than the stack, a negative count, or a remainder the subtraction does not reach is a
+ * statement the receipt cannot be trusted to make.
+ */
+function pickupMovementAccountedFor(
+  evidence: Readonly<Record<string, string>>,
+  stack: number,
+): boolean {
+  const consumedText = evidence.object_consumed;
+  const remainderText = evidence.object_after;
+  if (consumedText === undefined && remainderText === undefined) return true;
+  if (consumedText === undefined || remainderText === undefined) return false;
+  const consumed = integerEvidenceValue(consumedText);
+  if (consumed === null || consumed < 0 || consumed > stack) return false;
+  if (remainderText === "none") return true;
+  const remainder = integerEvidenceValue(remainderText);
+  return remainder !== null && stack - consumed === remainder;
 }
 
 /**

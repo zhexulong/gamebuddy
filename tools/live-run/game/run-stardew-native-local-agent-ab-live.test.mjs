@@ -1460,7 +1460,7 @@ test("a turn that ended in a provider failure is a failure, not silence", () => 
   assert.deepEqual(unreadable, { observed: false, reason: "session_not_readable" });
   assert.equal(agentTurnFailureReason(unreadable), undefined);
 });
-test("a run with no flat dispatch reports zero, and its plan calls are plan compiles", () => {
+test("a run with no flat dispatch reports zero, and its plan calls are plan work", () => {
   // Measured 2026-10-22 (g143closed): `executionTrace.flat: 0`, no per-action tool on the mounted surface, and
   // `action_dispatch.calls: 45`. A pattern over tool names, or a session record from another run, is how a category
   // publishes work this run never did. The falsifier is the split: ten shape reads and four compiled plans are plan
@@ -1477,7 +1477,7 @@ test("a run with no flat dispatch reports zero, and its plan calls are plan comp
   const timing = readToolTiming(record, { executionTraceFlat: 0 });
   assert.equal(timing.byCategory.flat_dispatch.calls, 0);
   assert.equal(timing.byCategory.plan_shape.calls, 10);
-  assert.equal(timing.byCategory.plan_compile.calls, 4);
+  assert.equal(timing.byCategory.plan_work.calls, 4);
   assert.equal(timing.byCategory.program_submit.calls, 1);
   assert.equal(timing.byCategory.program_status.calls, 2);
   assert.equal(

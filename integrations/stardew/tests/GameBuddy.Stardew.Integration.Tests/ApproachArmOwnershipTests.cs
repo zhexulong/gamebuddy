@@ -205,7 +205,7 @@ public sealed class ApproachArmOwnershipTests
     {
         var halves = new List<RequestHalf>();
         string directory = RepositorySourcePath(ModDirectory);
-        foreach (string path in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").OrderBy(name => name, StringComparer.Ordinal))
+        foreach (string path in Directory.GetFiles(directory, "farmhandexecutioncontroller*.cs").Concat(Directory.GetFiles(directory, "farmhandtargetdiscovery*.cs")).OrderBy(name => name, StringComparer.Ordinal))
         {
             string source = StripLineComments(File.ReadAllText(path));
             int from = 0;

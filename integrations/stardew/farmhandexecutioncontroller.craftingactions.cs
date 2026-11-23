@@ -129,25 +129,6 @@ internal sealed partial class ExecutionManager
         return this.RememberTerminal(requestId, executionId, ExecutionState.PartiallySucceeded, "crafted_item_created", evidence);
     }
 
-    private static IReadOnlyList<BridgeRecipeTarget> DiscoverCraftingRecipeTargets(Farmer player)
-    {
-        Dictionary<string, string>? table = CraftingRecipe.craftingRecipes;
-        if (table is null) return Array.Empty<BridgeRecipeTarget>();
-        List<BridgeRecipeTarget> result = new();
-        foreach (string recipeKey in player.craftingRecipes.Keys.OrderBy(key => key, StringComparer.Ordinal))
-        {
-            if (!table.ContainsKey(recipeKey)) continue;
-            if (TryBuildWireRecipeIdentity(table.Keys, recipeKey) is not { } wireIdentity) continue;
-            CraftingRecipe recipe = new(recipeKey, isCookingRecipe: false);
-            if (!string.Equals(recipe.name, recipeKey, StringComparison.Ordinal)) continue;
-            result.Add(new BridgeRecipeTarget(wireIdentity, recipe.DisplayName, recipe.doesFarmerHaveIngredientsInInventory(), MissingRecipeIngredients(player, recipe)));
-        }
-        return result
-            .OrderByDescending(target => target.IngredientsAvailable)
-            .Take(64)
-            .ToArray();
-    }
-
     /// <summary>Short ingredients one row may carry; the `recipeTarget.missingIngredients` ceiling in the wire schema.</summary>
     private const int MaximumMissingRecipeIngredients = 16;
 
@@ -165,7 +146,7 @@ internal sealed partial class ExecutionManager
     /// NOT understand category keys - and those are half of this method's job.)
     /// </para>
     /// </summary>
-    private static IReadOnlyList<BridgeRecipeMissingIngredient> MissingRecipeIngredients(Farmer player, CraftingRecipe recipe)
+    internal static IReadOnlyList<BridgeRecipeMissingIngredient> MissingRecipeIngredients(Farmer player, CraftingRecipe recipe)
     {
         List<BridgeRecipeMissingIngredient> missing = new();
         foreach (KeyValuePair<string, int> ingredient in recipe.recipeList)

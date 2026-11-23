@@ -44,7 +44,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 {
     private const int MineElevatorTileIndex = 112;
     /// <summary>Native ceiling: the elevator works only at mineLevel &lt;= 120 (MineShaft.cs:3067).</summary>
-    private const int HighestElevatorMineLevel = 120;
+    internal const int HighestElevatorMineLevel = 120;
     /// <summary>Native ceiling on selectable floors (MineElevatorMenu.cs:16).</summary>
     private const int HighestSelectableMineFloor = 120;
     /// <summary>Mine shaft 0 returns to this location/tile (MineElevatorMenu.cs:86).</summary>
@@ -75,7 +75,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
     /// facts are checked against live state: this must be a MineShaft, and its
     /// Buildings layer must carry tile 112 (MineShaft.cs:3057/3066).
     /// </summary>
-    private static bool TryFindMineElevatorTile(GameLocation? location, out int tileX, out int tileY)
+    internal static bool TryFindMineElevatorTile(GameLocation? location, out int tileX, out int tileY)
     {
         tileX = 0;
         tileY = 0;
@@ -97,28 +97,6 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             }
         }
         return false;
-    }
-
-    private IReadOnlyList<BridgeMineElevatorFloorTarget> DiscoverMineElevatorFloors()
-    {
-        Farmer? player = Game1.player;
-        if (player is null || !TryFindMineElevatorTile(player.currentLocation, out _, out _))
-            return Array.Empty<BridgeMineElevatorFloorTarget>();
-        if (player.currentLocation is not MineShaft shaft || shaft.mineLevel > HighestElevatorMineLevel)
-            return Array.Empty<BridgeMineElevatorFloorTarget>();
-
-        int lowest = MineShaft.lowestLevelReached;
-        int current = shaft.mineLevel;
-        List<BridgeMineElevatorFloorTarget> targets = new();
-        foreach (int floor in SelectableMineFloors(lowest))
-        {
-            targets.Add(new BridgeMineElevatorFloorTarget(
-                MineElevatorFloorTargetId(floor),
-                floor,
-                IsCurrentFloor: floor == current,
-                IsMineEntrance: floor == 0));
-        }
-        return targets;
     }
 
     public LocalExecutionReceipt RequestLocalSelectMineElevatorFloor(BridgeExecutionRequest request, IExecutionLedger ledger)

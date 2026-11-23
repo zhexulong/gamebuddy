@@ -76,8 +76,7 @@
     "tools/audit-stardew-nogame-subset.mjs",
     "tools/check-action-coverage.mjs",
     "tools/check-dist-runtime-exports.mjs",
-    "tools/check-game-context-pressure.mjs",
-    "tools/check-stardew-actor-admissibility.mjs"
+    "tools/check-game-context-pressure.mjs"
   ],
   "unexecuted": [
     {

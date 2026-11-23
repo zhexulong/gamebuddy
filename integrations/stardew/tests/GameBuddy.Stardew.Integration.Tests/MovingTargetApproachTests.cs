@@ -175,7 +175,7 @@ public sealed class MovingTargetApproachTests
         // The animal product family reaches its radius through the named wrapper, which
         // itself delegates to the same predicate at radius 1.
         string controller = Read("farmhandexecutioncontroller.cs");
-        controller.Should().Contain("private static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)");
+        controller.Should().Contain("internal static bool IsAnimalProductTargetInRange(Farmer player, int targetX, int targetY)");
         controller.Should().Contain("return IsTileWithinChebyshevRadius(player, targetX, targetY, AnimalProductActionRadius);");
     }
 

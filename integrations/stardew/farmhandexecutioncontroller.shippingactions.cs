@@ -147,7 +147,7 @@ internal sealed partial class ExecutionManager
     /// only resolution and the opaque identity differ between them. The tile is
     /// the footprint's origin and the extent always grows +x/+y.
     /// </summary>
-    private readonly record struct ResolvedShippingBin(string TargetId, int TileX, int TileY, int TilesWide, int TilesHigh, string LocationName);
+    internal readonly record struct ResolvedShippingBin(string TargetId, int TileX, int TileY, int TilesWide, int TilesHigh, string LocationName);
 
     /// <summary>
     /// Resolve the bin <paramref name="actor"/> may use, or null when this location
@@ -155,7 +155,7 @@ internal sealed partial class ExecutionManager
     /// only after the island house upgrade, matching the native guard both of its
     /// input paths carry (IslandWest.cs:237, :311).
     /// </summary>
-    private static ResolvedShippingBin? ResolveShippingBin(Farmer actor)
+    internal static ResolvedShippingBin? ResolveShippingBin(Farmer actor)
     {
         if (actor.currentLocation is Farm farm)
         {
@@ -243,31 +243,4 @@ internal sealed partial class ExecutionManager
         return -1;
     }
 
-    private IReadOnlyList<BridgeShippingBinTarget> DiscoverShippingBinTargets(Farmer player)
-    {
-        if (player.currentLocation is not (Farm or StardewValley.Locations.IslandWest)) return Array.Empty<BridgeShippingBinTarget>();
-        if (ResolveShippingBin(player) is not ResolvedShippingBin bin) return Array.Empty<BridgeShippingBinTarget>();
-        int slot = -1;
-        for (int candidate = 0; candidate < player.Items.Count; candidate++)
-        {
-            if (player.Items[candidate] is StardewValley.Object item && item.Stack > 0 && item.canBeShipped())
-            {
-                slot = candidate;
-                break;
-            }
-        }
-        if (slot < 0) return Array.Empty<BridgeShippingBinTarget>();
-        StardewValley.Object shippable = (StardewValley.Object)player.Items[slot]!;
-        return new[]
-        {
-            new BridgeShippingBinTarget(
-                bin.TargetId,
-                bin.TileX,
-                bin.TileY,
-                slot,
-                shippable.QualifiedItemId,
-                RequireDisplayName(shippable.QualifiedItemId),
-                shippable.Stack),
-        };
-    }
 }

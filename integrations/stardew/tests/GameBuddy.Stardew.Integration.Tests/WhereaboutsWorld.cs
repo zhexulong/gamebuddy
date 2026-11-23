@@ -139,9 +139,7 @@ internal sealed class WhereaboutsWorld : IDisposable
 
     private object Discover(string name)
     {
-        MethodInfo method = typeof(ExecutionManager).GetMethod(
-            name,
-            BindingFlags.NonPublic | BindingFlags.Static)!;
+        MethodInfo method = DiscoveryMembers.Method(name);
         return method.Invoke(null, new object[] { this.Exclusions })!;
     }
 

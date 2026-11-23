@@ -215,7 +215,7 @@ public sealed class UseMineLadderExitTests
     public void BothLadderRowsAreScannedFromTheLiveLayer()
     {
         string source = ReadRepositoryFile(TransportActionsFile);
-        string discovery = MethodBody(source, "private static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(");
+        string discovery = MethodBody(ControllerPartials.Declaring("DiscoverMineEntranceTargets"), "internal static IReadOnlyList<BridgeMineEntranceTarget> DiscoverMineEntranceTargets(");
 
         discovery.Should().Contain("TryFindMineExitLadderTile(shaft, out int exitX, out int exitY)");
         discovery.Should().Contain("TryFindMineLadderTile(shaft, out int ladderX, out int ladderY)");

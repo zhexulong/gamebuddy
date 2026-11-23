@@ -112,6 +112,20 @@ internal static class BodyHold
     /// </summary>
     internal const string NativeWriterHolderPrefix = "native:";
 
+    /// <summary>
+    /// The holder word for a transient the WORLD owns - a warp, a fade, a native animation pause - prefixed like the two
+    /// above for the same reason. The word after the colon is the classifier's own kind, so a declaration and the
+    /// sentence can only agree: `transient:warping`.
+    /// </summary>
+    internal const string TransientHolderPrefix = "transient:";
+
+    /// <summary>
+    /// Why a declared transient hold exists: the engine started a world transition whose own completion clears it. It is
+    /// separate from <see cref="NativeTimerReason"/> because nothing counts it down - a transient ends when its producer
+    /// reaches its end, which is the fact its settle window measures.
+    /// </summary>
+    internal const string NativeTransientReason = "native_world_transient";
+
     private static BodyHoldFact current = BodyHoldFact.Free;
     private static long declared;
     private static long attributed;

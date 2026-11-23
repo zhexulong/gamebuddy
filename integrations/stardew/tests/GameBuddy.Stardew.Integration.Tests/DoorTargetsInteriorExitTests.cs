@@ -48,7 +48,7 @@ public sealed class DoorTargetsInteriorExitTests
         using DoorWorld world = DoorWorld.Create();
         world.Location.warps.Add(new Warp(6, 12, "Farm", 64, 15, flipFarmer: false));
 
-        IReadOnlyList<BridgeDoor> doors = ExecutionManager.DiscoverDoorTargets(Game1.player);
+        IReadOnlyList<BridgeDoor> doors = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player);
 
         world.Location.doors.Pairs.Should().BeEmpty("a building interior's doorways are not drawn into the Buildings layer");
         world.Location.warps.Should().ContainSingle("the exit is the warp list's fact, and it is the only exit this room has");
@@ -68,7 +68,7 @@ public sealed class DoorTargetsInteriorExitTests
         world.Location.warps.Add(new Warp(6, 12, "Farm", 64, 15, flipFarmer: false));
         world.Location.warps.Add(new Warp(6, 13, "Farm", 65, 15, flipFarmer: false));
 
-        IReadOnlyList<BridgeDoor> doors = ExecutionManager.DiscoverDoorTargets(Game1.player);
+        IReadOnlyList<BridgeDoor> doors = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player);
 
         doors.Select(door => (door.SourceX, door.SourceY)).Should().Equal(
             new[] { (6, 12), (6, 13) },
@@ -86,7 +86,7 @@ public sealed class DoorTargetsInteriorExitTests
         world.Location.warps.Add(new Warp(6, 12, "Farm", 64, 15, flipFarmer: false, npcOnly: true));
         world.Location.warps.Add(new Warp(6, 13, "Farm", 65, 15, flipFarmer: false));
 
-        IReadOnlyList<BridgeDoor> doors = ExecutionManager.DiscoverDoorTargets(Game1.player);
+        IReadOnlyList<BridgeDoor> doors = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player);
 
         world.Location.warps.Should().HaveCount(2, "the fixture carries both declarations");
         doors.Should().ContainSingle().Which.SourceY.Should().Be(13);
@@ -101,7 +101,7 @@ public sealed class DoorTargetsInteriorExitTests
     {
         using DoorWorld world = DoorWorld.Create();
 
-        IReadOnlyList<BridgeDoor> doors = ExecutionManager.DiscoverDoorTargets(Game1.player);
+        IReadOnlyList<BridgeDoor> doors = FarmhandTargetDiscovery.DiscoverDoorTargets(Game1.player);
 
         world.Location.doors.Pairs.Should().BeEmpty();
         world.Location.warps.Should().BeEmpty();

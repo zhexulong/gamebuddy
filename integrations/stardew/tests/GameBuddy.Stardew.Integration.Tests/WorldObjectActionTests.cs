@@ -120,7 +120,7 @@ public sealed class WorldObjectActionTests
     [Fact]
     public void Handler_PlacesThroughTheNativeIngress_AndProvesTheObjectFromTheWorld()
     {
-        string source = ReadHandlerSource();
+        string source = ReadHandlerOnly();
         string code = StripLineComments(source);
         string body = MethodBody(source, "public LocalExecutionReceipt RequestLocalPlaceOwnedObject(");
         string executed = MethodBody(source, "private LocalExecutionReceipt ExecutePlaceOwnedObject(");
@@ -329,6 +329,10 @@ public sealed class WorldObjectActionTests
     // ---------------------------------------------------------------------------------
 
     private static string ReadHandlerSource() =>
+        ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile))
+        + ControllerPartials.Declaring("DiscoverWorldObjectTargets");
+
+    private static string ReadHandlerOnly() =>
         ReadRepositoryFile(Path.Combine("integrations", "stardew", HandlerFile));
 
     /// <summary>Extract one member body by brace balance from its declaration.</summary>

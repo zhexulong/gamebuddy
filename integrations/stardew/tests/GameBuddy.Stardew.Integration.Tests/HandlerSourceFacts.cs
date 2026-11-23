@@ -53,7 +53,8 @@ internal static class HandlerSourceFacts
     internal static IReadOnlyDictionary<string, string> HandlerSources()
     {
         var sources = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs"))
+        foreach (string file in Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandexecutioncontroller*.cs")
+            .Concat(Directory.GetFiles(RepositorySourcePath(ModDirectory), "farmhandtargetdiscovery*.cs")))
         {
             sources[Path.GetFileName(file)] = File.ReadAllText(file);
         }
