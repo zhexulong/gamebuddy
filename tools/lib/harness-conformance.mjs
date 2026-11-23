@@ -834,6 +834,16 @@ const AUDIT_WITHOUT_SELF_REPORT_REASON =
  */
 const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
+    gate: "check-companion-observability-parity.mjs",
+    reason:
+      "prints its reading as lines (`states examined N · carried M · declared debt K · facts owed F …`) rather than a " +
+      "`{gate, checks[]}` report, so a green run says nothing about whether the parity it asserts can fail; that is " +
+      "carried by gates/product/check-companion-observability-parity.test.mjs (`test:companion-observability-parity`), " +
+      "which replays an empty debt table over the real tree (seven `parity_fact_undeclared`), a copied contract gaining " +
+      "a debt row's `expiresWhen` arm (three `observability_debt_expired`), an owner path that is not on disk, a " +
+      "malformed expiry and an excused-but-unowed fact",
+  },
+  {
     gate: "check-action-coverage.mjs",
     reason:
       "a report, not a gate: it exits 0 unconditionally unless --fail-under <n> is passed, and no script, workflow or list in this repository passes one (`git grep -n fail-under` finds the flag only in its own header and its own argument parser), so nobody has defined what well-covered means and its default run has no threshold to fail against",
