@@ -35,7 +35,11 @@ import { identityKey } from "../../../host/dist-test/runtime-identity.js";
 import { LocalVoiceGatewayClient } from "../../../host/dist-test/voice-gateway-client.js";
 import { summarizeActionCadence } from "../../lib/action-cadence.mjs";
 import { describeActivityPoints, readActivityPoints, summarizeActivity } from "../../lib/companion-activity.mjs";
-import { assessCompanionInteraction, assessSpokenUtterances } from "../../lib/companion-interaction-gate.mjs";
+import {
+  assessCompanionInteraction,
+  assessSpokenUtterances,
+  readObservedEvents,
+} from "../../lib/companion-interaction-gate.mjs";
 import { COMPANION_LOCALE, COMPANION_LOCALE_KEY } from "../../lib/companion-locale.mjs";
 import { collectContextSummary } from "../../lib/context-db-summary.mjs";
 import { checkHistorianRubric, readCompartments } from "../../lib/historian-rubric.mjs";
@@ -173,8 +177,6 @@ import { writeInputManifest } from "../core/input-manifest.mjs";
 import { createLaunchPhaseLog, readLaunchPhaseHandover } from "../core/launch-phase.mjs";
 import { submitPlayerPrompt } from "../core/player-input-admission.mjs";
 import { openRunProgress } from "../core/run-progress.mjs";
-import { attributeTurnSpeech, bubbleFragment } from "./turn-speech.mjs";
-import { publishCadence } from "./action-cadence-reading.mjs";
 // memory_covenant: the covenant FACT is planted through the
 // real management surface under the product continuity, then the Game runtime on
 // the SAME root/continuity must render it into m[0] — the Agent reads the rule
@@ -182,6 +184,7 @@ import { publishCadence } from "./action-cadence-reading.mjs";
 // given (disposable-root runs), seeding is skipped and the covenant is not
 // asserted: a disposable root has no persisted memory by construction.
 import { seedMemoriesViaManagementSurface } from "../memory/run-memory-live-loop.mjs";
+import { publishCadence } from "./action-cadence-reading.mjs";
 import {
   agentTurnFailureReason,
   findRunSessionJsonl,
@@ -243,6 +246,7 @@ import {
   taskPurposeVerdict,
 } from "./run-verdicts.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
+import { attributeTurnSpeech, bubbleFragment } from "./turn-speech.mjs";
 
 // THE LAUNCH CLOCK, which is the launcher's and not this file's.
 //
@@ -5350,19 +5354,17 @@ try {
   const contextPassed = contextAssembled && worldBookAssembled; // Companion-quality gate (every speaking scenario): the spoken closing line must be
   // game-appropriate — short and to the player, not a step-by-step recital of
   // what the companion just did, and not a claim about a world reaction the
-  // receipts never recorded. The offer receipt carries showed_response, so an
-  // NPC reaction is only "observed" when the game actually showed it.
+  // run never published. TWO FAMILIES PUBLISH ONE: the offer receipt carries
+  // `showed_response`, and a paged dialogue is the Mod's `npc_dialogue_presented`
+  // fact — which is the only one a multiday day produces. Reading the receipt
+  // alone charged `round95` with an invented event she had been shown.
   //
   // The covenant scenario's reply is the companion's answer to the player, so it is assessed like every other
   // scenario's speech; gating the assessment on particular rungs left the others unassessed.
-  const observedEvents = [];
-  if (
-    offerReceipt?.evidence !== null &&
-    typeof offerReceipt?.evidence === "object" &&
-    offerReceipt.evidence.showed_response === true
-  ) {
-    observedEvents.push("npc_dialogue");
-  }
+  const observedEvents = readObservedEvents({
+    facts: factLog,
+    npcResponseShown: offerReceipt?.evidence?.showed_response === true,
+  });
   // Every scenario that SPOKE is assessed: the companion's speech is part of what every scenario promises
   // (morning_routine included - it reports its day to the player), so gating it on particular rungs was how
   // dialogue went unassessed on the others.

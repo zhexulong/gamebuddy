@@ -206,6 +206,21 @@ test("the runner enforces a companion-interaction gate on every speaking scenari
     /const interactionPassed = interactionOutcome === "verified" \|\| interactionOutcome === "unobserved";/,
   );
   assert.match(RUNNER_SOURCE, /interactionOutcome,/);
+  // WHAT COUNTS AS AN OBSERVED EVENT IS WHAT THE RUN PUBLISHED, IN EVERY FAMILY THAT PUBLISHES IT. Measured 2026-11-23
+  // (`round95`, day 1): the Community Center scene paged ten of Lewis's lines into `npc_dialogue_presented` and the gate
+  // charged her with `unobserved_event` for narrating them, because this reader asked one scenario's receipt
+  // (`showed_response`) and a multiday day mints none. The population is the run's own published facts, which is the
+  // same field the result carries as `bridgeFacts`, so a reader can check the excuse against the artifact.
+  assert.match(
+    RUNNER_SOURCE,
+    /import \{[^}]*\breadObservedEvents\b[^}]*\} from "\.\.\/\.\.\/lib\/companion-interaction-gate\.mjs";/u,
+    "the observed-event reader comes from the gate that owns the vocabulary",
+  );
+  assert.match(
+    RUNNER_SOURCE,
+    /readObservedEvents\(\{\n\s+facts: factLog,/u,
+    "and it is fed the run's own published facts, not one ladder's receipt",
+  );
   assert.match(
     RUNNER_SOURCE,
     /reasonCode: interactionAssessment\.reason \?\? "companion_interaction_not_assessed"/,
@@ -597,7 +612,10 @@ test("the fact log keeps receipt evidence so observed events can be derived", ()
   // live run after adding the gate proved it: gift_given had showed_response=false
   // recorded, yet the gate could not see it either way.
   assert.match(RUNNER_SOURCE, /evidence: fact\.payload\?\.evidence \?\? null/);
-  assert.match(RUNNER_SOURCE, /offerReceipt\.evidence\.showed_response === true/);
+  // The receipt is one of the TWO families that publish an NPC's words (see `readObservedEvents`): the other is the
+  // Mod's paged `npc_dialogue_presented` fact, which is the only one a multiday day mints. Both are handed over here, so
+  // neither can be dropped without the gate falling back to charging a true claim - which is `round95`.
+  assert.match(RUNNER_SOURCE, /npcResponseShown: offerReceipt\?\.evidence\?\.showed_response === true/);
 });
 test("the run records chunked-presentation evidence so the presence mechanism is measured", () => {
   // The mechanism-A design requires measurable TTFB and piece granularity, not

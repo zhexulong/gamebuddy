@@ -16,7 +16,7 @@
  *   - machine_token_leak : machine wire identifiers (gift_given, quest_25_completed)
  *   - unobserved_event   : asserts a specific thing the world did in response
  *                          (e.g. an NPC rejoiced, reacted, or said something)
- *                          when the receipts carry no such event.
+ *                          when the run published no such event (`readObservedEvents`).
  *   - hasPlayerAddress   : mentions the player or asks a question (recorded,
  *                          not enforced — a companion may also just exclaim)
  *
@@ -40,6 +40,51 @@
 
 /** The schema every population-level assessment is tagged with, so a reader knows which shape it holds. */
 const SPOKEN_UTTERANCE_SCHEMA = "gamebuddy_spoken_utterance_assessment/v1";
+
+/**
+ * THE ONE EVENT THIS GATE REASONS ABOUT, and the world fact that publishes it.
+ *
+ * <p>
+ * `npc_dialogue` is this gate's vocabulary for "the world showed a character's words"; `npc_dialogue_presented` is the
+ * Mod's fact for the same thing - it pages a `DialogueBox` and publishes the transcript with its speaker
+ * (`integrations/stardew/Sensory/NpcDialoguePager.cs`). One fact with two spellings, so the pair sits here instead of in
+ * a string literal at every reader that has to recognise it.
+ * </p>
+ */
+const NPC_DIALOGUE_EVENT = "npc_dialogue";
+const NPC_DIALOGUE_FACT = "npc_dialogue_presented";
+
+/**
+ * The event kinds a RUN published, in this gate's vocabulary.
+ *
+ * <p>
+ * THE EVIDENCE IS THE RUN'S OWN PUBLICATIONS, AND EVERY FAMILY THAT PUBLISHES IT COUNTS. Measured 2026-11-23 (`round95`,
+ * day 1, 09:56:23): the vanilla Community Center scene paged ten of Lewis's lines into `npc_dialogue_presented` - the
+ * Host rendered them into her prompt as `09:10 Lewis说：「这里比我记忆中还要破旧。」` - she answered 「刘易斯这一通念叨是没
+ * 完了，我就杵在这儿等他说完。」, and the gate charged her with `unobserved_event`. The run published that fact 26 times
+ * and the claim was true; the reader was the defect. It asked one scenario's receipt (`gift_given` /
+ * `quest_item_delivered` carrying `showed_response`), and a multiday day mints none (`offerReceipt: null`), so
+ * `observedEvents` was empty for a world that had just talked.
+ * </p>
+ * <p>
+ * TWO FAMILIES, ONE KIND. A receipt whose own postcondition is that the game SHOWED a response and a paged dialogue are
+ * the same fact about the world, so they are OR-ed here rather than spelled `"npc_dialogue"` at each caller.
+ * </p>
+ * <p>
+ * WHAT IT STILL CANNOT DECIDE: a run-level fact proves the world said something SOMEWHERE in the run - never that the
+ * line being judged came after it, or that the speaker is the one she named. Binding a claim to its own moment needs the
+ * timestamp on both sides (the judged population carries one on every line; this reader does not look at it), which is a
+ * separate design rather than a wider vocabulary.
+ * </p>
+ */
+export function readObservedEvents({ facts = [], npcResponseShown = false } = {}) {
+  const observed = new Set();
+  if (npcResponseShown === true) observed.add(NPC_DIALOGUE_EVENT);
+  // The kind is recorded on the run's fact log entry as `worldFactKind` (the runner mirrors the Mod's `payload.kind`),
+  // which is the same field the published artifact carries as `bridgeFacts` - so a reader can check the excuse.
+  for (const fact of facts) if (fact?.worldFactKind === NPC_DIALOGUE_FACT) observed.add(NPC_DIALOGUE_EVENT);
+  return Object.freeze([...observed]);
+}
 
 /** How many findings a result carries: the count below is unbounded, the list is not. */
 const PUBLISHED_FINDING_LIMIT = 20;
@@ -75,8 +120,10 @@ export function assessCompanionInteraction(text, observedEvents = []) {
   const selfTag = /§\d+§/.test(trimmed);
   if (selfTag) reasons.push("self_tag_leak");
   // Asserting a specific in-world reaction that never happened. `observedEvents`
-  // carries the event kinds the receipts actually prove (e.g. "npc_dialogue");
-  // a narration of a concrete reaction without that evidence is fabrication.
+  // carries the event kinds the run's own publications prove (see
+  // `readObservedEvents`: a paged `npc_dialogue_presented`, or the receipt whose
+  // postcondition is a shown response); a narration of a concrete reaction without
+  // that evidence is fabrication.
   //
   // Parenthetical tone tags ((满意)/(softly)) are the companion's own delivery,
   // not a claim about the world, so they are stripped first. The reaction must
@@ -111,7 +158,7 @@ export function assessCompanionInteraction(text, observedEvents = []) {
     if (/(要是|如果|假如|万一|只要)/.test(c) || /的话$/.test(c)) return false;
     return reactionRegex.test(c) || bodyPartChangeRegex.test(c);
   });
-  if (claimsNpcReaction && !observedEvents.includes("npc_dialogue")) {
+  if (claimsNpcReaction && !observedEvents.includes(NPC_DIALOGUE_EVENT)) {
     reasons.push("unobserved_event");
   }
   // Soft interaction signal: address the player or ask/turn the turn over.

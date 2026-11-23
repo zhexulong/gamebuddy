@@ -1,6 +1,10 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
-import { assessCompanionInteraction, assessSpokenUtterances } from "./companion-interaction-gate.mjs";
+import { test } from "node:test";
+import {
+  assessCompanionInteraction,
+  assessSpokenUtterances,
+  readObservedEvents,
+} from "./companion-interaction-gate.mjs";
 
 /** Two hundred short lines: the shape a real 37.5-minute run produced (207 lines across 14 turns). */
 const TWO_HUNDRED_LINES = Array.from({ length: 200 }, (_, index) => `第${index + 1}行：草清完了，你那边慢慢来。`);
@@ -99,6 +103,48 @@ test("rejects an invented cutscene line, which is what a hold that names no cont
   assert.deepEqual(unpublished.reasons, ["unobserved_event"]);
   // The same words are acceptable when the game really showed them: the verdict is the evidence, not the wording.
   assert.equal(assessCompanionInteraction(invented, ["npc_dialogue"]).passed, true);
+});
+
+test("a world's words the run published prove the dialogue, whatever family carried them", () => {
+  // MEASURED 2026-11-23 (`round95`, day 1, 09:56:23): the vanilla Community Center scene paged ten of Lewis's lines into
+  // `npc_dialogue_presented`, the Host rendered them into her prompt as `09:10 Lewis说：「这里比我记忆中还要破旧。」`, and
+  // she answered 「刘易斯这一通念叨是没完了，我就杵这儿等他说完。」. The run published that fact 26 times and the gate
+  // charged her with an INVENTED event - because `observedEvents` was read from the covenant ladder's offer receipt
+  // alone, and a multiday day mints none (`offerReceipt: null`). The sentence was true; the reader was the defect.
+  const line = "刘易斯这一通念叨是没完了，我就杵这儿等他说完。";
+  assert.equal(
+    assessCompanionInteraction(line, []).passed,
+    false,
+    "the sentence IS a reaction claim the gate reads, or the fixture proves nothing",
+  );
+  const published = [
+    Object.freeze({ type: "world_fact", worldFactKind: "modal_presented" }),
+    Object.freeze({ type: "world_fact", worldFactKind: "npc_dialogue_presented" }),
+    Object.freeze({ type: "execution_receipt", worldFactPayload: { actionId: "cut_weeds" } }),
+  ];
+  const observed = readObservedEvents({ facts: published });
+  assert.deepEqual(observed, ["npc_dialogue"], "the paged dialogue is the event, and it is the gate's own kind");
+  assert.equal(assessCompanionInteraction(line, observed).passed, true);
+  // FALSIFIER: the same run minus that one family must still fail. The reader is the evidence, not a switch that makes
+  // any claim about a world pass.
+  const withoutDialogue = published.filter((fact) => fact.worldFactKind !== "npc_dialogue_presented");
+  assert.deepEqual(readObservedEvents({ facts: withoutDialogue }), []);
+  assert.equal(assessCompanionInteraction(line, readObservedEvents({ facts: withoutDialogue })).passed, false);
+});
+
+test("one event, two publishers: the offered reaction and the paged dialogue are the same kind", () => {
+  // The receipt whose own postcondition is that the game SHOWED a response (`gift_given`/`quest_item_delivered`, which
+  // carry `showed_response`) and the Mod's paged dialogue are two families publishing ONE fact, so they meet in one
+  // spelling here rather than in a string literal at every caller.
+  assert.deepEqual(readObservedEvents({ npcResponseShown: true }), ["npc_dialogue"]);
+  assert.deepEqual(readObservedEvents({ facts: [], npcResponseShown: false }), []);
+  assert.deepEqual(readObservedEvents(), [], "a run that published nothing observed nothing");
+  // A dialogue fact does not stand in for a reaction the receipt contradicts: the two are OR-ed, so one family's absence
+  // is never repaired by the other's presence being read as a denial either.
+  assert.deepEqual(
+    readObservedEvents({ facts: [{ worldFactKind: "npc_dialogue_presented" }], npcResponseShown: false }),
+    ["npc_dialogue"],
+  );
 });
 
 test("does not flag a player-directed line that mentions no NPC reaction", () => {
