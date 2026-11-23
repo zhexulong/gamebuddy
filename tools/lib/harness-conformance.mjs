@@ -371,6 +371,15 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // directions of the exemption rule including an arm owner that stopped arming.
   "check-armed-destructive-actions.mjs",
   "check-build-artifact-producers.mjs",
+  // Prints `modules examined N · M read site(s): A on the composed aggregate, C on the Chat route` plus a
+  // per-rule `checks[]` verdict (every receiver resolved, every Chat read on the Chat route, the Chat route
+  // read at all, the session mint identified, every module parsed), so its default run is the report this
+  // suite reads. Its falsifier is gates/product/check-chat-reads-the-chat-route.test.mjs: the seam given
+  // back its `read ?? (await composedApi.readState())` fallback is named at its own line, an aggregate read
+  // through a member declared in another module's type is named the same way, the same read is green in
+  // the module that spends a boot token and blocked when that mint is taken away, an unresolvable or
+  // doubly-declared receiver is a finding, and a tree with no module is blocked.
+  "check-chat-reads-the-chat-route.mjs",
   // Prints `functions examined N · over the bound K · worst <name> @ <file>:<line> = <n>` per producer, the class
   // line and the class-size line, then a `checks[]` verdict enumerating its five rules (each language's function
   // bound, the class complexity bound, the class-size ceiling, and the ratchet over the baseline), so its default
@@ -1383,8 +1392,8 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     reason:
       "prints `ceiling sites examined 103 · from a declaration 103 · from a name list 0`, so its reading is lines and not " +
       "a `{gate, checks[]}` report; its falsifier suite is tools/check-deadline-ceiling-declaration.test.mjs, run by " +
-      "`test:deadline-ceiling-declaration`, which plants the pre-fix `action === \"navigate_to_destination\" || action === " +
-      "\"sleep\"` name list and asserts the finding it produces",
+      '`test:deadline-ceiling-declaration`, which plants the pre-fix `action === "navigate_to_destination" || action === ' +
+      '"sleep"` name list and asserts the finding it produces',
   },
   {
     gate: "check-declared-deleted-facts.mjs",

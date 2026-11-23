@@ -1,21 +1,21 @@
 /**
  * A Chat read may not put the Game panel back on an older projection.
  *
- * `/state` answers the whole aggregate: the conversation *and* a `game` slice beside it, photographed when the
- * request left. The shell's Chat reads committed that whole document, so a Chat read that was in flight when the
- * game moved - a resume converging, a farm loading, a world ending, all of which reach the panel on its own
- * channel - landed on the OLDER projection and stayed there: the Chat channel never speaks again about the game,
- * so nothing put the panel forward.
+ * The aggregate `/state` answered the conversation *and* a `game` slice beside it, photographed when the request
+ * left, and the shell's Chat reads committed that whole document: a Chat read in flight when the game moved - a
+ * resume converging, a farm loading, a world ending, all of which reach the panel on its own channel - landed on
+ * the OLDER projection and stayed there, because the Chat channel never speaks again about the game.
  *
- * The journey is deliberately an in-flight one, and it asserts what the panel SHOWS rather than that a request
- * happened: the player is on the Game surface, the Game's own channel publishes the move, and the Chat read that
- * was already outstanding answers the projection from before it.
+ * The rule that fixes it is `withChatHalf` (one Chat read replaces `chat` and keeps the Game slice), and since
+ * `chat-snapshot-pair.ts` reads the Chat half's own route a Chat read carries no Game slice at all. These journeys
+ * keep holding the older rule: the read is held open across the move, and it is asserted what the panel SHOWS
+ * rather than that a request happened. The player is on the Game surface, the Game's own channel publishes the
+ * move, and the Chat read that was already outstanding answers the Chat half from before it.
  *
  * There are two such Chat reads and each has its own journey. The first is the shell's own reread (a surface
- * arrival). The second is the fallback poll, the reader that settles a turn no stream is delivering: it ran the
- * same whole-document commit after the other two had been narrowed, so a Game fact that arrived inside its three
- * round trips was undone by the hop that followed - and the panel lost, with it, the controls that belong to the
- * newer projection (`Stop game`, `Disconnect game`), because those are drawn from the same Game slice.
+ * arrival). The second is the fallback poll, the reader that settles a turn no stream is delivering - and the panel
+ * lost, with it, the controls that belong to the newer projection (`Stop game`, `Disconnect game`), because those
+ * are drawn from the same Game slice.
  */
 import { expect, test } from "./frontend-coverage";
 import { composeGameEvent, gameStreamCursor } from "./game-stream-fixtures";
@@ -56,17 +56,18 @@ test("a Chat read that outlives a Game fact does not put the panel back on the o
     route.fulfill(jsonOk({ ...root, game: quietGame })),
   );
   // The Chat read the journey holds: it is armed immediately before the player leaves the conversation, and what
-  // it answers is the projection from BEFORE the frame below - which is exactly what a round trip returns.
+  // it answers is the Chat half from BEFORE the frame below - which is exactly what a round trip returns. It is the
+  // Chat half's own route (`readChatSnapshotPair`), and the answer carries no Game slice for it to commit.
   let armed = false;
   let release: (() => void) | null = null;
   let landed: (() => void) | null = null;
   const landedAt = () => new Promise<void>((resolve) => (landed = resolve));
   let chatReadLanded = landedAt();
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  await page.route("**/api/tavern/v1/state", async (route) => {
     const held = armed;
     armed = false;
     if (held) await new Promise<void>((resolve) => (release = resolve));
-    await route.fulfill(jsonOk({ ...root, game: quietGame }));
+    await route.fulfill(jsonOk(chat));
     landed?.();
   });
   // The panel's own read answers the same quiet projection: the ONLY thing that says the game moved is its channel,
@@ -130,15 +131,15 @@ test("the fallback poll's hop does not put the panel back on the projection it r
   const quietRoot = { ...root, chat: submittableChat, game: quietGame };
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(quietRoot)));
 
-  // The poll's own hop: the first `/state` after the send is held, and answers the projection from BEFORE the
+  // The poll's own hop: the first Chat read after the send is held, and answers the Chat half from BEFORE the
   // frame below - which is exactly what a round trip returns.
   let armed = false;
   let releaseHop: (() => void) | null = null;
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  await page.route("**/api/tavern/v1/state", async (route) => {
     const hold = armed;
     armed = false;
     if (hold) await new Promise<void>((resolve) => (releaseHop = resolve));
-    await route.fulfill(jsonOk(quietRoot));
+    await route.fulfill(jsonOk(quietRoot.chat));
   });
   await stubGameRead(page, quietGame);
   // The press leaves the browser and nothing comes back, so the submission record it published is what starts

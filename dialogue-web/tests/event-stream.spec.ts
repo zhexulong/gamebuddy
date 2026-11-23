@@ -98,12 +98,12 @@ test("the composed conversation opens the projected event stream, previews a del
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
     // The repair's own read moves the checkpoint: the reconnect must carry the
     // cursor this answer names, never the id of the frame that was rejected.
     currentCursor = recoveredCursor;
-    return route.fulfill(jsonOk(projection(repairedDraft)));
+    return route.fulfill(jsonOk(projection(repairedDraft).chat));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -269,7 +269,7 @@ test("a burst of stream frames costs two authoritative reads, not one per frame,
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  await page.route("**/api/tavern/v1/state", async (route) => {
     stateReads += 1;
     // Served from the durable state this read was dispatched against - captured
     // now, so the answer cannot borrow the state of a later frame.
@@ -278,7 +278,7 @@ test("a burst of stream frames costs two authoritative reads, not one per frame,
     // coalescing is about, and it is what makes the intermediate answer the one a
     // dropped pending pass would leave on screen.
     if (stateReads === 1) await new Promise((resolve) => setTimeout(resolve, 600));
-    await route.fulfill(jsonOk(body));
+    await route.fulfill(jsonOk(body.chat));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -293,7 +293,7 @@ test("a burst of stream frames costs two authoritative reads, not one per frame,
   // A tally of what the browser actually put on the wire, beside the route counts:
   // the two must agree, so neither a route that answered without a request nor a
   // read this surface made off the intercepted paths can hide in the numbers.
-  const statePath = "/api/composed-reference-game/v1/state";
+  const statePath = "/api/tavern/v1/state";
   const draftPath = "/api/tavern/v1/draft";
   const wireRequests: string[] = [];
   page.on("request", (request) => wireRequests.push(new URL(request.url()).pathname));

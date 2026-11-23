@@ -73,7 +73,8 @@ test("a send the Host never answers is settled by the submission's own status", 
   let statusReads = 0;
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  // The poll's own read is the Chat half's route (`readChatSnapshotPair`), never the aggregate.
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(root.chat)));
   // The press leaves the browser and nothing comes back: the request stays open for the whole journey.
   await page.route("**/api/tavern/v1/messages", async (route) => {
     submits += 1;

@@ -178,6 +178,28 @@ export const jsonOk = (body: unknown) => ({
 });
 
 /**
+ * A refusal in the shape the Chat half's own route declares.
+ *
+ * `PROBLEM_KEYS` in `src/reference-pipeline-api.ts` accepts exactly `type, title, status, code, requestId,
+ * retryable` and classifies the refusal by the `retryable` it carries, so a bare `{code}` body - the
+ * composed contract's shape - is a protocol error on this route, and the stream treats a protocol error
+ * as terminal. Journeys whose subject is a read that failed rather than a refusal that means something
+ * answer with this.
+ */
+export const tavernRefusal = (status: number, code: string, retryable: boolean) => ({
+  status,
+  contentType: "application/json",
+  body: JSON.stringify({
+    type: "about:blank",
+    title: code,
+    status,
+    code,
+    requestId: "R".repeat(42) + "A",
+    retryable,
+  }),
+});
+
+/**
  * The Game slice's own read, for every journey that presses a Game control.
  *
  * `GameSurface` re-reads `GET …/game`, never the aggregate root: the panel's reads are the game's own,

@@ -101,9 +101,10 @@ async function stubHost(page: Page, state: HostState): Promise<void> {
   const root = () => composedRoot(state);
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+  // A Chat read takes the Chat half's own route (`readChatSnapshotPair`); the aggregate is the mount's.
+  await page.route("**/api/tavern/v1/state", (route) =>
     state.stateHealthy
-      ? route.fulfill(jsonOk(root()))
+      ? route.fulfill(jsonOk(root().chat))
       : route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) }),
   );
   // A saved, ready connection, so Settings renders its real connection group beside the voice one.

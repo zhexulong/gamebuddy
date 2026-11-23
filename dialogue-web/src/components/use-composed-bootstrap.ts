@@ -1,5 +1,5 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
-import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import { chatSnapshotPairFromRoot, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import { type ChatTurnTerminalState, TERMINAL_TURN_STATES } from "../chat-turn-terminal-states.generated";
 import {
   composedBootstrapProblemView as bootstrapProblemView,
@@ -7,6 +7,7 @@ import {
 } from "../composed-problem-view";
 import {
   type ComposedReferenceGameBrowserApi,
+  type ComposedReferenceGameBrowserRootV1,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
   createComposedReferenceGameBrowserApi,
@@ -32,8 +33,9 @@ import type { ViewState } from "./composed-reference-game-view";
 /**
  * The shell's bootstrap and its fallback poll.
  *
- * The composed root is the only authority used to refresh either projection; the
- * nested Reference pipeline client remains the sole Chat mutation/events client.
+ * The composed root is the authority the MOUNT commits - the boot token, the session it adopts and the
+ * Game slice it carries. Every later Chat refresh is the Chat half's own route, and the nested Reference
+ * pipeline client remains the sole Chat mutation/events client.
  * This hook owns the first read of that root (the mounted conversation, its
  * durable draft and the display language), the view state that read commits, and
  * the fallback poll that settles a turn no event stream is delivering. The shell
@@ -92,6 +94,24 @@ export type ComposedBootstrap = Readonly<{
   startPolling: () => void;
 }>;
 
+/**
+ * The shell's whole-root read, for the one path that has no Chat half to read instead.
+ *
+ * `/bootstrap` and its sibling `/state` are the aggregate: the Host composes a Game projection into the
+ * document and refuses the document when that half cannot be produced, and a refused `/bootstrap`
+ * retires the session it minted (`game-projection-failure-is-not-the-chats.spec.ts` measures
+ * `chatHalfReads=0` on that page) - so this read cannot be moved to the Chat half's own route. It is
+ * therefore the MOUNT's read, and a card whose problem IS the mount re-takes it, carrying nothing over
+ * because there is nothing here to carry. It lives in this module because the aggregate read belongs to
+ * the module that mints the session (`gates/product/check-chat-reads-the-chat-route.mjs`); every other
+ * Chat read goes through `chat-snapshot-pair.ts`.
+ */
+export function readShellRoot(
+  composedApi: ComposedReferenceGameBrowserApi,
+): Promise<ComposedReferenceGameBrowserRootV1> {
+  return composedApi.readState();
+}
+
 export function useComposedBootstrap(
   localeRef: RefObject<Locale>,
   setPreview: Dispatch<SetStateAction<ComposedPreviewV1 | null>>,
@@ -145,7 +165,7 @@ export function useComposedBootstrap(
               : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
-        const pair = await readChatSnapshotPair(composedApiRef.current, root);
+        const pair = chatSnapshotPairFromRoot(root);
         if (!active) return;
         // The interface language the player CHOSE, from the one record that outlives the launch.
         //
@@ -192,10 +212,11 @@ export function useComposedBootstrap(
   }, [commit, managementApi]);
 
   /**
-   * The pair a poll hop projects: the root's own read, which carries the draft's revision *and* its
+   * The pair a poll hop projects: the Chat half's own route, which carries the draft's revision *and* its
    * body, so a hop costs one request and every hop learns the draft as it stands.
    */
-  const resolvePollDraft = () => readChatSnapshotPair(composedApiRef.current);
+  const resolvePollDraft = (current: ComposedReferenceGameBrowserRootV1) =>
+    readChatSnapshotPair(current, tavernApiRef.current);
 
   const startPolling = (): void => {
     if (pollActiveRef.current) return;
@@ -245,7 +266,7 @@ export function useComposedBootstrap(
         return;
       }
       try {
-        const { root, draft } = await resolvePollDraft();
+        const { root, draft } = await resolvePollDraft(current.root);
         let session = current.session.applySnapshot(root.chat);
         if (session.pending !== null) {
           const status = await tavernApiRef.current.readSubmissionStatus({
@@ -263,10 +284,10 @@ export function useComposedBootstrap(
           pollActiveRef.current = false;
           return;
         }
-        // The hop answered the whole aggregate, and its `game` slice was photographed before those three awaits: a
-        // Game fact that reached the panel inside them is newer, and this read is the one Chat path that would have
-        // put the panel back on the older projection with nothing left to put it forward again. So the root is
-        // taken from the view that is current HERE, with only the Chat half replaced (`withChatHalf`).
+        // The hop answers the Chat half and nothing else, so the Game slice is the landing view's own: a Game fact
+        // that reached the panel while this hop was in flight is newer than the view the hop left on, and committing
+        // an older projection would leave the panel on it with nothing left to put it forward again
+        // (`withChatHalf`).
         const landing = viewRef.current;
         const next = {
           kind: "ready" as const,

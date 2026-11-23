@@ -1,5 +1,6 @@
 import { expect, test } from "./frontend-coverage";
 import { messages } from "../src/i18n";
+import { tavernRefusal } from "./composed-reference-game-fixtures";
 
 /**
  * A reconnect whose read fails once must not end reconnection for the session.
@@ -86,14 +87,10 @@ const recovered = {
 const jsonOk = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
 /**
- * One transient refusal of the authoritative read: the composed contract's own refusal shape - an
- * exact `{code}` body - with a 5xx status, which is what the client classifies as retryable.
+ * One transient refusal of the authoritative read: a 5xx the Chat route's client classifies as retryable
+ * (`tavernRefusal` carries the `retryable` the closed problem document declares).
  */
-const temporaryRefusal = {
-  status: 503,
-  contentType: "application/json",
-  body: JSON.stringify({ code: "storage_unavailable" }),
-};
+const temporaryRefusal = tavernRefusal(503, "storage_unavailable", true);
 
 test("a reconnect read that fails once keeps the conversation and reconnects on its own", async ({ page }) => {
   test.setTimeout(120_000);
@@ -131,14 +128,16 @@ test("a reconnect read that fails once keeps the conversation and reconnects on 
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  // The recovery and confirmation reads take the Chat half's own route (`readChatSnapshotPair`), so
+  // the refusal that carries this journey's outage is answered there, not on the aggregate.
+  await page.route("**/api/tavern/v1/state", async (route) => {
     stateReads += 1;
     // The first two reads after the stream dies are the transient outage; the third is the link back.
     if (stateReads <= 2) {
       await route.fulfill(temporaryRefusal);
       return;
     }
-    await route.fulfill(jsonOk(recovered));
+    await route.fulfill(jsonOk(recovered.chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),

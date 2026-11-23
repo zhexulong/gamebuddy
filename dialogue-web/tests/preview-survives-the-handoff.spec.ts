@@ -59,13 +59,14 @@ test("the reply bubble survives the stream-to-transcript handoff without a gap",
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  // The read the committed frame triggers is the Chat half's own route (`readChatSnapshotPair`).
+  await page.route("**/api/tavern/v1/state", async (route) => {
     stateReads += 1;
     // Captured before the delay, so the answer describes durable state at the moment the read was
     // dispatched - the read is slower than the frame, which is the window the blink lived in.
     const body = projection();
     await new Promise((resolve) => setTimeout(resolve, stateReadDelayMs));
-    return route.fulfill(jsonOk(body));
+    return route.fulfill(jsonOk(body.chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),

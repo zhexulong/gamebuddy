@@ -122,9 +122,9 @@ function rootWithWorldInfo(worldInfo: unknown) {
 
 /**
  * The composed shell's Chats surface: the same panel, over the same route, and
- * the rename moves this shell's own Chat projection through the composed
- * `/state` read (the shell cannot fold a management read-back into the frozen
- * reference Chat session by hand).
+ * the rename moves this shell's own Chat projection through the Chat half's own
+ * route (`readChatSnapshotPair` -> `GET /api/tavern/v1/state`; the shell cannot
+ * fold a management read-back into the frozen reference Chat session by hand).
  */
 test("the product Chats surface renames through chat/title and moves the conversation heading from the composed state", async ({ page }) => {
   const titleWrites: unknown[] = [];
@@ -138,12 +138,12 @@ test("the product Chats surface renames through chat/title and moves the convers
       body: JSON.stringify({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: rootTitle } } }),
     }),
   );
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  await page.route("**/api/tavern/v1/state", (route) => {
     composedStateReads.count += 1;
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ ...composedRoot, chat: { ...composedChat, chat: { ...composedChat.chat, title: rootTitle } } }),
+      body: JSON.stringify({ ...composedChat, chat: { ...composedChat.chat, title: rootTitle } }),
     });
   });
   await page.route("**/api/tavern/v1/draft", (route) =>

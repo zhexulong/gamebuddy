@@ -34,14 +34,15 @@ function frame(sequence: number, eventType: string, payload: unknown) {
 
 type ChatHost = Readonly<{
   stateReads: () => number;
-  /** What the next `/state` publishes: the projection the mount opened with, or the same one with no stream. */
+  /** What the next authoritative Chat read publishes: the projection the mount opened with, or the same one with no stream. */
   publishStream: (present: boolean) => void;
 }>;
 
 /**
- * Mounts the shell with a Chat projection whose `/state` answer can stop publishing the stream -
+ * Mounts the shell with a Chat projection whose authoritative read can stop publishing the stream -
  * the answer a mounted session cannot apply, i.e. a Chat read that fails for good while the Game
- * projection beside it is perfectly readable.
+ * projection beside it is perfectly readable. The read is the Chat half's own route
+ * (`readChatSnapshotPair`), which is why the failure is answered there.
  */
 async function mountWithAFailingChatRead(page: Page): Promise<ChatHost> {
   await installSyntheticEventStream(page);
@@ -53,9 +54,9 @@ async function mountWithAFailingChatRead(page: Page): Promise<ChatHost> {
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection(true))));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill(jsonOk(projection(publishesStream)));
+    return route.fulfill(jsonOk(projection(publishesStream).chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: "A durable delegated draft." })),
@@ -138,7 +139,9 @@ test("a Game refusal is drawn in the Game region and the conversation stays moun
   let activationRequests = 0;
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(activationRoot)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(activationRoot)));
+  // The shell's Chat reads take the Chat half's route (`readChatSnapshotPair`); the mount is the only
+  // aggregate read, and `/bootstrap` answered it above.
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(activationRoot.chat)));
   await page.route("**/api/composed-reference-game/v1/lifecycle/activate", (route) => {
     activationRequests += 1;
     return route.fulfill({

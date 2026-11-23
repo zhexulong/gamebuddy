@@ -1,27 +1,23 @@
 /**
  * A Game projection that cannot be read is not a conversation that broke.
  *
- * The claim this file settles: `use-chat-event-stream` reconnects the Chat stream by reading
- * `/state`, `/state` also carries the Game projection, so a Game fault answers 409 and the Chat
- * client classifies it as `terminalReadFailure` - a Game with nothing to do with the conversation
- * kills its live stream.
+ * The claim this file settles: the Chat stream's reconnect read is the Chat half's own route
+ * (`readChatSnapshotPair` -> `GET /api/tavern/v1/state`), so a Game projection that refuses the
+ * aggregate never answers it at all - the aggregate stub here refuses for the whole journey and is
+ * never asked, which is the fact the journey holds.
  *
- * Measured: the composed root's refusal is `{code: "state_unavailable", cause:
- * "game_projection_failed"}` with a 409 (`ComposedReferenceGameBrowserAPI` `retryable = status >= 500
- * || code === "state_unavailable"`, and the Host's `readStateRoute` answers `composedRootProblem`),
- * so the Chat client does NOT take it as terminal: the projection stays, the surface says which read
- * it could not take, the stream's recovery keeps trying, and the live channel re-arms itself from
- * the first read that lands. This journey pins exactly that, with the Host's own body for the half
- * that broke.
+ * Measured: what the read CAN be handed is a transient refusal of its own route, and the Chat client
+ * keeps that class non-terminal (`terminalReadFailure`): the projection stays, the surface says which
+ * read it could not take, the stream's recovery keeps trying, and the live channel re-arms itself from
+ * the first read that lands. This journey pins exactly that, with the Game half refused throughout.
  *
- * The residual the same journey measures: while the Game projection keeps failing, every Chat read
- * fails with it, so the stream retries instead of re-arming. That is a dependency of the composed
- * root's own shape (one route carries both halves), not of the client's classification - the fix for
- * it belongs to `/state`, not here.
+ * The residual the older shape of this file measured - "while the Game projection keeps failing, every
+ * Chat read fails with it" - is gone with the route: `game-projection-failure-is-not-the-chats.spec.ts`
+ * measures `aggregateReads=0` in session, and this journey's aggregate stub is the proof it is unread.
  */
 import { expect, test } from "./frontend-coverage";
 import { messages } from "../src/i18n";
-import { game } from "./composed-reference-game-fixtures";
+import { game, tavernRefusal } from "./composed-reference-game-fixtures";
 
 const token = "A".repeat(43);
 const chatHandle = `${"B".repeat(42)}A`;
@@ -123,9 +119,13 @@ test("a Game projection failure does not end the conversation's live stream", as
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  // The aggregate is refused for the whole journey and nothing reads it: the Chat stream's reconnect
+  // takes the Chat half's own route (`readChatSnapshotPair`), which is the fact this journey holds - a
+  // Game projection failure cannot end the conversation's stream because it never answers its read.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(gameProjectionRefusal));
+  await page.route("**/api/tavern/v1/state", async (route) => {
     stateReads += 1;
-    await route.fulfill(gameBroken ? gameProjectionRefusal : jsonOk(recovered));
+    await route.fulfill(gameBroken ? tavernRefusal(503, "storage_unavailable", true) : jsonOk(recovered.chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })),
@@ -139,8 +139,8 @@ test("a Game projection failure does not end the conversation's live stream", as
   await expect(rows).toHaveCount(1);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __streams: unknown[] }).__streams.length)).toBe(1);
 
-  // The Game projection is the half that broke, and the Chat stream loses its link - so the
-  // reconnect reads `/state` and is handed the Host's own refusal for a Game fault.
+  // The Game projection is the half that broke, and the Chat stream loses its link - so the reopen
+  // reads the Chat half and is handed a transient refusal of its own route.
   gameBroken = true;
   await page.evaluate(() => (window as unknown as { __fail: (index: number) => void }).__fail(0));
   await expect.poll(() => stateReads).toBeGreaterThanOrEqual(1);

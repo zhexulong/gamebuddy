@@ -124,7 +124,9 @@ test("a read that started before a send does not erase the submission the send p
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  // The shell's reread is the Chat half's own route (`readChatSnapshotPair`), which is the read this
+  // journey holds open across the send.
+  await page.route("**/api/tavern/v1/state", async (route) => {
     // The Host's answer is fixed when the read is taken; only its delivery is slow. That is what a
     // round trip is, and it is the whole interleaving: the reading describes the screen before the send.
     const body = projection();
@@ -135,7 +137,7 @@ test("a read that started before a send does not erase the submission the send p
         releaseHeld = resolve;
       });
     }
-    await route.fulfill(jsonOk(body));
+    await route.fulfill(jsonOk(body.chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: null })));
   await page.route("**/api/tavern/v1/messages", async (route) => {

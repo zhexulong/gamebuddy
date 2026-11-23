@@ -4,10 +4,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import type {
-  ComposedReferenceGameBrowserApi,
-  ComposedReferenceGameBrowserRootV1,
-} from "../composed-reference-game-browser-api";
+import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
 import { messages } from "../i18n";
 import type {
   BrowserEventV1,
@@ -26,7 +23,7 @@ import type { ComposedPreviewV1 } from "./use-composed-bootstrap";
  *
  * What it must keep true, and what the shell would lose if the effect were still spelled inline: the
  * stream opens on the cursor the committed snapshot published, and a socket error is a RESYNC rather
- * than a restart - one authoritative `/state` read whose Chat half is committed through the shell's
+ * than a restart - one authoritative read of the Chat half's own route, committed through the shell's
  * own `withChatHalf` rule, then a new connection from the position that read published. A resync the
  * link refuses keeps the projection on screen, says which read it could not take, and retries on the
  * fallback poll's own backoff (1 s doubling to a 5 s ceiling, one timer at a time); a resync the Host
@@ -158,9 +155,11 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 /**
  * One armed cursor over fake seams.
  *
- * The two clients are casts: the stream takes one route off each (`readState`, `openEvents`), and the
- * rest of their surface belongs to the routes it does not call. `window` is replaced for the reason
- * the stream needs it at all - the retry timer and the preview hold - so the test owns when they fire.
+ * The one client is a cast: the stream takes one route off the Chat client (`readState`), arms one
+ * cursor off it (`openEvents`), and the rest of its surface belongs to the routes it does not call. It
+ * is handed no composed client at all, so the aggregate read the Chat half must never take is not one
+ * the stream can reach (`gates/product/check-chat-reads-the-chat-route.mjs`). `window` is replaced for the
+ * reason the stream needs it at all - the retry timer and the preview hold - so the test owns when they fire.
  */
 function harness(view: ViewState) {
   const committed: ViewState[] = [];
@@ -172,8 +171,8 @@ function harness(view: ViewState) {
   // The streaming preview, as the shell holds it: one cell the stream writes through the setter's
   // own two shapes, so a test reads exactly what the player would be watching.
   const previewCell: { current: ComposedPreviewV1 | null } = { current: null };
-  let answer: () => Promise<ComposedReferenceGameBrowserRootV1> = () =>
-    Promise.resolve(view.kind === "ready" ? view.root : root(snapshot()));
+  let answer: () => Promise<TavernStateSnapshotV1> = () =>
+    Promise.resolve(view.kind === "ready" ? view.root.chat : snapshot());
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -194,13 +193,11 @@ function harness(view: ViewState) {
   const streamLiveRef = { current: false };
   const streamFailedRef = { current: false };
   const turnKeyRef = { current: null as string | null };
-  const composedApi = {
-    readState: (): Promise<ComposedReferenceGameBrowserRootV1> => {
+  const tavernApi = {
+    readState: (): Promise<TavernStateSnapshotV1> => {
       reads.count += 1;
       return answer();
     },
-  } as unknown as ComposedReferenceGameBrowserApi;
-  const tavernApi = {
     openEvents(options: OpenedOptions) {
       const source: OpenedSource = {
         cursor: options.cursor,
@@ -218,7 +215,6 @@ function harness(view: ViewState) {
   const stop = startChatEventStream({
     view,
     viewRef,
-    composedApiRef: { current: composedApi },
     tavernApiRef: { current: tavernApi },
     localeRef: { current: "en" },
     eventSourceRef,
@@ -251,7 +247,7 @@ function harness(view: ViewState) {
     reads,
     /** The reply the player is watching right now, or null when no preview stands. */
     preview: () => previewCell.current,
-    answer: (next: () => Promise<ComposedReferenceGameBrowserRootV1>) => {
+    answer: (next: () => Promise<TavernStateSnapshotV1>) => {
       answer = next;
     },
     viewRef,
@@ -278,7 +274,7 @@ test("the stream opens on the cursor the committed snapshot published", () => {
 test("a socket error resyncs through the shell's Chat rule and reconnects from the same position", async () => {
   const h = harness(ready(snapshot()));
   const state = snapshot();
-  h.answer(() => Promise.resolve(root(state)));
+  h.answer(() => Promise.resolve(state));
 
   h.sources[0].options.onError(new Event("error"));
   await settle();
@@ -300,7 +296,7 @@ test("a socket error resyncs through the shell's Chat rule and reconnects from t
 
 test("an epoch the read reports is a new position, not a resumed one", async () => {
   const h = harness(ready(snapshot(EPOCH, CURSOR)));
-  h.answer(() => Promise.resolve(root(snapshot("epoch-2", "cursor-2"))));
+  h.answer(() => Promise.resolve(snapshot("epoch-2", "cursor-2")));
 
   h.sources[0].options.onError(new Event("error"));
   await settle();
@@ -411,7 +407,7 @@ test("a committed frame holds the reply on screen until the read that carries it
   h.answer(
     () =>
       new Promise((resolve) => {
-        land = () => resolve(root(snapshot(EPOCH, "cursor-3", null, [committedReply()])));
+        land = () => resolve(snapshot(EPOCH, "cursor-3", null, [committedReply()]));
       }),
   );
   h.sources[0].options.onEvent(committedFrame(2), "cursor-3");
@@ -436,7 +432,7 @@ test("a stream blip mid-turn keeps the words already on screen", async () => {
 
   // The link drops while the turn is open. Nothing about this reply is durable and no row anywhere
   // carries these words, so the Host still holds them: a reconnect is not a disappearance.
-  h.answer(() => Promise.resolve(root(snapshot(EPOCH, "cursor-3", turnIn("running")))));
+  h.answer(() => Promise.resolve(snapshot(EPOCH, "cursor-3", turnIn("running"))));
   h.sources[0].options.onError(new Event("error"));
   assert.equal(h.preview()?.text, HALF_REPLY, "the half-written reply vanished when the link dropped");
 
@@ -459,7 +455,7 @@ test("a recovery read that finds no open turn spends the reply that was never co
 
     // The turn ended while the link was down: a cancelled turn commits no reply, so its partial text
     // is owed to nothing and a reply the Host may not have kept must not stand on screen.
-    h.answer(() => Promise.resolve(root(snapshot(EPOCH, "cursor-3", settled))));
+    h.answer(() => Promise.resolve(snapshot(EPOCH, "cursor-3", settled)));
     h.sources[0].options.onError(new Event("error"));
     await settle();
 

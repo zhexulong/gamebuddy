@@ -1,7 +1,6 @@
 import { type Dispatch, type RefObject, type SetStateAction, useEffect, useState } from "react";
 import { readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
-  type ComposedReferenceGameBrowserApi,
   ComposedReferenceGameProblemError,
   ComposedReferenceGameProtocolError,
 } from "../composed-reference-game-browser-api";
@@ -94,7 +93,6 @@ function terminalReadFailure(error: unknown): boolean {
 export type ChatEventStreamInput = Readonly<{
   view: ViewState;
   viewRef: RefObject<ViewState>;
-  composedApiRef: RefObject<ComposedReferenceGameBrowserApi>;
   tavernApiRef: RefObject<ReferencePipelineApi>;
   localeRef: RefObject<Locale>;
   eventSourceRef: RefObject<{ close(): void } | null>;
@@ -121,7 +119,6 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
   const {
     view,
     viewRef,
-    composedApiRef,
     tavernApiRef,
     localeRef,
     eventSourceRef,
@@ -170,7 +167,11 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
     try {
       const doReset = pendingResetCursor;
       pendingResetCursor = false;
-      const pair = await readChatSnapshotPair(composedApiRef.current);
+      // The root this read composes onto is the one the view holds when the read LEAVES: the Chat half
+      // is the route's answer, and the Game slice is the landing view's (`withChatHalf` below).
+      const base = viewRef.current;
+      if (base.kind !== "ready") return;
+      const pair = await readChatSnapshotPair(base.root, tavernApiRef.current);
       const root = pair.root;
       const draft = pair.draft;
       if (disposed) return;
@@ -325,7 +326,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
         const current = viewRef.current;
         if (current.kind !== "ready") return;
         try {
-          const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
+          const { root, draft } = await readChatSnapshotPair(current.root, tavernApiRef.current);
           const latest = viewRef.current;
           // A recovery that started under these reads is reading the same
           // authority with a cursor of its own; its answer supersedes this one.

@@ -78,6 +78,11 @@ test("a chat with no durable draft lets the player save the first one from the c
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composed()) }),
   );
+  // Every Chat read on a standing shell is the Chat half's own route (`readChatSnapshotPair`), answered
+  // from the same document.
+  await page.route("**/api/tavern/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(composed().chat) }),
+  );
   await page.route("**/api/tavern/v1/draft", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(durable) });
@@ -225,6 +230,7 @@ test("a Class B action mid-turn reaches its route and leaves the running turn al
   });
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projected())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projected())));
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(projected().chat)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -382,6 +388,7 @@ test("sending shows the player's text immediately with a pending marker, then co
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(projection().chat)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );
@@ -527,9 +534,12 @@ test("the mounted conversation stops an armed reply, keeps the stop durable acro
   });
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  // The reload below mounts through the aggregate (no boot token), and every Chat read after the mount
+  // takes the Chat half's own route: both are answered from the same projection.
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill(jsonOk(projection()));
+    return route.fulfill(jsonOk(projection().chat));
   });
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
@@ -681,6 +691,7 @@ test("Stop hands the composer back when the stream stays silent and the reread i
 
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(projection())));
   await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(projection())));
+  await page.route("**/api/tavern/v1/state", (route) => route.fulfill(jsonOk(projection().chat)));
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, choices: [] })),
   );

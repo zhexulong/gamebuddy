@@ -212,11 +212,11 @@ async function stubHost(page: Page, state: HostState): Promise<Host> {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk(composedRoot(state))),
   );
-  await page.route("**/api/composed-reference-game/v1/state", async (route) => {
+  await page.route("**/api/tavern/v1/state", async (route) => {
     // The Chat channel's own read: `rereadChat` takes it on arrival, and it is the one that spends a
-    // preview whose turn is over.
+    // preview whose turn is over. It is the Chat half's own route (`readChatSnapshotPair`).
     await holdIfAsked("chat");
-    await route.fulfill(jsonOk(composedRoot(state)));
+    await route.fulfill(jsonOk(composedRoot(state).chat));
   });
   // The panel's own read is the Game slice's route (`readGameState`), and it is the read every Game
   // command rereads. Its answer is fixed when the read is taken and only its delivery is slow - that is

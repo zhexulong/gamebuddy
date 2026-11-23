@@ -1,8 +1,5 @@
-import type {
-  ComposedReferenceGameBrowserApi,
-  ComposedReferenceGameBrowserRootV1,
-} from "./composed-reference-game-browser-api";
-import type { BrowserDraftV1, TavernStateSnapshotV1 } from "./reference-pipeline-api";
+import type { ComposedReferenceGameBrowserRootV1 } from "./composed-reference-game-browser-api";
+import type { BrowserDraftV1, ReferencePipelineApi, TavernStateSnapshotV1 } from "./reference-pipeline-api";
 import { ReferencePipelineSessionError } from "./reference-pipeline-session";
 
 /**
@@ -67,20 +64,17 @@ function committedDraft(chat: ChatSnapshotPair["root"]["chat"]["chat"]): Browser
 }
 
 /**
- * The snapshot, from one read.
+ * The pair a root the caller already holds publishes.
  *
- * `read` is passed in when the caller already holds a fresh read it cannot repeat: the mount's own
- * bootstrap consumed a one-time token, and a reconnect's kickoff read is the frame it is acting on.
- * Omitted, the root is read here - which is what every other caller does.
+ * The mount is the one caller: `/bootstrap` answers this root, spends the one-time token and adopts the
+ * session this page runs on, so the read it just took IS the read the pair is built from. Asking the
+ * composed aggregate again would be a second answer to disagree with, and it is the answer no mount may
+ * depend on (`game-projection-failure-is-not-the-chats.spec.ts` measures it).
  */
-export async function readChatSnapshotPair(
-  composedApi: ComposedReferenceGameBrowserApi,
-  read: ComposedReferenceGameBrowserRootV1 | null = null,
-): Promise<ChatSnapshotPair> {
-  const current = read ?? (await composedApi.readState());
-  const chat = current.chat.chat;
+export function chatSnapshotPairFromRoot(root: ComposedReferenceGameBrowserRootV1): ChatSnapshotPair {
+  const chat = root.chat.chat;
   if (chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
-  return { root: current as ChatSnapshotPair["root"], draft: committedDraft(chat) };
+  return { root: root as ChatSnapshotPair["root"], draft: committedDraft(chat) };
 }
 
 /**
@@ -109,4 +103,27 @@ export function chatHalfPair(
   if (mounted === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
   const read: ComposedReferenceGameBrowserRootV1 = { ...current, chat };
   return { root: withChatHalf(current, read) as ChatSnapshotPair["root"], draft: committedDraft(mounted) };
+}
+/**
+ * The snapshot, from the Chat half's own route, on the root the caller already holds.
+ *
+ * Every Chat read on a shell that is standing goes through here: the fallback poll, the stream's
+ * recovery read and its confirmation read, the shell's own authoritative reread. The route is
+ * `GET /api/tavern/v1/state` and never the aggregate, because the Host composes a Game projection into
+ * that document and refuses the document when the Game half cannot be produced
+ * (`state_unavailable`/`game_projection_failed`, `readComposedRoot` in
+ * `host/src/composed-reference-game-browser.ts`) - so an aggregate read here made a Game fault abort a
+ * conversation read the game has no part in. Measured on the mount as `problem-view=1 chat-surface=0`,
+ * and in session as a Chat reread whose only retry is the same refusal.
+ *
+ * The Game slice is the caller's own: `chatHalfPair` replaces the Chat half of the root it is handed and
+ * keeps the rest, the rule every Chat path follows. This function takes no composed client at all, so
+ * there is no aggregate left for it to fall back to; a caller that needs the Game half reads it from its
+ * own view (`withChatHalf`) or from the game's own route.
+ */
+export async function readChatSnapshotPair(
+  current: ComposedReferenceGameBrowserRootV1,
+  tavernApi: ReferencePipelineApi,
+): Promise<ChatSnapshotPair> {
+  return chatHalfPair(current, await tavernApi.readState());
 }

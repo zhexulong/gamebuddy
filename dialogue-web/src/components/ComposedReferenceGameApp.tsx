@@ -1,6 +1,6 @@
 import { SlidersHorizontal } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { chatHalfPair, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import { chatHalfPair, chatSnapshotPairFromRoot, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
@@ -57,12 +57,12 @@ import { markTurn } from "./turn-timings";
 import { useArrivalReread } from "./use-arrival-reread";
 import { useAppearance } from "./use-appearance";
 import { useChatEventStream } from "./use-chat-event-stream";
-import { type ComposedPreviewV1, terminalTurn, useComposedBootstrap } from "./use-composed-bootstrap";
+import { type ComposedPreviewV1, readShellRoot, terminalTurn, useComposedBootstrap } from "./use-composed-bootstrap";
 
 /**
- * Same-origin composed reference-game shell. The composed root is the only
- * authority used to refresh either projection; the nested Reference pipeline
- * client remains the sole Chat mutation/events client.
+ * Same-origin composed reference-game shell. The composed root is the authority the mount commits - the
+ * boot token, the session it adopts and the Game slice - while every later Chat refresh is the Chat
+ * half's own route and the nested Reference pipeline client remains the sole Chat mutation/events client.
  */
 export function ComposedReferenceGameApp() {
   const [inputText, setInputText] = useState("");
@@ -308,7 +308,6 @@ export function ComposedReferenceGameApp() {
   const streamNotice = useChatEventStream({
     view,
     viewRef,
-    composedApiRef,
     tavernApiRef,
     localeRef,
     eventSourceRef,
@@ -452,11 +451,10 @@ export function ComposedReferenceGameApp() {
    * the one this render closed over.
    *
    * A view that is not ready is the one other case, and it is what the problem
-   * screen's step is: the shell has no session to apply the snapshot to, so this
-   * same read - the mount's own - rebuilds one from what the Host publishes.
-   * Nothing is carried over because there is nothing to carry: the player's place
-   * on a problem screen is the problem screen, and a read that lands replaces it
-   * wholesale.
+   * screen's step is: the shell has no session, so the read it can take is the mount's own
+   * (`readShellRoot`), because the Chat half's route answers on the session that mount mints.
+   * Nothing is carried over because there is nothing to carry: the player's place on a problem
+   * screen is the problem screen, and a read that lands replaces it wholesale.
    *
    * The view this read is applied to is the one that is current when the read
    * LANDS, never the one it saw when it started. A read is a round trip, and a
@@ -468,13 +466,17 @@ export function ComposedReferenceGameApp() {
    * mid-turn. `recover` and `reconcile` below already read after their awaits for
    * the same reason - this is the read path that did not.
    *
-   * The same photograph carries the aggregate's `game` slice, which this read has no
-   * business deciding either: a Game fact that arrived inside the round trip is newer
-   * than it. So the commit replaces the Chat half and keeps the Game half the landing
-   * view holds (`withChatHalf`, which says why the panel never recovers on its own).
+   * The read is the Chat half's own route (`readChatSnapshotPair`), so it carries no Game slice for
+   * this path to decide: the commit replaces the Chat half and keeps the Game half the landing view
+   * holds (`withChatHalf`, which says why the panel never recovers on its own).
    */
   const rereadChat = async (): Promise<void> => {
-    const { root, draft } = await readChatSnapshotPair(composedApiRef.current);
+    const base = viewRef.current;
+    const pair =
+      base.kind === "ready"
+        ? await readChatSnapshotPair(base.root, tavernApiRef.current)
+        : chatSnapshotPairFromRoot(await readShellRoot(composedApiRef.current));
+    const root = pair.root;
     const current = viewRef.current;
     if (current.kind !== "ready") {
       setPreview(null);
@@ -482,7 +484,7 @@ export function ComposedReferenceGameApp() {
         kind: "ready",
         root,
         session: createReferencePipelineSession(root.chat),
-        draft,
+        draft: pair.draft,
         locale: localeRef.current,
         chatProblem: null,
       });
@@ -497,7 +499,7 @@ export function ComposedReferenceGameApp() {
       // the reading cannot have seen the submission it names: `applySnapshot` carries it over, and
       // the read only spends it for the one state that settles it - a terminal turn.
       session: terminalTurn(root.chat.chat.turn) ? session.withPending(null) : session,
-      draft,
+      draft: pair.draft,
       // This read landed, so the conversation it publishes has no problem: the card this shell was
       // carrying described the state it has just replaced.
       chatProblem: null,
@@ -507,8 +509,8 @@ export function ComposedReferenceGameApp() {
   /**
    * The step the card can perform itself: the read it came from, taken again.
    *
-   * `rereadChat` is that read - the composed root and the draft it carries, which is what the mount
-   * took and every view here was committed over - so the control is a real call rather than a reload,
+   * `rereadChat` is that read - the Chat half and the draft it carries, which is what every view here
+   * was committed over - so the control is a real call rather than a reload,
    * and the player's place survives either way: a read that lands replaces the screen, and one the
    * Host refuses commits its own sentence to the same card. The ref is the single-flight guard; the
    * button shows nothing while the read is outstanding, so a second state would only be a second

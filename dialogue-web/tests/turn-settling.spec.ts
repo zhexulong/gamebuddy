@@ -29,8 +29,8 @@ import {
  *
  * The route-mocked setup is the spec's own, with one fact made explicit:
  * `eventStream: null` opens no stream, so the authoritative rereads the poll
- * makes are the only reader of the turn's terminal state. The `/state` route
- * keeps returning the turn-running projection until the poll's second read, so
+ * makes are the only reader of the turn's terminal state. The Chat half's own
+ * route keeps returning the turn-running projection until the poll's second read, so
  * the settled variant exists only after polling has advanced.
  */
 
@@ -71,14 +71,15 @@ test("regeneration settles through the polling fallback with no event stream", a
       }),
     });
   });
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  // The poll reads the Chat half's own route (`readChatSnapshotPair`), never the aggregate.
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
     // The reread that immediately follows acceptance still sees the running
     // turn and the old variant; only the poll's later read sees the settled one.
     return route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(stateReads >= 2 ? settledRoot : runningRoot),
+      body: JSON.stringify((stateReads >= 2 ? settledRoot : runningRoot).chat),
     });
   });
   await page.route("**/api/tavern/v1/message-submission-status", async (route) => {
@@ -143,9 +144,9 @@ test("an idle conversation with nothing pending never starts polling", async ({ 
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(idleRoot.chat) });
   });
   await page.route("**/api/tavern/v1/message-submission-status", (route) => {
     statusReads += 1;
@@ -246,9 +247,9 @@ test("a healthy event stream suspends the fallback poll, and a stream that fails
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
     route.fulfill(jsonOk(streamed(idleRoot))),
   );
-  await page.route("**/api/composed-reference-game/v1/state", (route) => {
+  await page.route("**/api/tavern/v1/state", (route) => {
     stateReads += 1;
-    return route.fulfill(jsonOk(streamed(stateReads >= settledFromRead ? settledRoot : runningRoot)));
+    return route.fulfill(jsonOk(streamed(stateReads >= settledFromRead ? settledRoot : runningRoot).chat));
   });
   await page.route("**/api/tavern/v1/draft", (route) => {
     draftReads += 1;
@@ -406,8 +407,8 @@ test("a turn that never settles ends the poll with the composer usable and the f
   await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ apiVersion: 1, choices: [] }) }),
   );
-  await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot) }),
+  await page.route("**/api/tavern/v1/state", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(neverSettlingRoot.chat) }),
   );
   await page.route("**/api/tavern/v1/messages/regenerate", (route) =>
     route.fulfill({
