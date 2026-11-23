@@ -74,9 +74,16 @@ export const MAX_SEED_SHORTAGE_FACT_CHARS = 320;
  * (there is no count to make short), and a `gap` declares none either: those tasks have no patch to fall short of.
  * `null` is therefore the answer for both, and it decides the SHORTFALL half alone - see `taskSowsSeed` for the half
  * that survives it.
+ *
+ * A PLOT DECLARES A COUNT WITHOUT A SHAPE (`plot.tiles`), and it is the same declaration read one field over: the day
+ * owes twenty tiles, so twenty seeds is the number to fall short of. Reading only `patch` here would hand a plot day
+ * "the task names no tile count" while its criterion asks for twenty - the two-answers-to-one-question defect this
+ * module exists to avoid.
  */
 export function taskPatchTiles(taskId) {
-  const declared = TASK_PURPOSE_CRITERIA[taskId]?.patch;
+  const entry = TASK_PURPOSE_CRITERIA[taskId];
+  if (Number.isInteger(entry?.plot?.tiles) && entry.plot.tiles > 0) return entry.plot.tiles;
+  const declared = entry?.patch;
   if (declared === undefined) return null;
   if (!Number.isInteger(declared.width) || !Number.isInteger(declared.height)) return null;
   if (declared.width <= 0 || declared.height <= 0) return null;
@@ -87,14 +94,15 @@ export function taskPatchTiles(taskId) {
  * Whether the day's task puts a seed in the ground at all - the population that decides whether a supply fact is due.
  *
  * Read from the same declaration `taskPatchTiles` reads, so a new criterion is covered by what it says its purpose is:
- * a patch task sows the whole way, and a criterion sows when one of its admitted steps is `plant_seed`. A `gap` sows
- * nothing it can prove, and a `town_visit` sows nothing at all - handing a fishing day a seed shop would be a fact
- * about a task nobody was given.
+ * a patch task sows the whole way, a plot task names the actions that do its sowing (`sownBy`), and a criterion of
+ * steps sows when one of them is `plant_seed`. A `gap` sows nothing it can prove, and a `town_visit` sows nothing at
+ * all - handing a fishing day a seed shop would be a fact about a task nobody was given.
  */
 export function taskSowsSeed(taskId) {
   const entry = TASK_PURPOSE_CRITERIA[taskId];
   if (entry === undefined) return false;
   if (entry.patch !== undefined) return true;
+  if (Array.isArray(entry.sownBy)) return entry.sownBy.some((proof) => proof.actionId === "plant_seed");
   return (entry.steps ?? []).some(
     (candidate) => candidate.actionId === "plant_seed" || (candidate.anyOf ?? []).includes("plant_seed"),
   );

@@ -487,12 +487,18 @@ test("the fact is appended to the day's prompt once, and the prompt is untouched
   assert.equal(dayPromptWithFact(prompt, null, "zh"), prompt);
 });
 
-test("the shop-and-plot task carries a supply fact", () => {
+test("the shop-and-plot task carries a shortfall, because its criterion counts twenty TILES", () => {
+  // The plot declares a count with no rectangle (`plot.tiles`), and the fact reads that count the same way it reads a
+  // patch's shape: twenty tiles owed, two seeds held, eighteen short. Before the plot shape existed this day was handed
+  // "the task names no tile count" while its criterion asked for twenty - the two-answers-to-one-question defect.
   const expandFact = seedShortageFact({
     taskId: "buy_seeds_and_expand_plot",
     snapshot: snapshotWith([parsnip]),
     locale: "zh",
   });
-  assert.equal(expandFact.reasonCode, "seed_supply");
+  assert.equal(expandFact.reasonCode, "seed_shortage");
+  assert.equal(expandFact.tiles, 20, "the plot's own count, read from the same declaration the criterion reads");
+  assert.equal(expandFact.shortfall, 18);
   assert.ok(expandFact.text.includes("SeedShop"), expandFact.text);
+  assert.ok(expandFact.text.includes("任务 20 格"), expandFact.text);
 });

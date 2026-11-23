@@ -148,10 +148,14 @@ function writeRun({
   sessionTurns = null,
   presentation = null,
   actionCadence = null,
+  // The run's own environment record: `null` is a bundle that holds none, which is the reading the verdict must name.
+  environmentFacts = null,
   // The run's own progress record, written as the run happened: the witness each turn's lines are a reading of.
   progress = null,
   ending = "closed",
   startedAtMs = null,
+  // The run's own verdict code, which the multi-day finding is printed under.
+  sessionVerdict = null,
 }) {
   const runDir = join(root, "run");
   mkdirSync(runDir, { recursive: true });
@@ -180,6 +184,7 @@ function writeRun({
       join(runDir, "result.json"),
       JSON.stringify({
         state: "blocked",
+        ...(sessionVerdict === null ? {} : { sessionVerdict }),
         toolTiming: { record },
         ...(multiday === null ? {} : { multiday }),
         ...(programOutcomes === null ? {} : { programOutcomes }),
@@ -194,6 +199,11 @@ function writeRun({
   if (timeline !== null)
     writeFileSync(join(runDir, "timeline.jsonl"), `${timeline.map((row) => JSON.stringify(row)).join("\n")}\n`);
   if (modLog !== null) writeFileSync(join(runDir, "mod-log.txt"), modLog);
+  if (environmentFacts !== null) {
+    const path = join(runDir, ...SESSION_RELATIVE.slice(0, -2), "environment-facts.jsonl");
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, `${environmentFacts.map((line) => JSON.stringify(line)).join("\n")}\n`);
+  }
   if (session !== null) {
     const path = join(runDir, ...SESSION_RELATIVE);
     mkdirSync(join(path, ".."), { recursive: true });
@@ -631,6 +641,132 @@ test("evidence sources that disagree are printed with all their numbers rather t
       assert.match(output, /DISAGREEMENT\s+crossings_disagree:sleep_receipts=3:night_endings=0:day_started_facts=2/u);
       assert.match(output, /4 night mechanism\s+PASS\s+crossed=not_decided/u);
       assert.doesNotMatch(output, /crossings 3 by the run's own evidence/u, "two evidence sources, no single number");
+    },
+  ));
+
+// THE FINDING BEHIND THE VERDICT. Measured 2026-11-23 (`round95`): every printed row was green - `crossed=3 passOut=0
+// unobserved=0`, receipts `examined 3 paired 3 unpaired 0`, three `day_started` facts, three `sleep` receipts - while the
+// run was blocked, because the one finding (`level_up_menu_not_resolved:level_up_pair_not_in_snapshot` at
+// `dayRecords[0].menus`) lived only in `result.json`. A clause that can fail prints the fact that failed it.
+const blockedAssessment = (overrides = {}) => ({
+  ok: false,
+  state: "blocked",
+  daysCrossed: 2,
+  passOutNights: 0,
+  unobservedNights: 0,
+  crossings: 2,
+  ...overrides,
+});
+
+const nightEvidence = () => [
+  sleepReceipt(1794310882971, "r1"),
+  sleepReceipt(1794311627708, "r2"),
+  sleepReceipt(1794312231618, "r3"),
+  dayStartedFact(5),
+  dayStartedFact(6),
+  dayStartedFact(7),
+];
+
+test("a blocked multi-day assessment prints the finding that blocked it, under the verdict it decided", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      sessionVerdict: "multiday_routine_blocked",
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: blockedAssessment({
+          violations: [
+            { code: "level_up_menu_not_resolved:level_up_pair_not_in_snapshot", where: "dayRecords[0].menus" },
+          ],
+        }),
+      },
+      timeline: nightEvidence(),
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^multiday_routine_blocked:level_up_menu_not_resolved:level_up_pair_not_in_snapshot at dayRecords\[0\]\.menus  <- .*multiday\.assessment\.violations\[0\] of 1 recorded$/mu,
+        "the harness's own code and the field it points at print beside the verdict, not only in result.json",
+      );
+      // THE ROWS AROUND IT STAY WHAT THEY WERE. The night-mechanism row reads `unobservedNights`, which is 0 here, so a
+      // reader who takes that row for the reason is wrong - which is exactly what the line above prevents.
+      assert.match(output, /4 night mechanism\s+PASS/u);
+    },
+  ));
+
+test("every finding is printed, each with its own index in the population it came from", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      sessionVerdict: "multiday_routine_blocked",
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: blockedAssessment({
+          violations: [
+            { code: "night_raised_unclosable_menu:LetterViewerMenu", where: "dayRecords[0].menus" },
+            { code: "level_up_menu_not_resolved:no_receipt", where: "dayRecords[1].menus" },
+          ],
+        }),
+      },
+      timeline: nightEvidence(),
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^multiday_routine_blocked:night_raised_unclosable_menu:LetterViewerMenu at dayRecords\[0\]\.menus  <- .*violations\[0\] of 2 recorded$/mu,
+      );
+      assert.match(
+        output,
+        /^multiday_routine_blocked:level_up_menu_not_resolved:no_receipt at dayRecords\[1\]\.menus  <- .*violations\[1\] of 2 recorded$/mu,
+      );
+    },
+  ));
+
+test("a block with no finding recorded names the comparison and both sides, never `0 violations`", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      sessionVerdict: "multiday_routine_blocked",
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: blockedAssessment({ violations: [] }),
+      },
+      timeline: nightEvidence(),
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.match(
+        output,
+        /^multiday_routine_blocked:state "blocked" != "passed" with 0 findings recorded  <- the comparison the verdict's own arm makes/mu,
+      );
+      assert.doesNotMatch(output, /multiday_routine_blocked:.*0 violations/u);
+    },
+  ));
+
+test("a multi-day assessment that passed prints no blocked line at all", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: twoTurns(),
+      sessionVerdict: "completed",
+      multiday: {
+        crossings: 2,
+        dayRecords: [watchedNight(1), watchedNight(2)],
+        assessment: blockedAssessment({ ok: true, state: "passed", violations: [] }),
+      },
+      timeline: nightEvidence(),
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      assert.doesNotMatch(output, /multiday_routine_blocked:/u);
     },
   ));
 
@@ -1467,3 +1603,61 @@ test("the [body-hold] lines are read as sites with the clocks they carry, and a 
     "the bound is the longest tool animation the tree declares, derived rather than restated",
   );
 });
+
+// ROWS 2 AND 5: what the model was actually shown about the environment, from the record the TURN writes.
+//
+// Measured 2026-11-21 (`round95`): both rows came back `NOT EXERCISED` with "this run has no environment-facts.jsonl: it
+// predates the record" - a sentence about the run's date, on a run that was supposed to have written one, which is why the
+// missing producer went unnoticed for as long as it was explained away. The absence has to name the producer that did not
+// write and what the bundle holds instead; and a bundle that does hold the record has to answer both rows from the line
+// the turn stated.
+const lineOf = (output, row) => output.split("\n").find((line) => line.startsWith(row)) ?? "";
+
+test("the two prompt-level rows name the producer that did not write, never the run's date", () => {
+  // Two shapes, because the file's absence has two causes and the detail must name the one this bundle shows: a bundle that
+  // kept a runtime root and holds no record, and a bundle that never captured a root at all.
+  for (const [build, flag] of [
+    [() => ({ withResult: true, session: sessionFile({ steps: [{ calls: [observeCall("c1")] }] }) }), /holds a runtime root with no such file/u],
+    [() => ({ withResult: false, session: null }), /holds no runtime root at all/u],
+  ])
+    withFixture(build, (runDir) => {
+      const output = runVerdict(runDir);
+      for (const row of ["2 unwatered false zero", "5 villager coordinates"]) {
+        const line = lineOf(output, row);
+        assert.match(line, /NOT EXERCISED/u, `${row} is not exercised without a record:\n${output}`);
+        assert.match(line, /not_measured:environment-facts\.jsonl/u, "the absence is a `not_measured` reading");
+        assert.match(line, /createEnvironmentFactsRecord/u, "and it names the producer that did not write");
+        assert.match(line, flag, "and what this bundle holds instead of one");
+        assert.doesNotMatch(line, /predates/u, "a run is never explained by its date");
+      }
+    });
+});
+
+test("a run whose record exists answers both prompt-level rows from the line the turn stated", () =>
+  withFixture(
+    () => ({
+      withResult: true,
+      session: sessionFile({ steps: [{ calls: [observeCall("c1")] }] }),
+      environmentFacts: [
+        {
+          schema: "gamebuddy_environment_facts_render/v1",
+          at: iso(START),
+          revision: 7,
+          bytes: 96,
+          overCap: false,
+          text: "06:00；位置: 农场；脚下: (60, 20)；本图可去: 谢恩(72,18)；待浇水作物: 24（最近: 18,16）；体力: 270",
+        },
+      ],
+    }),
+    (runDir) => {
+      const output = runVerdict(runDir);
+      const unwatered = lineOf(output, "2 unwatered false zero");
+      assert.match(unwatered, /PASS/u, `a non-zero unwatered count was rendered:\n${output}`);
+      assert.match(unwatered, /1 non-zero of 1 rendered/u, "and the row says how many lines it came out of");
+      assert.match(
+        lineOf(output, "5 villager coordinates"),
+        /PASS/u,
+        `a same-map villager arrived with a tile:\n${output}`,
+      );
+    },
+  ));

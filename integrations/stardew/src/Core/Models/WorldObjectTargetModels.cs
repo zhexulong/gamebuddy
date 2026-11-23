@@ -41,6 +41,15 @@ namespace GameBuddy.Stardew.Core.Models;
 /// <c>round95</c>).
 /// </para>
 /// <para>
+/// AND ONE OBJECT IS ONE FAMILY'S. A subject another family already publishes - the
+/// storage container the <c>chests</c> family names with its contents, a mannequin, a
+/// sign - is described there and not here (<c>SubjectsOwnedBySiblingFamilies</c>): the
+/// farmhouse's starter gift box carries no item id at all, and a second row about it was
+/// a second, unresolvable spelling of a box the container family already named
+/// (measured <c>round96</c>, `错误物品 (-1)`). Such a subject is counted in
+/// <c>worldObjectTargetsOmitted</c> rather than dropped in silence.
+/// </para>
+/// <para>
 /// <c>Rotation</c> and <c>Rotations</c> are the piece's live <c>currentRotation</c> and the
 /// size of its own rotation cycle, and they are <c>null</c> for every kind that is not a
 /// piece of furniture - <c>null</c>, not 0, because 0 is a legal rotation and a sentinel

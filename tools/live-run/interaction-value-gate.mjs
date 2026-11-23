@@ -45,8 +45,10 @@
  *   "我把草清了，你去浇水吧" does not (second person). The adjacency is not decoration: an action stem anywhere plus a
  *   completion marker anywhere also matched "这一片终于干净了" (干 of 干净 + 了) on the 2026-11-04 multiday run, which
  *   is a satisfied observation, not a report of an action.</li>
- *   <li><b>obstacle</b> - names a concrete setback or refusal (卡/挡/堵/够不着/搬不动/太重/没水/坏了/来不及/天黑/下雨
- *   …).</li>
+ *   <li><b>obstacle</b> - names a concrete setback or refusal (卡/挡/堵/够不着/搬不动/太重/没水/坏了/锁着/来不及/天黑/
+ *   下雨 …). A shortage is one of those forms and so is a blocked tile: `round96` said `手里一颗种子都没有`, `门锁着`,
+ *   `河边这角站不进去` and `就差种子`, and the list held none of the four - so the clause's own population was one line
+ *   of all the setbacks that run narrated.</li>
  *   <li><b>choice</b> - hands a decision to the player (要不要/还是/你定/你说/听你的/选哪/你觉得 …).</li>
  *   <li><b>player_or_day</b> - an unprompted remark about the PLAYER or the day, not about the task. Two structural
  *   asks, either one enough: the line <b>addresses the player</b> (a 你/您 that is not the plural 你们 or the greeting
@@ -153,10 +155,27 @@ const STEP_ACTION_COMPLETION =
 const STEP_IN_PROGRESS = /正在|还在|在(?:浇|种|收|弄|做|干|搬|清)/u;
 const STEP_REPORT_DISQUALIFIER =
   /你|您|？|\?|吧|要不要|还是|我(?:想|觉得|看|担心|怕)|累|困|饿|先|然后|接着|要不|待会|一会儿|回头|卡|挡|堵|够不着|搬不动|来不及|天黑|下雨|不够|满了/u;
+/**
+ * A concrete setback, in the forms a companion says one in.
+ *
+ * `没有` is a shortage only when it STATES one: a question that asks whether the player is done (`你镇上办完没有？`)
+ * carries the same three characters and is not a setback, which is why the question mark immediately after it is the one
+ * exclusion. `不进去` is `进不去` with its particles the other way round and was how `round96` reported a blocked tile
+ * (`河边这角站不进去`); `锁着` is a door that will not open (`门锁着，皮埃尔九点才开张`); `就差`/`还差` is short of the
+ * one thing the day needs (`就差种子`). Each was measured in that run's own words, and none of them was in the list.
+ */
 const OBSTACLE =
-  /卡住|卡在|卡了|挡住|堵|过不去|够不着|走不到|搬不动|砍不动|敲不动|弄不动|太重|进不去|满了|被占|没(?:水|钱|地方|位置|路|空|时间)|空着|坏了|来不及|天黑|下雨|太远|失败|不行|不够|没法/u;
+  /卡住|卡在|卡了|挡住|堵|过不去|够不着|走不到|搬不动|砍不动|敲不动|弄不动|太重|进不去|不进去|满了|被占|没有(?![？?])|没(?:水|钱|地方|位置|路|空|时间)|空着|坏了|锁着|锁了|来不及|天黑|下雨|太远|失败|不行|不够|没法|就差|还差/u;
 const CHOICE = /要不要|还是|你定|你说|听你的|选哪|哪个|哪块|哪边|你想|你觉得|拿个主意|你挑|行不行|好不好/u;
-const PLAN = /先|然后|接着|再|换个|绕|去拿|回头|一会儿|待会|明早|等会|试试|要不/u;
+/**
+ * What a plan sounds like when it is spoken, in the same one-line-of-speech sense `obstaclePlanPairs` pairs it in.
+ *
+ * `等X` is a plan - `round96` said `等他把话说完` of the cutscene holding her at the door, made no call for three and
+ * a half minutes, and was still there when it ended - while `等着` is a state (`三颗花椰菜躺着等着过秤`) and not one.
+ * `就` is her forward connective (`店九点一开我就去扫货`), not the emphasis of `就是`/`就算`. Both were measured in that
+ * run: with `等` and `就` missing, the one line that narrated a setback as a plan read as a setback alone.
+ */
+const PLAN = /先|然后|接着|再|换个|绕|去拿|回头|一会儿|待会|明早|等会|等(?!着)|就(?!是|算)|试试|要不/u;
 
 /**
  * A word that locates the day rather than the task: a named part of it, a clock reading, or the state of the light.
@@ -623,6 +642,11 @@ function quoteLines(lines, indexes, limit = 5) {
  * A plan is either in the same line ("石头搬不动，我先去清草") or in the very next spoken line within
  * `PLAN_LOOKAHEAD_MS`. One line of lookahead is deliberate: two lines later the companion has moved on, and a plan
  * paired with a setback it does not answer would pass the clause on a coincidence.
+ *
+ * THE PAIR IS TWO THINGS SHE SAID, not two things she did. `round96` narrated the cutscene holding her at Clint's door
+ * (`克林特又堵在门口了…等他把话说完`), made no call at all until it ended, and then submitted the program she had already
+ * described - so the plan was in her own line, six minutes before the tool call that carried it out, and a reader that
+ * only accepted a submitted program would have counted the wait as silence.
  */
 function obstaclePlanPairs(lines) {
   const pairs = [];

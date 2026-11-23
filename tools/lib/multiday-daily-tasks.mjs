@@ -122,10 +122,17 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
   // after walking out of the window she laid the far end of it in?
   //
   // `chop_tree`/`chop_stump` are deliberately absent, and that is the only pruning: this patch is a strip of open
-  // ground, and a tile a tree stands on is not a tile you till. Weeds, loose debris and rocks are what a clearable
-  // strip in front of the house actually holds, and all three stand between her and the first tilled tile.
+  // ground, and a tile a tree stands on is not a tile you till. Weeds, grass, loose debris and rocks are what a
+  // clearable strip in front of the house actually holds, and all of them stand between her and the first tilled tile.
+  //
+  // AND THE CRITERION READS THIS LIST. `task-purpose.mjs` crosses these actions with the Mod's own `Clears(...)`
+  // declarations to decide which occupants a tile of the strip owes cleared and which ones make a tile the day was
+  // never asked for - so a kind whose only clearer is missing here (`tree`, cleared by `chop_tree`) is excluded from the
+  // denominator and named in the verdict, rather than demanded and missed. Measured 2026-11-23 (`round96`, day 3):
+  // fifty-eight of sixty tiles worked and two trees standing, filed `not_achieved` while the strip was laid.
   clear_and_plant_long_patch: Object.freeze([
     "cut_weeds",
+    "cut_grass",
     "clear_debris",
     "break_rock",
     "travel",
@@ -136,6 +143,11 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "water_crop",
     "refill_watering_can",
   ]),
+  // TWENTY TILES, AND THE HOE IS ONE WAY TO OPEN THEM. The criterion counts the tiles that carry a sowing and a
+  // watering at the end of the day (`plot` in `task-purpose.mjs`), so `till_soil` is work this day may reach for and
+  // not a quota it must meet: measured 2026-11-23 (`round96`), the day sowed and watered twenty tiles and turned five of
+  // them, and the plot was laid. `shop_purchase` is the half the name carries - the seed has to be bought - and it is
+  // read from a receipt, not from the seed being in the pack.
   buy_seeds_and_expand_plot: Object.freeze([
     "cut_weeds",
     "clear_debris",
@@ -203,7 +215,34 @@ const soilGround = ({ width = 1, height = 1, tiles = null, hoed }) => {
   return Object.freeze({ fact: "soil_ground", width, height, tiles, hoed });
 };
 
-/** A shop counter that sells a seed - and either she holds one or she can pay the price it charges. */
+/**
+ * A shop counter that sells a seed - and either she holds one or she can pay the price it charges.
+ *
+ * <p>
+ * WHAT THIS ASKS IS NARROWER THAN WHAT A SOWING DAY NEEDS, and the gap is measured rather than suspected. The gate
+ * (`readSeedMarket`) reads `seedSupplyTargets`, whose population is the seeds SHE HOLDS crossed with the shops in
+ * `Data/Shops` that stock one (`DiscoverSeedSupplyTargets` in
+ * `integrations/stardew/farmhandexecutioncontroller.shopactions.cs`), and answers satisfied when ANY of those rows is
+ * held (\`heldCount >= 1\`) or costs no more than her purse. So it answers "is there a seed she could get", and a day
+ * that owes sixty tiles needs sixty of them.
+ * </p>
+ * <p>
+ * 2026-11-23 (`tools/_multiday_routine-round96.result.json`) is that gap with a date on it. The run opened at 06:00 with
+ * two cauliflower seeds and 500g: `seedSupplyTargets` published 3 rows, three of them stocked, so this requirement was
+ * satisfied and the gate called both sowing tasks feasible. By the evening of the same day the same family published 0
+ * rows - she had planted the cauliflower - and on day 2 she walked to Pierre's, found 「店里摆的全是沙漠节那些摊子，连防风草
+ * 种子都没上架」, and came back with nothing: 60 tiles of strip owed, 20 tilled, 0 sowed. Asked on THAT snapshot the gate
+ * answers `task_precondition_unmet:<task>:a_seed_counter_she_can_buy_or_already_holds` and is right to: the day could
+ * not be held. Asked at boot it answers feasible and is right about the world it read.
+ * </p>
+ * <p>
+ * SO THE DEFECT IS THE MOMENT, NOT THE READING, and the fix belongs to the layer that decides a DAY: a task whose
+ * purpose sows must be asked this question on the snapshot the day opens on (`tools/live-run/game/task-pool-feasibility.mjs`
+ * already answers it for a whole pool, and `seedShortageFact` in `seed-shortage.mjs` already states the same thing to her
+ * as \`no_known_supply\` every morning), and a day the world cannot hold must not be filed as her failure. Nothing in
+ * this file can do that - a precondition here is read once, at the launch it belongs to.
+ * </p>
+ */
 const seedMarket = () => Object.freeze({ fact: "seed_market" });
 
 /**
@@ -243,10 +282,16 @@ const sig = (...needs) => {
  * separate requirements, so the finding names the half that failed instead of the pair.
  */
 const SCENARIO_TASK_PRECONDITIONS = Object.freeze({
-  // The strip the day lays: sixty tiles of ground the Hoe has not turned, and a seed counter that will sell her what goes
-  // in it. Both were untrue when this was written, and both are opening-snapshot facts.
+  // The strip the day lays: sixty tiles of ground the Hoe has not turned, and a seed counter she can buy from (see
+  // `seedMarket` for how much narrower that is than "a counter that will sell her sixty"). Both were untrue when this was
+  // written, and both are opening-snapshot facts - which is exactly why a day that opens on a different world than the
+  // launch snapshot is not covered by them.
   clear_and_plant_long_patch: sig(soilGround({ width: 3, height: 20, hoed: false }), seedMarket()),
-  // Twenty tiles is the count its criterion owes; the shape is not, so the ground is asked for by area.
+  // Twenty tiles is the count its criterion owes; the shape is not, so the ground is asked for by area. The STATE half
+  // is what the plot criterion reads: ground the Hoe has not turned, because a seed goes into tilled soil and this day
+  // may turn it itself. A farm whose twenty tiles are ALREADY tilled would be refused here while the criterion would
+  // accept it - the one direction this reading is wrong in, stated rather than hidden (`readSoilGround` in
+  // `tools/live-run/game/task-pool-feasibility.mjs` can only ask for one hoe state).
   buy_seeds_and_expand_plot: sig(soilGround({ tiles: 20, hoed: false }), seedMarket()),
   // THE MINE IS NOT ON THIS MAP, and that is what the requirements say: `mineEntranceTargets` is discovered within the
   // six-tile window of the map she stands on, so a Farm snapshot can only publish an entrance when she is already near

@@ -22,10 +22,10 @@ async function sessionRecord(sessionDir, name, bytes) {
 }
 
 /**
- * The Host's own filename for what the environment provider RENDERED into each assembled request
- * (`ENVIRONMENT_FACTS_RECORD_FILENAME`, host/src/runtime-core.internal.ts). `round-verdict.mjs` reads rows 2
+ * The Host's own filename for what each DELIVERED turn rendered into its `<world-state>` paragraph
+ * (`ENVIRONMENT_FACTS_RECORD_FILENAME`, host/src/environment-facts-record.ts). `round-verdict.mjs` reads rows 2
  * and 5 from it, so if the capture stops keeping it those two criteria go back to reading a session that by
- * construction never contained the block.
+ * construction never contained the line.
  */
 const ENVIRONMENT_FACTS_RECORD = "environment-facts.jsonl";
 

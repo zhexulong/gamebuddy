@@ -165,25 +165,26 @@ function newestUnder(root, wanted) {
 /**
  * The rendered environment block, read from the run's own record.
  *
- * `<runtime-environment>` is produced by the Magic Context transform when a request is ASSEMBLED and is never
- * written to the session, which stores MESSAGES. Measured 2026-11-01 on round18 (24 minutes, 75 assembled plans):
- * `位置:` 0, `脚下` 0, `待浇水` 0 in the bound session, while `formatGameEnvironmentFacts` renders all three when
- * called directly. So a prompt-level criterion here had no file to read and reported UNOBSERVABLE by
- * construction - a fact about the instrument, not about the product.
+ * `<runtime-environment>` and `<world-state>` are produced while a request is assembled, and the session stores MESSAGES,
+ * which is why a prompt-level question had no file to read for a long time: measured 2026-11-01 on round18 (24 minutes, 75
+ * assembled plans), `位置:` 0, `脚下` 0, `待浇水` 0 in the bound session, while `formatGameEnvironmentFacts` renders all
+ * three when called directly. A criterion here reported UNOBSERVABLE by construction - a fact about the instrument.
  *
- * The file exists now: the registered provider records what it rendered, per request, in
- * `environment-facts.jsonl` beside the run manifest (`createRenderedEnvironmentFactsProvider`,
- * `host/src/runtime-core.internal.ts`), and the run's capture copies it into the run directory. One line reads
- * `{ at, revision, bytes, overCap, dropped?, text }`, so a reader can ask the four questions that were
- * unanswerable: did the block render on every request, what did the unwatered count say, did same-map
- * villagers arrive with tiles, and what did the byte cap drop.
+ * THE RECORD IS WRITTEN BY THE TURN, not by anything downstream of it: `createEnvironmentFactsRecord`
+ * (`host/src/environment-facts-record.ts`) is attached by `createGameCompanionLoop` at every Game mount and is handed the
+ * paragraph each delivered turn states. One line reads `{ at, revision, bytes, overCap, dropped?, text }`, so a reader can
+ * ask the four questions that were unanswerable: did the line render on every turn, what did the unwatered count say, did
+ * same-map villagers arrive with tiles, and what did the byte cap drop.
  *
- * A run that PREDATES the record has no such file. That criterion is then NOT EXERCISED, and the detail says why
- * (the record did not exist when that run assembled its requests) rather than claiming the block never rendered.
- * It is deliberately NOT the old structural UNOBSERVABLE: nothing about these criteria is unreadable any more, and
- * every run from the one that introduced the record on can be answered.
+ * A RUN THAT HOLDS NO RECORD IS `not_measured`, AND THE DETAIL NAMES THE PRODUCER THAT DID NOT WRITE - never a sentence
+ * about the run's date. The record's first producer was removed with the Magic Context provider it hung off, so
+ * `round95` was reported as "this run predates the record" on a run that was supposed to have written one: a verdict that
+ * explains an absence by history can never go red, and the missing file went unnoticed for as long as it was explained
+ * away. What a reader needs is which producer was absent and what the bundle holds instead.
  */
 const ENVIRONMENT_FACTS_RECORD = "environment-facts.jsonl";
+const ENVIRONMENT_FACTS_PRODUCER =
+  "createEnvironmentFactsRecord (host/src/environment-facts-record.ts), attached by createGameCompanionLoop at every Game mount";
 
 function findEnvironmentFactsRecord(runDir) {
   const found = [];
@@ -222,7 +223,12 @@ function readEnvironmentFactsRecord(runDir) {
       path: null,
       renders: [],
       truncated: false,
-      why: `this run has no ${ENVIRONMENT_FACTS_RECORD}: it predates the record, so nothing captured what the provider rendered`,
+      // WHICH PRODUCER DID NOT RUN, and what this bundle holds instead. The file's absence has two shapes and they are
+      // different readings: a bundle with no runtime root never had the directory the record is written into, while a
+      // bundle that kept a runtime root and still holds no record is a run whose pump delivered nothing to record.
+      why: existsSync(join(runDir, "runtime-root"))
+        ? `not_measured:${ENVIRONMENT_FACTS_RECORD}, written by ${ENVIRONMENT_FACTS_PRODUCER} - this bundle holds a runtime root with no such file, so the pump recorded no delivered turn`
+        : `not_measured:${ENVIRONMENT_FACTS_RECORD}, written by ${ENVIRONMENT_FACTS_PRODUCER} - this bundle holds no runtime root at all, so nothing that producer wrote could be in it`,
     };
   const renders = [];
   let truncated = false;
@@ -1671,7 +1677,7 @@ record(
         ? "NOT EXERCISED"
         : "FAIL",
   environmentFacts.path === null
-    ? `cannot answer from this run: ${environmentFacts.why} (not a claim that the block never rendered)`
+    ? `${environmentFacts.why} (not a claim that the line never rendered)`
     : unwateredFacts.length === 0
       ? `no unwatered fact reached the model (${renderCoverage(environmentFacts)})`
       : `${unwateredNonZero.length} non-zero of ${unwateredFacts.length} rendered (${renderCoverage(environmentFacts)})`,
@@ -1714,8 +1720,51 @@ record(
   boundSession ?? "no session",
 );
 
+/**
+ * THE FINDING THAT BLOCKED THE MULTI-DAY CLAUSE, PRINTED UNDER THE VERDICT IT PRODUCED.
+ *
+ * <p>
+ * `result.json`'s state is decided by `multiday.assessment.ok`, which is `violations.length === 0`
+ * (`tools/lib/multiday-baseline.mjs`), and `deriveSessionVerdict` returns `multiday_routine_blocked` for `state !==
+ * "passed"`. Measured 2026-11-23 (`round95`): every row this report printed was green - `crossed=3 passOut=0
+ * unobserved=0`, receipts `examined 3 paired 3 unpaired 0`, three `day_started` facts, three `sleep` receipts - while the
+ * run was blocked, because the one finding lived in a field nothing printed: the first night's `LevelUpMenu` carried no
+ * `respond_level_up` receipt, so `level_up_menu_not_resolved:level_up_pair_not_in_snapshot` sat at `dayRecords[0].menus`. A
+ * red clause whose reason is only in the JSON is a refusal with no reason code.
+ * </p>
+ * <p>
+ * WHEN NOTHING IS RECORDED the block can only come from the comparison the verdict's own arm makes, and both sides print:
+ * `state "blocked" != "passed"`. An empty `violations` prints that way rather than as `0 violations`, which is what an
+ * unread population also says. The line prints whenever the assessment is not `passed`, whatever the headline verdict
+ * was, because the finding is a fact the run published about itself and hiding it is the same defect one arm later.
+ * </p>
+ */
+const MULTIDAY_BLOCKED = "multiday_routine_blocked";
+
+function multidayBlockedLines({ assessment, source, field }) {
+  if (assessment === null) return [];
+  const state = typeof assessment.state === "string" ? assessment.state : null;
+  if (state === "passed") return [];
+  const findings = Array.isArray(assessment.violations) ? assessment.violations : null;
+  if (findings !== null && findings.length > 0)
+    return findings.map(
+      (finding, index) =>
+        `${MULTIDAY_BLOCKED}:${String(finding?.code ?? "unnamed_rule")} at ${String(
+          finding?.where ?? "no field named",
+        )}  <- ${source} ${field}.violations[${String(index)}] of ${String(findings.length)} recorded`,
+    );
+  return [
+    `${MULTIDAY_BLOCKED}:state ${JSON.stringify(state)} != "passed" with ${
+      findings === null ? "no violations array to read" : `${String(findings.length)} findings recorded`
+    }  <- the comparison the verdict's own arm makes (${source} ${field}), and this run published no finding to name`,
+  ];
+}
+
 // 4. Night attribution, from the harness's own assessment.
 const assessment = result.multiday?.assessment ?? result.assessment ?? null;
+// WHICH OF THE TWO FIELDS THE READER ACTUALLY READ: a bundle that carries the assessment at its top level would otherwise be
+// sent to `multiday.assessment`, which is not where its finding is.
+const assessmentField = result.multiday?.assessment != null ? "multiday.assessment" : "assessment";
 const dayRecords = result.multiday?.dayRecords ?? result.dayRecords ?? [];
 // THE CROSSINGS, FROM THE EVIDENCE RATHER THAN FROM THE NIGHTS THAT WERE WATCHED.
 //
@@ -1786,7 +1835,7 @@ record(
         ? "NOT EXERCISED"
         : "FAIL",
   environmentFacts.path === null
-    ? `cannot answer from this run: ${environmentFacts.why} (not a claim that no villager was on her map)`
+    ? `${environmentFacts.why} (not a claim that no villager was on her map)`
     : `${withCoords.length} with coordinates of ${villagerFacts.length} rendered (${renderCoverage(environmentFacts)})`,
   environmentRecordSource,
 );
@@ -1864,6 +1913,9 @@ if (pointedAtABundle)
       : `bundle ${resultPath} (pointed at directly: ${bundleBinding.how})\n`,
   );
 process.stdout.write(`state ${result.state ?? "?"}  verdict ${result.sessionVerdict ?? "?"}\n`);
+// THE REASON TRAVELS WITH THE VERDICT. A clause that can fail prints the fact that failed it in the block it appears in, above
+// the rows, so the first screen cannot read as an all-green run that is somehow blocked.
+for (const line of multidayBlockedLines({ assessment, source: resultPath, field: assessmentField })) process.stdout.write(`${line}\n`);
 // THE FIRST SCREEN CARRIES THE WRITER. A reader who stops after two lines has to know that this run left a body locked
 // and, when the log names one, which frame took it - the block below is the derivation, not the finding.
 const bodyHeadline =

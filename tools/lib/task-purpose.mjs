@@ -28,6 +28,26 @@
  * demanded the chain clearing-then-tilling-then-sowing. The chain is ONE way to prepare ground; she had sown into
  * ground that was already tilled, which is what a farmhand does, so the criterion graded the drawing instead of the day.
  *
+ * GROUND IS GRADED BY ITS STATE AT THE END OF THE DAY, NEVER BY THE SWINGS THAT OPENED IT. That is the rule above applied
+ * to a purpose about a PLOT rather than about a sequence: the day owes tiles that are tilled, sown and watered when it
+ * ends, and it does not owe a Hoe swung once per tile. So a tile a SOWING named is tilled ground - `plant_seed` puts a
+ * seed into that tile's soil, which is the one place a seed can go - and a day that sows into ground turned earlier has
+ * laid the plot exactly as much as one that turned every tile itself. Measured 2026-11-23 (the round96 run published as
+ * `tools/_multiday_routine-round96.result.json`): day 3 bought fifty parsnip seeds at Pierre's, sowed and watered twenty
+ * tiles, turned FIVE of them with its own Hoe, and answered `till_soil 5/20`, because the criterion it was judged on
+ * counted swings. The twenty tiles were the plot. What the reading keeps is how much of it was ground the day had to
+ * open itself (`already_tilled`), so "expand" stays a measured word rather than an assertion.
+ *
+ * AND IT MAY NOT DEMAND WHAT THE DAY'S OWN ACTIONS CANNOT PRODUCE. Measured 2026-11-23 (`round96`, day 3,
+ * `clear_and_plant_long_patch`): she tilled, sowed and watered fifty-eight tiles of the 20x3 strip at `(44,21)..(63,23)`
+ * and was filed `not_achieved` for the two she did not - `(60,22)` and `(62,23)`, where two standing trees answered
+ * `soil_not_diggable:occupied:tree` twice. Her own words that turn: 「就差两棵树占着的那两格。」 `chop_tree` is not among
+ * the actions that day declares (`DAILY_TASK_ACTION_HINTS`), and the strip's own declaration says why - "a tile a tree
+ * stands on is not a tile you till" - so the criterion asked for a shape the day's action set could not produce, and a
+ * model that did everything right was filed as failed. A patch's denominator is therefore the tiles INSIDE its rectangle
+ * that the day could make ready (`PATCH_OCCUPANT_REFUSAL` below), and the ones it could not are named in the verdict
+ * rather than silently missed.
+ *
  * WHAT A CRITERION MAY NOT DO. It may not read a fact the receipts do not publish, and it may not substitute a
  * readable neighbour for the purpose (clearing "one patch somewhere" is not clearing the east patch). Where the
  * purpose needs a fact nothing publishes, the entry carries `missingFact` instead of `steps`: the day is then
@@ -52,10 +72,10 @@
  */
 
 import { readFileSync } from "node:fs";
-
+import { clearedKinds, constantsIn, SOURCES } from "../../gates/stardew/audit-stardew-clearing-vocabulary.mjs";
 import { judgeStardewCompletionEvidence } from "../../host/dist-test/stardew-completion-contracts.js";
 
-import { SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
+import { DAILY_TASK_ACTION_HINTS, SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
 import { bestWindow, largestFilledRectangle, windowHoldsAll } from "./tile-patch.mjs";
 
 /** A step of a criterion: one admitted postcondition, or `count` distinct receipts of it. */
@@ -158,6 +178,127 @@ const patch = (purpose, { width, height, tilledBy, croppedBy }) =>
 /** One action that proves a tile is tilled or carries a crop, and the evidence field that names the tile. */
 const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField });
 
+/**
+ * A purpose that is a COUNT OF TILES on one map, with no shape declared.
+ *
+ * <p>
+ * `patch` asks for a rectangle; a farm's own plot need not be one, and `round96`'s was not - twenty tiles in a 7x3 block
+ * missing a corner. So this declares the count and, beside it, the actions whose own postcondition names the tile it
+ * changed and the evidence field that name is in, exactly as `patch` does and for the same reason. The judge counts
+ * TILES and never receipts: twenty swings of the Hoe on ONE tile is not a plot, which is the difference between this and
+ * a step list.
+ * </p>
+ * <p>
+ * `boughtBy` is the half its name carries - seeds were BOUGHT - and it is an action list without a tile because a
+ * purchase names a counter and a stack, not ground. `tilledBy` is NOT a demand here: it is the evidence that tells the
+ * ground the day opened from the ground it inherited (`already_tilled`), and a plot whose sowing never needed the Hoe
+ * passes without it.
+ * </p>
+ */
+const plot = (purpose, { tiles, boughtBy, tilledBy, sownBy, wateredBy }) =>
+  Object.freeze({
+    purpose,
+    plot: Object.freeze({ tiles }),
+    boughtBy: Object.freeze(boughtBy),
+    tilledBy: Object.freeze(tilledBy),
+    sownBy: Object.freeze(sownBy),
+    wateredBy: Object.freeze(wateredBy),
+  });
+
+/**
+ * EVERY OCCUPANT THE MOD DECLARES A CLEARING ACTION FOR, and which action clears it.
+ *
+ * <p>
+ * Read from the Mod's own `Clears(...)` declarations through the reader the clearing-vocabulary gate publishes
+ * (`gates/stardew/audit-stardew-clearing-vocabulary.mjs`), the same one `tools/live-run/slices/patch-3x20.mjs` measures
+ * the farm with - so a kind that gains or loses a clearer changes this criterion in the same edit, and no kind list is
+ * written here to drift. A kind in the Mod's vocabulary with NO clearer appears in no row: nothing published removes it,
+ * which is a fact about the tile and not a missing reading.
+ * </p>
+ */
+const REPOSITORY_ROOT = new URL("../../", import.meta.url);
+
+function readOccupantClearers() {
+  const constants = constantsIn(readFileSync(new URL(SOURCES.vocabulary, REPOSITORY_ROOT), "utf8"));
+  const cleared = clearedKinds(readFileSync(new URL(SOURCES.catalog, REPOSITORY_ROOT), "utf8"), constants);
+  // A catalog that parsed to nothing would answer "no action clears anything", which silently excuses every occupied
+  // tile in every strip - the direction that reads like a finished patch.
+  if (cleared.size === 0) throw new Error("stardew_clearing_vocabulary_has_no_cleared_kinds");
+  return cleared;
+}
+
+const OCCUPANT_CLEARERS = readOccupantClearers();
+
+/**
+ * The occupant kinds ONE DAY's declared actions can clear - the tiles that day was asked to open, and no others.
+ *
+ * <p>
+ * WHY THE DAY'S OWN ACTIONS AND NOT THE WHOLE CATALOG. `round96` stands on the difference: `chop_tree` fells a tree, and
+ * that task's own declaration (`SCENARIO_TASK_ACTION_HINTS.clear_and_plant_long_patch` in
+ * `multiday-daily-tasks.mjs`) leaves `chop_tree` out on purpose - "a tile a tree stands on is not a tile you till". A
+ * reader that asked the catalog instead would call the tree tile openable ground and demand it, which is the verdict
+ * that run was filed under. A task that DOES declare `chop_tree` tomorrow becomes answerable to trees with no edit here.
+ * </p>
+ * <p>
+ * A patch task with no declared actions is refused by name: with none, everything would read as "no action of this day
+ * clears it" and the criterion would agree with any short day.
+ * </p>
+ */
+function patchClearableKinds(taskId) {
+  const actions = DAILY_TASK_ACTION_HINTS[taskId];
+  if (!Array.isArray(actions) || actions.length === 0)
+    throw new Error(`stardew_patch_task_declares_no_actions:${String(taskId)}`);
+  const offered = new Set(actions);
+  const kinds = new Set();
+  for (const [kind, clearers] of OCCUPANT_CLEARERS)
+    if (clearers.some((actionId) => offered.has(actionId))) kinds.add(kind);
+  return kinds;
+}
+
+/** The Mod's own word for a tile the Hoe refused because something stands on it: `soil_not_diggable:occupied:tree`. */
+const PATCH_OCCUPANT_REFUSAL = /^soil_not_diggable:occupied:(.+)$/u;
+
+/**
+ * The tiles of the day's rectangle the day was never asked for: a standing occupant no action IT declares clears.
+ *
+ * <p>
+ * The fact comes from the REFUSAL, which is the only receipt that names a tile the day could not work: `till_soil`
+ * answered `soil_not_diggable:occupied:tree` with `target=60,22`, so the tile AND the kind are the Mod's own statement
+ * and neither is inferred here. An occupant the day's own actions CAN clear is deliberately not excluded - a weed left
+ * standing in the strip is work it owes, and a criterion that excused it would grade nothing.
+ * </p>
+ * <p>
+ * WHAT THIS DOES NOT READ: the refusal carries no `location` (its evidence is `target`, `diggable_tiles`,
+ * `diggable_nearest`, `search_radius`), so an excluded tile is read against the strip each map's own admitted tiles
+ * form. It can only ever shrink the denominator of a window that covers it, and the two strips a day proves on two maps
+ * are already never added together (`patchTileFacts` groups by map).
+ * </p>
+ */
+function patchExcludedTiles(entry, taskId, receipts) {
+  const tillActionIds = new Set(entry.tilledBy.map((proof) => proof.actionId));
+  const clearable = patchClearableKinds(taskId);
+  const byTile = new Map();
+  for (const receipt of receipts ?? []) {
+    if (receipt === null || typeof receipt !== "object") continue;
+    if (receipt.state === "succeeded") continue;
+    if (!tillActionIds.has(receipt.actionId)) continue;
+    const detail = receipt.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    const match = PATCH_OCCUPANT_REFUSAL.exec(typeof receipt.reasonCode === "string" ? receipt.reasonCode : "");
+    if (match === null) continue;
+    const kind = match[1];
+    if (clearable.has(kind)) continue;
+    const tile = tileOf(evidenceFields(detail).get("target"));
+    if (tile === null) continue;
+    const key = tileKey(tile);
+    if (!byTile.has(key)) byTile.set(key, Object.freeze({ tile, kind, reasonCode: receipt.reasonCode }));
+  }
+  return Object.freeze([...byTile.values()]);
+}
+
+/** The excluded tiles as the one reading a verdict prints: `excluded_by_occupant=tree@60,22,tree@62,23`. */
+const describeExcludedTiles = (excluded) =>
+  `excluded_by_occupant=${excluded.map((entry) => `${entry.kind}@${tileKey(entry.tile)}`).join(",")}`;
 /**
  * THE ACTIONS WHOSE OWN POSTCONDITION IS ABOUT WHAT SHE IS CARRYING, and the direction each one proves.
  *
@@ -460,6 +601,10 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   // or how much of it, because a receipt names one tile and the criterion asks for none. This one does: sixty tiles,
   // all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the 13x13 window one snapshot sees, so
   // the boundary has to survive her walking out of view.
+  //
+  // "SIXTY" IS THE RECTANGLE, NOT A COUNT OF GROUND: a tile a tree stands on is a tile this strip is not made of
+  // (`PATCH_OCCUPANT_REFUSAL` above, measured `round96`), so the denominator is the tiles of that rectangle the day's
+  // own declared actions could make ready - sixty on open ground, fifty-eight when two trees are in the way.
   clear_and_plant_long_patch: patch(
     "one long strip, three tiles wide and twenty long, was tilled and sown the whole way",
     {
@@ -473,17 +618,28 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
       croppedBy: [tileProof("plant_seed", "tile"), tileProof("water_crop", "tile")],
     },
   ),
-  // Explicit shop-purchase + scaled-cultivation loop: 20 tiles exceeds starter chest seeds and explicitly requires a
-  // `shop_purchase` receipt alongside twenty distinct till, sow, and water postconditions.
-  buy_seeds_and_expand_plot: criterion(
+  // TWENTY TILES AND NO SHAPE, WHICH IS WHAT A PLOT IS. It used to be a step list - `shop_purchase`, then twenty
+  // `till_soil`, twenty `plant_seed`, twenty `water_crop` - and a step list counts RECEIPTS on whatever tile each one
+  // landed on, which is a count of swings and not of ground. `round96` is the measurement: twenty tiles sowed and
+  // watered, five of them turned by the day's own Hoe, and the criterion answered `till_soil 5/20` about a plot that
+  // was laid. The twenty tiles were there; the twenty TILLINGS were not owed, because the ground she sowed into was
+  // already tilled (the Hoe proves it, `plant_seed` only succeeds on soil). So the plot is the tiles that carry a sowing
+  // AND a watering at the end of the day, the purchase is what bought the seed, and how much of the ground she had to
+  // open herself travels in the reading as `already_tilled` rather than as a passing grade.
+  //
+  // THE NAME SURVIVES THE READING: "expand" is the PLOT's arrival - twenty tiles that were not under crop now are -
+  // and it cannot mean "ground the Hoe had never touched", because that is a verb, and a criterion that graded it
+  // would file a farmhand who sows into yesterday's tilth as idle (the same defect `round76` fixed for
+  // `clear_and_plant_long_patch`).
+  buy_seeds_and_expand_plot: plot(
     "seeds were bought from a shop and a twenty-tile plot was tilled, planted, and watered",
-    [
-      step("shop_purchase"),
-      step("till_soil", { count: 20 }),
-      step("plant_seed", { count: 20 }),
-      step("water_crop", { count: 20 }),
-    ],
-    { ordered: false },
+    {
+      tiles: 20,
+      boughtBy: ["shop_purchase"],
+      tilledBy: [tileProof("till_soil", "target")],
+      sownBy: [tileProof("plant_seed", "tile")],
+      wateredBy: [tileProof("water_crop", "tile")],
+    },
   ),
   // Two steps, because the purpose is not "an action succeeded": it is that she went to water and came back with a
   // fish. The waypoint half is EVERY movement the surface publishes (`MOVEMENT_ACTIONS`), not the one seam a particular
@@ -819,13 +975,16 @@ const tileKey = (tile) => `${String(tile.x)},${String(tile.y)}`;
 /**
  * The seed a receipt put in the ground, or null when it put none there.
  *
- * ONE SPELLING OF "THIS TILE WAS SOWN": a crop proof (an action the criterion's `croppedBy` declares) that also names
- * the `item` it spent. `plant_seed`'s postcondition carries `item`, `inventory_before` and `inventory_after`; a
- * `water_crop` carries the water it spent and no seed, so it proves a crop without proving a sowing. Adding a second
- * declaration of which actions sow would be the same fact written twice, and the two copies would drift.
+ * ONE SPELLING OF "THIS TILE WAS SOWN": an action the entry declares as a SOWING (`sownBy` on a plot, the crop proofs
+ * of a patch) that also names the `item` it spent. `plant_seed`'s postcondition carries `item`, `inventory_before` and
+ * `inventory_after`; a `water_crop` carries the water it spent and no seed, so it proves a crop without proving a
+ * sowing. Adding a second declaration of which actions sow would be the same fact written twice, and the two copies
+ * would drift.
  */
+const sowingProofsOf = (entry) => entry.sownBy ?? entry.croppedBy;
+
 function sownSeed(entry, actionId, fields) {
-  if (!entry.croppedBy.some((proof) => proof.actionId === actionId)) return null;
+  if (!sowingProofsOf(entry).some((proof) => proof.actionId === actionId)) return null;
   const item = fields.get("item");
   return typeof item === "string" && item.length > 0 ? item : null;
 }
@@ -844,18 +1003,26 @@ function sownSeed(entry, actionId, fields) {
  * "a crop is on this tile" and "a seed went into this tile" answer differently: a day that waters the crops of an
  * earlier week proves forty crops and sows none, and a verdict that called those forty "sown" would report a patch
  * day she never planted.
+ *
+ * AND A TILE A SOWING NAMED IS TILLED GROUND. `plant_seed` succeeded ON that tile, and the one place a seed goes is
+ * tilled soil, so the receipt that proves the seed also proves the ground under it - whether this day's Hoe turned it or
+ * a day before did. The rule is the header's: the strip's state at the end of the day, never the swings that got it
+ * there. One observation can still contradict it, and only one: a `soilTiles` row whose own `hoeDirt` is `false` says
+ * the Hoe can turn that tile NOW, and a receipt and an observation that disagree are not a strip laid. That is why the
+ * contradiction is read before the inference and kept per map.
  */
+const mapOf = (location) =>
+  typeof location === "string" && location.length > 0 && location !== "none" ? location : null;
+
 function patchTileFacts(entry, admitted, observations) {
   const byLocation = new Map();
   const factsFor = (location) => {
     const existing = byLocation.get(location);
     if (existing !== undefined) return existing;
-    const created = { tilled: new Map(), cropped: new Map(), sown: new Map() };
+    const created = { tilled: new Map(), cropped: new Map(), sown: new Map(), untilled: new Set() };
     byLocation.set(location, created);
     return created;
   };
-  const mapOf = (location) =>
-    typeof location === "string" && location.length > 0 && location !== "none" ? location : null;
   for (const admittedReceipt of admitted) {
     const proofs = [...entry.tilledBy, ...entry.croppedBy].filter(
       (proof) => proof.actionId === admittedReceipt.actionId,
@@ -881,12 +1048,21 @@ function patchTileFacts(entry, admitted, observations) {
     const facts = factsFor(observedOn);
     for (const row of observations?.soilTiles ?? []) {
       const tile = tileOf(`${String(row?.x)},${String(row?.y)}`);
-      if (row?.hoeDirt === true && tile !== null) facts.tilled.set(tileKey(tile), tile);
+      if (tile === null) continue;
+      if (row?.hoeDirt === true) facts.tilled.set(tileKey(tile), tile);
+      else if (row?.hoeDirt === false) facts.untilled.add(tileKey(tile));
     }
     for (const row of observations?.cropTargets ?? []) {
       const tile = tileOf(`${String(row?.x)},${String(row?.y)}`);
       if (tile !== null) facts.cropped.set(tileKey(tile), tile);
     }
+  }
+  for (const facts of byLocation.values()) {
+    // THE GROUND THE DAY HOLDS, which is the state the strip is judged on: a tile the day's Hoe named, plus a tile a
+    // sowing proved and no observation contradicted. `tilled` stays what the Hoe named, so `tilled 20` in a verdict still
+    // means twenty swings or settlements and never twenty plus whatever she sowed into.
+    facts.ground = new Map(facts.tilled);
+    for (const [key, tile] of facts.sown) if (!facts.untilled.has(key)) facts.ground.set(key, tile);
   }
   return byLocation;
 }
@@ -897,27 +1073,51 @@ function patchTileFacts(entry, admitted, observations) {
  * `holdsAll` is the line between the two failures that must not read alike: a set of tiles that fits inside one
  * declared window is a patch that is not finished yet, and a set that fits inside none of them is a different shape
  * however many tiles it holds.
+ *
+ * `excludedTiles` is the denominator's other half: the tiles inside that same window the day was never asked for
+ * (`patchExcludedTiles`), so `tileCount === availableTiles` is a finished patch and `tileCount === area` is a finished
+ * patch with nothing standing in it. A tile the day DID work is never also an excluded tile - the exclusion comes from a
+ * refusal, and a refusal cannot be the last thing that happened to a tile she went on to till.
  */
-function patchReading(location, facts, orientations) {
-  const qualified = [...facts.tilled.keys()]
+function patchReading(location, facts, orientations, excluded) {
+  const qualified = [...facts.ground.keys()]
     .filter((key) => facts.cropped.has(key))
-    .map((key) => facts.tilled.get(key));
+    .map((key) => facts.ground.get(key));
   const windows = orientations.map((orientation) => bestWindow(qualified, orientation));
   let window = windows[0];
   for (const candidate of windows) {
     if (candidate !== null && (window === null || candidate.count > window.count)) window = candidate;
   }
+  const used = new Set(qualified.map(tileKey));
+  const area = orientations[0].width * orientations[0].height;
+  const inside =
+    window === null
+      ? []
+      : excluded.filter((entry) => !used.has(tileKey(entry.tile)) && windowContains(window, entry.tile));
   return Object.freeze({
     location,
-    coordinateCount: facts.tilled.size + facts.cropped.size,
+    coordinateCount: facts.ground.size + facts.cropped.size,
     tileCount: qualified.length,
-    // The components of `tileCount`, so a short verdict can say WHY it is short instead of only that it is.
+    // The components of `tileCount`, so a short verdict can say WHY it is short instead of only that it is - and each
+    // number keeps its own meaning: `tilledTiles` is ground the day's Hoe named, `sownTiles` is ground a seed went into.
+    // A tile is in the patch when both a crop and a sowing-or-Hoe witness hold it (`ground`), which is why the two can
+    // describe the same tile without being the same count.
     sownTiles: facts.sown.size,
     tilledTiles: facts.tilled.size,
+    groundTiles: facts.ground.size,
     window,
+    excludedTiles: Object.freeze(inside),
+    availableTiles: area - inside.length,
     holdsAll: orientations.some((orientation) => windowHoldsAll(qualified, orientation)),
     largestRectangle: largestFilledRectangle(qualified),
   });
+}
+
+/** Whether a tile sits inside a window of the declared shape - the only place a rectangle's own geometry is read. */
+function windowContains(window, tile) {
+  return (
+    tile.x >= window.x && tile.x < window.x + window.width && tile.y >= window.y && tile.y < window.y + window.height
+  );
 }
 
 /**
@@ -966,15 +1166,22 @@ function heldCount(value) {
  * planting spent, the tile-bearing receipts that were refused, and the tilled tiles nothing sowed. The ledger is
  * derived from the receipts the day actually minted, so it is bounded by a measured population rather than by a cap.
  * </p>
+ * <p>
+ * AND THE COUNT NAMES ITS OWN DENOMINATOR when that denominator is smaller than the declared rectangle: `round96`'s
+ * `58/60` is a finished patch when the two missing tiles hold trees no action of that day's set fells, and a reader
+ * must see that the two were excluded rather than assume they were missed (`excluded_by_occupant=tree@60,22,...`).
+ * </p>
  */
 function patchTally(entry, admitted, refusedTileProofs, reading, area) {
   const tileCount = reading?.tileCount ?? 0;
   const sownTiles = reading?.sownTiles ?? 0;
   const tilledTiles = reading?.tilledTiles ?? 0;
+  const excluded = reading?.excludedTiles ?? [];
   return Object.freeze({
     patchTiles: tileCount,
     patchSownTiles: sownTiles,
     patchTilledTiles: tilledTiles,
+    patchExcludedTiles: excluded,
     limitingFactors: Object.freeze([
       ...seedLedger(entry, admitted).map(
         (seed) => `seed_ledger:${seed.item}:${String(seed.before)}->${String(seed.after)}`,
@@ -983,7 +1190,11 @@ function patchTally(entry, admitted, refusedTileProofs, reading, area) {
       ...(tilledTiles > tileCount ? [`tilled_not_sown:${String(tilledTiles - tileCount)}`] : []),
       ...(sownTiles === 0 ? ["nothing_sown"] : []),
     ]),
-    countDetail: `${String(tileCount)}/${String(area)} tiles tilled and sown (sown ${String(sownTiles)}, tilled ${String(tilledTiles)})`,
+    countDetail:
+      `${String(tileCount)}/${String(area)} tiles tilled and sown (sown ${String(sownTiles)}, tilled ${String(tilledTiles)})` +
+      (excluded.length === 0
+        ? ""
+        : ` · tillable=${String(area - excluded.length)}/${String(area)} · ${describeExcludedTiles(excluded)}`),
   });
 }
 
@@ -1007,16 +1218,24 @@ function patchDetail(tally, finding = "") {
  * the one outcome a run reaches when a tile-bearing receipt cannot be read was also the only outcome that could not
  * say whether it saw two tiles or fifty-nine (`round81`, below). It now carries the count as a FLOOR and says so: a
  * refused proof may hide tiles, so it cannot be read as proof that they were not there.
+ *
+ * AND `achieved` IS A FULL WINDOW OF THE TILES THE DAY WAS ASKED FOR, which is the declared rectangle less the tiles a
+ * standing occupant no action of this day clears holds (`patchExcludedTiles`). `round96` is the measurement: 58 worked
+ * tiles and two trees inside the same 20x3 strip is a strip that was laid, and the verdict names the two rather than
+ * reporting them as missing.
  */
-function judgePatch(entry, admitted, refused, observations) {
+function judgePatch(taskId, entry, admitted, refused, receipts, observations) {
   const declared = entry.patch;
   const area = declared.width * declared.height;
   // The same strip laid across the farm and laid down it is the same work, so the declared shape is tried in both
   // orientations. Rotation is the criterion's decision, not the geometry's.
   const orientations = [declared, Object.freeze({ width: declared.height, height: declared.width })];
+  const excluded = patchExcludedTiles(entry, taskId, receipts);
   const byLocation = patchTileFacts(entry, admitted, observations);
-  const readings = [...byLocation].map(([location, facts]) => patchReading(location, facts, orientations));
-  const proved = readings.find((reading) => reading.window?.count === area);
+  const readings = [...byLocation].map(([location, facts]) => patchReading(location, facts, orientations, excluded));
+  // A full window means every tile of it the day could make ready is tilled AND sown; `availableTiles` is `area` when
+  // nothing stands in the strip, so a plain sixty-tile patch answers exactly as it did.
+  const proved = readings.find((reading) => reading.window !== null && reading.window.count === reading.availableTiles);
   if (proved !== undefined) {
     const strip = proved.window;
     return Object.freeze({
@@ -1029,10 +1248,15 @@ function judgePatch(entry, admitted, refused, observations) {
       patchTiles: proved.tileCount,
       patchSownTiles: proved.sownTiles,
       patchTilledTiles: proved.tilledTiles,
+      patchExcludedTiles: proved.excludedTiles,
       patchWindow: strip,
-      // Nothing limited a day that reached all sixty, and a ledger here would invite a reader to look for the catch.
+      // Nothing limited a day that reached every tile it could make ready, and a ledger here would invite a reader to
+      // look for the catch. What it could NOT make ready is not a limit on the day, and travels in the count itself.
       limitingFactors: Object.freeze([]),
-      detail: `${String(area)}/${String(area)} tiles of a ${String(strip.width)}x${String(strip.height)} strip at ${String(strip.x)},${String(strip.y)} are tilled and sown`,
+      detail:
+        `${String(proved.tileCount)}/${String(area)} tiles of a ${String(strip.width)}x${String(strip.height)} strip at ` +
+        `${String(strip.x)},${String(strip.y)} are tilled and sown` +
+        (proved.excludedTiles.length === 0 ? "" : ` · ${describeExcludedTiles(proved.excludedTiles)}`),
     });
   }
   // A refused receipt means the evidence that would have decided this purpose exists and proved nothing about the
@@ -1063,6 +1287,9 @@ function judgePatch(entry, admitted, refused, observations) {
     patchTiles: tally.patchTiles,
     patchSownTiles: tally.patchSownTiles,
     patchTilledTiles: tally.patchTilledTiles,
+    // The tiles the day was NOT asked for, named in every branch that has a window: a short reading that printed only
+    // the count would leave "two tiles stand under a tree" and "two tiles she never reached" reading the same.
+    patchExcludedTiles: tally.patchExcludedTiles,
     limitingFactors: tally.limitingFactors,
   };
   if (refusedTileProofs > 0) {
@@ -1094,6 +1321,22 @@ function judgePatch(entry, admitted, refused, observations) {
     });
   }
   const strip = best.window ?? Object.freeze({ width: declared.width, height: declared.height, count: 0 });
+  // NO PLOT AT ALL IS ITS OWN SENTENCE. With no tile carrying both a tilling and a sowing there is no window to be inside,
+  // and the branch below would report it as `inside the best 3x20 window at undefined,undefined` - a coordinate that does
+  // not exist, printed by the one reading a day with nothing in the ground gets.
+  if (best.window === null) {
+    return Object.freeze({
+      ...counted,
+      state: "not_achieved",
+      reasonCode: "task_purpose_not_achieved",
+      purpose: entry.purpose,
+      missingFact: null,
+      patch: declared,
+      location: best.location,
+      patchWindow: strip,
+      detail: patchDetail(tally, "no tile carries both a tilling and a sowing"),
+    });
+  }
   if (best.holdsAll) {
     return Object.freeze({
       ...counted,
@@ -1124,6 +1367,179 @@ function judgePatch(entry, admitted, refused, observations) {
       tally,
       `the largest rectangle found is ${String(largest.width)}x${String(largest.height)} (${String(largest.area)} tiles), not the declared ${String(declared.width)}x${String(declared.height)}`,
     ),
+  });
+}
+
+/**
+ * The tiles one day's receipts named, grouped by the map they are on, split by what each receipt PROVES.
+ *
+ * <p>
+ * One map at a time, for the reason the strip is read that way: Stardew's coordinates restart at `(0, 0)` in every
+ * location, so a plot half on the Farm and half in the greenhouse names the same coordinates as one plot and would be
+ * counted as twenty tiles of ground that exists on no map.
+ * </p>
+ */
+function plotFacts(entry, admitted) {
+  const byLocation = new Map();
+  const factsFor = (location) => {
+    const existing = byLocation.get(location);
+    if (existing !== undefined) return existing;
+    const created = { tilled: new Map(), sown: new Map(), watered: new Map() };
+    byLocation.set(location, created);
+    return created;
+  };
+  const sinks = [
+    [entry.tilledBy, "tilled"],
+    [entry.sownBy, "sown"],
+    [entry.wateredBy, "watered"],
+  ];
+  for (const admittedReceipt of admitted) {
+    const detail = admittedReceipt.receipt?.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    const fields = evidenceFields(detail);
+    const location = mapOf(fields.get("location"));
+    if (location === null) continue;
+    for (const [proofs, sink] of sinks) {
+      const proof = proofs.find((candidate) => candidate.actionId === admittedReceipt.actionId);
+      if (proof === undefined) continue;
+      const tile = tileOf(fields.get(proof.tileField));
+      if (tile !== null) factsFor(location)[sink].set(tileKey(tile), tile);
+    }
+  }
+  return byLocation;
+}
+
+/**
+ * What one map's tiles say about the declared plot.
+ *
+ * <p>
+ * THE PLOT IS THE TILES THAT CARRY A SOWING AND A WATERING, so the two sets have to be the SAME tiles: twenty sows on
+ * one field and twenty waterings on another is a plot nowhere. That is the whole reason the entry is a count of tiles
+ * instead of a step list, and it is why a step list could not be repaired into one - a step list has no way to say
+ * "these, and not those".
+ * </p>
+ * <p>
+ * `alreadyTilled` is the ground the day inherited: a sown tile whose ground this day's own `till_soil` never named.
+ * It is not a deduction about yesterday - the sowing proves the tile was tilled when the seed went in - and it is the
+ * number that makes "expand" a measurement rather than a word.
+ * </p>
+ */
+function plotReading(location, facts) {
+  const plot = [...facts.sown.keys()]
+    .filter((key) => facts.watered.has(key))
+    .map((key) => facts.sown.get(key))
+    .sort((left, right) => left.y - right.y || left.x - right.x);
+  return Object.freeze({
+    location,
+    plot: Object.freeze(plot),
+    plotTiles: plot.length,
+    sownTiles: facts.sown.size,
+    wateredTiles: facts.watered.size,
+    tilledTiles: facts.tilled.size,
+    // A sow on a tile the day's Hoe never named: the ground was already tilled when the seed went in.
+    alreadyTilled: [...facts.sown.keys()].filter((key) => !facts.tilled.has(key)).length,
+  });
+}
+
+/** The plot as one reading: the count against the declared tiles, then the two facts that make it a PLOT. */
+function describePlot(reading, declared, bought) {
+  const counts =
+    `${String(reading.plotTiles)}/${String(declared)} tiles sown and watered ` +
+    `(sown ${String(reading.sownTiles)}, watered ${String(reading.wateredTiles)}) · ` +
+    `tiles_not_under_crop_before=${String(reading.sownTiles)} · already_tilled=${String(reading.alreadyTilled)}`;
+  const purchase = bought.length === 0 ? "nothing bought" : `bought=${bought.join(",")}`;
+  const tiles = reading.plotTiles === 0 ? "" : ` · tiles ${reading.plot.map(tileKey).join(" ")}`;
+  return `${counts} · ${purchase}${tiles}`;
+}
+
+/**
+ * The verdict for a plot purpose: did the day leave the declared count of tiles tilled, sown and watered?
+ *
+ * <p>
+ * THREE OUTCOMES, and the difference between the last two is the one this table keeps having to protect: `achieved` is
+ * a plot of the declared count on ONE map with the seed bought; `not_achieved` is a day whose receipts are complete
+ * evidence that it did not get there; `unproven` is a day whose tile-bearing receipts were refused - the evidence that
+ * would have decided it exists and proved nothing, which is a floor rather than a total, and it carries the count so a
+ * reader can tell "two tiles" from "sixty".
+ * </p>
+ */
+function judgePlot(entry, admitted, refused) {
+  const declared = entry.plot.tiles;
+  const bought = entry.boughtBy.filter((actionId) => admitted.some((receipt) => receipt.actionId === actionId));
+  const readings = [...plotFacts(entry, admitted)].map(([location, facts]) => plotReading(location, facts));
+  // The plot is the map that carries the most of it, and ties break by map name so the same day always reads the same.
+  const best =
+    [...readings].sort(
+      (left, right) =>
+        right.plotTiles - left.plotTiles ||
+        right.sownTiles - left.sownTiles ||
+        left.location.localeCompare(right.location),
+    )[0] ??
+    Object.freeze({
+      location: null,
+      plot: Object.freeze([]),
+      plotTiles: 0,
+      sownTiles: 0,
+      wateredTiles: 0,
+      tilledTiles: 0,
+      alreadyTilled: 0,
+    });
+  const tally = Object.freeze({
+    plotTiles: best.plotTiles,
+    plotSownTiles: best.sownTiles,
+    plotWateredTiles: best.wateredTiles,
+    plotAlreadyTilled: best.alreadyTilled,
+    plotBoughtActions: Object.freeze(bought),
+    detail: describePlot(best, declared, bought),
+    limitingFactors: Object.freeze([
+      ...(best.plotTiles < declared ? [`plot_short:${String(declared - best.plotTiles)}`] : []),
+      ...(bought.length === 0 ? ["nothing_bought"] : []),
+      ...seedLedger(entry, admitted).map(
+        (seed) => `seed_ledger:${seed.item}:${String(seed.before)}->${String(seed.after)}`,
+      ),
+    ]),
+  });
+  const tileProvingActionIds = new Set(
+    [...entry.tilledBy, ...entry.sownBy, ...entry.wateredBy].map((proof) => proof.actionId),
+  );
+  const refusedTileProofs = refused.filter((receipt) => tileProvingActionIds.has(receipt.actionId)).length;
+  if (refusedTileProofs > 0) {
+    return Object.freeze({
+      ...tally,
+      state: "unproven",
+      reasonCode: "task_purpose_evidence_without_postcondition",
+      purpose: entry.purpose,
+      missingFact: null,
+      plot: entry.plot,
+      location: best.location,
+      detail:
+        `${tally.detail} · ` +
+        `${String(refusedTileProofs)} tile proofs were refused, so this count is a floor rather than the day's total`,
+    });
+  }
+  if (best.plotTiles >= declared && bought.length > 0) {
+    return Object.freeze({
+      ...tally,
+      state: "achieved",
+      reasonCode: "task_purpose_achieved",
+      purpose: entry.purpose,
+      missingFact: null,
+      plot: entry.plot,
+      location: best.location,
+      // Nothing limited a day that laid its plot, and a ledger here would invite a reader to look for the catch - the
+      // same rule the strip's achieved branch keeps. What the day inherited is in the count, not in the limits.
+      limitingFactors: Object.freeze([]),
+    });
+  }
+  return Object.freeze({
+    ...tally,
+    state: "not_achieved",
+    reasonCode: "task_purpose_not_achieved",
+    purpose: entry.purpose,
+    missingFact: null,
+    plot: entry.plot,
+    location: best.location,
+    detail: `${tally.detail} · ${tally.limitingFactors.join(" \u00b7 ")}`,
   });
 }
 
@@ -1172,7 +1588,12 @@ export function judgeTaskPurpose(taskId, receipts, observations = null) {
     });
   }
   if (entry.patch !== undefined) {
-    return Object.freeze({ ...common, ...judgePatch(entry, admitted, refused, observations) });
+    return Object.freeze({ ...common, ...judgePatch(taskId, entry, admitted, refused, receipts, observations) });
+  }
+  // A plot is judged on the tiles it left behind, so it reads receipts the same way and never the step list - which is
+  // what keeps "twenty tiles" from becoming "twenty receipts" (see the entry's own note).
+  if (entry.plot !== undefined) {
+    return Object.freeze({ ...common, ...judgePlot(entry, admitted, refused) });
   }
   if (criterionSatisfied(entry, admitted)) {
     return Object.freeze({

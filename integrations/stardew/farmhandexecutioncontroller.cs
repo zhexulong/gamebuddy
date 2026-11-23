@@ -1217,6 +1217,13 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("place_owned_object", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_placed_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_container", StringComparer.Ordinal) || advertisedCapabilities.Contains("move_placed_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("rotate_furniture", StringComparer.Ordinal) || advertisedCapabilities.Contains("remove_fence", StringComparer.Ordinal) || advertisedCapabilities.Contains("put_item_in_fish_tank", StringComparer.Ordinal) || advertisedCapabilities.Contains("place_item_on_pedestal", StringComparer.Ordinal)
                 ? DiscoverWorldObjectTargets(player, out worldObjectTargetsOmitted)
                 : null;
+        // ONE OBJECT, ONE FAMILY, SAID OUT LOUD: the rows that list withheld because a sibling family already names the
+        // subject (`SubjectsOwnedBySiblingFamilies`) are inside `worldObjectTargetsOmitted` beside the rows the caps
+        // took, and a count alone cannot say WHICH subject a reader should look for in which family. The walk is static
+        // and holds no monitor, so the log happens here, off the same predicate the walk applied.
+        if (worldObjectTargets is not null)
+            foreach (string owned in DescribeSubjectsOwnedBySiblingFamilies(player))
+                this.monitor.Log($"world_object_targets_owned_elsewhere={owned}", LogLevel.Trace);
         // THE LEVEL-UP PAIRS THE NIGHT STILL OWES AN ANSWER FOR, read ONCE here and consumed by both fields below.
         //
         // These used to be published straight off `Farmer.newLevels` while the modal was named from
@@ -2214,10 +2221,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// <para>
     /// A gift box is the one container here that was never an item. The farmhouse's starter gift box is built by the
     /// constructor the location calls (<c>Chest.cs:279-295</c>, `FarmHouse.cs:142`), which assigns the gift flags and no
-    /// item id, so <c>QualifiedItemId</c> migrates to <c>(O)0</c> (<c>Item.cs:338-341</c>) and the registry answers its
-    /// Error Item - a fact about a lookup miss, not about the box the player is looking at. <c>Chest</c> names itself in
-    /// its own constructor (<c>Chest.cs:226-230</c>), and the block still labels the row 箱子 from the family; this is
-    /// only the name a reader sees when it asks the row what stands there.
+    /// item id, so <c>QualifiedItemId</c> migrates to the id from <c>ParentSheetIndex</c> an <c>Object()</c> carries -
+    /// <c>(O)-1</c>, measured on the running save's own <c>FarmHouse</c> node (<c>2026-11-23</c>: one object at (3,7),
+    /// <c>Chest</c>, <c>itemId -1</c>, `giftbox`) - and the registry answers its Error Item, a fact about a lookup miss,
+    /// not about the box the player is looking at. <c>Chest</c> names itself in its own constructor (<c>Chest.cs:226-230</c>),
+    /// and the block still labels the row 箱子 from the family; this is only the name a reader sees when it asks the row
+    /// what stands there.
     /// </para>
     /// </summary>
     private static string DescribeContainerName(StardewValley.Objects.Chest chest) =>
@@ -2981,20 +2990,25 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     /// ("bring the cauliflower") be matched by the Agent without it having to map
     /// an opaque content id from model memory. Returns null when no item data
     /// exists, so callers never publish an empty string into the wire contract.
+    ///
+    /// <para>
+    /// THE ERROR ITEM IS A LOOKUP MISS, NOT A NAME. <c>ItemRegistry.Create</c> never fails: an id no type definition
+    /// lists comes back as the engine's Error Item, and its <c>DisplayName</c> is the translated
+    /// 「错误物品 (&lt;id&gt;)」 (<c>ItemRegistry.GetErrorItemName</c>, ItemRegistry.cs:401-411, through
+    /// <c>BaseItemDataDefinition.GetErrorData</c>, :29-32). Reading <c>DisplayName</c> off it made a miss
+    /// indistinguishable from a resolved name, so this resolver answered it as one and the caller had no way to tell
+    /// "the game has a name for this" from "the game has no row for this" - measured 2026-11-23 (<c>round96</c>): a
+    /// <c>worldObjectTargets</c> row for an object carrying no item data was published as 「错误物品 (-1)」.
+    /// <c>ItemRegistry.GetData</c> is the registry's own "is there a row" question and answers <c>null</c>, which is
+    /// the fact the caller needs: no call site in this Mod may publish the Error Item's name as if it were the item's.
+    /// </para>
     /// </summary>
     internal static string? ReadItemDisplayName(string? qualifiedOrRawItemId)
     {
         if (string.IsNullOrWhiteSpace(qualifiedOrRawItemId))
             return null;
-        try
-        {
-            string name = StardewValley.ItemRegistry.Create(qualifiedOrRawItemId, 1).DisplayName;
-            return string.IsNullOrWhiteSpace(name) ? null : name;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        string? name = StardewValley.ItemRegistry.GetData(qualifiedOrRawItemId)?.DisplayName;
+        return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
     /// <summary>

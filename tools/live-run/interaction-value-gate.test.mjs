@@ -225,6 +225,143 @@ test("a setback in the world that was never narrated fails the obstacle clause i
   assert.equal(report.measurements.timeline.refusals, 2);
 });
 
+// `round96`'s own 22 spoken lines, verbatim and at the minute each was spoken, read out of that run's bundle
+// (`.live-runs/game-ladder/2026-11-23T11-46-56-349Z-multiday_routine`, `result.json` `startedAtMs` 1795434414460).
+// The gate answered `failedClauses: interaction_value:obstacle_with_plan:obstacle_narrated_without_a_next_plan` over
+// `{ obstacles: 1, pairs: 0 }` - one setback line, no plan - for a day that narrated FIVE setbacks, each with the step
+// she took next:
+//
+//   idx 11 `手里一颗种子都没有…整地可以先干，种子得看着买`  - the shortage, and what she would do about it
+//   idx 12 `克林特又堵在门口了，拿熔炉图纸过来，等他把话说完` - the cutscene at Clint's door, and waiting it out
+//   idx 16 `门锁着，皮埃尔九点才开张。我在镇上先晃到点儿`     - a shut door, and killing time until nine
+//   idx 17 `河边这角站不进去…我就在杂货店门口干等九点`         - a blocked tile, and where she went instead
+//   idx 18 `…就差种子。店九点一开我就去扫货`                     - the missing seed, and the nine o'clock purchase
+//
+// Three of the five were not in the register at all (`都没有`/`锁着`/`不进去` were missing from the vocabulary) and two
+// were obstacles the plan list could not answer (`等X` and `就`). Nothing about the rule changed: an obstacle line with no
+// next step in it or in the line that follows still fails, and the two tests below this one hold that line.
+const ROUND96_SPEECH = [
+  [0.47, "醒得比鸡还早。手里还攥着斧头呢，昨天睡前就没放下。今天先奔哪块地，你说了算。"],
+  [1.74, "行，包我来理。石头和铜矿我留着打熔炉，那两颗花椰菜种子不卖了，一颗才八十金币，找块地种下去更划算。你路上小心。"],
+  [2.64, "刚摘的那颗花椰菜在手上了，空出来的垄我顺手补了一颗种子。剩下一颗没地儿搁，先揣着。"],
+  [4.34, "南头还有两颗熟的，我过去收了。你镇上那边办得怎么样？"],
+  [5.99, "三颗花椰菜全进货箱了，明早刘易斯过秤。石头和铜矿我留着，凑齐二十个铜就打熔炉。"],
+  [7.48, "出货箱边上这圈杂草总算割开了，顺手还摸了根大葱。你那头到底办完没？我这儿天一黑就收工。"],
+  [9.24, "这会儿风一凉下来，就想早点回屋窝着了。"],
+  [9.4, "天一黑，外面凉得挺快。我先回屋了。"],
+  [9.54, "进屋了。这一天下来，包也理利索了，三颗花椰菜也躺出货箱里等着过秤。你呢，镇上办完没有？"],
+  [10.73, "早，一觉到六点，睡得还挺沉。"],
+  [10.84, "出货的钱到账了，三颗花椰菜加一条鱼，兜里一千零六十。回头该去镇上把种子补齐。"],
+  [
+    11.35,
+    "刚才在屋里理包呢，这就出门。三格宽二十格长我记下了。不过得说一句：手里一颗种子都没有，六十颗买齐得一千二，我兜里就一千零六十，整地可以先干，种子得看着买。",
+  ],
+  [11.78, "克林特又堵在门口了，拿熔炉图纸过来，等他把话说完。"],
+  [18.03, "奇了，店里摆的全是沙漠节那些摊子，连防风草种子都没上架。我这趟怕是空手回了。"],
+  [19.94, "天快擦黑了，店里还没种子上架，我这就空手往回走，明早再说。"],
+  [22.87, "都十点了，我这才从店里出来，得赶紧往回赶。"],
+  [24.86, "门锁着，皮埃尔九点才开张。我在镇上先晃到点儿。"],
+  [25.11, "河边这角站不进去，绕来绕去都是死胡同。算了，我就在杂货店门口干等九点。"],
+  [26.15, "屋前那条三格宽二十格长的地我早翻好了，就差种子。店九点一开我就去扫货。"],
+  [28.76, "门前这一片二十三格全种上了，水也浇透。东头那两棵老苗我回头补浇。"],
+  [29.89, "东头那棵也浇上了，今天地里的活算是齐了。你镇上办完没有？"],
+  [33.4, "早，一觉睡到天亮。门前那片苗今天还得再浇一遍。"],
+];
+
+/** The three pairs the clause quotes (`pairs.slice(0, 3)`), each line answering its own setback. */
+const ROUND96_FIRST_PAIRS = [
+  "刚才在屋里理包呢，这就出门。三格宽二十格长我记下了。不过得说一句：手里一颗种子都没有，六十颗买齐得一千二，我兜里就一千零六十，整地可以先干，种子得看着买。",
+  "克林特又堵在门口了，拿熔炉图纸过来，等他把话说完。",
+  "门锁着，皮埃尔九点才开张。我在镇上先晃到点儿。",
+];
+
+test("round96's own 22 lines: five setbacks each answered with the next step, and the gate passes on them", (t) => {
+  const runDir = writeRun(t, {
+    timeline: [
+      lifecycle(0),
+      milestone(0, "0650"),
+      // The cutscene that held her at Clint's door - a real refusal, so the clause has a timeline to argue with too.
+      receipt(11.9, "rejected", "cutscene_active"),
+      milestone(33, "2610"),
+    ],
+    session: [
+      header(0),
+      playerLine("我今天去镇上办事，你把这活儿干一下。怎么安排你自己定。", 0.4),
+      ...ROUND96_SPEECH.map(([minutes, text]) => assistant(text, minutes)),
+      toolResult(34),
+    ],
+  });
+
+  const report = assessInteractionValue({ runDir });
+  const clause = clauseFor(report, "obstacle_with_plan");
+
+  assert.equal(clause.state, "pass", "the red this replays: obstacle_narrated_without_a_next_plan");
+  assert.equal(clause.reason, null);
+  assert.deepEqual(
+    { obstacles: clause.observed.obstacles, pairs: clause.observed.pairs },
+    { obstacles: 5, pairs: 5 },
+    "every setback this day narrated was answered in the same line, and none of them is a plan without a setback",
+  );
+  assert.equal(clause.observed.refusalsInTimeline, 1, "the cutscene refusal is in the timeline, so this is not a quiet run");
+  assert.deepEqual(
+    clause.evidence.map((entry) => [entry.obstacle.text, entry.plan.text]),
+    ROUND96_FIRST_PAIRS.map((text) => [text, text]),
+    "the clause quotes the line it paired, and the plan is the second half of that same line",
+  );
+  assert.equal(report.measurements.register.counts.obstacle, 5);
+  assert.deepEqual(
+    report.measurements.ratePopulation.droppedByRegister,
+    { step_report: 0, obstacle: 5, choice: 0, other: 7 },
+    "the twelve dropped lines are accounted for by the register that claimed them",
+  );
+  assert.equal(report.verdict, "passed", "all four clauses of this run's own transcript are met");
+});
+
+test("a question that asks whether the player is done is not a shortage, and 等着 is not a plan", (t) => {
+  // The two false readings the broadened vocabulary could have bought: `办完没有？` carries 没有 and asks a question, and
+  // `三颗花椰菜躺着等着过秤` carries 等着 and describes the shipping bin. Both are this run's own words.
+  const asking = "进屋了。这一天下来，包也理利索了，三颗花椰菜也躺出货箱里等着过秤。你呢，镇上办完没有？";
+  assert.equal(classifySpokenLine(asking).register, "player_or_day");
+  assert.equal(classifySpokenLine(asking).matched, "你");
+
+  const runDir = writeRun(t, {
+    timeline: [lifecycle(0), milestone(0, "0600"), milestone(33, "2610")],
+    session: [
+      header(0),
+      assistant(asking, 9.54),
+      assistant("早，一觉睡到天亮。门前那片苗今天还得再浇一遍。", 33.4),
+    ],
+  });
+
+  const clause = clauseFor(assessInteractionValue({ runDir }), "obstacle_with_plan");
+  assert.equal(clause.state, "not_exercised");
+  assert.equal(clause.reason, "no_setback_in_this_run");
+  assert.equal(clause.observed.obstacles, 0);
+});
+
+test("a setback narrated and left there still fails, and the reason names what is missing", (t) => {
+  // The rule this file exists for, unchanged: a companion that says the road is blocked and stops is not a companion.
+  const runDir = writeRun(t, {
+    timeline: [lifecycle(0), milestone(0, "0600"), milestone(40, "2200")],
+    session: [
+      header(0),
+      assistant("克林特又堵在门口了。", 3),
+      assistant("奇了，店里摆的全是沙漠节那些摊子。", 40),
+      toolResult(41),
+    ],
+  });
+
+  const clause = clauseFor(assessInteractionValue({ runDir }), "obstacle_with_plan");
+  assert.equal(clause.state, "fail");
+  assert.equal(clause.reason, "obstacle_narrated_without_a_next_plan");
+  assert.deepEqual({ obstacles: clause.observed.obstacles, pairs: clause.observed.pairs }, { obstacles: 1, pairs: 0 });
+  assert.deepEqual(
+    clause.evidence.map((entry) => entry.text),
+    ["克林特又堵在门口了。"],
+    "the line that narrated the setback is quoted, and nothing is offered as its plan",
+  );
+});
+
 test("a session that cannot be bound to the run is not_established, never a pass", (t) => {
   const runDir = writeRun(t, {
     timeline: [lifecycle(0), milestone(0, "0600")],

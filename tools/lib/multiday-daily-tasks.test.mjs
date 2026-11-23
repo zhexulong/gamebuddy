@@ -331,9 +331,14 @@ test("the_rotation_leads_with_concrete_decidable_work", (t) => {
     findings.push(`insufficient_patch_tasks:${String(patchTasks.length)} (${patchTasks.join(", ")})`);
   }
   const shopAndSowTasks = DAILY_TASK_ROTATION.filter((task) => {
-    const steps = TASK_PURPOSE_CRITERIA[task]?.steps ?? [];
-    const buys = steps.some((candidate) => candidate.actionId === "shop_purchase");
-    const sowsScaled = steps.some((candidate) => candidate.actionId === "plant_seed" && (candidate.count ?? 1) >= 15);
+    const entry = TASK_PURPOSE_CRITERIA[task];
+    const steps = entry?.steps ?? [];
+    const sows = entry?.sownBy ?? [];
+    const buys = steps.some((candidate) => candidate.actionId === "shop_purchase") || (entry?.boughtBy ?? []).includes("shop_purchase");
+    // The scale is the same fact in either shape: a counted `plant_seed` step, or a plot of tiles the sowing has to fill.
+    const sowsScaled =
+      steps.some((candidate) => candidate.actionId === "plant_seed" && (candidate.count ?? 1) >= 15) ||
+      (sows.some((proof) => proof.actionId === "plant_seed") && (entry?.plot?.tiles ?? 0) >= 15);
     return buys && sowsScaled;
   });
   if (shopAndSowTasks.length < 1) {
@@ -347,19 +352,41 @@ test("the_rotation_leads_with_concrete_decidable_work", (t) => {
 });
 
 test("a_step_with_a_count_is_not_satisfied_by_fewer_receipts", (t) => {
-  const countedTasks = DAILY_TASK_ROTATION.filter((task) =>
-    (TASK_PURPOSE_CRITERIA[task]?.steps ?? []).some((candidate) => candidate.count !== undefined),
+  const countedTasks = DAILY_TASK_ROTATION.filter(
+    (task) =>
+      (TASK_PURPOSE_CRITERIA[task]?.steps ?? []).some((candidate) => candidate.count !== undefined) ||
+      TASK_PURPOSE_CRITERIA[task]?.plot !== undefined,
   );
-  assert.ok(countedTasks.length > 0, "blocked: no rotation criterion declares a quantified step count");
+  assert.ok(countedTasks.length > 0, "blocked: no rotation criterion declares a count of any kind");
   const receiptsFor = (steps, reduceTaskIndex = -1) =>
     steps.flatMap((candidate, index) => {
       const actionId = candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId;
       const needed = candidate.count ?? 1;
       return stepReceipts(actionId, index === reduceTaskIndex ? needed - 1 : needed);
     });
+  // A PLOT DECLARES ITS COUNT AS TILES, so the shortfall is one tile and not one receipt: `plotReceipts(n)` sows and
+  // waters n distinct tiles, which is the only shape that satisfies the criterion at all.
+  const plotReceipts = (entry, tiles) => [
+    ...entry.boughtBy.flatMap((actionId) => stepReceipts(actionId, 1)),
+    // `stepReceipts` names tile `(12 + index, 4)` for each unit, so the two halves land on the SAME tiles.
+    ...stepReceipts("plant_seed", tiles),
+    ...stepReceipts("water_crop", tiles),
+  ];
   const findings = [];
   for (const task of countedTasks) {
     const entry = TASK_PURPOSE_CRITERIA[task];
+    if (entry.plot !== undefined) {
+      const declared = entry.plot.tiles;
+      const short = judgeTaskPurpose(task, plotReceipts(entry, declared - 1));
+      if (short.state !== "not_achieved")
+        findings.push(`${task}: a plot of ${String(declared - 1)}/${String(declared)} tiles answered ${short.state}`);
+      else if (!String(short.detail ?? "").includes(`${String(declared - 1)}/${String(declared)} tiles sown and watered`))
+        findings.push(`${task}: short verdict detail missed the tile count: ${String(short.detail ?? "")}`);
+      const full = judgeTaskPurpose(task, plotReceipts(entry, declared));
+      if (full.state !== "achieved")
+        findings.push(`${task}: a plot of ${String(declared)} tiles answered ${full.state} (${full.reasonCode})`);
+      continue;
+    }
     for (const [index, candidate] of entry.steps.entries()) {
       if (candidate.count === undefined) continue;
       if (!Number.isInteger(candidate.count) || candidate.count < 2) {

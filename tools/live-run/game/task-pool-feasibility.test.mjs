@@ -280,3 +280,88 @@ test("an unknown requirement is refused by name instead of being skipped", () =>
   assert.throws(() => describeRequirement({ fact: "a_fact_nobody_reads" }), /task_precondition_kind_unknown/u);
   assert.equal(readRequirement(satisfiedWorld(), { fact: "a_fact_nobody_reads" }).satisfied, false);
 });
+
+/**
+ * THE DEFECT: `a_sowing_day_is_refused_on_the_world_that_holds_no_seed`.
+ *
+ * <p>
+ * Measured on `round96` (the run published as `tools/_multiday_routine-round96.result.json`). Its opening snapshot held
+ * two cauliflower seeds and 500g, and `seedSupplyTargets` published THREE rows - three shops that stock the seed she was
+ * carrying - so this gate called both sowing tasks feasible. That reading was right about the world it read and it was
+ * the last moment that world existed: by the evening of the SAME day the family published ZERO rows (she had planted the
+ * cauliflower), and on day 2 she walked to Pierre's, found 「店里摆的全是沙漠节那些摊子，连防风草种子都没上架」, came back
+ * empty-handed, and left twenty of the strip's sixty tiles tilled. The day's criterion then filed
+ * `0/60 ... nothing_sown` against her.
+ * </p>
+ * <p>
+ * SO THE GATE IS RIGHT AND THE MOMENT IS WRONG. `seedSupplyTargets`'s population is the seeds SHE HOLDS crossed with the
+ * shops that stock them, so a world with no plantable seed in the pack can only answer "none stocked by a shop" - and
+ * that answer is DECISIVE, because the family is whole-world. Both halves are asserted here: the day-2 world is
+ * REFUSED, and the launch world was not. A reader who saw only the second would conclude the gate was wrong; the truth
+ * is that the world moved between the snapshot and the day, which is a scheduling defect and not a reading defect.
+ * </p>
+ *
+ * red-proof: inject  reading `seed_market` as satisfied when the family is empty (`usable` defaulting to true) -> the
+ *                   day-2 rows below go red naming both sowing tasks
+ *                   (tools/live-run/game/task-pool-feasibility.test.mjs)
+ */
+test("a_sowing_day_is_refused_on_the_world_that_holds_no_seed", (t) => {
+  // THE LAUNCH SNAPSHOT, in the run's own numbers: two seeds held, purse 500, three supply rows and all three stocked.
+  const launch = satisfiedWorld();
+  launch.money = 500;
+  launch.seedSupplyTargets = ["SeedShop", "JojaMart", "Sandy"].map((shopId) => ({
+    qualifiedItemId: "(O)474",
+    displayName: "Cauliflower Seeds",
+    heldCount: 2,
+    shopId,
+    price: 80,
+  }));
+  const atLaunch = evaluateTaskPoolFeasibility({ snapshot: launch });
+  const sowingTasks = ["clear_and_plant_long_patch", "buy_seeds_and_expand_plot"];
+  assert.ok(sowingTasks.length > 0, "the population is named here because it is two tasks of one shape");
+  for (const task of sowingTasks)
+    assert.deepEqual(
+      findingsFor(atLaunch, task),
+      [],
+      `${task}: two seeds held and three shops stocking them is what this gate called feasible at launch, and it has to ` +
+        `stay that reading - the defect is the moment, not the answer`,
+    );
+
+  // THE DAY-2 WORLD: she holds no plantable seed at all, so the family is measured and EMPTY, and the purse is 1060.
+  // The ground is the farm's own, so the only refused half is the seed - otherwise this test would pass for the wrong
+  // reason on a world with no field in it.
+  const sownDay = satisfiedWorld();
+  sownDay.revision = 178;
+  sownDay.money = 1060;
+  sownDay.seedSupplyTargets = [];
+  const onTheDay = evaluateTaskPoolFeasibility({ snapshot: sownDay });
+  const examined = [];
+  for (const task of sowingTasks) {
+    examined.push(task);
+    t.diagnostic(`a_sowing_day_is_refused_on_the_world_that_holds_no_seed:${task}`);
+    assert.deepEqual(
+      findingsFor(onTheDay, task),
+      [`task_precondition_unmet:${task}:a_seed_counter_she_can_buy_or_already_holds`],
+      `${task}: with no seed held and nothing named that stocks one, this day cannot be held - and the finding has to ` +
+        `name the seed counter rather than the ground`,
+    );
+  }
+  assert.deepEqual(
+    onTheDay.infeasibleTasks.filter((task) => sowingTasks.includes(task)),
+    sowingTasks,
+    "both sowing days are infeasible on that world, and neither is silently undecided",
+  );
+  // The ground half is still satisfied on the day-2 world: the strip and the plot both have their tiles, so the seed is
+  // the only thing that failed.
+  for (const task of sowingTasks)
+    for (const requirement of TASK_PRECONDITIONS[task]) {
+      if (requirement.fact !== "soil_ground") continue;
+      assert.equal(
+        readRequirement(sownDay, requirement).satisfied,
+        true,
+        `${task}: the ground was not what stopped this day - ${readRequirement(sownDay, requirement).detail}`,
+      );
+    }
+  t.diagnostic(`sowing days ${String(examined.length)} · refused on the day-2 world ${String(onTheDay.infeasible)}`);
+  assert.ok(examined.length > 0, "blocked: no sowing task was examined");
+});

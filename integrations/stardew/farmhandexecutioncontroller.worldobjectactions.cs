@@ -1191,6 +1191,69 @@ internal sealed partial class ExecutionManager
         return $"breakable_container_{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw))).ToLowerInvariant()[..16]}";
     }
 
+    /// <summary>
+    /// THE SUBJECTS ANOTHER FAMILY ALREADY NAMES, and the family that owns each: no subject listed here is described a
+    /// second time by <see cref="DiscoverWorldObjectTargets"/>.
+    ///
+    /// <para>
+    /// ONE OBJECT, ONE FAMILY. The farmhouse's starter gift box is the case that paid for this
+    /// (<c>FarmHouse.AddStarterGiftBox</c>, FarmHouse.cs:140-181): a <c>Chest</c> the location puts down at
+    /// <c>FarmHouseStarterSeedsPosition</c> with the parsnip seeds inside, built by the constructor that assigns the gift
+    /// flags and no item id (<c>Chest.cs:279-295</c>), so its <c>QualifiedItemId</c> migrates to <c>(O)-1</c>
+    /// (<c>Item.MigrateLegacyItemId</c>, Item.cs:338-341) - an id no data table has. Measured 2026-11-23
+    /// (<c>round96</c>): this walk published that box as <c>non_removable_object</c> with <c>qualifiedItemId "(O)-1"</c>
+    /// and the display 「错误物品 (-1)」, while the <c>chests</c> family was already naming the SAME box from
+    /// <c>chest.Name</c> with its fifteen parsnip seeds. Two spellings of one object, and the wrong one won: a reader was
+    /// handed an identity it could neither resolve nor act on, beside the true one it already had.
+    /// </para>
+    ///
+    /// <para>
+    /// THE RULE IS OWNERSHIP, NOT RESOLVABILITY. Withholding a row because its id does not resolve would also hide a
+    /// real object the game failed to put a data row behind; withholding it because its own family already describes it
+    /// hides nothing and removes the second spelling. Each entry therefore carries the OWNING FAMILY'S OWN predicate -
+    /// <see cref="IsStorageContainer"/> is the answer the container family publishes and counts by, not a second copy of
+    /// "is this a container" - so a subject that family does NOT publish (a mini shipping bin, an auto-loader, an
+    /// enricher) stays in this lane exactly as it was. Every entry also names that family's own PUBLISHER, so
+    /// `WorldObjectRowsDoNotRepeatASiblingFamilyTests` can ask the family whether it published the subject instead of
+    /// taking this table's word for it. An owned subject is COUNTED in <c>omitted</c>, so a row withheld here is stated
+    /// rather than silently gone, and logged by name through <see cref="DescribeSubjectsOwnedBySiblingFamilies"/>.
+    /// </para>
+    /// </summary>
+    internal static readonly IReadOnlyList<(string Family, string Discovery, Func<StardewValley.Object, bool> Owns)> SubjectsOwnedBySiblingFamilies =
+        Array.AsReadOnly(new (string Family, string Discovery, Func<StardewValley.Object, bool> Owns)[]
+        {
+            ("chests", nameof(DiscoverChestStates), subject => subject is StardewValley.Objects.Chest chest && IsStorageContainer(chest)),
+            ("mannequinTargets", nameof(DiscoverMannequinTargets), subject => subject is StardewValley.Objects.Mannequin),
+            ("signTargets", nameof(DiscoverSignTargets), subject => subject is StardewValley.Objects.Sign),
+        });
+
+    /// <summary>The family that already publishes this subject, or null when this lane is its only address.</summary>
+    private static string? OwningSiblingFamily(StardewValley.Object subject) =>
+        SubjectsOwnedBySiblingFamilies
+            .Where(entry => entry.Owns(subject))
+            .Select(entry => entry.Family)
+            .FirstOrDefault();
+
+    /// <summary>
+    /// The owned subjects this observation withheld from <c>worldObjectTargets</c>, family first so the line says which
+    /// family owns what and where (<c>chests:(O)-1@3,7</c>). The walk itself is static and holds no monitor, so the
+    /// snapshot builder logs this beside the count; the gate reads it as the same answer the walk applied.
+    /// </summary>
+    internal static IReadOnlyList<string> DescribeSubjectsOwnedBySiblingFamilies(Farmer player)
+    {
+        StardewValley.GameLocation? location = player.currentLocation;
+        if (location is null) return Array.Empty<string>();
+        List<string> owned = new();
+        foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
+        {
+            if (pair.Value is null) continue;
+            if (OwningSiblingFamily(pair.Value) is not { } family) continue;
+            if (!IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, TargetDiscoveryRadius)) continue;
+            owned.Add($"{family}:{pair.Value.QualifiedItemId}@{(int)pair.Key.X},{(int)pair.Key.Y}");
+        }
+        return owned;
+    }
+
     internal static IReadOnlyList<BridgeWorldObjectTarget> DiscoverWorldObjectTargets(Farmer player, out int omitted)
     {
         omitted = 0;
@@ -1267,6 +1330,12 @@ internal sealed partial class ExecutionManager
         // (`IsPublishedTargetTileInRadius`): on the map, and with a cardinal neighbour the body can stand on. That is a
         // bound on WHERE a row may name - a cell no body can be sent beside is a coordinate, not a target - and never a
         // filter on WHAT stands there.
+        //
+        // AND A SUBJECT ITS OWN FAMILY ALREADY NAMES IS NOT A SECOND ROW HERE (`SubjectsOwnedBySiblingFamilies`). The
+        // existence rule above is about what the WORLD holds, not about who gets to describe it: the container family
+        // publishes the farmhouse's starter gift box by name and contents, so a second row about the same box here
+        // states nothing new - it only states it with an id the registry cannot resolve. That row is COUNTED rather
+        // than dropped: `omitted` says a subject the room holds is not in this list.
         List<BridgeWorldObjectTarget> objectCandidates = new();
         foreach (KeyValuePair<Vector2, StardewValley.Object> pair in location.objects.Pairs)
         {
@@ -1274,6 +1343,11 @@ internal sealed partial class ExecutionManager
             StardewValley.Object placed = pair.Value;
             if (placed is null || !IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, TargetDiscoveryRadius))
                 continue;
+            if (OwningSiblingFamily(placed) is not null)
+            {
+                omitted++;
+                continue;
+            }
             bool container = placed is BreakableContainer;
             bool removable = !container && IsRemovableByAnyLaneTool(placed);
             string targetId = container

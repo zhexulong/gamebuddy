@@ -3,6 +3,12 @@ import { readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  clearedKinds,
+  constantsIn,
+  declaredKinds,
+  SOURCES,
+} from "../../gates/stardew/audit-stardew-clearing-vocabulary.mjs";
 import { readHostCompletionContracts } from "../../gates/stardew/check-stardew-postcondition-delta.mjs";
 import { modConstants } from "../../gates/stardew/check-stardew-snapshot-family-bounds.mjs";
 import { taskPurposeVerdict } from "../live-run/game/run-verdicts.mjs";
@@ -599,6 +605,39 @@ test("a purpose is either a criterion of more than one fact, a declared shape, o
         );
       continue;
     }
+    // A PLOT is the fourth kind: a count of tiles with no rectangle around them. It must name the count and the actions
+    // that prove each half, because a count nothing proves is a purpose nothing can decide - and its tile proofs are
+    // held to the same rule as a patch's, one field name per tile.
+    if (entry.plot !== undefined) {
+      assert.equal(entry.steps, undefined, `${task}: a count of tiles is not a step list`);
+      assert.equal(entry.patch, undefined, `${task}: a plot declares no rectangle, so it declares no shape`);
+      assert.ok(
+        Number.isInteger(entry.plot.tiles) && entry.plot.tiles > 1,
+        `${task}: a plot needs an integer count of more than one tile`,
+      );
+      assert.ok(
+        typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
+        `${task}: a plot criterion states its purpose`,
+      );
+      for (const kind of ["tilledBy", "sownBy", "wateredBy"])
+        assert.ok(
+          Array.isArray(entry[kind]) && entry[kind].length > 0,
+          `${task}: a plot must say which actions prove a tile is ${kind === "tilledBy" ? "tilled" : kind === "sownBy" ? "sown" : "watered"}`,
+        );
+      for (const proof of [...entry.tilledBy, ...entry.sownBy, ...entry.wateredBy])
+        assert.ok(
+          typeof proof.actionId === "string" && typeof proof.tileField === "string",
+          `${task}: every tile proof names an action and the evidence field that carries the tile`,
+        );
+      // The purchase half is an action and not a tile: a counter names a stack, never ground.
+      assert.ok(
+        Array.isArray(entry.boughtBy) && entry.boughtBy.length > 0,
+        `${task}: a plot called \`expand\` has to name the actions that bought the seed`,
+      );
+      for (const actionId of entry.boughtBy)
+        assert.equal(typeof actionId, "string", `${task}: \`boughtBy\` names action ids, not tile proofs`);
+      continue;
+    }
     assert.ok(
       typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
       `${task}: a criterion states its purpose`,
@@ -734,7 +773,18 @@ function receiptFactsOf(entry) {
       });
     }
   }
-  for (const proof of [...(entry.tilledBy ?? []), ...(entry.croppedBy ?? [])]) {
+  // A plot's purchase is a receipt the criterion reads, so it needs its own producer exactly as a step does.
+  for (const actionId of entry.boughtBy ?? [])
+    facts.push({
+      name: `\`${actionId}\`'s own postcondition`,
+      producer: { path: HOST_CONTRACT_PATH, anchor: `${actionId}: (claim) =>` },
+    });
+  for (const proof of [
+    ...(entry.tilledBy ?? []),
+    ...(entry.croppedBy ?? []),
+    ...(entry.sownBy ?? []),
+    ...(entry.wateredBy ?? []),
+  ]) {
     // The keys come from the row the Host folds over (`declaredEvidenceKeys`), so "the receipt cannot carry this" is
     // read from the declaration instead of remembered.
     const keys = declaredEvidenceKeys(proof.actionId);
@@ -850,14 +900,24 @@ test("every action a criterion reads is published by the Mod", async () => {
         );
       }
     }
-    // A shape criterion reads its tile proofs instead of steps, and the same rule governs them.
-    for (const proof of [...(entry.tilledBy ?? []), ...(entry.croppedBy ?? [])]) {
+    // A shape or a plot criterion reads its tile proofs instead of steps, and the same rule governs them.
+    for (const proof of [
+      ...(entry.tilledBy ?? []),
+      ...(entry.croppedBy ?? []),
+      ...(entry.sownBy ?? []),
+      ...(entry.wateredBy ?? []),
+    ]) {
       if (published.has(proof.actionId)) continue;
       drifting.push(
         experimental.has(proof.actionId)
           ? `${task} reads ${proof.actionId}, which the Mod registers Experimental - no run can dispatch it`
           : `${task} reads ${proof.actionId}, which the Mod does not publish`,
       );
+    }
+    // And a purchase a plot criterion reads is an action like any other.
+    for (const actionId of entry.boughtBy ?? []) {
+      if (published.has(actionId)) continue;
+      drifting.push(`${task} reads ${actionId}, which the Mod does not publish`);
     }
   }
   assert.deepEqual(drifting, [], drifting.join("; "));
@@ -895,20 +955,34 @@ test("hitting a task's declared actions with a bare succeeded receipt accomplish
 
 test("a succeeded receipt that carries no postcondition of its own is refused, and proves nothing", () => {
   const drifting = [];
+  let examined = 0;
+  // The actions a criterion reads, from whichever shape it declares - steps, or the several actions a plot names. A plot
+  // left out of this population would be the one criterion nobody checked the admission rule against.
+  const readActionIdsOf = (entry) => {
+    if (Array.isArray(entry?.steps))
+      return entry.steps.map((candidate) => (candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId));
+    if (entry?.plot === undefined) return null;
+    return [
+      ...new Set([
+        ...entry.boughtBy,
+        ...[...entry.tilledBy, ...entry.sownBy, ...entry.wateredBy].map((proof) => proof.actionId),
+      ]),
+    ];
+  };
   for (const task of ROTATION) {
-    const entry = TASK_PURPOSE_CRITERIA[task];
-    if (entry?.steps === undefined) continue;
-    const steps = entry.steps.map((candidate) =>
-      receipt(candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId, { evidence: null }),
-    );
+    const actionIds = readActionIdsOf(TASK_PURPOSE_CRITERIA[task]);
+    if (actionIds === null || actionIds.length === 0) continue;
+    examined += 1;
+    const steps = actionIds.map((actionId) => receipt(actionId, { evidence: null }));
     const judged = judgeTaskPurpose(task, steps);
     if (judged.state === "achieved") drifting.push(`${task}: a succeeded receipt with no evidence accomplished it`);
     assert.deepEqual(
       judged.refusedReceipts.map((refused) => refused.actionId).sort(),
-      steps.map((step) => step.actionId).sort(),
+      actionIds.slice().sort(),
       `${task}: every evidence-less success must be reported as refused`,
     );
   }
+  assert.ok(examined > 0, "blocked: no criterion reads a receipt, so nothing here was examined");
   assert.deepEqual(drifting, [], drifting.join("; "));
 });
 
@@ -1667,18 +1741,25 @@ test("round38's patch day is 3/60 of the declared strip, not `unproven`", () => 
     "not_achieved",
     "twenty tiles tilled in a 9x8 box and thirteen planted across eighteen columns is not a 3x20 strip, and the criterion has to be able to say so",
   );
-  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+  // THE BRANCH MOVED, AND THE COUNT WITH IT. The day's thirteen sowings ARE ground the day held - `plant_seed` only
+  // succeeds on tilled soil, so the ten tiles she sowed into without turning them herself are tilled ground too - so the
+  // plot it left is thirteen tiles, and thirteen tiles spread over eighteen columns fit inside no 3x20 window. The old
+  // reading stopped at the three tiles she both tilled and sowed THAT day and called them "inside the best 20x3 window",
+  // which is the same verb-counting defect `round96`'s day 3 exposed: the strip was judged by her swings.
+  assert.equal(judged.reasonCode, "tiles_do_not_form_the_declared_patch");
   assert.equal(judged.missingFact, null, "nothing is missing: the tiles are all in the receipts");
-  // The fraction, the shape, and where it sits: the (x, y, w, h) a reader needs to see that the work was somewhere
-  // else. Three tiles carry both her tilling and her seed; the other ten crops went into ground this day did not till.
-  // The components are what say so - thirteen sown, twenty tilled, seventeen of those tilled tiles never sown - and a
-  // verdict that reported `3/60` alone would leave a reader unable to tell this day from one that planted three seeds.
+  assert.equal(judged.patchTiles, 13, "thirteen tiles carry a crop on ground the day held");
+  assert.equal(judged.patchSownTiles, 13);
   assert.equal(
-    judged.detail,
-    "3/60 tiles tilled and sown (sown 13, tilled 20) · inside the best 20x3 window at 50,18 · seed_ledger:(O)472:2->1 · tilled_not_sown:17",
+    judged.patchTilledTiles,
+    20,
+    "twenty tiles the Hoe named, and no more: the ten she sowed into were never counted as swings she made",
   );
-  assert.deepEqual(judged.patchWindow, { x: 50, y: 18, width: 20, height: 3, count: 3 });
-  assert.equal(judged.patchTiles, 3);
+  assert.match(
+    judged.detail ?? "",
+    /^13\/60 tiles tilled and sown \(sown 13, tilled 20\)/u,
+    `the count and its components, in the day's own numbers; got ${String(judged.detail)}`,
+  );
 });
 
 test("a refused receipt of an action that proves a TILE still leaves the patch unproven", () => {
@@ -2260,5 +2341,446 @@ test("round90 day 1: a swing that landed without finishing is a reading, not an 
     judgeTaskPurpose("mine_delve", withoutWarrant).refusedReceipts,
     [{ actionId: "break_rock", reasonCode: "succeeded_receipt_without_its_own_postcondition" }],
     "a succeeded rock receipt carrying no evidence at all is still a receipt the contract cannot read",
+  );
+});
+
+/**
+ * `round96`'s OWN DAY-3 STRIP, tile for tile, and the two tiles two trees were standing on.
+ *
+ * <p>
+ * Measured 2026-11-23 on `.live-runs/game-ladder/2026-11-23T09-52-51-255Z-multiday_routine` (day 3, facts 255..551,
+ * replayed row for row from its `timeline.jsonl`): 58 `soil_tilled`, 58 `seed_planted` and 66 `crop_watered` inside the
+ * 20x3 window at `(44,21)`, and exactly two `till_soil` refusals - `(60,22)` and `(62,23)`, both
+ * `soil_not_diggable:occupied:tree` with `target=<tile>;diggable_tiles=..;diggable_nearest=..;search_radius=3`. The
+ * criterion answered `not_achieved` with `58/60 tiles tilled and sown ... inside the best 20x3 window at 44,21`, and the
+ * companion's own words that turn were 「就差两棵树占着的那两格。」
+ * </p>
+ * <p>
+ * THE TILES ARE DERIVED FROM THE WINDOW THE RUN ITSELF PROVED, not quoted as sixty pairs: the artifact is 6 MB outside
+ * the tree and a gate that cannot run without it is a gate nobody runs, but the shape of the day must be the run's - a
+ * full 20x3 strip minus the two tiles the trees hold. `TREE_REFUSED` carries the wire text the Mod published.
+ * </p>
+ */
+const ROUND96_WINDOW = Object.freeze({ x: 44, y: 21, width: 20, height: 3 });
+const ROUND96_TREES = Object.freeze([
+  [60, 22],
+  [62, 23],
+]);
+
+/** One `till_soil` the ground refused because something stands there, in the Mod's own reason code and evidence. */
+const TREE_REFUSED = (x, y, kind = "tree") =>
+  Object.freeze({
+    actionId: "till_soil",
+    state: "rejected",
+    reasonCode: `soil_not_diggable:occupied:${kind}`,
+    evidence: { detail: `target=${String(x)},${String(y)};diggable_tiles=37;diggable_nearest=59,21;search_radius=3` },
+  });
+
+/** The window's own sixty tiles, in the order `rectangle` walks a strip. */
+const round96Strip = () => {
+  const points = [];
+  for (let offsetY = 0; offsetY < ROUND96_WINDOW.height; offsetY += 1)
+    for (let offsetX = 0; offsetX < ROUND96_WINDOW.width; offsetX += 1)
+      points.push([ROUND96_WINDOW.x + offsetX, ROUND96_WINDOW.y + offsetY]);
+  return points;
+};
+
+/** The run's fifty-eight worked tiles: the window less the two the trees hold. */
+const ROUND96_WORKED = Object.freeze(
+  round96Strip().filter(([x, y]) => !ROUND96_TREES.some(([treeX, treeY]) => treeX === x && treeY === y)),
+);
+
+const ROUND96_DAY = Object.freeze([
+  ...patchReceipts(ROUND96_WORKED),
+  ...ROUND96_TREES.map(([x, y]) => TREE_REFUSED(x, y)),
+]);
+
+/**
+ * NAMED `round96`: the strip WAS laid, and the two tiles a tree stands on were never candidates.
+ *
+ * red-proof: inject  `patchExcludedTiles` returning `[]` (the criterion before this was measured), and this test goes
+ *                   red with `not_achieved · 58/60 tiles tilled and sown (sown 58, tilled 58) · inside the best 20x3
+ *                   window at 44,21` - which is what the run's own `result.json` published.
+ */
+test("round96's fifty-eight tiles inside a 20x3 strip are the whole strip, and the two a tree holds are named", () => {
+  // The fixture is the run only if the two refusals are exactly what it minted: a refused receipt the Host ADMITS would
+  // test a different branch, and no refusal at all would be a plain sixty-tile day.
+  const admissions = purposeReceipts(ROUND96_DAY);
+  assert.equal(admissions.admitted.length, ROUND96_WORKED.length * 2, "every worked tile is tilled and sown, and read");
+  assert.deepEqual(
+    admissions.refused,
+    [],
+    "a rejected tile is not a receipt nobody can read: it is the ground answering, and it must not turn the day unproven",
+  );
+
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", ROUND96_DAY);
+  assert.equal(
+    judged.state,
+    "achieved",
+    "fifty-eight worked tiles and two trees inside one 20x3 strip is the strip: the two were never candidates, so the " +
+      "criterion must not file them as missing (round96, day 3)",
+  );
+  assert.equal(judged.patchTiles, 58);
+  assert.deepEqual(judged.patchWindow, { x: 44, y: 21, width: 20, height: 3, count: 58 });
+  assert.deepEqual(
+    judged.patchExcludedTiles.map((entry) => `${entry.kind}@${entry.tile.x},${entry.tile.y}`),
+    ["tree@60,22", "tree@62,23"],
+    "the verdict names each excluded tile and its occupant, so a reader sees the two were excluded and not missed",
+  );
+  assert.equal(
+    judged.detail,
+    "58/60 tiles of a 20x3 strip at 44,21 are tilled and sown · excluded_by_occupant=tree@60,22,tree@62,23",
+    "the count stays against the DECLARED sixty and carries the exclusions beside it: 58/60 alone would read as a short day",
+  );
+  assert.deepEqual(
+    judged.limitingFactors,
+    [],
+    "nothing limited this day - the trees were not a limit on it, they are ground it was never asked to open",
+  );
+});
+
+/**
+ * THE GATE: `an_occupant_a_patch_day_cannot_clear_is_named_and_never_demanded:<task>:<kind>`.
+ *
+ * <p>
+ * THE DEFECT CLASS. A criterion that asks for N tiles of ground asks for whatever happens to stand on them, and the
+ * only thing that decides whether a tile is part of a patch is whether THIS day's own actions could make it ready. A
+ * hand-written list of "trees do not count" would answer for `round96` and leave the next occupant - a stump, a bush, a
+ * boulder the task's tools cannot break - exactly where the trees were. So the population is the Mod's own published
+ * occupant vocabulary (`TileOccupantKind.cs`), crossed with the Mod's own `Clears(...)` declarations, and the expectation
+ * is derived from the two: a kind some action of this task clears is a tile the day owes, and every other kind is a
+ * tile it was never asked for.
+ * </p>
+ * <p>
+ * WHAT IT PROVES, ONE KIND AT A TIME, on a strip that is otherwise complete: excluding the tile must turn `achieved`
+ * into `not_achieved` for a kind the day can clear, and must name the tile for a kind it cannot. Both directions matter -
+ * an exclusion rule that excused everything would call fifty-eight of sixty `achieved` for a weed too, which is the
+ * grade-nothing criterion this table has been burned by before.
+ * </p>
+ *
+ * red-proof: inject  excluding every occupant kind (dropping the `clearable.has(kind)` test) -> the `stone` row goes red
+ *                   naming the kind the day CAN break; inject  excluding none (`patchExcludedTiles` returning `[]`) ->
+ *                   every un-clearable row goes red naming the kind (tools/lib/task-purpose.test.mjs)
+ */
+test("an_occupant_a_patch_day_cannot_clear_is_named_and_never_demanded", (t) => {
+  const vocabulary = readFileSync(
+    new URL("../../integrations/stardew/src/Core/TileOccupantKind.cs", import.meta.url),
+    "utf8",
+  );
+  const kinds = declaredKinds(vocabulary);
+  assert.ok(
+    Array.isArray(kinds) && kinds.length > 0,
+    "blocked: the Mod's occupant vocabulary published no kinds, so this gate would examine nothing",
+  );
+  const clearers = clearedKinds(
+    readFileSync(new URL(`../../${String(SOURCES.catalog)}`, import.meta.url), "utf8"),
+    constantsIn(vocabulary),
+  );
+  assert.ok(clearers.size > 0, "blocked: the Mod's catalog declares no clearing action, so no kind could be owed");
+
+  const patchTasks = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.patch !== undefined);
+  assert.ok(patchTasks.length > 0, "blocked: no criterion asks for a shape, so nothing here was examined");
+
+  const violations = [];
+  let examined = 0;
+  for (const [task, entry] of patchTasks) {
+    const offered = new Set(DAILY_TASK_ACTION_HINTS[task]);
+    const strip = rectangle(entry.patch.width, entry.patch.height);
+    // The tile the occupant stands on: the strip's first, so the window is the declared one whichever way it is laid.
+    const [heldX, heldY] = strip[0];
+    const worked = strip.slice(1);
+    for (const kind of kinds) {
+      examined += 1;
+      const code = `an_occupant_a_patch_day_cannot_clear_is_named_and_never_demanded:${task}:${kind}`;
+      t.diagnostic(code);
+      const judged = judgeTaskPurpose(task, [...patchReceipts(worked), TREE_REFUSED(heldX, heldY, kind)]);
+      const owed = (clearers.get(kind) ?? []).some((actionId) => offered.has(actionId));
+      const named = (judged.patchExcludedTiles ?? []).map(
+        (excluded) => `${excluded.kind}@${excluded.tile.x},${excluded.tile.y}`,
+      );
+      if (owed) {
+        if (judged.state === "achieved")
+          violations.push(
+            `${code} - a ${kind} this task's own actions clear (${String(clearers.get(kind))}) was excused, so a strip ` +
+              `with one left standing reads finished`,
+          );
+        if (named.length > 0) violations.push(`${code} - a ${kind} the day can clear was reported excluded: ${named}`);
+        continue;
+      }
+      if (judged.state !== "achieved")
+        violations.push(
+          `${code} - no action of ${task} clears a ${kind}, so that tile was never a candidate: the day reported ` +
+            `${String(judged.state)} (${String(judged.reasonCode)}) for a strip it worked whole`,
+        );
+      if (named.length !== 1 || !named[0].startsWith(`${kind}@`))
+        violations.push(`${code} - the verdict names ${JSON.stringify(named)} instead of that one excluded tile`);
+    }
+  }
+  const summary = `kinds ${String(kinds.length)} · criteria ${String(patchTasks.length)} · examined ${String(examined)}`;
+  t.diagnostic(summary);
+  assert.ok(examined > 0, `blocked: ${summary} - nothing was examined`);
+  assert.deepEqual(violations, [], `${summary}\n${violations.join("\n")}`);
+});
+
+/**
+ * THE OTHER HALF OF `round96`: the run published as `tools/_multiday_routine-round96.result.json`, day for day.
+ *
+ * <p>
+ * Two days, two members of ONE rule. Day 3 (`buy_seeds_and_expand_plot`) bought fifty parsnip seeds at Pierre's, sowed
+ * twenty tiles, watered them, and turned FIVE of them with its own Hoe - and the criterion answered `till_soil 5/20`,
+ * because it counted the swing instead of the ground. Day 2 (`clear_and_plant_long_patch`) tilled twenty tiles and then
+ * could not sow one: she walked to the SeedShop and found 「店里摆的全是沙漠节那些摊子，连防风草种子都没上架」, came back with
+ * nothing, and the criterion filed `0/60 ... nothing_sown` against her.
+ * </p>
+ * <p>
+ * THE TILES ARE THE RUN'S OWN, from its `timeline.jsonl` (`.live-runs/game-ladder/2026-11-23T11-46-56-349Z-multiday_routine/`,
+ * facts 134..233 for the sown day and 48..134 for the strip day). Only the receipt SHAPES are built here, from the same
+ * contract-derived helpers the rest of this file uses, so the fixture fails if the wire changes and the artifact is 6 MB
+ * outside the tree.
+ * </p>
+ */
+/** Day 3's twenty sown tiles: the block at `(60,18)..(66,20)` less `(60,20)`, which the day tilled and never sowed. */
+const ROUND96_SOWN_TILES = Object.freeze([
+  [60, 18],
+  [61, 18],
+  [62, 18],
+  [63, 18],
+  [64, 18],
+  [65, 18],
+  [66, 18],
+  [60, 19],
+  [61, 19],
+  [62, 19],
+  [63, 19],
+  [64, 19],
+  [65, 19],
+  [66, 19],
+  [61, 20],
+  [62, 20],
+  [63, 20],
+  [64, 20],
+  [65, 20],
+  [66, 20],
+]);
+
+/** The five tiles the day's own Hoe turned, in the order its receipts named them. */
+const ROUND96_TURNED_TILES = Object.freeze([
+  [66, 19],
+  [65, 19],
+  [60, 19],
+  [61, 20],
+  [61, 18],
+]);
+
+/** Day 2's twenty tilled tiles, which are exactly the ground day 3 went on to sow. */
+const ROUND96_STRIP_TILLED = ROUND96_SOWN_TILES;
+
+/** The purchase itself, verbatim from the run's own `item_purchased` terminal. */
+const ROUND96_PURCHASE = receipt("shop_purchase", {
+  reasonCode: "item_purchased",
+  evidence: {
+    detail:
+      "shop=SeedShop;location=SeedShop;owner=Pierre;entry=npc_owner;distance_required=none;why=engine_has_no_gate_for_npc_counters;item=(O)472;requested=50;purchased=50;unit_price=20;money_before=1060;money_after=60;owned_before=0;owned_after=50;gained=50;stock_before=unlimited;stock_after=unlimited;owner_tile=4,17;menu_closed=true;clicks=50;drops=50",
+  },
+});
+
+/**
+ * The sown day's receipts: five turnings, twenty sowings, twenty-one waterings (the last one is a crop at `(29,17)` the
+ * day also watered), and the purchase.
+ */
+const ROUND96_SOWN_DAY = Object.freeze([
+  ...ROUND96_TURNED_TILES.map(([x, y]) => TILLED(x, y)),
+  ...ROUND96_SOWN_TILES.map(([x, y]) => PLANTED(x, y)),
+  ...ROUND96_SOWN_TILES.map(([x, y]) => WATERED(x, y)),
+  WATERED(29, 17),
+  ROUND96_PURCHASE,
+]);
+
+/**
+ * NAMED `round96, day 3`: the plot was laid, and five swings were not twenty.
+ *
+ * red-proof: inject  restoring `buy_seeds_and_expand_plot` to its step list (`till_soil 20`) -> this test reads
+ *                   `not_achieved · till_soil 5/20 · plant_seed 20/20 · water_crop 20/20`, which is what the run's own
+ *                   `result.json` published (tools/lib/task-purpose.test.mjs)
+ */
+test("round96's sown day is the twenty tiles it left, whatever the Hoe did", () => {
+  // The fixture is the run only if the wire admits every one of these: a refused receipt would make the day answer
+  // `unproven` and this test would be measuring admission instead of the criterion.
+  const admissions = purposeReceipts(ROUND96_SOWN_DAY);
+  assert.deepEqual(admissions.refused, [], "every receipt of the sown day is its own postcondition");
+  assert.equal(admissions.admitted.length, ROUND96_SOWN_DAY.length);
+
+  const judged = judgeTaskPurpose("buy_seeds_and_expand_plot", ROUND96_SOWN_DAY);
+  assert.equal(
+    judged.state,
+    "achieved",
+    "twenty tiles sown and watered is a plot: the ground she sowed into was already tilled, which is what a farmhand " +
+      "uses, and `round96`'s own day answered `till_soil 5/20` against it",
+  );
+  assert.equal(judged.plotTiles, 20);
+  assert.equal(judged.plotSownTiles, 20);
+  assert.equal(
+    judged.plotWateredTiles,
+    21,
+    "twenty-one waterings and a plot of twenty, because one of them was a crop somewhere else",
+  );
+  assert.equal(judged.plotAlreadyTilled, 15, "fifteen of the twenty were ground the day did not open itself");
+  assert.equal(judged.plotBoughtActions.length, 1, "the seed was bought, which is the half the task's name carries");
+  assert.equal(
+    judged.detail,
+    "20/20 tiles sown and watered (sown 20, watered 21) · tiles_not_under_crop_before=20 · already_tilled=15 · " +
+      "bought=shop_purchase · tiles 60,18 61,18 62,18 63,18 64,18 65,18 66,18 60,19 61,19 62,19 63,19 64,19 65,19 " +
+      "66,19 61,20 62,20 63,20 64,20 65,20 66,20",
+    "the reading names the plot tile by tile, and keeps the two numbers that make `expand` a measurement: the tiles that " +
+      "were not under crop before, and the ones she had to open herself",
+  );
+  assert.deepEqual(judged.limitingFactors, [], "nothing limited a day that laid its plot");
+});
+
+/**
+ * THE GATE: `a_plot_is_counted_in_tiles_and_never_in_receipts:<task>`.
+ *
+ * <p>
+ * THE DEFECT CLASS. A criterion made of counted steps counts RECEIPTS, and a receipt names whatever tile it landed on:
+ * twenty sowings on one tile read as twenty sown tiles. `round96` is the other direction of the same defect - twenty
+ * receipts can also be the wrong twenty - and the whole reason `buy_seeds_and_expand_plot` stopped being a step list.
+ * So the population is every criterion that declares a plot, read from `TASK_PURPOSE_CRITERIA`, and the property is the
+ * one a step list cannot state: the count is of DISTINCT tiles, the sowings and the waterings are on the SAME tiles, and
+ * the tiles are on one map.
+ * </p>
+ *
+ * <p>
+ * red-proof: inject  judging a plot by receipt counts (matching the count of admitted receipts) -> the one-tile row
+ *                   goes red naming the task, and judging it without the same-tile rule -> the split-row goes red
+ *                   (tools/lib/task-purpose.test.mjs)
+ * </p>
+ */
+test("a_plot_is_counted_in_tiles_and_never_in_receipts", (t) => {
+  const plotTasks = Object.entries(TASK_PURPOSE_CRITERIA).filter(([, entry]) => entry.plot !== undefined);
+  assert.ok(plotTasks.length > 0, "blocked: no criterion declares a plot, so nothing here was examined");
+  const violations = [];
+  let examined = 0;
+  for (const [task, entry] of plotTasks) {
+    const declared = entry.plot.tiles;
+    const plots = [
+      {
+        label: "every receipt on ONE tile",
+        receipts: [
+          ...Array.from({ length: declared }, () => PLANTED(12, 4)),
+          ...Array.from({ length: declared }, () => WATERED(12, 4)),
+          ...entry.boughtBy.map((actionId) => (actionId === "shop_purchase" ? ROUND96_PURCHASE : receipt(actionId))),
+        ],
+        tiles: 1,
+      },
+      {
+        label: "sown on one field and watered on another",
+        receipts: [
+          ...rectangle(declared, 1, 12, 4).map(([x, y]) => PLANTED(x, y)),
+          ...rectangle(declared, 1, 12, 9).map(([x, y]) => WATERED(x, y)),
+          ...entry.boughtBy.map((actionId) => (actionId === "shop_purchase" ? ROUND96_PURCHASE : receipt(actionId))),
+        ],
+        tiles: 0,
+      },
+      {
+        label: "the declared tiles, sown and watered",
+        receipts: [
+          ...rectangle(declared, 1, 12, 4).map(([x, y]) => PLANTED(x, y)),
+          ...rectangle(declared, 1, 12, 4).map(([x, y]) => WATERED(x, y)),
+          ...entry.boughtBy.map((actionId) => (actionId === "shop_purchase" ? ROUND96_PURCHASE : receipt(actionId))),
+        ],
+        tiles: declared,
+      },
+      {
+        label: "the declared tiles with no purchase",
+        receipts: [
+          ...rectangle(declared, 1, 12, 4).map(([x, y]) => PLANTED(x, y)),
+          ...rectangle(declared, 1, 12, 4).map(([x, y]) => WATERED(x, y)),
+        ],
+        tiles: declared,
+        bought: false,
+      },
+    ];
+    for (const plot of plots) {
+      examined += 1;
+      const code = `a_plot_is_counted_in_tiles_and_never_in_receipts:${task}: ${plot.label}`;
+      t.diagnostic(code);
+      const judged = judgeTaskPurpose(task, plot.receipts);
+      if (judged.plotTiles !== plot.tiles)
+        violations.push(`${code} - the verdict counts ${String(judged.plotTiles)} tiles, not ${String(plot.tiles)}`);
+      const shouldAchieve = plot.bought !== false && plot.tiles >= declared;
+      if (shouldAchieve && judged.state !== "achieved")
+        violations.push(`${code} - a finished plot answered ${String(judged.state)} (${String(judged.reasonCode)})`);
+      if (!shouldAchieve && judged.state === "achieved")
+        violations.push(`${code} - it answered achieved with ${String(judged.plotTiles)} plot tiles`);
+    }
+  }
+  const summary = `plot criteria ${String(plotTasks.length)} · readings ${String(examined)}`;
+  t.diagnostic(summary);
+  assert.ok(examined > 0, `blocked: ${summary} - nothing was examined`);
+  assert.deepEqual(violations, [], `${summary}\n${violations.join("\n")}`);
+});
+
+/**
+ * THE SAME RULE, THE OTHER MEMBER: a strip a day SOWS is a strip the day laid.
+ *
+ * <p>
+ * `clear_and_plant_long_patch` reads a rectangle rather than a count, and it inherited the identical defect: a tile
+ * counted only when the day's own Hoe named it, so a family that lays its strip over ground tilled yesterday would be
+ * filed `0/60` with sixty crops standing in it. A sowing proves the ground it went into, so the strip is the tiles that
+ * carry a crop on ground the day HOLDS - and the one observation that can contradict a receipt, a `soilTiles` row whose
+ * own state says the Hoe can turn that tile now, still wins.
+ * </p>
+ *
+ * red-proof: inject  `patchReading` reading `facts.tilled` instead of `facts.ground` -> the sown strip answers
+ *                   `not_achieved · 0/60` (tools/lib/task-purpose.test.mjs)
+ */
+test("a strip sown into ground an earlier day tilled is a strip this day laid", () => {
+  const strip = rectangle(3, 20);
+  const sownOnly = judgeTaskPurpose(
+    "clear_and_plant_long_patch",
+    strip.map(([x, y]) => PLANTED(x, y)),
+  );
+  assert.equal(
+    sownOnly.state,
+    "achieved",
+    "sixty sowings inside one 3x20 strip are the strip: `plant_seed` only succeeds on tilled soil, so the receipts " +
+      "prove the ground they went into as well as the seed they spent",
+  );
+  assert.equal(sownOnly.patchTiles, 60);
+  assert.equal(sownOnly.patchTilledTiles, 0, "the Hoe named no tile, and the verdict does not pretend it did");
+  assert.match(sownOnly.detail ?? "", /^60\/60 tiles of a 3x20 strip at/u);
+
+  // THE CONTRADICTION WINS. The same sixty sowings against an observation that says the Hoe can turn those tiles now is
+  // not a strip laid: one receipt says the seed went in and the other says the ground is open, and a criterion that
+  // picked the convenient one would report untilled ground as a finished plot.
+  const contradicted = judgeTaskPurpose("clear_and_plant_long_patch", strip.map(([x, y]) => PLANTED(x, y)), {
+    location: "Farm",
+    soilTiles: strip.map(([x, y]) => ({ x, y, hoeDirt: false })),
+  });
+  assert.equal(contradicted.state, "not_achieved");
+  assert.match(contradicted.detail ?? "", /0\/60/u);
+});
+
+/**
+ * `round96`'s STRIP DAY, WHICH THIS CRITERION WAS RIGHT TO REFUSE.
+ *
+ * <p>
+ * Day 2 tilled twenty tiles of the ground the sown day later used, could not buy a seed, and went to bed. The reading is
+ * `0/60 ... tilled 20 ... nothing_sown` and it is TRUE: the day did not lay the strip. What was wrong was that the day
+ * was scheduled at all - see `a_sowing_day_is_refused_on_the_world_that_holds_no_seed` in
+ * `tools/live-run/game/task-pool-feasibility.test.mjs`, which is the half of this measurement the pool owns.
+ * </p>
+ */
+test("round96's strip day left twenty tilled tiles and no plot, and the count says so", (t) => {
+  const day = ROUND96_STRIP_TILLED.map(([x, y]) => TILLED(x, y));
+  const judged = judgeTaskPurpose("clear_and_plant_long_patch", day);
+  t.diagnostic(`round96 day 2: ${String(judged.state)} · ${String(judged.detail)}`);
+  assert.equal(judged.state, "not_achieved", "twenty tilled tiles are not a sown strip, and nothing here excuses it");
+  assert.equal(judged.patchTiles, 0, "no tile carries a crop, so no tile is part of the plot");
+  assert.equal(judged.patchTilledTiles, 20, "twenty tiles the Hoe named - that part of the day is in the reading");
+  assert.equal(judged.patchSownTiles, 0);
+  assert.ok(
+    judged.limitingFactors.includes("nothing_sown"),
+    `the limit is the missing seed, and it has to be named: ${String(judged.limitingFactors)}`,
   );
 });

@@ -1146,7 +1146,14 @@ public sealed record BridgeSnapshot(
     // (placement candidates, objects, placed furniture, empty pedestals), and the reason it had to exist: the object half
     // publishes EVERYTHING standing in `location.objects` now, so a farmhouse or a cluttered farm routinely offers more
     // than the sixteen object rows one budget admits, and a reader receiving sixteen cannot tell that room from one with
-    // exactly sixteen. Null when the family itself was not measured (none of its capabilities advertised).
+    // exactly sixteen.
+    //
+    // A CAP IS NOT THE ONLY REASON A ROW IS ABSENT FROM THE LIST, and both reasons are the same fact here - "the room
+    // holds a subject this list does not name": a subject another family already publishes (a storage container, a
+    // mannequin, a sign) is withheld by `SubjectsOwnedBySiblingFamilies` and counted here too, and the Mod logs which
+    // family owns which subject and where (`world_object_targets_owned_elsewhere`). Anything published by exactly one
+    // family is still published; what this count never means is "the row was dropped because its item id looked wrong".
+    // Null when the family itself was not measured (none of its capabilities advertised).
     // Defaulted and LAST for the same reason as its siblings above: the positional list is already closed.
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? WorldObjectTargetsOmitted = null);
 
