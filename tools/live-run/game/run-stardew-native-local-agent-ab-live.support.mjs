@@ -13,18 +13,20 @@ import {
   buildSnapshotCensus,
   measureActionBreadth,
   readActionBreadthSurface,
+  unmeasuredActionBreadth,
 } from "../../lib/action-breadth.mjs";
 import { appendTurnMemory, summarizeHostMemory, turnMemoryPoint } from "../../lib/live-run-memory.mjs";
+import { gapClause, measureOrNotMeasured } from "../../lib/measurement-boundary.mjs";
 import { sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 import { decideDayWake, WAKE_REASON, WAKE_REASONS } from "../../lib/multiday-loop.mjs";
 import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
+import { publishCadence } from "./action-cadence-reading.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { createGameClock } from "./game-clock.mjs";
 import { shouldAbandonTurnForTransport } from "./transport-loss.mjs";
 import { attributeTurnSpeech } from "./turn-speech.mjs";
-import { publishCadence } from "./action-cadence-reading.mjs";
 
 // The support the runner's own assertions read: the sources they compare against, the extractors that evaluate a
 // declaration on its own, and the fixtures a scenario needs. Declarations only - nothing here asserts anything, so the
@@ -508,6 +510,11 @@ export function builderGlobals(overrides = {}) {
     // census builder are real too - the denominator of a run is its OWN published census, and a double here would let
     // a test pass against a world the runner could never produce.
     measureActionBreadth,
+    // The one boundary a clause's measurement stands behind, and the two shapes a gap publishes in: the test that
+    // proves a throwing reader cannot abort the assembly drives the REAL helper, so a double here would answer for it.
+    measureOrNotMeasured,
+    gapClause,
+    unmeasuredActionBreadth,
     actionBreadthClause,
     deliveryAccountClause,
     readActionBreadthSurface,

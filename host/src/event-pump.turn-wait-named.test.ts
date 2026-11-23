@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  BODY_HOLD,
+  BODY_HOLDS,
+  type BodyHeldBy,
   CLOSED_WITH_NOTHING_WAIT_FOR,
   CLOSED_WITH_NOTHING_WAIT_FORS,
   CompanionEventPump,
@@ -270,8 +273,14 @@ const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
  * </p>
  */
 test("a_turn_that_closed_with_nothing_names_when_it_looks_again: the wait is named, and the look has a moment", async () => {
-  const conditions: Array<Readonly<{ reason: TurnWithoutActionReason; waitingFor: string; lookAgainInMs: number }>> =
-    [];
+  const conditions: Array<
+    Readonly<{
+      reason: TurnWithoutActionReason;
+      waitingFor: string;
+      lookAgainInMs: number;
+      heldBy: BodyHeldBy | undefined;
+    }>
+  > = [];
   const unnamed: TurnWithoutActionReason[] = [];
   for (const reason of TURN_WITHOUT_ACTION_REASONS) {
     const pump = await pumpAfterEmptyTurn(reason);
@@ -280,8 +289,25 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: the wait is nam
       unnamed.push(reason);
       continue;
     }
-    conditions.push({ reason, waitingFor: wait.waitingFor, lookAgainInMs: wait.lookAgainInMs });
+    conditions.push({ reason, waitingFor: wait.waitingFor, lookAgainInMs: wait.lookAgainInMs, heldBy: wait.heldBy });
   }
+
+  // THE HOLDER HALF, added with round94: a wait for the BODY must name who holds it, in a member the pump's own list
+  // declares - because a warp, a mounted menu and a cutscene are three different waits with three different next steps.
+  // Both directions are refused: a body wait with no holder at all, and a holder whose source the pump does not declare
+  // (or whose name the source should have and does not).
+  const bodyWaits = conditions.filter((entry) => entry.waitingFor === CLOSED_WITH_NOTHING_WAIT_FOR.freeBody);
+  const holderless = bodyWaits.filter((entry) => entry.heldBy === undefined).map((entry) => entry.reason);
+  const unnamable = bodyWaits
+    .filter(
+      (entry) =>
+        entry.heldBy !== undefined &&
+        (!BODY_HOLDS.includes(entry.heldBy.source) ||
+          (entry.heldBy.source === BODY_HOLD.unnamedEngineGate
+            ? entry.heldBy.holder !== undefined
+            : (entry.heldBy.holder ?? "").length === 0)),
+    )
+    .map((entry) => entry.reason);
 
   const namedReasons = new Set(conditions.map((entry) => entry.reason));
   const closedWithNothing = ROUND84.account.closedWithNothing;
@@ -296,7 +322,13 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: the wait is nam
     `opened-by-a-milestone ${String(openedByAMilestone)} · named-wait ${String(namedWait)}`;
   console.log(
     `a_turn_that_closed_with_nothing_names_when_it_looks_again: ${line} · named ` +
-      `{${conditions.map((entry) => `${entry.reason}→${entry.waitingFor} in ${seconds(entry.lookAgainInMs)}`).join(", ")}} · ` +
+      `{${conditions
+        .map(
+          (entry) =>
+            `${entry.reason}→${entry.waitingFor} in ${seconds(entry.lookAgainInMs)}` +
+            `${entry.heldBy === undefined ? "" : ` (held by ${entry.heldBy.holder ?? entry.heldBy.source})`}`,
+        )
+        .join(", ")}} · ` +
       `clock openers {${clockWoken
         .map((turn) => `${turn.batchId.slice(0, 8)} ${seconds(turn.waitedMs)} → ${turn.nextOpenedBy}`)
         .join(", ")}} · source ${ROUND84.run}`,
@@ -332,6 +364,26 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: the wait is nam
     `${line}: these conditions a turn can close with leave NO named wait, so the run's own history cannot say ` +
       `what it was waiting for when one of them closed it (${CLOSED_WITH_NOTHING_WAIT_FOR.freshReading} / ` +
       `${CLOSED_WITH_NOTHING_WAIT_FOR.freeBody} / ${CLOSED_WITH_NOTHING_WAIT_FOR.nextWorldFact} are the names the pump has)`,
+  );
+  // AND THE BODY'S WAIT NAMES WHO, from the pump's own closed list of sources - a wait that says the body is held and
+  // cannot say by what is the shape `nothing_owed` had, one level down.
+  assert.ok(
+    bodyWaits.length > 0,
+    `${line}: no wait for the body was examined, so the holder half below would pass by absence`,
+  );
+  assert.deepEqual(
+    holderless,
+    [],
+    `${line}: these conditions leave a wait for the BODY and name no holder, so a reader cannot tell a warp (wait for the ` +
+      `owner's receipt) from a menu (answer it) from a cutscene (wait it out) - ${BODY_HOLDS.join(" / ")} are the sources ` +
+      `the pump declares`,
+  );
+  assert.deepEqual(
+    unnamable,
+    [],
+    `${line}: these body waits carry a holder the pump cannot stand behind - either a source that is not one of ` +
+      `${BODY_HOLDS.join(" / ")}, a named source with no name, or \`${BODY_HOLD.unnamedEngineGate}\` with a name it by ` +
+      `definition does not have (${bodyWaits.map((entry) => `${entry.reason}:${JSON.stringify(entry.heldBy)}`).join(", ")})`,
   );
 });
 
@@ -487,7 +539,7 @@ test("a_turn_that_closed_with_nothing_names_when_it_looks_again: a turn that act
   assert.equal(flushed.kind, "opened", `the settlement opens the turn that ends the wait (${flushed.kind})`);
   assert.deepEqual(
     { ...pump.closedWithNothing },
-    { shape: undefined, waitingFor: undefined, lookAgainInMs: undefined, turn: undefined },
+    { shape: undefined, waitingFor: undefined, lookAgainInMs: undefined, turn: undefined, heldBy: undefined },
     "a turn that acted leaves no wait to name",
   );
 });

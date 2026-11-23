@@ -576,10 +576,52 @@ export const CLOSED_WITH_NOTHING_WAIT_FORS = Object.freeze(Object.values(CLOSED_
 export type ClosedWithNothingWaitFor = (typeof CLOSED_WITH_NOTHING_WAIT_FORS)[number];
 
 /**
+ * Where a held body comes from: the three facts this pump can read, which are not a copy of the Mod's own kinds.
+ *
+ * <p>
+ * A HELD BODY IS NOT ONE CONDITION. `round94`'s closed accounting could say the body was not free and nothing else, so a
+ * reader of `a_held_body` could not tell a warp the game was running, a menu the engine had mounted, and a cutscene that
+ * absorbs the actor - and those three have three different next steps: wait for the owner's own receipt, answer or dismiss
+ * the modal, wait for the performance to end. One word over three facts is the defect this night has been deleting.
+ * </p>
+ * <p>
+ * THE MEMBERS ARE THE SOURCES, NOT THE KINDS. `disposition` quotes whatever `actorDispositionKind` the reading published
+ * (`modal`, `event`, `pass_out`, `transient`, and any kind the Mod adds later) so this file never holds a second copy of
+ * the wire's enum: `game-world-vocabulary.ts` owns what each kind's way out is, and it already renders the holder from the
+ * same two fields (`formatBodyState` -> `modal/DialogueBox`). What is decided here is only WHICH of the pump's three
+ * observables answered, because that is the half that changes the fix.
+ * </p>
+ */
+export const BODY_HOLD = Object.freeze({
+  /** The pump is holding delivery because the Mod said the body belongs to a world transition (`body_owned_by_*`). */
+  worldTransition: "world_transition",
+  /** The reading named an `actorDispositionKind` (and the body is held): the Mod's own word, quoted verbatim. */
+  disposition: "disposition",
+  /** The reading says the body cannot act and names no holder: the engine's gate with nothing said about why. */
+  unnamedEngineGate: "unnamed_engine_gate",
+});
+
+export const BODY_HOLDS = Object.freeze(Object.values(BODY_HOLD));
+
+export type BodyHoldSource = (typeof BODY_HOLDS)[number];
+
+/**
+ * Who is holding the body, in the Mod's own words: the holder half of `a_held_body`.
+ *
+ * `holder` is the token the run's own body line already prints - the Mod's `body_owned_by_*` refusal code, or
+ * `actorDispositionKind` with its `/detail` - and it is `undefined` only for `unnamedEngineGate`, where the honest reading
+ * is that nothing named the holder. A consumer must therefore be able to print `undefined` without inventing a word for it.
+ */
+export type BodyHeldBy = Readonly<{
+  source: BodyHoldSource;
+  holder: string | undefined;
+}>;
+
+/**
  * The wait the last delivered turn left, or nothing when that turn acted.
  *
  * <p>
- * THREE FIELDS, each `undefined` in exactly one situation: no turn has closed with nothing (`shape`), so there is no wait
+ * FOUR FIELDS, each `undefined` in exactly one situation: no turn has closed with nothing (`shape`), so there is no wait
  * to name and no moment to look - which is a different answer from naming one and looking at `0`.
  * </p>
  */
@@ -600,6 +642,13 @@ export type ClosedWithNothingWait = Readonly<{
    * only its own guard could stop. The index is what makes "this wait has already been looked at" a fact.
    */
   turn: number | undefined;
+  /**
+   * Who held the body, when the wait is the body - and `undefined` for every other wait, and for a turn that acted.
+   *
+   * CAPTURED AT THE SETTLEMENT, not recomputed: a hold can end between this turn and the moment a reader asks, and a
+   * reading that moved would then describe a different turn than the one this wait belongs to (`turn`).
+   */
+  heldBy: BodyHeldBy | undefined;
 }>;
 
 /** The ONE reading of what a turn that closed with `reason` waits for - the counter's condition, not a second guess. */
@@ -2486,7 +2535,13 @@ export class CompanionEventPump {
    * are one moment rather than two that can drift. `undefined` is the honest reading for a pump whose last turn acted.
    */
   #lastClosedWithNothing:
-    | Readonly<{ shape: TurnWithoutActionShape; reason: TurnWithoutActionReason; atMs: number; turn: number }>
+    | Readonly<{
+        shape: TurnWithoutActionShape;
+        reason: TurnWithoutActionReason;
+        atMs: number;
+        turn: number;
+        heldBy: BodyHeldBy | undefined;
+      }>
     | undefined;
   /**
    * Turns that produced work and delivered no speech, one count per opener, beside `#emptyTurns`.
@@ -4826,20 +4881,53 @@ export class CompanionEventPump {
   }
 
   /**
-   * Whether the engine is holding the actor right now: a menu, a native performance, or a transition it has not finished.
+   * Who is holding the body right now, in the Mod's own words, or `undefined` when it is free (`BodyHeldBy`).
    *
    * <p>
-   * A HELD BODY IS NOT SILENCE (`IDLE_WAIT_REASON.heldBody`). The three ways are the Mod's own three, and each of them
-   * publishes the fact that ends it: `actionable: false` is the engine's admission gate (a menu, a pass-out, an animation),
-   * `actorDispositionKind: "event"` is a performance absorbing the actor (`#nativePerformancePlaying`, the same reading
-   * `#waitsForThePerformanceToEnd` holds a wake on), and a world transition is a body owned by a warp it has not got through
-   * (`#worldTransition`, ended by the owner's own receipt or by a reading that shows the body free). Nothing here reads a
-   * clock, so "held" can only be answered by the game saying so - which is what makes the wait invokable rather than timed.
+   * A HELD BODY IS NOT SILENCE (`IDLE_WAIT_REASON.heldBody`), AND IT IS NOT ONE CONDITION EITHER. The three ways are the
+   * Mod's own three, and each of them publishes the fact that ends it: `actionable: false` is the engine's admission gate (a
+   * menu, a pass-out, an animation), `actorDispositionKind: "event"` is a performance absorbing the actor
+   * (`#nativePerformancePlaying`, the same reading `#waitsForThePerformanceToEnd` holds a wake on), and `#worldTransition`
+   * is a body owned by a warp it has not got through (ended by the owner's own receipt or by a reading that shows the body
+   * free). Nothing here reads a clock, so "held" can only be answered by the game saying so - which is what makes the wait
+   * invokable rather than timed.
+   * </p>
+   * <p>
+   * WHAT THIS ADDS IS THE NAME. The same reading used to come back as one boolean, so `a_held_body` could not say whether
+   * the caller should wait for a receipt, answer a modal or wait out a cutscene - three fixes behind one word. The holder
+   * is quoted, not translated: `body_owned_by_navigation` is the Mod's refusal code and `modal/DialogueBox` is the same
+   * token `game-world-vocabulary.ts` renders into her own body line, so the run's artifact and her prompt cannot name the
+   * holder differently. `unnamedEngineGate` is the one member with no holder, and that absence IS its reading.
    * </p>
    */
+  public get bodyHeldBy(): BodyHeldBy | undefined {
+    const hold = this.#worldTransition;
+    if (hold !== null) return Object.freeze({ source: BODY_HOLD.worldTransition, holder: hold.code });
+    const payload = this.#lastSnapshot?.payload as
+      | { actorDispositionKind?: unknown; actorDispositionDetail?: unknown }
+      | undefined;
+    if (payload === undefined) return undefined;
+    if (!this.#bodyHeld() && !this.#nativePerformancePlaying()) return undefined;
+    const kind = payload.actorDispositionKind;
+    if (typeof kind === "string" && kind.length > 0 && kind !== IDLE_DISPOSITION_KIND) {
+      const detail = payload.actorDispositionDetail;
+      return Object.freeze({
+        source: BODY_HOLD.disposition,
+        holder: typeof detail === "string" && detail.length > 0 ? `${kind}/${detail}` : kind,
+      });
+    }
+    return Object.freeze({ source: BODY_HOLD.unnamedEngineGate, holder: undefined });
+  }
+
+  /**
+   * Whether the body can take no command at all: the one-bit reading of `bodyHeldBy`, kept for the callers that only
+   * branch.
+   *
+   * Derived rather than asked a second time, so "the body is held" cannot be true here and false in `bodyHeldBy`: a menu,
+   * a cutscene and a warp are the three ways the same fact is true.
+   */
   public get bodyHeldByEngine(): boolean {
-    if (this.#worldTransition !== null) return true;
-    return this.#bodyHeld() || this.#nativePerformancePlaying();
+    return this.bodyHeldBy !== undefined;
   }
 
   /**
@@ -5152,7 +5240,15 @@ export class CompanionEventPump {
       this.#emptyTurnsByShape[shape] += 1;
       // THE SAME MOMENT ANSWERS THE NEXT QUESTION (`closedWithNothing`): this is the turn the wait after it belongs to, so
       // the name and the count cannot describe two different turns.
-      this.#lastClosedWithNothing = Object.freeze({ shape, reason, atMs: this.#now(), turn: this.#openedTurns });
+      this.#lastClosedWithNothing = Object.freeze({
+        shape,
+        reason,
+        atMs: this.#now(),
+        turn: this.#openedTurns,
+        // The body's own name, taken at the same settlement as the condition: `heldBy` describes the turn this wait belongs
+        // to, and a hold that ended since is not this turn's answer.
+        heldBy: reason === TURN_WITHOUT_ACTION_REASON.bodyHeld ? this.bodyHeldBy : undefined,
+      });
     } else {
       this.#lastClosedWithNothing = undefined;
     }
@@ -5188,7 +5284,13 @@ export class CompanionEventPump {
   public get closedWithNothing(): ClosedWithNothingWait {
     const wait = this.#lastClosedWithNothing;
     if (wait === undefined)
-      return Object.freeze({ shape: undefined, waitingFor: undefined, lookAgainInMs: undefined, turn: undefined });
+      return Object.freeze({
+        shape: undefined,
+        waitingFor: undefined,
+        lookAgainInMs: undefined,
+        turn: undefined,
+        heldBy: undefined,
+      });
     return Object.freeze({
       shape: wait.shape,
       waitingFor: closedWithNothingWaitFor(wait.reason),
@@ -5196,6 +5298,7 @@ export class CompanionEventPump {
       // already means something else (no wait at all).
       lookAgainInMs: Math.max(0, closedWithNothingLookAgainMs(wait.reason) - (this.#now() - wait.atMs)),
       turn: wait.turn,
+      heldBy: wait.heldBy,
     });
   }
 
@@ -6067,6 +6170,15 @@ export function planRepeatsShape(fact: WorldFact, programmes: readonly InFlightP
  * distinction for the guidance it gives her). One spelling, read by the transition watcher and the classification below.
  */
 const BODY_HOLD_PREFIX = "body_owned_by_";
+
+/**
+ * The wire's own word for "no disposition": `actorDispositionKind` is a closed set in `protocol.ts` whose idle member
+ * names no holder, so a held body reading it is held by nothing that has a name.
+ *
+ * Named here rather than imported because the pump reads the field's VALUE, exactly as `#nativePerformancePlaying` reads
+ * the `event` kind: the set is the Mod's, the question "which member means nobody" is this file's.
+ */
+const IDLE_DISPOSITION_KIND = "idle";
 
 /**
  * Why this fact does or does not steer the running turn - the preemption predicate's ONE return site.

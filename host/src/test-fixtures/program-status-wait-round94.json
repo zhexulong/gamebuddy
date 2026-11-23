@@ -1,0 +1,541 @@
+{
+  "source": ".live-runs/game-ladder/2026-11-23T03-13-05-598Z-multiday_routine",
+  "run": "round94",
+  "recorded": {
+    "planWorkCalls": 62,
+    "held": 49,
+    "medianHeldMs": 1686,
+    "atOrAbove5500": 9,
+    "settledByTheHold": 40,
+    "budgetMs": 6000,
+    "waitedKeys": [
+      "settled",
+      "waitedMs",
+      "terminality",
+      "unreadable",
+      "snapshotChanged"
+    ]
+  },
+  "holds": [
+    {
+      "programId": "plan_0_7c0c634baadeab3c",
+      "waitedMs": 1686,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 4, y: 6 });"
+    },
+    {
+      "programId": "plan_2_b9fd9c0b57cdaa6c",
+      "waitedMs": 298,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_placed_furniture({ x: 4, y: 4, expectedTargetId: \"placed_furniture_05f0887495de037c\" });"
+    },
+    {
+      "programId": "plan_5_3d0e2977296cb89f",
+      "waitedMs": 308,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.place_owned_object({ x: 5, y: 6, slot: 15, expectedQualifiedItemId: \"(F)0\", expectedTargetId: \"place_owned_object_089cc325e66b4eae\" });"
+    },
+    {
+      "programId": "plan_6_88fc745dd7bc1801",
+      "waitedMs": 1376,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_placed_furniture({ x: 1, y: 10, expectedTargetId: \"placed_furniture_1de65e7e4fcafcbb\" });"
+    },
+    {
+      "programId": "plan_9_1c61ecb19349e348",
+      "waitedMs": 311,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.place_owned_object({ x: 1, y: 7, slot: 15, expectedQualifiedItemId: \"(F)1376\", expectedTargetId: \"place_owned_object_a0ab4afc275359c1\" });"
+    },
+    {
+      "programId": "plan_12_f07f00310befd0d8",
+      "waitedMs": 841,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.rotate_furniture({ x: 5, y: 6, expectedTargetId: \"placed_furniture_eb30ab7376c798b7\" });"
+    },
+    {
+      "programId": "plan_17_53066f84cc3161a9",
+      "waitedMs": 1110,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 9, y: 9 });"
+    },
+    {
+      "programId": "plan_20_0442da48ca242b09",
+      "waitedMs": 353,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.dismiss_modal();"
+    },
+    {
+      "programId": "plan_21_184e1b4f18183bdd",
+      "waitedMs": 319,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.equip_wearable({ slot: 9, expectedQualifiedItemId: \"(H)0\", expectedTargetId: \"wearable_hat_530eb22da94fe859\" });\nbuilder.equip_wearable({ slot: 10, expectedQualifiedItemId: \"(B)504\", expectedTargetId: \"wearable_boots_c4cce4e8c4868bdf\" });"
+    },
+    {
+      "programId": "plan_23_4082cfe2e1745052",
+      "waitedMs": 1379,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.chest_store({ chestId: \"chest_4dbf281006c47d2b\", expectedQualifiedItemId: \"(O)390\" });\nbuilder.chest_store({ chestId: \"chest_4dbf281006c47d2b\", expectedQualifiedItemId: \"(O)378\" });\nbuilder.chest_store({ chestId: \"chest_4dbf281006c47d2b\", expectedQualifiedItemId: \"(O)178\" });"
+    },
+    {
+      "programId": "plan_28_01eb956d2f831b31",
+      "waitedMs": 1749,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 3, y: 12 });"
+    },
+    {
+      "programId": "plan_32_9d340ed712ac4929",
+      "waitedMs": 862,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.equipFor(\"till_soil\", { x: 62, y: 18 });\nbuilder.till_soil({ x: 62, y: 18, charge: 0 });\nbuilder.till_soil({ x: 63, y: 18, charge: 0 });"
+    },
+    {
+      "programId": "plan_39_bce516b87742d8ab",
+      "waitedMs": 323,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.plant_seed({ x: 63, y: 18, slot: 8, expectedQualifiedItemId: \"(O)474\", expectedTargetId: \"seed_2185dc423bc52282\" });\nbuilder.plant_seed({ x: 62, y: 18, slot: 8, expectedQualifiedItemId: \"(O)474\", expectedTargetId: \"seed_2d9cdc97acabfff4\" });"
+    },
+    {
+      "programId": "plan_41_420838455f9fc30d",
+      "waitedMs": 590,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.water_crop({ x: 63, y: 18, expectedTargetId: \"crop_dbad7e163aba7541\", charge: 0 });\nbuilder.water_crop({ x: 62, y: 18, expectedTargetId: \"crop_6edf731f90a53ea2\", charge: 0 });"
+    },
+    {
+      "programId": "plan_47_6bfe6e3b665b3112",
+      "waitedMs": 6092,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 29, y: 17 });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_47_6bfe6e3b665b3112",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "move_to_tile",
+              "state": "running",
+              "x": 29,
+              "y": 17
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5806,
+      "journalSpanMs": 7925
+    },
+    {
+      "programId": "plan_49_c636182b0b12e762",
+      "waitedMs": 329,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.equipFor(\"cut_weeds\", { x: 37, y: 14, targetId: \"weed_8d1cdbdc659a4a14\" });\nbuilder.cut_weeds({ x: 37, y: 14, slot: 4, expectedTargetId: \"weed_8d1cdbdc659a4a14\" });"
+    },
+    {
+      "programId": "plan_51_6bfe6e3b665b3112",
+      "waitedMs": 2995,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 29, y: 17 });"
+    },
+    {
+      "programId": "plan_53_a8a882fdb72ebe12",
+      "waitedMs": 326,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.harvest_crop({ x: 29, y: 17, expectedQualifiedItemId: \"(O)190\", expectedTargetId: \"crop_6dd7651520fa5c6b\" });"
+    },
+    {
+      "programId": "plan_54_b4c3b180fd8dfc6f",
+      "waitedMs": 6081,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 14, y: 36 });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_54_b4c3b180fd8dfc6f",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "move_to_tile",
+              "state": "running",
+              "x": 14,
+              "y": 36
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5779,
+      "journalSpanMs": 9285
+    },
+    {
+      "programId": "plan_56_6d011e8a18fc133c",
+      "waitedMs": 4333,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.harvest_crop({ x: 9, y: 33, expectedQualifiedItemId: \"(O)190\", expectedTargetId: \"crop_84ff948a84715914\" });"
+    },
+    {
+      "programId": "plan_59_247ea235ab7c8c0b",
+      "waitedMs": 4323,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.harvest_crop({ x: 14, y: 36, expectedQualifiedItemId: \"(O)190\", expectedTargetId: \"crop_6bfe84604baf3de1\" });"
+    },
+    {
+      "programId": "plan_62_5d10d5cc52483b31",
+      "waitedMs": 6082,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.ship_item({ x: 71, y: 14, expectedQualifiedItemId: \"(O)190\", expectedTargetId: \"shipping_bin_fcfc08b380a8ca22\" });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_62_5d10d5cc52483b31",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "ship_item",
+              "state": "running",
+              "x": 71,
+              "y": 14
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5796,
+      "journalSpanMs": 22195
+    },
+    {
+      "programId": "plan_65_a2f64ea30ed54d53",
+      "waitedMs": 2706,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 64, y: 14 });"
+    },
+    {
+      "programId": "plan_69_905fe1590e9b2a31",
+      "waitedMs": 305,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 10, y: 9 });"
+    },
+    {
+      "programId": "plan_70_03fd294c84313fb0",
+      "waitedMs": 6057,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.sleep();",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_70_03fd294c84313fb0",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "sleep",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5772,
+      "journalSpanMs": 174400
+    },
+    {
+      "programId": "plan_72_01eb956d2f831b31",
+      "waitedMs": 2491,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 3, y: 12 });"
+    },
+    {
+      "programId": "plan_76_1e1a10387f0e9d71",
+      "waitedMs": 1928,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 57, y: 17 });"
+    },
+    {
+      "programId": "plan_78_87ce7de907e956e9",
+      "waitedMs": 4332,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const inRect = (t) => t.x >= 47 && t.x <= 66 && t.y >= 17 && t.y <= 19;\nconst weeds = (snapshot.weedTargets ?? []).filter(inRect);\nconst grasses = (snapshot.grassTargets ?? []).filter(inRect);\nif (weeds.length > 0 || grasses.length > 0) {\n  let slot = 4;\n  if (weeds.length > 0) slot = builder.equipFor(\"cut_weeds\", weeds[0]);\n  for (const w of weeds) builder.cut_weeds({ x: w.x, y: w.y, slot: slot, expectedTargetId: w.targetId });\n  for (const g of grasses) builder.cut_grass({ x: g.x, y: g.y, slot: slot, expectedTargetId: g.targetId });\n}"
+    },
+    {
+      "programId": "plan_98_e9ba6165ce1a8de1",
+      "waitedMs": 1143,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const inRect = (t) => t.x >= 47 && t.x <= 66 && t.y >= 17 && t.y <= 19;\nconst rocks = (snapshot.rockSourceTargets ?? []).filter(inRect);\nif (rocks.length > 0) {\n  const slot = builder.equipFor(\"break_rock\", rocks[0]);\n  for (const r of rocks) builder.break_rock({ x: r.x, y: r.y, slot: slot, expectedTargetId: r.targetId });\n}"
+    },
+    {
+      "programId": "plan_173_3c340ffa6e49eaf5",
+      "waitedMs": 1433,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const inRect = (t) => t.x >= 47 && t.x <= 66 && t.y >= 17 && t.y <= 19;\nconst targets = (snapshot.soilTiles ?? []).filter(t => inRect(t) && t.hoeDirt === false);\nlet slot = 1;\nif (targets.length > 0) slot = builder.equipFor(\"till_soil\", targets[0]);\nfor (const t of targets) builder.till_soil({ x: t.x, y: t.y, charge: 0 });"
+    },
+    {
+      "programId": "plan_191_37fbedd7506e508b",
+      "waitedMs": 3872,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 64, y: 14 });\nbuilder.chest_retrieve({ chestId: \"chest_4dbf281006c47d2b\", expectedQualifiedItemId: \"(O)472\" });"
+    },
+    {
+      "programId": "plan_198_01eb956d2f831b31",
+      "waitedMs": 1406,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 3, y: 12 });"
+    },
+    {
+      "programId": "plan_202_c760e70afa3294ea",
+      "waitedMs": 1995,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "for (const s of (snapshot.seedTargets ?? [])) {\n  builder.plant_seed({ x: s.x, y: s.y, slot: s.slot, expectedQualifiedItemId: s.qualifiedItemId, expectedTargetId: s.targetId });\n}"
+    },
+    {
+      "programId": "plan_220_2a602d552c59744c",
+      "waitedMs": 6067,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.navigate_to_destination({ destination: { kind: \"label\", label: \"皮埃尔的杂货店\" } });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_220_2a602d552c59744c",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "navigate_to_destination",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5761,
+      "journalSpanMs": 54623
+    },
+    {
+      "programId": "plan_223_2a602d552c59744c",
+      "waitedMs": 6148,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.navigate_to_destination({ destination: { kind: \"label\", label: \"皮埃尔的杂货店\" } });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_223_2a602d552c59744c",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "navigate_to_destination",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5842,
+      "journalSpanMs": 10992
+    },
+    {
+      "programId": "plan_225_b2a3fd47172ac205",
+      "waitedMs": 317,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.shop_purchase({ expectedTargetId: \"shop_d1821b85749a947f\", expectedQualifiedItemId: \"(O)472\", quantity: 50 });"
+    },
+    {
+      "programId": "plan_225_88bc257d55691f6a",
+      "waitedMs": 1494,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 6, y: 30 });\nbuilder.navigate_to_destination({ destination: { kind: \"label\", label: \"农场\" } });"
+    },
+    {
+      "programId": "plan_229_77bbc2e5b9101ef9",
+      "waitedMs": 6147,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.navigate_to_destination({ destination: { kind: \"label\", label: \"Farm\" } });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_229_77bbc2e5b9101ef9",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "navigate_to_destination",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5843,
+      "journalSpanMs": 19400
+    },
+    {
+      "programId": "plan_232_817f9336dff34f15",
+      "waitedMs": 4883,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 58, y: 19 });"
+    },
+    {
+      "programId": "plan_266_b138fd72d68e189c",
+      "waitedMs": 695,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const seeds = (snapshot.seedTargets ?? []).filter(s => s.canPlantThisSeedHere === true);\nfor (const s of seeds) builder.plant_seed({ x: s.x, y: s.y, slot: s.slot, expectedQualifiedItemId: s.qualifiedItemId, expectedTargetId: s.targetId });"
+    },
+    {
+      "programId": "plan_339_6cb555da49372333",
+      "waitedMs": 2255,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const inRect = (t) => t.x >= 47 && t.x <= 66 && t.y >= 17 && t.y <= 19;\nconst grasses = (snapshot.grassTargets ?? []).filter(inRect);\nif (grasses.length > 0) {\n  const slot = builder.equipFor(\"cut_grass\", grasses[0]);\n  for (const g of grasses) builder.cut_grass({ x: g.x, y: g.y, slot: slot, expectedTargetId: g.targetId });\n}"
+    },
+    {
+      "programId": "plan_351_6344b20ab300d553",
+      "waitedMs": 903,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const inRect = (t) => t.x >= 47 && t.x <= 66 && t.y >= 17 && t.y <= 19;\nconst grasses = (snapshot.grassTargets ?? []).filter(inRect);\nif (grasses.length > 0) {\n  const slot = builder.equipFor(\"cut_grass\", grasses[0]);\n  for (const g of grasses) builder.cut_grass({ x: g.x, y: g.y, slot: slot, expectedTargetId: g.targetId });\n}"
+    },
+    {
+      "programId": "plan_407_826b53de09b144a3",
+      "waitedMs": 6117,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "const ref = (snapshot.refillWateringCanTargets ?? [])[0];\nif (ref) builder.refill_watering_can({ x: ref.x, y: ref.y, slot: 2, expectedTargetId: ref.targetId });",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_407_826b53de09b144a3",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "refill_watering_can",
+              "state": "running",
+              "x": 70,
+              "y": 28
+            }
+          ]
+        }
+      },
+      "node": "n01",
+      "observedInStateMs": 5791,
+      "journalSpanMs": 6865
+    },
+    {
+      "programId": "plan_410_45fb1efb4a242087",
+      "waitedMs": 4610,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const dry = (snapshot.cropTargets ?? []).filter(c => c.watered === false);\nif (dry.length > 0) builder.equipFor(\"water_crop\", dry[0]);\nfor (const c of dry) builder.water_crop({ x: c.x, y: c.y, expectedTargetId: c.targetId, charge: 0 });"
+    },
+    {
+      "programId": "plan_414_0f9e828380858241",
+      "waitedMs": 1519,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "const dry = (snapshot.cropTargets ?? []).filter(c => c.watered === false);\nif (dry.length > 0) builder.equipFor(\"water_crop\", dry[0]);\nfor (const c of dry) builder.water_crop({ x: c.x, y: c.y, expectedTargetId: c.targetId, charge: 0 });"
+    },
+    {
+      "programId": "plan_435_025a2fc063d1cd51",
+      "waitedMs": 3027,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 50, y: 18 });"
+    },
+    {
+      "programId": "plan_467_a2f64ea30ed54d53",
+      "waitedMs": 4647,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.enter_exit({ x: 64, y: 14 });"
+    },
+    {
+      "programId": "plan_471_70e21c06346da89f",
+      "waitedMs": 6082,
+      "terminality": "active",
+      "snapshotChanged": true,
+      "script": "builder.move_to_tile({ x: 10, y: 9 });\nbuilder.sleep();",
+      "lastRead": {
+        "code": "found",
+        "snapshot": {
+          "programId": "plan_471_70e21c06346da89f",
+          "state": "active",
+          "stopEpoch": 0,
+          "nodes": [
+            {
+              "nodeId": "n01",
+              "actionId": "move_to_tile",
+              "state": "failed",
+              "x": 10,
+              "y": 9
+            },
+            {
+              "nodeId": "n02",
+              "actionId": "sleep",
+              "state": "running"
+            }
+          ]
+        }
+      },
+      "node": "n02",
+      "observedInStateMs": 5772,
+      "journalSpanMs": 328317
+    },
+    {
+      "programId": "plan_474_0442da48ca242b09",
+      "waitedMs": 379,
+      "terminality": "terminal",
+      "snapshotChanged": true,
+      "script": "builder.dismiss_modal();"
+    }
+  ]
+}

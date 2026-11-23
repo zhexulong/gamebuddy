@@ -5,17 +5,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  MAX_PROGRAM_STATUS_WAIT_MS,
   createProgramProgressObserver,
   isTerminalProgramStatus,
+  MAX_PROGRAM_STATUS_WAIT_MS,
   planBatchAnswer,
   planNodeReasonDetail,
   programStatusTerminality,
   waitForTerminalProgramStatus,
 } from "./program-status-wait.js";
 import {
-  BODY_PROGRAM_NODE_STATES,
   BODY_PROGRAM_NODE_STATE_VERDICTS,
+  BODY_PROGRAM_NODE_STATES,
   BODY_PROGRAM_REFUSAL_DETAIL_NODE_STATES,
 } from "./protocol.js";
 
@@ -216,6 +216,153 @@ test("expiry returns the honest still-running read, never a finished one", async
   assert.equal(outcome.waited.terminality, "active");
   // It polled more than once but did not spin: ~4 intervals inside a 1s budget.
   assert.ok(reads >= 2 && reads <= 6, `unexpected read count ${String(reads)}`);
+});
+
+/**
+ * THE FACT AN EXPIRED WAIT OWES, after `snapshotChanged` and for the same measured reason.
+ *
+ * MEASURED `round94` (2026-11-23): nine of 49 holds spent the whole 6,000 ms budget and came back `in_flight_not_done` -
+ * 54.9 s of one run's waiting that ended with a word. The wait already holds the payload that names the plan and the
+ * node, so the arm that runs out answers with it: which plan is still moving, which node it is on, and which
+ * publication ends it. `program-status-wait.expired-holds.test.ts` drives that run's own nine through this.
+ */
+test("an expired wait names the plan, the node it is on, and the publication that ends it", async () => {
+  const clock = fakeTime();
+  const outcome = await waitForTerminalProgramStatus(
+    async () => plan([["n01", "running"]]),
+    plan([["n01", "running"]]),
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  assert.equal(outcome.waited.terminality, "active");
+  assert.deepEqual(outcome.waited.unsettled, {
+    programId: "p1",
+    node: { nodeId: "n01", actionId: null, state: "running" },
+    settlesWith: "node_receipt",
+  });
+});
+
+test("a node the Mod has not started owes its dispatch before it owes a receipt", async () => {
+  const clock = fakeTime();
+  const queued = {
+    code: "found",
+    snapshot: {
+      programId: "p1",
+      state: "active",
+      nodes: [
+        { nodeId: "n01", actionId: "harvest_crop", state: "succeeded" },
+        { nodeId: "n02", actionId: "plant_seed", state: "pending" },
+      ],
+    },
+  };
+  const outcome = await waitForTerminalProgramStatus(
+    async () => queued,
+    queued,
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  // Nothing is dispatched, so nothing owes a receipt: "wait for the receipt" would be a promise nobody made.
+  assert.deepEqual(outcome.waited.unsettled, {
+    programId: "p1",
+    node: { nodeId: "n02", actionId: "plant_seed", state: "pending" },
+    settlesWith: "node_dispatch",
+  });
+});
+
+test("a plan whose every node has stopped names its own terminal state as what is still owed", async () => {
+  const clock = fakeTime();
+  const finishedNodes = {
+    code: "found",
+    snapshot: {
+      programId: "p1",
+      state: "active",
+      nodes: [{ nodeId: "n01", actionId: "harvest_crop", state: "succeeded" }],
+    },
+  };
+  const outcome = await waitForTerminalProgramStatus(
+    async () => finishedNodes,
+    finishedNodes,
+    1_000,
+    clock.now,
+    async (milliseconds) => clock.advance(milliseconds),
+  );
+  // No node is left to name, and that is not the same fact as "nothing is owed": the plan's own settlement is one watch
+  // interval away, which is what `idleWaitReading` says about the same state.
+  assert.deepEqual(outcome.waited.unsettled, { programId: "p1", node: null, settlesWith: "program_terminal" });
+});
+
+test("a read that names no active plan names no node, and never reads as one still running", async () => {
+  const clock = fakeTime();
+  const waitOver = async (payload: unknown) =>
+    (
+      await waitForTerminalProgramStatus(
+        async () => payload,
+        payload,
+        1_000,
+        clock.now,
+        async (milliseconds) => clock.advance(milliseconds),
+      )
+    ).waited;
+  for (const payload of [
+    { code: "found", snapshot: { programId: "p1", state: "succeeded", nodes: [] } },
+    { code: "not_found", snapshot: null },
+  ]) {
+    const waited = await waitOver(payload);
+    assert.equal(waited.terminality, "terminal", JSON.stringify(payload));
+    assert.equal(waited.unsettled, null, JSON.stringify(payload));
+  }
+  // An answer nobody can classify knows no node either, and `unreadable` is what keeps it from reading as finished.
+  const unreadable = await waitOver({ code: "invalid_input", snapshot: null });
+  assert.equal(unreadable.terminality, "unknown");
+  assert.equal(unreadable.unreadable, "invalid_input");
+  assert.equal(unreadable.unsettled, null);
+});
+
+/**
+ * THE GATE, over the declaration rather than a list written here.
+ *
+ * Population: every node state `BODY_PROGRAM_NODE_STATES` calls `moving` - the states a plan can still be in while a wait
+ * holds its turn. Property: each one answers ONE of the two node publications, and both arms are reachable from that
+ * population, so no state can quietly fall through to "nothing will settle this".
+ *
+ * The four-state anchor is pinned by hand once, because a gate whose buckets silently moved would agree with itself: a
+ * queued node's next publication is the Mod starting it, and only a dispatched node owes a receipt
+ * (`NODE_STATES_IN_FLIGHT`).
+ */
+test("every moving node state names the publication that ends it, and nothing falls through", async () => {
+  const moving = BODY_PROGRAM_NODE_STATES.filter((state) => BODY_PROGRAM_NODE_STATE_VERDICTS[state] === "moving");
+  assert.ok(moving.length > 0, "blocked: the declaration names no moving state, so this gate examined nothing");
+  assert.deepEqual(moving, ["pending", "awaiting_host_admission", "host_admitted", "running"]);
+  const answered: string[] = [];
+  for (const state of moving) {
+    const clock = fakeTime();
+    const payload = {
+      code: "found",
+      snapshot: { programId: "p1", state: "active", nodes: [{ nodeId: "n01", actionId: "move_to_tile", state }] },
+    };
+    const outcome = await waitForTerminalProgramStatus(
+      async () => payload,
+      payload,
+      0,
+      clock.now,
+      async (milliseconds) => clock.advance(milliseconds),
+    );
+    const unsettled = outcome.waited.unsettled;
+    assert.equal(unsettled?.node?.state, state, `the state '${state}' must arrive verbatim`);
+    const settlesWith = unsettled?.settlesWith ?? "none";
+    assert.ok(
+      settlesWith === "node_receipt" || settlesWith === "node_dispatch",
+      `the state '${state}' is still moving, so a node publication ends it, not '${settlesWith}'`,
+    );
+    answered.push(settlesWith);
+  }
+  assert.deepEqual(
+    answered,
+    ["node_dispatch", "node_dispatch", "node_receipt", "node_receipt"],
+    `examined ${String(answered.length)} moving states`,
+  );
 });
 
 /**

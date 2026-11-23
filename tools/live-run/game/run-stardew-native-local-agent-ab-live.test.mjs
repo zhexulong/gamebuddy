@@ -8,12 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import {
-  actionBreadthClause,
-  buildSnapshotCensus,
-  measureActionBreadth,
-  readActionBreadthSurface,
-} from "../../lib/action-breadth.mjs";
 import { validateEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { buildFailureSnapshot, classifyFailure } from "../../lib/failure-dump.mjs";
 import { killedReasonCode, reclamationRecord } from "../../lib/live-run-teardown.mjs";
@@ -29,8 +23,6 @@ import {
 } from "../../lib/multiday-baseline.mjs";
 import { DAILY_TASK_ROTATION, sweepTaskPrompts } from "../../lib/multiday-daily-tasks.mjs";
 import { WAKE_REASON, WAKE_REASONS, watchRollover } from "../../lib/multiday-loop.mjs";
-import { deliveryAccountClause } from "../../lib/presentation-delivery-account.mjs";
-import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { executionsFromJournalEvents } from "../../lib/stardew-body-program-journal.mjs";
 import { TERMINAL_STATES } from "../../lib/stardew-native-smoke-harness-v1.mjs";
@@ -43,12 +35,7 @@ import {
   readLaunchPhaseHandover,
   writeLaunchPhaseHandover,
 } from "../core/launch-phase.mjs";
-import {
-  executedActionIds,
-  executionTraceInvariant,
-  oneSubmissionPerProgram,
-  programExecutionRows,
-} from "./execution-trace.mjs";
+import { oneSubmissionPerProgram } from "./execution-trace.mjs";
 import {
   COMPANION_DID_NOT_SLEEP,
   COMPANION_SLEEP_REFUSED,
@@ -70,7 +57,6 @@ import {
   extractProgramToolDescription,
   extractRunnerFunction,
   HOST_MATERIALIZER_SOURCE,
-  instrumentGlobals,
   isDeclaredWakeReason,
   LAUNCHER_OWNED_PHASES,
   LAUNCHER_SOURCE,
@@ -78,7 +64,6 @@ import {
   loadRunSessionSelection,
   loadToolTiming,
   NIGHT_FACTS_SOURCE,
-  NOTHING_PRESENTED,
   newestJsonlUnder,
   nightWatchCadence,
   PROMPT_CALL,
@@ -629,8 +614,11 @@ test("the run records chunked-presentation evidence so the presence mechanism is
   // Computed in the ONE place a result is assembled (buildRunResult), so the crashed path reports it too: this used to
   // be a local of the success path, and the failure literal computed it a second time.
   // ONE derivation, made before the verdict because the verdict reads it: a run whose own piece count disagrees with
-  // its account cannot be `passed`, and the bundle publishes the object the clause was decided on.
-  assert.match(RUNNER_SOURCE, /const presentationEvidence = summarizePresentationEvidence\(\);/u);
+  // its account cannot be `passed`, and the bundle publishes the object the clause was decided on. The derivation is a
+  // MEASUREMENT, so it stands behind the clause boundary: a reader that throws publishes `not_measured:delivery_account`
+  // instead of costing the run its record (`round98`).
+  assert.match(RUNNER_SOURCE, /const presentationReading = await measureOrNotMeasured\("delivery_account"/u);
+  assert.match(RUNNER_SOURCE, /const presentationEvidence = presentationReading\.value;/u);
   assert.match(RUNNER_SOURCE, /presentation: presentationEvidence,/u);
   assert.match(RUNNER_SOURCE, /deliveryAccountClause\(presentationEvidence\.deliveryAccount\)/u);
   assert.doesNotMatch(RUNNER_SOURCE, /presentation: summarizePresentationEvidence\(\),/u);
@@ -1638,37 +1626,11 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SURFACE_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
-    {
-      ...instrumentGlobals,
-      executedActionIds,
-      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
-      // and hands it to its own clause, so a test of the builder supplies the real implementations.
-      measureActionBreadth,
-      actionBreadthClause,
-      deliveryAccountClause,
-      readActionBreadthSurface,
-      buildSnapshotCensus,
-      snapshotFamilyRows: new Map(),
-      snapshotToolCategories: new Set(),
-      snapshotCensusSamples: 0,
+    builderGlobals({
+      // This fixture dispatches no non-accomplishment action, so the runner's own set is narrowed to nothing.
       NON_ACCOMPLISHMENT_ACTIONS: new Set(),
-      phaseTimings: { runStartedAtMs: 1, marks: {} },
-      lastObservedSnapshot: null,
-      lastObservedPose: null,
-      actionTrace: [],
-      programSubmissions: [],
-      programOutcomes: [],
-      sampleProgramOutcomes: async () => [],
-      programExecutionRows,
-      executionTraceInvariant,
-      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-      multidayOutcome: null,
       SCENARIO: "morning_routine",
-      LEGACY_LADDER: null,
-      historianRubricOutcome: null,
       runSessionRecord: Object.freeze({ path: "/tmp/session.jsonl", reason: null }),
-      summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       // The reader's own answer for a violated invariant, verbatim: this test is about the assembly NAMING the violation
       // and publishing the withheld shape, not about re-reading a record.
       readToolTiming: () => ({
@@ -1679,14 +1641,7 @@ test("the assembly logs a tool-timing disagreement by name", async () => {
         longest: null,
         invariant: { checked: true, ok: false, calls: 45, frames: 0 },
       }),
-      summarizeRunCost,
-      describeRunCost,
-      buildFailureSnapshot: (input) => input,
-      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-      closeCapture: async () => ({ state: "closed" }),
-      writeFile: async () => {},
-      join: (...parts) => parts.join("/"),
-    },
+    }),
   );
   const logged = [];
   const original = console.error;
@@ -3148,50 +3103,16 @@ test("a run whose trace has dispatches publishes a non-empty attempted list", as
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SURFACE_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
-    {
-      ...instrumentGlobals,
-      executedActionIds,
-      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
-      // and hands it to its own clause, so a test of the builder supplies the real implementations.
-      measureActionBreadth,
-      actionBreadthClause,
-      deliveryAccountClause,
-      readActionBreadthSurface,
-      buildSnapshotCensus,
-      snapshotFamilyRows: new Map(),
-      snapshotToolCategories: new Set(),
-      snapshotCensusSamples: 0,
-      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
-      phaseTimings: { runStartedAtMs: 1, marks: {} },
-      lastObservedSnapshot: null,
-      lastObservedPose: null,
+    builderGlobals({
       actionTrace: [
         { action: "move_to_tile", state: "succeeded" },
         { action: "harvest_crop", state: "succeeded" },
         { action: "plant_seed", state: "rejected" },
       ],
       programSubmissions: [{ tool: "stardew_submit_action_program", accepted: false }],
-      programOutcomes: [],
-      sampleProgramOutcomes: async () => [],
-      programExecutionRows,
-      executionTraceInvariant,
-      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
       multidayOutcome: { crossings: 1, dayRecords: [] },
       SCENARIO: "morning_routine",
-      LEGACY_LADDER: null,
-      historianRubricOutcome: null,
-      runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
-      summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => NOTHING_PRESENTED,
-      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-      summarizeRunCost,
-      describeRunCost,
-      buildFailureSnapshot: (input) => input,
-      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-      closeCapture: async () => ({ state: "closed" }),
-      writeFile: async () => {},
-      join: (...parts) => parts.join("/"),
-    },
+    }),
   );
   const result = await buildRunResult({
     state: "blocked",
@@ -3271,24 +3192,7 @@ test("a run whose work all went through programs publishes a non-empty attempted
   const [, buildRunResult] = extractRunnerFunction(
     RUNNER_SURFACE_SOURCE,
     ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
-    {
-      ...instrumentGlobals,
-      executedActionIds,
-      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
-      // and hands it to its own clause, so a test of the builder supplies the real implementations.
-      measureActionBreadth,
-      actionBreadthClause,
-      deliveryAccountClause,
-      readActionBreadthSurface,
-      buildSnapshotCensus,
-      snapshotFamilyRows: new Map(),
-      snapshotToolCategories: new Set(),
-      snapshotCensusSamples: 0,
-      NON_ACCOMPLISHMENT_ACTIONS: new Set(["move_to_tile"]),
-      phaseTimings: { runStartedAtMs: 1, marks: {} },
-      lastObservedSnapshot: null,
-      lastObservedPose: null,
-      actionTrace: [],
+    builderGlobals({
       programSubmissions: [
         {
           programId: "plan_morning_1",
@@ -3302,29 +3206,11 @@ test("a run whose work all went through programs publishes a non-empty attempted
         },
       ],
       // The read is CARRIED, as the run's own pre-teardown read is: the builder must not have to ask a closed bridge.
-      programOutcomes: [],
       sampleProgramOutcomes: async () => {
         throw new Error("the carried read must be used, not a second query");
       },
-      programExecutionRows,
-      executionTraceInvariant,
-      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-      multidayOutcome: null,
       SCENARIO: "morning_routine",
-      LEGACY_LADDER: null,
-      historianRubricOutcome: null,
-      runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
-      summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => NOTHING_PRESENTED,
-      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-      summarizeRunCost,
-      describeRunCost,
-      buildFailureSnapshot: (input) => input,
-      writeRunBundle: async () => ({ state: "written", runDir: "/run" }),
-      closeCapture: async () => ({ state: "closed" }),
-      writeFile: async () => {},
-      join: (...parts) => parts.join("/"),
-    },
+    }),
   );
   const result = await buildRunResult({
     state: "passed",
@@ -3378,42 +3264,13 @@ test("an error that escapes the run still publishes the work it had already reco
       "deriveRungVerdict",
       "planPollCount",
     ],
-    {
-      ...instrumentGlobals,
-      executedActionIds,
-      // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
-      // and hands it to its own clause, so a test of the builder supplies the real implementations.
-      measureActionBreadth,
-      actionBreadthClause,
-      deliveryAccountClause,
-      readActionBreadthSurface,
-      buildSnapshotCensus,
-      snapshotFamilyRows: new Map(),
-      snapshotToolCategories: new Set(),
-      snapshotCensusSamples: 0,
+    builderGlobals({
       NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
-      phaseTimings: { runStartedAtMs: 1, marks: {} },
-      lastObservedSnapshot: null,
-      lastObservedPose: null,
       actionTrace,
       factLog,
       programSubmissions,
-      programOutcomes: [],
-      sampleProgramOutcomes: async () => [],
-      programExecutionRows,
-      executionTraceInvariant,
-      readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-      summarizeRunCost,
-      describeRunCost,
-      TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
-      multidayOutcome: null,
-      historianRubricOutcome: null,
-      runSessionRecord: { path: undefined, reason: "session_record_binding_not_established" },
+      // The evidence the failure dump assembles from, and the readers that judge it: the dump is what this test drives.
       providerReadiness: null,
-      SCENARIO: "multiday_routine",
-      LEGACY_LADDER: null,
-      summarizeActionCadence: () => ({ spans: [] }),
-      summarizePresentationEvidence: () => NOTHING_PRESENTED,
       buildFailureSnapshot,
       classifyFailure,
       buildRunObservation: (input) => input,
@@ -3441,8 +3298,7 @@ test("an error that escapes the run still publishes the work it had already reco
       // This test asserts the run's result reached GAMEBUDDY_RESULT_FILE, so the one path the assembly writes is the file
       // it set up - the same value the runner derives from that variable at startup.
       RESULT_FILE: resultFile,
-      join: (...parts) => parts.join("/"),
-    },
+    }),
   );
   const logged = [];
   const originalError = console.error;
@@ -3602,36 +3458,14 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         "deriveRungVerdict",
         "planPollCount",
       ],
-      {
+      builderGlobals({
         // The run's accumulated evidence: this is what a killed run must not lose.
-        ...instrumentGlobals,
-        executedActionIds,
-        // The breadth reading and its clause, both imported by the runner: `buildRunResult` derives the reading once
-        // and hands it to its own clause, so a test of the builder supplies the real implementations.
-        measureActionBreadth,
-        actionBreadthClause,
-        deliveryAccountClause,
-        readActionBreadthSurface,
-        buildSnapshotCensus,
-        snapshotFamilyRows: new Map(),
-        snapshotToolCategories: new Set(),
-        snapshotCensusSamples: 0,
         NON_ACCOMPLISHMENT_ACTIONS: new Set(["equip_tool"]),
         phaseTimings: { runStartedAtMs: 1_700_000_000_000, marks: {} },
-        lastObservedSnapshot: null,
-        lastObservedPose: null,
         actionTrace,
         factLog,
         programSubmissions: [{ programId: "p_harvest", code: "accepted", accepted: true }],
-        programOutcomes: [],
         programOutcomesReadAtSubmissionCount: 1,
-        sampleProgramOutcomes: async () => [],
-        programExecutionRows,
-        executionTraceInvariant,
-        readToolTiming: () => ({ observed: false, invariant: { checked: false, ok: null } }),
-        summarizeRunCost,
-        describeRunCost,
-        TOOL_TIMING_INVARIANT_VIOLATED: "TOOL_TIMING_INVARIANT_VIOLATED",
         multidayOutcome: { crossings: 1, assessment: { state: "passed", ok: true, violations: [] }, dayRecords },
         // The bundle's account literal is built by the module the runner uses, so this eval binds the same builder.
         reclamationRecord,
@@ -3642,12 +3476,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
           compartmentsChecked: 0,
         }),
         killedReasonCode,
-        runSessionRecord: Object.freeze({ path: undefined, reason: "no_session_record_for_run_surface_session" }),
         providerReadiness: null,
-        SCENARIO: "multiday_routine",
-        LEGACY_LADDER: null,
-        summarizeActionCadence: () => ({ spans: [] }),
-        summarizePresentationEvidence: () => NOTHING_PRESENTED,
         buildFailureSnapshot,
         classifyFailure,
         writeFileSync: () => {},
@@ -3683,7 +3512,7 @@ test("a run interrupted from outside publishes its own verdict, with the evidenc
         ledger: { snapshot: () => ({ clock: "run_monotonic", entries: [] }), entries: () => [] },
         ledgerSpans: () => [],
         ledgerSummary: () => ({ count: 0, open: 0, medianMs: null, maxMs: null, sumMs: 0 }),
-      },
+      }),
     );
     writeKilledDump = killedDump;
     await writeKilledDump("SIGINT");
@@ -4440,6 +4269,126 @@ test("a run that used a handful of the addressable actions fails its own `action
   assert.equal(unmeasured.state, "passed");
   assert.equal(unmeasured.failedClause, null);
   assert.match(unmeasured.actionBreadth.verdict, /^not_measured:/u);
+});
+test("a clause whose reader throws publishes not_measured:<clause>:<reason> instead of aborting the assembly", async () => {
+  // MEASURED 2026-11-23 (`round98`): fifteen minutes of a real world - 261 facts, 188 weeds, 76 rocks - and nothing was
+  // published, because a READER threw while the finished run was assembling its record. The throw escaped the assembly,
+  // the last-resort dump wrote its stub, and the run's own verdict was replaced by the reader's stack trace.
+  //
+  // THE POPULATION IS THE RUNNER'S OWN CALL SITES, not a list here: a clause added behind the boundary next month is
+  // examined without anyone remembering to add it, and a clause measured at the boundary with no injection fails by name.
+  const clauses = [...RUNNER_SOURCE.matchAll(/measureOrNotMeasured\(\s*"([a-z_]+)"/gu)].map((match) => match[1]);
+  assert.ok(
+    clauses.length > 0,
+    "blocked: the runner measures no clause behind the boundary, so this gate examined nothing",
+  );
+  // Each reader is the one the runner really calls, throwing the way `round98`'s did, and each clause decides for itself
+  // whether a gap passes it: a measurement of HER day must not fail the run it was handed, while the world's clock and
+  // the run's own execution record are the two questions a gap answers with "this run cannot be judged".
+  const injections = {
+    action_breadth: {
+      expectedState: "passed",
+      globals: {
+        measureActionBreadth: async () => {
+          throw new Error("action_breadth_baseline_coverage_floor_invalid:multiday_routine");
+        },
+      },
+    },
+    delivery_account: {
+      expectedState: "blocked",
+      globals: {
+        summarizePresentationEvidence: () => {
+          throw new Error("host_log_unreadable");
+        },
+      },
+    },
+    execution_trace: {
+      expectedState: "blocked",
+      globals: {
+        sampleProgramOutcomes: async () => {
+          throw new Error("journal_unreadable");
+        },
+      },
+    },
+    game_clock: {
+      expectedState: "blocked",
+      globals: {
+        gameClock: {
+          read: () => {
+            throw new Error("clock_unreadable");
+          },
+        },
+      },
+    },
+  };
+  assert.deepEqual(
+    clauses.filter((clause) => injections[clause] === undefined),
+    [],
+    "these clauses are measured behind the boundary and nothing here proves a throwing reader cannot abort the assembly",
+  );
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.map(String).join(" "));
+  try {
+    for (const clause of clauses) {
+      logged.length = 0;
+      const [, buildRunResult] = extractRunnerFunction(
+        RUNNER_SURFACE_SOURCE,
+        ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+        builderGlobals(injections[clause].globals),
+      );
+      const result = await buildRunResult({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+      // 1. THE ASSEMBLY FINISHED, and the record the run already had is published: this is the half `round98` lost.
+      for (const field of [
+        "attemptedActionIds",
+        "executionTrace",
+        "snapshotCensus",
+        "actionBreadth",
+        "presentation",
+        "gameClock",
+        "state",
+        "failure",
+      ])
+        assert.ok(Object.hasOwn(result, field), `${clause}: ${field} must still be published when a reader throws`);
+      // 2. THE GAP IS NAMED, with a reason: `not_measured:<clause>:` with nothing after it would be a gap a reader cannot
+      // act on - the same failure as a measurement that failed silently.
+      const codes = [
+        result.actionBreadth?.verdict,
+        result.reasonCode,
+        ...(result.failedClauses ?? []).map((entry) => entry.reasonCode),
+      ].filter((code) => typeof code === "string");
+      const gap = codes.find((code) => code.startsWith(`not_measured:${clause}:`));
+      assert.ok(
+        gap,
+        `${clause}: the reader threw and nothing in the result says so - it published ${codes.join(", ")}`,
+      );
+      assert.match(gap, new RegExp(`^not_measured:${clause}:.+$`, "u"), `${clause}: a gap must name its reason`);
+      // 3. THE CLAUSE ITSELF says so, and the run's state follows the clause rather than the throw.
+      if (injections[clause].expectedState === "passed")
+        assert.equal(result.failedClause, null, `${clause}: a gap passed it`);
+      else
+        assert.deepEqual(
+          result.failedClauses.filter((entry) => entry.id === clause),
+          [{ id: clause, reasonCode: gap }],
+          `${clause}: the clause that could not be measured is the one that failed, named by the gap`,
+        );
+      assert.equal(result.state, injections[clause].expectedState, `${clause}: the state follows the clause`);
+      // 4. LOUD IN THE LOG, with the reader's stack: the artifact and the log are read by different people at different
+      // times, and a reader that throws without a trace is a defect nobody can find.
+      assert.ok(
+        logged.some(
+          (line) =>
+            line.startsWith("MEASUREMENT_NOT_MEASURED") &&
+            line.includes(`"clause":"${clause}"`) &&
+            line.includes(`"reasonCode":"${gap}"`) &&
+            line.includes('"stack":"Error:'),
+        ),
+        `${clause}: the log must name the throwing reader and carry its stack, got ${logged.filter((line) => line.startsWith("MEASUREMENT_NOT_MEASURED")).join(" | ") || "nothing"}`,
+      );
+    }
+  } finally {
+    console.error = originalError;
+  }
 });
 test("a run whose execution record could not be read to the end cannot be `passed`", async () => {
   // `executionTrace.ok` was published and consumed by nobody: measured 2026-11-06, round38 published

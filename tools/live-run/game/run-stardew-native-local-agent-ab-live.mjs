@@ -97,7 +97,6 @@ import { executeFresh, TERMINAL_STATES } from "../../lib/stardew-native-smoke-ha
 import { summarizeSystemFindings } from "../../lib/system-findings.mjs";
 import { judgesAPublishedFact, judgeTaskPurpose, readScheduledJudgement } from "../../lib/task-purpose.mjs";
 import { turnSettled } from "../../lib/turn-settled.mjs";
-import { rereadDaySeedMarket } from "./task-pool-feasibility.mjs";
 import {
   launchVoiceGatewayChild,
   pickVoiceGatewayPort,
@@ -116,6 +115,7 @@ import { assessInteractionValue } from "../interaction-value-gate.mjs";
 import { fileNightReceiptsOnTheirOwnNights } from "./night-receipt-filing.mjs";
 import { judgeUncrossedNight, sleepReceiptOf, sleepVerdictCase, summarizeCrossings } from "./night-verdict.mjs";
 import { createLedger, ledgerSpans, ledgerSummary } from "./run-ledger.mjs";
+import { rereadDaySeedMarket } from "./task-pool-feasibility.mjs";
 
 // The registered terminal reason code per action is the only authority that can
 // tell a receipt that FINISHED an action from one that only progressed it. Read it
@@ -150,6 +150,7 @@ import {
   buildSnapshotCensus,
   measureActionBreadth,
   readActionBreadthSurface,
+  unmeasuredActionBreadth,
 } from "../../lib/action-breadth.mjs";
 import { EVIDENCE_BUNDLE_FILES, writeEvidenceBundle } from "../../lib/evidence-bundle.mjs";
 import { buildFailureSnapshot, buildReproPlan, classifyFailure } from "../../lib/failure-dump.mjs";
@@ -165,6 +166,10 @@ import {
   reclamationStep,
   stampReclamation,
 } from "../../lib/live-run-teardown.mjs";
+// The boundary every clause's measurement sits behind: a reader that throws becomes `not_measured:<clause>:<reason>` in
+// the artifact and one `MEASUREMENT_NOT_MEASURED` line with its stack in the log, instead of aborting the assembly of a
+// run whose work already happened (`round98`, 2026-11-23).
+import { gapClause, measureOrNotMeasured } from "../../lib/measurement-boundary.mjs";
 // The Mod's own durable Body Program journal: the fallback that answers when the game - and with it the bridge - dies
 // mid-run, which is exactly when a program's evidence matters most.
 import {
@@ -6060,14 +6065,33 @@ async function buildRunResult({
   // observation carries the pose (the snapshot has no facing). Neither can be re-read after teardown.
   const snapshot = settlement?.snapshot ?? lastObservedSnapshot ?? lastObservedPose ?? null;
   const pose = lastObservedPose;
+  // THE ONE BOUNDARY EVERY CLAUSE'S MEASUREMENT STANDS BEHIND (`../../lib/measurement-boundary.mjs`). Measured
+  // 2026-11-23 (`round98`): the run finished fifteen minutes of real work and published nothing, because a READER threw
+  // while this function was assembling the record - the baseline file was re-recorded at 17:36 while the process that had
+  // loaded the previous reader at 17:28 was still running. A clause's reader answers a question ABOUT the run; it is not
+  // the run, so a throw is `not_measured:<clause>:<reason>` in the artifact and a `MEASUREMENT_NOT_MEASURED` line with
+  // the stack in the log - never an aborted assembly.
+  //
   // The trace is read BEFORE the verdict because the verdict reads it: an execution record that could not be read to
   // the end is absent evidence, and a run cannot be `passed` on evidence it failed to read. `carriedExecutionTrace`
   // is the caller's derivation from the pre-teardown read, so the observation block published the same object.
   const carried = evidence.programOutcomesAtTeardown;
-  programOutcomes = carried ?? (await sampleProgramOutcomes());
-  const programRows = programExecutionRows(programOutcomes);
-  const executionTrace =
-    carriedExecutionTrace ?? executionTraceInvariant({ actionTrace, programOutcomes, programRows, programSubmissions });
+  const outcomesReading = await measureOrNotMeasured("execution_trace", async () => {
+    const read = carried ?? (await sampleProgramOutcomes());
+    const rows = programExecutionRows(read);
+    return Object.freeze({
+      programOutcomes: read,
+      programRows: rows,
+      executionTrace:
+        carriedExecutionTrace ??
+        executionTraceInvariant({ actionTrace, programOutcomes: read, programRows: rows, programSubmissions }),
+    });
+  });
+  programOutcomes = outcomesReading.value?.programOutcomes ?? Object.freeze([]);
+  const programRows = outcomesReading.value?.programRows ?? Object.freeze([]);
+  // `null` is this field's own spelling of "the trace was not read", which the write below and the bundle already
+  // answer with a named reason instead of a zero.
+  const executionTrace = outcomesReading.value?.executionTrace ?? null;
   // What the run tried and what it achieved, read from BOTH channels once the program record is in hand. Derived
   // HERE, above the verdict, because `action_breadth` is a clause: the breadth a run publishes and the breadth its
   // verdict is decided on are then one object instead of two derivations that can disagree - and the crashed path,
@@ -6079,30 +6103,44 @@ async function buildRunResult({
   // address: the families its own snapshots published (`snapshotCensus`, built from `snapshotFamilyRows`), joined to
   // actions through `lib/action-breadth.mjs`; the catalog is published beside it as context only. The ratchet is
   // `tools/action-breadth-baseline.json`, and the verdict names what is missing rather than counting what was done.
-  const breadthSurface = await readActionBreadthSurface();
-  const snapshotCensus = buildSnapshotCensus({
-    surface: breadthSurface,
-    rows: snapshotFamilyRows,
-    snapshots: snapshotCensusSamples,
-    tools: snapshotToolCategories,
+  const breadthReading = await measureOrNotMeasured("action_breadth", async () => {
+    const surface = await readActionBreadthSurface();
+    const census = buildSnapshotCensus({
+      surface,
+      rows: snapshotFamilyRows,
+      snapshots: snapshotCensusSamples,
+      tools: snapshotToolCategories,
+    });
+    const reading = await measureActionBreadth({
+      scenario: SCENARIO,
+      attempted: dispatched.attempted,
+      succeeded: dispatched.succeeded,
+      executions: executionTrace?.rows ?? null,
+      // The flat half of the trace, in hand: without it the flat dispatches could not be attributed to any action and
+      // the concentration would be reported as unmeasurable rather than measured on the program half alone.
+      actionRows: actionTrace,
+      // The program half, from `programExecutionRows` - the module that owns what one execution IS - so a redelivered
+      // journal event cannot be counted twice here while the manifest counts it once.
+      programRows,
+      programSubmissions,
+      // The world this run was given, as the run itself read it. Absent samples (a run that ended before its first
+      // observation) make the reading `not_measured:no_snapshot_census`, never a fall back to the catalog.
+      census,
+      surface,
+    });
+    return Object.freeze({ census, reading });
   });
-  const actionBreadth = await measureActionBreadth({
-    scenario: SCENARIO,
-    attempted: dispatched.attempted,
-    succeeded: dispatched.succeeded,
-    executions: executionTrace.rows,
-    // The flat half of the trace, in hand: without it the flat dispatches could not be attributed to any action and
-    // the concentration would be reported as unmeasurable rather than measured on the program half alone.
-    actionRows: actionTrace,
-    // The program half, from `programExecutionRows` - the module that owns what one execution IS - so a redelivered
-    // journal event cannot be counted twice here while the manifest counts it once.
-    programRows,
-    programSubmissions,
-    // The world this run was given, as the run itself read it. Absent samples (a run that ended before its first
-    // observation) make the reading `not_measured:no_snapshot_census`, never a fall back to the catalog.
-    census: snapshotCensus,
-    surface: breadthSurface,
-  });
+  // The census only exists beside the surface it is built from, so a gap here costs the census too - and the reading
+  // publishes the gap. The two counts travel: they are the run's own dispatch trace, not this reading's work.
+  const snapshotCensus = breadthReading.value?.census ?? null;
+  const actionBreadth =
+    breadthReading.value?.reading ??
+    unmeasuredActionBreadth({
+      scenario: SCENARIO,
+      code: breadthReading.notMeasured,
+      attempted: dispatched.attempted.length,
+      succeeded: dispatched.succeeded.length,
+    });
   if (String(actionBreadth.verdict).startsWith("narrow:"))
     console.error(
       "ACTION_BREADTH_NARROW",
@@ -6123,20 +6161,27 @@ async function buildRunResult({
   // every claim about whether the run worked at all and before the clause that says whether the record can be trusted.
   // ONE derivation of what the presentation layer did, made BEFORE the verdict because the verdict reads it: a run
   // whose own commitment count disagrees with its account cannot be a passed run, and the bundle publishes the same
-  // object the clause was decided on.
-  const presentationEvidence = summarizePresentationEvidence();
+  // object the clause was decided on. `null` is what an unmeasurable one publishes, and its clause says why.
+  const presentationReading = await measureOrNotMeasured("delivery_account", () => summarizePresentationEvidence());
+  const presentationEvidence = presentationReading.value;
   // WHETHER THE WORLD MOVED, derived ONCE and read twice - by the clause below and by the result this function
   // publishes - so a run cannot be blocked by a clock its own artifact says was turning. It is the FIRST clause for a
   // reason: a paused world measures nothing about the companion, so the behavioural clauses below it have to be preceded
   // by the fact that there was a world to behave in. `round50b` (2026-11-19) is that case measured: ten real minutes,
   // zero bridge facts, and no reading anywhere in the artifact to say whether the clock had stopped.
-  const clockReadout = gameClock.read({ facts: factLog.length });
-  console.error("GAME_CLOCK", clockReadout.line);
-  const clockClause = Object.freeze({
-    id: "game_clock",
-    passed: clockReadout.verdict === "advanced",
-    reasonCode: clockReadout.reasonCode ?? "game_clock_advanced",
-  });
+  const clockReading = await measureOrNotMeasured("game_clock", () => gameClock.read({ facts: factLog.length }));
+  const clockReadout = clockReading.value;
+  if (clockReadout !== null) console.error("GAME_CLOCK", clockReadout.line);
+  // A GAP IN THIS READING BLOCKS, in the shape the reading's own `not_measured` arms already block: a run whose world
+  // cannot be read cannot say the world moved, and the code names the reader rather than the world.
+  const clockClause =
+    clockReading.notMeasured === null
+      ? Object.freeze({
+          id: "game_clock",
+          passed: clockReadout.verdict === "advanced",
+          reasonCode: clockReadout.reasonCode ?? "game_clock_advanced",
+        })
+      : gapClause("game_clock", clockReading.notMeasured, { passed: false });
   const rung =
     rungClauses === null
       ? null
@@ -6149,12 +6194,16 @@ async function buildRunResult({
           // remainder. Round41 published 59 pieces and thirteen records accounting 46 parts with nothing said about
           // the difference, and a reader reported a whole turn missing. Publishing the account without deciding
           // anything on it is what let that read as fine.
-          deliveryAccountClause(presentationEvidence.deliveryAccount),
-          Object.freeze({
-            id: "execution_trace",
-            passed: executionTrace.ok === true,
-            reasonCode: "execution_trace_incomplete",
-          }),
+          presentationReading.notMeasured === null
+            ? deliveryAccountClause(presentationEvidence.deliveryAccount)
+            : gapClause("delivery_account", presentationReading.notMeasured, { passed: false }),
+          outcomesReading.notMeasured === null
+            ? Object.freeze({
+                id: "execution_trace",
+                passed: executionTrace.ok === true,
+                reasonCode: "execution_trace_incomplete",
+              })
+            : gapClause("execution_trace", outcomesReading.notMeasured, { passed: false }),
         ]);
   const runState = rung === null ? state : rung.state;
   // ONE derivation for the reason a run is not passed, so a code that came from a crash, a code the rung failed on
@@ -6197,13 +6246,19 @@ async function buildRunResult({
   // The disconnect record reads this, and it is only knowable here: a run whose work all went through programs has
   // `flat: 0` and a large program count, so a disconnect that reported the flat half alone said "nothing had
   // happened" beside its own dispatches.
-  lastKnownProgramDispatches = executionTrace.programDispatches;
-  if (!executionTrace.ok) console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
+  lastKnownProgramDispatches = executionTrace?.programDispatches ?? null;
+  if (executionTrace !== null && !executionTrace.ok)
+    console.error("EXECUTION_TRACE_INVARIANT_VIOLATED", JSON.stringify(executionTrace));
   // ONE PROGRAM HAS ONE ROW, printed every run with the numbers it is computed from: `duplicated 0` beside
   // `submissions 114 · programs 112` is a reading, and `duplicated 0` alone is also what a reader who never looked would
   // print. The difference between the first two numbers is the retries, which are neither a second program nor a second
   // row - the shape round77 read as `programDispatches 477` against 473 rows.
-  console.error("EXECUTION_TRACE_LEDGER", `a_trace_row_is_one_program: ${executionTrace.oneRow.line}`);
+  // A trace nobody could read prints the gap instead of a ledger: the line exists to be compared with the run's own
+  // numbers, and there are none.
+  console.error(
+    "EXECUTION_TRACE_LEDGER",
+    `a_trace_row_is_one_program: ${executionTrace?.oneRow.line ?? outcomesReading.notMeasured}`,
+  );
   // The same discipline for the other side of the same executions: the tool-call counts and the frames the runner sent
   // must not disagree about how many flat dispatches this run made. Read here, not inside the result literal, so the
   // violation is logged by name before anything is published - and read before the run cost account below, which divides
@@ -6211,7 +6266,7 @@ async function buildRunResult({
   // it could not be bound, its reason is published instead of another run's numbers, and when the invariant fails the
   // reader withholds the timings rather than qualifying them.
   const toolTiming = readToolTiming(runSessionRecord.path, {
-    executionTraceFlat: executionTrace.flat,
+    executionTraceFlat: executionTrace?.flat ?? null,
     unboundReason: runSessionRecord.reason ?? "no_session_record",
   });
   if (toolTiming.invariant.ok === false)
@@ -6226,7 +6281,7 @@ async function buildRunResult({
     modelTurns: toolTiming.modelTurns ?? null,
     // An execution record that could not be read is an unmeasured denominator, never a smaller one.
     completedActions:
-      executionTrace.ok === true
+      executionTrace?.ok === true
         ? actionTrace.length + programRows.filter((row) => Number.isFinite(row.settledAtMs)).length
         : null,
   });

@@ -29,22 +29,53 @@
  * names every target family, including the ones it saw zero rows of, so "this family was empty" and "nobody looked"
  * stay different answers - `census_family_absent:<family>` is the drift between the census and the catalog.
  *
- * THE RATCHET. `tools/action-breadth-baseline.json` records the best coverage each scenario has shown - its attempted
- * count, the addressable width when the census could measure one, the per-family split of its attempts, and the coverage
- * floor taken from the best census-bearing run - plus the actions a fixture cannot reach with the reason each one cannot.
- * What is compared is coverage, never an absolute count of families: a run is not below a run that worked in more
- * families, it is below one whose families it also had and skipped. An action that was excluded and then attempted is
+ * THE RATCHET. `tools/action-breadth-baseline.json` records the best attempts each scenario has shown - its attempted
+ * count, the per-family split of its attempts, and the coverage floor as the ACTIONS the best census-bearing run could
+ * address and the ones it addressed - plus the actions a fixture cannot reach with the reason each one cannot. What is
+ * compared is coverage, never an absolute count of families: a run is not below a run that worked in more families, it is
+ * below one whose families it also had and skipped. An action that was excluded and then attempted is
  * `narrow:excluded_action_attempted:<actionId>`, because a carve-out that has silently stopped being true makes every
  * later reading smaller than it looks.
+ *
+ * WHAT THIS ASKS, in one line: of the work her own day made reachable, did she touch as much as the best run on this
+ * machine touched of the work the two days SHARED? A criterion that answers differently when the world publishes fewer
+ * families is measuring the world, not her.
+ *
+ * THE FLOOR IS COMPARED ON THE WORLD BOTH RUNS HAD. Measured 2026-11-23, three consecutive multiday runs: `round95`
+ * attempted 26 of 57 addressable (45.6 %, rich), `round96` 20 of 55 (36.4 %, narrow), `round97` 18 of 53 (34.0 %,
+ * narrow), against a floor recorded as `round76`'s 17 of 43 (39.5 %). Three of those four numbers moved for reasons that
+ * are not her: the addressable width fell 57 -> 55 -> 53 because families published nothing on those days
+ * (`artifactSpotTargets` and `petBowlTargets` went from one row to none, with them two more), and the floor's own numerator
+ * had been taken outside its denominator - `round76` named 17 attempted actions and 43 addressable ones, but `chop_stump`,
+ * `chop_tree` and `pickup_item` ran against families its census never carried a row for, so its coverage of its own world
+ * was 14 of 43 (32.6 %), not 17 of 43. Those two defects are what failed `round96` and `round97`: 36.4 % and 34.0 % clear
+ * the floor's real 32.6 %.
+ *
+ * So the floor is recorded as the floor run's OWN action ids - what it could address and what it addressed - and the
+ * comparison is taken on the actions this run's world and the floor's world both made addressable. Equal denominators make
+ * the count comparison the ratio comparison, and the bar cannot move with the world: a family that publishes nothing leaves
+ * both the denominator and the bar by the same action. Against the floor as this file used to record it, the rule agrees
+ * with the rate rule on 17 of the 26 census-bearing multiday bundles here and disagrees on nine, all nine toward `rich`
+ * (`round80`, `round81`, `round84`, `round86`, `round87b`, `round89`, `round91`, `round96`, `round97`); against the
+ * floor's corrected 14 of 43 the two agree on all 26, and differ only where a world wider than a floor's can lower a run's
+ * rate while it touched nothing less - which is the structural reason for the change and not a rescue of a particular run.
+ * The four both rules fail are the four thin days (`round45` 6 of 31 shared, `round46` 2 of 30, `round87` 9 of 40,
+ * `round90` 12 of 41, against the floor's 14).
+ * Keeping the fixed floor and printing how much of each shortfall is the world was the alternative: it needs the same
+ * action ids to be honest - two ratios cannot say which actions left - and once it has them it still fails a run for a
+ * world wider than the floor's. Explaining a wrong number is not the same as not printing it. `sameWorld` is published
+ * with every reading so the population of the comparison is visible, and an empty one is `not_measured` rather than a
+ * pass: a comparison nobody could make must not read as one she won.
  *
  * A VERDICT NAMES WHAT IT COMPARED. Two populations decide every breadth reading - what the world published and made
  * addressable, and what the companion chose to attempt - and a verdict that names neither cannot be argued with.
  * Measured 2026-11-20 on `round84`: `published 101 · addressable 55 · attempted 18 · succeeded 16` came back as
  * `narrow:below_baseline:round38`, and nothing in that code said the comparison was 18 of 55 against round76's 17 of 43;
  * `round38` recorded no addressable width at all, so the label named a run the coverage dimension never used. The code
- * now carries the dimension and both halves of the ratio it compared -
- * `narrow:below_baseline:<label>:coverage=<attempted>/<addressable>:held=<h>/<w>:by=<holder>` - and
- * `narrow:below_baseline:<label>:families=<names>` stays as it was, because the token `families` already says which
+ * now carries the dimension and both halves of the population it compared -
+ * `narrow:below_baseline:<label>:coverage=<this run>/<shared>:held=<h>/<shared>:by=<holder>`, where `<shared>` is the
+ * actions both worlds made addressable - and `narrow:below_baseline:<label>:families=<names>` stays as it was, because the
+ * token `families` already says which
  * dimension failed and the names are the ones this run offered and skipped. Every reading prints both populations beside
  * the bar they were held to (`formatActionBreadth`), so the 46 actions round84 published and never could address are
  * visible as a fact about its world rather than charged to the companion.
@@ -144,6 +175,11 @@ export const SNAPSHOT_CENSUS_SOURCE = "runner_observations";
 
 function fail(code) {
   throw new Error(`action_breadth_${code}`);
+}
+
+/** A published action id: the only kind of entry the baseline's id lists and a run's attempt list may carry. */
+function isActionId(value) {
+  return typeof value === "string" && value.length > 0;
 }
 
 /** `PetTargets` -> `petTargets`: the snapshot key one action's targets are published under, or null when it has none. */
@@ -400,6 +436,7 @@ export async function readActionBreadthBaseline({ path = ACTION_BREADTH_BASELINE
   const baselines = parsed?.baselines;
   if (baselines === null || typeof baselines !== "object" || Array.isArray(baselines))
     fail("baseline_missing_baselines");
+  const floors = new Map();
   for (const [scenario, entry] of Object.entries(baselines)) {
     if (typeof entry?.label !== "string" || entry.label.length === 0) fail(`baseline_label_missing:${scenario}`);
     if (!Number.isInteger(entry?.attempted) || entry.attempted <= 0) fail(`baseline_attempted_invalid:${scenario}`);
@@ -424,20 +461,25 @@ export async function readActionBreadthBaseline({ path = ACTION_BREADTH_BASELINE
       if (sum !== entry.attempted)
         fail(`baseline_families_do_not_sum:${scenario}:${String(sum)}:${String(entry.attempted)}`);
     }
-    // The best coverage a census-bearing run of this scenario has shown, with the run it came from: the width the
-    // coverage dimension is compared against while the baseline itself records none. Its two numbers are one pair - an
-    // `attempted` from one run beside an `addressable` from another would be a comparison identity no run ever had.
+    // The floor is recorded as the ACTIONS the recorded run could address and the ones it addressed, never as a pair of
+    // counts: a rate over a world of its own is what made the verdict move with the world, and the comparison needs the
+    // identities to stand on the part of the world both runs had. `attempted` and `addressable` are derived from the two
+    // lists below - one spelling, so a count can never disagree with the ids it counts.
     if (entry?.coverageFloor !== null && entry?.coverageFloor !== undefined) {
       const floor = entry.coverageFloor;
-      if (
-        !Number.isInteger(floor?.attempted) ||
-        floor.attempted <= 0 ||
-        !Number.isInteger(floor?.addressable) ||
-        floor.addressable < floor.attempted ||
-        typeof floor?.label !== "string" ||
-        floor.label.length === 0
-      )
+      if (typeof floor?.label !== "string" || floor.label.length === 0)
         fail(`baseline_coverage_floor_invalid:${scenario}`);
+      const addressable = floor?.addressableActionIds;
+      const attempted = floor?.attemptedActionIds;
+      if (!Array.isArray(addressable) || addressable.length === 0 || !addressable.every(isActionId))
+        fail(`baseline_coverage_floor_unpopulated:${scenario}`);
+      if (new Set(addressable).size !== addressable.length) fail(`baseline_coverage_floor_duplicate:${scenario}`);
+      if (!Array.isArray(attempted) || attempted.length === 0 || !attempted.every(isActionId))
+        fail(`baseline_coverage_floor_unattempted:${scenario}`);
+      const addressableSet = new Set(addressable);
+      const outside = attempted.filter((actionId) => !addressableSet.has(actionId));
+      if (outside.length > 0) fail(`baseline_coverage_floor_attempted_outside:${scenario}:${outside.join(",")}`);
+      floors.set(scenario, Object.freeze({ ...floor, attempted: attempted.length, addressable: addressable.length }));
     }
   }
   const exclusions = parsed?.exclusions ?? [];
@@ -449,7 +491,18 @@ export async function readActionBreadthBaseline({ path = ACTION_BREADTH_BASELINE
     if (typeof entry?.reason !== "string" || entry.reason.length < 40)
       fail(`baseline_exclusion_unreasoned:${entry.actionId}`);
   }
-  return Object.freeze({ baselines, exclusions });
+  return Object.freeze({
+    // The floor's counts are DERIVED above and carried beside its ids, so every reader prints one number per fact.
+    baselines: Object.freeze(
+      Object.fromEntries(
+        Object.entries(baselines).map(([scenario, entry]) => [
+          scenario,
+          floors.has(scenario) ? Object.freeze({ ...entry, coverageFloor: floors.get(scenario) }) : entry,
+        ]),
+      ),
+    ),
+    exclusions,
+  });
 }
 
 /** The join key between a journal node (`(programId, nodeId)`) and the candidate the Host submitted. */
@@ -608,14 +661,14 @@ export async function measureActionBreadth({
             ),
           ].sort(),
         );
-  // ONE derivation of the ratchet comparison, read twice: by the verdict below and by the field this result publishes,
-  // so the artifact and the decision cannot disagree about which families the run skipped.
+  // ONE derivation of the ratchet comparison, read twice: by the verdict below and by the fields this result publishes,
+  // so the artifact and the decision cannot disagree about what was compared, or about which families the run skipped.
   const baselineComparison =
     scenarioBaseline === null
       ? null
       : belowBaseline({
-          attemptedCount: attemptedIds.length,
-          addressableCount,
+          attemptedIds,
+          addressableIds: addressable === null ? Object.freeze([]) : addressable.actionIds,
           familyNames,
           addressableFamilyNames,
           scenarioBaseline,
@@ -623,7 +676,6 @@ export async function measureActionBreadth({
   const verdict = deriveVerdict({
     published,
     attemptedCount: attemptedIds.length,
-    addressableCount,
     baselineComparison,
     total,
     concentration,
@@ -670,6 +722,10 @@ export async function measureActionBreadth({
     baselineCompared: baselineComparison === null ? null : baselineComparison.held,
     baselineFailed: baselineComparison === null ? null : baselineComparison.belowBy,
     baselineMissedFamilies: baselineComparison === null ? null : baselineComparison.missedFamilies,
+    // The population the coverage dimension was compared over, and the two counts inside it: this run's attempts there,
+    // the floor run's there, and the floor run's actions this run did not touch - named, so the comparison can be
+    // recomputed and argued with from the artifact alone.
+    baselineSameWorld: baselineComparison === null ? null : baselineComparison.sameWorld,
     publishedFamilies: resolvedSurface.familyCount,
     familyNames,
     executions: total,
@@ -691,6 +747,60 @@ export async function measureActionBreadth({
 }
 
 /**
+ * The reading of a run whose breadth could not be measured at all: the code that says which reader threw, and every
+ * population it would have published as `null`.
+ *
+ * The counts the caller already holds travel - `attempted` and `succeeded` are the run's own dispatch trace, not this
+ * reading's work - so an artifact whose breadth gate failed still says how many actions the run used. The verdict is
+ * the gap itself (`not_measured:action_breadth:<reason>`), never `rich`: a reading nobody took is not a pass.
+ *
+ * `NOT MEASURED IS NOT NARROW` (see the header) is why this publishes rather than throws, and the shape is asserted
+ * against `measureActionBreadth`'s own output in `action-breadth.test.mjs`: one reading, one shape, whichever way the
+ * numbers arrived.
+ */
+export function unmeasuredActionBreadth({ scenario = null, code, attempted = 0, succeeded = 0 }) {
+  return Object.freeze({
+    scenario,
+    attempted,
+    succeeded,
+    published: null,
+    judged: null,
+    census: null,
+    addressable: null,
+    addressableTargetBound: null,
+    addressableTargetless: null,
+    addressableFamilies: null,
+    addressableExcluded: null,
+    addressableWithheld: null,
+    addressableFromAttempt: null,
+    toolClaimUnmeasured: null,
+    censusFamiliesAbsent: null,
+    coverage: null,
+    catalogCoverage: null,
+    families: null,
+    addressableFamilyNames: null,
+    baselineCompared: null,
+    baselineFailed: null,
+    baselineMissedFamilies: null,
+    baselineSameWorld: null,
+    publishedFamilies: null,
+    familyNames: Object.freeze([]),
+    executions: null,
+    attributedExecutions: null,
+    unattributedExecutions: null,
+    concentration: null,
+    concentrationReason: null,
+    baseline: null,
+    excludedAttempted: Object.freeze([]),
+    staleExclusions: Object.freeze([]),
+    outsidePopulation: Object.freeze([]),
+    outsideAddressable: Object.freeze([]),
+    perAction: Object.freeze([]),
+    verdict: code,
+  });
+}
+
+/**
  * The verdict, in the order a reader should be told about it.
  *
  * Every `narrow:` arm is decided BEFORE the measurement gaps, because a run that was both narrow and unmeasurable in
@@ -701,7 +811,6 @@ export async function measureActionBreadth({
 function deriveVerdict({
   published,
   attemptedCount,
-  addressableCount,
   baselineComparison,
   total,
   concentration,
@@ -727,10 +836,15 @@ function deriveVerdict({
     // count and cannot be recomputed (`round84`, 2026-11-20), so the coverage arm carries both halves of both ratios.
     if (baselineComparison.belowBy === "coverage") {
       const held = baselineComparison.held;
-      return `narrow:below_baseline:${scenarioBaseline.label}:coverage=${String(attemptedCount)}/${String(addressableCount)}:held=${String(held.attempted)}/${String(held.addressable)}:by=${held.label}`;
+      const shared = baselineComparison.sameWorld;
+      return `narrow:below_baseline:${scenarioBaseline.label}:coverage=${String(shared.attempted)}/${String(shared.addressable)}:held=${String(held.attempted)}/${String(held.addressable)}:by=${held.label}`;
     }
     return `narrow:below_baseline:${scenarioBaseline.label}:families=${baselineComparison.missedFamilies.join(",")}`;
   }
+  // A ratchet that cannot compare this run - no shared action with the floor's world and no family split either - is a
+  // measurement this tree could not take, and it says so instead of reading as a comparison she won.
+  if (baselineComparison !== null && baselineComparison.unmeasured !== null)
+    return `not_measured:${baselineComparison.unmeasured}`;
   if (published.size === 0) return "not_measured:published_action_population_empty";
   if (staleExclusions.length > 0) return `not_measured:excluded_action_not_published:${staleExclusions.join(",")}`;
   if (censusFamiliesAbsent.length > 0) return `not_measured:census_family_absent:${censusFamiliesAbsent.join(",")}`;
@@ -741,30 +855,50 @@ function deriveVerdict({
 }
 
 /**
- * The coverage width the coverage dimension is compared against, as ONE pair and the label of the run that held it.
+ * The coverage floor the coverage dimension is compared against: the recorded run, the ACTIONS its world made
+ * addressable, and the ones it addressed.
  *
- * The pair is never mixed: `scenarioBaseline.addressable` belongs beside `scenarioBaseline.attempted`, and a baseline
- * that recorded no width is compared against `coverageFloor`, which records its own attempted/addressable pair for the
- * same reason. The label travels with the pair, because `round38` recorded no addressable width at all - a verdict that
- * named it for a ratio round76 held sent a reader looking for a denominator that run never had.
+ * The floor is the ONE bar for this dimension. `round38`'s own attempted count (24) is the family dimension's population
+ * and never a coverage width - its bundle predates the census, so the width of its world is not a number this gate ever
+ * measured - which is why a verdict that named it for a ratio `round76` held sent a reader looking for a denominator that
+ * run never had.
  */
-function coverageWidthOf(scenarioBaseline) {
-  if (Number.isInteger(scenarioBaseline.addressable) && scenarioBaseline.addressable > 0)
-    return Object.freeze({
-      dimension: "coverage",
-      label: scenarioBaseline.label,
-      attempted: scenarioBaseline.attempted,
-      addressable: scenarioBaseline.addressable,
-      what: "recorded attempted/addressable",
-    });
+function coverageFloorOf(scenarioBaseline) {
   const floor = scenarioBaseline.coverageFloor ?? null;
   if (floor === null || floor === undefined) return null;
   return Object.freeze({
-    dimension: "coverage",
     label: floor.label,
-    attempted: floor.attempted,
-    addressable: floor.addressable,
-    what: "coverage floor, the best census-bearing run's attempted/addressable",
+    attemptedActionIds: floor.attemptedActionIds,
+    addressableActionIds: floor.addressableActionIds,
+  });
+}
+
+/**
+ * The part of the world this run and the floor run BOTH had, and how much of it each addressed.
+ *
+ * The population is `this run's addressable actions ∩ the floor's addressable actions`, and both counts are taken inside
+ * it: `attempted` is what this run did there, `held` is what the floor run did there. Equal denominators make the count
+ * comparison the ratio comparison, and the bar cannot move with the world - an action whose family published nothing
+ * leaves BOTH sides by the same action, which is the defect this replaced: `round97` attempted 18 of 53 and was held to a
+ * rate recorded over 43, so the same 18 attempts read as 34.0 % or 40.0 % depending on what the fixture published.
+ *
+ * Null when the two worlds share nothing: the ratchet then has no population to compare over, and the caller says so
+ * rather than passing a run on a comparison nobody made.
+ */
+function coverageOnSharedWorld({ floor, addressableIds, attemptedIds }) {
+  const floorAddressable = new Set(floor.addressableActionIds);
+  const shared = addressableIds.filter((actionId) => floorAddressable.has(actionId));
+  if (shared.length === 0) return null;
+  const sharedSet = new Set(shared);
+  const attempted = new Set(attemptedIds);
+  const held = new Set(floor.attemptedActionIds.filter((actionId) => sharedSet.has(actionId)));
+  return Object.freeze({
+    label: floor.label,
+    addressable: shared.length,
+    attempted: shared.filter((actionId) => attempted.has(actionId)).length,
+    held: held.size,
+    // The floor's actions this run did not touch, named: the same fact the family dimension prints member by member.
+    skipped: Object.freeze(shared.filter((actionId) => held.has(actionId) && !attempted.has(actionId)).sort()),
   });
 }
 
@@ -773,10 +907,12 @@ function coverageWidthOf(scenarioBaseline) {
  *
  * TWO DIMENSIONS, both measured on the world this run was given.
  *
- * COVERAGE is compared by cross-multiplication so two runs in two differently-armed worlds are compared as fractions
- * rather than as counts: a fixture that arms nine actions and a run that attempts five of them is not below a run that
- * attempted 24 of 51. It is only comparable when a width is recorded - the baseline's own, else the floor of the best
- * census-bearing run - which the census predating runs do not have.
+ * COVERAGE is compared on the world the two runs SHARE: the actions both this run's snapshots and the floor run's made
+ * addressable. Inside that population the two counts are comparable directly, and the ratio comparison (equal
+ * denominators) is the same statement - but a fraction whose denominator is only this run's world is not, because the
+ * world publishes a different number of families every day: `round95` attempted 26 of 57 (45.6 %) and passed, `round96`
+ * 20 of 55 (36.4 %) and `round97` 18 of 53 (34.0 %) failed, while the 18 attempts of `round97` are 41.9 % of a 43-wide
+ * world. A criterion that answers differently when the world publishes fewer families is measuring the world.
  *
  * FAMILIES are compared as COVERAGE OF THE SAME FAMILIES, never as an absolute count of families. The old rule was
  * `familyCount < baseline.families → below`, and it vetoed any run whose world or task mix was narrower than the best
@@ -786,22 +922,47 @@ function coverageWidthOf(scenarioBaseline) {
  * now is the share of THIS run's own families the baseline also worked in, against how many of them this run worked in:
  * a family this run's world never offered is not asked of it, and a family it offered and the run skipped is named.
  *
- * `held` is the dimension's own bar in the dimension's own terms - a ratio for coverage, a set for families - so the
- * reading that prints it can state what the run was held to instead of leaving a reader to derive it. COVERAGE DECIDES
- * FIRST, because its bar is one pair and a run below it needs no second dimension to explain the verdict; the family
- * dimension is reached only when the ratio cleared or could not be measured. A baseline entry that records neither width
- * cannot fail a run on either dimension, and a run with no census cannot be compared at all (the verdict says
- * `not_measured` before this is reached).
+ * `held` is the dimension's own bar in the dimension's own terms - a share of the shared world for coverage, a set for
+ * families - so the reading that prints it can state what the run was held to instead of leaving a reader to derive it.
+ * COVERAGE DECIDES FIRST, because its bar is one population and a run below it needs no second dimension to explain the
+ * verdict; the family dimension is reached only when the ratio cleared or could not be measured. `unmeasured` names the
+ * one state that is neither: no floor, no shared world, and no family split to compare, i.e. a ratchet that cannot say
+ * anything about this run - which the verdict reports as `not_measured` rather than as a pass.
  */
-function belowBaseline({ attemptedCount, addressableCount, familyNames, addressableFamilyNames, scenarioBaseline }) {
-  const width = coverageWidthOf(scenarioBaseline);
-  if (width !== null && addressableCount !== null && addressableCount > 0) {
-    if (attemptedCount * width.addressable < width.attempted * addressableCount)
-      return Object.freeze({ below: true, missedFamilies: Object.freeze([]), belowBy: "coverage", held: width });
-  }
+function belowBaseline({ attemptedIds, addressableIds, familyNames, addressableFamilyNames, scenarioBaseline }) {
+  const floor = coverageFloorOf(scenarioBaseline);
+  const sameWorld = floor === null ? null : coverageOnSharedWorld({ floor, addressableIds, attemptedIds });
+  const coverageHeld =
+    sameWorld === null
+      ? null
+      : Object.freeze({
+          dimension: "coverage",
+          label: sameWorld.label,
+          attempted: sameWorld.held,
+          addressable: sameWorld.addressable,
+          what: "the actions both worlds made addressable, and how many of them the floor run addressed",
+        });
+  if (sameWorld !== null && sameWorld.attempted < sameWorld.held)
+    return Object.freeze({
+      below: true,
+      missedFamilies: Object.freeze([]),
+      belowBy: "coverage",
+      held: coverageHeld,
+      sameWorld,
+      unmeasured: null,
+    });
   const baselineFamilies = scenarioBaseline.familiesAttempted ?? null;
-  if (baselineFamilies === null || addressableFamilyNames === null)
-    return Object.freeze({ below: false, missedFamilies: Object.freeze([]), belowBy: null, held: width });
+  const familiesComparable = baselineFamilies !== null && addressableFamilyNames !== null;
+  if (!familiesComparable)
+    return Object.freeze({
+      below: false,
+      missedFamilies: Object.freeze([]),
+      belowBy: null,
+      held: coverageHeld,
+      sameWorld,
+      // A population of zero is never green: with no shared action and no family split there is nothing to compare.
+      unmeasured: sameWorld === null ? `no_shared_world_with_baseline:${floor?.label ?? scenarioBaseline.label}` : null,
+    });
   const touched = new Set(familyNames);
   // The families this run's world offered AND the recorded best worked in: the only families it can be charged for
   // skipping. The bar is that set; the count held is how much of it this run used.
@@ -813,7 +974,7 @@ function belowBaseline({ attemptedCount, addressableCount, familyNames, addressa
     belowBy: missedFamilies.length > 0 ? "families" : null,
     held:
       missedFamilies.length === 0
-        ? width
+        ? coverageHeld
         : Object.freeze({
             dimension: "families",
             label: scenarioBaseline.label,
@@ -821,6 +982,8 @@ function belowBaseline({ attemptedCount, addressableCount, familyNames, addressa
             touched: offered.filter((family) => touched.has(family)).length,
             what: "the families this run's world offered that the recorded best worked in",
           }),
+    sameWorld,
+    unmeasured: null,
   });
 }
 
@@ -843,6 +1006,10 @@ export function actionBreadthClause(breadth) {
  * while the ratio it failed - 18 of 55 against 17 of 43 - belonged to `round76`, a run `round38`'s entry had never
  * recorded a width for. So the holder travels with the pair, and a reading that could compare nothing says which input
  * was missing instead of printing a bar nobody held.
+ *
+ * The coverage arm prints the SHARED-WORLD pair, not the floor's own rate: `13 of 40 same-world by round76, this run 15`
+ * is a comparison of two runs in one world, and the floor's original 43 is a fact about `round76`'s day that this run
+ * cannot be charged with. Printing the run's own number beside the bar is what lets a reader see which of the two moved.
  */
 function baselineHeldText(breadth) {
   const held = breadth.baselineCompared ?? null;
@@ -851,15 +1018,23 @@ function baselineHeldText(breadth) {
   if (breadth.census === null)
     return "not_measured (this run published no snapshot census, so it has no world of its own to compare)";
   if (held !== null && held.dimension === "families")
-    return `${String(held.touched)} of ${String(held.offered.length)} families (${held.what})`;
-  if (held !== null) return `${String(held.attempted)} of ${String(held.addressable)} (${held.label}'s ${held.what})`;
+    return `${String(held.touched)} of ${String(held.offered.length)} families by ${held.label} (${held.what})`;
+  const shared = breadth.baselineSameWorld ?? null;
+  if (held !== null && shared !== null)
+    return `${String(held.attempted)} of ${String(held.addressable)} same-world by ${held.label}, this run ${String(shared.attempted)} (${held.what})`;
+  if (held !== null) return `${String(held.attempted)} of ${String(held.addressable)} by ${held.label} (${held.what})`;
   if (breadth.baseline === null || breadth.baseline === undefined)
     return `none (no ratchet recorded for scenario ${breadth.scenario ?? "none"})`;
-  return "not_measured (the recorded ratchet holds neither a width nor a family split to compare)";
+  return "not_measured (the recorded ratchet holds neither a coverage floor nor a family split to compare)";
 }
 
 /** The reading as lines a terminal or a run log can carry, one fact per line, population and census first. */
 export function formatActionBreadth(breadth) {
+  // A READING NOBODY COULD TAKE has no population to print, and the verdict is its whole content: `round98`'s baseline
+  // reader threw during assembly, and the artifact it published was the gap code. Printing `attempted 0` beside it would
+  // turn a measurement that was never taken into a day that did nothing.
+  if (breadth.published === null && breadth.census === null && breadth.addressable === null)
+    return Object.freeze([`action_breadth: not measured - ${breadth.verdict}`]);
   const share =
     breadth.concentration === null
       ? `not_judged (${breadth.concentrationReason ?? "no_concentration_reading"})`
@@ -867,14 +1042,16 @@ export function formatActionBreadth(breadth) {
   const percent = (value) => `${(value * 100).toFixed(1)}%`;
   const census = breadth.census ?? null;
   const withRows = census === null ? 0 : census.families.filter((entry) => entry.rows > 0).length;
-  // THE TWO POPULATIONS, SIDE BY SIDE, and the bar the verdict compared them against. `published P` is what the world
-  // offered in total, `addressable A` is the part of it this run's own snapshots made reachable, `attempted T` and
-  // `succeeded S` are what the companion chose and what landed. The difference `P - A` is printed because it is the
-  // fact that used to be charged to her: `round84` published 101 actions, 46 of which its world never made addressable.
+  // THE THREE READINGS, SIDE BY SIDE, and the bar the verdict compared them against. `attempted T of addressable A` is
+  // what the companion chose out of what its own snapshots made reachable, `published F of G families` is how wide that
+  // world was, and `published P` is what the catalog offered in total. All three are printed because all three move for
+  // different reasons: `round95`/`96`/`97` attempted 26/20/18 of worlds 57/55/53 wide, so a reader has to be able to see
+  // which of them the verdict turned on. The difference `P - A` is the part of the catalog this world never made
+  // addressable (`round84`: 46 of 101), a fact about the fixture and never about her.
   const populations =
     breadth.addressable === null || breadth.addressable === 0
       ? `attempted ${String(breadth.attempted)} of ${String(breadth.published)} published; succeeded ${String(breadth.succeeded)} (no snapshot census, so the addressable width is not measurable)`
-      : `attempted ${String(breadth.attempted)} of ${String(breadth.addressable)} addressable (${percent(breadth.coverage ?? 0)}); succeeded ${String(breadth.succeeded)} of ${String(breadth.addressable)}; published ${String(breadth.published)} (${String(breadth.published - breadth.addressable)} never addressable in this world)`;
+      : `attempted ${String(breadth.attempted)} of ${String(breadth.addressable)} addressable (${percent(breadth.coverage ?? 0)}) (published ${String(withRows)} of ${String(census.families.length)} families); succeeded ${String(breadth.succeeded)} of ${String(breadth.addressable)}; published ${String(breadth.published)} (${String(breadth.published - breadth.addressable)} never addressable in this world)`;
   const compared = `${populations}; baseline-held ${baselineHeldText(breadth)}; compared ${breadth.baselineFailed ?? "none"}`;
   return Object.freeze([
     `action_breadth: population ${String(breadth.published)} published, ${String(breadth.judged)} judged (${String(breadth.published - breadth.judged)} excluded)`,

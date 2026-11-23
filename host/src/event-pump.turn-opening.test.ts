@@ -21,9 +21,12 @@ import {
   assistantTurnsToolOnly,
   assistantTurnsWithText,
   BACKLOG_BOUND,
+  BODY_HOLD,
+  BODY_HOLDS,
   BUBBLES_DELIVERED,
   CARRIED,
   CARRIED_BACKLOG_BOUND_MS,
+  CLOSED_WITH_NOTHING_WAIT_FOR,
   CompanionEventPump,
   CONSUMED,
   HELD,
@@ -2335,6 +2338,7 @@ test("a_turn_that_closed_without_work_names_why: every code is a condition the p
 
   const named: string[] = [];
   const mute: string[] = [];
+  const holderFaults: string[] = [];
   for (const reason of population) {
     const scenario = EMPTY_TURN_SCENARIOS[reason];
     assert.ok(scenario !== undefined, `a code was declared without a scenario: ${reason}`);
@@ -2349,6 +2353,25 @@ test("a_turn_that_closed_without_work_names_why: every code is a condition the p
     const others = population.filter((other) => other !== reason && (counts.get(other) ?? 0) > 0);
     const printed = turnAccountLine(pump.turnAccount).includes(`:${reason}: `);
 
+    // THE WAIT'S HOLDER HALF, in the same population. A turn that measured the BODY must say which holder, in a source the
+    // pump declares - and no other condition may carry a holder at all, because a field always filled answers the wrong
+    // question with the right word (the defect `nothing_owed` was, one level down).
+    const wait = pump.closedWithNothing;
+    const bodyWait = wait.waitingFor === CLOSED_WITH_NOTHING_WAIT_FOR.freeBody;
+    if (bodyWait && wait.heldBy === undefined)
+      holderFaults.push(`${reason}: the wait is the body and names no holder`);
+    if (!bodyWait && wait.heldBy !== undefined)
+      holderFaults.push(`${reason}: names \`${wait.heldBy.source}\` while the wait is \`${String(wait.waitingFor)}\``);
+    if (bodyWait && wait.heldBy !== undefined) {
+      const held = wait.heldBy;
+      if (!BODY_HOLDS.includes(held.source))
+        holderFaults.push(`${reason}: \`${held.source}\` is not one of ${BODY_HOLDS.join(" / ")}`);
+      else if (held.source !== BODY_HOLD.unnamedEngineGate && (held.holder ?? "").length === 0)
+        holderFaults.push(
+          `${reason}: \`${held.source}\` names no holder, and only \`${BODY_HOLD.unnamedEngineGate}\` may`,
+        );
+    }
+
     if (reached === 0 || others.length > 0 || !printed) {
       mute.push(
         `${reason} {reached: ${String(reached)}, also_fired: ${others.join("|") || "none"}, printed: ${String(printed)}}`,
@@ -2362,4 +2385,10 @@ test("a_turn_that_closed_without_work_names_why: every code is a condition the p
   const reading = `codes examined ${String(population.length)} · names-a-cause ${String(named.length)} · mute ${String(mute.length)}`;
   console.log(`a_turn_that_closed_without_work_names_why: ${reading}`);
   assert.deepEqual(mute, [], `every empty-turn code must name a condition no other code also names (${reading})`);
+  assert.deepEqual(
+    holderFaults,
+    [],
+    `${reading}: the body's wait must name its holder and no other wait may carry one (${BODY_HOLDS.join(" / ")} ` +
+      `are the sources the pump declares)`,
+  );
 });

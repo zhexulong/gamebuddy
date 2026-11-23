@@ -846,6 +846,15 @@ export function productivityGate(lines, { requireRows = true } = {}) {
 // (`tools/lib/action-breadth.mjs`), and this gate holds every reading to it: the numbers on the comparison row must be the
 // reading's own, a verdict that FAILED a comparison must name the value it was held to and who held it, and the coverage
 // verdict must follow from those four numbers by cross-multiplication alone.
+//
+// THE COVERAGE PAIR IS THE SHARED WORLD'S, NOT THIS RUN'S OWN WORLD (`round95`/`96`/`97`, 2026-11-23). `round97` attempted
+// 18 of the 53 actions its world made addressable and 15 of the 40 the floor run's world also had; the floor it was held to
+// recorded 17 of 43, three of which `round76` could not address itself, so the bar was 39.5 % by construction and 32.6 %
+// measured on its own world. So the row prints the run's own three populations - attempted, addressable, published families -
+// and, beside them, the population the comparison actually used:
+// `baseline-held <held> of <shared> same-world by <holder>, this run <mine>`. The verdict's `coverage=<mine>/<shared>` must
+// be those same-world numbers, which is the half a reader cannot recompute from the run's own attempted/addressable: that
+// pair is a fact about the day, and the comparison is a fact about the two worlds they share.
 
 /** The gate: a breadth verdict names the population it compared, and the comparison survives arithmetic. */
 export const BREADTH_POPULATION_GATE = "a_breadth_verdict_names_the_population_it_compared";
@@ -853,9 +862,14 @@ export const BREADTH_POPULATION_GATE = "a_breadth_verdict_names_the_population_i
 // The row may carry the day anchor after the comparison (`· day_task=<the day>`), so the pattern names the token that
 // ends the comparison rather than the end of the line.
 const COMPARISON_HELD = /baseline-held (.+?); compared (coverage|families|none)(?: ·|$)/u;
-const COMPARISON_ADDRESSABLE = /attempted (\d+) of (\d+) addressable/u;
+const COMPARISON_ADDRESSABLE =
+  /attempted (\d+) of (\d+) addressable \((\d+(?:\.\d+)?)%\) \(published (\d+) of (\d+) families\)/u;
 const COMPARISON_CATALOG = /attempted (\d+) of (\d+) published/u;
 const PUBLISHED_WITHOUT_WIDTH = /published (\d+) \((\d+) never addressable in this world\)/u;
+// `held` is captured WITHOUT the `baseline-held ` prefix the row prints, so these two read the captured text.
+const HELD_COVERAGE = /^(\d+) of (\d+) same-world by (\S+), this run (\d+)/u;
+const HELD_FAMILIES = /^(\d+) of (\d+) families by (\S+)/u;
+const CENSUS_ROW = /^action_breadth: census \d+ snapshots from \S+, (\d+) of (\d+) target families with rows$/u;
 const VERDICT_ROW = /^action_breadth_verdict: (\S+)/u;
 const COVERAGE_CODE = /:coverage=(\d+)\/(\d+):held=(\d+)\/(\d+):by=(\S+)$/u;
 const FAMILIES_CODE = /:families=(.+)$/u;
@@ -866,8 +880,13 @@ const FAMILIES_CODE = /:families=(.+)$/u;
  *
  * POPULATION: the one comparison row this reading prints (the populations and the bar) and the one verdict row. A reading
  * that printed neither is BLOCKED rather than passed, for the reason every gate in this tree is: a check whose population
- * is empty agrees with itself. A verdict the four numbers do not reproduce, a coverage verdict that does not say which
+ * is empty agrees with itself. A verdict the row's numbers do not reproduce, a coverage verdict that does not say which
  * dimension it used, and a failed comparison that does not name the value it was held to all fail and are named.
+ *
+ * THE COVERAGE ARITHMETIC IS DONE ON THE SHARED-WORLD PAIR, because that is the population the comparison used. The row's
+ * own `attempted of addressable` is the day's world and cannot reproduce a verdict taken on the part of it the two runs
+ * shared - `round97`'s 18 of 53 is not the 15 of 40 it was measured on - so the gate requires the row to print the
+ * same-world pair and the verdict to be those four numbers.
  */
 export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
   const printed = (Array.isArray(lines) ? lines : []).map(String);
@@ -889,11 +908,36 @@ export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
   const addressableShape = comparison.match(COMPARISON_ADDRESSABLE);
   const catalogShape = comparison.match(COMPARISON_CATALOG);
   const neverAddressable = comparison.match(PUBLISHED_WITHOUT_WIDTH);
-  const read = { published: null, addressable: null, attempted: null };
+  const census = printed.find((line) => CENSUS_ROW.test(line))?.match(CENSUS_ROW) ?? null;
+  const sameWorld = held.match(HELD_COVERAGE);
+  const read = {
+    published: null,
+    addressable: null,
+    attempted: null,
+    familiesWithRows: null,
+    familiesTotal: null,
+    shared:
+      sameWorld === null
+        ? null
+        : {
+            held: Number(sameWorld[1]),
+            addressable: Number(sameWorld[2]),
+            label: sameWorld[3],
+            attempted: Number(sameWorld[4]),
+          },
+  };
   if (addressableShape !== null) {
     read.attempted = Number(addressableShape[1]);
     read.addressable = Number(addressableShape[2]);
+    read.familiesWithRows = Number(addressableShape[4]);
+    read.familiesTotal = Number(addressableShape[5]);
     if (neverAddressable !== null) read.published = Number(neverAddressable[1]);
+    const percent = Number(addressableShape[3]);
+    const expected = (read.attempted / read.addressable) * 100;
+    if (Math.abs(percent - expected) > 0.05)
+      failures.push(
+        `${BREADTH_POPULATION_GATE}:${verdict} - the row prints ${String(percent)}% beside attempted ${String(read.attempted)} of ${String(read.addressable)}, which is ${expected.toFixed(1)}%`,
+      );
   } else if (catalogShape !== null) {
     // The shape a run with no census prints: `attempted 3 of 101 published`, where the two numbers are the companion's
     // attempts and the catalog - never an addressable width it never had.
@@ -920,6 +964,32 @@ export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
         `${name} - the row prints addressable ${read.addressable === null ? "not_measured" : String(read.addressable)}, the reading holds ${breadth.addressable === null || breadth.addressable === undefined ? "not_measured" : String(breadth.addressable)}`,
       );
   }
+  // The world's width is one fact: the comparison row's `published F of G families` must be the census row's own pair,
+  // which is what stops a second derivation of it appearing beside the first.
+  if (census !== null && (read.familiesWithRows !== Number(census[1]) || read.familiesTotal !== Number(census[2])))
+    failures.push(
+      `${name} - the comparison row prints ${String(read.familiesWithRows)} of ${String(read.familiesTotal)} families published, the census row counted ${census[1]} of ${census[2]}`,
+    );
+  // The same-world pair is the population the coverage comparison used, so it has to be the reading's own.
+  const own = breadth?.baselineSameWorld ?? null;
+  if (read.shared !== null && own !== null) {
+    if (read.shared.held !== own.held || read.shared.addressable !== own.addressable)
+      failures.push(
+        `${name} - the row prints the bar as ${String(read.shared.held)} of ${String(read.shared.addressable)} same-world, the reading compared ${String(own.held)} of ${String(own.addressable)}`,
+      );
+    if (read.shared.attempted !== own.attempted)
+      failures.push(
+        `${name} - the row prints this run at ${String(read.shared.attempted)} of the shared world, the reading holds ${String(own.attempted)}`,
+      );
+    if (read.shared.label !== own.label)
+      failures.push(
+        `${name} - the row credits the bar to ${read.shared.label}, the reading holds it against ${own.label}`,
+      );
+    if (read.shared.addressable > read.addressable || read.shared.attempted > read.attempted)
+      failures.push(
+        `${name} - the shared world cannot be wider than this run's: ${String(read.shared.addressable)} shared and ${String(read.shared.attempted)} attempted inside it against attempted ${String(read.attempted)} of addressable ${String(read.addressable)}`,
+      );
+  }
 
   const failedOn = verdict.startsWith("narrow:below_baseline:") ? (verdict.split(":")[3]?.split("=")[0] ?? null) : null;
   if (verdict.startsWith("narrow:below_baseline:") && failedOn !== compared)
@@ -930,7 +1000,11 @@ export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
   if (failedOn === "coverage") {
     if (coverage === null)
       failures.push(
-        `${name} - the verdict failed on coverage without printing the ratio it compared; it must carry :coverage=<attempted>/<addressable>:held=<h>/<w>:by=<holder>`,
+        `${name} - the verdict failed on coverage without printing the ratio it compared; it must carry :coverage=<this run>/<shared>:held=<h>/<shared>:by=<holder>`,
+      );
+    else if (read.shared === null)
+      failures.push(
+        `${name} - the verdict failed on coverage and the row prints no same-world population (\`baseline-held ${held}\`), so the comparison it made cannot be recomputed`,
       );
     else {
       const codeAttempted = Number(coverage[1]);
@@ -942,17 +1016,19 @@ export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
         failures.push(
           `${name} - the verdict claims coverage failed, but ${String(codeAttempted)}/${String(codeAddressable)} is not below ${String(codeHeld)}/${String(codeWidth)}`,
         );
-      if (codeAttempted !== read.attempted || codeAddressable !== read.addressable)
+      if (
+        codeAttempted !== read.shared.attempted ||
+        codeAddressable !== read.shared.addressable ||
+        codeWidth !== read.shared.addressable
+      )
         failures.push(
-          `${name} - the verdict's own ratio is not the row's: ${String(codeAttempted)}/${String(codeAddressable)} against attempted ${String(read.attempted)} of addressable ${String(read.addressable)}`,
+          `${name} - the verdict's ratio is not the row's shared world: ${String(codeAttempted)}/${String(codeAddressable)} against held ${String(codeWidth)} wide, and the row prints this run ${String(read.shared.attempted)} of ${String(read.shared.addressable)}`,
         );
-      if (!held.includes(`${String(codeHeld)} of ${String(codeWidth)}`))
+      if (codeHeld !== read.shared.held)
         failures.push(
-          `${name} - the verdict was held to ${String(codeHeld)} of ${String(codeWidth)} by ${holder}, and the row prints \`baseline-held ${held}\``,
+          `${name} - the verdict was held to ${String(codeHeld)}, and the row prints a bar of ${String(read.shared.held)}`,
         );
-      // WHO held the bar, not only what it was: `round84`'s code named `round38` for a ratio `round76` recorded, and the
-      // label is the half a reader follows to the bundle the number came from.
-      if (!held.includes(holder))
+      if (!held.includes(`by ${holder}`))
         failures.push(
           `${name} - the verdict says ${holder} held the bar, and the row names no such run (\`baseline-held ${held}\`)`,
         );
@@ -972,6 +1048,18 @@ export function breadthPopulationGate({ breadth = null, lines = [] } = {}) {
     if (/^(?:not_measured|none)/u.test(held))
       failures.push(
         `${name} - the verdict failed on a family the world offered, and the row names no bar it was held to`,
+      );
+    const familiesBar = held.match(HELD_FAMILIES);
+    if (familiesBar === null)
+      failures.push(
+        `${name} - the row prints a family comparison with no \`<touched> of <offered> families by <holder>\` bar (\`baseline-held ${held}\`)`,
+      );
+    else if (
+      breadth?.baselineCompared?.dimension === "families" &&
+      Number(familiesBar[1]) !== breadth.baselineCompared.touched
+    )
+      failures.push(
+        `${name} - the row prints ${familiesBar[1]} families worked in, the reading holds ${String(breadth.baselineCompared.touched)}`,
       );
   }
   const summary = `${BREADTH_POPULATION_GATE} published ${String(read.published ?? "not_measured")} · addressable ${read.addressable === null ? "not_measured" : String(read.addressable)} · attempted ${String(read.attempted ?? "not_measured")} · baseline-held ${held} · compared ${compared} · verdict ${verdict}`;
@@ -1393,12 +1481,20 @@ async function main() {
     `action_breadth_baseline: ${
       breadth.baseline === null
         ? `none recorded for scenario ${breadth.scenario ?? "none"}`
-        : `best seen ${breadth.baseline.label} - attempted ${String(breadth.baseline.attempted)}, families ${String(breadth.baseline.families)}, addressable ${breadth.baseline.addressable === null ? "not recorded" : String(breadth.baseline.addressable)}, coverage floor ${breadth.baseline.coverageFloor === undefined ? "not recorded" : `${String(breadth.baseline.coverageFloor.attempted)} of ${String(breadth.baseline.coverageFloor.addressable)} (${String(breadth.baseline.coverageFloor.label)})`}`
+        : `best seen ${breadth.baseline.label} - attempted ${String(breadth.baseline.attempted)}, families ${String(breadth.baseline.families)}, addressable ${breadth.baseline.addressable === null ? "not recorded" : String(breadth.baseline.addressable)}, coverage floor ${breadth.baseline.coverageFloor === undefined ? "not recorded" : `${String(breadth.baseline.coverageFloor.attempted)} of its own ${String(breadth.baseline.coverageFloor.addressable)} (${String(breadth.baseline.coverageFloor.label)})`}`
     }`,
   );
   if ((breadth.baselineMissedFamilies ?? []).length > 0)
     out(
       `action_breadth_baseline_families: ${breadth.baselineMissedFamilies.join(",")} - this run's world offered these families, the recorded best worked in them, and this run did not`,
+    );
+  // THE COMPARISON'S OWN POPULATION, printed for every verdict rather than only for the one it failed: the coverage
+  // dimension is measured on the actions the two worlds shared, so a reader of a FAMILY verdict still gets to see how this
+  // run stood on coverage instead of taking its absence as agreement.
+  const sameWorld = breadth.baselineSameWorld ?? null;
+  if (sameWorld !== null)
+    out(
+      `action_breadth_baseline_same_world: ${sameWorld.label} addressed ${String(sameWorld.held)} of the ${String(sameWorld.addressable)} actions both worlds made addressable, this run ${String(sameWorld.attempted)}${sameWorld.skipped.length === 0 ? " - it skipped none of them" : ` - it skipped ${sameWorld.skipped.join(",")}`}`,
     );
   reportFindings(breadth, chosen.flatDispatchCount, chosen.source === FROM_RESULT ? flatRows : null);
   reportCensusContact(breadth, actedFamilies);

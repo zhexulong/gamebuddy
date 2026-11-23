@@ -458,27 +458,40 @@ test("the productivity gate reds on a row that scores an action count and names 
 // ---------------------------------------------------------------------------------------------------------------------
 // THE POPULATION THE VERDICT COMPARED.
 //
-// Both fixtures below are the rows two real runs printed on 2026-11-20, copied verbatim from
+// Both fixtures below are the rows two real runs printed on 2026-11-23, copied verbatim from
 // `node tools/live-run/analysis/action-breadth.mjs --result tools/_multiday_routine-round<nn>.result.json`:
-// `round84` failed on the coverage ratio and `round82`, a different world, failed on the families it offered and skipped.
+// `round87` failed on the coverage ratio and `round82`, a different world, failed on the families it offered and skipped.
 // What they pin is the rule, not the numbers: the verdict names the dimension it compared and the value it was held to,
-// and those four numbers reproduce it. `round84`'s code used to read `narrow:below_baseline:round38` - no dimension, no
-// numerator, no holder - while the ratio it had failed belonged to `round76`.
+// and a coverage verdict's four numbers are the SHARED world's - `round87` attempted 10 of its own 50 addressable, and the
+// comparison it failed was 9 of the 40 its world and `round76`'s both had against the floor's 14 there. The old code read
+// `coverage=18/55:held=17/43`, two ratios in two different worlds, and failed `round84` for the fixture's width.
 
-const ROUND84_ROW = Object.freeze({
-  line: "action_breadth: attempted 18 of 55 addressable (32.7%); succeeded 16 of 55; published 101 (46 never addressable in this world); baseline-held 17 of 43 (round76's coverage floor, the best census-bearing run's attempted/addressable); compared coverage · day_task=sweep_animals_and_company+sweep_carried_things+clear_east_patch",
-  verdict: "action_breadth_verdict: narrow:below_baseline:round38:coverage=18/55:held=17/43:by=round76",
-  breadth: { published: 101, addressable: 55, attempted: 18, baselineMissedFamilies: [] },
+const ROUND87_ROW = Object.freeze({
+  census: "action_breadth: census 16 snapshots from runner_observations, 26 of 67 target families with rows",
+  line: "action_breadth: attempted 10 of 50 addressable (20.0%) (published 26 of 67 families); succeeded 9 of 50; published 101 (51 never addressable in this world); baseline-held 14 of 40 same-world by round76, this run 9 (the actions both worlds made addressable, and how many of them the floor run addressed); compared coverage · day_task=mine_ladder_to_depth",
+  verdict: "action_breadth_verdict: narrow:below_baseline:round38:coverage=9/40:held=14/40:by=round76",
+  breadth: {
+    published: 101,
+    addressable: 50,
+    attempted: 10,
+    baselineMissedFamilies: [],
+    baselineSameWorld: { label: "round76", addressable: 40, attempted: 9, held: 14 },
+    baselineCompared: { dimension: "coverage", label: "round76", attempted: 14, addressable: 40 },
+  },
 });
 
 const ROUND82_ROW = Object.freeze({
-  line: "action_breadth: attempted 23 of 57 addressable (40.4%); succeeded 20 of 57; published 101 (44 never addressable in this world); baseline-held 4 of 6 families (the families this run's world offered that the recorded best worked in); compared families · day_task=a_fish_from_the_water+sweep_yard_and_work+sweep_animals_and_company",
+  census: "action_breadth: census 119 snapshots from runner_observations, 34 of 67 target families with rows",
+  line: "action_breadth: attempted 23 of 57 addressable (40.4%) (published 34 of 67 families); succeeded 20 of 57; published 101 (44 never addressable in this world); baseline-held 4 of 6 families by round38 (the families this run's world offered that the recorded best worked in); compared families · day_task=a_fish_from_the_water+sweep_yard_and_work+sweep_animals_and_company",
   verdict: "action_breadth_verdict: narrow:below_baseline:round38:families=buildings_farm_management,shops_economy",
   breadth: {
     published: 101,
     addressable: 57,
     attempted: 23,
     baselineMissedFamilies: ["buildings_farm_management", "shops_economy"],
+    baselineSameWorld: { label: "round76", addressable: 42, attempted: 15, held: 14 },
+    // The offered set itself is not printed (it is the six the row's `4 of 6` counts); the gate reads the count.
+    baselineCompared: { dimension: "families", label: "round38", touched: 4 },
   },
 });
 
@@ -488,31 +501,31 @@ const GATE_LINE =
 
 test("a verdict that compares a baseline names the dimension, the numbers and the run that held them", () => {
   const coverage = breadthPopulationGate({
-    breadth: ROUND84_ROW.breadth,
-    lines: [ROUND84_ROW.line, ROUND84_ROW.verdict],
+    breadth: ROUND87_ROW.breadth,
+    lines: [ROUND87_ROW.census, ROUND87_ROW.line, ROUND87_ROW.verdict],
   });
   assert.equal(coverage.failed, false, coverage.lines.join("\n"));
   assert.match(coverage.lines.at(-1), GATE_LINE);
   assert.match(
     coverage.lines.at(-1),
-    /published 101 · addressable 55 · attempted 18 · baseline-held 17 of 43 \(round76's coverage floor.*compared coverage · verdict narrow:below_baseline:round38:coverage=18\/55:held=17\/43:by=round76$/u,
-    "the four numbers alone reproduce the verdict: 18 of 55 is below 17 of 43",
+    /published 101 · addressable 50 · attempted 10 · baseline-held 14 of 40 same-world by round76, this run 9 .*compared coverage · verdict narrow:below_baseline:round38:coverage=9\/40:held=14\/40:by=round76$/u,
+    "the row's own numbers and the shared world's reproduce the verdict: 9 of the 40 both worlds had is below the floor's 14",
   );
 
   // THE FALSIFIER: a different world changes the numbers and the dimension, never the shape of the line.
   const families = breadthPopulationGate({
     breadth: ROUND82_ROW.breadth,
-    lines: [ROUND82_ROW.line, ROUND82_ROW.verdict],
+    lines: [ROUND82_ROW.census, ROUND82_ROW.line, ROUND82_ROW.verdict],
   });
   assert.equal(families.failed, false, families.lines.join("\n"));
   assert.match(families.lines.at(-1), GATE_LINE);
   assert.match(
     families.lines.at(-1),
-    /addressable 57 · attempted 23 · baseline-held 4 of 6 families .*compared families/u,
+    /addressable 57 · attempted 23 · baseline-held 4 of 6 families by round38 .*compared families/u,
   );
 
   // And a population of zero is blocked rather than green: no comparison row, nothing to check.
-  const empty = breadthPopulationGate({ breadth: ROUND84_ROW.breadth, lines: [ROUND84_ROW.verdict] });
+  const empty = breadthPopulationGate({ breadth: ROUND87_ROW.breadth, lines: [ROUND87_ROW.verdict] });
   assert.equal(empty.failed, true);
   assert.match(
     empty.lines[0],
@@ -523,8 +536,8 @@ test("a verdict that compares a baseline names the dimension, the numbers and th
 test("the verdict this unit replaced fails, and the numbers that do not reproduce it fail too", () => {
   // THE RED PROOF, on the exact line `round84` produced: same row, the old code with no dimension and no ratio.
   const old = breadthPopulationGate({
-    breadth: ROUND84_ROW.breadth,
-    lines: [ROUND84_ROW.line, "action_breadth_verdict: narrow:below_baseline:round38"],
+    breadth: ROUND87_ROW.breadth,
+    lines: [ROUND87_ROW.census, ROUND87_ROW.line, "action_breadth_verdict: narrow:below_baseline:round38"],
   });
   assert.equal(old.failed, true);
   assert.match(
@@ -533,47 +546,108 @@ test("the verdict this unit replaced fails, and the numbers that do not reproduc
     "the failure names the code and says which comparison it dropped",
   );
 
-  // A ratio that does not fail: 30 of 55 clears 17 of 43, so a `coverage` verdict on it is a claim the numbers refute.
-  const refuted = breadthPopulationGate({
-    breadth: ROUND84_ROW.breadth,
+  // THE RED PROOF OF THIS UNIT: the verdict taken on the run's OWN world - 10 of 50 against the floor's 14 of 40 - is the
+  // two-worlds comparison that failed `round84`/`round96`/`round97` for what their fixtures published, and it cannot be
+  // recomputed inside the population the row prints.
+  const ownWorld = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
     lines: [
-      ROUND84_ROW.line,
-      "action_breadth_verdict: narrow:below_baseline:round38:coverage=30/55:held=17/43:by=round76",
+      ROUND87_ROW.census,
+      ROUND87_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=10/50:held=14/40:by=round76",
+    ],
+  });
+  assert.equal(ownWorld.failed, true);
+  assert.match(
+    ownWorld.lines[0],
+    /the verdict's ratio is not the row's shared world: 10\/50 against held 40 wide, and the row prints this run 9 of 40/u,
+  );
+
+  // A ratio that does not fail: 20 of the 40 shared actions clears the floor's 14, so a `coverage` verdict on it is a claim
+  // the numbers refute - even though the run's own coverage of its world is below the floor's own rate.
+  const refuted = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
+    lines: [
+      ROUND87_ROW.census,
+      ROUND87_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=20/40:held=14/40:by=round76",
     ],
   });
   assert.equal(refuted.failed, true);
-  assert.match(refuted.lines[0], /claims coverage failed, but 30\/55 is not below 17\/43/u);
+  assert.match(refuted.lines[0], /claims coverage failed, but 20\/40 is not below 14\/40/u);
 
-  // A held value the row does not carry: the verdict says 17 of 43, the row printed 6 of 11.
+  // A held value the row does not carry: the verdict says 14 of 40, the row printed 6 of 11.
   const otherBar = breadthPopulationGate({
-    breadth: ROUND84_ROW.breadth,
-    lines: [ROUND84_ROW.line.replace("17 of 43", "6 of 11"), ROUND84_ROW.verdict],
+    breadth: ROUND87_ROW.breadth,
+    lines: [
+      ROUND87_ROW.census,
+      ROUND87_ROW.line.replace("14 of 40 same-world", "6 of 11 same-world"),
+      ROUND87_ROW.verdict,
+    ],
   });
   assert.equal(otherBar.failed, true);
-  assert.match(
-    otherBar.lines[0],
-    /the verdict was held to 17 of 43 by round76, and the row prints `baseline-held 6 of 11/u,
-  );
+  assert.match(otherBar.lines[0], /the row prints the bar as 6 of 11 same-world, the reading compared 14 of 40/u);
 
-  // THE MISLABEL ITSELF: the ratio is round76's, and the code credits round38 - the run whose entry records no width.
-  const mislabelled = breadthPopulationGate({
-    breadth: ROUND84_ROW.breadth,
+  // And a verdict whose held count is not the row's, with the row and the reading agreeing with each other.
+  const heldMismatch = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
     lines: [
-      ROUND84_ROW.line,
-      "action_breadth_verdict: narrow:below_baseline:round38:coverage=18/55:held=17/43:by=round38",
+      ROUND87_ROW.census,
+      ROUND87_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=9/40:held=12/40:by=round76",
+    ],
+  });
+  assert.equal(heldMismatch.failed, true);
+  assert.match(heldMismatch.lines[0], /the verdict was held to 12, and the row prints a bar of 14/u);
+
+  // THE MISLABEL ITSELF: the numbers are round76's, and the code credits round38 - the run whose entry records no floor.
+  const mislabelled = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
+    lines: [
+      ROUND87_ROW.census,
+      ROUND87_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:coverage=9/40:held=14/40:by=round38",
     ],
   });
   assert.equal(mislabelled.failed, true);
   assert.match(
     mislabelled.lines[0],
     /the verdict says round38 held the bar, and the row names no such run/u,
-    "a reader following `by=round38` reaches a bundle that never recorded an addressable width",
+    "a reader following `by=round38` reaches a bundle that never recorded a floor",
   );
+
+  // A row whose shared world is not the reading's: the gate holds the two to one another, so a copied bar cannot drift.
+  const driftedBar = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
+    lines: [
+      ROUND87_ROW.census,
+      ROUND87_ROW.line.replace("14 of 40 same-world", "12 of 40 same-world"),
+      ROUND87_ROW.verdict,
+    ],
+  });
+  assert.equal(driftedBar.failed, true);
+  assert.match(driftedBar.lines[0], /the row prints the bar as 12 of 40 same-world, the reading compared 14 of 40/u);
+
+  // The world's width is one fact: a comparison row whose families pair is not the census's is a second derivation.
+  const rederived = breadthPopulationGate({
+    breadth: ROUND87_ROW.breadth,
+    lines: [
+      ROUND87_ROW.census,
+      ROUND87_ROW.line.replace("published 26 of 67", "published 26 of 66"),
+      ROUND87_ROW.verdict,
+    ],
+  });
+  assert.equal(rederived.failed, true);
+  assert.match(rederived.lines[0], /prints 26 of 66 families published, the census row counted 26 of 67/u);
 
   // The families arm names its members from the reading, so a code that dropped one is caught.
   const droppedFamily = breadthPopulationGate({
     breadth: ROUND82_ROW.breadth,
-    lines: [ROUND82_ROW.line, "action_breadth_verdict: narrow:below_baseline:round38:families=shops_economy"],
+    lines: [
+      ROUND82_ROW.census,
+      ROUND82_ROW.line,
+      "action_breadth_verdict: narrow:below_baseline:round38:families=shops_economy",
+    ],
   });
   assert.equal(droppedFamily.failed, true);
   assert.match(

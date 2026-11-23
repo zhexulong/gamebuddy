@@ -569,7 +569,10 @@ function createBodyProgramTools(
                       terminality: "terminal" as const,
                       unreadable: null,
                       snapshotChanged: false,
-                    }),
+                      // The first read already proved the plan stopped, so there is nothing left to wait on - the same
+                      // `null` the wait's own derivation answers for every terminal read.
+                      unsettled: null,
+                    } satisfies ProgramStatusWaitFacts),
                   })
                 : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
               // The model is being handed this settlement in the result of this call, so the pump owes no fact for it.
@@ -596,11 +599,9 @@ function createBodyProgramTools(
                   // journal published anything while it did. "Still running" and "I could not read your plan" therefore
                   // never arrive in the same shape.
                   waited: Object.freeze({
+                    ...settled.waited,
                     settled: settled.waited.terminality === "terminal",
                     waitedMs: Math.max(0, Date.now() - startedAtMs),
-                    terminality: settled.waited.terminality,
-                    unreadable: settled.waited.unreadable,
-                    snapshotChanged: settled.waited.snapshotChanged,
                   }),
                   // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
                   // what is left and whether anything moved while this one held the turn.
@@ -661,7 +662,7 @@ function createBodyProgramTools(
         // (`host-service.ts` `acceptIntegrationFact`) rather than by asking here. Measured 2026-11-03 (`round29`): 48
         // calls, `waitMs` median 30,000 (the cap), 248 s blocked - the description advertised waiting, so it waited.
         description:
-          'One submitted plan\'s journal state and its `progress`: `total`, `settled`, `remaining`, `running` (dispatched, receipt owed), `queued`, and `current` with `observedInStateMs` - how long this Host has watched that node in its state, so `0` means it has just appeared. This is a DIAGNOSTIC, not a progress bar: a plan\'s progress reaches you as receipts, so read this when a settlement you expected never arrived, or when a step looks stuck - not after every submission. `waitMs` is a rare opt-in that holds your turn until the plan settles or the bound expires: `waited.terminality` is what the last read PROVED (`terminal`, `active`, or `unknown` when the answer could not be classified at all) and `waited.unreadable` names what could not be read, so "it is still running" and "I could not read your plan" are never the same answer; `waited.snapshotChanged: false` means nothing moved. While it holds the turn you cannot stop, append or steer, so leave it out unless this turn genuinely needs the settled answer. `staleSnapshotReplaced` means the journal answered once from a state it had already moved past (`stale_snapshot:eventHighWater=N;delivered=M`) and this answer is the current re-read, so you are reading the plan\'s real state; `staleSnapshot` means the answer in front of you IS that older snapshot because the re-read did not catch up, so `state` describes where the plan was at N and must not be read as its current state.',
+          'One submitted plan\'s journal state and its `progress`: `total`, `settled`, `remaining`, `running` (dispatched, receipt owed), `queued`, and `current` with `observedInStateMs` - how long this Host has watched that node in its state, so `0` means it has just appeared. This is a DIAGNOSTIC, not a progress bar: a plan\'s progress reaches you as receipts, so read this when a settlement you expected never arrived, or when a step looks stuck - not after every submission. `waitMs` is a rare opt-in that holds your turn until the plan settles or the bound expires: `waited.terminality` is what the last read PROVED (`terminal`, `active`, or `unknown` when the answer could not be classified at all) and `waited.unreadable` names what could not be read, so "it is still running" and "I could not read your plan" are never the same answer; `waited.snapshotChanged: false` means nothing moved, and `waited.unsettled` names what is still holding the wait - the plan, the node it is on, and the publication that ends it (`node_receipt`, `node_dispatch` or `program_terminal`). While it holds the turn you cannot stop, append or steer, so leave it out unless this turn genuinely needs the settled answer. `staleSnapshotReplaced` means the journal answered once from a state it had already moved past (`stale_snapshot:eventHighWater=N;delivered=M`) and this answer is the current re-read, so you are reading the plan\'s real state; `staleSnapshot` means the answer in front of you IS that older snapshot because the re-read did not catch up, so `state` describes where the plan was at N and must not be read as its current state.',
         // Mounted only once a submission has been recorded (see mountProgramReadersAfterSubmission); until then it can
         // only be read as empty, and two always-empty readers are what an agent polls instead of submitting the plan at
         // all.
@@ -1300,7 +1301,7 @@ function planToolParameters() {
             String(PLAN_SELF_WAIT_BUDGET_MS) +
             " ms, no more than one of your own decisions costs), and a longer plan is not held: holding it would spend the bound on nodes that outlast it. Pass 0 to never hold this turn - do that when you are about to stop, append to or redirect the plan - or a positive bound up to " +
             String(MAX_PROGRAM_STATUS_WAIT_MS) +
-            " when this particular plan needs the settled answer. While the call is held you cannot stop, append or steer.",
+            " when this particular plan needs the settled answer. While the call is held you cannot stop, append or steer. When the bound runs out, `waited.unsettled` names the plan, the node it is on and the publication that ends it (`node_receipt`, `node_dispatch` or `program_terminal`), so waiting again is a choice made against that fact instead of the only word on offer.",
         }),
       ),
     },
@@ -1391,7 +1392,7 @@ function bodyProgramToolParameters(name: string) {
             minimum: 0,
             maximum: 30_000,
             description:
-              'Wait up to this many milliseconds for the plan to settle instead of returning at once; 0 or omitted returns immediately, which is what you want unless this turn needs the settled answer - while the call holds your turn you cannot stop, append or steer. waited.terminality is what the last read proved: terminal, active, or unknown when the answer could not be classified (waited.unreadable then names why, so "still running" and "unreadable answer" stay different facts); waited.snapshotChanged says whether the plan moved at all meanwhile.',
+              'Wait up to this many milliseconds for the plan to settle instead of returning at once; 0 or omitted returns immediately, which is what you want unless this turn needs the settled answer - while the call holds your turn you cannot stop, append or steer. waited.terminality is what the last read proved: terminal, active, or unknown when the answer could not be classified (waited.unreadable then names why, so "still running" and "unreadable answer" stay different facts); waited.snapshotChanged says whether the plan moved at all meanwhile; waited.unsettled names the plan, the node and the publication that ends it when the bound runs out.',
           }),
         ),
       },

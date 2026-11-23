@@ -34,6 +34,7 @@ import {
   readActionBreadthSurface,
   SNAPSHOT_CENSUS_SOURCE,
   TOOL_CLAIM_CATEGORIES,
+  unmeasuredActionBreadth,
 } from "./action-breadth.mjs";
 
 /** A family per action, so a reading's family count is decided by the fixture and not by today's catalog. */
@@ -112,17 +113,77 @@ const NARROW_ROWS = Object.freeze({
   cropTargets: 2,
 });
 
-/** The ratchet: 8 of 11 addressable actions in 4 families, and one action this fixture cannot reach. */
-const BASELINE = Object.freeze({
-  baselines: { multiday_routine: { label: "fixture-best", attempted: 8, addressable: 11, families: 4 } },
-  exclusions: Object.freeze([
-    Object.freeze({
-      actionId: "ride_bus",
-      reason:
-        "targets the Bus Stop ticket machine and drives its native dialogue; the bus is out of order until the Vault repair",
-    }),
-  ]),
-});
+/** The eleven actions the wide fixture world makes addressable: seven target-bound families with rows, four needing none. */
+const WIDE_ADDRESSABLE = Object.freeze([
+  "cut_weeds",
+  "cut_grass",
+  "break_rock",
+  "harvest_crop",
+  "plant_seed",
+  "water_crop",
+  "talk_to_npc",
+  "till_soil",
+  "move_to_tile",
+  "enter_exit",
+  "sleep",
+]);
+
+/** The eight of those the recorded floor run addressed. */
+const FLOOR_ATTEMPTED = Object.freeze([
+  "cut_weeds",
+  "break_rock",
+  "harvest_crop",
+  "till_soil",
+  "move_to_tile",
+  "enter_exit",
+  "sleep",
+  "talk_to_npc",
+]);
+
+/** The one action this fixture cannot reach, with the native precondition that says why. */
+const RIDE_BUS_EXCLUSION = Object.freeze([
+  Object.freeze({
+    actionId: "ride_bus",
+    reason:
+      "targets the Bus Stop ticket machine and drives its native dialogue; the bus is out of order until the Vault repair",
+  }),
+]);
+
+/** The whole fixture world when nothing is excluded: the eleven above plus the bus. */
+const WHOLE_FIXTURE_WORLD = Object.freeze([...WIDE_ADDRESSABLE, "ride_bus"]);
+
+/**
+ * One ratchet entry, with the coverage floor recorded the way the reader records it: as the ACTIONS the floor run could
+ * address and the ones it addressed.
+ *
+ * The floor's counts are deliberately absent - the reader derives them from the two lists, and a second spelling here
+ * would be the disagreement between a count and the ids it counts that this shape exists to end.
+ */
+function ratchet({
+  attempted,
+  addressable,
+  floorLabel = "fixture-floor",
+  label = "fixture-best",
+  familiesAttempted = null,
+  exclusions = [],
+}) {
+  return {
+    baselines: {
+      multiday_routine: {
+        label,
+        attempted: 8,
+        addressable: null,
+        families: 4,
+        ...(familiesAttempted === null ? {} : { familiesAttempted }),
+        coverageFloor: { label: floorLabel, attemptedActionIds: attempted, addressableActionIds: addressable },
+      },
+    },
+    exclusions,
+  };
+}
+
+/** The ratchet: the floor addressed eight of the world's eleven addressable actions, and `ride_bus` is out of reach. */
+const BASELINE = ratchet({ attempted: FLOOR_ATTEMPTED, addressable: WIDE_ADDRESSABLE, exclusions: RIDE_BUS_EXCLUSION });
 
 test("every tool the catalog declares is a word this reading can interpret", async () => {
   // THE ONE TEST HERE THAT READS TODAY'S CATALOG, and it must: the population is the Mod's own declarations, and a claim
@@ -141,55 +202,89 @@ test("every tool the catalog declares is a word this reading can interpret", asy
   );
 });
 
-test("the coverage floor fails a run that used a fraction of the world its own snapshots offered", async () => {
+test("the floor fails a run that addressed fewer of the shared actions than the recorded floor did", async () => {
   // THE ARM THAT KEEPS THE FAMILY COMPARISON HONEST. Dropping the absolute family count leaves a run in a thin world free
-  // to work in both of its families and still use three of eighteen actions; the floor is the coverage such a run has to
-  // beat, taken from the best census-bearing run and recorded with its OWN attempted/addressable pair.
-  const floored = {
-    baselines: {
-      multiday_routine: {
-        label: "fixture-best",
-        attempted: 6,
-        addressable: null,
-        families: 3,
-        familiesAttempted: { resource_gathering: 3, farming_crops: 2, world_lifecycle: 1 },
-        coverageFloor: { label: "fixture-floor", attempted: 6, addressable: 11 },
-      },
-    },
-    exclusions: BASELINE.exclusions,
-  };
-  const thin = await measure({ cut_weeds: 4, harvest_crop: 4, move_to_tile: 4 }, { baseline: floored });
+  // to work in both of its families and still address three of eleven actions; the floor is the coverage such a run has to
+  // meet, taken from the best census-bearing run and recorded as the ACTIONS it could address and the ones it addressed.
+  const thin = await measure({ cut_weeds: 4, harvest_crop: 4, move_to_tile: 4 });
   assert.equal(thin.addressable, 11);
-  assert.ok(thin.coverage < 6 / 11, `${String(thin.coverage)} must be below the recorded floor`);
+  assert.deepEqual(
+    [thin.baselineSameWorld.attempted, thin.baselineSameWorld.addressable, thin.baselineSameWorld.held],
+    [3, 11, 8],
+    "three of the eleven both worlds made addressable, against the floor's eight there",
+  );
+  assert.deepEqual(
+    [...thin.baselineSameWorld.skipped],
+    ["break_rock", "enter_exit", "sleep", "talk_to_npc", "till_soil"],
+    "and the floor's actions it never touched are named, not counted",
+  );
   assert.equal(
     thin.verdict,
-    "narrow:below_baseline:fixture-best:coverage=3/11:held=6/11:by=fixture-floor",
-    "coverage alone fails it, and the code names the dimension, both halves of its ratio, and the run that held it",
+    "narrow:below_baseline:fixture-best:coverage=3/11:held=8/11:by=fixture-floor",
+    "coverage alone fails it, and the code names the dimension, both halves of the shared world's counts, and who held it",
   );
   assert.deepEqual(thin.baselineCompared, {
     dimension: "coverage",
     label: "fixture-floor",
-    attempted: 6,
+    attempted: 8,
     addressable: 11,
-    what: "coverage floor, the best census-bearing run's attempted/addressable",
+    what: "the actions both worlds made addressable, and how many of them the floor run addressed",
   });
   assert.equal(thin.baselineFailed, "coverage", "and which dimension decided is a field, not a word to decode");
 
-  // The falsifier: eight of eleven clears the same floor, and nothing else in this reading objects.
-  const wide = await measure(
-    {
-      cut_weeds: 4,
-      break_rock: 4,
-      harvest_crop: 4,
-      till_soil: 4,
-      plant_seed: 4,
-      water_crop: 4,
-      move_to_tile: 4,
-      sleep: 4,
-    },
-    { baseline: floored },
-  );
+  // The falsifier: the floor's own eight clears the floor, and nothing else in this reading objects.
+  const wide = await measure({
+    cut_weeds: 4,
+    break_rock: 4,
+    harvest_crop: 4,
+    till_soil: 4,
+    move_to_tile: 4,
+    enter_exit: 4,
+    sleep: 4,
+    talk_to_npc: 4,
+  });
   assert.equal(wide.verdict, "rich");
+});
+
+test("the floor is compared on the world both runs had, so a wider world does not lower a run's verdict", async () => {
+  // MEASURED 2026-11-23 (`round95`/`96`/`97`): three consecutive multiday runs attempted 26 of 57, 20 of 55 and 18 of 53
+  // addressable, and the addressable width fell only because families published no rows on those days. Against a floor
+  // recorded as a rate (17 of 43) the same 18 attempts read as 34.0 %, and against a 43-wide world as 41.9 % - the verdict
+  // moved with the fixture, not with her.
+  //
+  // The fixture is that shape in miniature: a floor whose world held six actions and which addressed all six, and a run in
+  // an eleven-action world that addressed exactly those six. Its own coverage (6 of 11) is half the floor's 6 of 6, and it
+  // is NOT below it: the five actions the floor's world never had are not this run's work to do.
+  const sharedWorld = ["cut_weeds", "cut_grass", "break_rock", "harvest_crop", "plant_seed", "move_to_tile"];
+  const narrowFloor = ratchet({ attempted: sharedWorld, addressable: sharedWorld, exclusions: RIDE_BUS_EXCLUSION });
+  const sameSix = await measure(
+    { cut_weeds: 4, cut_grass: 4, break_rock: 4, harvest_crop: 4, plant_seed: 4, move_to_tile: 4 },
+    { baseline: narrowFloor },
+  );
+  assert.equal(sameSix.addressable, 11, "this run's own world is nearly twice the floor's");
+  assert.ok(sameSix.coverage <= 6 / 11, "and its own coverage is below the floor's own");
+  assert.deepEqual(
+    [sameSix.baselineSameWorld.attempted, sameSix.baselineSameWorld.addressable, sameSix.baselineSameWorld.held],
+    [6, 6, 6],
+  );
+  assert.equal(sameSix.verdict, "rich", "the six actions both worlds had were all addressed, by both runs");
+
+  // The falsifier, one action apart: skip one of the six and the same run is below the same floor.
+  const five = await measure(
+    { cut_weeds: 4, cut_grass: 4, break_rock: 4, harvest_crop: 4, plant_seed: 4 },
+    { baseline: narrowFloor },
+  );
+  assert.deepEqual([...five.baselineSameWorld.skipped], ["move_to_tile"]);
+  assert.equal(five.verdict, "narrow:below_baseline:fixture-best:coverage=5/6:held=6/6:by=fixture-floor");
+});
+
+test("a floor whose world shares no action with this run is not_measured, never rich", async () => {
+  // A population of zero is never a pass: with nothing the two worlds share, the ratchet compared nothing, and the verdict
+  // says which input was missing instead of reading as a comparison she won.
+  const otherWorld = ratchet({ attempted: ["fish_here"], addressable: ["fish_here"] });
+  const breadth = await measure({ cut_weeds: 4, break_rock: 4, till_soil: 4, sleep: 4 }, { baseline: otherWorld });
+  assert.equal(breadth.baselineSameWorld, null);
+  assert.equal(breadth.verdict, "not_measured:no_shared_world_with_baseline:fixture-floor");
 });
 
 test("a ratchet whose three dimensions disagree with each other is refused, not partly read", async () => {
@@ -203,11 +298,61 @@ test("a ratchet whose three dimensions disagree with each other is refused, not 
       /action_breadth_baseline_families_do_not_sum:multiday_routine:2:5/u,
       "a split that does not add up describes a different run",
     );
-    write({ label: "fixture", attempted: 5, families: 2, coverageFloor: { label: "x", attempted: 5, addressable: 3 } });
+    // The floor is ids, and its two lists are one population: an attempt outside the world the same entry records, a list
+    // with a repeated id, and an empty list each mean the entry describes a comparison no run ever had.
+    write({
+      label: "fixture",
+      attempted: 5,
+      families: 2,
+      coverageFloor: { label: "x", addressableActionIds: ["a"], attemptedActionIds: ["b"] },
+    });
     await assert.rejects(
       readActionBreadthBaseline({ path }),
-      /action_breadth_baseline_coverage_floor_invalid:multiday_routine/u,
-      "a floor narrower than the attempts it records is not a coverage",
+      /action_breadth_baseline_coverage_floor_attempted_outside:multiday_routine:b/u,
+      "an action the floor addressed outside the world it could address is not a coverage",
+    );
+    write({
+      label: "fixture",
+      attempted: 5,
+      families: 2,
+      coverageFloor: { label: "x", addressableActionIds: ["a", "a"], attemptedActionIds: ["a"] },
+    });
+    await assert.rejects(
+      readActionBreadthBaseline({ path }),
+      /action_breadth_baseline_coverage_floor_duplicate:multiday_routine/u,
+    );
+    write({
+      label: "fixture",
+      attempted: 5,
+      families: 2,
+      coverageFloor: { label: "x", addressableActionIds: [], attemptedActionIds: ["a"] },
+    });
+    await assert.rejects(
+      readActionBreadthBaseline({ path }),
+      /action_breadth_baseline_coverage_floor_unpopulated:multiday_routine/u,
+      "a floor with no world is a comparison over nothing",
+    );
+    // And the counts the file used to carry are derived, so an entry that repeats them beside the ids is read from the ids.
+    write({
+      label: "fixture",
+      attempted: 5,
+      families: 2,
+      coverageFloor: {
+        label: "x",
+        addressableActionIds: ["a", "b", "c"],
+        attemptedActionIds: ["a", "b"],
+        attempted: 99,
+        addressable: 99,
+      },
+    });
+    const read = await readActionBreadthBaseline({ path });
+    assert.deepEqual(
+      [
+        read.baselines.multiday_routine.coverageFloor.attempted,
+        read.baselines.multiday_routine.coverageFloor.addressable,
+      ],
+      [2, 3],
+      "the lists are the authority, so a stale count beside them cannot decide anything",
     );
   } finally {
     rmSync(path, { force: true });
@@ -266,6 +411,81 @@ async function measure(counts, overrides = {}) {
   });
 }
 
+test("the ratchet this tree ships is one its own reader can read, and one its own catalog names", async () => {
+  // THE FILE AND THE READER ARE ONE UNIT. Measured 2026-11-23 (`round98`): the floor was re-recorded as action ids at
+  // 17:36 while a process that had loaded the PREVIOUS reader at 17:28 was still running, so the reader refused the tree's
+  // own floor file inside that run's assembly - and the run's record was lost. A test against a temp file cannot say
+  // anything about that pair; this one reads the shipped pair, and every floor id against the shipped catalog.
+  const baseline = await readActionBreadthBaseline();
+  const surface = await readActionBreadthSurface();
+  const scenarios = Object.keys(baseline.baselines);
+  assert.ok(scenarios.length > 0, "blocked: the shipped ratchet records no scenario, so this gate examined nothing");
+  let floors = 0;
+  for (const scenario of scenarios) {
+    const floor = baseline.baselines[scenario].coverageFloor ?? null;
+    if (floor === null || floor === undefined) continue;
+    floors += 1;
+    const unknown = [...floor.addressableActionIds, ...floor.attemptedActionIds].filter(
+      (actionId) => !surface.actionIds.includes(actionId),
+    );
+    assert.deepEqual(
+      unknown,
+      [],
+      `${scenario}: the recorded floor names actions this catalog does not publish: ${unknown.join(",")} - re-record it from the bundle it came from`,
+    );
+    assert.ok(
+      floor.attempted > 0 && floor.addressable >= floor.attempted,
+      `${scenario}: the floor's counts are derived from its own ids, so the world is never narrower than what it addressed`,
+    );
+  }
+  assert.ok(
+    floors > 0,
+    "blocked: no scenario records a coverage floor, so the coverage dimension is compared against nothing",
+  );
+});
+
+test("a reading nobody could take is the same shape as one that was, and says so", async () => {
+  // THE SHAPE PARITY. `round98` (2026-11-23) finished its work and could not measure its breadth: the baseline reader threw
+  // while the record was being assembled. The artifact still has to carry `actionBreadth`, and every reader of it - the
+  // clause, the formatter, the bundle, the analysis tool - reads ONE shape. So the gap is a reading whose numbers are
+  // `null` and whose verdict is the gap code, and this test holds the two shapes to each other key by key: a field added
+  // to `measureActionBreadth` without being added here would make the unmeasured artifact a second, smaller shape.
+  const measured = await measure({ cut_weeds: 4, break_rock: 4 });
+  const unmeasured = unmeasuredActionBreadth({
+    scenario: "multiday_routine",
+    code: "not_measured:action_breadth:action_breadth_baseline_coverage_floor_invalid:multiday_routine",
+    attempted: 2,
+    succeeded: 2,
+  });
+  assert.deepEqual(
+    Object.keys(unmeasured).sort(),
+    Object.keys(measured).sort(),
+    "an unmeasured reading and a measured one are one shape",
+  );
+  // What the caller already knew travels: the run's own dispatch trace is not this reading's work, so a failed reading
+  // still says how many actions were used.
+  assert.equal(unmeasured.attempted, 2);
+  assert.equal(unmeasured.succeeded, 2);
+  assert.equal(unmeasured.scenario, "multiday_routine");
+  // And every population is absent rather than zero: a measured zero is a fact, and this run never measured one.
+  for (const key of ["addressable", "published", "coverage", "catalogCoverage", "families", "executions"])
+    assert.equal(unmeasured[key], null, `${key} must be null, never 0: the reading was never taken`);
+  assert.equal(
+    unmeasured.verdict,
+    "not_measured:action_breadth:action_breadth_baseline_coverage_floor_invalid:multiday_routine",
+  );
+  // NOT MEASURED IS NOT NARROW, and not rich either: the clause passes, carrying the code.
+  assert.deepEqual(actionBreadthClause(unmeasured), {
+    id: "action_breadth",
+    passed: true,
+    reasonCode: unmeasured.verdict,
+  });
+  // The formatter prints the gap and nothing invented: one line, no `attempted 0`.
+  const lines = formatActionBreadth(unmeasured);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^action_breadth: not measured - not_measured:action_breadth:.+$/u);
+});
+
 test("a run at the recorded best is rich, and one action below it is below_baseline", async () => {
   // Eight actions in five families, four executions each: nothing above a fifth of the day, so coverage alone decides.
   const atBaseline = await measure({
@@ -302,11 +522,11 @@ test("a run at the recorded best is rich, and one action below it is below_basel
     sleep: 4,
   });
   assert.equal(oneShort.attempted, 7);
-  assert.equal(oneShort.verdict, "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-best");
+  assert.equal(oneShort.verdict, "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-floor");
   assert.deepEqual(actionBreadthClause(oneShort), {
     id: "action_breadth",
     passed: false,
-    reasonCode: "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-best",
+    reasonCode: "narrow:below_baseline:fixture-best:coverage=7/11:held=8/11:by=fixture-floor",
   });
 });
 
@@ -315,18 +535,12 @@ test("a family the run's own world offered and the baseline worked in is what fa
   // world or task mix was narrower than the best run's - `round38` worked in eleven families including `transport_warps`,
   // so three farm-only days that did real work in every family their own world offered were "below" it for families they
   // never had. What is compared now is the share of THIS run's own families that the baseline also worked in.
-  const baseline = {
-    baselines: {
-      multiday_routine: {
-        label: "fixture-best",
-        attempted: 6,
-        addressable: null,
-        families: 3,
-        familiesAttempted: { resource_gathering: 3, farming_crops: 2, npc_social: 1 },
-      },
-    },
-    exclusions: BASELINE.exclusions,
-  };
+  const baseline = ratchet({
+    attempted: FLOOR_ATTEMPTED,
+    addressable: WIDE_ADDRESSABLE,
+    exclusions: RIDE_BUS_EXCLUSION,
+    familiesAttempted: { resource_gathering: 3, farming_crops: 2, npc_social: 1 },
+  });
   const withoutSocial = {
     cut_weeds: 4,
     cut_grass: 4,
@@ -361,47 +575,42 @@ test("a family the run's own world offered and the baseline worked in is what fa
   );
 });
 
-test("coverage is compared as a fraction, so a smaller world is not charged for being smaller", async () => {
-  // The defect this reading was rebuilt for: a world that arms six actions cannot be held to a count of five attempts
-  // out of a ten-action world. Four of six is above five of ten, even though four is fewer attempts than five.
-  const baseline = {
-    baselines: { multiday_routine: { label: "fixture-best", attempted: 5, addressable: 10, families: 1 } },
-    exclusions: [],
-  };
+test("coverage is compared on the actions both worlds had, so a smaller world is not charged for being smaller", async () => {
+  // The defect this reading was rebuilt for: a world that arms six actions cannot be held to a count of five attempts out
+  // of a ten-action world. Here the floor's world is the whole fixture (twelve actions) and it addressed five of them; a run
+  // in a world that published one family and addressed the four it had is not below it, because the shared world is what
+  // both counts are taken inside and the four are all of it.
+  const baseline = ratchet({
+    attempted: ["cut_weeds", "till_soil", "move_to_tile", "sleep", "talk_to_npc"],
+    addressable: WHOLE_FIXTURE_WORLD,
+  });
   const smallerWorld = censusOf({ weedTargets: 16 });
   const fourOfSix = await measure(
     { cut_weeds: 4, till_soil: 4, move_to_tile: 4, sleep: 4 },
     { baseline, census: smallerWorld },
   );
   assert.equal(fourOfSix.addressable, 6, "the small world: one target family with rows, five actions needing none");
-  assert.equal(fourOfSix.attempted, 4);
-  assert.ok(
-    fourOfSix.attempted < baseline.baselines.multiday_routine.attempted,
-    "fewer attempts than the baseline made",
+  assert.equal(fourOfSix.attempted, 4, "and four attempts, fewer than the floor's five");
+  assert.deepEqual(
+    [fourOfSix.baselineSameWorld.attempted, fourOfSix.baselineSameWorld.addressable, fourOfSix.baselineSameWorld.held],
+    [4, 6, 4],
+    "the shared world is the four target-bound actions plus the two family-free ones the floor also had",
   );
-  assert.equal(fourOfSix.verdict, "rich", "and still above it, because 4 of 6 covers more of its world than 5 of 10");
+  assert.equal(fourOfSix.verdict, "rich", "four of the four shared actions the floor addressed is not below it");
 
-  const threeOfEleven = await measure(
-    { cut_weeds: 4, till_soil: 4, sleep: 4 },
-    {
-      baseline: {
-        baselines: { multiday_routine: { label: "fixture-best", attempted: 5, addressable: 10, families: 1 } },
-      },
-    },
-  );
-  assert.equal(threeOfEleven.addressable, 12, "the whole fixture world, with no exclusions declared for this baseline");
+  // And the other end, in a world with no exclusion declared: three actions of twelve, none of them the floor's missing
+  // one, is below a floor that addressed five.
+  const threeOfTwelve = await measure({ cut_weeds: 4, till_soil: 4, sleep: 4 }, { baseline });
+  assert.equal(threeOfTwelve.addressable, 12, "the whole fixture world, with no exclusions declared for this baseline");
   assert.equal(
-    threeOfEleven.verdict,
-    "narrow:below_baseline:fixture-best:coverage=3/12:held=5/10:by=fixture-best",
-    "3 of 12 is below 5 of 10, and the code carries both fractions so a reader can redo the cross-multiplication",
+    threeOfTwelve.verdict,
+    "narrow:below_baseline:fixture-best:coverage=3/12:held=5/12:by=fixture-floor",
+    "3 of the 12 shared actions is below the floor's 5, and the code carries both halves for a reader to redo it",
   );
 });
 
 test("a run that attempts every addressable action is rich, and one that attempts three of eleven is narrow", async () => {
-  const world = {
-    baselines: { multiday_routine: { label: "fixture-best", attempted: 8, addressable: 9, families: 3 } },
-    exclusions: BASELINE.exclusions,
-  };
+  const world = ratchet({ attempted: FLOOR_ATTEMPTED, addressable: WIDE_ADDRESSABLE, exclusions: RIDE_BUS_EXCLUSION });
   const everything = await measure(
     {
       cut_weeds: 2,
@@ -432,16 +641,13 @@ test("a run that attempts every addressable action is rich, and one that attempt
   const threeOfEleven = await measure(
     { cut_weeds: 4, cut_grass: 4, break_rock: 4 },
     {
-      baseline: {
-        baselines: { multiday_routine: { label: "fixture-best", attempted: 8, addressable: 9, families: 1 } },
-        exclusions: BASELINE.exclusions,
-      },
+      baseline: ratchet({ attempted: FLOOR_ATTEMPTED, addressable: WIDE_ADDRESSABLE, exclusions: RIDE_BUS_EXCLUSION }),
     },
   );
   assert.equal(threeOfEleven.addressable, 11);
   assert.equal(threeOfEleven.attempted, 3);
   assert.equal(threeOfEleven.families, 1, "the family dimension is satisfied, so only coverage can fail this run");
-  assert.equal(threeOfEleven.verdict, "narrow:below_baseline:fixture-best:coverage=3/11:held=8/9:by=fixture-best");
+  assert.equal(threeOfEleven.verdict, "narrow:below_baseline:fixture-best:coverage=3/11:held=8/11:by=fixture-floor");
 });
 
 test("one action holding most of the executions is narrow even when the coverage looks acceptable", async () => {
@@ -465,12 +671,12 @@ test("one action holding most of the executions is narrow even when the coverage
 });
 
 test("the concentration boundary is 'more than the share', not 'at least'", async () => {
-  // Exactly 40 % of 100 executions: the largest action is a large part of the day but the day still has four parts.
-  // The ratchet is set at this run's own coverage, so only the concentration rule is being asked about here.
-  const atTheLine = {
-    baselines: { multiday_routine: { label: "fixture-best", attempted: 4, addressable: 12, families: 2 } },
-    exclusions: [],
-  };
+  // Exactly 40 % of 100 executions: the largest action is a large part of the day but the day still has four parts. The
+  // floor addressed exactly the four actions both runs here attempt, so only the concentration rule is being asked about.
+  const atTheLine = ratchet({
+    attempted: ["cut_weeds", "cut_grass", "break_rock", "harvest_crop"],
+    addressable: WHOLE_FIXTURE_WORLD,
+  });
   const atThreshold = await measure(
     { cut_weeds: 40, cut_grass: 20, break_rock: 20, harvest_crop: 20 },
     { baseline: atTheLine },
@@ -918,23 +1124,31 @@ test("the reading prints its population, its census, its addressable set, its co
     baselineCompared: {
       dimension: "coverage",
       label: "round76",
-      attempted: 17,
-      addressable: 43,
-      what: "coverage floor, the best census-bearing run's attempted/addressable",
+      attempted: 14,
+      addressable: 26,
+      what: "the actions both worlds made addressable, and how many of them the floor run addressed",
+    },
+    baselineSameWorld: {
+      label: "round76",
+      addressable: 26,
+      attempted: 12,
+      held: 14,
+      skipped: ["craft_item", "till_soil"],
     },
     baselineFailed: "coverage",
-    verdict: "narrow:below_baseline:round38:coverage=15/40:held=17/43:by=round76",
+    verdict: "narrow:below_baseline:round38:coverage=12/26:held=14/26:by=round76",
   };
   assert.deepEqual(formatActionBreadth(breadth), [
     "action_breadth: population 95 published, 91 judged (4 excluded)",
     "action_breadth: census 402 snapshots from runner_observations, 2 of 3 target families with rows",
     "action_breadth: addressable 40 of 95 published (target-bound 25, targetless 15)",
-    // THE LINE THE VERDICT HAS TO BE READ AGAINST: both populations side by side, the 55 of the 95 published actions this
-    // world never made addressable named as such, and the bar with the run that held it.
-    "action_breadth: attempted 15 of 40 addressable (37.5%); succeeded 14 of 40; published 95 (55 never addressable in this world); baseline-held 17 of 43 (round76's coverage floor, the best census-bearing run's attempted/addressable); compared coverage",
+    // THE LINE THE VERDICT HAS TO BE READ AGAINST: the companion's attempts, the world's own width in families, the
+    // catalog, and the bar - which is the SAME-WORLD pair, printed with this run's number inside it so a reader can see
+    // which of the two moved.
+    "action_breadth: attempted 15 of 40 addressable (37.5%) (published 2 of 3 families); succeeded 14 of 40; published 95 (55 never addressable in this world); baseline-held 14 of 26 same-world by round76, this run 12 (the actions both worlds made addressable, and how many of them the floor run addressed); compared coverage",
     "action_breadth: families 2 of 20 resource_gathering,world_lifecycle",
     "action_breadth: executions 124 (124 attributed); concentration cut_weeds 32 (25.8%)",
-    "action_breadth: verdict narrow:below_baseline:round38:coverage=15/40:held=17/43:by=round76",
+    "action_breadth: verdict narrow:below_baseline:round38:coverage=12/26:held=14/26:by=round76",
   ]);
 
   // And the shape a bundle from before the census produces: the catalog stays visible, the addressable set does not, and
@@ -966,6 +1180,6 @@ test("the reading prints its population, its census, its addressable set, its co
   });
   assert.match(
     byFamily[3],
-    /baseline-held 1 of 3 families \(the families this run's world offered .*compared families$/u,
+    /baseline-held 1 of 3 families by round38 \(the families this run's world offered .*compared families$/u,
   );
 });

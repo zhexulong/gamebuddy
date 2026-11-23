@@ -87,6 +87,63 @@ export interface ProgramStatusReadTerminality {
 }
 
 /**
+ * What ENDS a wait that has not ended yet, named by the publication that will end it.
+ *
+ * The three members are the three states a readable `active` plan can be in, and they are exhaustive: a node dispatched
+ * with its receipt owed (`node_receipt`), a node the Mod has not started yet whose dispatch comes first
+ * (`node_dispatch`), and a plan whose every node has stopped and now owes only its own terminal state
+ * (`program_terminal`).
+ *
+ * MEASURED 2026-11-23 (`round94`) is why this exists. Of 49 `stardew_plan_work` calls that held their turn, 40 were
+ * answered by the hold and **nine came back `in_flight_not_done` after a median 6,082 ms of the 6,000 ms bound** - 54.9 s
+ * that ended in a word. The run's own journal says what they were: one dispatched node, still `running`, in a plan whose
+ * journal span ran from 6,865 ms (`refill_watering_can`) to 328,317 ms (`sleep`), every one of them settling after the
+ * bound and none of them stuck. "Not done" is not an answer a caller can choose from; "`n01` is `running` and its receipt
+ * ends it" is.
+ */
+export const PROGRAM_STATUS_WAIT_SETTLEMENT = Object.freeze({
+  /** Nothing has been dispatched yet: the Mod starting the node is the publication to come. */
+  nodeDispatch: "node_dispatch",
+  /** A dispatched node owes its terminal state, and that receipt is the publication to come. */
+  nodeReceipt: "node_receipt",
+  /** Every node has stopped: what is still owed is the plan's own terminal state. */
+  programTerminal: "program_terminal",
+});
+
+export type ProgramStatusWaitSettlement =
+  (typeof PROGRAM_STATUS_WAIT_SETTLEMENT)[keyof typeof PROGRAM_STATUS_WAIT_SETTLEMENT];
+
+export const PROGRAM_STATUS_WAIT_SETTLEMENTS: readonly ProgramStatusWaitSettlement[] = Object.freeze(
+  Object.values(PROGRAM_STATUS_WAIT_SETTLEMENT),
+);
+
+/**
+ * The plan an unfinished wait is waiting on: WHICH programme, WHICH node, and what would settle it.
+ *
+ * A wait that runs out says `active` and stops there, which leaves a caller exactly one informed move - wait again - and
+ * `round94` is the reading of it: nine 6 s holds on one-node plans whose single action outlived the bound, each one
+ * answered with the word `in_flight_not_done` and no statement of what it was waiting for.
+ *
+ * The node is the journal's own row, chosen by the same rule `ProgramStatusProgress.current` uses (the first node in
+ * flight, else the next one the plan will start), so the block and `progress` cannot name different nodes for one plan.
+ * `observedInStateMs` is deliberately NOT here: it is the ledger's clock and it is published by `progress` and by every
+ * plan answer's `elapsedMs`, where a caller reading how long the node has been that way already looks.
+ */
+export interface ProgramStatusWaitUnsettled {
+  /** The plan the wait is still watching, from that plan's own payload. */
+  readonly programId: string;
+  /** The node that has to move for the wait to end, or `null` when every node has stopped and only the plan owes more. */
+  readonly node: Readonly<{
+    readonly nodeId: string;
+    /** The Mod's own action name for the node, when the journal row named one. */
+    readonly actionId: string | null;
+    /** The Mod's node-state token, verbatim - never a Host word for it. */
+    readonly state: string;
+  }> | null;
+  readonly settlesWith: ProgramStatusWaitSettlement;
+}
+
+/**
  * What the wait itself saw, BESIDE the payload it returned last.
  *
  * `terminality` is what that last read proved, and it is derived from that read on EVERY return arm rather than stated
@@ -94,9 +151,15 @@ export interface ProgramStatusReadTerminality {
  * poll came back as "not terminal". `snapshotChanged` is what makes an expired wait actionable: a caller told only
  * "still running" cannot tell a long node from a plan that published nothing for thirty seconds, and the measured
  * answer to that is to ask again and pay the same bound once more.
+ *
+ * `unsettled` is the same discipline one step further: on the arm that runs out, the caller is told which plan is still
+ * moving, which node it is on, and which publication ends it - so "wait again" is a choice made against a fact rather
+ * than the only word on offer. `null` exactly when the last read did not identify an active plan (it proved the plan
+ * stopped, or it could not read one and `unreadable` says so).
  */
 export interface ProgramStatusWaitFacts extends ProgramStatusReadTerminality {
   readonly snapshotChanged: boolean;
+  readonly unsettled: ProgramStatusWaitUnsettled | null;
 }
 
 export interface ProgramStatusWaitOutcome<TResult> {
@@ -157,6 +220,38 @@ function hasNothingInFlight(payload: unknown): boolean {
       node !== null &&
       NODE_STATES_IN_FLIGHT.has((node as Record<string, unknown>).state as string),
   );
+}
+
+/**
+ * What a wait that is NOT finished is still waiting on: the plan, the node, and the publication that ends it.
+ *
+ * The two questions this answers - which node, and what settles it - are both read off the payload the wait already
+ * holds: `readPlanProgressSource` is the one reader of a status frame, and `NODE_STATES_IN_FLIGHT` is the module's own
+ * statement about which node states owe a receipt. The node is chosen by the rule `ProgramStatusProgress.current` uses,
+ * so the block and the progress published beside it cannot name different nodes for one plan.
+ *
+ * `null` is "the last read did not identify an active plan", never "nothing is wrong": a plan that stopped has nothing
+ * left to wait on, and a payload nobody could classify says so in `unreadable`.
+ */
+function unsettledProgramme(payload: unknown): ProgramStatusWaitUnsettled | null {
+  const plan = readPlanProgressSource(payload);
+  if (plan === null || plan.state !== ACTIVE_PROGRAM_STATE) return null;
+  const dispatched = plan.nodes.find((node) => NODE_STATES_IN_FLIGHT.has(node.state));
+  const node = dispatched ?? plan.nodes.find((candidate) => !NODE_STATES_SETTLED.has(candidate.state));
+  if (node === undefined)
+    return Object.freeze({
+      programId: plan.programId,
+      node: null,
+      settlesWith: PROGRAM_STATUS_WAIT_SETTLEMENT.programTerminal,
+    });
+  return Object.freeze({
+    programId: plan.programId,
+    node: Object.freeze({ nodeId: node.nodeId, actionId: node.actionId ?? null, state: node.state }),
+    settlesWith:
+      dispatched === undefined
+        ? PROGRAM_STATUS_WAIT_SETTLEMENT.nodeDispatch
+        : PROGRAM_STATUS_WAIT_SETTLEMENT.nodeReceipt,
+  });
 }
 
 /**
@@ -1031,6 +1126,7 @@ export async function waitForTerminalProgramStatus<TResult>(
         terminality: readTerminality.terminality,
         unreadable: readTerminality.unreadable,
         snapshotChanged,
+        unsettled: unsettledProgramme(result),
       }),
     });
   };

@@ -1567,9 +1567,24 @@ export class CompanionHostService {
     this.#idleSpan = this.runTrace.begin(RUN_WAIT_NAMES.idle, {
       ...idle,
       ask: this.#readAsk(),
+      ...this.#heldByLine(),
       ...this.#namedWaitLine(),
     });
     this.#armReadingLook(idle.reason);
+  }
+
+  /**
+   * WHO holds the body, on the idle line: the holder half of `a_held_body`.
+   *
+   * Three conditions come back as one reason, and a reader who saw only `a_held_body` could not tell a warp (wait for the
+   * owner's receipt) from a mounted modal (answer it) from a cutscene (wait it out). The token is the Mod's own -
+   * `body_owned_by_navigation`, `modal/DialogueBox` - quoted here rather than translated, so the run's artifact and her own
+   * body line name one holder (`formatBodyState`). A partial pump double answers nothing, and a free body prints no field.
+   */
+  #heldByLine(): Readonly<{ heldBy?: string }> {
+    const held = this.loop.pump.bodyHeldBy;
+    if (held?.source === undefined) return {};
+    return { heldBy: held.holder === undefined ? held.source : `${held.source}:${held.holder}` };
   }
 
   /** What the pump's read path would do about the reading this session is owed, or `nothing_to_ask` for a partial pump. */

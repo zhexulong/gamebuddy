@@ -491,3 +491,59 @@ test("a_named_wait_is_what_the_idle_arm_reads: every named wait is read, and a p
   );
   cutscene.service.close();
 });
+
+/**
+ * `a_named_wait_is_what_the_idle_arm_reads: the held body names its holder` - the half `a_held_body` could not say.
+ *
+ * <p>
+ * A warp the game is running, a mounted menu and a cutscene are three different waits with three different next steps, and
+ * the idle line used to answer all three with one word (`round94`, 535 s). This drives ONE idle decision with the body held
+ * by a modal and asserts the exported line carries the holder in the Mod's own token - then the same decision with the body
+ * free, where the field must be ABSENT rather than empty, because a free body has no holder and not an unnamed one.
+ * </p>
+ */
+test("a_named_wait_is_what_the_idle_arm_reads: the held body names its holder on the idle line", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: BASE_MS });
+  const { adapter, loop, service, spans } = host();
+  await settle();
+
+  const HELD = readingAt(17, 3, {
+    ...BODY_FREE,
+    gameTime: "0750",
+    actionable: false,
+    actorDispositionKind: "modal",
+    actorDispositionDetail: "DialogueBox",
+  });
+  adapter.emit(HELD);
+  await settle();
+
+  const heldLine = idleLines(spans).at(-1);
+  assert.equal(heldLine?.reason, "a_held_body", "the engine holds the actor, and the line says so");
+  assert.equal(
+    heldLine?.heldBy,
+    "disposition:modal/DialogueBox",
+    `the line names WHO holds the body, or a reader cannot tell a menu from a cutscene (${JSON.stringify(heldLine)})`,
+  );
+  assert.equal(
+    loop.pump.bodyHeldBy?.holder,
+    "modal/DialogueBox",
+    "and the token is the pump's own reading rather than a word this line invented",
+  );
+
+  // THE SAME DECISION WITH A FREE BODY: the field is absent, not blank - "nobody holds it" and "held by nobody we can name"
+  // are different facts and the pump has a member for each.
+  adapter.emit(readingAt(18, 4, { ...BODY_FREE, gameTime: "0755" }));
+  await settle();
+  const freeLine = idleLines(spans).at(-1);
+  assert.notEqual(freeLine?.reason, "a_held_body", "a free body is not held");
+  assert.equal(
+    Object.hasOwn(freeLine ?? {}, "heldBy"),
+    false,
+    `and the line carries no holder at all (${JSON.stringify(freeLine)})`,
+  );
+
+  console.log(
+    `a_named_wait_is_what_the_idle_arm_reads: held-by ${String(heldLine?.heldBy)} · free-line ${JSON.stringify(freeLine)}`,
+  );
+  service.close();
+});
