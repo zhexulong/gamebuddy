@@ -28,16 +28,32 @@
 // `restart_gamebuddy` is `second_attempt_only_restart_gamebuddy`, and an attempt the Host refuses is the
 // Host's own code in the driver's log.
 //
-// MEASURED TWICE, AND THE TWO READINGS ARE THE POINT. At commit `09484648` (2026-11-23) a game the Host
+// MEASURED FOUR TIMES, AND THE READINGS ARE THE POINT. At commit `09484648` (2026-11-23) a game the Host
 // watched end left the panel with NO staging step at all - `attachment.status: "attached"` outlived the Player
 // Host's exit, `deriveGameSessionControls` led with the attachment, and the surface drew only 断开游戏连接 /
 // 结束游戏, so `ended_attempt_ready` was unreachable in that shape and the only way out was to disconnect
 // first (`.tmp/lane-gen2live.md` §4c). At commit `9682e223` the derivation leads with the ending instead, and
 // this driver's own press list says so: `SECOND-ATTEMPT the panel offered "activate"; pressed
 // ["activate","launch"]`, with `activate` the only control the panel drew while `attachment: attached` was
-// still latched (`.tmp/lane-gen2end.md` §3e). What did NOT change is where the retry ends: the registration
-// issues the next instance number (1 -> 2) and the launch is quarantined before any Player Host process exists
-// (`409 game_unavailable`, `cause: stardew_player_host_launch_failed`).
+// still latched (`.tmp/lane-gen2end.md` §3e); there the launch was refused (`409 game_unavailable`, `cause:
+// stardew_player_host_launch_failed`) before any Player Host process existed.
+//
+// THE TWO RUNS AFTER THAT SEPARATE THE SESSION FROM THE HANDOFF, and neither is "the retry works":
+//
+//   `d7b7ac6a` (the guardian broker serves the next attempt on its own session, `.tmp/lane-guardsession.md`
+//   §4a-4b): the retry armed on a FRESH session with its own hello and its own Guardian, launched a real
+//   Player Host, and its world advertised two cabins - but after one cabin confirm the attach never latched
+//   (`second_attempt_did_not_attach:running/none`) and the attempt's own record went `quarantined` /
+//   `retry_required` AFTER the launch.
+//
+//   `b7c8de04` (`.tmp/lane-gen2prove.md` §8): the same fresh session, arm and Guardian again (`arm_attempt`,
+//   `launch_role`, a second Guardian pid, a Player Host that loaded the run's own save and built the cabin,
+//   `refusals: []`), and this time the cabin handoff was never reached at all: the panel's own read window ran
+//   `8/30 -> 16/30 -> 25/30` and then drew `cabin-launch-wait-expired` with 0 choices and 0 confirms, while the
+//   world published `state: ready` with two cabins three and a half minutes AFTER that window closed, and the
+//   attempt's own record stayed `reserved` (revision 1) for the nine minutes its role ran. So a later reader
+//   must not take either run for the other: the session half is fixed live, the attach half is open, and the
+//   layer it stops at is different in each (the cabin handoff's bounded read vs. the attach after a confirm).
 //
 // SO THE ESCAPE IS STILL ITS OWN NAMED PRESS. When the panel's staging step is not there and its attachment
 // release is, this driver presses that release ONCE, records it as `release_attachment` beside the staging
