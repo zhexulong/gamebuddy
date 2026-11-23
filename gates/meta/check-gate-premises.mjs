@@ -82,6 +82,9 @@ export const GATE_PREMISES = Object.freeze([
   // rather than restated here: the wire schema, the Host validator, the contract and the producer it judges.
   { gate: "gates/product/check-inventory-row-field-rendering.mjs" },
   { gate: "gates/product/check-browser-state-projection-fields.mjs" },
+  // The observability parity gate declares the files it reads as UPPER_CASE constants (the activity declaration, both
+  // browser contracts, the turn account it answers), so its premise list is derived here too.
+  { gate: "gates/product/check-companion-observability-parity.mjs" },
 ]);
 
 /** A repo-relative path: the roots this tree's gates read from. A string outside these is prose, not an input. */
