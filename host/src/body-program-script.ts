@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createContext, runInContext } from "node:vm";
 import { isExpressionOnlyAction } from "./action-registry.js";
+import { planSecondSowRefusal } from "./body-program-planting.js";
 import {
   footprintTiles,
   type PackingResult,
@@ -1659,7 +1660,8 @@ function planWaterBudget(
   if (row === undefined) return unmeasured(`slot_not_published=${String(slot)}`);
   const water = row.water;
   const maximum = row.max;
-  if (!isNonNegativeSafeInteger(water) || !isNonNegativeSafeInteger(maximum)) return unmeasured(`can_reading_invalid=${String(slot)}`);
+  if (!isNonNegativeSafeInteger(water) || !isNonNegativeSafeInteger(maximum))
+    return unmeasured(`can_reading_invalid=${String(slot)}`);
   // The cost of one node is the engine's own: `WaterLeft -= power + 1`, where `power` is the `charge` the request names -
   // an action that declares no `charge` swings at power 0 and spends one. A charge this compiler cannot read is priced at
   // the same 0, which is the surface's own minimum and the only call a builder could write without one.
@@ -2920,14 +2922,14 @@ function bindSnapshotReadings(
   // it is still read from the snapshot or refused by name.
   const resolvable = readings.filter((reading) => !reading.required);
   const tile = planWorldTileOf(action, canonical);
-  const producer = tile === null ? undefined : planProducerOnTile(state, tile);
+  const producer = tile === null ? undefined : planProducerNodeOnTile(state, tile);
   const resolved: string[] = [];
   if (producer !== undefined)
     for (const reading of resolvable) {
       // Her copy is dropped rather than kept: the row she remembers belongs to a tile that did not exist when she wrote
       // it, so the only value that can be true at execution is the one the body computes.
       delete canonical[reading.name];
-      resolved.push(`resolved_after=${action.actionId}.${reading.name};producer=${producer}`);
+      resolved.push(`resolved_after=${action.actionId}.${reading.name};producer=${producer.nodeId}`);
     }
   const outstanding = readings.filter((reading) => reading.required || producer === undefined);
   if (outstanding.length === 0) return Object.freeze({ bound: [], unmeasured: [], resolved, observed: [] });
@@ -3470,10 +3472,7 @@ function planUnaffordablePurchaseRefusal(
  */
 function planStepClearsTheHoeDirt(canonical: Readonly<Record<string, PlanArgument>>, state: PlanScriptState): boolean {
   const tile = tileKeyOf(canonical);
-  if (tile === null) return false;
-  const producer = planProducerOnTile(state, tile);
-  if (producer === undefined) return false;
-  return state.nodes.find((node) => node.nodeId === producer)?.actionId === "clear_hoedirt";
+  return tile !== null && planProducerNodeOnTile(state, tile)?.actionId === "clear_hoedirt";
 }
 
 /**
@@ -3698,7 +3697,8 @@ function emitPlanNode(
 ): void {
   const tile = announcedTileOf(action, arguments_);
   const predecessor =
-    state.refusedTransitions[0] ?? (tile === null ? undefined : state.refusedTiles.find((entry) => entry.tile === tile));
+    state.refusedTransitions[0] ??
+    (tile === null ? undefined : state.refusedTiles.find((entry) => entry.tile === tile));
   if (predecessor !== undefined)
     rejectPlanCall(
       `plan_script_orphaned_by_a_refused_predecessor:${planStepName(state.builderCalls)}:${action.actionId}:${planStepName(predecessor.call)}:${predecessor.actionId}`,
@@ -3856,6 +3856,19 @@ function emitPlanStep(
   // missing argument is answered first, because no row can fix a call she did not finish writing.
   const rowRefusal = planTargetRowRefusal(action, canonical, snapshot, state);
   if (rowRefusal !== null) rejectPlanCall(rowRefusal, state, requirement);
+  // AND WHETHER THIS PROGRAM ALREADY TOOK THE TILE, which no row of any family can answer: the snapshot was read before
+  // the plan ran, so a tile this program sows is still published as empty soil in it (`body-program-planting.ts`).
+  const sowTile = tileKeyOf(canonical);
+  const secondSow = planSecondSowRefusal(
+    {
+      actionId: action.actionId,
+      targetFamily: action.targetFamily,
+      place: sowTile === null ? null : planNamedPlace(canonical),
+    },
+    sowTile === null ? undefined : planProducerNodeOnTile(state, sowTile),
+    actions,
+  );
+  if (secondSow !== null) rejectPlanCall(secondSow, state, requirement);
   // AND WHETHER THE TILE A TRANSITION NAMES IS A WAY OUT OF THE MAP SHE IS ON - the question every other layer left
   // unasked, because a transition's coordinates are intentions and its declared family is never applied to them.
   const refusedExit = planExitTileRefusal(action, canonical, snapshot);
@@ -3883,9 +3896,7 @@ function emitPlanStep(
   // A WALK THIS COMPILER CANNOT PLACE IS REPORTED, NOT WRITTEN: an invented coordinate becomes a node the world refuses,
   // and a refused node the author never wrote is the shape `round89`'s `plan_12` measured. See `transitionApproachNode`.
   if (approach.kind === "refused")
-    state.autoWalkRefused.push(
-      `auto_walk_refused:${approach.reasonCode}:${approach.tile.x}:${approach.tile.y}`,
-    );
+    state.autoWalkRefused.push(`auto_walk_refused:${approach.reasonCode}:${approach.tile.x}:${approach.tile.y}`);
   // EVERY NODE THE COMPILER WRITES IS ONE THE WIRE CARRIES, so the cap is checked against all of them: a program past
   // the bound would be refused as a malformed request instead of as a plan that is too long.
   const authorPosition = state.nodes.length + 1;
@@ -3931,7 +3942,7 @@ function emitPlanStep(
   // with it. That errs toward leaving a tile alone after the step written on it failed; the direction it must never err
   // in is acting as if a failed step had produced something.
   const tile = planWorldTileOf(action, canonical);
-  const producer = tile === null ? undefined : planProducerOnTile(state, tile);
+  const producer = tile === null ? undefined : planProducerNodeOnTile(state, tile)?.nodeId;
   const previous = state.nodes[state.nodes.length - 1]?.nodeId;
   if (tile !== null) state.worldTileByNode.set(authorNodeId, tile);
   state.nodes.push(
@@ -4050,10 +4061,10 @@ function tileKeyOf(arguments_: Readonly<Record<string, PlanArgument>>): string |
  * Nearest rather than all of them, so a node carries one edge and a skip names one producer - `till`, then `plant`, then
  * `water` on one tile is a chain of consumption, not a node with three edges.
  */
-function planProducerOnTile(state: PlanScriptState, tile: string): string | undefined {
+function planProducerNodeOnTile(state: PlanScriptState, tile: string): PlanNode | undefined {
   for (let index = state.nodes.length - 1; index >= 0; index -= 1) {
-    const candidate = state.nodes[index]!.nodeId;
-    if (state.worldTileByNode.get(candidate) === tile) return candidate;
+    const candidate = state.nodes[index]!;
+    if (state.worldTileByNode.get(candidate.nodeId) === tile) return candidate;
   }
   return undefined;
 }
@@ -4439,19 +4450,12 @@ function approachTilesOf(action: PublishedPlanAction): number {
 }
 
 /** Whether a node already puts the body within `tiles` (Chebyshev) of the transition's source tile. */
-function planWalkReaches(
-  previous: PlanNode,
-  sourceX: number,
-  sourceY: number,
-  tiles: number,
-): boolean {
+function planWalkReaches(previous: PlanNode, sourceX: number, sourceY: number, tiles: number): boolean {
   if (previous.actionId !== MOVE_TO_TILE_ACTION_ID) return false;
   const x = previous.arguments.x;
   const y = previous.arguments.y;
   if (x?.type !== "integer" || y?.type !== "integer") return false;
-  return (
-    Math.max(Math.abs(Number(x.canonicalValue) - sourceX), Math.abs(Number(y.canonicalValue) - sourceY)) <= tiles
-  );
+  return Math.max(Math.abs(Number(x.canonicalValue) - sourceX), Math.abs(Number(y.canonicalValue) - sourceY)) <= tiles;
 }
 
 /** An integer plan argument: the whole-number wire value, canonicalized to its exact decimal spelling. */
