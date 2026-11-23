@@ -1480,6 +1480,24 @@
             "null"
           ],
           "description": "Whether this exit's target location passes the engine's own accessibility gate (Game1.isLocationAccessible). Omitted by the Mod, never null, when the leg was not measured; absent must never be read as false."
+        },
+        "opensAt": {
+          "description": "The trading window the MAP declares for this doorway, in the engine's own 24h minutes (LockedDoorWarp's openTime/closeTime, GameLocation.cs:9537-9544). Written on a doorTargets row that declares one; the Mod only ever publishes it there, and the shared row shape is what both families validate with. Omitted together with closesAt for a doorway that declares no hours.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2359
+        },
+        "closesAt": {
+          "description": "The other end of the same window. Always greater than opensAt: a window that wraps the game day is not one interval, and the Mod publishes hoursUnknown instead.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2359
+        },
+        "hoursUnknown": {
+          "description": "Why a DECLARED window could not be stated (declared_window_unreadable), present only when the doorway declares a schedule and its numbers were unreadable. The hour is then missing, which is a different answer from 'this doorway has no schedule' and from a guessed number.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       }
     },
@@ -3338,6 +3356,14 @@
             "$ref": "#/$defs/worldObjectTarget"
           },
           "maxItems": 48
+        },
+        "worldObjectTargetsOmitted": {
+          "description": "The world-object rows the lane's caps left out of `worldObjectTargets`: sixteen placement candidates, sixteen objects, sixteen placed furniture pieces and sixteen empty pedestals are the per-kind budgets, and 48 is the family's whole-row bound. Without this count a room that lost the far end of its objects reads as a room with exactly the rows it received.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
         },
         "wearableTargets": {
           "type": "array",
@@ -8661,7 +8687,7 @@
           "maxLength": 128
         },
         "kind": {
-          "description": "What the live thing IS for this lane, in the Mod's own words. `placed_furniture` is a piece in `location.furniture` - the room's own bed, sofa or rug - which `place_owned_object` can add to but no object kind can describe, because furniture never sits in `location.objects`. `empty_pedestal` is a pedestal in `location.objects` that holds nothing, which is the only state `place_item_on_pedestal` can address.",
+          "description": "What the live thing IS for this lane, in the Mod's own words. `placed_furniture` is a piece in `location.furniture` - the room's own bed, sofa or rug - which `place_owned_object` can add to but no object kind can describe, because furniture never sits in `location.objects`. `empty_pedestal` is a pedestal in `location.objects` that holds nothing, which is the only state `place_item_on_pedestal` can address. `removable_object` and `non_removable_object` are a fact about the OBJECT's own native removal guards, not about the pack: an axe or a pickaxe removes the first and no axe and no pickaxe removes the second, so a row published with `slot: -1` says the pack cannot act on a thing that is standing there.",
           "type": "string",
           "enum": [
             "placement_candidate",
@@ -8947,6 +8973,24 @@
             "$ref": "#/$defs/shopStockPrice"
           },
           "maxItems": 16
+        },
+        "opensAt": {
+          "description": "The trading window this counter's OWN owner entry declares, in the engine's own 24h minutes - the TIME game-state query ShopBuilder.GetCurrentOwners evaluates, read out of Data/Shops rather than written per shop id. Same two members and same meaning as a doorTargets row's.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2359
+        },
+        "closesAt": {
+          "description": "The other end of the same window, always greater than opensAt.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2359
+        },
+        "hoursUnknown": {
+          "description": "Why a DECLARED window could not be stated as one interval (declared_window_unreadable). Absent together with opensAt/closesAt means the owner entry declares no hours at all.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
         }
       }
     },

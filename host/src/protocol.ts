@@ -29,6 +29,7 @@ import {
   isCropTargetFact,
   isDailyQuestTargetFact,
   isDebrisTargetFact,
+  isDeclaredWindow,
   isFacilityTargetFact,
   isFarmAnimalPetTargetFact,
   isFarmBuildingTargetFact,
@@ -424,6 +425,26 @@ export type Snapshot = Readonly<{
     targetLocation: string;
     targetX: number;
     targetY: number;
+    /**
+     * The trading window the MAP declares for this doorway, in the engine's own 24h minutes
+     * (`LockedDoorWarp <x> <y> <location> <openTime> <closeTime>` - GameLocation.cs:9537-9544, and the two numbers
+     * `lockedDoorWarp` quotes back as `LockedDoor_OpenRange`, :10362-10368).
+     *
+     * <p>
+     * Measured round96: a companion walked to Pierre's door at 08:00 twice, and the only place the 9:00~21:00 sign
+     * existed was inside the `door_gate_refused` receipt. The hour belongs where the door is named, before the walk.
+     * Both are ABSENT together for a doorway that declares no hours at all - a plain `Warp` has none, and no field is
+     * the honest answer for it.
+     * </p>
+     */
+    opensAt?: number;
+    closesAt?: number;
+    /**
+     * Why a DECLARED window could not be stated (`declared_window_unreadable`). Present only when the tile is the
+     * engine's timed-door family and its numbers could not be read: the hour is then MISSING, which is a different
+     * answer from "this doorway has no schedule" and from a number nobody measured. A guessed hour is worse than none.
+     */
+    hoursUnknown?: string;
   }>[];
   /**
    * The map's OWN fixed interaction points, WHOLE MAP and without entities: a mine level's ladder tiles,
@@ -1138,6 +1159,21 @@ export type Snapshot = Readonly<{
      * price for the named item and `snapshot.money` are both present.
      */
     stockPrices?: readonly Readonly<{ qualifiedItemId: string; price: number }>[];
+    /**
+     * The trading window this counter's OWN owner entry declares, in the engine's own 24h minutes - the `TIME`
+     * game-state query `ShopBuilder.GetCurrentOwners` evaluates (`ShopBuilder.cs:209-212`), read out of `Data/Shops`
+     * rather than written per shop id. Same two members and same meaning as a `doorTargets` row's.
+     *
+     * <p>
+     * `stockCount` says what would be sold and these say when. ABSENT together with no `hoursUnknown` means the entry
+     * declares no window at all (a counter open all day is a fact, not an absence); `hoursUnknown` means the entry DOES
+     * declare a window whose numbers could not be stated as one interval. See `declaredWindowSuffix` in
+     * `game-world-vocabulary.ts` for the line that prints them.
+     * </p>
+     */
+    opensAt?: number;
+    closesAt?: number;
+    hoursUnknown?: string;
   }>[];
   /**
    * Where the seeds this actor HOLDS are sold, what the menu charges, and whether the shop's own hours query says it is
@@ -2036,6 +2072,31 @@ export type ActionRegistrationDescriptor = Readonly<{
    * Present-but-`false` is refused: the member is a claim, and the Mod never publishes the opposite of one.
    */
   synthetic?: boolean;
+  /**
+   * What the action REQUIRES of the world and what it CHANGES, each effect with the seam that observes it
+   * (`FarmhandActionEffect`), or the surface's own reason it has none.
+   *
+   * <p>
+   * The four classes are a closed vocabulary because they answer one question - "can my next step depend on this one" -
+   * and that is the question a Body Program's edges are made of: `moves_actor` is what a later step may be written on top
+   * of, `requires_place` is what it may be waiting for, and `produces`/`consumes` are the resource pair. Read by
+   * `body-program-script.ts` (`planActionsFromRegistrations`), which is why it is declared here rather than as a second
+   * shape beside this one.
+   * </p>
+   * <p>
+   * The Mod publishes it on the STATIC surface artifact the script compiler reads; the `hello_ack` wire descriptor does
+   * not carry it, and the artifact's own validator (`packages/game-action-program/src/descriptors.mjs` `validEffects`)
+   * holds every member to the closed sets before this side ever sees it.
+   * </p>
+   */
+  effects?: Readonly<{
+    declared: readonly Readonly<{
+      class: "moves_actor" | "requires_place" | "produces" | "consumes";
+      subject: string;
+      observedBy: string;
+    }>[];
+    none?: string;
+  }>;
 }>;
 
 export type ActionRegistration = Readonly<{
@@ -6120,9 +6181,24 @@ function isWarp(value: unknown): boolean {
   // be read as `false`. A `hasExactKeys` list here would refuse the Mod's own payload and close the
   // bridge (the `tailoringTargets` failure), so the key set stays open and the optional member is
   // type-checked when it is present.
+  //
+  // `opensAt`/`closesAt`/`hoursUnknown` are the door's own trading window and are optional for the same reason: the
+  // Mod writes them only on a doorway that declares one. They are allowed here rather than in a second validator
+  // because `warps` and `doorTargets` are one row shape on this wire, and the producer (`DiscoverDoorTargets`) only
+  // ever writes them on a door row.
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["sourceX", "sourceY", "targetLocation", "targetX", "targetY", "accessible"])
+    !hasOnlyKeys(value, [
+      "sourceX",
+      "sourceY",
+      "targetLocation",
+      "targetX",
+      "targetY",
+      "accessible",
+      "opensAt",
+      "closesAt",
+      "hoursUnknown",
+    ])
   )
     return false;
   return (
@@ -6133,7 +6209,17 @@ function isWarp(value: unknown): boolean {
     value.targetLocation.length <= 256 &&
     isTileCoordinate(value.targetX) &&
     isTileCoordinate(value.targetY) &&
-    (value.accessible === undefined || value.accessible === null || typeof value.accessible === "boolean")
+    (value.accessible === undefined || value.accessible === null || typeof value.accessible === "boolean") &&
+    // A window is a PAIR or it is not a window: one end alone is a number no reader can compare, so the two ends are
+    // judged together (one rule, in `isDeclaredWindow`) rather than each on its own.
+    isDeclaredWindow(value.opensAt, value.closesAt) &&
+    // The window and the not-measured reason are answers to the same question, so never both: a row that states hours
+    // and also says they could not be measured is a row whose reader has to choose which half to believe.
+    (value.hoursUnknown === undefined ||
+      (value.opensAt === undefined &&
+        typeof value.hoursUnknown === "string" &&
+        value.hoursUnknown.length >= 1 &&
+        value.hoursUnknown.length <= 64))
   );
 }
 

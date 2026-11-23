@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.Abstractions;
@@ -126,7 +127,11 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
         int CounterX,
         int CounterY,
         bool OpensNow,
-        string? ClosedMessage);
+        string? ClosedMessage,
+        // The `Data/Shops` owner entry that would RUN this counter right now, or null for a counter no entry runs (a
+        // tile-opened stall, whose selector opens the menu with a null owner). Carried rather than re-resolved so the
+        // window on the published row is read from the entry this discovery actually selected.
+        ShopOwnerData? Owner);
 
     /// <summary>
     /// The selector a passive-festival stall tile carries, and the shop-id family that selector builds.
@@ -348,7 +353,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     npc.TilePoint.X,
                     npc.TilePoint.Y,
                     OpensNow(resolvedOwner),
-                    resolvedOwner?.ClosedMessage));
+                    resolvedOwner?.ClosedMessage,
+                    resolvedOwner));
             }
         }
 
@@ -385,6 +391,7 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             if (priceByQualifiedItemId.TryGetValue(qualifiedItemId, out int unitPrice))
                 stockPrices.Add(new BridgeShopStockPrice(qualifiedItemId, unitPrice));
         }
+        (int OpensAt, int ClosesAt)? window = DeclaredOwnerWindow(counter.Owner);
         return new BridgeShopTarget(
             counter.TargetId,
             counter.ShopId,
@@ -395,7 +402,10 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
             Utility.tileWithinRadiusOfPlayer(counter.CounterX, counter.CounterY, NativeInteractionRadius, player),
             stockCount,
             stockItemIds,
-            stockPrices);
+            stockPrices,
+            window?.OpensAt,
+            window?.ClosesAt,
+            window is null ? OwnerWindowUnknown(counter.Owner) : null);
     }
 
     private IReadOnlyList<BridgeShopTarget> DiscoverShopTargets(Farmer player, DiscoveryExclusionRecorder? exclusions)
@@ -536,7 +546,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     x,
                     y,
                     festivalOpen && OpensNow(resolvedOwner),
-                    festivalOpen ? resolvedOwner?.ClosedMessage : null));
+                    festivalOpen ? resolvedOwner?.ClosedMessage : null,
+                    resolvedOwner));
             }
         }
 
@@ -593,7 +604,8 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
                     x,
                     y,
                     OpensNow: true,
-                    ClosedMessage: null);
+                    ClosedMessage: null,
+                    Owner: null);
             }
         }
     }

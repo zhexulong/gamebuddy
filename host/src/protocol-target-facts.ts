@@ -11,6 +11,33 @@ export function isBoundedNonEmptyString(value: unknown, maxLength: number): valu
 }
 
 /**
+ * One engine clock reading: 24h minutes, `0` to `2359`, with a real minute component.
+ *
+ * This is the unit the engine's own timetable is written in (`LockedDoorWarp ... 900 2100`, `TIME 900 1600`, and
+ * `Game1.timeOfDay` itself), so a wire number outside it is not a clock and is refused here rather than printed as
+ * `12:75`. One definition, because two row families publish a trading window and a bound stated twice is a bound that
+ * disagrees later.
+ */
+export function isGameClockMinute(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value <= 2359 && value % 100 <= 59;
+}
+
+/**
+ * A trading window as two row members spell it: BOTH ends in the engine's clock and in order, or NEITHER.
+ *
+ * One rule for the two families that publish a window (`doorTargets`, `shopTargets`), because "a pair or nothing" is the
+ * whole meaning: one end alone is a number no reader can compare, and a window whose close is not after its open is not
+ * one interval (the engine's own day wraps at 02:00, so a schedule that crosses it is stated by its own clause rather
+ * than by two numbers here). The pair's PRESENCE is the caller's half of the question - a row with neither is a subject
+ * that declares no hours, which is a fact.
+ */
+export function isDeclaredWindow(opensAt: unknown, closesAt: unknown): boolean {
+  if (opensAt === undefined && closesAt === undefined) return true;
+  if (typeof opensAt !== "number" || typeof closesAt !== "number") return false;
+  return isGameClockMinute(opensAt) && isGameClockMinute(closesAt) && closesAt > opensAt;
+}
+
+/**
  * The Mod's canonical tool categories (`FarmhandActionCatalog.ToolEnum`): the words a `tool:<category>` claim and an
  * `equip_tool` selector share. Kept here because the tool slot's published `category` is that same vocabulary.
  */
@@ -1532,7 +1559,7 @@ export function isShopTargetFact(value: unknown): boolean {
         "stockCount",
         "stockItemIds",
       ],
-      ["stockPrices"],
+      ["stockPrices", "opensAt", "closesAt", "hoursUnknown"],
     ) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
@@ -1549,6 +1576,11 @@ export function isShopTargetFact(value: unknown): boolean {
     value.stockCount >= 0 &&
     isStringArray(value.stockItemIds) &&
     (value.stockItemIds as readonly string[]).length <= 16 &&
+    // The trading window, in the engine's own 24h minutes: a PAIR judged by the one rule both families share, with
+    // `hoursUnknown` standing in for a declared window whose numbers the Mod could not state.
+    isDeclaredWindow(value.opensAt, value.closesAt) &&
+    (value.hoursUnknown === undefined ||
+      (value.opensAt === undefined && isBoundedNonEmptyString(value.hoursUnknown, 64))) &&
     // Each price row is a pair, and the list covers ids the same list published: a price for an item the counter does
     // not name is a number nobody can act on, and it is the shape a stale or forged row would take.
     (value.stockPrices === undefined ||

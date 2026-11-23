@@ -161,8 +161,8 @@ internal sealed partial class ExecutionManager
     /// </para>
     ///
     /// <para>
-    /// A row carries no source field - <c>BridgeDoor</c> is the five warp coordinates and the wire's <c>hasOnlyKeys</c>
-    /// would refuse a sixth - so the source is read off the tile: the door table names tiles the map declared with an
+    /// A row carries no source field other than the tile itself - <c>BridgeDoor</c> is the five warp coordinates plus the
+    /// window the tile declares (<c>opensAt</c>/<c>closesAt</c>/<c>hoursUnknown</c>) - so the source is read off the tile: the door table names tiles the map declared with an
     /// <c>Action</c>, the warps list names every tile the map's own <c>Warp</c> property declared, and the one tile of a
     /// building that appears in NEITHER is its human door (the tile a player clicks). Dedup is by SOURCE TILE with the
     /// earliest table owning the row, because one tile can be both a gated door and a plain warp and the gated one is the
@@ -183,14 +183,14 @@ internal sealed partial class ExecutionManager
         Dictionary<(int X, int Y), BridgeDoor> result = new();
         foreach ((Microsoft.Xna.Framework.Point point, string target) in location.doors.Pairs)
         {
-            if (DescribeDoor(point.X, point.Y, location.getWarpFromDoor(point, actor)) is { } door)
+            if (DescribeDoor(location, point.X, point.Y, location.getWarpFromDoor(point, actor)) is { } door)
                 result.TryAdd((door.SourceX, door.SourceY), door);
         }
         foreach (StardewValley.Buildings.Building building in location.buildings)
         {
             if (!building.HasIndoors()) continue;
             Microsoft.Xna.Framework.Point point = building.getPointForHumanDoor();
-            if (DescribeDoor(point.X, point.Y, ResolveDoorWarp(location, point)) is { } door)
+            if (DescribeDoor(location, point.X, point.Y, ResolveDoorWarp(location, point)) is { } door)
                 result.TryAdd((door.SourceX, door.SourceY), door);
         }
         foreach (StardewValley.Warp warp in location.warps)
@@ -199,7 +199,8 @@ internal sealed partial class ExecutionManager
             if (!FarmhandWarpCoordinateRange.IsPublishableSource(warp.X, warp.Y)
                 || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
                 continue;
-            result.TryAdd((warp.X, warp.Y), new BridgeDoor(warp.X, warp.Y, warp.TargetName, warp.TargetX, warp.TargetY));
+            if (DescribeDoor(location, warp.X, warp.Y, warp) is { } exit)
+                result.TryAdd((exit.SourceX, exit.SourceY), exit);
         }
 
         return result.Values.Take(64).ToArray();

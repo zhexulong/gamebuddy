@@ -1656,13 +1656,35 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         return null;
     }
 
-    private static BridgeDoor? DescribeDoor(int sourceX, int sourceY, StardewValley.Warp? warp)
+    /// <summary>
+    /// One published doorway, or null when the tile is not one.
+    ///
+    /// <para>
+    /// The window comes from the TILE (<see cref="DeclaredDoorWindow"/>) rather than from the table that found the row,
+    /// because `doorTargets` reaches a door through three different tables and only one of them holds the drawn
+    /// <c>Action</c>. 
+    /// </para>
+    /// </summary>
+    private static BridgeDoor? DescribeDoor(
+        StardewValley.GameLocation? location,
+        int sourceX,
+        int sourceY,
+        StardewValley.Warp? warp)
     {
         if (warp is null || string.IsNullOrWhiteSpace(warp.TargetName)) return null;
         if (!FarmhandWarpCoordinateRange.IsPublishableSource(sourceX, sourceY)
             || !FarmhandWarpCoordinateRange.IsPublishableDestination(warp.TargetX, warp.TargetY))
             return null;
-        return new BridgeDoor(sourceX, sourceY, warp.TargetName, warp.TargetX, warp.TargetY);
+        (int OpensAt, int ClosesAt)? window = DeclaredDoorWindow(location, sourceX, sourceY);
+        return new BridgeDoor(
+            sourceX,
+            sourceY,
+            warp.TargetName,
+            warp.TargetX,
+            warp.TargetY,
+            window?.OpensAt,
+            window?.ClosesAt,
+            window is null ? DoorWindowUnknown(location, sourceX, sourceY) : null);
     }
 
 

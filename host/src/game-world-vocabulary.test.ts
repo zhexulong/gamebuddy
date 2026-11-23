@@ -486,7 +486,7 @@ test("region_summary_disagrees_with_the_rows: the gate refuses a summary that do
     ...answer,
     kinds: answer.kinds.map((kind) =>
       kind.kind === "weedTargets"
-        ? { ...kind, shown: [...kind.shown, { x: 900, y: 900, name: undefined, state: "", w: 1, h: 1 }] }
+        ? { ...kind, shown: [...kind.shown, { x: 900, y: 900, name: undefined, state: "", window: "", w: 1, h: 1 }] }
         : kind,
     ),
   };
@@ -840,7 +840,8 @@ test("a soil row's connected strip prints once, and a one-tile strip stays silen
   );
 });
 
-test("a_row_states_the_state_its_producer_carries: a declaration the line does not print is REFUSED by that check", () => {  // THE FALSIFIER ON THE DECLARATION HALF: a family whose rows carry a boolean state and whose line prints nothing about
+test("a_row_states_the_state_its_producer_carries: a declaration the line does not print is REFUSED by that check", () => {
+  // THE FALSIFIER ON THE DECLARATION HALF: a family whose rows carry a boolean state and whose line prints nothing about
   // it. `chests` is the fixture because its state is a fact the line has never carried - and the refusal has to name the
   // family AND the dropped field, or the next reader cannot tell which value the block is missing.
   const reading = rowStateReading({ chests: { field: "isFridge" } });
@@ -848,5 +849,85 @@ test("a_row_states_the_state_its_producer_carries: a declaration the line does n
     reading.missing,
     ["a_row_states_the_state_its_producer_carries:chests:isFridge"],
     `a declared state the line drops must be refused by name: ${reading.missing.join(" | ")}`,
+  );
+});
+
+/**
+ * THE HOUR ARRIVES WITH THE DOOR, AND THE COUNTER SAYS WHEN IT IS OPEN.
+ *
+ * Measured `round96` (and again in `round97`): a companion walked to Pierre's door before nine and was refused
+ * `door_gate_refused` twice, the receipt's own words being the engine's sign 「上锁了……（营业时间：9:00~21:00）」. The
+ * sentence existed in the GAME and not in her world: `doorTargets` published the tile and no hour, so the fact arrived
+ * only after the walk. The pair `opensAt`/`closesAt` is the world's own declaration in the engine's 24h clock
+ * (`LockedDoorWarp`'s tokens on a door, the owner entry's `TIME` clause on a counter), and this line is where she reads
+ * it - so the assertion is on the composed sentence, not on the field.
+ *
+ * TWO ABSENCES, TOLD APART, and neither is a guessed hour: a doorway that declares no schedule prints nothing at all,
+ * and a tile that declares one whose numbers could not be read prints the Mod's own reason verbatim.
+ */
+test("a_door_that_opens_later_states_the_hour_before_the_walk", () => {
+  const doorOf = (row: Record<string, unknown>): string | undefined =>
+    nearbyTargetFamilies({ tile: { x: 10, y: 12 }, doorTargets: [row] } as unknown as Snapshot).find(
+      (entry) => entry.family === "doorTargets",
+    )?.rendered;
+
+  assert.equal(
+    doorOf({
+      sourceX: 9,
+      sourceY: 12,
+      targetLocation: "SeedShop",
+      targetX: 3,
+      targetY: 11,
+      opensAt: 900,
+      closesAt: 2100,
+    }),
+    "门 (9,12) 营业 09:00–21:00",
+    "the 08:00 walk of round96 must be visibly pointless from the row she already holds",
+  );
+  assert.equal(
+    doorOf({ sourceX: 9, sourceY: 12, targetLocation: "SeedShop", targetX: 3, targetY: 11 }),
+    "门 (9,12)",
+    "a doorway that declares no hours says nothing about hours - absence is not `not measured`",
+  );
+  assert.equal(
+    doorOf({
+      sourceX: 9,
+      sourceY: 12,
+      targetLocation: "SeedShop",
+      targetX: 3,
+      targetY: 11,
+      hoursUnknown: "declared_window_unreadable",
+    }),
+    "门 (9,12) 营业时间未测(declared_window_unreadable)",
+    "a declared window this build could not state says so: a wrong hour is worse than none",
+  );
+  // ONE END ALONE IS NOT A WINDOW: the wire refuses the shape, so the line does too rather than printing `营业 9:00–`.
+  assert.equal(
+    doorOf({ sourceX: 9, sourceY: 12, targetLocation: "SeedShop", targetX: 3, targetY: 11, opensAt: 900 }),
+    "门 (9,12)",
+  );
+
+  const shop = nearbyTargetFamilies({
+    tile: { x: 10, y: 12 },
+    shopTargets: [
+      {
+        targetId: "shop_0123456789abcdef",
+        shopId: "SeedShop",
+        ownerName: "Pierre",
+        location: "SeedShop",
+        ownerTileX: 4,
+        ownerTileY: 17,
+        ownerInReach: false,
+        stockCount: 0,
+        stockItemIds: [],
+        opensAt: 900,
+        closesAt: 1600,
+      },
+    ],
+  } as unknown as Snapshot).find((entry) => entry.family === "shopTargets");
+  assert.equal(
+    shop?.rendered,
+    "商店 (4,17) 营业 09:00–16:00",
+    "a counter is placed at the tile its keeper stands on - the tile the actor must reach - so its window can be read on the line at all",
   );
 });

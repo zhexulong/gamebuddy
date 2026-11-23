@@ -209,42 +209,6 @@ public sealed record FarmhandActionRegistrationWire(
 /// <summary>Exact Mod-owned capability publication identity projected on authenticated bridge availability messages.</summary>
 public sealed record FarmhandPolicyIdentityWire(string Value, long CapabilityRevision);
 
-/// <summary>
-/// One exit the CURRENT location declares, published so the Agent can choose a real hop
-/// instead of probing. <see cref="Accessible"/> is the leg's own survival of the engine's
-/// accessibility gate (<c>Game1.isLocationAccessible(targetLocation)</c>, the same gate
-/// <c>TryCreateCurrentOrdinaryWarpTopology</c> applies at
-/// <c>game1navigationworldsource.cs:135</c>). Optional and LAST: the Mod's serializer omits
-/// a null member (WhenWritingNull), so ABSENT means NOT MEASURED and must never be read as
-/// <c>false</c>.
-/// </summary>
-public sealed record BridgeWarp(
-    int SourceX,
-    int SourceY,
-    string TargetLocation,
-    int TargetX,
-    int TargetY,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Accessible = null
-);
-
-public sealed record BridgeDoor(
-    int SourceX,
-    int SourceY,
-    string TargetLocation,
-    int TargetX,
-    int TargetY
-);
-
-/// <summary>
-/// One tile of the soil family - ground the Hoe still admits (`HoeDirt` false) or ground already under it (true) - with
-/// the shape of the strip it belongs to.
-///
-/// <para>
-/// <see cref="HoeDirt"/> is the engine's own presence answer for the tile
-/// (<c>GameLocation.GetHoeDirtAtTile</c>), which is the fact <c>till_soil</c> admits on: a tile that already carries
-/// one is refused with <c>soil_already_tilled</c>. Discovery publishes that tile anyway - it is the target of
-/// <c>plant_seed</c>, <c>fertilize_tile</c> and <c>water_crop</c> and the record of work already done - so `true` is a
-/// row a caller planning a till pass must skip, and the reason the state is a field instead of being inferred from the
 /// row's existence. Measured round80: twenty-seven <c>soil_already_tilled</c> receipts in one runner log, twenty-one
 /// of them one programme walking a block it had already hoed, while every row of that block answered `hoeDirt: true`.
 /// </para>
@@ -1493,7 +1457,18 @@ public sealed record BridgeShopTarget(
     // Why it is published at all: measured round87b (2026-11-21), `shop_purchase({expectedQualifiedItemId: "(O)378",
     // quantity: 15})` was sent at 75g a unit with 35g in hand and refused `insufficient_money` by the GAME - the wallet
     // and the unit price were on neither side of the wire, so no compiler could have refused it first.
-    IReadOnlyList<BridgeShopStockPrice> StockPrices);
+    IReadOnlyList<BridgeShopStockPrice> StockPrices,
+    // The trading window this shop's OWN owner entry declares, in the engine's own 24h minutes - the `TIME` game-state
+    // query `ShopBuilder.GetCurrentOwners` evaluates (ShopBuilder.cs:209-212), read out of `Data/Shops` rather than
+    // written per shop id. Same two members and same meaning as `BridgeDoor`'s, so the wire has one window spelling.
+    //
+    // Why it is published: measured round96, a companion walked to a shop before it opened and learned the hour only
+    // from the refusal. `StockCount` says what would be sold and this says when. ABSENT + no `HoursUnknown` means the
+    // entry declares no window at all (a counter open all day is a fact, not an absence); `HoursUnknown` means an entry
+    // DOES declare a window and this reader could not state it as one interval - never a guessed hour.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? OpensAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ClosesAt = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HoursUnknown = null);
 
 /// <summary>
 /// One <c>(item id, price)</c> pair of a counter's stock: the id exactly as <c>StockItemIds</c> publishes it and the

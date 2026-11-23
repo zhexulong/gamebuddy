@@ -394,11 +394,6 @@ export const WITHHELD_TILE_SPELLINGS = Object.freeze({
     reason:
       "the connected strip a soil row belongs to (`blockX`/`blockY`/`blockW`/`blockH`) - a SHAPE around the tile, not a second place for the row: the row's own place is `x`/`y`, and printing the strip's north-west corner as its coordinate would move every tile of the ground to the corner of it. The line prints the box ONCE per strip (`块 3×20@(62,17)`), which is why these four fields are declared in `READER_ROW_FIELDS` rather than read as a placement pair.",
   },
-  ownerTile: {
-    reason:
-      "the tile the shop's keeper stands on: a real place in this map, and the row carries no `x`/`y` at all, so the line prints only `共 N 格，都没有可读的坐标` today. Placing the shop at its owner's tile is the next unit.",
-    owedBy: "host/src/game-world-vocabulary.ts",
-  },
   station: {
     reason:
       "the minecart station tile: a real place in this map, and the family publishes no `x`/`y`, so the line cannot place a cart today. Placing it at its station is the next unit.",

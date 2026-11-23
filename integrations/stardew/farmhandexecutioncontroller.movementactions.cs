@@ -1151,13 +1151,64 @@ internal sealed partial class ExecutionManager
         if (action is null)
             return null;
         string[] tokens = action.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (tokens.Length < 6 || !string.Equals(tokens[0], "LockedDoorWarp", StringComparison.Ordinal))
+        if (!IsLockedDoorWarp(tokens) || tokens.Length < 6)
             return null;
         return int.TryParse(tokens[4], NumberStyles.Integer, CultureInfo.InvariantCulture, out int opensAt)
             && int.TryParse(tokens[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out int closesAt)
             ? (opensAt, closesAt)
             : null;
     }
+
+    /// <summary>Whether one tokenised Buildings-layer <c>Action</c> is the engine's own timed-door family.</summary>
+    private static bool IsLockedDoorWarp(IReadOnlyList<string> tokens) =>
+        tokens.Count > 0 && string.Equals(tokens[0], "LockedDoorWarp", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The trading window ONE MAP TILE declares for itself, in the engine's own 24h minutes - or null when it declares
+    /// none.
+    ///
+    /// <para>
+    /// THE TILE IS THE SUBJECT, not the way discovery found it. `doorTargets` reaches a door through any of three tables
+    /// (the door table, a building's human door, the warp list), and which table holds a tile is an artefact of map
+    /// authoring; the hours are a property of the drawn tile, so they are read here from the tile for every row.
+    /// </para>
+    /// <para>
+    /// ABSENT IS A LEGAL ANSWER and it is not "not measured": a plain `Warp 3 11 Farm 64 15` doorway declares no hours,
+    /// and the engine has no gate on it either. A tile that IS a <c>LockedDoorWarp</c> and whose tokens cannot be read is
+    /// the different fact <see cref="DoorWindowUnknown"/> exists for.
+    /// </para>
+    /// </summary>
+    internal static (int OpensAt, int ClosesAt)? DeclaredDoorWindow(StardewValley.GameLocation? location, int x, int y) =>
+        location is null
+            ? null
+            : ReadLockedDoorWindow(ReadBuildingsLayerAction(location, new Microsoft.Xna.Framework.Point(x, y)));
+
+    /// <summary>
+    /// Why a tile's DECLARED window could not be stated, or null when nothing is owed.
+    ///
+    /// <para>
+    /// Only the engine's own timed-door family can owe this: the tile says "I close on a schedule" and the numbers are
+    /// unreadable, which is the one case where a reader must be told the hour is MISSING rather than shown a number the
+    /// Mod invented. Every other doorway owes nothing, and a field saying so on each of them would be noise.
+    /// </para>
+    /// </summary>
+    internal static string? DoorWindowUnknown(StardewValley.GameLocation? location, int x, int y)
+    {
+        if (location is null)
+            return null;
+        string? action = ReadBuildingsLayerAction(location, new Microsoft.Xna.Framework.Point(x, y));
+        if (action is null
+            || !IsLockedDoorWarp(action.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+            || ReadLockedDoorWindow(action) is not null)
+            return null;
+        return DeclaredWindowUnreadable;
+    }
+
+    /// <summary>
+    /// The one spelling of "the world declares a window here and it could not be stated". Two families publish it
+    /// (`doorTargets` and `shopTargets`), so it is one constant rather than a literal on each row.
+    /// </summary>
+    internal const string DeclaredWindowUnreadable = "declared_window_unreadable";
 
     /// <summary>The field a refusal carries when it is the refusal answered just before it, word for word.</summary>
     internal const string SameRefusalField = "same_refusal_as_before";

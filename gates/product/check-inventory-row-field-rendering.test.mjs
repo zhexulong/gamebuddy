@@ -96,11 +96,18 @@ test("the tree passes: every renderer places every family it claims and prints e
     `the crossing examined ${String(reading.rowFields)} row fields: the row records were read as something smaller`,
   );
   // TWO SPELLINGS OF ONE FACT are in the table, one of them the door's: this is the pair that made the shipped defect
-  // possible, and a run that read only `x`/`y` would still pass every other assertion here.
+  // possible, and a run that read only `x`/`y` would still pass every other assertion here. `ownerTileX`/`ownerTileY`
+  // is the third: a shop's rows carry no `x`/`y` at all, and the tile its keeper stands on is where the actor has to be
+  // before the counter opens.
   assert.deepEqual(reading.tilePairs, [
     ["x", "y"],
     ["sourceX", "sourceY"],
+    ["ownerTileX", "ownerTileY"],
   ]);
+  assert.ok(
+    reading.placeable.includes("shopTargets"),
+    `\`shopTargets\` publishes \`ownerTileX\`/\`ownerTileY\` so its hours and stock can be read off the line: ${reading.placeable.join(", ")}`,
+  );
   assert.ok(
     reading.placeable.includes("doorTargets"),
     `\`doorTargets\` publishes \`sourceX\`/\`sourceY\` and the renderer must place it: ${reading.placeable.join(", ")}`,
@@ -176,7 +183,7 @@ test("a spelling the renderer starts reading makes its exemption expire", (t) =>
 
 test("one composer dropping the pack slot is red, even while the sibling still prints it", (t) => {
   const root = fixtureTree(t);
-  rewrite(root, "host/src/fact-brief.ts", (source) => source.replace(" [槽 ${String(row.slot)}]", ""));
+  rewrite(root, "host/src/fact-brief.ts", (source) => source.replace(" 槽 ${String(row.slot)} ", ""));
   const reading = auditInventoryRowFields({ root });
   assert.equal(reading.status, "failed");
   assert.deepEqual(codes(reading), ["inventory_row_field_dropped:slot:inventoryItemFacts:formatCarrying"]);
@@ -187,7 +194,7 @@ test("one composer dropping the pack slot is red, even while the sibling still p
 
 test("both composers dropping it names both, and the field as undelivered", (t) => {
   const root = fixtureTree(t);
-  rewrite(root, "host/src/fact-brief.ts", (source) => source.replace(" [槽 ${String(row.slot)}]", ""));
+  rewrite(root, "host/src/fact-brief.ts", (source) => source.replace(" 槽 ${String(row.slot)} ", ""));
   rewrite(root, "host/src/snapshot-projection.ts", (source) => source.replace(" [slot ${String(row.slot)}]", ""));
   const reading = auditInventoryRowFields({ root });
   assert.deepEqual(codes(reading).sort(), [
@@ -204,7 +211,10 @@ test("the declared colour is checked, not believed", (t) => {
   );
   const reading = auditInventoryRowFields({ root });
   assert.equal(reading.status, "failed");
-  assert.deepEqual(codes(reading), ["inventory_row_state_field_not_printed:colorTargets:color"]);
+  assert.deepEqual(codes(reading), [
+    "inventory_row_state_field_not_printed:colorTargets:color",
+    "inventory_row_state_field_not_printed:soilTiles:hoeDirt",
+  ]);
 });
 
 test("a declared value the wire does not publish is red rather than quietly skipped", (t) => {
@@ -336,6 +346,10 @@ test("the renderer's declarations are read out of its source, so the crossing ca
   assert.deepEqual(declaredTilePairs(source), [
     ["x", "y"],
     ["sourceX", "sourceY"],
+    ["ownerTileX", "ownerTileY"],
   ]);
-  assert.deepEqual(declaredStateFields(source), [{ family: "colorTargets", field: "color" }]);
+  assert.deepEqual(declaredStateFields(source), [
+    { family: "colorTargets", field: "color" },
+    { family: "soilTiles", field: "hoeDirt" },
+  ]);
 });

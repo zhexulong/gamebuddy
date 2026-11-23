@@ -312,12 +312,13 @@ const MAX_ENVIRONMENT_NAME_CHARS = 16;
  *
  * The table is a TOTAL record over the wire's own union, so a fourth marker cannot reach this line unnamed.
  */
-export const NPC_MARKER_WORDS: Readonly<Record<"quest" | "special_order" | "dialogue" | "none", string>> = Object.freeze({
-  quest: "委托",
-  special_order: "订单",
-  dialogue: "有话",
-  none: "",
-});
+export const NPC_MARKER_WORDS: Readonly<Record<"quest" | "special_order" | "dialogue" | "none", string>> =
+  Object.freeze({
+    quest: "委托",
+    special_order: "订单",
+    dialogue: "有话",
+    none: "",
+  });
 
 function boundedName(value: string): string {
   const characters = Array.from(value);
@@ -1127,7 +1128,9 @@ export const MAX_COUNTED_FAMILIES_NAMED = 8;
  * `<p>`
  * TWO SPELLINGS, ONE FACT. Seventy-two families name the tile `x`/`y`; `warps` and `doorTargets` name their SOURCE tile
  * `sourceX`/`sourceY` (`isWarp` in `protocol.ts`, and the Mod's `FarmhandActionArgument` for `move_to_tile` says the
- * argument is "copied exactly from the `sourceX` and `sourceY` of a `doorTargets` entry"). Reading only the first pair
+ * argument is "copied exactly from the `sourceX` and `sourceY` of a `doorTargets` entry"); and `shopTargets` names the
+ * TILE THE KEEPER STANDS ON `ownerTileX`/`ownerTileY`, which is the tile the actor has to reach before the counter opens
+ * at all. Reading only the first pair
  * was not a formatting choice: measured 2026-11-23 on `round62`'s own snapshot, the FarmHouse door sat at (3,12)
  * - Chebyshev 4 from her, inside the radius-6 discovery envelope - and the block printed no door at all, because every
  * row of that family failed the `x`/`y` test and was dropped by `continue`. The counts agreed with the silence: `total`
@@ -1146,6 +1149,7 @@ export const MAX_COUNTED_FAMILIES_NAMED = 8;
 export const ROW_TILE_FIELD_PAIRS: readonly (readonly [string, string])[] = Object.freeze([
   Object.freeze(["x", "y"] as const),
   Object.freeze(["sourceX", "sourceY"] as const),
+  Object.freeze(["ownerTileX", "ownerTileY"] as const),
 ]);
 
 /**
@@ -1419,12 +1423,22 @@ function rowTileId(candidate: Record<string, unknown>): string | undefined {
 function placedTargetTiles(
   value: readonly unknown[],
   state: Readonly<{ field: string; label: string }> | undefined,
-): { x: number; y: number; name: string | undefined; state: string; w: number; h: number; block: TargetBlock | undefined }[] {
+): {
+  x: number;
+  y: number;
+  name: string | undefined;
+  state: string;
+  window: string;
+  w: number;
+  h: number;
+  block: TargetBlock | undefined;
+}[] {
   const tiles: {
     x: number;
     y: number;
     name: string | undefined;
     state: string;
+    window: string;
     w: number;
     h: number;
     block: TargetBlock | undefined;
@@ -1439,6 +1453,7 @@ function placedTargetTiles(
       y: tile.y,
       name: rowDisplayName(candidate),
       state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
+      window: declaredWindowSuffix(candidate),
       w: extentSide(candidate.w),
       h: extentSide(candidate.h),
       block: rowBlock(candidate),
@@ -1463,18 +1478,20 @@ function rowBlock(candidate: Record<string, unknown>): TargetBlock | undefined {
   const y = candidate.blockY;
   const w = candidate.blockW;
   const h = candidate.blockH;
-  if (!(
-    typeof x === "number" &&
-    typeof y === "number" &&
-    Number.isFinite(x) &&
-    Number.isFinite(y) &&
-    typeof w === "number" &&
-    typeof h === "number" &&
-    Number.isSafeInteger(w) &&
-    Number.isSafeInteger(h) &&
-    w >= 1 &&
-    h >= 1
-  ))
+  if (
+    !(
+      typeof x === "number" &&
+      typeof y === "number" &&
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      typeof w === "number" &&
+      typeof h === "number" &&
+      Number.isSafeInteger(w) &&
+      Number.isSafeInteger(h) &&
+      w >= 1 &&
+      h >= 1
+    )
+  )
     return undefined;
   return w * h === 1 ? undefined : Object.freeze({ x, y, w, h });
 }
@@ -1540,6 +1557,7 @@ function renderTargetFamily(
     y: number;
     name: string | undefined;
     state: string;
+    window: string;
     w: number;
     h: number;
     block?: TargetBlock | undefined;
@@ -1555,7 +1573,7 @@ function renderTargetFamily(
   const tiles = shown
     .map(
       (tile) =>
-        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}`,
+        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}${tile.window}`,
     )
     .join(" ");
   return `${label} ${tiles}${blockSuffix(shown)}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}${targetLineFreshness(proved)}`;
@@ -1635,6 +1653,55 @@ function stateSuffix(state: Readonly<{ field: string; label: string }>, value: u
   if (typeof value === "number" && Number.isFinite(value)) return ` ${state.label} ${String(value)}`;
   if (typeof value === "string" && value.trim().length > 0) return ` ${state.label} ${value.trim()}`;
   return "";
+}
+
+/**
+ * The trading window one row declares, in the game's own clock - or the row's own not-measured reason, or nothing.
+ *
+ * <p>
+ * WHY THIS IS FAMILY-NEUTRAL. Two families publish it and they are the same fact about two subjects: `doorTargets`
+ * states the hours the MAP declares on a doorway (`LockedDoorWarp`'s two numbers) and `shopTargets` states the hours
+ * the counter's owner entry declares (`TIME` in `Data/Shops`). Measured round96: a companion walked to Pierre's at
+ * 08:00 twice, and the 9:00~21:00 sign existed only inside the `door_gate_refused` receipt - the hour arrived after
+ * the walk, which is the same as not at all. So the pair is read here, off the wire's own `opensAt`/`closesAt`, and
+ * not through a per-family table: a third family that publishes a window joins this line by publishing it.
+ * </p>
+ *
+ * <p>
+ * A PARTIAL WINDOW PRINTS NOTHING. One end alone is a number no reader can compare, so the pair is required whole - the
+ * same rule the wire validator applies - and the row falls back to its `hoursUnknown` reason, which is printed
+ * VERBATIM rather than translated: it is the Mod's own word for why the hour is missing, and inventing a sentence for
+ * each reason here would be a second spelling of a vocabulary this file does not own.
+ * </p>
+ *
+ * <p>
+ * The clock is `formatGameClock`'s 24h reading with its time-of-day band stripped, which is the idiom `fact-brief.ts`
+ * already uses for the game clock on this same line: `09:00–21:00` is the sign the door would show, so she can compare
+ * it against the `时间` fact without converting anything.
+ * </p>
+ */
+function declaredWindowSuffix(row: Readonly<Record<string, unknown>>): string {
+  const opens = row.opensAt;
+  const closes = row.closesAt;
+  if (
+    typeof opens === "number" &&
+    typeof closes === "number" &&
+    Number.isSafeInteger(opens) &&
+    Number.isSafeInteger(closes)
+  ) {
+    const from = gameClock(opens);
+    const to = gameClock(closes);
+    if (from !== "" && to !== "") return ` 营业 ${from}–${to}`;
+  }
+  const unknown = row.hoursUnknown;
+  if (typeof unknown === "string" && unknown.trim().length > 0) return ` 营业时间未测(${unknown.trim()})`;
+  return "";
+}
+
+/** One 24h clock reading without the time-of-day band: the shape a printed hour takes (`9:00`), or `""` if unreadable. */
+function gameClock(minutes: number): string {
+  const reading = formatGameClock(minutes, true);
+  return reading.replace(/（.*$/u, "");
 }
 
 /**
@@ -1755,6 +1822,8 @@ export type SelectedRow = Readonly<{
   y: number;
   name: string | undefined;
   state: string;
+  /** The row's declared trading window (or its not-measured reason), as `declaredWindowSuffix` prints it. */
+  window: string;
   w: number;
   h: number;
 }>;

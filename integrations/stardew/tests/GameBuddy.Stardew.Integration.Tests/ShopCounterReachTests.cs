@@ -424,7 +424,7 @@ public sealed class ShopCounterReachTests
         int y,
         bool opensNow = true,
         string? closedMessage = null) =>
-        new(ExecutionManager.ShopTargetId(shopId, ownerName, x, y), shopId, new ShopData(), ownerName, x, y, opensNow, closedMessage);
+        new(ExecutionManager.ShopTargetId(shopId, ownerName, x, y), shopId, new ShopData(), ownerName, x, y, opensNow, closedMessage, Owner: null);
 
     /// <summary>The world's shop table as far as this file needs it: which ids `Data/Shops` keys. The real table is the
     /// game's; a set of keys is all the identity question asks of it.</summary>
