@@ -149,11 +149,57 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
 
         // ...and the world does contain work that spends the morning it really has.
         string fixture = ReadFixtureSource();
-        // The counts come from the ground now, not from a literal: `stoneCount` is derived so that a farm with less
-        // walkable room still arms. Pinning "10" here would re-introduce the fixed budget this whole change removed,
-        // so the assertion names the shape instead - a loop over a count, plus the seed the crops are planted with.
-        fixture.Should().Contain("for (int index = 0; index < stoneCount; index += 1)");
+        // The counts come from the ground now, not from a literal: the budget is a capacity divided out of the tiles the
+        // props may use, so a farm with less walkable room still arms. Pinning "10" here would re-introduce the fixed
+        // budget this whole change removed, so the assertion names the shape instead - a budget read off the ground, a
+        // loop over the count it produced, plus the seed the crops are planted with.
+        fixture.Should().Contain("int propBudget = PropCapacity.For(freeAfterReservations);");
+        fixture.Should().Contain("for (int index = 0; index < remaining; index += 1)");
         fixture.Should().Contain("cauliflowerSeedId, 8");
+    }
+
+    /// <summary>
+    /// THE DAY'S LOAD-BEARING MEMBERS ARE PLACED BEFORE THE SWEEP, FROM OPEN GROUND.
+    ///
+    /// MEASURED 2026-11-23, the launch this order answers: <c>dropped 5 prop(s) a later placement cut off:
+    /// scenery=forage@8,36;weed@9,35;stone@9,34;stone@9,33; load_bearing=forage@8,35&gt;forageTargets</c>. The refusal
+    /// was right - <c>forage_and_trees</c> addresses <c>forageTargets</c> and the family was empty - but the reason the
+    /// last forage prop was in the pocket at all is the ORDER: the props are laid nearest-the-actor-first, and a pocket
+    /// is the nearest ground there is. One member of every family therefore goes down first, from the openest ground the
+    /// piece holds, and the near-first sweep spends what is left.
+    ///
+    /// <para>
+    /// The population is <c>PlaySessionPropFamilies.All</c> - the fixture's own declaration - so a seventh family is
+    /// inside both passes the moment it is added, and the order between them is read out of the initializer's body
+    /// because no compiler can state "this pass runs before that loop".
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void EveryFamilyTheDayNamesReservesOneMemberBeforeTheSweepSpendsTheGround()
+    {
+        string body = InitializerBody("private void InitializeNativeLocalPlaySessionFixture(");
+
+        int reservation = body.IndexOf(
+            "if (!TryPlacePlaySessionProp(family, clearance, out Vector2 reservedAt, out string? refusal))",
+            StringComparison.Ordinal);
+        int sweep = body.IndexOf("TryPlacePlaySessionProp(family, clearance: null,", StringComparison.Ordinal);
+        reservation.Should().BeGreaterThanOrEqualTo(0, "the world must place one member of every family before the sweep runs");
+        sweep.Should().BeGreaterThan(reservation, "the near-first sweep may only spend what the reservations left");
+        // Both passes walk the DECLARATION, so no family can be added to the world and left out of either.
+        body.Should().Contain("foreach (string family in PlaySessionPropFamilies.All)");
+        body.Should().Contain(
+            "ClearanceFromPieceEdge(walkablePiece)",
+            "a reserved member is placed on the openest ground the piece holds, never on the floor of a pocket");
+
+        // A FAMILY NO WORLD CAN HOLD IS A TASK THE ROTATION SHOULD NOT SCHEDULE: the refusal names the family, the
+        // published family it would have filled, and the reason - one family per world, not one failure per prop loop.
+        body.Should().Contain("fixture_native_local_play_session_reserved_prop_unplaceable:family=");
+        body.Should().Contain("reason={refusal}");
+        // ...and the arm log says which families got a reserved member and where, one row per FAMILY the day names.
+        body.Should().Contain("string.Join(\";\", reserved)", "the reservation is printed, or a good launch cannot say where the day's families stand");
+        // The sweep's own refusal is unchanged and still earned: a family that loses its last standing member is the one
+        // case where a dropped prop is the day's loss rather than scenery.
+        body.Should().Contain("fixture_native_local_play_session_world_too_fragmented:");
     }
 
     [Fact]

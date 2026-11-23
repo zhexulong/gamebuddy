@@ -178,4 +178,131 @@ public sealed class PlaySessionFixturePlacementTests
             .Should()
             .Contain(PlaySessionFixturePlacement.DoorApproachTiles(door), "the ring is free ground until the house owns it");
     }
+
+    /// <summary>
+    /// A piece as the world draws it: '#' is walkable ground, anything else is a wall.
+    ///
+    /// A SHAPE rather than a rectangle, because a rectangle has no pocket in it and a pocket is the one thing the
+    /// measured farm had: the props chained north of the start and a later placement cut the chain off.
+    /// </summary>
+    private static HashSet<Point> Piece(params string[] rows)
+    {
+        HashSet<Point> tiles = new();
+        for (int y = 0; y < rows.Length; y++)
+        {
+            for (int x = 0; x < rows[y].Length; x++)
+            {
+                if (rows[y][x] == '#')
+                    tiles.Add(new Point(x, y));
+            }
+        }
+
+        return tiles;
+    }
+
+    /// <summary>
+    /// THE MEASURED FARM, as a piece. A pocket in the top-left corner, a one-tile corridor down from it, and the body of
+    /// the field on the right - with the actor standing in the corridor, so the pocket really is the NEAREST ground the
+    /// world has. That is the whole reason the day's last forage prop ended up in it (2026-11-23: `forage@8,35`).
+    /// </summary>
+    private static readonly string[] MeasuredFarm =
+    {
+        "##............",
+        "##............",
+        ".##...........",
+        "..#.....######",
+        "..#.....######",
+        "..############",
+        "........######",
+        "........######",
+        "........######",
+        "........######",
+    };
+
+    private static Point MeasuredFarmStart => new(2, 3);
+
+    [Fact]
+    public void AClearanceIsMeasuredInStepsFromThePiecesEdgeAndCoversTheWholePiece()
+    {
+        // The number is what "open ground" means, so it is measured rather than assumed: a pocket's floor is one step
+        // from its own wall, while the body of a field is several steps from everything.
+        HashSet<Point> piece = Piece(MeasuredFarm);
+        IReadOnlyDictionary<Point, int> clearance = PlaySessionFixturePlacement.ClearanceFromPieceEdge(piece);
+
+        clearance.Keys.Should().BeEquivalentTo(
+            piece,
+            "a tile with no entry would read as the LEAST open ground and sort last, which is the one answer a defect here must not look like");
+        clearance.Values.Should().OnlyContain(steps => steps >= 1, "every tile of a finite piece is some steps from its edge");
+        clearance[new Point(0, 0)].Should().Be(1, "the pocket's corner has two walls beside it");
+        clearance[new Point(2, 4)].Should().Be(1, "the corridor is one tile wide");
+        // The field's body is farther from a wall than anything in the pocket: that difference IS the rule.
+        clearance.Values.Max().Should().BeGreaterThan(2);
+        Point deepest = clearance.First(pair => pair.Value == clearance.Values.Max()).Key;
+        System.Math.Abs(deepest.X - 2).Should().BeGreaterThan(2, "the openest ground is in the field, not in the corridor or the pocket");
+    }
+
+    [Fact]
+    public void AnUnmeasuredPieceKeepsTheNearestFirstOrder()
+    {
+        // The flood can give up, and "not measured" must not become "every tile is a pocket": with nothing to read, the
+        // reserved order is EXACTLY the near-first order, so a reservation can never refuse a world nobody looked at.
+        HashSet<Point> piece = Piece(MeasuredFarm);
+        Point start = MeasuredFarmStart;
+
+        IReadOnlyDictionary<Point, int> nothing = PlaySessionFixturePlacement.ClearanceFromPieceEdge(null);
+
+        nothing.Should().BeEmpty("the flood gave up, which is not the same as measuring a wall");
+        PlaySessionFixturePlacement.ReservedCandidates(piece, start, nothing)
+            .Should()
+            .Equal(PlaySessionFixturePlacement.PlaceableCandidates(piece, start));
+    }
+
+    [Fact]
+    public void AReservedPropIsOfferedTheOpenGroundBeforeThePocketBesideTheActor()
+    {
+        // THE MEASURED DEFECT AND THE RULE THAT ANSWERS IT, in one world. Nearest-first walks UP the corridor into the
+        // pocket, because the pocket is the nearest ground there is; that is how the day's last forage prop came to be
+        // somewhere a later placement could cut off. A reserved member is offered the open ground first instead, and
+        // only then the tiles beside it.
+        HashSet<Point> piece = Piece(MeasuredFarm);
+        Point start = MeasuredFarmStart;
+        IReadOnlyDictionary<Point, int> clearance = PlaySessionFixturePlacement.ClearanceFromPieceEdge(piece);
+
+        List<Point> sweep = PlaySessionFixturePlacement.PlaceableCandidates(piece, start).ToList();
+        List<Point> reserved = PlaySessionFixturePlacement.ReservedCandidates(piece, start, clearance).ToList();
+        Point pocketFloor = new(1, 1);
+
+        clearance[pocketFloor].Should().Be(1, "the pocket's floor is one step from its own wall");
+        // THE RULE, as the one assertion that names it: whatever else changes, the FIRST tile a reservation is offered is
+        // among the openest the piece holds - so a family's standing member is never the floor of a pocket.
+        clearance[reserved[0]].Should().Be(
+            clearance.Values.Max(),
+            "a reserved prop is offered the openest ground first, or the reservation has not changed what the sweep does");
+        Point openGround = reserved[0];
+        sweep.IndexOf(pocketFloor).Should().BeLessThan(
+            sweep.IndexOf(openGround),
+            "nearest-first reaches the pocket long before the open field - the pocket IS the nearest ground there is, which is how the day's last forage prop got into one");
+
+        // THE PROPERTY, over the whole sequence rather than over the two tiles above: openness never increases as the
+        // order proceeds, so no later candidate is more open than an earlier one.
+        reserved.Select(tile => clearance[tile]).Should().BeInDescendingOrder();
+        // ...and among tiles that are equally open, the actor's side comes first: a reserved prop still lands beside it.
+        for (int index = 1; index < reserved.Count; index++)
+        {
+            if (clearance[reserved[index]] != clearance[reserved[index - 1]])
+                continue;
+            Distance(MeasuredFarmStart, reserved[index]).Should().BeGreaterThanOrEqualTo(
+                Distance(MeasuredFarmStart, reserved[index - 1]),
+                $"({reserved[index].X},{reserved[index].Y}) is as open as the tile before it but farther from the actor");
+        }
+
+        // Two runs of the same fixture must produce the same world, or a session diff cannot be attributed.
+        PlaySessionFixturePlacement.ReservedCandidates(piece, start, clearance)
+            .Should()
+            .Equal(reserved);
+    }
+
+    /// <summary>The Chebyshev distance the placement orders by: one step is one tile, diagonals included.</summary>
+    private static int Distance(Point from, Point to) =>
+        System.Math.Max(System.Math.Abs(to.X - from.X), System.Math.Abs(to.Y - from.Y));
 }

@@ -105,4 +105,92 @@ internal static class PlaySessionFixturePlacement
         Point start,
         IReadOnlySet<Point>? held = null) =>
         OrderByDistanceFrom(PropsMayUse(allTiles, start, held), start);
+
+    /// <summary>
+    /// How many steps each tile of a walkable piece sits from that piece's own edge: 1 for a tile with a neighbour
+    /// outside the piece, one more for each step inward. A pocket's floor answers 1 or 2; the body of a field answers
+    /// several times that.
+    ///
+    /// <para>
+    /// MEASURED 2026-11-23: the day's last forage prop stood at 8,35 in the pocket north of the start, a later
+    /// placement cut the pocket off, and <c>forage_and_trees</c> was left addressing an empty <c>forageTargets</c>. The
+    /// pocket was the NEAREST ground there is, so the near-first sweep walked straight into it. This map is how a
+    /// RESERVED prop asks for open ground instead - the one question the sweep cannot ask for itself.
+    /// </para>
+    ///
+    /// <para>
+    /// Chebyshev steps and a Moore neighbourhood, the same metric <see cref="OrderByDistanceFrom"/> orders by: two
+    /// rules that agree about what one tile is cannot disagree about which tile is more open. An UNMEASURED piece
+    /// (<paramref name="piece"/> null, the flood gave up) answers nothing, and nothing means "no tile is more open than
+    /// another", so a caller keeps the near-first order rather than inventing a wall.
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyDictionary<Point, int> ClearanceFromPieceEdge(IReadOnlySet<Point>? piece)
+    {
+        Dictionary<Point, int> clearance = new();
+        if (piece is null || piece.Count == 0)
+            return clearance;
+        Queue<Point> frontier = new();
+        foreach (Point tile in piece)
+        {
+            if (MooreNeighbours(tile).All(piece.Contains))
+                continue;
+            clearance[tile] = 1;
+            frontier.Enqueue(tile);
+        }
+        while (frontier.Count > 0)
+        {
+            Point tile = frontier.Dequeue();
+            foreach (Point neighbour in MooreNeighbours(tile))
+            {
+                if (!piece.Contains(neighbour) || clearance.ContainsKey(neighbour))
+                    continue;
+                clearance[neighbour] = clearance[tile] + 1;
+                frontier.Enqueue(neighbour);
+            }
+        }
+        // EVERY tile of the piece has a clearance, or this is not the piece the caller measured. A missing entry would
+        // read as 0 below and sort LAST, which is the one answer a defect here must not look like: it would send the
+        // reserved member into the least open ground while the report called it open.
+        if (clearance.Count != piece.Count)
+            throw new InvalidOperationException(
+                $"play_session_clearance_incomplete:piece={piece.Count};measured={clearance.Count}");
+        return clearance;
+    }
+
+    /// <summary>
+    /// The tiles a RESERVED prop may take, in the order it must try them: the openest ground first, and among tiles
+    /// that are equally open the one nearest the actor before a farther one.
+    ///
+    /// <para>
+    /// The second key is what keeps this a variant of the near-first rule rather than a different world: a reserved
+    /// member still lands beside the actor when it can, it is only never the floor of a pocket. With no clearance to
+    /// read (an unmeasured piece) the order is exactly <see cref="PlaceableCandidates"/>, which is the property that
+    /// lets one search serve both the reservation and the sweep.
+    /// </para>
+    /// </summary>
+    internal static IEnumerable<Point> ReservedCandidates(
+        IEnumerable<Point> allTiles,
+        Point start,
+        IReadOnlyDictionary<Point, int> clearance,
+        IReadOnlySet<Point>? held = null) =>
+        PropsMayUse(allTiles, start, held)
+            .OrderByDescending(tile => clearance.TryGetValue(tile, out int steps) ? steps : 0)
+            .ThenBy(tile => Math.Max(Math.Abs(tile.X - start.X), Math.Abs(tile.Y - start.Y)))
+            .ThenBy(tile => tile.Y)
+            .ThenBy(tile => tile.X);
+
+    /// <summary>The eight tiles one Moore step from <paramref name="tile"/>: the neighbourhood the clearance is in.</summary>
+    private static IEnumerable<Point> MooreNeighbours(Point tile)
+    {
+        for (int offsetX = -1; offsetX <= 1; offsetX++)
+        {
+            for (int offsetY = -1; offsetY <= 1; offsetY++)
+            {
+                if (offsetX == 0 && offsetY == 0)
+                    continue;
+                yield return new Point(tile.X + offsetX, tile.Y + offsetY);
+            }
+        }
+    }
 }

@@ -103,22 +103,33 @@ public sealed class FixtureForageIsSpawnedTests
         place.Should().NotContain(".objects.Add(", "`objects.Add` is the shape that planted the unpickable flower");
         place.Should().NotContain("IsSpawnedObject =", "the fixture reads the marker the engine wrote; it must not forge it");
 
-        string playSession = MethodBody(source, "private void InitializeNativeLocalPlaySessionFixture(");
-        int forageLoopStart = playSession.IndexOf("int foragePlaced = 0;", StringComparison.Ordinal);
-        int weedLoopStart = playSession.IndexOf("for (int index = 0; index < weedCount;", StringComparison.Ordinal);
-        forageLoopStart.Should().BeGreaterThanOrEqualTo(0, "the forage loop has to be findable by name, not by its position");
-        weedLoopStart.Should().BeGreaterThan(forageLoopStart, "the forage loop ends where the weed loop begins; weed and stone props DO use `objects.Add`");
-        string forageLoop = playSession[forageLoopStart..weedLoopStart];
+        // THE FORAGE ARM OF THE ONE PLACEMENT SEAM. Every family is laid by `LayPlaySessionProp` now - the reservation
+        // and the sweep both reach it through `TryPlacePlaySessionProp` - so the arm is what says the forage prop is
+        // planted through the checked path and recorded only once the item is on the tile.
+        string layProp = MethodBody(source, "private static bool LayPlaySessionProp(");
+        int forageArmStart = layProp.IndexOf("case PlaySessionPropFamilies.Forage:", StringComparison.Ordinal);
+        int weedArmStart = layProp.IndexOf("case PlaySessionPropFamilies.Weed:", StringComparison.Ordinal);
+        forageArmStart.Should().BeGreaterThanOrEqualTo(0, "the forage arm has to be findable by name, not by its position");
+        weedArmStart.Should().BeGreaterThan(forageArmStart, "the forage arm ends where the weed arm begins; weed and stone props DO use `objects.Add`");
+        string forageArm = layProp[forageArmStart..weedArmStart];
 
-        int planted = forageLoop.IndexOf("PlacePlaySessionForage(farm,", StringComparison.Ordinal);
-        int recorded = forageLoop.IndexOf("placedProps.Add((forageSpot.Value.TargetTile, PlaySessionPropFamilies.Forage))", StringComparison.Ordinal);
+        int planted = layProp.IndexOf("PlacePlaySessionForage(farm,", StringComparison.Ordinal);
+        int recorded = MethodBody(source, "bool TryPlacePlaySessionProp(").IndexOf("placedProps.Add((target, family))", StringComparison.Ordinal);
 
-        planted.Should().BeGreaterThanOrEqualTo(0, "the forage loop plants through the checked path, or the path is dead code");
-        recorded.Should().BeGreaterThan(planted, "the tile is recorded after the item is on it, never before");
-        forageLoop.Should().NotContain(".objects.Add(", "the forage loop must not write the object itself");
-        forageLoop.Should().Contain(
-            "fixture_native_local_play_session_forage_count_missing",
-            "a world that budgeted forage and holds none cannot answer its `forageTargets` chore, so it is refused by name");
+        planted.Should().BeGreaterThanOrEqualTo(0, "the forage arm plants through the checked path, or the path is dead code");
+        recorded.Should().BeGreaterThanOrEqualTo(0, "the placement records the prop, or the world reports a tile it never laid");
+        forageArm.Should().Contain("PlacePlaySessionForage(farm, tile)", "the forage arm is the checked path itself");
+        forageArm.Should().NotContain(".objects.Add(", "the forage arm must not write the object itself");
+        // ...and the ANSWER is the checked path's: a tile where every declared forage id was refused is not recorded.
+        MethodBody(source, "bool TryPlacePlaySessionProp(").Should().Contain(
+            "native_placement_refused",
+            "a spot the engine refuses the item on is the ground's answer, and the placement must not record it as laid");
+
+        // A WORLD THAT BUDGETED FORAGE AND HOLDS NONE cannot answer its `forageTargets` chore, so it is refused by name -
+        // and the refusal names the FAMILY and the reason, one family per world rather than one failure per prop loop.
+        MethodBody(source, "private void InitializeNativeLocalPlaySessionFixture(").Should().Contain(
+            "fixture_native_local_play_session_reserved_prop_unplaceable:family=",
+            "a family the ground cannot hold a single member of is a chore the rotation should not schedule, so it is refused by name");
     }
 
     /// <summary>

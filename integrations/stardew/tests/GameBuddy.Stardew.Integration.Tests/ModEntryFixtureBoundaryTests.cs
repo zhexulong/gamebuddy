@@ -96,6 +96,9 @@ public sealed class ModEntryFixtureBoundaryTests
         // path that marks a map spawn, which is the gate the engine's forage pickup branch opens on - and reads the
         // marker back off the map. It lives in the fixtures partial because it seeds a world.
         "PlacePlaySessionForage",
+        // The play-session world's ONE placement seam: a prop of one family on a tile a search already accepted, so the
+        // reserved member and the sweep lay a prop the same way and a family word nothing can lay is refused by name.
+        "LayPlaySessionProp",
         // The play-session world's animal Given: the barn it stands beside the farmhouse, built from the
         // `Data/Buildings` row the engine itself resolves, plus the row lookup that refuses by name when the table has
         // no such entry (the mannequin's own rule: a fixture authors nothing the engine cannot place).

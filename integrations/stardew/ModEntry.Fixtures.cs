@@ -858,8 +858,14 @@ public sealed partial class ModEntry : Mod
         // One measurement, three counts: stones take the largest share because they are the work; weeds and
         // crops take a share each so the day has variety; the grass stays a single prop because it is scenery
         // the session inspects rather than consumes.
+        //
+        // THE BUDGET AND THE PROP ORDER COME FROM ONE FLOOD. `walkablePiece` is the actor's own walkable component as
+        // the world stood before any prop existed: the budget divides it, the reserved members' clearance is measured
+        // across it, and the arm log's `free_after_reservations` is the same tiles - so the ground the budget counted
+        // and the ground the props were placed on cannot describe two different farms.
+        HashSet<Point>? walkablePiece = WalkableComponentTiles(farm, startTile);
         int freeAfterReservations = PlaySessionFixturePlacement.FreeTilesForProps(
-            WalkableComponentTiles(farm, startTile),
+            walkablePiece,
             new Point((int)startTile.X, (int)startTile.Y),
             animalHouseHeldTiles);
         int propBudget = PropCapacity.For(freeAfterReservations);
@@ -873,12 +879,16 @@ public sealed partial class ModEntry : Mod
         // twenty-three back off the ground (`dropped=5; kept=18`, measured twice on 2026-10-28).
         //
         // The budget is about ground, not about which family consumes it, so the two new families simply take their
-        // share first and the other three divide what is left. If the ground is too small for a full share, the
-        // later loops degrade the way they already do (`placed N of M ... before the ground ran out`).
+        // share first and the other three divide what is left. If the ground is too small for a full share, the sweep
+        // below degrades the way it always has (`placed N of M <family> props: <reason>`).
         int treesCount = Math.Min(PlaySessionTreeCount, Math.Max(0, propBudget / 8));
         int forageCount = Math.Min(PlaySessionForageCount, Math.Max(0, propBudget / 8));
         int remainingBudget = Math.Max(1, propBudget - treesCount - forageCount);
         int weedCount = Math.Max(1, remainingBudget / 4);
+        // Stones because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
+        // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is tired and
+        // one that cannot reach -15 no matter what it does - the audit measured the old world at about THREE points of
+        // the 270 a morning holds. A few rocks by the crossroads, not a quarry.
         int stoneCount = Math.Max(1, remainingBudget / 2);
         int cropCount = Math.Max(1, remainingBudget / 4);
         // WHAT EACH FAMILY WAS ASKED FOR, by the word the world lays it with. The single grass tuft is outside the budget
@@ -894,171 +904,71 @@ public sealed partial class ModEntry : Mod
             [PlaySessionPropFamilies.Crop] = cropCount,
         };
         int propsWanted = wantedByFamily.Values.Sum();
-        int propsPlaced = 0;
         int propsDropped = 0;
         // The numbers the arm log and the fragmentation refusal both print, built once so a fragmented world reads as
         // counts rather than as one failure message: what the budget asked for, what the ground took, what the sweep
-        // took back, and the ground the ask was divided out of.
+        // took back, and the ground the ask was divided out of. `props_placed` is COUNTED from the placements rather
+        // than incremented beside them, so a refusal raised part-way through still reports what is standing.
         string PropCounts() =>
-            $"props_wanted={propsWanted};props_placed={propsPlaced};props_dropped={propsDropped};"
+            $"props_wanted={propsWanted};props_placed={placedProps.Count};props_dropped={propsDropped};"
                 + $"free_after_reservations={freeAfterReservations}";
 
-        // TREES AND FORAGE, placed FIRST because a tree is a walkability blocker.
+        // ① ONE MEMBER OF EVERY FAMILY THE DAY NAMES IS PLACED BEFORE THE SWEEP, FROM OPEN GROUND.
         //
-        // The placement search protects only the door; earlier props are deliberately left unprotected because
-        // requiring every candidate to satisfy several reachability floods refused 7 of 8 stones (see the
-        // search's own comment). Trees placed LAST therefore walled off props already accepted: measured
-        // 2026-10-28, `dropped=5; kept=18`, which crosses the one-quarter bound and refused the world before a
-        // turn ran. First is the durable order: everything after is judged against a map that already has them.
+        // MEASURED 2026-11-23: `dropped 5 prop(s) a later placement cut off: scenery=forage@8,36;weed@9,35;stone@9,34;
+        // stone@9,33; load_bearing=forage@8,35>forageTargets`. The refusal was right - `forage_and_trees` names
+        // `forageTargets` and the family was empty - but the reason the last forage prop was in that pocket at all is
+        // the ORDER: the props are placed nearest-the-actor-first, and a pocket is the nearest ground there is.
         //
-        // The tree recipe is the live-verified WIA fixture's (ModEntry.Fixtures.WiaToolApproach.cs:72-83).
-        int treesPlaced = 0;
-        for (int index = 0; index < treesCount; index += 1)
+        // So the day's material is laid in two passes. Every family `PlaySessionPropFamilies.All` declares gets ONE
+        // member first, from the openest ground the piece holds (`PlaySessionFixturePlacement.ClearanceFromPieceEdge`):
+        // a tile several steps from the piece's edge cannot be the floor of a pocket. The near-first sweep below then
+        // spends what is left and may still drop scenery freely - the member its family cannot lose already stands.
+        //
+        // NOTHING IS REDUCED TO MAKE ROOM: the count is the day's material and a day with fewer weeds is a different
+        // day, so a reservation takes one prop out of its OWN family's count and never out of the total.
+        var reserved = new List<string>();
+        IReadOnlyDictionary<Point, int> clearance = PlaySessionFixturePlacement.ClearanceFromPieceEdge(walkablePiece);
+        foreach (string family in PlaySessionPropFamilies.All)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? treeSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-            if (treeSpot is null)
-            {
-                this.Monitor.Log(
-                    $"GameBuddy play-session placed {treesPlaced} of {treesCount} trees before the ground ran out",
-                    LogLevel.Warn);
-                break;
-            }
-            StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
-            tree.health.Value = 1f;
-            farm.terrainFeatures.Add(treeSpot.Value.TargetTile, tree);
-            placedProps.Add((treeSpot.Value.TargetTile, PlaySessionPropFamilies.Tree));
-            provisionedTiles.Add(treeSpot.Value.TargetTile);
-            treesPlaced += 1;
+            if (!wantedByFamily.TryGetValue(family, out int wanted))
+                throw new InvalidOperationException($"fixture_native_local_play_session_prop_family_unbudgeted:{family}");
+            // A family the ground is too small to budget is not one the day names: reserving it would ask for a prop the
+            // budget declined, and the sweep below then places none of it either. The arm log still shows the family
+            // with `0` in `props=`, and a family missing from `reserved=` is the same fact - so a world that could not
+            // hold a tree says so, without refusing a day the budget already shrank.
+            if (wanted <= 0)
+                continue;
+            // A FAMILY NO WORLD CAN HOLD IS A TASK THE ROTATION SHOULD NOT SCHEDULE, so this refusal names the family,
+            // the published family it would have put rows in, and which half of the placement ran out. It is the one
+            // refusal `forage_count_missing` and `crop_count_missing` used to make, one family at a time.
+            if (!TryPlacePlaySessionProp(family, clearance, out Vector2 reservedAt, out string? refusal))
+                throw new InvalidOperationException(
+                    $"fixture_native_local_play_session_reserved_prop_unplaceable:family={family}>"
+                        + $"{PlaySessionPropFamilies.TargetFamilyOf(family)};reason={refusal};{PropCounts()}");
+            reserved.Add($"{family}@{(int)reservedAt.X},{(int)reservedAt.Y}");
         }
 
-        int foragePlaced = 0;
-        for (int index = 0; index < forageCount; index += 1)
+        // ② THE REST OF EVERY FAMILY, nearest the actor first, in the order the world has always laid them: a tree is a
+        // walkability blocker, so the trees still come first and everything after is judged against a map that already
+        // has them (trees placed LAST walled off props already accepted - measured 2026-10-28, `dropped=5; kept=18`,
+        // which crossed the one-quarter bound and refused the world before a turn ran). A family the ground runs out of
+        // degrades by a warning rather than a refusal: fewer props is still a world, and the member that mattered is the
+        // one placed above.
+        foreach (string family in PlaySessionPropFamilies.All)
         {
-            (Vector2 TargetTile, Vector2 StandingTile)? forageSpot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-            if (forageSpot is null)
+            int remaining = wantedByFamily[family] - placedProps.Count(prop => prop.Family == family);
+            for (int index = 0; index < remaining; index += 1)
             {
+                if (TryPlacePlaySessionProp(family, clearance: null, out _, out string? refusal))
+                    continue;
                 this.Monitor.Log(
-                    $"GameBuddy play-session placed {foragePlaced} of {forageCount} forage items before the ground ran out",
+                    $"GameBuddy play-session placed {placedProps.Count(prop => prop.Family == family)} of "
+                        + $"{wantedByFamily[family]} {family} props: {refusal}",
                     LogLevel.Warn);
                 break;
             }
-            StardewValley.Object? forage = PlacePlaySessionForage(farm, forageSpot.Value.TargetTile);
-            if (forage is null)
-            {
-                this.Monitor.Log(
-                    $"GameBuddy play-session placed {foragePlaced} of {forageCount} forage items: native placement refused {(int)forageSpot.Value.TargetTile.X},{(int)forageSpot.Value.TargetTile.Y}",
-                    LogLevel.Warn);
-                break;
-            }
-            placedProps.Add((forageSpot.Value.TargetTile, PlaySessionPropFamilies.Forage));
-            provisionedTiles.Add(forageSpot.Value.TargetTile);
-            foragePlaced += 1;
         }
-        // A world budgeted forage and holding none is a world whose `forageTargets` chore cannot be answered, and the
-        // audit would read that as a capability failure. Ground too small to budget a single forage item is not this
-        // case - the loop never ran.
-        if (forageCount > 0 && foragePlaced <= 0)
-            throw new InvalidOperationException("fixture_native_local_play_session_forage_count_missing");
-
-        for (int index = 0; index < weedCount; index += 1)
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-                if (spot is null)
-                {
-                    // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
-                    // usable world; refusing here made the run unstartable for a count no player asked for. Measured
-                    // 2026-10-25: a narrow map still threw here while the stone loop beside it had already been taught to
-                    // degrade, so the fixture's own commit message over-claimed.
-                    this.Monitor.Log(
-                        $"GameBuddy play-session placed {index} of {weedCount} weeds before the ground ran out",
-                        LogLevel.Warn);
-                    break;
-                }
-            StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
-            if (!weed.IsWeeds())
-                throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
-            farm.objects.Add(spot.Value.TargetTile, weed);
-            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Weed));
-            provisionedTiles.Add(spot.Value.TargetTile);
-            standingTile ??= spot.Value.StandingTile;
-        }
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-            if (spot is null)
-                throw new InvalidOperationException("fixture_native_local_play_session_grass_spot_missing");
-            farm.terrainFeatures.Add(spot.Value.TargetTile, new StardewValley.TerrainFeatures.Grass(1, 4));
-            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Grass));
-            provisionedTiles.Add(spot.Value.TargetTile);
-            standingTile ??= spot.Value.StandingTile;
-        }
-        // Ten stones, because one stone is not a day. A pickaxe spends about 4 stamina per swing at power 1
-        // (Pickaxe.cs:88), so a handful of rocks is the difference between an actor that can work until it is
-        // tired and one that cannot reach -15 no matter what it does - the audit measured the old world at about
-        // THREE points of the 270 a morning holds. Still a few rocks by the crossroads, not a quarry.
-        for (int index = 0; index < stoneCount; index += 1)
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-            if (spot is null)
-            {
-                // The search ran out of ground that can host a stone without splitting the farm. A world with
-                // fewer stones is still a world - refusing here made the entire run unstartable for a prop
-                // count no player asked for. The guard that matters is the one already inside the search: a
-                // stone may never sever the route the day depends on.
-                this.Monitor.Log(
-                    $"GameBuddy play-session placed {index} of {stoneCount} stones before the ground ran out",
-                    LogLevel.Warn);
-                break;
-            }
-            farm.objects.Add(spot.Value.TargetTile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
-            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Stone));
-            provisionedTiles.Add(spot.Value.TargetTile);
-            standingTile ??= spot.Value.StandingTile;
-        }
-        // A few mature crops, placed explicitly (the scythe-crop fixture's recipe) rather than
-        // seeded across the field, so harvesting is one of several things to do instead of the only
-        // thing in sight. Each one is validated as harvestable here: a crop that is not ready would
-        // silently give the session a target the audit cannot explain.
-        int plantedCrops = 0;
-        for (int index = 0; index < cropCount; index += 1)
-        {
-            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(farm, startTile, provisionedTiles, requiredReachable, animalHouseHeldTiles);
-                if (spot is null)
-                {
-                    // The search ran out of ground that can host this prop without splitting the farm. Fewer props is a
-                    // usable world; refusing here made the run unstartable for a count no player asked for. Measured
-                    // 2026-10-25: a narrow map still threw here while the stone loop beside it had already been taught to
-                    // degrade, so the fixture's own commit message over-claimed.
-                    this.Monitor.Log(
-                        $"GameBuddy play-session placed {index} of {cropCount} crops before the ground ran out",
-                        LogLevel.Warn);
-                    break;
-                }
-            StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
-                ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
-                : new StardewValley.TerrainFeatures.HoeDirt();
-            if (!farm.terrainFeatures.ContainsKey(spot.Value.TargetTile))
-                farm.terrainFeatures.Add(spot.Value.TargetTile, dirt);
-            StardewValley.Crop crop = new("474", (int)spot.Value.TargetTile.X, (int)spot.Value.TargetTile.Y, farm);
-            dirt.crop = crop;
-            crop.growCompletely();
-            crop.currentPhase.Value = crop.phaseDays.Count - 1;
-            crop.dayOfCurrentPhase.Value = 0;
-            if (!dirt.readyForHarvest()
-                || crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
-                throw new InvalidOperationException("fixture_native_local_play_session_crop_not_ready");
-            farm.objects.Remove(spot.Value.TargetTile);
-            placedProps.Add((spot.Value.TargetTile, PlaySessionPropFamilies.Crop));
-            provisionedTiles.Add(spot.Value.TargetTile);
-            standingTile ??= spot.Value.StandingTile;
-            plantedCrops += 1;
-        }
-        propsPlaced = placedProps.Count;
-        // The count is a budget, not a literal: the fixture refuses only when it planted NOTHING, because the world is
-        // then missing the family the crops task needs. It used to demand exactly four, which was true only while the
-        // budget happened to divide to four - measured 2026-10-28, after trees and forage began taking their share, the
-        // division produced three and this refused a world that had every prop it needed.
-        if (plantedCrops <= 0)
-            throw new InvalidOperationException("fixture_native_local_play_session_crop_count_missing");
 
         if (standingTile is null)
             throw new InvalidOperationException("fixture_native_local_play_session_standing_tile_missing");
@@ -1084,6 +994,11 @@ public sealed partial class ModEntry : Mod
         // SCENERY IS DROPPED, A DAY'S LAST PROP IS NOT. Refusing over a dropped prop made the whole run unstartable for a
         // count no player asked for; refusing when a family loses its last member is the only version of this that is
         // telling the truth, because that is the case where a task has nothing left to address.
+        //
+        // AND IT IS KEPT NOW THAT THE RESERVATION ABOVE MAKES IT AN EXCEPTION: the day's load-bearing members already
+        // stand in open ground before the sweep runs, so a drop here should be scenery and this refusal should stay
+        // silent. "Should" is not "does" - a world whose open ground was still severed loses a family, and that is the
+        // one verdict this file may not swallow.
         if (startAtHome)
         {
             List<Vector2> removed = new();
@@ -1139,6 +1054,10 @@ public sealed partial class ModEntry : Mod
                 // WHAT THE PROP LOOPS ACTUALLY PLACED, counted from the placements themselves, because "the ground ran
                 // out" was previously only visible as a warning for the family that ran short.
                 + $"props={string.Join(",", PlaySessionPropFamilies.All.Select(family => $"{family}:{placedProps.Count(prop => prop.Family == family)}"))}; "
+                // WHICH FAMILIES GOT A RESERVED MEMBER AND WHERE, one row per family the day names rather than one per
+                // prop: it is the answer to "could the sweep have emptied a chore", and a family missing from it is a
+                // family the budget never asked the ground to hold.
+                + $"reserved={(reserved.Count == 0 ? "none" : string.Join(";", reserved))}; "
                 // THE FOUR NUMBERS, so a fragmented world reads as counts: what the budget asked for, what the ground
                 // took, what the sweep took back, and the ground the ask was divided out of.
                 + $"{PropCounts()}; "
@@ -1147,6 +1066,102 @@ public sealed partial class ModEntry : Mod
                 // spent on scenery.
                 + $"animal_house_held={animalHouseHeldTiles.Count}; no chain is scripted and production alone acts.",
             LogLevel.Info);
+
+        // ONE PROP OF ONE FAMILY, at the first spot the order offers - the single placement path both passes read, so a
+        // reservation and a sweep cannot disagree about which prop a family lays or where it records it. `clearance` is
+        // null for the day's ordinary props (nearest the actor first) and the piece's clearance map for a RESERVED
+        // member (open ground first).
+        bool TryPlacePlaySessionProp(
+            string family,
+            IReadOnlyDictionary<Point, int>? clearance,
+            out Vector2 target,
+            out string? refusal)
+        {
+            target = default;
+            refusal = null;
+            (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalPlaySessionSpot(
+                farm, startTile, requiredReachable, clearance, animalHouseHeldTiles);
+            if (spot is not { } chosen)
+            {
+                refusal = "no_free_tile";
+                return false;
+            }
+            target = chosen.TargetTile;
+            // THE FAMILY'S OWN NATIVE ADMISSION IS THE SECOND HALF of the question: a spot the search likes can still be
+            // a tile the engine refuses the item on, and that is the ground's answer rather than a defect.
+            if (!LayPlaySessionProp(farm, target, family))
+            {
+                refusal = "native_placement_refused";
+                return false;
+            }
+            placedProps.Add((target, family));
+            provisionedTiles.Add(target);
+            standingTile ??= chosen.StandingTile;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// One prop of one family laid on a tile a search already accepted, and whether the engine took it there.
+    ///
+    /// <para>
+    /// The families are the words <see cref="PlaySessionPropFamilies.All"/> declares, and a word this cannot lay is
+    /// refused BY NAME: an unhandled family would otherwise be recorded as placed with nothing on the ground, which is
+    /// the one answer a defect here must not look like.
+    /// </para>
+    /// </summary>
+    private static bool LayPlaySessionProp(Farm farm, Vector2 tile, string family)
+    {
+        switch (family)
+        {
+            case PlaySessionPropFamilies.Tree:
+            {
+                // The live-verified WIA fixture's recipe (ModEntry.Fixtures.WiaToolApproach.cs:72-83).
+                StardewValley.TerrainFeatures.Tree tree = new("1", StardewValley.TerrainFeatures.Tree.treeStage);
+                tree.health.Value = 1f;
+                farm.terrainFeatures.Add(tile, tree);
+                return true;
+            }
+            case PlaySessionPropFamilies.Forage:
+                return PlacePlaySessionForage(farm, tile) is not null;
+            case PlaySessionPropFamilies.Weed:
+            {
+                StardewValley.Object weed = ItemRegistry.Create<StardewValley.Object>("(O)313", 1);
+                if (!weed.IsWeeds())
+                    throw new InvalidOperationException("fixture_native_local_play_session_not_weed");
+                farm.objects.Add(tile, weed);
+                return true;
+            }
+            case PlaySessionPropFamilies.Grass:
+                farm.terrainFeatures.Add(tile, new StardewValley.TerrainFeatures.Grass(1, 4));
+                return true;
+            case PlaySessionPropFamilies.Stone:
+                farm.objects.Add(tile, ItemRegistry.Create<StardewValley.Object>("(O)2", 1));
+                return true;
+            case PlaySessionPropFamilies.Crop:
+            {
+                // The scythe-crop fixture's recipe, placed explicitly rather than seeded across the field, so harvesting
+                // is one of several things to do instead of the only thing in sight.
+                StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
+                    ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
+                    : new StardewValley.TerrainFeatures.HoeDirt();
+                if (!farm.terrainFeatures.ContainsKey(tile))
+                    farm.terrainFeatures.Add(tile, dirt);
+                StardewValley.Crop crop = new("474", (int)tile.X, (int)tile.Y, farm);
+                dirt.crop = crop;
+                crop.growCompletely();
+                crop.currentPhase.Value = crop.phaseDays.Count - 1;
+                crop.dayOfCurrentPhase.Value = 0;
+                if (!dirt.readyForHarvest()
+                    || crop.GetHarvestMethod() != StardewValley.GameData.Crops.HarvestMethod.Grab)
+                    throw new InvalidOperationException("fixture_native_local_play_session_crop_not_ready");
+                farm.objects.Remove(tile);
+                return true;
+            }
+            default:
+                throw new InvalidOperationException(
+                    $"fixture_native_local_play_session_prop_family_unknown:{family}");
+        }
     }
 
     /// <summary>

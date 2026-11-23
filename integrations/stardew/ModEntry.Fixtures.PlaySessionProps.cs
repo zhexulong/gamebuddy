@@ -83,19 +83,33 @@ public sealed partial class ModEntry
     /// building already holds (its footprint or the ring its door is used from), so a prop cannot spend a road the day
     /// needs. The session starts on the first placement's standing tile, and everything placed after it keeps that
     /// tile's cardinal ring clear.
+    ///
+    /// <para>
+    /// <paramref name="clearance"/> is the one thing the ORDER of this search depends on: null tries the tiles nearest
+    /// the actor first, which is where the day's ordinary props belong, while the piece's clearance map
+    /// (<see cref="PlaySessionFixturePlacement.ClearanceFromPieceEdge"/>) tries the openest ground first, which is where
+    /// a RESERVED member of a family belongs - a pocket is the nearest ground there is, and the measured world lost
+    /// <c>forageTargets</c> exactly because the day's last forage prop had been placed in one.
+    /// </para>
     /// </summary>
-    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(GameLocation farm, Vector2 start, IReadOnlyList<Vector2>? alreadyPlaced = null, Vector2? mustRemainReachable = null, IReadOnlySet<Point>? held = null)
+    private static (Vector2 TargetTile, Vector2 StandingTile)? FindNativeLocalPlaySessionSpot(
+        GameLocation farm,
+        Vector2 start,
+        Vector2? mustRemainReachable = null,
+        IReadOnlyDictionary<Point, int>? clearance = null,
+        IReadOnlySet<Point>? held = null)
     {
         int width = farm.map.Layers[0].LayerWidth;
         int height = farm.map.Layers[0].LayerHeight;
         // Outward from the actor's start, never inside its ring and never on a tile a standing building holds: the
         // ordering and both exclusions are pure rules (`PlaySessionFixturePlacement`) so their properties can be pinned
         // without a live game.
-        var candidates = PlaySessionFixturePlacement.PlaceableCandidates(
-            Enumerable.Range(0, width)
-                .SelectMany(x => Enumerable.Range(0, height).Select(y => new Point(x, y))),
-            new Point((int)start.X, (int)start.Y),
-            held);
+        IEnumerable<Point> allTiles = Enumerable.Range(0, width)
+            .SelectMany(x => Enumerable.Range(0, height).Select(y => new Point(x, y)));
+        Point startPoint = new((int)start.X, (int)start.Y);
+        IEnumerable<Point> candidates = clearance is null
+            ? PlaySessionFixturePlacement.PlaceableCandidates(allTiles, startPoint, held)
+            : PlaySessionFixturePlacement.ReservedCandidates(allTiles, startPoint, clearance, held);
         foreach (Point candidate in candidates)
         {
             Vector2 target = new(candidate.X, candidate.Y);
@@ -112,22 +126,13 @@ public sealed partial class ModEntry
             // `home_unreachable:what=field` refused the world.
             if (!IsReachableFromStart(farm, start, target))
                 continue;
-            // A placement must not isolate a prop already on the ground. Protecting only the door left the
-            // earlier props exposed: stones were placed outward from the start, each one fine on its own, until
-            // the field's walkable piece had shrunk to nine tiles and the door could no longer reach the work
-            // (measured 2026-10-24: the world was refused after every placement "succeeded").
-            //
-            // Cheap because it is bounded: at most fifteen props exist by the time the last one is placed.
-            // Protects the route the session depends on: the door. Earlier props are NOT protected here, and
-            // that is a measured decision rather than an oversight - protecting every placed prop as well
-            // refused 7 of 8 stones and then ran out of ground for the crops too, because every candidate had to
-            // satisfy several reachability floods at once. A prop cut off by a later one is handled where it can
-            // be judged: the pass after placement drops it and says which tile (see
-            // `dropped_unreachable`), which keeps the world usable and the reason visible.
-            if (alreadyPlaced is not null && alreadyPlaced.Count > 0)
-            {
-                // Nothing to do: kept as a parameter so the call sites state what they considered.
-            }
+            // A placement must not isolate a prop already on the ground, but protecting EVERY placed prop here was
+            // measured to refuse 7 of 8 stones and then run out of ground for the crops too, because every candidate
+            // had to satisfy several reachability floods at once. So the guard below protects the route the session
+            // depends on - the door - and a prop a later placement cuts off is judged where it can be: the pass after
+            // placement drops it and reports its tile AND its family (`dropped_unreachable`), which keeps the world
+            // usable and the reason visible. A RESERVED member of a family is placed from open ground instead, before
+            // the sweep runs, so the one prop the day cannot lose is never the one that pass has to report.
             // A placement must not sever the route the session depends on. The start was chosen while the
             // farm was clean, so it could reach the door; a stone between them breaks that promise without any
             // single choice looking wrong, and the composed-world assertion then refuses the whole day
