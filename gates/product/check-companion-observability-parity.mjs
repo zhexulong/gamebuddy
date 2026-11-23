@@ -65,6 +65,12 @@
  *            `expiresWhen: "the game surface"` -> `debt_expiry_malformed:<state>`; a row excusing a fact its state does
  *            not owe -> `debt_covers_unowed_fact:<state>:<fact>` (the same suite).
  */
+
+// source-invariant: no compiler can require the browser contract's event union and the companion's activity states to
+//   cover each other - they are two declarations in two languages that nothing forces to meet. This file reads both
+//   sources because the pair is the invariant.
+// source-expiry: when the browser contract's event types are generated from one descriptor that also names the activity
+//   state each carries, retire this reading and compare the descriptor with its own generated output.
 export const gateDeclaration = {
   id: "check-companion-observability-parity",
   domain: "product",
