@@ -1527,7 +1527,7 @@ internal sealed class StardewBodyController
     /// </summary>
     private const int MaxStagedSteps = 24;
 
-    private static readonly Point[] CardinalOffsets =
+    internal static readonly Point[] CardinalOffsets =
     {
         new(0, -1), new(1, 0), new(0, 1), new(-1, 0),
     };

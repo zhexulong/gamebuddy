@@ -305,4 +305,171 @@ public sealed class PlaySessionFixturePlacementTests
     /// <summary>The Chebyshev distance the placement orders by: one step is one tile, diagonals included.</summary>
     private static int Distance(Point from, Point to) =>
         System.Math.Max(System.Math.Abs(to.X - from.X), System.Math.Abs(to.Y - from.Y));
+
+    /// <summary>
+    /// THE MEASURED `round94` ROOM (2026-11-23, twice), as the receipt published it: the bed spot at `10,9` is an
+    /// alcove whose four approaches are `north:location_constraint@10,8`, `east:buildings_tile@11,9`,
+    /// `south:location_constraint@10,10` and `west:object:(M)MannequinMale@9,9` - one way in, and the mannequin stood on
+    /// it. The corridor west is the walk the receipts came from (`from=3,11`).
+    /// </summary>
+    private static readonly string[] MeasuredBedroom =
+    {
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "###########.",
+        "............",
+        "............",
+    };
+
+    /// <summary>
+    /// The same bedroom with its corridor two tiles wide: the round94 alcove, in a room that CAN hold an object. The
+    /// pair is what separates "this placement is wrong" from "this room can hold nothing", which are two different
+    /// answers for the fixture to give.
+    /// </summary>
+    private static readonly string[] TwoWideBedroom =
+    {
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "............",
+        "###########.",
+        "##########..",
+        "............",
+    };
+
+    /// <summary>
+    /// THE RED PROOF, on the room and the tile that actually failed: a mannequin at `9,9` - the spawn tile, which was
+    /// also the only approach to the bed - must be refused by the room rule, and the refusal must NAME the bed at
+    /// `10,9` as the tile it cut off.
+    ///
+    /// <para>
+    /// Measured `round94` (2026-11-23), twice: the heartbeat read `location=FarmHouse;tile=9,9`, the Given's own log
+    /// said `display=mannequin@9,9;actor=9,9`, and the walk to the bed answered `no_native_path` with
+    /// `approaches=north:location_constraint@10,8,east:buildings_tile@11,9,south:location_constraint@10,10,"
+    /// + "west:object:(M)MannequinMale@9,9`. She never slept and passed out at 02:00 three nights running. The old
+    /// placement asked the warps and only the warps, so a door-only answer passed while the bed was sealed.
+    /// </para>
+    ///
+    /// <para>
+    /// The actor is placed WEST along the corridor rather than on `9,9`, because a body that stands where the object
+    /// stands is a different rule (`PlaySessionFixturePlacement.IsInStartRing` refuses that tile before the flood is
+    /// asked), and mixing the two rules would let one of them hide the other.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnObjectOnTheOnlyApproachToTheBedCutsTheRoomAndNamesTheBed()
+    {
+        HashSet<Point> room = Piece(MeasuredBedroom);
+        Point actor = new(3, 9);
+        Point bedSpot = new(10, 9);
+        Point door = new(0, 9);
+        Point[] needed = { bedSpot, door };
+
+        IReadOnlyList<Point> severed = PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, new Point(9, 9), needed);
+
+        severed.Should().BeEquivalentTo(new[] { bedSpot });
+        severed.Should().Contain(
+            new Point(10, 9),
+            "the tile the placement cut off is the bed the night walks to, and the refusal has to name it");
+
+        // The same question about the same tile, with the BED out of the room's needs: it is then lawful. That is what
+        // makes the first answer about the bed rather than about the corridor the mannequin happened to stand in.
+        PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, new Point(9, 9), new[] { door })
+            .Should()
+            .BeEmpty("with the bed out of the question the same placement is lawful, which is what makes the answer about the bed");
+
+        // AND THIS ROOM IS THE ZERO THE FIXTURE MUST REFUSE BY NAME: one tile wide, so every tile the actor's ring
+        // leaves is a bridge, and nothing may stand anywhere.
+        List<Point> candidates = PlaySessionFixturePlacement.RoomCandidates(room, actor, room.Contains).ToList();
+        candidates.Should().NotBeEmpty("the room offers ground; the rule is what refuses it");
+        candidates.Should().OnlyContain(
+            tile => PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, tile, needed).Count > 0,
+            "a one-tile-wide corridor has no lawful ground at all, which is `fixture_object_severs_the_room`'s case");
+    }
+
+    /// <summary>
+    /// A ROOM THAT CAN HOLD THE OBJECT, with the round94 alcove in it: the corner is offered first, and the corner IS
+    /// the bed's only approach - so the flood refuses the tile the ordering preferred and the placement moves on to
+    /// ground nothing crosses.
+    ///
+    /// <para>
+    /// This is the answer to "say whether the room has more than one corner that qualifies": on this room exactly ONE
+    /// dead end exists and it is the bed's alcove. A corner preference alone would therefore place at `9,9` - the very
+    /// tile that starved her - which is why the exit count is a preference and the flood is the rule.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void TheCornerIsOfferedFirstAndTheFloodRefusesItWhenItIsTheBedsOnlyApproach()
+    {
+        HashSet<Point> room = Piece(TwoWideBedroom);
+        Point actor = new(0, 9);
+        Point bedSpot = new(10, 9);
+        Point door = new(0, 10);
+        Point[] needed = { bedSpot, door };
+
+        List<Point> candidates = PlaySessionFixturePlacement.RoomCandidates(room, actor, room.Contains).ToList();
+
+        // (a) THE ORDERING IS THE CORNER: the alcove is the room's one dead end (one way out) and is offered first.
+        candidates[0].Should().Be(bedSpot, "the openest-is-safest order starts with the tile a path cannot cross");
+        PlaySessionFixturePlacement.WalkableExitCount(candidates[0], room.Contains).Should().Be(1, "the alcove has one way in");
+        candidates.Count(tile => PlaySessionFixturePlacement.WalkableExitCount(tile, room.Contains) == 1)
+            .Should()
+            .Be(1, "this room offers exactly one corner, and it is the bed's own alcove - so the corner rule alone would not save her");
+        candidates
+            .Should()
+            .Equal(PlaySessionFixturePlacement.RoomCandidates(room, actor, room.Contains), "two runs must produce the same world");
+
+        // (b) NO OBJECT ON THE ACTOR'S OWN TILE OR BESIDE IT: rule one, the one the display search never asked.
+        candidates.Should().NotContain(tile => PlaySessionFixturePlacement.IsInStartRing(tile, actor));
+        candidates.Should().NotContain(actor, "the mannequin that starved her stood on the spawn tile itself");
+
+        // (c) THE FLOOD IS THE RULE: the preferred corner severs the bed, `9,9` severs the bed, and the bed itself
+        // severs the bed - while ground nothing crosses does not.
+        PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, bedSpot, needed)
+            .Should()
+            .BeEquivalentTo(new[] { bedSpot }, "an object ON the tile the night walks to is the same severed room");
+        PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, new Point(9, 9), needed)
+            .Should()
+            .BeEquivalentTo(new[] { bedSpot }, "`9,9` is the measured tile that failed, and it cuts the bed at `10,9`");
+        Point lawful = candidates.First(tile => PlaySessionFixturePlacement.TilesSeveredByPlacing(room.Contains, actor, tile, needed).Count == 0);
+        lawful.Should().NotBe(bedSpot);
+        lawful.Should().NotBe(new Point(9, 9));
+        PlaySessionFixturePlacement.WalkableExitCount(lawful, room.Contains)
+            .Should()
+            .BeGreaterThan(1, "the room's only dead end is unusable, so the lawful tile is a corridor tile the flood proved");
+    }
+
+    /// <summary>
+    /// A FLOOD THAT GAVE UP MEASURED NOTHING, which is neither "nothing was cut" nor a room with a wall in it: it is a
+    /// named refusal. The budget is the receipt probe's own 8000, so a room large enough to exceed it must refuse rather
+    /// than pass a placement nobody judged.
+    /// </summary>
+    [Fact]
+    public void AnUnmeasuredRoomRefusesRatherThanPassingThePlacement()
+    {
+        HashSet<Point> room = Piece(Enumerable.Repeat(new string('#', 100), 100).ToArray());
+        room.Should().HaveCount(10000, "the room has to exceed the probe's budget for this case to exist at all");
+
+        System.Action act = () => PlaySessionFixturePlacement.TilesSeveredByPlacing(
+            room.Contains,
+            new Point(0, 0),
+            new Point(1, 0),
+            new[] { new Point(99, 99) });
+
+        act.Should()
+            .Throw<System.InvalidOperationException>()
+            .WithMessage("play_session_room_reachability_unmeasured*");
+    }
 }

@@ -208,9 +208,15 @@ public sealed partial class ModEntry
     /// </para>
     ///
     /// <para>
-    /// A display stands on a tile the actor still walks past: the room's own exits are re-measured with the fixture's
-    /// strict flood after the placement, because the farm's props already taught what one object on the only bridge costs
-    /// (measured 2026-10-25: the door's component fell from 1623 tiles to 122 and the field left it).
+    /// AND THE ROOM MUST STILL WORK. This is the defect `round94` (2026-11-23) measured twice: the nearest-first search
+    /// put the mannequin at `9,9`, which was the SPAWN TILE and the only approach to the bed spot at `10,9`. She woke in
+    /// that room, could not walk to the bed it had only one way of reaching, never slept, and passed out at 02:00 three
+    /// nights running - the fixture's instruction coming back as a world fact. So a display is placed under two rules
+    /// that the room itself answers: the actor's own ring is never a placement (`PlaySessionFixturePlacement`), and no
+    /// object may cost the room a tile the day stands on - the tile the night walks to (`GetPlayerBedSpot`, which is what
+    /// `SleepAndAdvanceDayLifecycle.WalkToBed` targets) or the tile an exit is taken from. A candidate that cuts one off
+    /// is put back and the refusal names what it would have cut (`fixture_object_severs_the_room:object@x,y:severs=...`),
+    /// because a world that cannot carry the deadline at all is one this Given must refuse by name.
     /// </para>
     /// </summary>
     private void InstallNativeLocalPlaySessionDisplayGiven(Farmer player)
@@ -219,20 +225,38 @@ public sealed partial class ModEntry
             throw new InvalidOperationException(
                 $"fixture_native_local_play_session_display_room_missing:location={player.currentLocation?.NameOrUniqueName ?? "none"}");
         Point actorTile = player.TilePoint;
+        // WHAT THE ROOM NEEDS, read off the room rather than listed here: the tile the night walks to and every tile an
+        // exit is taken from. `GetPlayerBedSpot` answers the map's entry location when the room holds no bed, so a room
+        // without one still names the door it must keep rather than quietly checking nothing.
+        Point bedSpot = room.GetPlayerBedSpot();
+        List<Point> roomExits = room.warps
+            .Where(warp => !warp.npcOnly.Value && room.isTileOnMap(new Vector2(warp.X, warp.Y)))
+            .Select(warp => new Point(warp.X, warp.Y))
+            .ToList();
+        List<Point> roomNeeds = roomExits.Prepend(bedSpot).ToList();
         var layer = room.map.Layers[0];
-        List<Point> candidates = PlaySessionFixturePlacement
-            .OrderByDistanceFrom(
+        List<Point> candidates = PlaySessionFixturePlacement.RoomCandidates(
                 Enumerable.Range(0, layer.LayerWidth)
                     .SelectMany(x => Enumerable.Range(0, layer.LayerHeight).Select(y => new Point(x, y))),
-                actorTile)
+                actorTile,
+                CanStand)
             .ToList();
+        // A CORNER is a candidate with one way in and out: nothing passes through it, so the object on it can only ever
+        // cost the ground it already owns. The count is what a run needs to read when the answer is "only one", because
+        // then the corner preference and the flood disagree and the flood is the rule.
+        int corners = candidates.Count(tile => PlaySessionFixturePlacement.WalkableExitCount(tile, CanStand) == 1);
+        var severedRefusals = new List<(string Object, IReadOnlyList<Point> Severed)>();
 
         (Vector2 Tile, string Kind)? display = PlaceDisplayTarget(mannequin: true) ?? PlaceDisplayTarget(mannequin: false);
         if (display is not { } target)
-            throw new InvalidOperationException(
-                $"fixture_native_local_play_session_display_target_missing:room={room.NameOrUniqueName};"
+            throw new InvalidOperationException(severedRefusals.Count > 0
+                ? $"fixture_object_severs_the_room:{severedRefusals[0].Object}:"
+                    + $"severs={string.Join(";", severedRefusals[0].Severed.Select(tile => $"{tile.X},{tile.Y}"))};"
+                    + $"room={room.NameOrUniqueName};actor={actorTile.X},{actorTile.Y};candidates={candidates.Count};"
+                    + $"corners={corners}"
+                : $"fixture_native_local_play_session_display_target_missing:room={room.NameOrUniqueName};"
                     + $"actor={actorTile.X},{actorTile.Y};radius={ExecutionManager.TargetDiscoveryRadius};"
-                    + $"objects={room.objects.Count()};candidates={candidates.Count}");
+                    + $"objects={room.objects.Count()};candidates={candidates.Count};corners={corners}");
         string family = target.Kind == "mannequin" ? "mannequinTargets" : "signTargets";
         // THE TARGET ARRIVES EMPTY, read back off the room rather than trusted from the constructor: a mannequin already
         // wearing something, or a sign already showing an item, would be the day's result handed to her by the fixture.
@@ -244,11 +268,16 @@ public sealed partial class ModEntry
         int familyTargets = target.Kind == "mannequin"
             ? ExecutionManager.DiscoverMannequinTargets(player).Count
             : ExecutionManager.DiscoverSignTargets(player).Count;
+        Point displayTile = new((int)target.Tile.X, (int)target.Tile.Y);
         this.Monitor.Log(
             "GameBuddy native-local-player initialized dress-and-display target Given before bridge attachment: "
                 + $"display={target.Kind}@{(int)target.Tile.X},{(int)target.Tile.Y};room={room.NameOrUniqueName};"
                 + $"family={family};family_targets={familyTargets};actor={actorTile.X},{actorTile.Y};empty=true;"
-                + "production alone equips and displays.",
+                // The placement's own evidence: how many ways off the tile it stands on (one is a dead end, which no
+                // path passes through), how much corner ground the room offered, and the tiles it kept reachable.
+                + $"tile_exits={PlaySessionFixturePlacement.WalkableExitCount(displayTile, CanStand)};"
+                + $"corners={corners};candidates={candidates.Count};bed={bedSpot.X},{bedSpot.Y};exits={roomExits.Count};"
+                + "room_connected=true;production alone equips and displays.",
             LogLevel.Info);
 
         (Vector2 Tile, string Kind)? PlaceDisplayTarget(bool mannequin)
@@ -256,8 +285,6 @@ public sealed partial class ModEntry
             foreach (Point candidate in candidates)
             {
                 Vector2 tile = new(candidate.X, candidate.Y);
-                if (!room.isTileOnMap(tile) || room.objects.ContainsKey(tile) || room.terrainFeatures.ContainsKey(tile))
-                    continue;
                 StardewValley.Object target = mannequin
                     ? CreateNativeLocalMannequin()
                     : new StardewValley.Objects.Sign(tile, "Sign");
@@ -265,26 +292,22 @@ public sealed partial class ModEntry
                 bool published = mannequin
                     ? ExecutionManager.DiscoverMannequinTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y)
                     : ExecutionManager.DiscoverSignTargets(player).Any(row => row.X == candidate.X && row.Y == candidate.Y);
-                if (published && RoomExitsStayWalkable()) return (tile, mannequin ? "mannequin" : "sign");
+                IReadOnlyList<Point> severed = published
+                    ? PlaySessionFixturePlacement.TilesSeveredByPlacing(CanStand, actorTile, candidate, roomNeeds)
+                    : Array.Empty<Point>();
+                if (published && severed.Count == 0) return (tile, mannequin ? "mannequin" : "sign");
+                if (severed.Count > 0)
+                    severedRefusals.Add(($"{(mannequin ? "mannequin" : "sign")}@{candidate.X},{candidate.Y}", severed));
                 room.objects.Remove(tile);
             }
             return null;
         }
 
-        bool RoomExitsStayWalkable()
-        {
-            foreach (Warp warp in room.warps.Where(warp => !warp.npcOnly.Value && room.isTileOnMap(new Vector2(warp.X, warp.Y))))
-            {
-                bool reachable = IsReachableFromStartPessimistic(
-                    room,
-                    new Vector2(actorTile.X, actorTile.Y),
-                    new Vector2(warp.X, warp.Y),
-                    tile => room.objects.ContainsKey(new Vector2(tile.X, tile.Y))
-                        || room.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y)));
-                if (!reachable) return false;
-            }
-            return true;
-        }
+        bool CanStand(Point tile) =>
+            room.isTileOnMap(new Vector2(tile.X, tile.Y))
+            && !room.objects.ContainsKey(new Vector2(tile.X, tile.Y))
+            && !room.terrainFeatures.ContainsKey(new Vector2(tile.X, tile.Y))
+            && StardewBodyController.IsWalkableTile(room, player, new Vector2(tile.X, tile.Y));
     }
 
     /// <summary>

@@ -504,6 +504,26 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         given.Should().Contain("player.currentLocation is not FarmHouse room", "the room is the actor's own, or nothing is published");
         given.Should().Contain("fixture_native_local_play_session_display_target_missing");
 
+        // AND THE ROOM HAS TO KEEP WORKING, not only its doors. Measured `round94` (2026-11-23), twice: the display
+        // search ordered the room's tiles by distance from the actor, put the mannequin on the spawn tile `9,9`, and that
+        // tile was the only approach to the bed at `10,9` - `no_native_path` with `approaches=west:object:(M)MannequinMale@9,9`,
+        // no night slept, and she passed out at 02:00 three days running while the old warp-only flood answered
+        // reachable. The two rules below are what a room object is placed under now, and both are the room's own
+        // answers rather than this file's.
+        given.Should().Contain(
+            "PlaySessionFixturePlacement.RoomCandidates(",
+            "the room's candidate order is the shared rule that keeps an object off the actor's own ring");
+        given.Should().Contain(
+            "PlaySessionFixturePlacement.TilesSeveredByPlacing(",
+            "the flood after placement is the rule that refuses a tile the room needs");
+        given.Should().Contain(
+            "room.GetPlayerBedSpot()",
+            "the bed is what the night walks to; a check that asks the warps and not the bed passed a room whose bed was sealed");
+        given.Should().Contain("fixture_object_severs_the_room:", "a room that cannot hold the object refuses by name");
+        given.Should().NotContain(
+            "RoomExitsStayWalkable",
+            "a warp-only connectivity check is the defect: the door stayed reachable while the bed was cut off");
+
         // AND NEITHER HALF IS THE WORK. A wearable in the pack is available, not worn; an empty mannequin is a target, not
         // a dressed result. The fixture performs no part of the day it makes possible, and it reads the target back off the
         // room to prove that rather than trusting the constructor.

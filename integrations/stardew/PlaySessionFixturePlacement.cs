@@ -19,6 +19,12 @@ namespace GameBuddy.Stardew;
 internal static class PlaySessionFixturePlacement
 {
     /// <summary>
+    /// The flood budget the room rule uses: a farmhouse interior is tens of tiles, and a flood that gave up refused
+    /// rather than passed.
+    /// </summary>
+    private const int PlaySessionRoomFloodBudget = 8000;
+
+    /// <summary>
     /// Candidate tiles nearest the start first. Ties break on Y then X so the placement is deterministic and two
     /// runs of the same fixture produce the same world.
     /// </summary>
@@ -156,6 +162,111 @@ internal static class PlaySessionFixturePlacement
             throw new InvalidOperationException(
                 $"play_session_clearance_incomplete:piece={piece.Count};measured={clearance.Count}");
         return clearance;
+    }
+
+    /// <summary>
+    /// How many ways a body can walk OFF this tile: its walkable cardinal neighbours, asked in the planner's own step
+    /// set (<see cref="StardewBodyController.CardinalOffsets"/>).
+    ///
+    /// <para>
+    /// This is the number that decides whether an object standing here could ever be a bridge. One exit or none is a
+    /// dead end: nothing passes THROUGH a tile with one way out, so an object there can only ever cost the ground it
+    /// already owns. Two or more is a tile a path may cross, which is why the room rule orders candidates by this count
+    /// before it asks the flood - the flood proves the room is whole TODAY, and an exit count proves the tile cannot
+    /// become a chokepoint for a target added later.
+    /// </para>
+    /// </summary>
+    internal static int WalkableExitCount(Point tile, Func<Point, bool> isWalkable) =>
+        StardewBodyController.CardinalOffsets.Count(offset => isWalkable(new Point(tile.X + offset.X, tile.Y + offset.Y)));
+
+    /// <summary>
+    /// The tiles a fixture object may take inside a ROOM, in the order it must try them: the actor's own ring is not
+    /// ground a prop may ever occupy, a DEAD END comes before a tile a path can cross, and the nearest one before a
+    /// farther one.
+    ///
+    /// <para>
+    /// MEASURED `round94` (2026-11-23), twice: the dress-and-display Given placed its mannequin at `9,9` - the spawn
+    /// tile itself, because the display search ordered the room's tiles by distance from the actor and nothing else -
+    /// and the room's only approach to the bed went with it. The heartbeat read `location=FarmHouse;tile=9,9` and the
+    /// walk to the bed answered `no_native_path` with `approaches=west:object:(M)MannequinMale@9,9,...`, so she never
+    /// slept and passed out three nights running. The ring rule already existed one layer up and the room search simply
+    /// never asked it.
+    /// </para>
+    ///
+    /// <para>
+    /// THE ORDER IS THE CORNER: a wall-adjacent tile nobody walks through, the nearest such tile first, and any other
+    /// ground after it. It is a preference and not an entitlement - a room whose every dead end is unusable still has a
+    /// lawful tile - because the question an object may not answer wrongly is <see cref="TilesSeveredByPlacing"/>, which
+    /// is asked of the placed object itself.
+    /// </para>
+    ///
+    /// <para>
+    /// A tile with NO exit is not offered at all: nothing can walk to it, so a target standing there is one the
+    /// observation can never carry (`IsTargetTileAddressable` needs a passable neighbour) and the search would spend a
+    /// candidate learning that. What the exit count does NOT decide is which tiles the room may lose - that is the flood.
+    /// </para>
+    /// </summary>
+    internal static IEnumerable<Point> RoomCandidates(IEnumerable<Point> tiles, Point actor, Func<Point, bool> isWalkable) =>
+        tiles
+            .Where(tile => isWalkable(tile) && !IsInStartRing(tile, actor) && WalkableExitCount(tile, isWalkable) > 0)
+            .OrderBy(tile => WalkableExitCount(tile, isWalkable))
+            .ThenBy(tile => Math.Max(Math.Abs(tile.X - actor.X), Math.Abs(tile.Y - actor.Y)))
+            .ThenBy(tile => tile.Y)
+            .ThenBy(tile => tile.X);
+
+    /// <summary>
+    /// The tiles a room NEEDS that an object standing on <paramref name="placed"/> would cut off.
+    ///
+    /// <para>
+    /// THE RULE FOR EVERY FIXTURE OBJECT IN A ROOM: an object may not cost the room a place the day uses. A needed tile
+    /// is one the day stands on - the tile the night walks to sleep and the tile an exit is taken from - and there are
+    /// two ways an object can cost it, asked as two questions because they are two facts:
+    /// <list type="number">
+    /// <item>THE OBJECT STANDS ON IT. The night walks the actor ONTO the bed spot
+    /// (<c>SleepAndAdvanceDayLifecycle.WalkToBed</c> finishes only when <c>player.Tile == bedTile</c>), so a body that
+    /// can stand BESIDE a solid object has not got there. No reachability reading catches this one, which is why it is
+    /// asked of the tile itself.</item>
+    /// <item>THE WALK NO LONGER REACHES IT AT ALL: <see cref="ReachabilityVerdict.TargetEnclosed"/>, the receipt's own
+    /// `target_enclosed`. That is the reading the warp-only check already used, kept because a map may draw a door tile
+    /// as a cell no body is admitted onto, and a health room must not turn into an arm-time refusal over that.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// THE FLOOD IS THE RECEIPTS' OWN (<see cref="StardewBodyController.AssessReachability"/>), so an arm-time refusal
+    /// and a mid-run `no_native_path` cannot disagree about what "reachable" means - the same discipline the barn's
+    /// porch route is judged by. The object is excluded from the walk by this function rather than by the caller's
+    /// predicate, so a caller may ask BEFORE it places anything, and an unmeasured room is a named refusal rather than
+    /// a pass (a flood that gave up measured nothing, which is not the same answer as "nothing was cut").
+    /// </para>
+    /// </summary>
+    internal static IReadOnlyList<Point> TilesSeveredByPlacing(
+        Func<Point, bool> isWalkable,
+        Point actor,
+        Point placed,
+        IEnumerable<Point> needed)
+    {
+        bool CanStand(Point tile) => tile != placed && isWalkable(tile);
+        List<Point> severed = new();
+        foreach (Point tile in needed)
+        {
+            // (1) The object is where the day must stand. Asked here rather than left to the flood because the flood
+            // would answer "a body can still stand beside it" and call a sealed bed spot connected.
+            if (tile == placed)
+            {
+                severed.Add(tile);
+                continue;
+            }
+            ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
+                actor, tile, CanStand, maxVisited: PlaySessionRoomFloodBudget, findClosestReachable: true);
+            if (verdict is not { } assessed)
+                throw new InvalidOperationException(
+                    $"play_session_room_reachability_unmeasured:actor={actor.X},{actor.Y};needed={tile.X},{tile.Y};"
+                        + $"placed={placed.X},{placed.Y}");
+            // (2) No tile of its arrival ring is in the actor's piece: the walk cannot get to this place at all.
+            if (assessed.TargetEnclosed) severed.Add(tile);
+        }
+        return severed;
     }
 
     /// <summary>
