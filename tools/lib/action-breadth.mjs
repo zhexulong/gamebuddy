@@ -60,7 +60,7 @@ import { fileURLToPath } from "node:url";
 // The one declaration of which snapshot family each action's targets are published under. Read from the discovery
 // audit rather than copied: a second spelling would go stale the first time a target-bearing action is published, and
 // this join is the whole addressable denominator.
-import { TARGET_FIELD } from "../audit-stardew-discovery-channels.mjs";
+import { TARGET_FIELD } from "../gates/stardew/audit-stardew-discovery-channels.mjs";
 import {
   readAllPublishedExecutionStardewActionIds,
   readStardewActionFamilies,

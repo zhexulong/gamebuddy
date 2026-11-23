@@ -87,7 +87,7 @@ import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { readDurableLiveEvidence } from "./check-stardew-action-promotion.mjs";
+import { readDurableLiveEvidence } from "../gates/stardew/check-stardew-action-promotion.mjs";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -129,7 +129,7 @@ export const PROMOTION_GATES = Object.freeze([
     label: "test:stardew-native-local-runner-fixture-contract",
     args: ["--test", "tools/stardew-native-local-runner-fixture-contract.test.mjs"],
   }),
-  Object.freeze({ label: "audit:stardew-discovery-channels", args: ["tools/audit-stardew-discovery-channels.mjs"] }),
+  Object.freeze({ label: "audit:stardew-discovery-channels", args: ["gates/stardew/audit-stardew-discovery-channels.mjs"] }),
 ]);
 
 const ACTION_ID = /^[a-z][a-z0-9_]{1,127}$/;

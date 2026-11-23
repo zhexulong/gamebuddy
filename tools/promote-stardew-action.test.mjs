@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { LIVE_EVIDENCE, validatePromotionSources } from "./check-stardew-action-promotion.mjs";
+import { LIVE_EVIDENCE, validatePromotionSources } from "../gates/stardew/check-stardew-action-promotion.mjs";
 import {
   applyPromotionPlan,
   PROMOTION_RESPONSIBILITIES,
@@ -399,7 +399,7 @@ test("writes on promotion, runs the gates, and refuses without writing when an a
     "node --test tools/stardew-action-gate-descriptors.test.mjs",
     "node --test tools/resolve-stardew-action-gate-runner.test.mjs",
     "node --test tools/stardew-native-local-runner-fixture-contract.test.mjs",
-    "node tools/audit-stardew-discovery-channels.mjs",
+    "node gates/stardew/audit-stardew-discovery-channels.mjs",
   ]);
   const after = await readFile(join(root, "tools/stardew-action-gate-descriptors.mjs"), "utf8");
   assert.notEqual(after, before);
