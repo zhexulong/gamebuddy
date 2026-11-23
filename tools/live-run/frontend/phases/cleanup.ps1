@@ -36,6 +36,48 @@ function Fingerprint($root) {
   }
 }
 
+# `CreationDate` arrives as a CIM datetime; it is rendered into the one ISO-8601 spelling the kit's ledger
+# records (`probes/process-table.ps1` `StartTime`), so the recorded string and this one are comparable.
+function Start-TimeOf($row) {
+  if ($null -eq $row.CreationDate) { return $null }
+  try { return ([datetime]$row.CreationDate).ToString('o') } catch { return ([string]$row.CreationDate) }
+}
+
+# End ONE pid, and only while it is still the process this run started.
+#
+# A pid is not an identity: Windows hands a dead process's number to the next one. Measured 2026-11-24
+# (`.tmp/lane-gen2prove.md` §12): the launch driver's pid 19420 had been reused by an unrelated `conhost`
+# minutes after it exited, so the force-kill below would have ended a stranger on a busier machine - the
+# incident #3715 exists to prevent. Two facts can claim a pid here, in this order: the OS start time this
+# run's ledger recorded for it (`state/run-processes.jsonl`, `lib/run-owner.mjs`), or a command line that
+# names this run's own stage. Anything else ends nothing and says `pid_reused`.
+function Stop-VerifiedPid([int]$processId, [string]$what, [string]$recordedStart, [string]$commandLineMarker) {
+  $row = Get-CimInstance -ClassName Win32_Process -Filter ('ProcessId = ' + $processId) -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+  if ($null -eq $row) {
+    Log ("  already_gone: " + $what + " pid=" + $processId + " is not in the process table - nothing to end")
+    return
+  }
+  $actualStart = Start-TimeOf $row
+  if (-not [string]::IsNullOrWhiteSpace($recordedStart)) {
+    if ($actualStart -ne $recordedStart) {
+      Log ("  pid_reused: " + $what + " pid=" + $processId + " now names " + $row.Name + " (started " + $actualStart + "), not the process this run recorded (started " + $recordedStart + ") - left alive")
+      return
+    }
+  } elseif (-not [string]::IsNullOrWhiteSpace($commandLineMarker)) {
+    $commandLine = [string]$row.CommandLine
+    if ($commandLine.IndexOf($commandLineMarker, [System.StringComparison]::OrdinalIgnoreCase) -lt 0) {
+      Log ("  pid_reused: " + $what + " pid=" + $processId + " has no recorded start time and its command line does not name this run (" + $commandLineMarker + ") - now names " + $row.Name + " (started " + $actualStart + ") - left alive")
+      return
+    }
+  } else {
+    Log ("  pid_reused: " + $what + " pid=" + $processId + " has neither a recorded start time nor a stage marker to claim it - now names " + $row.Name + " (started " + $actualStart + ") - left alive")
+    return
+  }
+  Log ("  killing " + $what + " pid=" + $processId + " name=" + $row.Name + " started " + $actualStart + " (identity matched)")
+  Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+}
+
 $prod = Join-Path ($run.homeLocalAppData) "GameBuddy"
 Log "=== 1. production fingerprint (before teardown) ==="
 $prodBefore = Fingerprint $prod
@@ -52,13 +94,38 @@ while ($waited -lt 120) {
   $waited += 3
 }
 if (-not $done) {
-  Log "  launch driver did NOT report DONE-LAUNCH within 120s — force-killing its processes"
-  $launchPid = Get-Content (Join-Path $stateDir "launch-driver.pid") -ErrorAction SilentlyContinue
-  if ($launchPid) { Log ("  killing launch driver pid=" + $launchPid); Stop-Process -Id ([int]$launchPid) -Force -ErrorAction SilentlyContinue }
+  Log "  launch driver did NOT report DONE-LAUNCH within 120s - ending this run's own processes, each only while its identity still matches"
+  # The pid file names whichever process holds that number NOW, so it is read as a CLAIM to be checked against
+  # the ledger and never as an identity. The LAST matching row wins: the ledger is append-only and a reused
+  # stage carries earlier invocations' rows, so the newest statement about a pid is the one this run wrote.
+  $ledger = @()
+  $ledgerFile = Join-Path $stateDir "run-processes.jsonl"
+  if (Test-Path $ledgerFile) {
+    foreach ($line in (Get-Content $ledgerFile -ErrorAction SilentlyContinue)) {
+      if ([string]::IsNullOrWhiteSpace($line)) { continue }
+      try { $ledger += ($line | ConvertFrom-Json) } catch { }
+    }
+  }
+  $launchPid = 0
+  $launchPidText = [string]((Get-Content (Join-Path $stateDir "launch-driver.pid") -ErrorAction SilentlyContinue | Select-Object -First 1))
+  if ([int]::TryParse($launchPidText.Trim(), [ref]$launchPid) -and $launchPid -gt 0) {
+    # The launch driver's command line carries this run's own `state/run.json` path, so the stage root claims it.
+    $driverRecord = $ledger | Where-Object { [int]$_.pid -eq $launchPid -and $_.role -eq 'launch-driver' -and $_.retired -ne $true } | Select-Object -Last 1
+    Stop-VerifiedPid $launchPid "launch driver" ([string]$driverRecord.startTime) $StageRoot
+  } else {
+    Log ("  no launch driver pid to end (launch-driver.pid holds " + $launchPidText + ")")
+  }
   $state = Get-Content $launchStateFile -Raw -ErrorAction SilentlyContinue | ConvertFrom-Json
   if ($state) {
-    if ($state.childPid)   { Log ("  killing child pid=" + $state.childPid);   Stop-Process -Id ([int]$state.childPid) -Force -ErrorAction SilentlyContinue }
-    if ($state.browserPid) { Log ("  killing browser pid=" + $state.browserPid); Stop-Process -Id ([int]$state.browserPid) -Force -ErrorAction SilentlyContinue }
+    # The Host child is claimed by the start time launch.json wrote beside its pid; its command line names no
+    # part of this run (`phases/launch.mjs`), so a child with no recorded start time is reported, not killed.
+    if ($state.childPid) {
+      Stop-VerifiedPid ([int]$state.childPid) "child (the mounted Host)" ([string]$state.childStartTime) $null
+    }
+    # The browser is the one process here whose command line does name this run: its own user-data-dir.
+    if ($state.browserPid) {
+      Stop-VerifiedPid ([int]$state.browserPid) "browser" ([string]$state.browserStartTime) (Join-Path $StageRoot "browser-profile")
+    }
   }
   Start-Sleep -Seconds 5
 }
