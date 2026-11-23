@@ -55,6 +55,20 @@
 //   must not take either run for the other: the session half is fixed live, the attach half is open, and the
 //   layer it stops at is different in each (the cabin handoff's bounded read vs. the attach after a confirm).
 //
+// THE FIFTH READING NAMES A LATER LAYER, AND ITS WORLD WAS FAST. At `6eec146a` (2026-11-24, stage
+// `C:\gb-lanes\gen2close`, `.tmp/lane-gen2close.md` §4) the same crash and the same two presses ran on a retry whose
+// own session document published `state: ready` **9 234 ms** after the launch press, so the panel's 30-read window
+// never expired and the refresh this driver now holds in reserve was never what decided the run. What happened
+// instead: two cabins were offered ("Cabin 1", "Cabin 2"), the driver pressed the confirm (one press), the game
+// issued the signed Farmhand manifest and admitted the companion (SMAPI 04:34:50), the Guardian launched the
+// ai-client half (04:34:52) and its trace records `hello` and an `observe_request` - and the attempt's own record
+// then read `state: quarantined`, `cleanupDisposition: retry_required` (revision 2, 04:35:02): `attachment` never
+// published. The panel's answer is its own sentence and its own ONE control - `确认结果仍在等待验证。请勿再次确认；…`
+// with `再查一次游戏状态` (the `uncertain` state), not the cabin refresh `再读一次小屋`; `cabin-launch-wait-expired`
+// is gone because the projection reads `instance=running`, and three presses of that control over 54 s did not
+// change it. So the three runs since `d7b7ac6a` stop at three DIFFERENT named layers - the attach after a confirmed
+// cabin, the read window, and now the confirm's publication - and none of them may be read as another.
+//
 // SO THE ESCAPE IS STILL ITS OWN NAMED PRESS. When the panel's staging step is not there and its attachment
 // release is, this driver presses that release ONCE, records it as `release_attachment` beside the staging
 // presses, and says what it was. It is the player's panic escape, not the product's answer: a run that reached
