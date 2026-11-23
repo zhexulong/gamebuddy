@@ -48,9 +48,9 @@ export type MemoryStateUnavailableCause = (typeof MEMORY_STATE_UNAVAILABLE_CAUSE
 
 export const MEMORY_STATE_UNAVAILABLE_OWNERS: Readonly<Record<MemoryStateUnavailableCause, string>> = Object.freeze({
   no_memory_read_route_on_this_origin:
-    "the profiles mounted on this origin - the frozen reference Chat profile declares " +
-    "['bootstrap','state.read','draft.read','chat.submit','chat.cancel','chat.submission_status','events'], " +
-    "so no GET /api/tavern/v1/memory is served here and there is nothing to read",
+    "the profiles mounted on this origin - the frozen reference Chat profile (`REFERENCE_TAVERN_ROUTE_IDS` in " +
+    "host/src/tavern/browser-contract) declares no `memory.read`, so no GET /api/tavern/v1/memory is served " +
+    "here and there is nothing to read",
   memory_read_probe_failed:
     "MemoryManagementService.read() (host/src/tavern/memory-management/memory-management.ts) - the durable " +
     "listMemories/listChapters read the route itself runs; a failed probe is a route that would answer an " +

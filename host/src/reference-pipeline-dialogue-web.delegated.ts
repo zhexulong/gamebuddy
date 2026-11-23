@@ -34,6 +34,7 @@ import {
   singleHeader,
   writeSseEvent,
   type ReferencePipelineDialogueWebRequestHandler,
+  type ReferencePipelineMemoryMount,
 } from "./reference-pipeline-dialogue-web.core.js";
 import {
   checkComposedReferenceGameBrowserAuthCsrf,
@@ -58,6 +59,11 @@ export type ReferencePipelineDialogueWebDelegatedOptions = Readonly<{
   referenceStateFacade: ReferencePipelineStateFacade;
   pipelineService?: ChatPipelineService;
   eventStream?: ChatEventStream;
+  /**
+   * The Memory mount beside this dispatcher on the same origin, when the composed shell mounts one.
+   * Absent leaves the snapshot's `memory` field naming `no_memory_read_route_on_this_origin`.
+   */
+  memoryMount?: ReferencePipelineMemoryMount;
   /** The broker-minted opaque branded capability; anything else is rejected. */
   capability: ComposedReferenceGameBrowserDelegatedAuthCapability;
 }>;
@@ -71,6 +77,7 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
   const pipelineService = options.pipelineService;
   const eventStream = options.eventStream;
   const profile = options.profile;
+  const memoryMount = options.memoryMount;
   const capability = options.capability;
   assertReferenceProfile(profile);
   if (profile.routeIds.includes("events") !== (eventStream !== undefined))
@@ -326,10 +333,16 @@ export function createReferencePipelineDialogueWebDelegatedHandler(
         const context = verifyComposedReferenceGameBrowserAuth(capability, request, origin);
         if (context === null) return sendProblem(response, 401, "unauthorized");
         const projection = composedReferenceGameBrowserAuthProjection(context);
-        return await sendProjectedSnapshot(response, referenceStateFacade, profile, {
-          csrf: projection.csrfToken,
-          expiresAtMs: projection.browserSessionExpiresAtMs,
-        });
+        return await sendProjectedSnapshot(
+          response,
+          referenceStateFacade,
+          profile,
+          {
+            csrf: projection.csrfToken,
+            expiresAtMs: projection.browserSessionExpiresAtMs,
+          },
+          memoryMount,
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/tavern/v1/draft") {
         if (url.search !== "" || (await hasRequestBody(request))) return sendProblem(response, 400, "invalid_request");

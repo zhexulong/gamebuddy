@@ -1637,9 +1637,17 @@ test("the composed snapshot's memory capability is the Memory route's own answer
       "the snapshot's Memory projection revision is not the one the Memory route answers with, so the flag is not the read it claims to be",
     );
     assert.equal(snapshot.chat.memory.projectionRevision, revision);
-    // One probe per projection taken - the bootstrap root, this `/state` read, and the route read
-    // beside it - so a cached copy or a flag written without reading would move this number.
-    assert.equal(reads, 3);
+    // The Chat half's own route answers the same capability: `state.read` stays with the reference
+    // dispatcher, so a shell that reads the conversation from there must not be told a different
+    // Memory answer than the composed root gives it.
+    const chatHalf = (await read("/api/tavern/v1/state")) as {
+      memory: { readAvailable: boolean; mutationAvailable: boolean; projectionRevision: string | null };
+    };
+    assert.deepEqual(chatHalf.memory, snapshot.chat.memory);
+    // One probe per projection taken - the bootstrap root, this `/state` read, the Memory route read
+    // beside it, and the Chat half's own `/state` - so a cached copy or a flag written without
+    // reading would move this number.
+    assert.equal(reads, 4);
   } finally {
     await server.close();
     await fixture.dispose();

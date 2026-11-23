@@ -262,6 +262,17 @@ export async function startComposedReferenceGameStaticShellComposition(
     referenceStateFacade: options.referenceStateFacade,
     ...(options.pipelineService === undefined ? {} : { pipelineService: options.pipelineService }),
     ...(options.eventStream === undefined ? {} : { eventStream: options.eventStream }),
+    // `state.read` stays with this dispatcher, and this origin's Memory routes are the management
+    // mount's: the Chat half's own snapshot reports what that mount answers, so the shell reads one
+    // capability wherever it reads the conversation (`memory-state-projection.ts`).
+    ...(options.management === undefined
+      ? {}
+      : {
+          memoryMount: Object.freeze({
+            profile: options.management.profile,
+            service: options.management.memoryService,
+          }),
+        }),
     capability: composedHandler.delegatedAuthCapability,
   });
   // The management domains' delegated dispatcher, mounted only when its

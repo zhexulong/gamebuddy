@@ -11,6 +11,7 @@ import {
   projectSnapshotDraftV1,
 } from "./tavern/browser-contract/index.js";
 import type { ChatEventStream, ResyncReason } from "./tavern/chat-event-stream.js";
+import type { MemoryManagementService } from "./tavern/memory-management/memory-management.js";
 import { projectMemoryStateV1 } from "./tavern/memory-management/memory-state-projection.js";
 import type { ReferencePipelineStateFacade } from "./tavern/reference-pipeline-state.js";
 
@@ -57,13 +58,31 @@ export type BrowserSession = Readonly<{
 }>;
 type ProblemCode = TavernProblemV1["code"] | "payload_too_large";
 
+/**
+ * The Memory mount beside this dispatcher on the same origin, when there is one.
+ *
+ * The snapshot's `memory` field says whether the browser can read and write Memory HERE, and the
+ * management profile is what declares those routes - never this frozen Chat profile, which declares
+ * none of them. A standalone reference listener has no such mount and says so through the projection's
+ * named cause; the composed shell mounts the management domains beside this dispatcher on the one
+ * broker session, so the same route reports what that mount answers.
+ */
+export type ReferencePipelineMemoryMount = Readonly<{
+  profile: ComposedTavernProfile | undefined;
+  service: MemoryManagementService | undefined;
+}>;
+
 export async function sendProjectedSnapshot(
   response: ServerResponse,
   facade: ReferencePipelineStateFacade,
   profile: ComposedTavernProfile,
   browser: Readonly<Pick<BrowserSession, "csrf" | "expiresAtMs">>,
+  memoryMount?: ReferencePipelineMemoryMount,
 ): Promise<void> {
-  const [state, memory] = await Promise.all([facade.read(), projectMemoryStateV1(profile, undefined)]);
+  const [state, memory] = await Promise.all([
+    facade.read(),
+    projectMemoryStateV1(memoryMount?.profile, memoryMount?.service),
+  ]);
   const snapshot = {
     apiVersion: 1,
     build: {
@@ -83,8 +102,9 @@ export async function sendProjectedSnapshot(
       turn: state.turn,
       worldInfo: null,
     },
-    // The reference Chat profile declares no `memory.read` route, so this mount answers the one
-    // named cause instead of a literal (`memory-state-projection.ts`).
+    // The reference Chat profile declares no `memory.read` route; when a management mount answers one
+    // beside this dispatcher it is projected here, and otherwise the projection names its cause
+    // (`memory-state-projection.ts`).
     memory: memory.state,
     // Additive optional v1 field; projected only when a Host voice surface is attached.
     ...(state.voice === null ? {} : { voice: state.voice }),
