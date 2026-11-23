@@ -532,17 +532,21 @@ export function createGuardianRoleBroker({
     inventoryDigest: binding.inventoryDigest,
     runtimeAdmissionSha256: binding.runtimeAdmissionSha256,
   });
-  let sessionBuffer = Buffer.alloc(0);
   let server = null;
-  let socket = null;
-  let socketClosed = false;
-  const inbound = [];
-  let inboundBusy = false;
-  let armed = false;
-  let correlation = null;
+  // The one session this broker is serving, or null between attempts.
+  //
+  // A session IS one attempt (`DesktopHostBootstrapBroker.ServeSessionsAsync`): the Host closes control
+  // when its attempt ends, the broker settles that attempt, and the next connection is the next attempt -
+  // re-authenticated from scratch with a fresh hello on this same endpoint. Everything an attempt owns
+  // therefore lives in the session and dies with it: the armed latch, the correlation, the roles it
+  // launched and contained, and the hello it authenticated with. A broker-wide copy of any of them is what
+  // refused the second attempt live: a crashed attempt's settle closed its session, and the next
+  // connection was destroyed on arrival, which the Host - which does re-open and does re-hello - read as
+  // `guardian_session_closed` at its hello (measured 2026-11-23, `.tmp/lane-guardsession.md`).
+  let session = null;
+  // Whether ANY session authenticated. This is a fact about the run for `facts()`, not about the session
+  // being served: a second attempt's hello is checked against the session it arrives on.
   let helloAccepted = false;
-  const launchedRoles = new Set();
-  const containedRoles = new Set();
   const operations = [];
   const refusals = [];
   const guardianRuns = [];
@@ -602,41 +606,47 @@ export function createGuardianRoleBroker({
     log(`role-broker: guardian pid ${running.pid} ${ended} (${reason})`);
   }
 
-  function writeHostFrame(value, keys) {
-    if (socket === null || socketClosed) return;
+  function writeHostFrame(target, value, keys) {
+    if (target === null || target.closed) return;
     if (keys !== undefined && !exactKeysInOrder(value, keys)) {
-      destroySocket("role_broker_frame_key_order_invalid");
+      destroySocket(target, "role_broker_frame_key_order_invalid");
       return;
     }
     const bytes = Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
     if (bytes.length > MAX_FRAME_BYTES) {
-      destroySocket("role_broker_frame_oversized");
+      destroySocket(target, "role_broker_frame_oversized");
       return;
     }
     try {
-      socket.write(bytes, (error) => {
-        if (error != null) destroySocket("role_broker_session_write_failed");
+      target.socket.write(bytes, (error) => {
+        if (error != null) destroySocket(target, "role_broker_session_write_failed");
       });
     } catch {
-      destroySocket("role_broker_session_write_failed");
+      destroySocket(target, "role_broker_session_write_failed");
     }
   }
 
-  function destroySocket(code) {
+  /**
+   * Ends ONE session: the frame that could not be served, and the Guardian that attempt armed.
+   *
+   * The endpoint and the Guardian slot are the broker's, not the session's, so ending this attempt leaves
+   * both ready for the next one - the next connection is accepted on this same pipe and the next arm
+   * creates the next Guardian (`relay`). This is the Desktop's own ordering, where a refused or finished
+   * session is settled by the broker and the accept that follows is the next attempt.
+   */
+  function destroySocket(target, code) {
     note(code);
-    socketClosed = true;
-    if (socket !== null) {
-      try {
-        socket.destroy();
-      } catch {
-        /* already gone */
-      }
+    target.closed = true;
+    try {
+      target.socket.destroy();
+    } catch {
+      /* already gone */
     }
     rejectHello(refuse(code));
     endGuardian(`session_refused:${code}`);
   }
 
-  async function startGuardian() {
+  async function startGuardian(target) {
     if (image === null)
       throw refuse(`role_broker_guardian_binary_absent:${String(imagePath ?? "<generation publishes none>")}`);
     const token = randomBytes(32).toString("hex");
@@ -663,6 +673,9 @@ export function createGuardianRoleBroker({
     const running = {
       pid: child.pid,
       record,
+      // The session this Guardian was created for. A role exit is bound to that attempt's correlation, so
+      // the exit a Guardian publishes can only ever be written back on the session that armed it.
+      session: target,
       token,
       pipeName,
       stdin: child.stdin,
@@ -739,12 +752,19 @@ export function createGuardianRoleBroker({
     ) {
       // A role cannot end before the session is armed, so an exit with no correlation has nothing
       // to bind to and is recorded rather than sent unbound.
-      if (correlation === null) {
+      const attempt = running.session;
+      if (attempt === null || attempt.correlation === null) {
         note("role_broker_role_exit_without_correlation");
         return;
       }
       writeHostFrame(
-        composeGuardianRoleExit({ binding: launch, correlation, role: value.role, exitCode: value.exitCode }),
+        attempt,
+        composeGuardianRoleExit({
+          binding: launch,
+          correlation: attempt.correlation,
+          role: value.role,
+          exitCode: value.exitCode,
+        }),
         ROLE_EXIT_KEYS,
       );
       operations.push(Object.freeze({ operation: "role_exited", outcome: value.role }));
@@ -856,13 +876,13 @@ export function createGuardianRoleBroker({
    * inside it leaves an unknown native outcome, which is never retried (#3795): the guardian is ended
    * and the name says which budget ran out.
    */
-  async function relay(command) {
+  async function relay(target, command) {
     const operation = command.operation;
     const budget = operation === "launch_role" ? command.deadlineUnixMs - now() : command.operationWaitBudgetMs;
     if (budget <= 0) throw refuse(`role_broker_${commandFamily(operation)}_timeout:${milliseconds(0)}`);
     if (operation === "launch_role" && budget > MAX_DEADLINE_HORIZON_MS)
       throw refuse(`role_broker_launch_refused:deadline_out_of_horizon:${milliseconds(budget)}`);
-    const running = guardian ?? (await startGuardian());
+    const running = guardian ?? (await startGuardian(target));
     const deadlineMs = now() + budget;
     try {
       return await withDeadline(commandFamily(operation), budget, async () => {
@@ -924,129 +944,135 @@ export function createGuardianRoleBroker({
    * courtesy check: a Host that arms twice, launches a role twice, or contains a role it never
    * launched is refused there, and the two peers must not disagree about what the session has done.
    */
-  function nextTransition(command) {
+  function nextTransition(target, command) {
     const next = {
       guardianInstanceId: command.guardianInstanceId,
       guardianEpoch: command.guardianEpoch,
       attemptId: command.attemptId,
     };
     if (command.operation === "arm_attempt") {
-      if (armed) throw refuse("role_broker_arm_refused:already_armed");
+      if (target.armed) throw refuse("role_broker_arm_refused:already_armed");
       return next;
     }
+    const correlation = target.correlation;
     const same =
       correlation !== null &&
       correlation.guardianInstanceId === next.guardianInstanceId &&
       correlation.guardianEpoch === next.guardianEpoch &&
       correlation.attemptId === next.attemptId;
     const family = commandFamily(command.operation);
-    if (!armed || !same) throw refuse(`role_broker_${family}_refused:correlation_mismatch`);
+    if (!target.armed || !same) throw refuse(`role_broker_${family}_refused:correlation_mismatch`);
     if (command.role === undefined) throw refuse(`role_broker_${family}_refused:role_missing`);
-    if (command.operation === "launch_role" && launchedRoles.has(command.role))
+    if (command.operation === "launch_role" && target.launchedRoles.has(command.role))
       throw refuse(`role_broker_launch_refused:role_already_launched:${command.role}`);
-    if (command.operation === "contain_role" && (!launchedRoles.has(command.role) || containedRoles.has(command.role)))
+    if (
+      command.operation === "contain_role" &&
+      (!target.launchedRoles.has(command.role) || target.containedRoles.has(command.role))
+    )
       throw refuse(`role_broker_contain_refused:role_not_containable:${command.role}`);
     return next;
   }
 
-  async function serveCommand(command) {
+  async function serveCommand(target, command) {
     let next;
     try {
-      next = nextTransition(command);
+      next = nextTransition(target, command);
     } catch (error) {
-      destroySocket(error instanceof RoleBrokerRefusal ? error.code : "role_broker_transition_refused");
+      destroySocket(target, error instanceof RoleBrokerRefusal ? error.code : "role_broker_transition_refused");
       return;
     }
-    if (command.operation === "arm_attempt") correlation = next;
+    if (command.operation === "arm_attempt") target.correlation = next;
     let status;
     try {
-      status = await relay(command);
+      status = await relay(target, command);
     } catch (error) {
       operations.push(Object.freeze({ operation: command.operation, outcome: "refused" }));
-      destroySocket(error instanceof RoleBrokerRefusal ? error.code : "role_broker_relay_failed");
+      destroySocket(target, error instanceof RoleBrokerRefusal ? error.code : "role_broker_relay_failed");
       return;
     }
     if (command.operation === "arm_attempt") {
-      armed = true;
+      target.armed = true;
     } else if (command.operation === "launch_role") {
-      launchedRoles.add(command.role);
+      target.launchedRoles.add(command.role);
     } else {
-      containedRoles.add(command.role);
+      target.containedRoles.add(command.role);
     }
     operations.push(Object.freeze({ operation: command.operation, outcome: status }));
     // The acknowledgement's key ORDER is asserted against the Host's own table before it is
     // written: the Host refuses a frame whose keys it cannot read in order, and a refusal here
     // names the broker rather than surfacing as an unexplained session loss there.
     writeHostFrame(
+      target,
       composeGuardianAck({ operation: command.operation, status, binding: launch, command }),
       command.role === undefined ? CORRELATION_KEYS : ROLE_ACK_KEYS,
     );
   }
 
   /** One command at a time, in the order the Host wrote them: this wire is a conversation. */
-  async function pump() {
-    if (inboundBusy) return;
-    inboundBusy = true;
+  async function pump(target) {
+    if (target.inboundBusy) return;
+    target.inboundBusy = true;
     try {
       for (;;) {
-        const command = inbound.shift();
+        const command = target.inbound.shift();
         if (command === undefined) return;
-        await serveCommand(command);
-        if (socketClosed) return;
+        await serveCommand(target, command);
+        if (target.closed) return;
       }
     } finally {
-      inboundBusy = false;
+      target.inboundBusy = false;
     }
   }
 
-  function acceptFrame(text) {
+  function acceptFrame(target, text) {
     let value;
     try {
       value = JSON.parse(text);
     } catch {
-      destroySocket("role_broker_frame_not_json");
+      destroySocket(target, "role_broker_frame_not_json");
       return;
     }
-    if (!helloAccepted) {
+    if (!target.helloAccepted) {
       if (!validateGuardianHelloRequest(value, launch)) {
-        destroySocket("role_broker_hello_rejected");
+        destroySocket(target, "role_broker_hello_rejected");
         return;
       }
+      target.helloAccepted = true;
       helloAccepted = true;
       clearTimeout(helloTimeout);
-      writeHostFrame(composeGuardianHelloAck(launch), HELLO_ACK_KEYS);
+      writeHostFrame(target, composeGuardianHelloAck(launch), HELLO_ACK_KEYS);
       resolveHello();
       return;
     }
     const command = validateGuardianCommandFrame(value, launch);
     if (command === undefined) {
-      destroySocket("role_broker_command_frame_invalid");
+      destroySocket(target, "role_broker_command_frame_invalid");
       return;
     }
     if (image === null) {
-      destroySocket(`role_broker_hello_only_refused:${command.operation}`);
+      destroySocket(target, `role_broker_hello_only_refused:${command.operation}`);
       return;
     }
-    inbound.push(command);
-    void pump();
+    target.inbound.push(command);
+    void pump(target);
   }
 
-  function onSessionData(chunk) {
-    sessionBuffer = Buffer.concat([sessionBuffer, chunk]);
+  function onSessionData(target, chunk) {
+    target.buffer = Buffer.concat([target.buffer, chunk]);
     for (;;) {
-      const newline = sessionBuffer.indexOf(10);
+      const newline = target.buffer.indexOf(10);
       if (newline < 0) {
-        if (sessionBuffer.length > MAX_FRAME_BYTES) destroySocket("role_broker_frame_oversized");
+        if (target.buffer.length > MAX_FRAME_BYTES) destroySocket(target, "role_broker_frame_oversized");
         return;
       }
-      const line = sessionBuffer.subarray(0, newline);
-      sessionBuffer = sessionBuffer.subarray(newline + 1);
+      const line = target.buffer.subarray(0, newline);
+      target.buffer = target.buffer.subarray(newline + 1);
       if (line.length === 0 || line.includes(0) || line.includes(13)) {
-        destroySocket("role_broker_frame_invalid");
+        destroySocket(target, "role_broker_frame_invalid");
         return;
       }
-      acceptFrame(line.toString("utf8"));
-      if (socketClosed) return;
+      acceptFrame(target, line.toString("utf8"));
+      if (target.closed) return;
     }
   }
 
@@ -1060,19 +1086,40 @@ export function createGuardianRoleBroker({
             `role-broker: role_broker_guardian_binary_absent:${String(imagePath ?? "<generation publishes none>")} - serving hello only`,
           );
         server = createServer((candidate) => {
-          if (socket !== null || socketClosed) {
+          // One attempt at a time, as the Desktop's one-instance pipe serves it: a connection that arrives
+          // while a session is still live is refused, and a connection that arrives after one ended IS the
+          // next attempt. `DesktopHostBootstrapBroker.ServeSessionsAsync` accepts the next session on the
+          // same pipe once the ended attempt is settled; here that settlement is the Guardian's own end,
+          // run by the close handler below, so the accept is unconditional and the next arm creates the
+          // next Guardian (`relay`).
+          if (session !== null) {
             candidate.destroy();
             return;
           }
-          socket = candidate;
-          socket.on("data", onSessionData);
-          socket.on("error", () => undefined);
-          socket.on("close", () => {
-            if (socket !== candidate) return;
-            socket = null;
-            socketClosed = true;
-            if (!helloAccepted) rejectHello(refuse("role_broker_session_closed_before_hello"));
+          const opened = {
+            socket: candidate,
+            buffer: Buffer.alloc(0),
+            inbound: [],
+            inboundBusy: false,
+            helloAccepted: false,
+            armed: false,
+            correlation: null,
+            launchedRoles: new Set(),
+            containedRoles: new Set(),
+            closed: false,
+          };
+          session = opened;
+          candidate.on("data", (chunk) => onSessionData(opened, chunk));
+          candidate.on("error", () => undefined);
+          candidate.on("close", () => {
+            if (session !== opened) return;
+            opened.closed = true;
+            // The ended attempt is settled BEFORE the slot is freed, in the Desktop's order
+            // (`SettleAttemptAsync`, then `AcceptSessionAsync`): the next connection is the next attempt and
+            // must never find this one's Guardian still resident.
             endGuardian("session_closed");
+            session = null;
+            if (!opened.helloAccepted) rejectHello(refuse("role_broker_session_closed_before_hello"));
           });
         });
         server.once("error", (error) =>
@@ -1086,14 +1133,15 @@ export function createGuardianRoleBroker({
       if (closed) return;
       closed = true;
       clearTimeout(helloTimeout);
-      if (socket !== null) {
-        socketClosed = true;
+      const live = session;
+      session = null;
+      if (live !== null) {
+        live.closed = true;
         try {
-          socket.destroy();
+          live.socket.destroy();
         } catch {
           /* already gone */
         }
-        socket = null;
       }
       rejectHello(refuse("role_broker_disposed"));
       endGuardian("dispose");

@@ -317,6 +317,7 @@ function connectHost(endpoint) {
       socket.once("connect", resolveConnect);
       socket.once("error", rejectConnect);
     }),
+    closed: new Promise((resolveClosed) => socket.once("close", resolveClosed)),
     send: (value) => socket.write(`${JSON.stringify(value)}\n`),
     next: async (match, budgetMs = 60_000) => {
       const began = Date.now();
@@ -482,6 +483,187 @@ test(
       assert.equal(JSON.stringify(facts).includes("token"), false);
     } finally {
       host.close();
+      await broker.dispose();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+/**
+ * The second attempt is the SECOND SESSION, and this is the peer half of that rule.
+ *
+ * ADR-0015 §3 makes a session the attempt: the Host closes control when its attempt ends, settles it, and
+ * opens the next session on the same endpoint with a fresh hello and the next attempt's own correlation.
+ * `DesktopHostBootstrapBroker.ServeSessionsAsync` serves exactly that (`Disconnect` -> settle ->
+ * `AcceptSessionAsync`), one attempt at a time.
+ *
+ * Measured 2026-11-23 (`.tmp/lane-guardsession.md`): this broker kept ONE session for the whole launch, so
+ * after a crashed attempt the next connection was destroyed on arrival. The Host re-opened and re-helloed
+ * as designed and died arming with `guardian_session_closed` - before a single frame of the retry reached
+ * a Guardian, which is why every other part of the retry read healthy and nothing ever started. Nothing
+ * else in the retry was wrong, and nothing here weakens the one-arm-per-session rule: attempt 2 is a new
+ * session, not a second arm on attempt 1's.
+ */
+test(
+  "a settled attempt leaves the endpoint serving the next attempt on its own session, which arms its own Guardian",
+  { skip: STATIC_SKIP, timeout: 240_000 },
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "role-broker-second-attempt-"));
+    const reportPath = join(root, "role-report.txt");
+    const bootstrapId = randomBytes(32).toString("hex");
+    const manifest = JSON.parse(
+      await readFile(join(dirname(GUARDIAN_IMAGE), "windows-bootstrap-guardian.manifest.json"), "utf8"),
+    );
+    const imageSha256 = createHash("sha256")
+      .update(await readFile(GUARDIAN_IMAGE))
+      .digest("hex");
+    assert.equal(imageSha256, manifest.sha256, "the built fixture publication is self-consistent");
+    const image = Object.freeze({ path: GUARDIAN_IMAGE, sha256: imageSha256 });
+    const broker = createGuardianRoleBroker({ bootstrapId, binding: generationFacts, image, log: () => undefined });
+    await broker.listen();
+    const endpoint = guardianPipeEndpoint(bootstrapId);
+    const helloRequest = () => ({
+      schema: "gamebuddy-desktop-guardian-session/v1",
+      protocolVersion: 1,
+      operation: "hello",
+      bootstrapId,
+      generation: binding.generation,
+      inventoryDigest: binding.inventoryDigest,
+      runtimeAdmissionSha256: binding.runtimeAdmissionSha256,
+    });
+    // One attempt's correlation and the three native names its arm fixes, all fresh: a second attempt that
+    // inherited any of them would be attempt 1 continued, which is the shape this test must not accept.
+    const attempt = () => {
+      const correlation = Object.freeze({
+        guardianInstanceId: randomUUID(),
+        guardianEpoch: 1,
+        attemptId: randomUUID(),
+      });
+      const suffix = randomUUID().replaceAll("-", "");
+      const names = Object.freeze({
+        revision: randomUUID(),
+        leaseName: `Local\\RoleBrokerSecondLease${suffix}`,
+        playerJobName: `Local\\RoleBrokerSecondPlayer${suffix}`,
+        aiJobName: `Local\\RoleBrokerSecondAi${suffix}`,
+      });
+      return Object.freeze({ correlation, names });
+    };
+    const armRequest = ({ correlation, names }) => ({
+      ...helloRequest(),
+      operation: "arm_attempt",
+      operationWaitBudgetMs: 60_000,
+      ...correlation,
+      privateFrame: Buffer.from(
+        JSON.stringify({ ...correlation, ...names, approvedExecutable: ROLE_FIXTURE }),
+      ).toString("base64url"),
+    });
+    const launchRequest = ({ correlation, names }) => {
+      const deadlineUnixMs = Date.now() + 120_000;
+      return {
+        ...helloRequest(),
+        operation: "launch_role",
+        deadlineUnixMs,
+        ...correlation,
+        role: "player_host",
+        privateFrame: Buffer.from(
+          JSON.stringify({
+            ...correlation,
+            planId: randomUUID(),
+            role: "player_host",
+            deadlineUnixMs,
+            executable: ROLE_FIXTURE,
+            cwd: dirname(ROLE_FIXTURE),
+            arguments: ["--signal", reportPath, "--exit-after-report"],
+            environment: { SystemRoot: process.env.SystemRoot },
+          }),
+        ).toString("base64url"),
+      };
+    };
+    const first = connectHost(endpoint);
+    let second;
+    await first.ready;
+    try {
+      first.send(helloRequest());
+      assert.equal((await first.next((frame) => frame.operation === "hello")).status, "accepted");
+      const attemptOne = attempt();
+      first.send(armRequest(attemptOne));
+      assert.equal((await first.next((frame) => frame.operation === "arm_attempt")).status, "armed");
+
+      // The Host closes control: this attempt is over. The broker settles the Guardian it armed, exactly as
+      // the Desktop does before it accepts again.
+      first.close();
+      await first.closed;
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const guardians = broker.facts().guardians;
+        if (guardians.length === 1 && guardians[0].ended !== null) break;
+        await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+      }
+      assert.equal(
+        broker.facts().guardians[0]?.ended === null || broker.facts().guardians[0]?.ended === undefined,
+        false,
+        `the ended attempt's Guardian was never settled; guardians=${JSON.stringify(broker.facts().guardians)}`,
+      );
+
+      // The next attempt: the same endpoint, its own connection, its own hello, its own correlation - and
+      // no help from anything outside the wire.
+      second = connectHost(endpoint);
+      await second.ready;
+      second.send(helloRequest());
+      const secondHello = await second
+        .next((frame) => frame.operation === "hello", 30_000)
+        .catch((error) => {
+          throw new Error(
+            `the next attempt's hello was never answered (${String(error?.message)}); the Host reads a destroyed ` +
+              `connection as guardian_session_closed at its hello; refusals=${JSON.stringify(broker.facts().refusals)}`,
+          );
+        });
+      assert.equal(secondHello.status, "accepted", "the next attempt is served on its own session");
+
+      const attemptTwo = attempt();
+      second.send(armRequest(attemptTwo));
+      const armed = await second.next((frame) => frame.operation === "arm_attempt");
+      assert.equal(armed.status, "armed");
+      assert.equal(armed.attemptId, attemptTwo.correlation.attemptId);
+      assert.notEqual(armed.guardianInstanceId, attemptOne.correlation.guardianInstanceId);
+
+      second.send(launchRequest(attemptTwo));
+      const active = await second.next((frame) => frame.operation === "launch_role");
+      assert.equal(active.status, "role_active");
+      assert.equal(active.role, "player_host");
+      // The role really ran inside the SECOND attempt's Job, which is the containment claim the retry needs.
+      await new Promise((resolveWait) => setTimeout(resolveWait, 2_000));
+      assert.equal((await readFile(reportPath, "utf8")).trim(), "member=true");
+      second.send({
+        ...helloRequest(),
+        operation: "contain_role",
+        operationWaitBudgetMs: 60_000,
+        ...attemptTwo.correlation,
+        role: "player_host",
+      });
+      const exit = await second.next((frame) => frame.operation === "role_exited");
+      assert.equal(exit.attemptId, attemptTwo.correlation.attemptId);
+      assert.equal((await second.next((frame) => frame.operation === "contain_role")).status, "role_contained");
+
+      const facts = broker.facts();
+      assert.deepEqual(
+        facts.operations.map((row) => `${row.operation}:${row.outcome}`),
+        [
+          "arm_attempt:armed",
+          "arm_attempt:armed",
+          "launch_role:role_active",
+          "role_exited:player_host",
+          "contain_role:role_contained",
+        ],
+      );
+      // One Guardian per attempt, and the ended attempt's is the one that was settled: two attempts, never
+      // two Guardians resident at once.
+      assert.equal(facts.guardians.length, 2);
+      assert.notEqual(facts.guardians[0].pid, facts.guardians[1].pid);
+      assert.deepEqual(facts.refusals, []);
+    } finally {
+      first.close();
+      second?.close();
       await broker.dispose();
       await rm(root, { recursive: true, force: true });
     }
