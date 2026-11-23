@@ -139,12 +139,16 @@
  *            `reason: "[derivable-now] list is the seams table"` reads `findings 0 status passed` and
  *            `residual by verdict: 1 derivable-now · 0 not-a-population · 0 needs-a-decision`. Measured 2026-11-14.
  *
- * red-proof: fixture  `--root` over a fixture test file carrying `readonly import("../../tools/protocol.js").ActionRegistration[]`
- *            reads `derived_population examined 1 sites 0 findings 0 baseline 0 unread 1 status failed`, exit 1, and the
+ * red-proof: fixture  `--root` over a fixture test file carrying `readonly import("...").ActionRegistration[]`, a modifier
+ *            the grammar refuses in a type position, reads
+ *            `derived_population examined 1 sites 0 findings 0 baseline 0 unread 1 status failed`, exit 1, and the
  *            unread row names the ERROR node's line and column on stdout as well as on stderr; the same fixture with that
  *            declaration spelled through a named `import type` reads the frozen count it carries as
  *            `literal_population_assertion` - and before this lane the first run read `status passed`, because an unread
- *            file used to leave the run green. Measured 2026-11-15.
+ *            file used to leave the run green. Measured 2026-11-15, and written by
+ *            `gates/data/check-derived-population.test.mjs` under "a file the grammar cannot read fails the run and names
+ *            the node that stopped it". The fixture's import specifier is not a path this repository carries, so none is
+ *            quoted here: a claim's path is checked against the index, and a fixture's placeholder never resolves.
  *
  * red-proof: history  the scoping lane replayed the finding this checkout actually carried. Before it,
  *            `node tools/check-derived-population.mjs` read `sites 68 findings 1 status failed`, the finding being

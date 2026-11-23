@@ -2,13 +2,13 @@
   "schema": "gamebuddy-gate-red-proof-execution-baseline/v1",
   "note": "Gates whose red proof is prose at this commit: the comment describes an injection that no code performs. A record of measured debt, not an acceptance of it: delete an entry by making the suite write the violating input and assert the code the gate then prints, never by recording another gate. `unexecuted` is recorded only with `--record-unexecuted`; it is empty here because each one measured was a live defect and the finding names the gate instead of this file holding it quiet.",
   "prose": [
-    "audit:stardew-execution-receipt-field-parity",
     "audit:stardew-open-ground-claims",
     "check:build-artifact-producers",
     "check:chat-card-voice",
     "check:diff",
     "check:draft-declaration-coverage",
     "check:evidence-bundle",
+    "check:game-context-pressure",
     "check:game-historian-rubric",
     "check:harness-conformance",
     "check:head-typecheck",
@@ -30,6 +30,11 @@
     "check:stardew-native-transition-ledger",
     "check:workspace-debris",
     "gates/meta/check-commit-staging.mjs",
+    "gates/product/check-dist-runtime-exports.mjs",
+    "gates/stardew/audit-stardew-action-admission-ledger.mjs",
+    "gates/stardew/audit-stardew-handler-actor-guard.mjs",
+    "gates/stardew/audit-stardew-nogame-subset.mjs",
+    "gates/stardew/check-action-coverage.mjs",
     "report:stardew-remaining-actions",
     "test:chat-quality-transcript",
     "test:chat-run-audit",
@@ -68,28 +73,7 @@
     "test:stub-subject-collision",
     "test:tavern-presets",
     "test:tavern-references",
-    "test:text-hygiene",
-    "test:vendored-bundle-leaks",
-    "test:workflow-expressions",
-    "tools/audit-stardew-action-admission-ledger.mjs",
-    "tools/audit-stardew-handler-actor-guard.mjs",
-    "tools/audit-stardew-nogame-subset.mjs",
-    "tools/check-action-coverage.mjs",
-    "tools/check-dist-runtime-exports.mjs",
-    "tools/check-game-context-pressure.mjs"
+    "test:text-hygiene"
   ],
-  "unexecuted": [
-    {
-      "gate": "tools/audit-stardew-nogame-subset.mjs",
-      "pointer": "tools/audit-stardew-nogame-subset.test.mjs"
-    },
-    {
-      "gate": "tools/check-refusal-informativeness.mjs",
-      "pointer": "tools/check-refusal-informativeness.test.mjs"
-    },
-    {
-      "gate": "tools/check-stardew-snapshot-family-bounds.mjs",
-      "pointer": "tools/check-stardew-snapshot-family-bounds.test.mjs"
-    }
-  ]
+  "unexecuted": []
 }
