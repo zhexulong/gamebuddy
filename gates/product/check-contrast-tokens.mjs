@@ -35,6 +35,55 @@
  * A translucent ink (`rgba()`, alpha < 1) is composited over its pair's background, which is how CSS paints it. A
  * translucent *background* is `token_unreadable` instead: the surface beneath it is not something a pair names.
  *
+ * THE ELEVATION LADDER: THE SAME BLIND SPOT, ONE LAYER DOWN
+ *
+ * The pair list measures ink on a surface, and it is complete for that claim. It is silent about two *surfaces*: a
+ * palette can hold every text pair above AA while its layers melt into each other. Measured on this sheet before the
+ * ladder existed: a light `--surface-canvas` of `#f8f9fa` reads 1.01:1 against the `#fafafc` card - no visible edge, the
+ * whole screen one white sheet - and all 24 pairs still passed. So the ladder is a second population, derived the same
+ * way, over the layers and the rungs between them.
+ *
+ *   * a LAYER is a `--surface-*` declaration in the theme's own table whose value is a colour of its own. An alias of
+ *     another layer (`--surface-raised`, `--surface-hover`) is that layer, not a new one. A sixth layer joins by being
+ *     written into the stylesheet, and then it has to be given a rung or a sibling - it cannot arrive unmeasured;
+ *   * a RUNG names the layer beneath and the layer raised above it, with a `why` naming the rule that stacks them:
+ *     `canvas->panel`, `panel->card`, `card->elevated`, and `canvas->card` for a card with no panel between it and the
+ *     page;
+ *   * a SIBLING is a layer painted at the depth of the surface it sits on rather than above it, declared with the
+ *     layer it sits on and the reason it has no rung. Every layer must be a rung's member or a sibling, so the
+ *     population cannot grow past the rules that decide how a layer separates from what is under it.
+ *
+ * A rung is distinguishable when ONE of three means holds, each of which is a declared token:
+ *
+ *   (a) LUMINANCE - the two layers read at or above `ELEVATION_STEP_FLOOR` (1.05:1). WCAG sets no floor for a fill:
+ *       1.4.11's 3:1 is a BOUNDARY floor, which is means (c). What 1.05 is derived from is the measurement's own
+ *       resolution. WCAG's ratio is `(L1+0.05)/(L2+0.05)`, and the ambient term compresses it at both ends, so a
+ *       two-code-value sRGB change reads 1.011 near white and 1.009 near black - the fog this ladder exists for is
+ *       exactly a two-code-value difference. 1.05 is a five-to-six-code-value change everywhere in the band this
+ *       palette occupies (L* 7 to 98: `#131518 -> #191b1e` at the dark end, `#fafafc -> #f4f5f7` at the light one),
+ *       i.e. dL* 1.9 to 2.9 - two to three of the classic one-unit dL* just-noticeable step for a large uniform field.
+ *       Under it, two layers differ by less than a display is asked to render reliably, and the edge has to come from
+ *       (b) or (c);
+ *   (b) SHADOW - the rung declares a shadow token, the theme declares it, the sheet paints it as a `box-shadow`, and
+ *       its value carries a colour that is not fully transparent. This proves the raised layer has a declared, painted,
+ *       visible shadow; it does NOT measure the shadow's rendered contrast, which depends on the backdrop and the blur
+ *       radius, and a token table cannot resolve those;
+ *   (c) BOUNDARY - the rung declares a boundary token that the theme declares, that the sheet paints as a border, and
+ *       that reads at or above `ELEVATION_BOUNDARY_FLOOR` (3:1, WCAG 1.4.11 - the floor `--border-control` already
+ *       follows) against the layer beneath it. A translucent boundary is composited over that layer, as CSS paints it.
+ *
+ * A rung holding none of the three is `elevation_indistinct`, naming the pair, its ratio, the floor and which means the
+ * gate looked for and did not find. A declared means that does not hold is its own violation
+ * (`elevation_shadow_*`, `elevation_boundary_*`), because a declaration the sheet does not keep is a false claim
+ * whether or not luminance rescued the rung.
+ *
+ * The shipped sheet holds (a) and nothing else, and the run prints that rather than assuming it: it declares no
+ * `--shadow-*` token at all, and the one >=3:1 boundary token, `--border-control`, is worn by some members of each
+ * family (`.game-action`, `.small-button`, `.form-select`, `.memory-filter-chip`) and by none of the canonical ones the
+ * rungs are about (`.app-bar` and `.context-panel` wear `--border-subtle`; `.message.companion .message-bubble` wears
+ * `--border-glass`), so a per-rung boundary claim would be false for the element the rung exists for. The ladder rests
+ * on the luminance floor alone.
+ *
  * WHAT IT DOES NOT MEASURE (named here so the reading is not overclaimed)
  *
  *   * combinations of the whole ink x surface cross product. Only pairs a rule justifies are measured.
@@ -49,18 +98,27 @@
  *   * tokens a theme does not restate. A light block that omits a colour token inherits the dark literal, which is a
  *     real defect and invisible here: this gate measures the pairs it is given, and a pair whose ink and surface both
  *     survive unchanged reads as a pass. The light set is held to the dark set's names by
- *     `dialogue-web/tests/theme-roots-gate.test.mjs`, not by this tool.
+ *     `dialogue-web/tests/theme-roots-gate.test.mjs`, not by this tool. The ladder's own version of this is a
+ *     `verdict=not_measured` rung naming the layer the appearance does not declare, which is why a rung can print
+ *     fewer readings than there are appearances;
+ *   * the accent plate's edge. `--surface-accent` is a sibling: the player's own bubble sits on the canvas-painted
+ *     timeline, and its separation from that canvas is chroma rather than luminance. None of the ladder's three means
+ *     reads hue, so its ratio is printed as a sibling row on every run and is not a verdict.
  *
  * Output: `contrast_tokens: examined N pair(s) in M token(s) over K theme(s)`, one line per theme and pair
- * (`<theme> <label> fg=#rrggbb bg=#rrggbb ratio=17.33 min=4.5 verdict=pass|fail|unreadable`), and one JSON verdict line
- * `{"gate":"contrast-tokens","examined":N,"tokens":M,"violations":[...],"status":"passed"|"failed"|"blocked"}`.
- * A pair below its minimum is REPORTED and exits 0 by default; `--fail` makes it exit 1. Zero pairs, an unreadable
- * stylesheet and a stylesheet with no custom property are `blocked` and exit 1 in every mode - a gate that measured
- * nothing has not passed.
+ * (`<theme> <label> fg=#rrggbb bg=#rrggbb ratio=17.33 min=4.5 verdict=pass|fail|unreadable`), then
+ * `elevation_ladder: examined R rung(s) in L layer(s) over K appearance(s), step floor 1.05:1, boundary floor 3:1`, one
+ * `  <theme> layers: surface-canvas=#rrggbb ...` line per appearance, and one line per rung or sibling
+ * (`  <theme> surface-canvas->surface-card beneath=#rrggbb raised=#rrggbb ratio=1.15 floor=1.05 means=luminance
+ * verdict=pass|fail|unreadable|not_measured|sibling`). The JSON verdict line carries both populations
+ * (`{"gate":"contrast-tokens","examined":N,"tokens":M,"elevation":{...},"violations":[...],"status":...}`) and a
+ * `checks` entry per rule. A pair below its minimum is REPORTED and exits 0 by default; `--fail` makes it exit 1. Zero
+ * pairs, an unreadable stylesheet and a stylesheet with no custom property are `blocked` and exit 1 in every mode - a
+ * gate that measured nothing has not passed.
  *
  * Usage:
- *   node tools/check-contrast-tokens.mjs            # report every pair, exit 0
- *   node tools/check-contrast-tokens.mjs --fail     # exit 1 when a pair is below its minimum
+ *   node tools/check-contrast-tokens.mjs            # report every pair and every rung, exit 0
+ *   node tools/check-contrast-tokens.mjs --fail     # exit 1 when a pair or a rung is below its floor
  *   node tools/check-contrast-tokens.mjs --root <dir>   # a fixture tree holding the same stylesheet path
  *
  * red-proof: inject  `--text-disabled` set to #6a625a instead of #90877e ->
@@ -68,7 +126,15 @@
  *            token declared `color-mix(...)` -> `token_unreadable:<theme>:<label>:<token>`; an empty pair list ->
  *            `status:"blocked"`, exit 1; a light root one shade too pale -> the same pair named under `light` while the
  *            `dark` reading of it still passes; a `[data-theme="sepia"]` root written outside the token-root shape ->
- *            `theme_selector_unread:sepia` (tools/check-contrast-tokens.test.mjs builds each in a temp dir).
+ *            `theme_selector_unread:sepia`; the same stylesheet with its light `--surface-canvas` set to #f8f9fa - a
+ *            palette every pair still passes - -> `elevation_indistinct:light:surface-canvas->surface-card` at 1.01:1
+ *            (floor 1.05) with the three means it looked for and did not find, while the pair readings of that same run
+ *            stay green; a rung carried by a declared `--shadow-card` painted as a `box-shadow` -> `verdict=pass
+ *            means=shadow` at a ratio under the floor; a rung carried by a `--border-control` painted as a border ->
+ *            `means=boundary` at >= 3:1, and the same declaration over a 1.1:1 hairline ->
+ *            `elevation_boundary_below_floor`; a `--surface-sheet` layer no rung raises and no sibling declares ->
+ *            `elevation_layer_without_rung`; a shadow token declared as `rgba(...,0)` -> `elevation_shadow_invisible`
+ *            (gates/product/check-contrast-tokens.test.mjs builds each in a temp dir).
  */
 
 export const gateDeclaration = {
@@ -247,11 +313,77 @@ export const CONTRAST_PAIRS = [
   },
 ];
 
+/**
+ * The smallest luminance step that is an edge on its own, with no shadow and no boundary carrying it.
+ *
+ * Derived in the header: 1.05:1 is a five-to-six-code-value sRGB change across the band this palette occupies, i.e.
+ * two to three just-noticeable dL* steps for a large uniform field, and it sits above the 1.01:1 that a two-code-value
+ * difference - the measured fog - reads as. WCAG's own 3:1 is a boundary floor and is `ELEVATION_BOUNDARY_FLOOR`.
+ */
+export const ELEVATION_STEP_FLOOR = 1.05;
+
+/** WCAG 2.1 1.4.11: the floor a boundary that identifies a component has to clear against what is behind it. */
+export const ELEVATION_BOUNDARY_FLOOR = 3;
+
+/**
+ * The rungs: the layer beneath, the layer raised above it, and the rule that stacks them.
+ *
+ * `shadow` and `boundary` are the other two means a rung may claim, and each names a token the theme has to declare
+ * and the sheet has to paint. No rung here claims either: the sheet declares no shadow token at all, and the one
+ * >=3:1 boundary token it has is not worn by the canonical member of any layer (see the header).
+ */
+export const ELEVATION_STEPS = [
+  {
+    beneath: "surface-canvas",
+    raised: "surface-panel",
+    why: "`.app-bar` and `.context-panel` paint `--surface-panel` inside the shell that paints `--surface-canvas`",
+  },
+  {
+    beneath: "surface-panel",
+    raised: "surface-card",
+    why: "`.memory-notebook` paints `--surface-card` inside the panel-painted `.context-panel` drawer",
+  },
+  {
+    beneath: "surface-card",
+    raised: "surface-elevated",
+    why: "`.message-bubble code` paints `--surface-elevated` inside the card-painted companion bubble",
+  },
+  {
+    beneath: "surface-canvas",
+    raised: "surface-card",
+    why:
+      "a card with no panel between it and the page: `.message.companion .message-bubble` and `.avatar-large` paint " +
+      "`--surface-card` straight onto the canvas-painted `.chat-view`",
+  },
+];
+
+/**
+ * A layer painted at the depth of the surface it sits on rather than above it, with the layer it sits on and the reason
+ * it has no rung. A layer that is neither a rung's member nor declared here is a violation, so the population cannot
+ * grow past the rules that decide how a layer separates from what is under it.
+ */
+export const ELEVATION_SIBLINGS = {
+  "surface-accent": {
+    on: "surface-canvas",
+    why:
+      "the accent plate (`--selection`): the player's own bubble sits on the canvas-painted timeline. Its edge is " +
+      "chroma, not luminance - none of the ladder's three means reads hue - so its reading is printed and is not a rung",
+  },
+};
+
+/** A layer token: a `--surface-*` declaration that is a colour of its own rather than an alias of another layer. */
+const LAYER_TOKEN = /^surface-[a-z0-9-]+$/u;
+
 const COMMENTS = /\/\*[\s\S]*?\*\//gu;
 /** A declaration at the start of a statement, so `border-color:` and `outline-color:` cannot pass as an ink. */
 const TOKEN_DECLARATION = /(?:^|[\s;{])(--[a-z0-9-]+)\s*:\s*([^;}]+)/gmu;
 const INK = /(?:^|[\s;{])color:\s*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
 const SURFACE = /(?:^|[\s;{])background(?:-color)?:\s*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
+/** A token painted as a `box-shadow`, which is how a layer declares it casts one. */
+const SHADOW = /(?:^|[\s;{])box-shadow:\s*[^;}]*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
+/** A token painted as a border, so `border-radius` and `border-collapse` cannot pass as an edge. */
+const BOUNDARY =
+  /(?:^|[\s;{])(?:border|border-(?:top|right|bottom|left|inline|block|color)(?:-[a-z]+)*):\s*[^;}]*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
 /** A token that is exactly one alias of another token. */
 const ALIAS = /^var\(\s*--([a-z0-9-]+)\s*\)$/u;
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/iu;
@@ -323,7 +455,44 @@ export function readStylesheet(css) {
   const tokens = new Map();
   for (const root of roots) for (const [token, value] of root.declarations) tokens.set(token, value);
   const painted = (pattern) => new Set([...text.matchAll(pattern)].map((match) => match[1]));
-  return { themes, tokens, unread, inks: painted(INK), surfaces: painted(SURFACE) };
+  return {
+    themes,
+    tokens,
+    unread,
+    inks: painted(INK),
+    surfaces: painted(SURFACE),
+    shadows: painted(SHADOW),
+    boundaries: painted(BOUNDARY),
+  };
+}
+
+/** The layer population of one theme's token table, sorted so two runs print the same order. */
+export function layersOf(tokens) {
+  const layers = [];
+  for (const [name, value] of tokens) {
+    if (!LAYER_TOKEN.test(name)) continue;
+    // `--surface-raised: var(--surface-card)` is the card under another name, not a sixth layer.
+    const alias = ALIAS.exec(value);
+    if (alias !== null && LAYER_TOKEN.test(alias[1])) continue;
+    layers.push(name);
+  }
+  return layers.sort();
+}
+
+/** The strongest alpha a shadow value paints, or null when it names no colour at all. */
+function shadowAlpha(value) {
+  let strongest = null;
+  for (const match of value.matchAll(/rgba?\(\s*[^)]*\)/gu)) {
+    const parts = match[0]
+      .slice(match[0].indexOf("(") + 1, -1)
+      .split(",")
+      .map((part) => part.trim());
+    const alpha = parts.length > 3 ? Number(parts[3]) : 1;
+    if (Number.isFinite(alpha)) strongest = Math.max(strongest ?? 0, alpha);
+  }
+  // A hex colour in the value is opaque; `0 1px 2px #000` casts a shadow whatever the rest of the list says.
+  if (/#[0-9a-f]{3,8}/iu.test(value)) return 1;
+  return strongest;
 }
 
 /**
@@ -376,16 +545,31 @@ const blockedReading = (reason) => ({
   tokens: 0,
   themes: [],
   rows: [],
+  elevation: {
+    floor: ELEVATION_STEP_FLOOR,
+    boundaryFloor: ELEVATION_BOUNDARY_FLOOR,
+    examined: 0,
+    layers: [],
+    rows: [],
+    violations: [],
+    status: "blocked",
+  },
+  pairsPassed: false,
   violations: [],
   status: "blocked",
   reason,
 });
 
 /**
- * The gate: every declared pair against its own minimum, in every appearance the stylesheet declares, held to the
- * stylesheet that declares its tokens.
+ * The gate: every declared pair against its own minimum and every rung against its floor, in every appearance the
+ * stylesheet declares, held to the stylesheet that declares its tokens.
  */
-export function checkContrastTokens({ root = REPOSITORY_ROOT, stylesheet = STYLESHEET, pairs = CONTRAST_PAIRS } = {}) {
+export function checkContrastTokens({
+  root = REPOSITORY_ROOT,
+  stylesheet = STYLESHEET,
+  pairs = CONTRAST_PAIRS,
+  steps = ELEVATION_STEPS,
+} = {}) {
   let css;
   try {
     css = readFileSync(resolve(root, stylesheet), "utf8");
@@ -393,7 +577,7 @@ export function checkContrastTokens({ root = REPOSITORY_ROOT, stylesheet = STYLE
     return blockedReading(`${stylesheet} could not be read`);
   }
   if (pairs.length === 0) return blockedReading("no pair to measure");
-  const { themes, tokens, unread, inks, surfaces } = readStylesheet(css);
+  const { themes, tokens, unread, inks, surfaces, shadows, boundaries } = readStylesheet(css);
   if (tokens.size === 0) return blockedReading(`${stylesheet} declares no custom property`);
 
   const rows = [];
@@ -455,12 +639,18 @@ export function checkContrastTokens({ root = REPOSITORY_ROOT, stylesheet = STYLE
         detail: `${row.reason}; this pair cannot be measured until that token is one colour`,
       });
 
+  const pairsPassed = violations.length === 0;
+  const elevation = elevationOf({ themes, steps, shadows, boundaries });
+  violations.push(...elevation.violations);
+
   return {
     gate: "contrast-tokens",
     examined: rows.length,
     tokens: new Set(pairs.flatMap((pair) => [pair.fg, pair.bg])).size,
     themes: [...themes.keys()],
     rows,
+    pairsPassed,
+    elevation,
     violations,
     status: violations.length === 0 ? "passed" : "failed",
     reason: null,
@@ -511,7 +701,298 @@ function measurePair({ theme, pair, tokens }) {
 }
 
 /**
- * Print the reading and return the exit code: `blocked` is always 1, a failing pair is 1 only under `--fail`.
+ * One rung in one appearance: the two layers, the ratio they paint, the means the rung holds, and the violations for any
+ * declared means the sheet does not keep.
+ */
+function measureRung({ theme, step, tokens, shadows, boundaries }) {
+  const label = `${step.beneath}->${step.raised}`;
+  const row = {
+    theme,
+    label,
+    why: step.why,
+    beneathHex: null,
+    raisedHex: null,
+    ratio: null,
+    means: [],
+    verdict: "unreadable",
+    reason: null,
+  };
+  const claims = [];
+  const beneath = colourOf(step.beneath, tokens);
+  const raised = colourOf(step.raised, tokens);
+  const unreadable = layerUnreadable(step, beneath, raised);
+  if (unreadable !== null) {
+    row.token = unreadable.token;
+    row.reason = unreadable.reason;
+    claims.push({
+      code: `token_unreadable:${theme}:${label}:${unreadable.token}`,
+      theme,
+      label,
+      token: unreadable.token,
+      detail: `${unreadable.reason}; this rung cannot be measured until that layer is one opaque colour`,
+    });
+    return { row, claims };
+  }
+
+  row.beneathHex = hexOf(beneath.rgb);
+  row.raisedHex = hexOf(raised.rgb);
+  row.ratio = contrastRatio(raised.rgb, beneath.rgb);
+  if (row.ratio >= ELEVATION_STEP_FLOOR) row.means.push("luminance");
+
+  if (step.shadow !== undefined) {
+    const shadow = shadowClaim({ theme, label, step, tokens, shadows });
+    if (shadow.violation === null) row.means.push("shadow");
+    else claims.push(shadow.violation);
+  }
+  if (step.boundary !== undefined) {
+    const boundary = boundaryClaim({ theme, label, step, tokens, boundaries, beneath });
+    if (boundary.violation === null) row.means.push("boundary");
+    else claims.push(boundary.violation);
+  }
+
+  row.verdict = row.means.length > 0 ? "pass" : "fail";
+  return { row, claims };
+}
+
+/** The layer that stopped a rung from being read, or null when both layers are one opaque colour. */
+function layerUnreadable(step, beneath, raised) {
+  if (beneath.unreadable !== undefined) return { token: step.beneath, reason: beneath.unreadable };
+  if (raised.unreadable !== undefined) return { token: step.raised, reason: raised.unreadable };
+  if (beneath.alpha >= 1 && raised.alpha >= 1) return null;
+  const translucent = beneath.alpha < 1 ? step.beneath : step.raised;
+  return { token: translucent, reason: `--${translucent} is translucent; a layer is an opaque surface` };
+}
+
+/**
+ * Means (b) for one rung: a shadow token the theme declares, the sheet paints, and that is not fully transparent. A
+ * declared means that does not hold is a violation of its own, whether or not luminance rescued the rung.
+ */
+function shadowClaim({ theme, label, step, tokens, shadows }) {
+  const claim = (code, detail) => ({
+    violation: { code, theme, label, token: step.shadow, detail },
+  });
+  const value = tokens.get(step.shadow);
+  if (value === undefined)
+    return claim(
+      `elevation_shadow_undeclared:${theme}:${label}`,
+      `the rung claims \`--${step.shadow}\` as its shadow, and the ${theme} appearance does not declare it`,
+    );
+  if (!shadows.has(step.shadow))
+    return claim(
+      `elevation_shadow_unpainted:${theme}:${label}`,
+      `\`--${step.shadow}\` is declared and no rule paints it as a \`box-shadow\`, so no layer wears it`,
+    );
+  if ((shadowAlpha(value) ?? 0) === 0)
+    return claim(
+      `elevation_shadow_invisible:${theme}:${label}`,
+      `\`--${step.shadow}\` is \`${value}\`, whose strongest colour is fully transparent: it casts nothing`,
+    );
+  return { violation: null };
+}
+
+/**
+ * Means (c) for one rung: a boundary token the theme declares, the sheet paints, and that reads at or above WCAG
+ * 1.4.11's 3:1 against the layer beneath. A translucent boundary is composited over that layer, as CSS paints it.
+ */
+function boundaryClaim({ theme, label, step, tokens, boundaries, beneath }) {
+  const claim = (code, detail, ratio) => ({
+    violation: { code, theme, label, token: step.boundary, detail, ...(ratio === undefined ? {} : { ratio }) },
+  });
+  const value = tokens.get(step.boundary);
+  if (value === undefined)
+    return claim(
+      `elevation_boundary_undeclared:${theme}:${label}`,
+      `the rung claims \`--${step.boundary}\` as its boundary, and the ${theme} appearance does not declare it`,
+    );
+  if (!boundaries.has(step.boundary))
+    return claim(
+      `elevation_boundary_unpainted:${theme}:${label}`,
+      `\`--${step.boundary}\` is declared and no rule paints it as a border, so no layer wears it`,
+    );
+  const colour = colourOf(step.boundary, tokens);
+  if (colour.unreadable !== undefined)
+    return claim(
+      `token_unreadable:${theme}:${label}:${step.boundary}`,
+      `${colour.unreadable}; this boundary cannot be measured until it is one colour`,
+    );
+  const painted = colour.alpha < 1 ? over(colour, beneath.rgb) : colour.rgb;
+  const ratio = contrastRatio(painted, beneath.rgb);
+  if (ratio < ELEVATION_BOUNDARY_FLOOR)
+    return claim(
+      `elevation_boundary_below_floor:${theme}:${label}`,
+      `\`--${step.boundary}\` reads ${ratio.toFixed(2)}:1 on \`--${step.beneath}\`, under the ` +
+        `${ELEVATION_BOUNDARY_FLOOR}:1 a boundary that identifies a component needs`,
+      Number(ratio.toFixed(2)),
+    );
+  return { violation: null };
+}
+
+/** The other two means named as missing, for a rung that luminance did not carry either. */
+function missingMeans(row, step) {
+  const missing = [];
+  if (!row.means.includes("shadow"))
+    missing.push(
+      step.shadow === undefined ? "no shadow token is declared for the rung" : `--${step.shadow} does not carry it`,
+    );
+  if (!row.means.includes("boundary"))
+    missing.push(
+      step.boundary === undefined
+        ? `no boundary token reads ${ELEVATION_BOUNDARY_FLOOR}:1 against --${step.beneath}`
+        : `--${step.boundary} does not carry it`,
+    );
+  return missing;
+}
+
+/** The violation a rung under its floor produces, naming the pair, the ratio, the floor and the means that are missing. */
+function indistinctViolation({ theme, step, row }) {
+  return {
+    code: `elevation_indistinct:${theme}:${row.label}`,
+    theme,
+    label: row.label,
+    beneath: row.beneathHex,
+    raised: row.raisedHex,
+    ratio: Number(row.ratio.toFixed(2)),
+    floor: ELEVATION_STEP_FLOOR,
+    detail:
+      `\`--${step.raised}\` reads ${row.ratio.toFixed(2)}:1 on \`--${step.beneath}\` in the ${theme} appearance, ` +
+      `under the ${ELEVATION_STEP_FLOOR}:1 step floor, and neither of the other two means carries it either: ` +
+      `${missingMeans(row, step).join("; ")} - ${step.why}`,
+  };
+}
+
+/** Every rung of one appearance, and the violations the rungs produce there. */
+function rungRows({ theme, table, steps, population, shadows, boundaries }) {
+  const rows = [];
+  const violations = [];
+  for (const step of steps) {
+    const missing = [step.beneath, step.raised].find((layer) => !population.includes(layer));
+    if (missing !== undefined) {
+      rows.push({
+        theme,
+        label: `${step.beneath}->${step.raised}`,
+        why: step.why,
+        beneathHex: null,
+        raisedHex: null,
+        ratio: null,
+        means: [],
+        verdict: "not_measured",
+        reason: `the ${theme} appearance does not declare --${missing}`,
+      });
+      continue;
+    }
+    const { row, claims } = measureRung({ theme, step, tokens: table, shadows, boundaries });
+    rows.push(row);
+    violations.push(...claims);
+    if (row.verdict === "fail") violations.push(indistinctViolation({ theme, step, row }));
+  }
+  return { rows, violations };
+}
+
+/** Every sibling plate of one appearance, printed with its reading and never a verdict. */
+function siblingRows({ theme, table, population }) {
+  const rows = [];
+  for (const [layer, sibling] of Object.entries(ELEVATION_SIBLINGS)) {
+    const measured = population.includes(layer) && population.includes(sibling.on);
+    if (!measured) continue;
+    const beneath = colourOf(sibling.on, table);
+    const plate = colourOf(layer, table);
+    if (beneath.unreadable !== undefined || plate.unreadable !== undefined) continue;
+    rows.push({
+      theme,
+      label: `${sibling.on}->${layer}`,
+      why: sibling.why,
+      beneathHex: hexOf(beneath.rgb),
+      raisedHex: hexOf(plate.rgb),
+      ratio: contrastRatio(plate.rgb, beneath.rgb),
+      means: [],
+      verdict: "sibling",
+      reason: null,
+    });
+  }
+  return rows;
+}
+
+/** The layers one appearance declares that no rung raises and no sibling names. */
+function coverageViolations({ theme, population, steps }) {
+  const violations = [];
+  for (const layer of population) {
+    const raised = steps.some((step) => step.beneath === layer || step.raised === layer);
+    if (raised || ELEVATION_SIBLINGS[layer] !== undefined) continue;
+    violations.push({
+      code: `elevation_layer_without_rung:${theme}:${layer}`,
+      theme,
+      token: layer,
+      detail:
+        `the ${theme} appearance declares \`--${layer}\` and no rung raises it and no sibling names it: ` +
+        "add the step that stacks it, or declare why it has no rung",
+    });
+  }
+  return violations;
+}
+
+/** A rung or sibling naming a layer no appearance declares: this file's own lists have drifted from the sheet. */
+function driftViolations(known, steps) {
+  const violations = [];
+  for (const step of steps)
+    for (const layer of [step.beneath, step.raised])
+      if (!known.has(layer))
+        violations.push({
+          code: `elevation_step_layer_undeclared:${layer}`,
+          token: layer,
+          detail: `a rung names \`--${layer}\`, which no appearance declares: the step list has drifted from the sheet`,
+        });
+  for (const [layer, sibling] of Object.entries(ELEVATION_SIBLINGS))
+    for (const name of [layer, sibling.on])
+      if (!known.has(name))
+        violations.push({
+          code: `elevation_sibling_layer_undeclared:${name}`,
+          token: name,
+          detail: `a sibling names \`--${name}\`, which no appearance declares: the sibling list has drifted from the sheet`,
+        });
+  return violations;
+}
+
+/**
+ * The elevation ladder over every appearance: each rung's ratio and means, each sibling's printed reading, the layer
+ * population of every appearance, and the violations the rungs and the population produce.
+ */
+function elevationOf({ themes, steps, shadows, boundaries }) {
+  const layers = [];
+  const rows = [];
+  const violations = [];
+  const known = new Set();
+  for (const [, table] of themes) for (const layer of layersOf(table)) known.add(layer);
+  violations.push(...driftViolations(known, steps));
+
+  for (const [theme, table] of themes) {
+    const population = layersOf(table);
+    for (const layer of population) {
+      const colour = colourOf(layer, table);
+      layers.push({ theme, layer, hex: colour.unreadable === undefined ? hexOf(colour.rgb) : null });
+    }
+    const rungs = rungRows({ theme, table, steps, population, shadows, boundaries });
+    rows.push(...rungs.rows, ...siblingRows({ theme, table, population }));
+    violations.push(...rungs.violations, ...coverageViolations({ theme, population, steps }));
+  }
+
+  // A sibling's reading is printed beside the rungs and is not one of them, so it is not counted here.
+  const examined = rows.filter((row) => row.verdict !== "sibling" && row.verdict !== "not_measured").length;
+  let status = "passed";
+  if (violations.length > 0) status = "failed";
+  else if (examined === 0) status = "not_measured";
+  return {
+    floor: ELEVATION_STEP_FLOOR,
+    boundaryFloor: ELEVATION_BOUNDARY_FLOOR,
+    examined,
+    layers,
+    rows,
+    violations,
+    status,
+  };
+}
+
+/**
+ * Print the reading and return the exit code: `blocked` is always 1, a failing pair or rung is 1 only under `--fail`.
  */
 export function reportContrastTokens(result, { fail = false, out = process.stdout, err = process.stderr } = {}) {
   out.write(`contrast_tokens: examined ${result.examined} pair(s) in ${result.tokens} token(s)\n`);
@@ -524,6 +1005,25 @@ export function reportContrastTokens(result, { fail = false, out = process.stdou
         `ratio=${row.ratio === null ? "-" : row.ratio.toFixed(2)} min=${row.min} verdict=${row.verdict}\n`,
     );
   if (result.reason !== null) err.write(`contrast_tokens_blocked: ${result.reason}\n`);
+  const elevation = result.elevation;
+  out.write(
+    `elevation_ladder: examined ${elevation.examined} rung(s) in ${new Set(elevation.layers.map((layer) => layer.layer)).size} layer(s) ` +
+      `over ${result.themes.length} appearance(s), step floor ${elevation.floor}:1, boundary floor ${elevation.boundaryFloor}:1\n`,
+  );
+  for (const theme of result.themes) {
+    const population = elevation.layers.filter((layer) => layer.theme === theme);
+    if (population.length === 0) continue;
+    out.write(
+      `  ${theme.padEnd(width)} layers: ${population.map((layer) => `${layer.layer}=${layer.hex ?? "-"}`).join(" ")}\n`,
+    );
+  }
+  for (const row of elevation.rows)
+    out.write(
+      `  ${row.theme.padEnd(width)} ${row.label} beneath=${row.beneathHex ?? "-"} raised=${row.raisedHex ?? "-"} ` +
+        `ratio=${row.ratio === null ? "-" : row.ratio.toFixed(2)} floor=${elevation.floor} ` +
+        `means=${row.means.length === 0 ? "none" : row.means.join("+")} verdict=${row.verdict}` +
+        `${row.reason === null ? "" : ` (${row.reason})`}\n`,
+    );
   for (const violation of result.violations) err.write(`${violation.code}\n  ${violation.detail}\n`);
   if (result.violations.length > 0) err.write(`contrast_tokens: ${result.violations.length} violation(s)\n`);
   out.write(
@@ -531,10 +1031,19 @@ export function reportContrastTokens(result, { fail = false, out = process.stdou
       gate: result.gate,
       examined: result.examined,
       tokens: result.tokens,
+      elevation: {
+        examined: elevation.examined,
+        layers: new Set(elevation.layers.map((layer) => layer.layer)).size,
+        floor: elevation.floor,
+        status: elevation.status,
+      },
       violations: result.violations,
-      // The rule this run verified, named, for the same reason the other gates name theirs: the harness has to be able
+      // The rules this run verified, named, for the same reason the other gates name theirs: the harness has to be able
       // to tell a gate that asserted something from one that only printed a table.
-      checks: [{ id: "every_declared_pair_meets_its_minimum", status: result.status }],
+      checks: [
+        { id: "every_declared_pair_meets_its_minimum", status: result.pairsPassed ? "passed" : "failed" },
+        { id: "every_elevation_rung_is_distinguishable", status: elevation.status },
+      ],
       status: result.status,
     })}\n`,
   );
