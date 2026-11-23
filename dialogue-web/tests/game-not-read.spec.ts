@@ -1,3 +1,6 @@
+import { ComposedReferenceGameProtocolError } from "../src/composed-reference-game-browser-api";
+import { composedProblemView } from "../src/composed-problem-view";
+import { messages } from "../src/i18n";
 import { expect, test, type Page } from "./frontend-coverage";
 
 /**
@@ -113,6 +116,36 @@ async function stubHost(page: Page): Promise<{ stateReads: () => number }> {
   return { stateReads: () => stateReads };
 }
 
+/**
+ * A Host that answers the Game's own read with a page instead of this contract's JSON.
+ *
+ * Not a hostile Host: a wrong-origin page, a proxy's error page and a stale service worker all
+ * answer HTML for a route the page then asks for JSON, and `readGameState` refuses each one as
+ * `non_json_response` (`readJson` in `composed-reference-game-browser-api.ts`). Everything else the
+ * shell mounts answers normally, so the only subject here is that one read.
+ */
+async function stubHostWithAnUnreadableGameAnswer(page: Page): Promise<void> {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk(composedRoot(UNREAD_GAME))),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(jsonOk(composedRoot(UNREAD_GAME))),
+  );
+  await page.route("**/api/composed-reference-game/v1/game", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>Gateway</title><p>This route is not served here.</p>",
+    }),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ code: "state_unavailable" }) }),
+  );
+  await page.route("**/api/tavern/v1/draft", (route) =>
+    route.fulfill(jsonOk({ apiVersion: 1, revision: 4, text: null })),
+  );
+}
+
 test("an unread game offers the read itself, first in a 400x800 window", async ({ page }) => {
   const host = await stubHost(page);
   await page.goto(`/#profile=composed-reference-game&boot=${token}`);
@@ -168,4 +201,54 @@ test("an unread game offers the read itself, first in a 400x800 window", async (
     .poll(() => host.stateReads(), { message: "the re-read asks the Host for its state again" })
     .toBeGreaterThan(before);
   await expect(sentence).toBeVisible();
+});
+
+/**
+ * An answer this page cannot parse is a refusal, not a crash.
+ *
+ * The read the game state panel offers is one click away from an answer no client can parse, and the
+ * reasons are ordinary: a wrong-origin page, a proxy, a stale service worker. Measured 2026-11-24,
+ * that answer reached the player as nothing at all - `handlers.reread` is `() => void rereadGame()`,
+ * so the rejection `readGameState` raises was left to the browser: the page recorded an unhandled
+ * rejection and the panel redrew the screen it was already on. The same shape was reachable from the
+ * installation picker's `onAdmitted`.
+ *
+ * What this journey holds: the press states what happened, in the words the refusal catalogue gives
+ * that coded answer (`data-problem-code` is `non_json_response`, so the line is about THIS failure and
+ * not a generic one), the read the state offers is still there to press, and the browser recorded no
+ * unhandled rejection and no page error.
+ */
+test("a game read the page cannot parse is a stated refusal, and no rejection is left floating", async ({ page }) => {
+  const uncaught: string[] = [];
+  page.on("pageerror", (error) => uncaught.push(error.message));
+  await page.addInitScript(() => {
+    const recorded = window as unknown as { __unhandledRejections: string[] };
+    recorded.__unhandledRejections = [];
+    window.addEventListener("unhandledrejection", (event) => {
+      recorded.__unhandledRejections.push(String(event.reason));
+    });
+  });
+  await stubHostWithAnUnreadableGameAnswer(page);
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await page.getByRole("button", { name: "Game", exact: true }).click();
+  await expect(page.getByTestId("game-state-panel")).toBeVisible();
+
+  await page.getByTestId("game-reread").click();
+  // The read is answered at once; a rejection left to the browser is recorded in the microtask after
+  // it, so this is the settle the reading needs rather than a wait for something to appear.
+  await page.waitForTimeout(500);
+  const rejected = await page.evaluate(
+    () => (window as unknown as { __unhandledRejections: string[] }).__unhandledRejections,
+  );
+  expect(rejected, "the press's read is handled - a floating promise leaves the rejection to the browser").toEqual([]);
+  expect(uncaught, "and nothing escaped to the page as an uncaught error").toEqual([]);
+
+  const notice = page.getByTestId("game-read-notice");
+  await expect(notice).toBeVisible();
+  await expect(notice).toHaveAttribute("data-problem-code", "non_json_response");
+  await expect(notice).toHaveText(
+    composedProblemView(new ComposedReferenceGameProtocolError("non_json_response"), messages("en")).detail,
+  );
+  // The step the failure leaves is the one that answers it, so a refusal is not a dead end.
+  await expect(page.getByTestId("game-reread")).toBeEnabled();
 });

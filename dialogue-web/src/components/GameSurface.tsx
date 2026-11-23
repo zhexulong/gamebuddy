@@ -19,7 +19,12 @@ import {
   type CabinLaunchWaitState,
   type GameSessionPhase,
 } from "../game-lifecycle-controls";
-import { gameOperationFailure, type GameOperationFailure } from "../composed-problem-view";
+import {
+  composedProblemView,
+  gameOperationFailure,
+  observedProblemCode,
+  type GameOperationFailure,
+} from "../composed-problem-view";
 import {
   type GameAttachmentEvent,
   type GameAttachmentOperation,
@@ -216,6 +221,23 @@ export function GameSurface({
   const gameEndgameKeysRef = useRef(new Map<number, string>());
   const [gameEndgameActive, setGameEndgameActive] = useState(false);
   const [gameEndgameFailure, setGameEndgameFailure] = useState<GameOperationFailure | null>(null);
+  /**
+   * The read this surface's own step could not make, in the words the refusal catalogue gives it.
+   *
+   * A press is not a command: it has no group to land in, and `rereadGame` throws on purpose - every
+   * command awaits it inside its own `try`, so a read that failed after a command is stated as THAT
+   * operation's failure, and swallowing it there would make a command look confirmed by a read that
+   * never landed. Measured 2026-11-24: without this, a route that answered HTML left the rejection to
+   * the browser (an unhandled `non_json_response`), and the panel redrew exactly the screen it was
+   * already on, saying nothing about the read that never happened.
+   *
+   * `code` is the bounded code the failure carried (`observedProblemCode`), kept as an attribute on
+   * the line for a report or a gate. A code is never part of a sentence a player reads.
+   */
+  const [gameReadFailure, setGameReadFailure] = useState<Readonly<{
+    sentence: string;
+    code: string | null;
+  }> | null>(null);
   /**
    * The UI-level confirm step for the terminal endgame operation: the first
    * click only arms this, and the POST happens on the confirm button alone
@@ -440,6 +462,23 @@ export function GameSurface({
     commitRef.current = commit;
     rereadGameRef.current = rereadGame;
   });
+
+  /**
+   * The read the player's own step takes, and the one place a press's failed read is published.
+   *
+   * The sentence is the catalogue's, not a second vocabulary: `composedProblemView` words every
+   * failure on this shell, and the answer it gives this one names the read taken again - which is the
+   * control the state keeps drawing beside this line. The failure is spent by the next read that
+   * succeeds, exactly as the shell's arrival notice is.
+   */
+  const readGameAgain = async (): Promise<void> => {
+    try {
+      await rereadGame();
+      setGameReadFailure(null);
+    } catch (error) {
+      setGameReadFailure({ sentence: composedProblemView(error, labels).detail, code: observedProblemCode(error) });
+    }
+  };
 
   /**
    * Applies one fact group to the projection this surface renders.
@@ -1487,7 +1526,7 @@ export function GameSurface({
         setContinuityIdentity: setContinuityIdentityInput,
         confirmCabin: (choice) => void handleCabinConfirmation(choice),
         refreshCabins: () => void readCabins("refresh_pressed"),
-        reread: () => void rereadGame(),
+        reread: () => void readGameAgain(),
       }}
     />
   );
@@ -1516,7 +1555,7 @@ export function GameSurface({
       // The guide above reads the Host's `prerequisites`, which only changes once an installation is admitted. The
       // panel owns that admission, so it is the one that says so; without this the step kept asking for a folder after
       // the folder had been accepted, and only a reload cleared it.
-      onAdmitted={() => void rereadGame()}
+      onAdmitted={() => void readGameAgain()}
     />
   );
   /**
@@ -1580,6 +1619,21 @@ export function GameSurface({
       {arrivalNotice !== null && (
         <p className="game-status" data-tone="danger" role="status" data-testid="game-arrival-notice">
           {arrivalNotice}
+        </p>
+      )}
+      {/* The read this surface's own step could not make, in the same line shape and the same place
+          as the arrival notice: the fact is about the read, not about any group's contents, and a
+          status line inside the region would move when a group renders. `data-problem-code` is the
+          bounded code the failure carried - the record's half of it, never a sentence's. */}
+      {gameReadFailure !== null && (
+        <p
+          className="game-status"
+          data-tone="danger"
+          role="status"
+          data-testid="game-read-notice"
+          data-problem-code={gameReadFailure.code ?? undefined}
+        >
+          {gameReadFailure.sentence}
         </p>
       )}
       {/* Installation discovery is a sibling of the Game state region, never inside it, so the

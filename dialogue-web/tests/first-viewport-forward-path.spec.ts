@@ -19,7 +19,10 @@
  *      sentence is inside the window; where it names nothing at all (`terminal`), the shell's own
  *      surface switch is;
  *   2. the step actually moves something - a press that reaches no Host route and changes nothing
- *      on screen is a control that exists and does not advance the flow;
+ *      on screen is a control that exists and does not advance the flow. The step pressed is the one
+ *      the state declares or, where it declares none, the first enabled control that is not already
+ *      the state it names (`aria-selected`/`aria-pressed`/`aria-current`): pressing the tab you are on
+ *      repeats the state the player already has, so it measures nothing;
  *   3. a press the Host refuses is not the only thing the viewport offers: when the press answers
  *      4xx/5xx, another enabled control must be inside the same viewport, or the state names its
  *      own refusal and stops.
@@ -499,6 +502,14 @@ type ControlReading = Readonly<{
   testId: string | null;
   tag: string;
   disabled: boolean;
+  /**
+   * The control declares itself as the state the player is already in: a selected tab
+   * (`aria-selected`), a pressed filter (`aria-pressed`), the page in the bar (`aria-current`).
+   *
+   * It is the one fact that separates a step forward from a true no-op, and the browser already
+   * publishes it - which is why the gate reads it rather than a list of controls to skip.
+   */
+  current: boolean;
   top: number;
   bottom: number;
   width: number;
@@ -549,6 +560,10 @@ async function readRegion(page: Page, region: string | null): Promise<ViewportRe
           testId: node.getAttribute("data-testid"),
           tag: node.tagName.toLowerCase(),
           disabled: node.matches(":disabled") || node.getAttribute("aria-disabled") === "true",
+          current:
+            node.getAttribute("aria-selected") === "true" ||
+            node.getAttribute("aria-pressed") === "true" ||
+            node.hasAttribute("aria-current"),
           top: Math.round(rect.top),
           bottom: Math.round(rect.bottom),
           width: Math.round(rect.width),
@@ -586,7 +601,7 @@ const forwardOf = (reading: ViewportReading): readonly ControlReading[] =>
 /** One control, as a sentence a failure can name it by. */
 const describeControl = (control: ControlReading): string =>
   `<${control.tag}${control.testId === null ? "" : ` data-testid="${control.testId}"`}> "${control.name}"` +
-  ` at y ${control.top}..${control.bottom}${control.disabled ? " (disabled)" : ""}${control.inViewport ? "" : " (below the fold)"}`;
+  ` at y ${control.top}..${control.bottom}${control.disabled ? " (disabled)" : ""}${control.current ? " (already the state it names)" : ""}${control.inViewport ? "" : " (below the fold)"}`;
 
 /**
  * The declared step of every Game phase, as the control the panel draws for it.
@@ -856,12 +871,28 @@ for (const surface of SURFACES) {
 
       // 2. The step actually moves something: a press that reaches no route and changes nothing on
       //    screen is a control that exists and does not advance the flow.
+      //
+      //    A control that declares itself as the state the player is already in is not a step FORWARD:
+      //    pressing the tab you are on, the filter already applied or the page you are on repeats the
+      //    state the player already has, which is the product's own `already_true` and not a control that
+      //    failed to advance anything. The Settings surface is the member that reported this (measured
+      //    2026-11-24): its tab strip leads the region, so the first enabled control in the first viewport
+      //    was "Connection and model" - the tab already on screen - and the press was a designed no-op.
+      //    The reading comes from the control's own `aria-*` state, never from a list of names here.
       const target = under.declaredControlTestId ?? null;
+      const steppable = forward.filter((control) => !control.current);
       const chosen =
-        target === null
-          ? forward[0]
-          : forward.find((control) => control.testId === target) ?? forward[0];
-      if (chosen === undefined) return;
+        target === null ? steppable[0] : (forward.find((control) => control.testId === target) ?? steppable[0]);
+      if (chosen === undefined) {
+        // Nothing to press forward: the state declares no control of its own and every enabled control in
+        // the first viewport is already the state it names. Named, because a silent return here would read
+        // as a pass for a surface that offers no step at all.
+        console.log(
+          `[forward-path] ${surface.panel}/${under.state.id} has no step to press: every enabled control in the ` +
+            `first viewport is already the state it names: ${forward.map(describeControl).join(", ") || "(nothing)"}`,
+        );
+        return;
+      }
       const requestsBefore = host.requests.length;
       const responsesBefore = host.responses.length;
       const textBefore = reading.text;
