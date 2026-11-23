@@ -269,25 +269,20 @@ export type GameSessionPhase =
   | "attached_resume_failed";
 
 /**
- * The one step each state offers, named rather than implied.
+ * A step the player takes inside GameBuddy: a control this surface draws, the shell's own
+ * surface switch, or the game's progress the product is already carrying.
  *
- * Two members are not controls on this page, and both name a step the player
- * really takes - the same precedent `companion-activation-controls.ts` set with
- * `restart`:
+ * The last two are not controls on this page, and both are still steps the player takes - the
+ * same precedent `companion-activation-controls.ts` set with `restart`:
  *
- * - `wait_for_game` is the game's own progress (the launch is in flight, or the
- *   farm has not handed over a session yet). The surface states it, because a
- *   player reading a panel with no control has no way to tell a wait from a trap.
- * - `restart_gamebuddy` is the only way out of a quarantined launch, and it is
- *   off this page entirely. Both endings of a game - the failed launch and the
- *   game the player quit - reach it, because the quarantine is the same in both.
+ * - `terminal` is the shell's surface switch, the way out of the one phase with no step of its
+ *   own (`no_projection`: the Host published no Game projection at all). It is shell chrome,
+ *   mounted whenever this surface is, and the gate keeps `no_projection` the only phase naming it.
+ * - `wait_for_game` is the game's own progress (the launch is in flight, or the farm has not
+ *   handed over a session yet). The surface states it, because a player reading a panel with no
+ *   control has no way to tell a wait from a trap.
  */
-type GameSessionForwardAction =
-  /**
-   * No step of this state's own: the shell's surface switch is the way out. Reserved
-   * for `no_projection`, where the Host published no Game projection at all, and kept
-   * the only such phase by the gate - the same shape `in_play` has for the roster.
-   */
+export type InSystemAction =
   | "terminal"
   | "activate"
   | "setup"
@@ -301,8 +296,28 @@ type GameSessionForwardAction =
   | "create"
   | "reopen"
   | "wait_for_game"
-  | "reread_game"
-  | "restart_gamebuddy";
+  | "reread_game";
+
+/**
+ * A step that leaves the software: the player has to quit GameBuddy itself and start it again.
+ *
+ * It is a real step - `launch_failed` has no other, because a launch whose outcome nobody knows is
+ * terminal for the installation (`STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS.launch_quarantined`) -
+ * and it is NOT a forward path on this surface: there is no button here to press, so a phase whose
+ * only step is this one is a dead end for a player sitting in the browser. That distinction is a
+ * type rather than a list so the two cannot be confused: `gates/product/check-fail-closed-forward-path.mjs`
+ * requires every non-terminal phase to name at least one `InSystemAction`, and a phase that does not
+ * must be a declared debt naming the step it is owed and the Host record that will expire it.
+ */
+export type OutOfBandIntervention = "restart_gamebuddy";
+
+/**
+ * The one step each state offers, in reading order.
+ *
+ * Both halves are one vocabulary at the call sites, because a phase may name either kind: the split
+ * is what the gate reads, not a second list to keep in step.
+ */
+type GameSessionForwardAction = InSystemAction | OutOfBandIntervention;
 
 export type GameSessionControls = Readonly<{
   phase: GameSessionPhase;

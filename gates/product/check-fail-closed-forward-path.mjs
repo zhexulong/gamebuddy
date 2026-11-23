@@ -32,9 +32,20 @@
  *      substring of that family's own `detail` in the default catalogue. This is the one place the
  *      claim "the sentence already tells you which control" can be held to account, and a family
  *      whose sentence does not say it is named;
- *   5. every phase of `GAME_SESSION_PHASES` (sixteen of them) still offers at least one forward
- *      action, and every action it offers is a member of the declared `GameSessionForwardAction`
- *      union - the same zero-forward-path rule, read off the derivation's own `build(...)` calls.
+ *   5. every phase of `GAME_SESSION_PHASES` still offers at least one forward action, and every
+ *      action it offers is a member of the declared step vocabulary - read off the derivation's own
+ *      `build(...)` calls. The vocabulary is TWO unions at its owning layer, and the gate demands an
+ *      in-system step:
+ *        - `InSystemAction` is a step taken inside GameBuddy (a control this surface draws, the
+ *          shell's surface switch, the game's own progress);
+ *        - `OutOfBandIntervention` is a step that leaves the software (`restart_gamebuddy`).
+ *      A non-terminal phase whose steps are ALL interventions is `phase_without_in_system_step`,
+ *      naming the phase and the step it is owed. This was the hole: the rule used to be "at least
+ *      one forward action", `restart_gamebuddy` is a declared action, so `crashed ->
+ *      ["restart_gamebuddy"]` passed while a browser player had no button - it took a live run to
+ *      find, and the phase that shipped it was `game_ended` (`6a822da9` retired it). The one phase
+ *      that is intervention-only today is declared in `INTERVENTION_ONLY_DEBT` with the step it
+ *      needs and the Host record that owns it; that entry EXPIRES by itself (see its own comment).
  *   6. a `self_heals` step's REASON is held to its own evidence. Union membership is not evidence: the
  *      reason is a claim about the Host ("it ends its own work", "the stream catches the page up") and a
  *      claim nobody can read is the alibi this item exists for. So `host_retries` is accepted only when
@@ -47,13 +58,15 @@
  *      (`hold_without_reachable_release`). A holding state whose only release is a transition no code
  *      performs is the zombie turn; prose about it is not a release.
  *
- * THE POPULATION IS DERIVED, all six parts, from declarations the product already owns:
- * `PROBLEM_CODES` (the browser mirror of the tavern contract's closed union), `GAME_PROBLEM_CODES`,
- * the turn's `TURN_PROBLEM_CODES`, the classifier's `PROVIDER_FAILURES`, `GAME_SESSION_PHASES`, and the
- * members of the `ChatTurnLedger` union (their `status` literals, split into terminal and holding by the
- * product's own `isTerminalTurnStatus`). A code or a turn status added anywhere joins this gate without
- * an edit here; the counts are printed per axis, and an empty population is `blocked` with exit 1 - a
- * gate that examined nothing has not passed.
+ * THE POPULATION IS DERIVED from declarations the product already owns: `PROBLEM_CODES` (the browser
+ * mirror of the tavern contract's closed union), `GAME_PROBLEM_CODES`, the turn's
+ * `TURN_PROBLEM_CODES`, the classifier's `PROVIDER_FAILURES`, `GAME_SESSION_PHASES` with the two
+ * halves of the step vocabulary (`InSystemAction`, `OutOfBandIntervention`), and the members of the
+ * `ChatTurnLedger` union (their `status` literals, split into terminal and holding by the product's
+ * own `isTerminalTurnStatus`). A code, a turn status or a step added anywhere joins this gate without
+ * an edit here; the counts are printed per axis - including `phases examined N · with an in-system
+ * step M · intervention-only K` - and an empty population is `blocked` with exit 1, because a gate
+ * that examined nothing has not passed.
  *
  * WHAT IT DOES NOT ASSERT, stated so a green run is not read as more than it is: that a named control
  * is *enabled* in the state the sentence describes, and that pressing it reaches the Host. Both need a
@@ -72,7 +85,12 @@
  *                    reports `TS2554: Expected 3 arguments, but got 2` in
  *                    dialogue-web/src/composed-problem-view.ts, and a control id that names no marker
  *                    (`message-delete` -> `message-del` ) is `control_id_not_a_control` naming that
- *                    family (tools/check-fail-closed-forward-path.test.mjs)
+ *                    family (gates/product/check-fail-closed-forward-path.test.mjs)
+ * red-proof: history `6a822da9^` - the shape a live run measured, where a crash and the player's own
+ *                    quit both reached a phase whose only step was the tray quit - reads
+ *                    `phase_without_in_system_step: phase/game_ended` and exits 1; the phase that
+ *                    entry retired (`ended_attempt_ready -> activate`) is why HEAD reads 18 of 19
+ *                    phases with an in-system step (gates/product/check-fail-closed-forward-path.test.mjs)
  */
 
 export const gateDeclaration = {
@@ -112,12 +130,16 @@ export const SOURCES = {
     "continuity-semantic-production-coordinator",
     "continuity-semantic-production-coordinator.internal.ts",
   ),
+  // The Host's own record of the terminals no in-process transition leaves. `launch_quarantined`
+  // there is why `launch_failed` has a tray quit and no press, and it is the authority the one
+  // intervention-only debt entry rests on.
+  trappedTerminals: join(HOST_SRC, "games", "stardew", "lifecycle", "stardew-game-lifecycle-state.internal.ts"),
 };
 
 /**
  * The falsifier seam: run the same checks over another tree.
  *
- * `tools/check-fail-closed-forward-path.test.mjs` turns each finding red by pointing one source at a
+ * `gates/product/check-fail-closed-forward-path.test.mjs` turns each finding red by pointing one source at a
  * throwaway copy - so the proof drives the gate's own readers rather than a second implementation of
  * them. Nothing else swaps a source; the default run reads the real tree above.
  */
@@ -132,9 +154,40 @@ export function checkForwardPathOf(overrides) {
 }
 
 const STEP_KINDS = Object.freeze(["control", "outside_surface", "self_heals", "no_step"]);
+/**
+ * The closed vocabulary of `outside_surface.step`, which means "off this card" - NOT "off the
+ * software". Read against where each is drawn: `open_settings` is a press in this window (the
+ * AppBar's Settings surface), while `retry_bootstrap` ("open GameBuddy again") and
+ * `restart_gamebuddy` ("start it again, then open the page it shows") both leave the software. The
+ * phase rule below is the one that reads that difference; this list only holds the kind's members
+ * closed.
+ */
 const OUTSIDE_SURFACE_STEPS = Object.freeze(["open_settings", "retry_bootstrap", "restart_gamebuddy"]);
 const SELF_HEALS_REASONS = Object.freeze(["host_retries", "stream_resumes"]);
 const NO_STEP_REASONS = Object.freeze(["over_a_ceiling", "already_true", "not_this_artifact"]);
+
+/**
+ * The phases whose only step leaves the software today, each with the step it is owed and the Host
+ * record that owes it.
+ *
+ * AN ENTRY IS A DEBT, NOT A DECISION, and it EXPIRES MECHANICALLY - `stale_intervention_only_exemption`
+ * turns red in all three directions that would make it a lie: the phase gains an in-system step (the
+ * debt is paid), the phase leaves `GAME_SESSION_PHASES` (the entry excuses nothing), or the Host
+ * stops declaring `trapped` in `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS` (the terminal is no longer
+ * terminal, so a press must exist). The entry is therefore deleted rather than kept, and it cannot
+ * outlive its own reason.
+ */
+export const INTERVENTION_ONLY_DEBT = Object.freeze([
+  Object.freeze({
+    phase: "launch_failed",
+    /** The Host terminal this phase is the surface's word for, read from the record that declares it. */
+    trapped: "launch_quarantined",
+    /** The in-system step the phase is owed, in the product's own words. */
+    needs:
+      "a recovery press for a launch that never created a runtime: the `never_spawned` proof kind, which " +
+      "releases the installation on evidence of non-existence (`STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`)",
+  }),
+]);
 
 /**
  * What each reason owes, in the words of the failure a missing one is. A reason absent here has no
@@ -342,7 +395,16 @@ function gameMembers() {
   return (codes ?? []).map((code) => {
     const entry = views === null ? undefined : views.get(code);
     if (entry === undefined) return { axis: "game", member: code, family: null, detailKey: null, step: null };
-    const value = unwrap(entry);
+    // A view is written in place (`gameUnavailable`) or named beside it (`refused(family)`), so an
+    // identifier is followed to its declaration before anything is read: `game_unavailable` is the
+    // one named view, and reading the name instead of the view reported a family that has a step as
+    // one that has none.
+    let value = unwrap(entry);
+    for (let hops = 0; hops < 8 && typescript.isIdentifier(value); hops += 1) {
+      const declaration = problemConstants.get(value.text);
+      if (declaration === undefined) break;
+      value = unwrap(declaration);
+    }
     // `refused(family)` / `unsettled(family)` name a family; `game_unavailable` writes its templated
     // sentence in place, so its own `sentence(...)` call is read instead.
     if (
@@ -394,46 +456,59 @@ function turnMembers() {
 }
 
 /**
- * The Game phases and the forward actions their own derivation offers.
+ * The Game phases and the forward actions their own derivation offers, classified by the two halves
+ * of the step vocabulary the product declares.
  *
- * Every phase is produced by one `build(phase, flags, actions)` call; two of those pass a variable
- * (`phase`) or a ternary instead of a literal, so the phase names are read from the argument's own
- * initializer rather than from a list retyped here.
+ * A phase's steps come from the derivation's own calls. Every one of them names a phase in its first
+ * argument and the steps it offers in its third, and the callee may be `build` or a wrapper this
+ * module defines around it (`inFarm`, the attached block's one-line pass-through): requiring the
+ * callee to be named `build` is how ten of nineteen phases stopped being read when `9682e223`
+ * introduced that wrapper, so the call is recognised by what it declares instead of by its name.
+ * Two of the calls pass a variable (`phase`) or a ternary, so the phase names are read from the
+ * argument's own initializer rather than from a list retyped here. Which step is pressable is the
+ * product's own declaration too (`InSystemAction` / `OutOfBandIntervention`): this gate classifies
+ * nothing by a list of its own, so a step added to either half is classified where it is written.
  */
 function phaseMembers() {
   const file = parseFile(SOURCES.lifecycle);
   const constants = constantsOf(file);
   const phases = stringArray(file, "GAME_SESSION_PHASES") ?? [];
-  const union = new Set(stringLiterals(unionTypeMembers(file, "GameSessionForwardAction")));
+  const phaseNames = new Set(phases);
+  const inSystem = new Set(stringLiterals(unionTypeMembers(file, "InSystemAction")));
+  const outOfBand = new Set(stringLiterals(unionTypeMembers(file, "OutOfBandIntervention")));
   const offered = new Map();
   const visit = (node) => {
-    if (
-      typescript.isCallExpression(node) &&
-      typescript.isIdentifier(node.expression) &&
-      node.expression.text === "build"
-    ) {
+    if (typescript.isCallExpression(node) && node.arguments.length >= 3) {
       const phaseArgument = unwrap(node.arguments[0]);
-      const phaseNames = stringLiterals(
+      const named = stringLiterals(
         typescript.isIdentifier(phaseArgument)
           ? unwrap(constants.get(phaseArgument.text) ?? phaseArgument)
           : phaseArgument,
-      );
-      const actions = node.arguments.length > 2 ? stringLiterals(unwrap(node.arguments[2])) : [];
-      for (const phase of phaseNames) offered.set(phase, [...(offered.get(phase) ?? []), ...actions]);
+      ).filter((name) => phaseNames.has(name));
+      if (named.length > 0) {
+        const actions = stringLiterals(unwrap(node.arguments[2]));
+        for (const phase of named) offered.set(phase, [...(offered.get(phase) ?? []), ...actions]);
+      }
     }
     typescript.forEachChild(node, visit);
   };
   visit(file);
   return {
-    union,
-    members: phases.map((phase) => ({
-      axis: "phase",
-      member: phase,
-      family: `GAME_SESSION_PHASES ${phase}`,
-      detailKey: null,
-      step: null,
-      actions: offered.get(phase) ?? [],
-    })),
+    inSystem,
+    outOfBand,
+    members: phases.map((phase) => {
+      const actions = offered.get(phase) ?? [];
+      return {
+        axis: "phase",
+        member: phase,
+        family: `GAME_SESSION_PHASES ${phase}`,
+        detailKey: null,
+        step: null,
+        actions,
+        inSystemActions: actions.filter((action) => inSystem.has(action)),
+        interventions: actions.filter((action) => outOfBand.has(action)),
+      };
+    }),
   };
 }
 
@@ -446,6 +521,70 @@ function unionTypeMembers(sourceFile, name) {
   };
   visit(sourceFile);
   return found;
+}
+
+/**
+ * The Host's own record of the lifecycle states no in-process transition leaves, by state.
+ *
+ * It is the authority the one intervention-only debt rests on: while `launch_quarantined` is trapped,
+ * a launch whose outcome nobody knows has no egress inside the Host, so the surface's word for it
+ * (`launch_failed`) can honestly name nothing but the tray quit. The record's entries are prose, so a
+ * state present with a non-empty reason is what "still declared" means here.
+ */
+function trappedTerminals() {
+  const file = parseFile(SOURCES.trappedTerminals);
+  const declaration = constantsOf(file).get("STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS");
+  const properties = declaration === undefined ? null : objectProperties(declaration);
+  const trapped = new Map();
+  if (properties !== null)
+    for (const [state, initializer] of properties)
+      trapped.set(state, stringLiterals(initializer).join("").trim().length > 0);
+  return trapped;
+}
+
+/**
+ * The declared debt, resolved against the tree it claims something about: the entries that still
+ * excuse a phase, and the finding for every entry that does not.
+ *
+ * The three expiry directions are checked here rather than described, so "declared with an owner and
+ * an expiry" is a reading of the product instead of a note beside it.
+ */
+function resolvedDebt(phases, trapped) {
+  const byPhase = new Map();
+  const findings = [];
+  for (const entry of INTERVENTION_ONLY_DEBT) {
+    const member = phases.members.find((phase) => phase.member === entry.phase);
+    if (member === undefined) {
+      findings.push(
+        finding(
+          "stale_intervention_only_exemption",
+          `${entry.phase} is not a phase this surface can be in, so the entry excuses nothing`,
+        ),
+      );
+      continue;
+    }
+    if (member.inSystemActions.length > 0) {
+      findings.push(
+        finding(
+          "stale_intervention_only_exemption",
+          `${entry.phase} now names ${member.inSystemActions.join("/")}, so the debt is paid and the entry must go`,
+        ),
+      );
+      continue;
+    }
+    if (trapped.get(entry.trapped) !== true) {
+      findings.push(
+        finding(
+          "stale_intervention_only_exemption",
+          `${entry.phase} rests on the Host trapping ${entry.trapped}, which STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS ` +
+            `no longer declares as a terminal no transition leaves - so a press must exist and the entry must go`,
+        ),
+      );
+      continue;
+    }
+    byPhase.set(entry.phase, entry);
+  }
+  return { byPhase, findings };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -749,6 +888,17 @@ function catalogues() {
 
 const finding = (code, detail) => ({ code, detail });
 
+/**
+ * Whether a phase's whole answer leaves the software: every step it names is an out-of-band
+ * intervention, and none is in-system. A step the vocabulary does not declare is not counted here -
+ * that is `phase_action_not_declared`'s finding, and calling it out-of-band would be the gate
+ * deciding a kind the product never declared.
+ */
+const isInterventionOnly = (member, outOfBand) =>
+  member.actions.length > 0 &&
+  member.inSystemActions.length === 0 &&
+  member.actions.every((action) => outOfBand.has(action));
+
 /** `+ newly added: [x]` / `- missing: [y]`: a difference, printed in both directions. */
 function difference(declared, members) {
   const declaredSet = new Set(declared);
@@ -768,6 +918,7 @@ export function checkForwardPath() {
   const catalogues = readCatalogues();
   const defaultCatalogue = catalogues.values().next().value ?? new Map();
   const phases = phaseMembers();
+  const debt = resolvedDebt(phases, trappedTerminals());
   const selfHeals = selfHealsEvidence();
   const members = [
     ...tavernMembers(),
@@ -776,6 +927,13 @@ export function checkForwardPath() {
     ...phases.members,
     ...turnStateMembers(selfHeals.states),
   ];
+  const phaseCounts = {
+    examined: phases.members.length,
+    withInSystem: phases.members.filter((phase) => phase.inSystemActions.length > 0).length,
+    interventionOnly: phases.members.filter((phase) => isInterventionOnly(phase, phases.outOfBand)).length,
+    exempt: [...debt.byPhase.keys()],
+  };
+  findings.push(...debt.findings);
 
   if (markers.size === 0)
     findings.push(finding("no_control_markers", "no data-testid or data-* marker was read from dialogue-web/src"));
@@ -799,9 +957,34 @@ export function checkForwardPath() {
     const label = `${member.axis}/${member.member}`;
     if (member.axis === "phase") {
       if (member.actions.length === 0) findings.push(finding("phase_without_forward_action", label));
-      for (const action of member.actions)
-        if (!phases.union.has(action))
-          findings.push(finding("phase_action_not_declared", `${label} offers "${action}"`));
+      for (const action of member.actions) {
+        const inSystem = phases.inSystem.has(action);
+        const outOfBand = phases.outOfBand.has(action);
+        if (!(inSystem || outOfBand))
+          findings.push(
+            finding(
+              "phase_action_not_declared",
+              `${label} offers "${action}", which neither InSystemAction nor OutOfBandIntervention declares`,
+            ),
+          );
+        else if (inSystem && outOfBand)
+          findings.push(
+            finding(
+              "phase_action_double_classified",
+              `${label} offers "${action}", which both halves declare, so whether a player can press it is two answers`,
+            ),
+          );
+      }
+      // The rule this gate was missing: a phase whose whole answer is a step off the software is a
+      // dead end for a player sitting in the browser, whatever the step is called.
+      if (isInterventionOnly(member, phases.outOfBand) && !debt.byPhase.has(member.member))
+        findings.push(
+          finding(
+            "phase_without_in_system_step",
+            `${label} names only out-of-band intervention(s) ${member.interventions.map((action) => `"${action}"`).join("/")}: ` +
+              `a player inside the browser has nothing to press, so the phase needs an InSystemAction`,
+          ),
+        );
       continue;
     }
     if (member.axis === "turn_status") continue;
@@ -814,18 +997,34 @@ export function checkForwardPath() {
     checkStep(member, label, { findings, markers, defaultCatalogue, catalogues, evidence: selfHeals.evidence });
   }
 
+  // Three populations can be empty, and each is blocked rather than green: a gate that examined
+  // nothing agrees with itself, and a vocabulary with no in-system member would make every phase a
+  // finding for a reason the tree does not hold.
+  const blocked = [];
   if (members.length === 0 || answerable.length === 0)
+    blocked.push(
+      finding(
+        "population_empty",
+        `examined ${members.length} members and found ${answerable.length} that owe a step, so this gate agreed with itself`,
+      ),
+    );
+  if (phaseCounts.examined === 0)
+    blocked.push(finding("phase_population_empty", "GAME_SESSION_PHASES declared no phase, so no phase was examined"));
+  if (phases.inSystem.size === 0)
+    blocked.push(
+      finding(
+        "in_system_vocabulary_empty",
+        "InSystemAction declared no member, so no phase could ever name an in-system step",
+      ),
+    );
+  if (blocked.length > 0)
     return {
       status: "blocked",
-      findings: [
-        finding(
-          "population_empty",
-          `examined ${members.length} members and found ${answerable.length} that owe a step, so this gate agreed with itself`,
-        ),
-      ],
+      findings: [...blocked, ...findings],
       examined: members.length,
       difference: "",
       selfHeals,
+      phases: phaseCounts,
     };
 
   return {
@@ -834,6 +1033,7 @@ export function checkForwardPath() {
     examined: members.length,
     difference: difference(answered, answerable),
     selfHeals,
+    phases: phaseCounts,
   };
 }
 
@@ -945,6 +1145,18 @@ function main() {
       `chat turn states ${verdict.selfHeals.states.states.length})`,
   );
   const { holding, reaches } = verdict.selfHeals.states;
+  const phaseCounts = verdict.phases;
+  console.log(
+    `[forward-path] phases examined ${phaseCounts.examined} · with an in-system step ${phaseCounts.withInSystem} · ` +
+      `intervention-only ${phaseCounts.interventionOnly}` +
+      (phaseCounts.exempt.length === 0 ? "" : ` (declared debt: ${phaseCounts.exempt.join(", ")})`),
+  );
+  for (const entry of INTERVENTION_ONLY_DEBT)
+    if (phaseCounts.exempt.includes(entry.phase))
+      console.log(
+        `[forward-path] intervention-only debt ${entry.phase}: needs ${entry.needs}; rests on ${entry.trapped} in ` +
+          `STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS`,
+      );
   console.log(
     `[forward-path] chat turn states: holding ${holding.length} (` +
       `${holding.map((status) => `${status}->${reaches.get(status).join("/") || "NOTHING"}`).join(", ")}), ` +
@@ -969,6 +1181,14 @@ function main() {
   for (const entry of verdict.findings) console.log(`[forward-path] ${entry.code}: ${entry.detail}`);
   const failed = (code) => verdict.findings.some((entry) => entry.code === code);
   const failedWithPrefix = (prefix) => verdict.findings.some((entry) => entry.code.startsWith(prefix));
+  // The rule's own verdict, in one place: blocked is its own answer (the phase population or the
+  // in-system vocabulary was empty), and an empty family of findings is not green over either.
+  const inSystemFinding =
+    failed("phase_without_in_system_step") ||
+    failed("phase_action_double_classified") ||
+    failedWithPrefix("stale_intervention_only") ||
+    failedWithPrefix("intervention_only_debt");
+  const phaseInSystemStatus = verdict.status === "blocked" ? "blocked" : inSystemFinding ? "failed" : "passed";
   console.log(
     JSON.stringify({
       gate: "fail-closed-forward-path",
@@ -985,7 +1205,14 @@ function main() {
         },
         { id: "control_id_names_a_control", status: failed("control_id_not_a_control") ? "failed" : "passed" },
         { id: "said_as_is_in_the_sentence", status: failedWithPrefix("said_as") ? "failed" : "passed" },
-        { id: "phase_forward_action", status: failedWithPrefix("phase_") ? "failed" : "passed" },
+        {
+          id: "phase_forward_action",
+          status: failed("phase_without_forward_action") || failed("phase_action_not_declared") ? "failed" : "passed",
+        },
+        {
+          id: "phase_in_system_step",
+          status: phaseInSystemStatus,
+        },
         { id: "self_heals_evidence", status: failed("self_heals_without_evidence") ? "failed" : "passed" },
         {
           id: "turn_status_release",

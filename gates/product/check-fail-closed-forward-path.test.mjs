@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The falsifier of `tools/check-fail-closed-forward-path.mjs`.
+ * The falsifier of `gates/product/check-fail-closed-forward-path.mjs`.
  *
  * red-proof: inject  make the `step_missing` branch unreachable (`if (false && member.step === null)`) ->
  *                   `a code with no family is a missing member, printed as a difference` fails and the
@@ -11,7 +11,7 @@ gate reports
  *                   it ends its own work" for a turn a crashed Host left `running` with nothing to settle
  *                   it; this gate reports `self_heals_without_evidence` naming `tavern/turn_busy` and the
  *                   missing durable reread, exit 1. Reproduced with `git archive 69b7a244^`, the same
- *                   `node tools/check-fail-closed-forward-path.mjs` invocation, and a junction for each
+ *                   `node gates/product/check-fail-closed-forward-path.mjs` invocation, and a junction for each
  *                   `node_modules` the archived tree needs; the injected copy below asserts the same shape.
  *
  * Each case turns one of the gate's findings red on a real violation, by pointing one source at a
@@ -28,14 +28,15 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, describe, test } from "node:test";
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   checkForwardPath,
   checkForwardPathOf,
-  selfHealsEvidence,
+  INTERVENTION_ONLY_DEBT,
   SOURCES,
+  selfHealsEvidence,
   turnStates,
 } from "./check-fail-closed-forward-path.mjs";
-import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const ROOT = repositoryRoot(import.meta.url);
 const WEB_ROOT = join(ROOT, "dialogue-web");
@@ -46,13 +47,21 @@ after(() => rmSync(scratch, { recursive: true, force: true }));
 
 /** A copy of one product file with one injected edit, in a directory this run owns. */
 function mutated(source, name, [from, to]) {
-  const text = readFileSync(source, "utf8");
-  assert.ok(
-    text.includes(from),
-    `${source} no longer contains ${JSON.stringify(from)}, so this injection cannot be made`,
-  );
+  return mutatedMany(source, name, [[from, to]]);
+}
+
+/** The same, with several injected edits applied in order (one shape made of two lines). */
+function mutatedMany(source, name, edits) {
+  let text = readFileSync(source, "utf8");
+  for (const [from, to] of edits) {
+    assert.ok(
+      text.includes(from),
+      `${source} no longer contains ${JSON.stringify(from)}, so this injection cannot be made`,
+    );
+    text = text.replace(from, to);
+  }
   const target = join(scratch, name);
-  writeFileSync(target, text.replace(from, to), "utf8");
+  writeFileSync(target, text, "utf8");
   return target;
 }
 
@@ -70,6 +79,17 @@ describe("check-fail-closed-forward-path", () => {
     // The population is derived, so a reader that quietly stopped finding things would still read as
     // "passed" over what little it saw: the size is pinned to a floor taken from the declarations.
     assert.ok(verdict.examined >= 100, `examined ${verdict.examined} members`);
+    // The phase axis, read as the product declares it: every phase either offers an in-system step or
+    // names only an intervention, and the one intervention-only phase is the declared debt. Ten of the
+    // nineteen phases were unread for two commits after `9682e223` wrapped `build` in `inFarm` - a
+    // reader that stops at the callee's name goes green over phases it never saw.
+    assert.ok(verdict.phases.examined > 0, "the phase population is never empty");
+    assert.equal(
+      verdict.phases.withInSystem + verdict.phases.interventionOnly,
+      verdict.phases.examined,
+      "every phase either offers an in-system step or names only interventions",
+    );
+    assert.deepEqual(verdict.phases.exempt, ["launch_failed"], "the quarantine is the one declared debt");
   });
 
   test("a family that loses its step no longer compiles", () => {
@@ -108,7 +128,13 @@ describe("check-fail-closed-forward-path", () => {
   });
 
   test("a control id that names no marker is named, with the family that claims it", () => {
-    const problemView = mutated(SOURCES.problemView, "control-id.ts", ['id: "message-delete"', 'id: "message-del"']);
+    // The pair is the anchor, not the bare id: `message-delete` is the step of more than one family
+    // (`chat_regenerate_anchor_unavailable` took it first), and an injection that lands in another
+    // family proves the reader over a family this case never meant.
+    const problemView = mutated(SOURCES.problemView, "control-id.ts", [
+      'id: "message-delete",\n    elsewhere: { said_as: "delete the message" },',
+      'id: "message-del",\n    elsewhere: { said_as: "delete the message" },',
+    ]);
     const finding = checkForwardPathOf({ problemView }).findings.find(
       (entry) => entry.code === "control_id_not_a_control",
     );
@@ -255,5 +281,112 @@ describe("check-fail-closed-forward-path", () => {
       ),
       JSON.stringify(findings),
     );
+  });
+});
+
+/**
+ * The rule this gate was missing: a step that leaves the software is not a forward path on the
+ * surface. A phase whose whole answer is one is a finding, and the one phase that needs the debt is
+ * declared with the step it is owed and an expiry the tree decides.
+ */
+describe("check-fail-closed-forward-path · the phase's in-system step", () => {
+  test("a phase whose whole answer leaves the software is named, on the shape a live run measured", () => {
+    // `6a822da9^`: a crash and the player's own quit both reached a phase whose only step was the tray
+    // quit, and a live run found a player with no button. The copy is HEAD's own file with those two
+    // `build(...)` lines put back, so the vocabulary under test is today's and the shape is history's.
+    const lifecycle = mutatedMany(SOURCES.lifecycle, "lifecycle-history.ts", [
+      [
+        'if (attemptEndedWithKnownOutcome(instance)) return build("ended_attempt_ready", {}, ["activate"]);',
+        'if (instance.status === "crashed") return build("launch_failed", {}, ["restart_gamebuddy"]);\n' +
+          '  if (instance.status === "stopped") return build("game_ended", {}, ["restart_gamebuddy"]);',
+      ],
+      [
+        '  "launch_failed",\n  "ended_attempt_ready",\n  "game_not_read",',
+        '  "launch_failed",\n  "game_ended",\n  "game_not_read",',
+      ],
+    ]);
+    const verdict = checkForwardPathOf({ lifecycle });
+    const finding = verdict.findings.find((entry) => entry.code === "phase_without_in_system_step");
+    assert.ok(finding, JSON.stringify(verdict.findings, null, 2));
+    assert.match(finding.detail, /phase\/game_ended/u);
+    assert.match(finding.detail, /"restart_gamebuddy"/u, "the step it names is what leaves the software");
+    assert.equal(verdict.status, "failed");
+    assert.equal(verdict.phases.interventionOnly, 2, "game_ended joins the quarantined launch");
+    assert.deepEqual(verdict.phases.exempt, ["launch_failed"], "only the declared debt is excused");
+  });
+
+  test("the declared debt expires when its phase gains an in-system step", () => {
+    const lifecycle = mutated(SOURCES.lifecycle, "lifecycle-paid.ts", [
+      'return build("launch_failed", {}, ["restart_gamebuddy"]);',
+      'return build("launch_failed", {}, ["reread_game"]);',
+    ]);
+    const verdict = checkForwardPathOf({ lifecycle });
+    const stale = verdict.findings.find((entry) => entry.code === "stale_intervention_only_exemption");
+    assert.ok(stale, JSON.stringify(verdict.findings, null, 2));
+    assert.match(stale.detail, /launch_failed/u);
+    assert.match(stale.detail, /now names reread_game/u, "the step that paid the debt is named");
+  });
+
+  test("the declared debt expires when the Host stops declaring the trap it rests on", () => {
+    // The entry's authority is the Host's own record: while `launch_quarantined` is trapped, a launch
+    // whose outcome nobody knows has no egress inside the Host, so the phase has nothing to press.
+    const trappedTerminals = mutated(SOURCES.trappedTerminals, "trapped-terminals.ts", [
+      "    launch_quarantined:",
+      "    launch_quarantine_proved:",
+    ]);
+    const verdict = checkForwardPathOf({ trappedTerminals });
+    const stale = verdict.findings.find((entry) => entry.code === "stale_intervention_only_exemption");
+    assert.ok(stale, JSON.stringify(verdict.findings, null, 2));
+    assert.match(stale.detail, /launch_failed/u);
+    assert.match(stale.detail, /STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS/u);
+    assert.ok(
+      verdict.findings.some(
+        (entry) => entry.code === "phase_without_in_system_step" && entry.detail.includes("phase/launch_failed"),
+      ),
+      "with the trap disproved, the phase is a finding again rather than an excused dead end",
+    );
+  });
+
+  test("the declared debt states the step it is owed and the Host terminal it rests on", () => {
+    assert.ok(INTERVENTION_ONLY_DEBT.length > 0, "the debt is a declaration, not an empty list");
+    for (const entry of INTERVENTION_ONLY_DEBT) {
+      assert.ok(entry.needs.trim().length > 0, `${entry.phase} names no in-system step a player would need`);
+      assert.ok(entry.trapped.trim().length > 0, `${entry.phase} names no Host terminal`);
+    }
+  });
+
+  test("a step both halves declare is named, because whether a player can press it would be two answers", () => {
+    const lifecycle = mutated(SOURCES.lifecycle, "lifecycle-double.ts", [
+      'export type InSystemAction =\n  | "terminal"',
+      'export type InSystemAction =\n  | "restart_gamebuddy"\n  | "terminal"',
+    ]);
+    const findings = checkForwardPathOf({ lifecycle }).findings;
+    assert.ok(
+      findings.some(
+        (entry) =>
+          entry.code === "phase_action_double_classified" &&
+          entry.detail.includes("phase/launch_failed") &&
+          entry.detail.includes('"restart_gamebuddy"'),
+      ),
+      JSON.stringify(findings),
+    );
+  });
+
+  test("a tree whose in-system vocabulary is empty is blocked, never green", () => {
+    const lifecycle = mutated(SOURCES.lifecycle, "lifecycle-no-in-system.ts", [
+      "export type InSystemAction =",
+      "export type InSystemAction = never;\nexport type UnusedInSystem =",
+    ]);
+    const verdict = checkForwardPathOf({ lifecycle });
+    assert.equal(verdict.status, "blocked", JSON.stringify(verdict.findings));
+    assert.ok(verdict.findings.some((entry) => entry.code === "in_system_vocabulary_empty"));
+  });
+
+  test("a tree that declares no phase is blocked, never green", () => {
+    const verdict = checkForwardPathOf({
+      lifecycle: emptyModule("empty-lifecycle.ts", "const GAME_SESSION_PHASES = [];"),
+    });
+    assert.equal(verdict.status, "blocked", JSON.stringify(verdict.findings));
+    assert.ok(verdict.findings.some((entry) => entry.code === "phase_population_empty"));
   });
 });
