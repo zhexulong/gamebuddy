@@ -43,6 +43,13 @@ const BUDGET = Object.freeze({
   registrationMs: 20_000,
   activationMs: 120_000,
   launchMs: 300_000,
+  /**
+   * The SECOND attempt's own wait (driver X). A retry's world has to launch, load the run's own save and build
+   * the companion's cabin before any cabin read can answer, and the same run measured that taking 4m40s from the
+   * launch press - longer than `launchMs`, which is a FIRST launch's budget and ends when the Host has published
+   * an instance rather than when the world inside it is readable.
+   */
+  retryAttachMs: 900_000,
   /** How long an instance that already exists gets to leave the state this driver found it in. */
   plateauMs: LAUNCH_PLATEAU_MS,
   /** One real provider turn. */

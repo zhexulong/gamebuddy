@@ -267,6 +267,14 @@ async function driveSecondAttempt({ page, say, record, problems }) {
   }
 
   // ---- the launch, and the guide's third step, in one wait ----
+  //
+  // THE LAST REFRESH IS HELD FOR THE WORLD, and that is the whole point of this loop's shape. Measured
+  // 2026-11-24 at `b7c8de04` (`.tmp/lane-gen2prove.md` §8d): the panel's own bounded read window ran
+  // `8/30 -> 16/30 -> 25/30` and drew `cabin-launch-wait-expired`, while the retry's world published
+  // `state: ready` three and a half minutes AFTER that window closed - so every press this driver had made
+  // asked a world that had not loaded its save yet, and no press happened once it had. Two presses may be spent
+  // on a launch that is still loading; the third waits until the world says it is ready (`readAttemptWorld`,
+  // named by the registration's own attempt pointer), which is the state the panel's sentence leaves the player.
   const attachBegan = Date.now();
   let state = await page.evaluate(S.readGameState);
   let confirms = 0;
@@ -274,9 +282,22 @@ async function driveSecondAttempt({ page, say, record, problems }) {
   let refreshes = 0;
   let lastRefreshAtMs = attachBegan;
   let handoff = null;
-  while (Date.now() - attachBegan < S.BUDGET.launchMs) {
+  let world = null;
+  let worldReadyAtMs = null;
+  let reservedPressAtMs = null;
+  while (Date.now() - attachBegan < S.BUDGET.retryAttachMs) {
     if (state.ok === true && state.attachmentStatus === "attached") break;
     handoff = await page.evaluate(SECOND.readSecondAttemptHandoff);
+    world = SECOND.readAttemptWorld({
+      declaredDataRoot,
+      bootstrapCorrelation: SECOND.readRegistrationGeneration(declaredDataRoot).bootstrapCorrelation,
+    });
+    if (world.read === true && world.state === "ready" && worldReadyAtMs === null) {
+      worldReadyAtMs = Date.now();
+      say(
+        `the retry's world published ready after ${String(worldReadyAtMs - attachBegan)}ms (${JSON.stringify(world)}); the panel's own refresh control is what is left to press`,
+      );
+    }
     const offer =
       handoff.present === true
         ? (handoff.choices.find(
@@ -295,11 +316,15 @@ async function driveSecondAttempt({ page, say, record, problems }) {
       handoff.present === true &&
       handoff.choices.length === 0 &&
       refreshes < 3 &&
-      Date.now() - lastRefreshAtMs >= 20_000
+      Date.now() - lastRefreshAtMs >= 20_000 &&
+      (refreshes < 2 || (world.read === true && world.state === "ready"))
     ) {
       const refresh = handoff.secondary.find((control) => control.visible === true && control.disabled !== true) ?? null;
       if (refresh !== null) {
-        say(`no cabin offer yet (${JSON.stringify(handoff.launchLine)}); pressing the handoff's own ${JSON.stringify(refresh.name)}`);
+        if (refreshes === 2) reservedPressAtMs = Date.now();
+        say(
+          `no cabin offer yet (${JSON.stringify(handoff.launchLine)}); pressing the handoff's own ${JSON.stringify(refresh.name)}${refreshes === 2 ? ` - the refresh held for the world, which reads ${JSON.stringify(world)}` : ""}`,
+        );
         await page
           .locator('[data-testid="game-surface"] section.stardew-cabin-handoff button.game-secondary-action')
           .first()
@@ -316,8 +341,11 @@ async function driveSecondAttempt({ page, say, record, problems }) {
     presses,
     confirms,
     refreshes,
+    reservedPressAtMs,
     state,
     handoff,
+    world,
+    worldReadyAtMs,
     registration,
     elapsedMs: Date.now() - attachBegan,
   });
@@ -333,7 +361,7 @@ async function driveSecondAttempt({ page, say, record, problems }) {
         confirms,
       })}`,
     );
-  else say(`the second attempt did not attach within ${String(S.BUDGET.launchMs)}ms: ${JSON.stringify(state)}${problemLine("game/launch")}`);
+  else say(`the second attempt did not attach within ${String(S.BUDGET.retryAttachMs)}ms: ${JSON.stringify(state)}; the world it waited for read ${JSON.stringify(world)}${problemLine("game/launch")}`);
   return { kind: "pressed", presses, before, staged, after: state, registration };
 }
 

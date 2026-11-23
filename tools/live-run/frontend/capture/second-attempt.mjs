@@ -192,12 +192,60 @@ export function readRegistrationGeneration(declaredDataRoot) {
       // The ended attempt is the one whose pointer is still held; a record with none is a registration whose
       // attempt was handed back, which is the other shape a reader has to be able to tell apart.
       holdingAnAttempt: record?.activeAttempt !== null && record?.activeAttempt !== undefined,
+      // The attempt's own directory name, and the only pointer that tells a RETRY's world from the ended
+      // attempt's: `readAttemptWorld` reads the world through it.
+      bootstrapCorrelation:
+        typeof record?.activeAttempt?.bootstrapCorrelation === "string"
+          ? record.activeAttempt.bootstrapCorrelation
+          : null,
       file,
     });
   } catch (error) {
     return Object.freeze({
       read: false,
       reason: `registration_unreadable:${String(error?.message ?? error).slice(0, 160)}`,
+      file,
+    });
+  }
+}
+
+/**
+ * What the WORLD this attempt launched says about itself: the attempt's own session document.
+ *
+ * The file is named by the registration's pointer (`activeAttempt.bootstrapCorrelation`), not by a directory
+ * scan on purpose. On a retry the ENDED attempt's session document is still on disk and still says
+ * `state: ready` - it was a healthy world until the scenario ended it - so "some attempt is ready" answers
+ * before the retry's world exists. The attempt's directory is `<declaredDataRoot>/stardew-private-bootstrap/
+ * <bootstrapCorrelation>/`, which is the same tree `run-records.cjs` reads its four records from.
+ *
+ * `state` is the Mod's own word for the world it holds: `launching` until it publishes `ready` with the
+ * cabins it built. The driver asks this so the panel's own refresh control is pressed when the world it is
+ * waiting for is actually there, instead of when a fixed number of reads has been spent.
+ */
+export function readAttemptWorld({ declaredDataRoot, bootstrapCorrelation }) {
+  if (typeof declaredDataRoot !== "string" || declaredDataRoot.length === 0)
+    return Object.freeze({ read: false, reason: "no_declared_data_root" });
+  if (typeof bootstrapCorrelation !== "string" || bootstrapCorrelation.length === 0)
+    return Object.freeze({ read: false, reason: "no_attempt_pointer" });
+  const file = path.join(
+    declaredDataRoot,
+    "stardew-private-bootstrap",
+    bootstrapCorrelation,
+    "session",
+    "stardew-session.json",
+  );
+  try {
+    const document = JSON.parse(readFileSync(file, "utf8"));
+    return Object.freeze({
+      read: true,
+      state: typeof document?.state === "string" ? document.state : null,
+      launchGeneration: typeof document?.launchGeneration === "string" ? document.launchGeneration : null,
+      file,
+    });
+  } catch (error) {
+    return Object.freeze({
+      read: false,
+      reason: `session_document_unreadable:${String(error?.message ?? error).slice(0, 160)}`,
       file,
     });
   }
