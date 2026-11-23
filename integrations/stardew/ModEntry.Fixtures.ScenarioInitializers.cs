@@ -856,7 +856,7 @@ public sealed partial class ModEntry
     {
         (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalChestFixtureSpot(farm);
         if (spot is null) throw new InvalidOperationException("fixture_native_local_dress_mannequin_tile_missing");
-        StardewValley.Objects.Mannequin mannequin = new("Mannequin");
+        StardewValley.Objects.Mannequin mannequin = CreateNativeLocalMannequin();
         farm.objects.Add(spot.Value.TargetTile, mannequin);
         if (!farm.objects.TryGetValue(spot.Value.TargetTile, out StardewValley.Object? placed) || !ReferenceEquals(placed, mannequin)) throw new InvalidOperationException("fixture_native_local_dress_mannequin_placement_failed");
         Item clothing = ItemRegistry.Create("(H)0", 1);

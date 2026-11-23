@@ -113,7 +113,7 @@ public sealed class PlaySessionFixturePlacementTests
         Point start = new(5, 5);
         List<Vector2> footprint = BarnFootprint(origin);
         List<Point> footprintTiles = footprint.Select(tile => new Point((int)tile.X, (int)tile.Y)).ToList();
-        HashSet<Point> held = PlaySessionFixturePlacement.TilesHeldByBuilding(footprint, door);
+        HashSet<Point> held = PlaySessionFixturePlacement.TilesHeldByBuilding(footprint, door, Array.Empty<Point>());
 
         // The footprint entire, plus the ring - the tiles the ring shares with the footprint are the same tiles.
         held.Should().Contain(footprintTiles, "the barn's own ground is not placeable");

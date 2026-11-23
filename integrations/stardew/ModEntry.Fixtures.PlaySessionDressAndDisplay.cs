@@ -155,6 +155,39 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
+    /// The display mannequin, built from an id the game's own `Data/Mannequins` sheet lists.
+    ///
+    /// <para>
+    /// THE SHEET'S KEYS ARE NOT "Mannequin". Measured 2026-11-23 against the target install's own
+    /// `Content/Data/Mannequins.xnb`: `MannequinMale`, `MannequinFemale`, `CursedMannequinMale`, `CursedMannequinFemale`.
+    /// A mannequin built from the literal "Mannequin" has no row, `GetMannequinData()` answers null, and `Mannequin.draw`
+    /// throws inside `GetFarmerForRendering` - `SMAPI-crash.txt` at 07:46:58, once per frame, until the sprite batch could
+    /// not be begun again: a fixture object the engine cannot draw, standing in the room the day begins in.
+    /// </para>
+    ///
+    /// <para>
+    /// SO THE ID IS THE DATA'S, resolved the way <see cref="ResolvePlaySessionWearable"/> resolves the wardrobe: the `(M)`
+    /// type definition is asked for the ids it lists and its own `CreateItem` builds the candidate, so no id is typed
+    /// here. The candidate is admitted only when the row behind it exists - the exact lookup `GetMannequinData` performs -
+    /// and when that row is not cursed: a cursed mannequin emits ghosts on a random draw and swaps clothes with the farmer
+    /// overnight, which a fixture may not hand the world.
+    /// </para>
+    /// </summary>
+    private static StardewValley.Objects.Mannequin CreateNativeLocalMannequin()
+    {
+        IItemDataDefinition definition = ItemRegistry.RequireTypeDefinition("(M)");
+        foreach (string itemId in definition.GetAllIds())
+        {
+            if (definition.GetData(itemId) is not { } data) continue;
+            if (definition.CreateItem(data) is not StardewValley.Objects.Mannequin mannequin) continue;
+            if (!DataLoader.Mannequins(Game1.content).TryGetValue(mannequin.ItemId, out var row) || row is null || row.Cursed)
+                continue;
+            return mannequin;
+        }
+        throw new InvalidOperationException("fixture_native_local_play_session_mannequin_unresolved");
+    }
+
+    /// <summary>
     /// One display target standing in the room the day begins in - a mannequin, or a sign when no tile of the room
     /// publishes a mannequin.
     ///
@@ -226,7 +259,7 @@ public sealed partial class ModEntry
                 if (!room.isTileOnMap(tile) || room.objects.ContainsKey(tile) || room.terrainFeatures.ContainsKey(tile))
                     continue;
                 StardewValley.Object target = mannequin
-                    ? new StardewValley.Objects.Mannequin("Mannequin")
+                    ? CreateNativeLocalMannequin()
                     : new StardewValley.Objects.Sign(tile, "Sign");
                 room.objects.Add(tile, target);
                 bool published = mannequin

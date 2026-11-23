@@ -57,6 +57,9 @@ public sealed class ModEntryFixtureBoundaryTests
     // cannot sever the door->field route again.
     "NativeLocalMultiDayDoorStandingSpot", "AssertNativeLocalMultiDayHomeReachable", "AssertReachable",
     "NativeLocalMultiDayWalkable",
+    // The one walk from the farmhouse's porch to the animal house's, as the tiles it crosses: what the props are held
+    // off and what the arm-time refusal is measured by, so reserving the road and refusing it cannot be two questions.
+    "NativeLocalMultiDayAnimalPorchRoad",
     // Whether a terrain feature on a tile actually stops a farmer, asked of the feature itself: the rule above defers to
     // it instead of refusing every kind of terrain feature, which is how a tilled field left the walkable map.
     "BlocksAFarmer",
@@ -89,19 +92,21 @@ public sealed class ModEntryFixtureBoundaryTests
         // path that marks a map spawn, which is the gate the engine's forage pickup branch opens on - and reads the
         // marker back off the map. It lives in the fixtures partial because it seeds a world.
         "PlacePlaySessionForage",
-        // The play-session world's animal Given: the coop it places and the one adult animal inside it - plus the
-        // question that keeps that coop off the door->field route, asked with the multi-day predicate above.
-        "InstallNativeLocalPlaySessionAnimalGiven", "TryFindNativeLocalPlaySessionAnimalSite",
-        // The ground a building is sited on: the footprint it would stand on, and the door's approach (registered once,
-        // so the ring the search asks about and the ring the day walks to cannot drift apart). The play-session Given
-        // spreads no soil, so there is no fixture-owned soil to lift: what the emptiness rules see on a field tile is
-        // what the MAP put there.
-        "PlaySessionAnimalFootprint", "PlaySessionAnimalDoorApproach",
-        // The refusal reading: one tally per rule, and the rule name inside a rejection message.
-        "CountPlaySessionAnimalRefusal", "PlaySessionAnimalRule",
-        // How far a refused footprint got, so a map-level refusal names the least-bad candidate rather than whichever
-        // one the search met first (`arm_refused` beat `no_approach` beat `field_component_too_small`).
-        "PlaySessionAnimalRefusalProgress",
+        // The play-session world's animal Given: the barn it stands beside the farmhouse, built from the
+        // `Data/Buildings` row the engine itself resolves, plus the row lookup that refuses by name when the table has
+        // no such entry (the mannequin's own rule: a fixture authors nothing the engine cannot place).
+        "InstallNativeLocalPlaySessionAnimalGiven", "RequireNativeLocalPlaySessionAnimalBuildingData",
+        // The ground a building is sited on: the footprint it would stand on, the door's approach, and the FIXED site a
+        // few tiles from the farmhouse door that replaced the farm-wide search (six launches died on sites that search
+        // picked). The play-session Given spreads no soil, so there is no fixture-owned soil to lift.
+        "PlaySessionAnimalFootprint", "PlaySessionAnimalDoorApproach", "PlaySessionAnimalFixedSite",
+        // WHAT STANDS ON ONE FOOTPRINT TILE, and the clearing that takes it out of the layer the classifier read it
+        // from. Registered for the same reason every other fixture member is: they live in this partial, and they are the
+        // two halves of the rule that stops a weed being counted as a wall the farm does not have.
+        "PlaySessionAnimalFootprintWall", "ClearPlaySessionAnimalFootprint",
+        // One pass over a footprint (so the admission and the re-ask cannot drift), and the footprint + door ring the
+        // house owns cleared as one set of tiles.
+        "PlaySessionAnimalFootprintFirstWall", "ClearPlaySessionAnimalSite",
         // The placeable check: the coop's own footprint, its door's approach and the arm-time assertion itself, all
         // measured on the real building standing on the real farm rather than on a footprint simulated with stones.
         "RejectsThePlaySessionAnimalBuilding",
@@ -113,6 +118,10 @@ public sealed class ModEntryFixtureBoundaryTests
         // the display Given as a local function, because a tuple-returning helper is not a shape this scanner can see.
         "InstallNativeLocalPlaySessionDressAndDisplayGiven", "InstallNativeLocalPlaySessionWardrobeGiven",
         "ResolvePlaySessionWearable", "InstallNativeLocalPlaySessionDisplayGiven", "IsEmptyDisplayTarget",
+        // The display mannequin itself, built from an id `Data/Mannequins` lists: a mannequin whose id has no row cannot
+        // be drawn (`Mannequin.draw` -> `GetFarmerForRendering` threw on every frame of the play-session farmhouse), and
+        // the single-action mannequin scenario builds the same object, so both fixtures take this one resolver.
+        "CreateNativeLocalMannequin",
         "InitializeNativeLocalPetFixture", "InitializeNativeLocalMoveStallProbeFixture",
         // The declared hand: the fixture config's one free-text Given, placed after the scenario's own Given so no
         // scenario initializer can clear it. Both halves live here for the same reason every other initializer does.

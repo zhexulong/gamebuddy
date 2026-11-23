@@ -814,23 +814,20 @@ public sealed partial class ModEntry : Mod
         // an animal that can supply what the day's third step collects (see `ModEntry.Fixtures.PlaySessionAnimal.cs`).
         //
         // It has to be FIRST because a building is the one thing here that needs a FOOTPRINT - seven by four tiles of
-        // ground with nothing on it and a door approach the start can walk to - while every prop loop below is ordered
-        // nearest-the-start-first (`PlaySessionFixturePlacement`), so those props spend exactly the open ground around
-        // the crossroads the house has to use. Measured `round93` (2026-11-22, the day the coop became a barn): with
-        // this Given last, the search found `free_footprints=0` on a farm whose props had already taken that pocket, and
-        // a run that never arms measures nothing. The barn needs ten tiles more than the coop it replaced, which is the
-        // whole difference between a 6x3 footprint the props left room for and a 7x4 one they did not.
+        // ground and a door ring - while every prop loop below is ordered nearest-the-start-first
+        // (`PlaySessionFixturePlacement`). Measured `round93` (2026-11-22, the day the coop became a barn): with this
+        // Given last, its site search found `free_footprints=0` on a farm whose props had already taken the pocket it
+        // was looking at, and a run that never arms measures nothing.
         //
-        // Nothing else about it moves: the house is measured against the same world (the ground the fixture has left
-        // untilled, the door, the shipping bin, the start tile) and with the same predicate as before, so a farm that
-        // genuinely cannot host it still refuses BY NAME (`fixture_map_cannot_hold_animal_building` when there was
-        // ground and no road, `fixture_native_local_play_session_animal_site_missing` when there was no ground at all)
-        // rather than quietly dropping the animal half the rotation still asks for.
+        // THE SITE ITSELF IS NO LONGER NEGOTIATED: it is a fixed offset from the farmhouse door, judged by the engine's
+        // own placement rule, so a world that cannot hold the barn refuses BY NAME
+        // (`fixture_native_local_play_session_animal_site_blocked` with the tile and the rule, or the row missing from
+        // `Data/Buildings`) rather than quietly dropping the animal half the rotation still asks for.
         //
-        // AND THE GROUND IS JUDGED AS THE FARM IT IS, not as the farm nobody has swept: the search now clears what a
-        // published action clears (see `PlaySessionAnimalFootprintWall`) and says how many tiles it took
-        // (`cleared=`), because `object=2332` of 5195 candidates on `round93` was the farm's own debris and a player
-        // builds on a swept patch. The barn's ten extra tiles were only half of that refusal.
+        // AND THE GROUND IS JUDGED AS THE FARM IT IS, not as the farm nobody has swept: the Given clears what a
+        // published action clears (see `PlaySessionAnimalFootprintWall`) over the footprint AND the door ring, and says
+        // how many tiles it took (`cleared=`), because `object=2332` of 5195 candidates on `round93` was the farm's own
+        // debris and a player builds on a swept patch.
         InstallNativeLocalPlaySessionAnimalGiven(player, farm, startTile, requiredReachable);
         // The hay belongs to that house and travels in the pack rather than on the ground, so it is placed with the
         // animal: the two are one `animals_pets` Given and nothing may arm half of it.

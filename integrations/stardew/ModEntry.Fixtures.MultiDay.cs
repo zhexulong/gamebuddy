@@ -86,15 +86,134 @@ public sealed partial class ModEntry
     }
 
     /// <summary>
-    /// The ROAD from the farmhouse's own porch to the animal house's, which the animal house's four neighbours do not
-    /// answer.
+    /// The road from the farmhouse's own porch to the animal house's, as the TILES a cardinal walk crosses — the one
+    /// answer to "where is the road" this fixture has, so reserving it and refusing it cannot be two questions.
     ///
     /// <para>
-    /// The flood is aimed at the building's DOOR TILE and that IS the ring: <see cref="StardewBodyController.AssessReachability"/>
-    /// calls a route found when its search reaches a CARDINAL NEIGHBOUR of the target, and those four tiles are exactly
-    /// what <see cref="PlaySessionAnimalDoorApproach"/> reserves. One span of the map's ground instead of four, asked
-    /// with the same predicate the day is judged by.
+    /// WHY TILES AND NOT A VERDICT. A reachability verdict refuses a world that cannot be walked; it cannot KEEP a
+    /// road that can. The play-session props are placed after this Given, so a road that is open when the animal house
+    /// is sited can be spent on scenery before the day ever walks it. Measured 2026-11-23, the launch after the
+    /// mannequin fix: `play-session dropped 1 prop(s) a later placement cut off: 9,33`, then
+    /// `animal_building_unreachable_from_house:door=66,15;porch=6,37` — the building stood, its road was open, and a
+    /// prop took a tile of it. The tiles are what the caller holds against the props; the blocked reading is what the
+    /// site search refuses a candidate by, and both come from this one walk.
     /// </para>
+    ///
+    /// <para>
+    /// THE ARRIVAL RULE IS THE PORCH ASSERTION'S: a walk ends on one of the four tiles BESIDE the door, because the door
+    /// tile is a building tile nobody stands on. <see cref="StardewBodyController.AssessReachability"/> answered that
+    /// question by flood and answered it correctly; this walk asks the same question of the same predicate and hands
+    /// back the ground as well — a second flood would be a second definition of "the road", which is exactly the class
+    /// that severed the door→field route on 2026-11-09.
+    /// </para>
+    ///
+    /// <para>
+    /// THREE ANSWERS, KEPT APART: <see cref="Tiles"/> is a road; <see cref="BlockedAt"/> with
+    /// <see cref="BlockedBy"/> is a map that walls it, named in the vocabulary a refusal receipt publishes
+    /// (`building:Barn`, `object:(O)390`, `off_map`); <see cref="Unmeasured"/> is a flood that gave up before it had an
+    /// answer, which is neither of the other two.
+    /// </para>
+    /// </summary>
+    internal sealed record NativeLocalMultiDayRoad(
+        IReadOnlyList<Point> Tiles,
+        Point BlockedAt,
+        string BlockedBy,
+        bool Unmeasured);
+
+    /// <summary>The planner's own four steps (`PathFindController.Directions`), which every walk here is made of.</summary>
+    private static readonly Point[] NativeLocalMultiDaySteps =
+    {
+        new(0, -1), new(1, 0), new(0, 1), new(-1, 0),
+    };
+
+    /// <summary>
+    /// ONE walk from the farmhouse's own porch to the animal house's, over the caller's walkability rule, as the tiles
+    /// it crosses (see <see cref="NativeLocalMultiDayRoad"/> for why the tiles are the answer and why there is only one
+    /// walk).
+    ///
+    /// <para>
+    /// `maxVisited` is the same budget the porch assertion always used, and exceeding it is
+    /// <see cref="NativeLocalMultiDayRoad.Unmeasured"/> rather than a refusal: a search that gave up is not a wall.
+    /// </para>
+    /// </summary>
+    internal static NativeLocalMultiDayRoad NativeLocalMultiDayAnimalPorchRoad(
+        Point houseDoor,
+        Point porch,
+        Func<Point, bool> walkable,
+        Func<Point, string> tileKind)
+    {
+        const int maxVisited = 8000;
+        static bool IsPorchStep(Point tile, Point target) =>
+            tile != target && Math.Abs(tile.X - target.X) + Math.Abs(tile.Y - target.Y) == 1;
+        static int Chebyshev(Point left, Point right) =>
+            Math.Max(Math.Abs(left.X - right.X), Math.Abs(left.Y - right.Y));
+        static List<Point> Unwind(Dictionary<Point, Point> previous, Point start, Point reached)
+        {
+            List<Point> tiles = new() { reached };
+            for (Point tile = reached; tile != start; tile = previous[tile])
+                tiles.Add(previous[tile]);
+            tiles.Reverse();
+            return tiles;
+        }
+
+        // A door one step from the porch needs no walk at all: the tile it stands on IS the road.
+        if (houseDoor == porch || IsPorchStep(houseDoor, porch))
+            return new NativeLocalMultiDayRoad(new[] { houseDoor }, houseDoor, string.Empty, false);
+
+        Dictionary<Point, Point> previous = new();
+        HashSet<Point> visited = new() { houseDoor };
+        Queue<Point> pending = new();
+        pending.Enqueue(houseDoor);
+        // The frontier the walk got closest with, tracked exactly as the flood did, so a refusal names the same tile it
+        // named before this function existed.
+        Point? closest = null;
+        int closestDistance = Chebyshev(houseDoor, porch);
+        while (pending.Count > 0)
+        {
+            Point current = pending.Dequeue();
+            foreach (Point offset in NativeLocalMultiDaySteps)
+            {
+                Point next = new(current.X + offset.X, current.Y + offset.Y);
+                if (!walkable(next) || !visited.Add(next))
+                    continue;
+                previous[next] = current;
+                if (IsPorchStep(next, porch))
+                    return new NativeLocalMultiDayRoad(Unwind(previous, houseDoor, next), next, string.Empty, false);
+                int distance = Chebyshev(next, porch);
+                if (distance < closestDistance)
+                {
+                    closest = next;
+                    closestDistance = distance;
+                }
+                if (visited.Count > maxVisited)
+                    return new NativeLocalMultiDayRoad(Array.Empty<Point>(), houseDoor, string.Empty, true);
+                pending.Enqueue(next);
+            }
+        }
+
+        // NO ROAD: the blocking tile is one of the frontier's four steps — the ground the road would have had to cross,
+        // nearest the porch — and `why=none` when nothing unwalkable borders it.
+        Point frontier = closest ?? houseDoor;
+        Point blockedAt = frontier;
+        string blockedBy = "none";
+        int nearestPorch = int.MaxValue;
+        foreach (Point offset in NativeLocalMultiDaySteps)
+        {
+            Point neighbour = new(frontier.X + offset.X, frontier.Y + offset.Y);
+            if (walkable(neighbour))
+                continue;
+            int distance = Chebyshev(neighbour, porch);
+            if (distance >= nearestPorch)
+                continue;
+            nearestPorch = distance;
+            blockedAt = neighbour;
+            blockedBy = tileKind(neighbour);
+        }
+        return new NativeLocalMultiDayRoad(Array.Empty<Point>(), blockedAt, blockedBy, false);
+    }
+
+    /// <summary>
+    /// The ROAD from the farmhouse's own porch to the animal house's, refused by name when there is none.
     ///
     /// <para>
     /// THE REFUSAL NAMES THE TILE THE ROAD STOPPED AT AND WHAT STANDS THERE. A boolean is what let this through: the
@@ -109,42 +228,17 @@ public sealed partial class ModEntry
         Func<Point, bool> walkable,
         Func<Point, string> tileKind)
     {
-        // `findClosestReachable: false` is the shape this needs: a porch the road reaches returns as soon as the flood
-        // meets one of its approach tiles, while an unreachable one still enumerates the component and hands back the
-        // tile it got closest with. The other way round enumerates on every site the animal Given's search tries.
-        ReachabilityVerdict? verdict = StardewBodyController.AssessReachability(
-            houseDoor,
-            porch,
-            walkable,
-            maxVisited: 8000,
-            findClosestReachable: false);
-        if (verdict is not { } assessed)
+        NativeLocalMultiDayRoad road = NativeLocalMultiDayAnimalPorchRoad(houseDoor, porch, walkable, tileKind);
+        if (road.Unmeasured)
         {
             throw new InvalidOperationException(
                 $"fixture_native_local_multi_day_home_reachability_unknown:what=animal_porch;door={houseDoor.X},{houseDoor.Y};target={porch.X},{porch.Y}");
         }
-        if (!assessed.TargetEnclosed)
+        if (road.Tiles.Count > 0)
             return;
-        Point frontier = assessed.ClosestToTarget ?? houseDoor;
-        // The blocking tile is one of the frontier's four steps: the ground the road would have had to cross, nearest
-        // the porch. The steps are the planner's own cardinal set (`PathFindController.Directions`), the same four the
-        // door ring is drawn from.
-        Point blockedAt = frontier;
-        int nearestPorch = int.MaxValue;
-        foreach (Point offset in new[] { new Point(0, -1), new Point(0, 1), new Point(-1, 0), new Point(1, 0) })
-        {
-            Point neighbour = new(frontier.X + offset.X, frontier.Y + offset.Y);
-            if (walkable(neighbour))
-                continue;
-            int distance = Math.Max(Math.Abs(neighbour.X - porch.X), Math.Abs(neighbour.Y - porch.Y));
-            if (distance >= nearestPorch)
-                continue;
-            nearestPorch = distance;
-            blockedAt = neighbour;
-        }
         throw new InvalidOperationException(
             $"animal_building_unreachable_from_house:door={houseDoor.X},{houseDoor.Y};porch={porch.X},{porch.Y};"
-                + $"blocked_at={blockedAt.X},{blockedAt.Y};why={(nearestPorch == int.MaxValue ? "none" : tileKind(blockedAt))}");
+                + $"blocked_at={road.BlockedAt.X},{road.BlockedAt.Y};why={road.BlockedBy}");
     }
 
     /// <summary>

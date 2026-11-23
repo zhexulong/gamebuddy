@@ -39,6 +39,14 @@ public sealed class FarmhandActionSurfaceExportTests
                 new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())));
             projection.Effect.Should().Be(descriptor.Effect);
             projection.Postcondition.Name.Should().Be(descriptor.Postcondition);
+            // The effects are part of the equality for the reason the argument descriptions are: the artifact is the only
+            // descriptor a consumer outside a running game can read, so a projection that dropped the declaration would
+            // leave the compiler answering "no effect" for every action in the catalogue.
+            descriptor.Effects.Should().NotBeNull($"the registration {source.ActionId} states its effects or why it has none");
+            projection.Effects.Should().NotBeNull();
+            projection.Effects!.None.Should().Be(descriptor.Effects!.None);
+            projection.Effects.Declared.Select(effect => (effect.Class, effect.Subject, effect.ObservedBy)).Should()
+                .Equal(descriptor.Effects.Declared.Select(effect => (effect.Class.ToWireValue(), effect.Subject, effect.ObservedBy)));
         }
     }
 
@@ -65,7 +73,10 @@ public sealed class FarmhandActionSurfaceExportTests
             new Dictionary<string, string>(),
             Array.Empty<FarmhandActionResourceTemplateClaim>(),
             "read",
-            "observation_complete"));
+            "observation_complete",
+            // A read-only action is the one row whose effects are answered by its own `effect`: it returns a reading and
+            // nothing a later step can require, which is what `observation_only` says.
+            Effects: new FarmhandActionEffects(Array.Empty<FarmhandActionEffect>(), FarmhandActionEffects.ObservationOnly)));
     }
 
     [Fact]
@@ -132,6 +143,10 @@ public sealed class FarmhandActionSurfaceExportTests
             // would use (`build_farm_building`). It is a CONDITIONAL member, not a flag on every row: the Mod omits it
             // when it is false, so its presence is the claim and its absence says the counter was used.
             if (action.TryGetProperty("synthetic", out _)) declared.Add("synthetic");
+            // `effects` is on EVERY registration and is the LAST member of the record, not only on the rows that declare a
+            // class: the reason a row has none is the declaration an empty list would otherwise be silent about, so its
+            // absence is a defect rather than a shape.
+            declared.Add("effects");
             action.EnumerateObject().Select(property => property.Name).Should().Equal(declared);
             action.GetProperty("resourceTemplate").EnumerateObject().Select(property => property.Name)
                 .Should().Equal("claims");

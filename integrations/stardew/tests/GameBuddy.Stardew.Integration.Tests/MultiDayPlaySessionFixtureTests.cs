@@ -29,13 +29,15 @@ public sealed class MultiDayPlaySessionFixtureTests
     /// the single file would now fail on a fact that still holds. The set is derived from the directory, so the next
     /// split cannot leave this reading a file that no longer contains the fixture.
     /// </summary>
-    private static string ReadFixtureSource() => string.Join(
-        "\n",
+    private static IReadOnlyList<string> FixtureSourcePaths() =>
         Directory.GetFiles(
                 Path.Combine(Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, RepositoryRelativeRoot)), "integrations", "stardew"),
                 "ModEntry.Fixtures*.cs")
             .OrderBy(path => path, StringComparer.Ordinal)
-            .Select(File.ReadAllText));
+            .ToArray();
+
+    private static string ReadFixtureSource() =>
+        string.Join("\n", FixtureSourcePaths().Select(File.ReadAllText));
 
     private static string ReadModConfigSource() =>
         File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "ModConfig.cs")));
@@ -247,7 +249,7 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         given.Should().Contain("tile => NativeLocalMultiDayTileKind(farm, tile)");
         // The refusal names the tile the road stopped at and what stands there: a bare boolean is what let round93 arm.
         given.Should().Contain("animal_building_unreachable_from_house:door=");
-        given.Should().Contain("blocked_at={blockedAt.X},{blockedAt.Y};why=");
+        given.Should().Contain("blocked_at={road.BlockedAt.X},{road.BlockedAt.Y};why=");
         // The kind is the layer a refusal receipt publishes as `blocked_by`, not a second table of tile kinds.
         given.Should().Contain("StardewBodyController.DescribeTargetOccupant(");
         // A world with no animal house to walk to is not one this assertion may pass silently.
@@ -299,86 +301,59 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
     }
 
     [Fact]
-    public void AWorldWithNoFreeFootprintSaysWhichGateRefusedIt()
+    public void TheAnimalHouseIsBuiltFromTheEngineTableAtAFixedSiteNearTheFarmhouse()
     {
-        // `free_footprints=0` is not an answer to anything: it reads the same whether the farm has no room left or one
-        // of the five rules refuses every tile in the world. round93's refusal was exactly that line, and its cause
-        // could only be found by re-reading this search - it cost three relaunches. Each gate that can refuse a
-        // footprint tile is therefore named with the tile it refused, and every refusal is COUNTED per rule, so the
-        // log says "one rule eliminated everything" instead of leaving an operator to guess.
-        //
-        // THE RULES ARE NOT A LIST IN THIS FILE ANY MORE. A tile is judged by what the map holds (`TileOccupancy.Of`) and
-        // by whether a published action clears it (`ClearingActionSurface.ClearersOf` over the catalogue), so the words a
-        // refusal prints are the vocabulary's own - a weed stopped being a wall, and asking a hand-written set of gate
-        // names here would keep passing while the search answered a different question. What is pinned is that the search
-        // asks THOSE TWO authorities and prints the tile and the rule it refused, which is what makes the reading
-        // diagnosable. The population behaviour is `AnimalBuildingSiteGroundTests`'.
-        string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
+        // SIX LAUNCHES DIED ON A SEARCHED SITE (2026-11-22/23): no ground at `56,11` (the fixture's own soil), then no
+        // vacancy under the props, then `object=2332` of 5195 candidates counted as walls, and finally a barn whose door
+        // stood sixty tiles from the farmhouse porch (`animal_building_unreachable_from_house:door=66,15;porch=6,37`).
+        // Each repair answered a footprint the search had picked. The fixture now GIVES the site, the way a player chooses
+        // where a barn goes before buying it - and it builds the barn the way the mannequin taught a fixture must build
+        // anything it authors: from the engine's own data table.
+        string given = InitializerBody("private void InstallNativeLocalPlaySessionAnimalGiven(");
         string source = ReadFixtureSource();
-        // The first wall of a footprint is asked ONCE per candidate through one helper, so the admission and the re-ask
-        // after the clearing cannot break at different tiles: `PlaySessionAnimalFootprintWall` is the classifier, and this
-        // is the loop over the footprint that calls it.
-        search.Should().Contain(
-            "PlaySessionAnimalFootprintFirstWall(farm, footprint, out Vector2 refusedTile, out bool clearing)",
-            "every footprint tile is judged by the one classifier, not by a presence test beside it");
-        search.Should().NotContain("farm.objects.ContainsKey",
-            "an object being there is not a reason the house cannot be built: what clears it is asked instead");
-        string firstWall = InitializerBody("private static string? PlaySessionAnimalFootprintFirstWall(");
-        firstWall.Should().Contain("PlaySessionAnimalFootprintWall(location, tile, out _, out string clearer)");
-        firstWall.Should().Contain("clearing |= clearer.Length > 0;", "a tile a published action opens is clearing, not a wall");
-        source.Should().Contain("TileOccupancy.Of(location, (int)tile.X, (int)tile.Y)",
-            "the occupant word is the one the rectangle query and the `where.occupant` filter answer in");
-        source.Should().Contain("ClearingActionSurface.ClearersOf(occupant, FarmhandActionCatalog.Registrations)",
-            "whether that occupant is a wall is the catalogue's own `Clears` declaration, not a second table");
-        search.Should().Contain("blocked=", "the refusal publishes the blocked reasons, not only the free count");
-        search.Should().Contain("@{refusedTile.X},{refusedTile.Y}", "a refusal names the tile it refused, not only a code");
-        // The tally, under the SAME names the gates answer with - one spelling per fact.
-        search.Should().Contain("eliminated=", "the refusal counts the candidates each rule eliminated");
-        search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, refusal)");
-        search.Should().Contain(
-            "string rule = PlaySessionAnimalRule(rejection);",
-            "a candidate that got as far as the probe is counted under the rule that refused THAT candidate");
-        search.Should().Contain("CountPlaySessionAnimalRefusal(eliminated, rule)");
-        // AND WHAT THE SEARCH CLEARED is part of the same reading: a number that only says how much ground was left
-        // would hide the farm the fixture swept to get it.
-        search.Should().Contain("ClearPlaySessionAnimalFootprint(farm, footprint, clearedKinds, out string? failingClearing)");
-        search.Should().Contain("cleared_total={clearedTotal}", "the refusal says how many tiles the search took off the farm");
-        search.Should().Contain("cleared_kinds=", "and of what, in the vocabulary's own words");
-        search.Should().Contain("cleared={cleared}", "each blocked/rejected entry carries the tiles IT needed cleared");
-        search.Should().Contain("PlaySessionAnimalClearingFailedRefusal",
-            "a clearing that did not come free is named rather than silently skipped");
-    }
 
-    [Fact]
-    public void ARefusalSaysWhetherTheSearchExhaustedTheMap()
-    {
-        // `tried` is what separates the two readings a refusal used to collapse into one: a search that tried every
-        // candidate and found no usable site, and a search that gave up halfway. `candidates` is what the pool offered
-        // and `tried` what the loop actually judged, so `tried < candidates` is a search that stopped early.
-        string search = InitializerBody("private bool TryFindNativeLocalPlaySessionAnimalSite(");
-        search.Should().Contain("tried += 1;", "every candidate the loop met is counted, not only the ones it refused");
-        search.Should().Contain("List<Point> candidates = PlaySessionFixturePlacement.PlaceableCandidates(");
-        search.Should().Contain("candidates={candidates.Count}", "the refusal says how many candidates the pool offered");
-        search.Should().Contain("tried={tried}", "and how many of them the search actually judged");
-        search.Should().Contain("footprints={footprints}", "and how many of them the emptiness rules admitted");
-        // The two failures are two codes because they are two repairs: no ground at all, versus ground with no approach
-        // or no road. The second names the least-bad candidate - a house one repair away from usable is a different
-        // finding from a map with nowhere to put one.
-        search.Should().Contain("fixture_map_cannot_hold_animal_building:footprints={footprints};best={best.X},{best.Y}:{bestRule};");
-        search.Should().Contain("fixture_native_local_play_session_animal_site_missing:start={startTile.X},{startTile.Y};footprints={footprints};");
-        search.Should().Contain("PlaySessionAnimalRefusalProgress(rule)", "the candidate named is ranked by how far it got");
+        // (a) THE ROW, from `Data/Buildings`, refused by name when the table has none.
+        given.Should().Contain(
+            "BuildingData data = RequireNativeLocalPlaySessionAnimalBuildingData();",
+            "the barn's footprint, door and indoor map are the row's, not this file's");
+        string data = InitializerBody("private static BuildingData RequireNativeLocalPlaySessionAnimalBuildingData(");
+        data.Should().Contain("Game1.buildingData.TryGetValue(PlaySessionAnimalBuildingType, out BuildingData? row)");
+        data.Should().Contain("Data/Buildings", "the refusal names the table it read");
+        data.Should().Contain("row_missing", "a table without the row is a named refusal, not a hand-built barn");
+        data.Should().Contain("table_missing");
 
-        // The ranking is keyed on the rules that can refuse a FREE footprint, under the same names the tally counts.
-        string source = ReadFixtureSource();
-        foreach (string rule in new[]
-        {
-            "PlaySessionAnimalArmRefusedRefusal",
-            "PlaySessionAnimalNoApproachRefusal",
-            "PlaySessionAnimalFieldComponentRefusal",
-        })
-        {
-            source.Should().Contain($"{rule} =>", $"{rule} must be ranked: it is one of the three answers a free footprint can get");
-        }
+        // (b) THE SITE, a fixed offset from the farmhouse door the day's own route assertion starts from.
+        source.Should().Contain("private static readonly Vector2 PlaySessionAnimalHouseDoorOffset = new(1f, 3f);");
+        given.Should().Contain("Point site = PlaySessionAnimalFixedSite(player, farm, out Point houseDoor);");
+        string siteHelper = InitializerBody("private static Point PlaySessionAnimalFixedSite(");
+        siteHelper.Should().Contain("houseDoor = NativeLocalMultiDayDoorStandingSpot(player, farm);");
+        siteHelper.Should().Contain(
+            "houseDoor.X + (int)PlaySessionAnimalHouseDoorOffset.X",
+            "one tile east of the house door, so the site and the walk to it are about the same farmhouse");
+
+        // (c) THE EMPTIEST THING A FIXTURE MAY DO TO THE GROUND: the footprint and the door ring, cleared of what a
+        // published action opens (`PlaySessionAnimalFootprintWall` is the classifier) and of nothing else.
+        given.Should().Contain("int cleared = ClearPlaySessionAnimalSite(farm, footprint, ring, site, door);");
+        string clearing = InitializerBody("private static int ClearPlaySessionAnimalSite(");
+        clearing.Should().Contain("PlaySessionAnimalFootprintFirstWall(farm, owned, out Vector2 wallTile, out _)");
+        clearing.Should().Contain("ClearPlaySessionAnimalFootprint(farm, owned, clearedKinds, out string? failure)");
+        clearing.Should().Contain("animal_site_wall", "a tile no published action opens refuses the day by name");
+        given.Should().Contain("PlaySessionFixturePlacement.DoorApproachTiles(door)", "the door ring is the second list");
+
+        // (d) THE ENGINE'S OWN PLACEMENT RULE decides whether the fixed tile is placeable - `buildStructure`'s footprint,
+        // additional placement tiles and human-door rule - and a tile it refuses stops the Given, naming the tile.
+        given.Should().Contain("ExecutionManager.FindFarmBuildingSiteBlockage(farm, data, site.X, site.Y)");
+        given.Should().Contain("fixture_native_local_play_session_animal_site_blocked:row=");
+        given.Should().Contain("tile={blocked.X},{blocked.Y};rule={blocked.Why}");
+
+        // (e) NO SEARCH IS LEFT. A candidate pool would be the same defect one launch later: a site picked by whatever
+        // happens to be free, then repaired.
+        given.Should().NotContain("PlaceableCandidates(");
+        source.Should().NotContain("fixture_map_cannot_hold_animal_building");
+        source.Should().NotContain("fixture_native_local_play_session_animal_site_missing");
+
+        // (f) AND THE ROUTE ASSERTION SURVIVES, because it is what caught the sixty-tile barn.
+        given.Should().Contain("RejectsThePlaySessionAnimalBuilding(player, farm, barn, startTile, mustRemainReachable)");
     }
 
     [Fact]
@@ -490,6 +465,65 @@ body.Should().Contain("new Vector2(doorStandingSpot.X, doorStandingSpot.Y),");
         given.Should().NotContain("performObjectDropInAction(", "dressing the mannequin belongs to production");
         given.Should().NotContain("checkForAction(", "setting the sign's display belongs to production");
         given.Should().NotContain(".Equip(", "equipping the wearable belongs to production");
+    }
+
+    /// <summary>
+    /// NO FIXTURE MAY NAME A MANNEQUIN BY A LITERAL ID: the id must be one `Data/Mannequins` lists, because
+    /// `Mannequin.draw` resolves the row behind the id on the first frame it is drawn.
+    ///
+    /// <para>
+    /// MEASURED 2026-11-23, and the reading is the target install's own table (`Content/Data/Mannequins.xnb`, loaded
+    /// through the game's content pipeline): the keys are `MannequinMale`, `MannequinFemale`, `CursedMannequinMale` and
+    /// `CursedMannequinFemale` - there is no `Mannequin`. A mannequin built from that literal has no row, so
+    /// `GetMannequinData()` answers null and `Mannequin.draw` throws inside `GetFarmerForRendering` (`Mannequin.cs:524` on
+    /// `SMAPI-crash.txt` at 07:46:58, once per frame) - the farmhouse the session starts in could not be drawn at all, and
+    /// the sprite batch could not be begun again. The fixture had authored a world object the engine cannot render, which
+    /// is why the id is resolved from the sheet rather than typed here.
+    /// </para>
+    ///
+    /// <para>
+    /// THE POPULATION IS EVERY FIXTURE PARTIAL, not the one file that carried the defect: the single-action mannequin
+    /// scenario typed the same id on a farm tile, so both spellings of the same mistake are in this gate's population and
+    /// the next one committed is too.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void NoFixtureNamesAMannequinByALiteralId()
+    {
+        IReadOnlyList<string> fixtureSources = FixtureSourcePaths();
+        fixtureSources.Should().NotBeEmpty("a fixture reading that examined no file would agree with itself");
+        Regex literalMannequinId = new("\"(?:Cursed)?Mannequin[A-Za-z]*\"", RegexOptions.Compiled);
+        List<string> offenders = new();
+        foreach (string path in fixtureSources)
+        {
+            string[] lines = File.ReadAllLines(path);
+            for (int index = 0; index < lines.Length; index++)
+            {
+                // COMMENTS ARE NOT DECLARATIONS: this pin is about an id a fixture hands the engine, and the prose that
+                // explains why the literal is wrong has to be free to quote it.
+                if (lines[index].TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
+                foreach (Match match in literalMannequinId.Matches(lines[index]))
+                    offenders.Add($"{Path.GetFileName(path)}:{index + 1}:{match.Value}");
+            }
+        }
+        offenders.Should().BeEmpty(
+            $"no fixture names a mannequin by a hand-written id ({string.Join(", ", offenders)}): the ids are "
+                + "Data/Mannequins' own and the sheet lists MannequinMale/MannequinFemale, so the display target is built "
+                + "by CreateNativeLocalMannequin(), which resolves the id through the (M) definition");
+        string given = File.ReadAllText(RepositorySourcePath(
+            Path.Combine("integrations", "stardew", "ModEntry.Fixtures.PlaySessionDressAndDisplay.cs")));
+        given.Should().Contain(
+            "CreateNativeLocalMannequin()",
+            "the display Given builds its mannequin from the sheet's own id");
+        given.Should().Contain(
+            "ItemRegistry.RequireTypeDefinition(\"(M)\")",
+            "which mannequins exist is the content's data, so the id is RESOLVED rather than typed");
+        given.Should().Contain(
+            "DataLoader.Mannequins(Game1.content)",
+            "the row that decides is the one GetMannequinData reads, so the mannequin returned is one the draw path resolves");
+        given.Should().Contain(
+            "row.Cursed",
+            "a cursed mannequin is skipped by the flag its data sheet carries, not by a name this file spells");
     }
 
     [Fact]

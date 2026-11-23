@@ -49,14 +49,26 @@ internal static class PlaySessionFixturePlacement
     };
 
     /// <summary>
-    /// The tiles a standing building holds against this fixture's props: its own footprint, and the ring its door is
-    /// used from. A prop on either is the defect the start-ring rule answers one layer down - a road the day needs,
-    /// spent on scenery - and the arm-time assertion can only see it after the whole day has been laid out.
+    /// The tiles a standing building holds against this fixture's props: its own footprint, the ring its door is used
+    /// from, and the ROAD the day walks to that door. A prop on any of them is the defect the start-ring rule answers
+    /// one layer down - a road the day needs, spent on scenery - and the arm-time assertion can only see it after the
+    /// whole day has been laid out.
+    ///
+    /// <para>
+    /// ONE LIST, because the road is held the same way the footprint and its door ring are: the props are handed a set
+    /// of tiles they may not take, and whether a tile is under the house, beside its door or on the way there is the
+    /// caller's business. <paramref name="road"/> is the walk from the farmhouse to this door, measured with the world's
+    /// own predicate before any prop exists (see `ModEntry.NativeLocalMultiDayAnimalPorchRoad`).
+    /// </para>
     /// </summary>
-    internal static HashSet<Point> TilesHeldByBuilding(IEnumerable<Vector2> footprint, Point door) =>
+    internal static HashSet<Point> TilesHeldByBuilding(
+        IEnumerable<Vector2> footprint,
+        Point door,
+        IEnumerable<Point> road) =>
         footprint
             .Select(tile => new Point((int)tile.X, (int)tile.Y))
             .Concat(DoorApproachTiles(door))
+            .Concat(road)
             .ToHashSet();
 
     /// <summary>
