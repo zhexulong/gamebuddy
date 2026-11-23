@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4867, largest ExecutionManager at 28162 lines / 938 members across 53 partial(s).",
-  "revision": "2014f1c2",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 58 cs member(s) over 30, 9 class(es) over 200, 22 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 111, class ExecutionManager = 4867, largest ExecutionManager at 28162 lines / 938 members across 53 partial(s).",
+  "revision": "c38daef4",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -292,7 +292,7 @@
       "name": "ModEntry.InitializeNativeLocalPlaySessionFixture(Farmer,Farm,Vector2?,bool)",
       "file": "integrations/stardew/ModEntry.Fixtures.cs",
       "line": 673,
-      "value": 64
+      "value": 63
     },
     {
       "id": "cs:ModEntry.InstallNativeLocalTailoringFixture(Farmer,GameLocation)",
@@ -349,14 +349,6 @@
       "file": "integrations/stardew/ModEntry.cs",
       "line": 2844,
       "value": 60
-    },
-    {
-      "id": "cs:ModEntry.TryFindNativeLocalPlaySessionAnimalSite(Farmer,Farm,Building,Vector2,Vector2?,Vector2,string)",
-      "language": "cs",
-      "name": "ModEntry.TryFindNativeLocalPlaySessionAnimalSite(Farmer,Farm,Building,Vector2,Vector2?,Vector2,string)",
-      "file": "integrations/stardew/ModEntry.Fixtures.PlaySessionAnimal.cs",
-      "line": 400,
-      "value": 54
     },
     {
       "id": "cs:ModEntry.TryInitializeEmbodiment()",
@@ -782,7 +774,7 @@
       "language": "ts",
       "name": "host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch",
       "file": "host/src/reference-pipeline-dialogue-web.delegated.ts",
-      "line": 82,
+      "line": 89,
       "value": 255,
       "saturated": true
     },
@@ -791,7 +783,7 @@
       "language": "ts",
       "name": "host/src/reference-pipeline-dialogue-web.ts#dispatch",
       "file": "host/src/reference-pipeline-dialogue-web.ts",
-      "line": 118,
+      "line": 119,
       "value": 225
     },
     {
@@ -920,7 +912,7 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#createTavernManagementDialogueWebRequestHandler",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 965,
+      "line": 966,
       "value": 132,
       "reason": "recorded at 79d0323d: 123 -> 132, and `line` 868 -> 933. The record was taken at 72582adf and exactly three commits touch this file in that range - 39e9e4f8 (`character.examples.read|update`), e7fa1dae (a capability is its groups, not its array slot) and 94b1faaa (`chat.fork`) - which together add 50 branching lines to the file (32, 3, 15). This handler is the router those routes mount on, so each route arrives as one more arm of admission here: +9 is tonight's routing, not drift. 132 is the ceiling now."
     },
@@ -929,7 +921,7 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#dispatch",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 1666,
+      "line": 1667,
       "value": 255,
       "saturated": true,
       "reason": "Lane ROUTETABLE folded the 21 write-route arms into `managementWriteRoutes` plus one loop and moved the shared write admission into `admitWrite`, which removed 161 `if (` conditions, 67 `||` conditions and 19 `&&` conditions from this function (444/153/64 -> 283/86/45) and 494 of its 1659 lines, and the compiled route suite stayed at 87/87. Biome still reads 255 because it carries the score in a byte, so 255 is that producer's floor and not a count: the remaining ~280 conditions and the 36 read arms keep the score at or above the ceiling, and no behaviour-preserving edit can bring it under the bound of 30. The entry therefore stays at 255 as the floor it always was rather than being re-recorded lower, which would claim a measurement this producer cannot make. 132 on the handler and 89 on `problemFor` are untouched by this lane."
@@ -939,7 +931,7 @@
       "language": "ts",
       "name": "host/src/tavern-management-dialogue-web.ts#problemFor",
       "file": "host/src/tavern-management-dialogue-web.ts",
-      "line": 3351,
+      "line": 3338,
       "value": 90,
       "reason": "recorded at 604844a6: 81 -> 82, and `line` 3147 -> 3155. The record was taken at b047bb19, 113 commits earlier, and three commits touch this file in that range (122c0be4, ba11fbc6, 0482b6e2), so the single branch is accumulated drift over that range rather than one attributed hunk - `git log -L` from 604844a6 names it. 82 is the ceiling now. Re-recorded at 79d0323d: 82 -> 89, `line` 3155 -> 3381. Three commits touch this file after the record's own revision 72582adf (39e9e4f8, e7fa1dae, 94b1faaa, the routes this file gained tonight) and each adds a problem branch this map has to name - `profile_operation_unavailable`, the examples route's refusal and the branch seam's - so +7 is tonight's routes arriving as refusals. 89 is the ceiling now. Re-recorded at 1e1462c4: 89 -> 90, `line` 3155 -> 3354. The one branch is `chat_active_list_empty`, added by e4e9b703 (host: the last active Chat cannot be removed, and the refusal is the library's) - a single `if (message === ...)` arm in the chain, not a rewrite of the map. 90 is the ceiling now."
     },
@@ -1068,8 +1060,9 @@
       "language": "ts",
       "name": "host/src/tavern/composed-reference-game-static-shell-composition.ts#startComposedReferenceGameStaticShellComposition",
       "file": "host/src/tavern/composed-reference-game-static-shell-composition.ts",
-      "line": 105,
-      "value": 33,
+      "line": 106,
+      "value": 34,
+      "reason": "659484ee bought +1 (33 -> 34): the shell's writer now projects the Memory route's answer through projectMemoryStateV1 instead of a literal false, so this function carries the call and its unavailable-cause branch. The literal it replaced is what forced the surface to bypass its own contract; the arithmetic is that one call plus one branch.",
       "reason": "recorded at 11e7cc9b: 32 -> 33, in `12490460` (the facts that move without a player are announced at the assignment) - the only commit that touched this file in the range."
     },
     {
@@ -1195,8 +1188,8 @@
       "parts": 60,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 2861,
-      "reason": "HELD AT 2755, THE COMMITTED VALUE, and this working tree measures 2757. `git diff bfc0c628..HEAD -- 'integrations/stardew/ModEntry*.cs'` is empty: nothing committed has touched this type since the record. The +2 is UNCOMMITTED body-hold work - `ModEntry.Instrumentation.cs` adds `private static string BodyHoldReport()` and the two call-site interpolations it feeds, and `ModEntry.cs` installs the probe - so recording it here would encode a half-written state and go stale the moment that method is renamed or reverted, which is what this type's size entry names as the reason its own record is compared on `parts` and `methods`. Re-record when the body-hold lane commits."
+      "value": 2869,
+      "reason": "Re-recorded at b47f4dd6: 2861 -> 2870 (+9). The arithmetic is one unit - the animal house's site search judged the farm's CURRENT ground and called it the only possible one (`object=2332` of 5195 candidates on `round93`), so a tile is now classified by `TileOccupancy.Of` and cleared when a published `Clears` declaration opens it. `ModEntry.Fixtures.PlaySessionAnimal.cs` +241/-43 (four new members: `PlaySessionAnimalFootprintWall`, `ClearPlaySessionAnimalFootprint`, `PlaySessionAnimalFootprintFirstWall`, `ProbePlaySessionAnimalFootprint`; the search keeps only its loop and its reading, and its own complexity FELL 54 -> 42) and `ModEntry.Fixtures.cs` +5 (the comment that names the new rule). Nothing else in this type moved."
     },
     {
       "id": "cs:OpenBodyProgramJournalAuthority",
@@ -1244,7 +1237,8 @@
       "line": 11,
       "lines": 2149,
       "methods": 123,
-      "reason": "Re-recorded at 2014f1c2: lines 2119 -> 2149 (+44/-14 in the file), methods 123 -> 123. The 30 net lines are `ProjectedWeedNodeWithNeitherItsToolSlotNorItsIdentityIsAdmittedAndOneThatDropsItsTileIsRefused`, which replaced `ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument`: the old fact (a weed node without a slot was `invalid_arguments:cut_weeds`) is now its inverse, so the same test drives the admitted node and one whose `y` is missing through the journal authority, and `WeedArguments` grew the `withTargetId` half. Assertions in a test class: no branches, no new member."    },
+      "reason": "Re-recorded at 2014f1c2: lines 2119 -> 2149 (+44/-14 in the file), methods 123 -> 123. The 30 net lines are `ProjectedWeedNodeWithNeitherItsToolSlotNorItsIdentityIsAdmittedAndOneThatDropsItsTileIsRefused`, which replaced `ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument`: the old fact (a weed node without a slot was `invalid_arguments:cut_weeds`) is now its inverse, so the same test drives the admitted node and one whose `y` is missing through the journal authority, and `WeedArguments` grew the `withTargetId` half. Assertions in a test class: no branches, no new member."
+    },
     {
       "id": "cs:BodyProgramControllerPumpTests",
       "name": "BodyProgramControllerPumpTests",
@@ -1381,9 +1375,9 @@
       "files": 60,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 16423,
-      "methods": 357,
-      "reason": "HELD AT 15801 LINES / 344 METHODS, THE COMMITTED VALUES, and this working tree measures 15826 / 345. `git diff bfc0c628..HEAD -- 'integrations/stardew/ModEntry*.cs'` is empty: nothing committed has touched this type since the record was taken. The +25 lines and the one extra method are UNCOMMITTED body-hold work - `ModEntry.cs` +8 (the probe install) and `ModEntry.Instrumentation.cs` +18/-1 (`private static string BodyHoldReport()`), while `WindowModeManagement.cs` +1/-1 is `bfd5871a`'s catch-all rename and a wash. Recording 345 here would encode a half-written state and go stale the moment that method is renamed or reverted, which is the exact failure the `parts`/`methods` staleness test exists for, so this entry waits for the body-hold lane to commit `ModEntry.cs` and `ModEntry.Instrumentation.cs` - and this gate stays RED on this type until it does."
+      "lines": 16802,
+      "methods": 363,
+      "reason": "Re-recorded at b47f4dd6: lines 16423 -> 16643 (+220), methods 357 -> 361 (+4), parts 60 -> 60. The +4 methods and the file-level lines are the animal-house site-ground unit: `ModEntry.Fixtures.PlaySessionAnimal.cs` +241/-43 (`PlaySessionAnimalFootprintWall`, `ClearPlaySessionAnimalFootprint`, `PlaySessionAnimalFootprintFirstWall`, `ProbePlaySessionAnimalFootprint`, and the site search rewritten to use them) and `ModEntry.Fixtures.cs` +5. The file arithmetic is +246 lines while the record moves +220, and the 26-line difference is not attributable to this unit: the observed diff against the stitched type is what the gate measured, and `git diff --numstat -- 'integrations/stardew/ModEntry*.cs'` names these two files and no others, so nothing else in this type changed here. THEN, in the same worktree and not yet committed: the play-session world's load-bearing reservation, methods 361 -> 363 (+2: the placement seam `LayPlaySessionProp` and the local function `TryPlacePlaySessionProp` that the reservation and the sweep both call in place of the six per-family loops, so the initializer's own complexity FELL 64 -> 63) and lines measured, not added up: the arithmetic in the sentence above is not the gate's span. `integrations/stardew/ModEntry*.cs` totals 16815 file lines at HEAD and the stitched struct measures 16782 there, so the recorded 16643 was 139 lines LOW before this unit touched anything. This unit adds 20 file lines - `ModEntry.Fixtures.cs` +166/-151 and `ModEntry.Fixtures.PlaySessionProps.cs` +27/-22 - and 16835 - 33 = 16802 is the span measured on this tree."
     },
     {
       "id": "cs:NavigationExecutionManagerTests",
