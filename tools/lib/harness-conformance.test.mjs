@@ -21,7 +21,9 @@ import {
   gateRedProofLedger,
   harnessGateNames,
   readModFixtureSources,
+  selfReportingGatePaths,
 } from "./harness-conformance.mjs";
+import { runGateDefaults } from "./gate-default-runs.mjs";
 import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { preflightLiveRun } from "./live-run-preflight.mjs";
 import {
@@ -32,6 +34,17 @@ import {
 
 const toolsDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(toolsDir, "..");
+
+/**
+ * The runs a judge reads: the same paths the real sweep runs, over the gates named here.
+ *
+ * A stub tree's gates are not in `GATES_WITH_FALSIFIER`, so the case states which ones report; the judge is given the
+ * lookup, which is the one seam `checkGateFalsifiers` reads instead of spawning a gate itself.
+ */
+async function runsOf(root, gateNames, options = {}) {
+  const runs = await runGateDefaults({ ...options, paths: selfReportingGatePaths({ ...options, gateNames, root }) });
+  return (path) => runs.get(path);
+}
 
 test("preflight check reports a preflight that misses a bad tree", () => {
   const blindPreflight = () => ({ ok: true, checks: [], firstFailure: null });
@@ -255,14 +268,15 @@ test("every gate filed under a domain directory is classified, and no row for th
   assert.deepEqual(checkGateRegistry({ gateNames: names }), [], "and no ledger row names a gate that is not there");
 });
 
-test("gate check reports a gate that neither self-reports nor is declared", () => {
+test("gate check reports a gate that neither self-reports nor is declared", async () => {
   const findings = checkGateFalsifiers({ gateNames: ["check-a-gate-nobody-classified.mjs"], root: repoRoot });
   assert.deepEqual(
     findings.map((entry) => entry.code),
     ["gate_without_falsifier"],
   );
 
-  assert.deepEqual(checkGateFalsifiers({ gateNames: harnessGateNames(repoRoot), root: repoRoot }), []);
+  const names = harnessGateNames(repoRoot);
+  assert.deepEqual(checkGateFalsifiers({ gateNames: names, root: repoRoot, run: await runsOf(repoRoot, names) }), []);
 });
 
 // Three findings are about the population rather than one gate's own run, and each NAMES its member: a gate no ledger
@@ -542,7 +556,7 @@ test("a declaration naming a gate that is not in tools/ is stale", () => {
 // The report is what the gate PRINTS, so the falsifier deletes the print while keeping the words the source-text form
 // looked for: a comment naming `checks` and `mode:` satisfies a regex and proves nothing about the run. The stub lives
 // in its own directory so it is never picked up as a real gate by `harnessGateNames`.
-test("gate check reads the report a gate prints, not the words in its source", () => {
+test("gate check reads the report a gate prints, not the words in its source", async () => {
   const root = mkdtempSync(join(tmpdir(), "harness-gates-"));
   try {
     const stubTools = join(root, "tools");
@@ -552,7 +566,12 @@ test("gate check reads the report a gate prints, not the words in its source", (
       join(stubTools, stub),
       '// this gate prints checks and mode: in a comment, and a human line on stdout\nprocess.stdout.write("all good\\n");\n',
     );
-    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools });
+    const findings = checkGateFalsifiers({
+      gateNames: [stub],
+      withFalsifier: [stub],
+      root: stubTools,
+      run: await runsOf(stubTools, [stub], { withFalsifier: [stub] }),
+    });
     assert.deepEqual(
       findings.map((entry) => entry.code),
       ["falsifier_signature_missing"],
@@ -564,7 +583,15 @@ test("gate check reads the report a gate prints, not the words in its source", (
       join(stubTools, stub),
       'const checks = [{ id: "one_rule", status: "passed" }];\nprocess.stdout.write(`${JSON.stringify({ gate: "stub/v1", status: "passed", checks })}\\n`);\n',
     );
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
+    assert.deepEqual(
+      checkGateFalsifiers({
+        gateNames: [stub],
+        withFalsifier: [stub],
+        root: stubTools,
+        run: await runsOf(stubTools, [stub], { withFalsifier: [stub] }),
+      }),
+      [],
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -576,7 +603,7 @@ test("gate check reads the report a gate prints, not the words in its source", (
 //
 // red-proof: inject  a stub gate printing `population: 0` beside a passing `checks` list -> `gate_measured_nothing`
 //                    names the stub; the same stub with `population: 3`, and with a stated `allowEmpty` reason, pass
-test("a gate's report that examined nothing is blocked, and one that says why is not", () => {
+test("a gate's report that examined nothing is blocked, and one that says why is not", async () => {
   const root = mkdtempSync(join(tmpdir(), "harness-vacuous-"));
   try {
     const stubTools = join(root, "tools");
@@ -585,9 +612,16 @@ test("a gate's report that examined nothing is blocked, and one that says why is
     const printing = (fields) =>
       `const checks = [{ id: "one_rule", status: "passed" }];\n` +
       `process.stdout.write(\`\${JSON.stringify({ gate: "stub/vacuous", status: "passed", checks, ${fields} })}\\n\`);\n`;
+    const judge = async () =>
+      checkGateFalsifiers({
+        gateNames: [stub],
+        withFalsifier: [stub],
+        root: stubTools,
+        run: await runsOf(stubTools, [stub], { withFalsifier: [stub] }),
+      });
 
     writeFileSync(join(stubTools, stub), printing("population: 0"));
-    const findings = checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools });
+    const findings = await judge();
     assert.deepEqual(
       findings.map((entry) => entry.code),
       ["gate_measured_nothing"],
@@ -596,7 +630,7 @@ test("a gate's report that examined nothing is blocked, and one that says why is
 
     // The control: the same report with objects in it is a measurement, so the finding above is about the population.
     writeFileSync(join(stubTools, stub), printing("population: 3"));
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
+    assert.deepEqual(await judge(), []);
 
     // A zero whose reason the gate states is `not_measured`, never `passed` and never a finding of this kind: the gate
     // already handles its own empty population, and the suite does not overrule the reason.
@@ -604,7 +638,60 @@ test("a gate's report that examined nothing is blocked, and one that says why is
       join(stubTools, stub),
       printing('population: 0, allowEmpty: "this gate judges a diff, and the diff is empty"'),
     );
-    assert.deepEqual(checkGateFalsifiers({ gateNames: [stub], withFalsifier: [stub], root: stubTools }), []);
+    assert.deepEqual(await judge(), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// A run that never finished and a run that finished printing nothing are two readings, and collapsing them made this
+// gate red on 2026-11-23 for gates that print their report whenever the machine is quiet. Both are real subprocesses
+// below: the slow stub outlives the budget the sweep gives it, and the silent one exits 0 having printed nothing.
+//
+// red-proof: inject  a stub gate that sleeps past the budget it is given -> the census's `reported not measured` names it
+//                    with that limit and no `falsifier_signature_missing`; a stub that exits 0 printing nothing is still
+//                    `falsifier_signature_missing` (measured 2026-11-23 on this checkout)
+test("a run that outlives its budget is not measured, and one that prints nothing is a missing report", async () => {
+  const root = mkdtempSync(join(tmpdir(), "harness-budget-"));
+  try {
+    const stubTools = join(root, "tools");
+    mkdirSync(stubTools, { recursive: true });
+    const slow = "check-stub-slow.mjs";
+    writeFileSync(
+      join(stubTools, slow),
+      "// a gate whose work outlives the budget the sweep gives it\n" +
+        "setTimeout(() => {\n" +
+        '  process.stdout.write(`${JSON.stringify({ gate: "stub/slow", status: "passed", examined: 1, checks: [{ id: "a", status: "passed" }] })}\\n`);\n' +
+        "}, 30_000);\n",
+    );
+    const notMeasured = [];
+    const findings = checkGateFalsifiers({
+      gateNames: [slow],
+      withFalsifier: [slow],
+      root: stubTools,
+      run: await runsOf(stubTools, [slow], { withFalsifier: [slow], timeoutMs: 250 }),
+      notMeasured,
+    });
+    assert.deepEqual(findings, [], "a run this machine could not finish is not a gate that failed to prove itself");
+    assert.deepEqual(
+      notMeasured.map((entry) => entry.gate),
+      [slow],
+    );
+    assert.match(notMeasured[0].detail, /did not finish within 250ms/u, "the report names the budget it was given");
+
+    const silent = "check-stub-silent.mjs";
+    writeFileSync(join(stubTools, silent), "process.exit(0);\n");
+    const silentFindings = checkGateFalsifiers({
+      gateNames: [silent],
+      withFalsifier: [silent],
+      root: stubTools,
+      run: await runsOf(stubTools, [silent], { withFalsifier: [silent], timeoutMs: 250 }),
+    });
+    assert.deepEqual(
+      silentFindings.map((entry) => entry.code),
+      ["falsifier_signature_missing"],
+    );
+    assert.match(silentFindings[0].detail, /the default run printed no self-verification report \(exit 0\)/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

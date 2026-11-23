@@ -39,7 +39,6 @@
  * failing the census for every lane - and it is still published, as `untracked_not_counted N: <paths>`, so it neither
  * blocks nor disappears.
  */
-import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -51,8 +50,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import process from "node:process";
+import { join } from "node:path";
 import {
   auditGateRedProofs,
   describeGateCensus,
@@ -65,6 +63,7 @@ import {
   STARDEW_PUBLISHED_ACTION_GATES,
 } from "../stardew-action-gate-descriptors.mjs";
 import { assertNonVacuous, POPULATION_FIELDS } from "./assert-non-vacuous.mjs";
+import { runGateDefaults } from "./gate-default-runs.mjs";
 import { gateFileNames, gateMemberNames, isGateFile } from "./gate-population.mjs";
 import { indexedGatePopulation } from "./indexed-sources.mjs";
 import { importsWithoutStarting, preflightLiveRun } from "./live-run-preflight.mjs";
@@ -730,21 +729,10 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-stale-line-age.mjs",
 ]);
 
-/** How long a gate's default run may take before it is reported as having printed nothing. */
-const GATE_RUN_TIMEOUT_MS = 120_000;
-
-/**
- * Run a gate the way an operator does - its own default, no-argument, offline invocation - and return what it
- * printed. The report on stdout is the artifact this suite reads; a gate's source text is not.
- */
-function runGateDefault(path, { spawn = spawnSync, timeoutMs = GATE_RUN_TIMEOUT_MS } = {}) {
-  const result = spawn(process.execPath, [path], { cwd: dirname(path), encoding: "utf8", timeout: timeoutMs });
-  return {
-    timedOut: result.error?.code === "ETIMEDOUT",
-    status: result.status ?? null,
-    stdout: String(result.stdout ?? ""),
-    stderr: String(result.stderr ?? ""),
-  };
+/** The gates this suite EXECUTES: the population members whose declaration says their default run prints a report. */
+export function selfReportingGatePaths({ gateNames, root, withFalsifier = GATES_WITH_FALSIFIER } = {}) {
+  const declared = new Set(withFalsifier);
+  return gateNames.filter((name) => declared.has(declaredNameOf(name))).map((name) => join(root, name));
 }
 
 /**
@@ -792,7 +780,8 @@ function describeRun(result) {
     .trim()
     .split("\n")
     .find((line) => line.trim().length > 0);
-  const how = result.timedOut ? "timed out" : `exit ${String(result.status)}`;
+  // No `timed out` case: a run that outlived its budget is `not_measured` before this reader is reached.
+  const how = `exit ${String(result.status)}`;
   return cause === undefined ? how : `${how}: ${cause.trim().slice(0, 200)}`;
 }
 
@@ -1569,7 +1558,8 @@ export function checkGateFalsifiers({
   staleDeclarations = [],
   externalWithoutRunner = [],
   root,
-  run = runGateDefault,
+  // How the runs happened: `runGateDefaults` over the real tree, a one-entry map in the tests, and no default.
+  run,
   // The gates whose own report says it could not measure, collected for the census line rather than for a verdict: a
   // gate whose prerequisite is absent is `not_measured`, which is neither a finding here nor a pass anywhere.
   notMeasured = [],
@@ -1606,6 +1596,12 @@ export function checkGateFalsifiers({
       const result = run(join(root, name));
       const report = selfVerificationReport(result.stdout);
       if (report === null) {
+        // A run that never finished is NOT the same reading as one that finished and printed nothing: the first measures
+        // this machine's load. Filing both as `falsifier_signature_missing` reddened this gate on 2026-11-23 for three.
+        if (result.timedOut) {
+          notMeasured.push({ gate: name, detail: `the default run did not finish within ${result.timeoutMs}ms` });
+          continue;
+        }
         findings.push(
           finding(
             "falsifier_signature_missing",
@@ -1815,16 +1811,18 @@ function describeNotMeasuredGates(notMeasured) {
 }
 
 /** Run the five checks against a real checkout and return `{ id, findings }` for each, plus the numbers it prints. */
-export function runHarnessConformance({ toolsDir, repoRoot }) {
+export async function runHarnessConformance({ toolsDir, repoRoot }) {
   const population = indexedGatePopulation({ root: repoRoot });
   const ledger = gateRedProofLedger({ root: repoRoot });
   const gateNames = gateFileNames(population);
   // Run first, then describe: the not-measured set is a result of the runs, not of the declarations the census counts.
   const notMeasured = [];
+  const runs = await runGateDefaults({ paths: selfReportingGatePaths({ gateNames, root: repoRoot }) });
   const gateFalsifierFindings = [
     ...checkGateFalsifiers({
       gateNames,
       root: repoRoot,
+      run: (path) => runs.get(path),
       zeroPopulation: ledger.zeroPopulationPass,
       undeclared: ledger.undeclared,
       staleDeclarations: ledger.stale,

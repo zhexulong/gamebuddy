@@ -99,7 +99,7 @@ if (process.argv.includes("--update-source-reading")) {
   process.exit(0);
 }
 
-const results = runHarnessConformance({ toolsDir, repoRoot: root });
+const results = await runHarnessConformance({ toolsDir, repoRoot: root });
 results.push({
   id: "source_reading_declarations",
   notes: describeSourceReadingCensus(declarationReading.census),
