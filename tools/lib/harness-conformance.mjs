@@ -833,12 +833,12 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
   {
     gate: "check-companion-observability-parity.mjs",
     reason:
-      "prints its reading as lines (`states examined N · carried M · declared debt K · facts owed F …`) rather than a " +
+      "prints its reading as lines (`states examined N · carried M · in debt K · at the boundary B …`) rather than a " +
       "`{gate, checks[]}` report, so a green run says nothing about whether the parity it asserts can fail; that is " +
       "carried by gates/product/check-companion-observability-parity.test.mjs (`test:companion-observability-parity`), " +
-      "which replays an empty debt table over the real tree (seven `parity_fact_undeclared`), a copied contract gaining " +
-      "a debt row's `expiresWhen` arm (three `observability_debt_expired`), an owner path that is not on disk, a " +
-      "malformed expiry and an excused-but-unowed fact",
+      "which replays an empty record over the real tree (seven `parity_fact_undeclared`), a copied handbook with the " +
+      "heading its boundary rows cite deleted (three `boundary_anchor_missing`), a debt row beside a boundary state " +
+      "and a state that boundary drops with nothing carrying it, plus the debt row's own expiry and owner rules",
   },
   {
     gate: "check-action-coverage.mjs",
