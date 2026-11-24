@@ -4,7 +4,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { StardewAttachmentFlow } from "./stardew-attachment.js";
+import { StardewAttachmentFlow, type StardewCabinOccupancy, type StardewCabinOccupancyExpectation } from "./stardew-attachment.js";
 
 const token = "test-session-token-012345";
 const baseSession = {
@@ -831,6 +831,21 @@ function occupancyFlow(directory: string, nowMs = 2_000): StardewAttachmentFlow 
   });
 }
 
+/**
+ * The answer alone, for the cases that are about which answer a document produces.
+ *
+ * `StardewCabinOccupancyReading` carries the expectation and both clocks beside it, and the one case
+ * below about freshness is the one that asserts those; repeating them in every answer case would make
+ * each longer without asking a different question.
+ */
+async function occupancyOf(
+  directory: string,
+  expected: StardewCabinOccupancyExpectation = OCCUPANCY_EXPECTED,
+  nowMs = 2_000,
+): Promise<StardewCabinOccupancy> {
+  return (await occupancyFlow(directory, nowMs).readCabinOccupancy(expected)).occupancy;
+}
+
 async function withSessionDocument(document: unknown, run: (directory: string) => Promise<void>): Promise<void> {
   const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
   try {
@@ -843,7 +858,7 @@ async function withSessionDocument(document: unknown, run: (directory: string) =
 
 test("cabin occupancy: a live advertisement that holds neither her nor the manifest's farmhand answers not_bound", async () => {
   await withSessionDocument(JSON.stringify(signed(baseSession)), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), { status: "not_bound" });
+    assert.deepEqual(await occupancyOf(directory), { status: "not_bound" });
   });
 });
 
@@ -853,7 +868,7 @@ test("cabin occupancy: a live advertisement whose cabin holds her answers alread
     cabins: [{ cabinId: "cabin_07", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
   });
   await withSessionDocument(JSON.stringify(session), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+    assert.deepEqual(await occupancyOf(directory), {
       status: "already_bound",
       cabinId: "cabin_07",
       boundBy: "companion",
@@ -877,7 +892,7 @@ test("cabin occupancy: a cabin holding the manifest's farmhand is already_bound,
     ],
   });
   await withSessionDocument(JSON.stringify(session), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+    assert.deepEqual(await occupancyOf(directory), {
       status: "already_bound",
       cabinId: "cabin_02",
       boundBy: "manifest_farmhand",
@@ -888,7 +903,7 @@ test("cabin occupancy: a cabin holding the manifest's farmhand is already_bound,
 test("cabin occupancy: an advertisement past its own expiry answers unknown, never not_bound", async () => {
   const session = signed({ ...baseSession, publishedAtUnixMs: 1_000, expiresAtUnixMs: 1_900 });
   await withSessionDocument(JSON.stringify(session), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+    assert.deepEqual(await occupancyOf(directory), {
       status: "unknown",
       reason: "session_document_stale",
     });
@@ -900,7 +915,7 @@ test("cabin occupancy: an advertisement whose publisher stopped answers unknown 
   // document describes a world this Host has no way to know is still the one it describes.
   const session = signed({ ...baseSession, publishedAtUnixMs: 1_000, expiresAtUnixMs: 3_600_000 });
   await withSessionDocument(JSON.stringify(session), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory, 8_000).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+    assert.deepEqual(await occupancyOf(directory, OCCUPANCY_EXPECTED, 8_000), {
       status: "unknown",
       reason: "session_document_stale",
     });
@@ -928,11 +943,7 @@ test("cabin occupancy: an unreadable, missing or forged advertisement answers un
   ] as const;
   for (const item of cases) {
     await withSessionDocument(item.document, async (directory) => {
-      assert.deepEqual(
-        await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED),
-        { status: "unknown", reason: item.reason },
-        item.label,
-      );
+      assert.deepEqual(await occupancyOf(directory), { status: "unknown", reason: item.reason }, item.label);
     });
   }
 });
@@ -942,7 +953,7 @@ test("cabin occupancy: an advertisement of another save proves nothing about thi
   // carries a world this attempt never published into.
   const session = signed({ ...baseSession, saveId: "save_02", worldId: "world_02" });
   await withSessionDocument(JSON.stringify(session), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+    assert.deepEqual(await occupancyOf(directory), {
       status: "unknown",
       reason: "session_document_other_world",
     });
@@ -956,11 +967,7 @@ test("cabin occupancy: a host that is not ready, or speaks another protocol, ans
   ] as const;
   for (const item of cases) {
     await withSessionDocument(JSON.stringify(signed({ ...baseSession, state: item.state })), async (directory) => {
-      assert.deepEqual(
-        await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED),
-        { status: "unknown", reason: item.reason },
-        item.state,
-      );
+      assert.deepEqual(await occupancyOf(directory), { status: "unknown", reason: item.reason }, item.state);
     });
   }
 });
@@ -969,7 +976,7 @@ test("cabin occupancy: without the manifest's farmhand, absence cannot be proven
   // No admitted manifest in hand (a Host that restarted): the companion column alone cannot tell a
   // world the publication never reached from one where the Mod bound the farmhand a beat ago.
   await withSessionDocument(JSON.stringify(signed(baseSession)), async (directory) => {
-    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy({ ...OCCUPANCY_EXPECTED, farmhandId: null }), {
+    assert.deepEqual(await occupancyOf(directory, { ...OCCUPANCY_EXPECTED, farmhandId: null }), {
       status: "unknown",
       reason: "manifest_farmhand_unavailable",
     });
@@ -983,6 +990,29 @@ test("cabin occupancy: the probe reads the document and writes nothing", async (
     await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED);
     assert.deepEqual(await readdir(directory), before, "a probe that wrote would be a second writer of the attempt");
     assert.equal(await readFile(join(directory, "stardew-session.json"), "utf8"), JSON.stringify(session));
+  });
+});
+
+test("cabin occupancy: the answer carries the world it is about and both clocks, so a release can re-check them", async () => {
+  const session = signed({ ...baseSession, publishedAtUnixMs: 1_500 });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    const reading = await occupancyFlow(directory, 2_000).readCabinOccupancy(OCCUPANCY_EXPECTED);
+    // The Mod's own stamp, and this Host's clock when it read it: two facts, not one derived from the other.
+    assert.equal(reading.publishedAtUnixMs, 1_500);
+    assert.equal(reading.observedAtUnixMs, 2_000);
+    // The expectation travels with the answer, so `not_bound` cannot be read as being about another world later.
+    assert.deepEqual(reading.expectation, OCCUPANCY_EXPECTED);
+  });
+});
+
+test("cabin occupancy: an answer no authenticated document produced carries no stamp", async () => {
+  // A forged document's `publishedAtUnixMs` is its author's claim, not this Host's reading: the answer
+  // that says the document could not be authenticated must not carry the stamp it wanted to be judged by.
+  const forged = { ...baseSession, publishedAtUnixMs: 1_900, signature: "tampered-session-signature" };
+  await withSessionDocument(JSON.stringify(forged), async (directory) => {
+    const reading = await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED);
+    assert.deepEqual(reading.occupancy, { status: "unknown", reason: "session_document_unauthenticated" });
+    assert.equal(reading.publishedAtUnixMs, null);
   });
 });
 

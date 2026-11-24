@@ -92,7 +92,7 @@ const gameProfileWithSettings = composeGameProfile({
 const gameProfileWithCabins = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
-  operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm"],
+  operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm", "game.stardew.cabins.occupancy"],
   navigationItemIds: ["game"],
 });
 const gameProfileWithCabinReadOnly = composeGameProfile({
@@ -1703,6 +1703,20 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
   const rawCabinId = "raw-cabin-id-must-not-cross-wire";
   let readCalls = 0;
   let confirmCalls = 0;
+  let occupancyCalls = 0;
+  /** The answer the press hands back: a stale document's own refusal, with the clocks that say so. */
+  const observedOccupancy = Object.freeze({
+    apiVersion: 1 as const,
+    occupancy: Object.freeze({
+      answer: "unknown" as const,
+      reason: "session_document_stale" as const,
+      cabinId: null,
+      boundBy: null,
+      publishedAtUnixMs: 1_000,
+      observedAtUnixMs: 2_000,
+    }),
+    release: "not_licensed" as const,
+  });
   const handler = createComposedReferenceGameBrowserRequestHandler({
     profile: composeReferenceGameBrowserProfile({ tavernProfile, gameProfile: gameProfileWithCabins }),
     bootstrapToken,
@@ -1747,6 +1761,15 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
             });
             return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
           },
+        )!;
+      },
+      async occupancy(admission) {
+        occupancyCalls += 1;
+        return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+          handler.lifecycleActivationIssuer,
+          admission,
+          "cabin_occupancy",
+          () => observedOccupancy,
         )!;
       },
     },
@@ -1795,6 +1818,19 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
     assert.equal(confirmCalls, 1);
     for (const forbidden of [rawCabinId, "cabinId", "companionId", "ownerFarmhandId", "AI", "Bridge", "ready"])
       assert.equal(confirmationText.includes(forbidden), false);
+
+    // The press the surface offers: a POST (the answer can license one release), no body, CSRF-bound.
+    const occupancyResponse = await fetch(`${cabinPath}/occupancy`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": root.chat.csrfToken },
+    });
+    assert.equal(occupancyResponse.status, 200);
+    assert.deepEqual(await occupancyResponse.json(), observedOccupancy);
+    assert.equal(occupancyCalls, 1);
+    // A press without the CSRF header is not the player's: the broker refuses it before the seam runs.
+    const unbound = await fetch(`${cabinPath}/occupancy`, { method: "POST", headers: { origin: server.origin, cookie } });
+    assert.equal(unbound.status, 401);
+    assert.equal(occupancyCalls, 1);
   } finally {
     await server.close();
   }
@@ -1817,6 +1853,10 @@ test("Stardew cabin routes reject wrong auth, origin, CSRF, and DTO before lifec
         throw new Error("must-not-dispatch");
       },
       async confirm() {
+        lifecycleCalls += 1;
+        throw new Error("must-not-dispatch");
+      },
+      async occupancy() {
         lifecycleCalls += 1;
         throw new Error("must-not-dispatch");
       },
@@ -2041,6 +2081,9 @@ test("Stardew cabin confirmation maps only frozen typed outcomes", async () => {
         async confirm() {
           throw new Error(internalMessage);
         },
+        async occupancy() {
+          throw new Error("unused");
+        },
       },
     });
     const server = await start(handler);
@@ -2092,6 +2135,9 @@ test("a cabin press refused by the manifest admission carries the stage that ref
         throw new Error("stardew_cabin_publication_uncertain", {
           cause: new Error("stardew_manifest_handoff_manifest_not_admitted"),
         });
+      },
+      async occupancy() {
+        throw new Error("unused");
       },
     },
   });
@@ -2161,6 +2207,9 @@ test("a cabin press refused inside the Game runtime enter names that refusal, no
         async confirm() {
           throw new Error("stardew_cabin_publication_uncertain", { cause: thrown });
         },
+        async occupancy() {
+          throw new Error("unused");
+        },
       },
     });
     const server = await start(handler);
@@ -2211,6 +2260,9 @@ test("a cabin press refused inside the Game runtime enter names that refusal, no
       },
       async confirm() {
         throw new Error("stardew_cabin_publication_uncertain", { cause: new Error(unbounded) });
+      },
+      async occupancy() {
+        throw new Error("unused");
       },
     },
   });
@@ -2276,6 +2328,9 @@ test("the cabin READ keeps the missing-cabin cause, which the confirm route alre
           throw new Error(internalMessage);
         },
         async confirm() {
+          throw new Error("unused");
+        },
+        async occupancy() {
           throw new Error("unused");
         },
       },
@@ -2345,6 +2400,18 @@ test("construction rejects fake or mismounted capabilities", () => {
           stardewCabins: {
             read: async () => ({ apiVersion: 1, choices: [] }),
             confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" }),
+            occupancy: async () => ({
+              apiVersion: 1,
+              occupancy: {
+                answer: "unknown",
+                reason: "session_document_missing",
+                cabinId: null,
+                boundBy: null,
+                publishedAtUnixMs: null,
+                observedAtUnixMs: 0,
+              },
+              release: "not_licensed",
+            }),
           },
         }),
       /cabin operations are mismounted/,
@@ -2354,6 +2421,7 @@ test("construction rejects fake or mismounted capabilities", () => {
   for (const stardewCabins of [
     { read: async () => ({ apiVersion: 1, choices: [] }) },
     { confirm: async () => ({ apiVersion: 1, status: "manifest_admitted" as const }) },
+    { occupancy: async () => ({}) },
   ]) {
     assert.throws(
       () =>

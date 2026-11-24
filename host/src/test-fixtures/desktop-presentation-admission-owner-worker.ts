@@ -236,6 +236,7 @@ const gameProfile = composeGameProfile({
     "game.create",
     "game.stardew.cabins.read",
     "game.stardew.cabins.confirm",
+    "game.stardew.cabins.occupancy",
   ],
   navigationItemIds: ["game"],
 });
@@ -291,6 +292,9 @@ const presentation: GamePresentationProjection = Object.freeze({
     },
     confirmCabinChoice: async () => {
       throw new Error("unused_cabin_confirm");
+    },
+    readCabinOccupancy: async () => {
+      throw new Error("unused_cabin_occupancy");
     },
   }),
 });

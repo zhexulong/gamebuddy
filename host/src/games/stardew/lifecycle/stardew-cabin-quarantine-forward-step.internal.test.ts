@@ -52,10 +52,14 @@ async function decideOver(document: unknown) {
       companionId: "companion_01",
       nowMs: () => nowMs,
     });
-    const occupancy = await flow.readCabinOccupancy(expected);
+    const reading = await flow.readCabinOccupancy(expected);
     return {
-      occupancy,
-      step: decideStardewCabinQuarantineStep({ occupancy, record: "publication_uncertain_quarantine" }),
+      occupancy: reading.occupancy,
+      reading,
+      step: decideStardewCabinQuarantineStep({
+        occupancy: reading.occupancy,
+        record: "publication_uncertain_quarantine",
+      }),
     };
   } finally {
     await rm(directory, { recursive: true, force: true });

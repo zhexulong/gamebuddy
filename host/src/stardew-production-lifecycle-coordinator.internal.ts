@@ -46,6 +46,9 @@ import { createStardewPrivateBootstrapComposition } from "./games/stardew/lifecy
 import type {
   StardewBootstrapRegistrationReconcileReport,
   StardewPrivateBootstrapInternalComposition,
+  StardewCabinOccupancyEvidence,
+  StardewCabinQuarantineReleaseRefusal,
+  StardewManifestHandoffCoordinator,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
 import type { StardewOwnedPlayerHostBootstrap } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.js";
 import {
@@ -71,9 +74,11 @@ import {
   openRecoverableStardewBootstrapOwner,
   readRecoverableStardewBootstrapOwnerRecoveryBinding,
   STARDEW_BOOTSTRAP_OWNER_RECOVERY_TERMINAL_REFUSAL,
+  stardewCabinQuarantineRefusalOf,
   type StardewManifestHandoffChoice,
   type StardewRecoverableBootstrapOwner,
 } from "./games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.js";
+import { decideStardewCabinQuarantineStep } from "./games/stardew/lifecycle/stardew-cabin-quarantine-forward-step.internal.js";
 import type {
   GameCreateCommandV1,
   GameCreateResultV1,
@@ -93,6 +98,7 @@ import type {
   StardewCabinChoicesV1,
   StardewCabinConfirmCommandV1,
   StardewCabinConfirmResultV1,
+  StardewCabinOccupancyAnswerV1,
   StardewPlayerSettingsCommandV1,
   StardewPlayerSettingsV1,
 } from "./game-browser-contract/index.js";
@@ -567,6 +573,19 @@ export type StardewProductionLifecycleActivationOwner = Readonly<{
   ): Promise<StardewPrivateActivationSnapshot>;
   readPrivateActivationSnapshot(): StardewPrivateActivationSnapshot;
   readCabinChoices(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission): Promise<StardewCabinChoicesV1>;
+  /**
+   * The cabin press's own forward question: does this save hold her, and if it does not, may the
+   * quarantined attempt be released?
+   *
+   * It answers with the Mod's three answers (`StardewCabinOccupancyAnswerV1`), never with a step: the
+   * surface states the answer it was given, and which step the answer licenses is decided here, once,
+   * by `decideStardewCabinQuarantineStep`. Only `not_bound` reaches the release, and only with the four
+   * assertions of `releaseCabinPublicationQuarantine` satisfied; every other answer, and every failed
+   * assertion, names what kept the quarantine.
+   */
+  readCabinOccupancy(
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewCabinOccupancyAnswerV1>;
   confirmCabinChoice(
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
     command: StardewCabinConfirmCommandV1,
@@ -1365,6 +1384,42 @@ async function waitForFarmhandBridgeRetry(deadlineMs: number): Promise<void> {
   await new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.min(25, remainingMs)));
 }
 
+/**
+ * The press's answer for a Host that holds no admitted manifest.
+ *
+ * It is `manifest_farmhand_unavailable` rather than a fourth answer because that reason already names this
+ * exact situation: the companion column alone cannot tell a world the publication never reached from one
+ * where the Mod bound the farmhand a beat ago, so absence cannot be proven and nothing may be released. It
+ * is the case a restart lands in, and answering it here keeps the probe's vocabulary whole.
+ */
+function notAnsweredCabinOccupancy(): StardewCabinOccupancyAnswerV1 {
+  return Object.freeze({
+    apiVersion: 1 as const,
+    occupancy: Object.freeze({
+      answer: "unknown" as const,
+      reason: "manifest_farmhand_unavailable" as const,
+      cabinId: null,
+      boundBy: null,
+      publishedAtUnixMs: null,
+      observedAtUnixMs: Date.now(),
+    }),
+    release: "not_licensed" as const,
+  });
+}
+
+/**
+ * Whether the attempt whose record the evidence carries is the publication quarantine the probe answers for:
+ * the state and the cleanup disposition only the cabin press's post-admission failure writes.
+ *
+ * Asked of the RECORD rather than of this Host's memory, because the release re-checks the same two fields
+ * under its own lock: a decision taken from a remembered classification could disagree with the record the
+ * release then reads, and the disagreement would be discovered by the release refusing instead of by the
+ * decision refusing.
+ */
+function isQuarantinedPublicationAttempt(evidence: StardewCabinOccupancyEvidence): boolean {
+  return evidence.record.state === "quarantined" && evidence.record.cleanupDisposition === "retry_required";
+}
+
 function createCoordinator(
   manifest: HostDeploymentManifest,
   internal: BootstrapComposition,
@@ -1736,6 +1791,16 @@ function createCoordinator(
     }>
   >();
   let cabinConfirmationKey: string | undefined;
+  /**
+   * The admission whose publication this Host's cabin press left unknown.
+   *
+   * Held only while the press that could have quarantined the attempt is the one being asked about: the
+   * world and farmhand the manifest named exist nowhere else once the press is over, and a Host that has
+   * no admission in hand cannot prove absence - the probe answers `manifest_farmhand_unavailable` - so the
+   * press that finds none answers `unknown` instead of releasing. That is why a restart can never release
+   * an attempt with a probe alone.
+   */
+  let cabinPublication: Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>> | undefined;
 
   const attachmentReader: StardewGameSurfaceAttachmentReader = Object.freeze({
     readAttachmentView(): StardewGameSurfaceAttachmentView {
@@ -2097,6 +2162,7 @@ function createCoordinator(
     expectedOperation:
       | "cabin_read"
       | "cabin_confirm"
+      | "cabin_occupancy"
       | "discovery_read"
       | "discovery_confirm"
       | "discovery_retry"
@@ -2608,6 +2674,10 @@ function createCoordinator(
         .confirmAndAdmit(handle.choice.selection, { confirmed: true })
         .then(async (admission) => {
           manifestAdmitted = true;
+          // Retained before anything can fail: the world and farmhand this manifest named are the only
+          // identity the forward question can be asked with, and the failure below is exactly when it is
+          // asked.
+          cabinPublication = admission;
           await internal.materializeAiClientProfileAfterManifestAdmission(handle.owner, admission);
           aiClientProfileMaterialized = true;
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
@@ -2697,6 +2767,77 @@ function createCoordinator(
       cabinConfirmations.set(command.idempotencyKey, Object.freeze({ payload, promise, uncertain }));
       return promise;
     });
+
+  /**
+   * The press that asks the Mod's own document whether this save holds her.
+   *
+   * It is the ONE caller of the probe and of the release the probe licenses, and the order is the
+   * answer's own: the evidence is read, the ONE decision mapping says what it licenses, and only the
+   * `release_and_offer_cabin` step reaches a write - behind the four assertions the composer re-checks
+   * under the registration lock. Every other answer leaves the quarantine exactly where it is and names
+   * why.
+   *
+   * Nothing here decides a third outcome: the answer is the Host's, the step is `decideStardewCabinQuarantineStep`'s,
+   * and the surface is given the answer plus what the release did with it.
+   */
+  const readCabinOccupancy = (
+    admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+  ): Promise<StardewCabinOccupancyAnswerV1> =>
+    consumeBrowserAdmission(admission, "cabin_occupancy", async () => {
+      if (isClosing()) throw new Error("stardew_lifecycle_closing");
+      const owner = exactOwner;
+      const publication = cabinPublication;
+      if (owner === undefined || publication === undefined) return notAnsweredCabinOccupancy();
+      const evidence = await handoffCoordinator.readCabinOccupancy(owner, publication);
+      const step = decideStardewCabinQuarantineStep({
+        occupancy: evidence.reading.occupancy,
+        record: isQuarantinedPublicationAttempt(evidence) ? "publication_uncertain_quarantine" : "other_attempt_state",
+      });
+      const release =
+        step.step === "release_and_offer_cabin"
+          ? await releaseQuarantinedPublication(owner, publication, evidence)
+          : "not_licensed";
+      return Object.freeze({
+        apiVersion: 1 as const,
+        occupancy: Object.freeze({
+          answer: evidence.reading.occupancy.status,
+          reason: evidence.reading.occupancy.status === "unknown" ? evidence.reading.occupancy.reason : null,
+          cabinId: evidence.reading.occupancy.status === "already_bound" ? evidence.reading.occupancy.cabinId : null,
+          boundBy: evidence.reading.occupancy.status === "already_bound" ? evidence.reading.occupancy.boundBy : null,
+          publishedAtUnixMs: evidence.reading.publishedAtUnixMs,
+          observedAtUnixMs: evidence.reading.observedAtUnixMs,
+        }),
+        release,
+      });
+    });
+
+  /**
+   * The release, or the ONE refusal name that kept the quarantine.
+   *
+   * A refusal is an answer, not a thrown failure: the player's press did what it could, and the fact that
+   * kept the attempt held is what the surface has to state. Only a failure with no name of its own escapes,
+   * because an unnamed failure is not a fact this layer can account for.
+   */
+  const releaseQuarantinedPublication = async (
+    owner: StardewOwnedPlayerHostBootstrap,
+    publication: NonNullable<typeof cabinPublication>,
+    evidence: StardewCabinOccupancyEvidence,
+  ): Promise<StardewCabinQuarantineReleaseRefusal | "released"> => {
+    try {
+      await handoffCoordinator.releaseQuarantinedCabinPublication(
+        owner,
+        publication,
+        evidence,
+        platform.guardian.probeNamedObjects,
+      );
+      return "released";
+    } catch (error) {
+      const refusal = stardewCabinQuarantineRefusalOf(error);
+      if (refusal === null) throw error;
+      console.error(`GameBuddy Stardew cabin quarantine release refused: ${refusal}`);
+      return refusal;
+    }
+  };
 
   const stopGame = (
     admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
@@ -3125,9 +3266,14 @@ function createCoordinator(
         if (heldAfter !== null) throw new Error(ATTEMPT_SETTLE_REFUSED);
       }
       // 3. Only now does this lifecycle forget the attempt. Its activation latch was
-      //    released when the settle began (it belongs to the attempt handed back, and
-      //    the one being prepared has taken it since); everything below was this
-      //    attempt's alone.
+      // released when the settle began (it belongs to the attempt handed back, and
+      // the one being prepared has taken it since); everything below was this
+      // attempt's alone.
+      //
+      // The attempt's private session material goes HERE and nowhere earlier: the quarantine keeps it because the
+      // cabin-occupancy probe authenticates a READ of the Mod's document with its token, and this is the moment the
+      // attempt stops existing for this Host.
+      internal.forgetOwnedPlayerHostMaterial(owner);
       exactOwner = undefined;
       ownerQuarantined = false;
       launchPromise = undefined;
@@ -3155,6 +3301,7 @@ function createCoordinator(
       cabinHandles.clear();
       cabinConfirmations.clear();
       cabinConfirmationKey = undefined;
+      cabinPublication = undefined;
       attachmentGeneration = 0;
       attachmentConnectionStatus = "none";
       actionAuthorityStatus = "unavailable";
@@ -4018,6 +4165,7 @@ function createCoordinator(
     readPrivateActivationSnapshot: snapshot,
     readCabinChoices,
     confirmCabinChoice,
+    readCabinOccupancy,
     resume,
     createGameSession,
     cancelResume,

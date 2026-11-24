@@ -79,6 +79,7 @@ const cabinProfile = composeReferenceGameBrowserProfile({
       "game.stop",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
+      "game.stardew.cabins.occupancy",
     ],
     navigationItemIds: ["game"],
   }),
@@ -482,6 +483,25 @@ test("composed shell mounts lifecycle cabin callbacks and close prevents later d
           assert.deepEqual(command, { apiVersion: 1, idempotencyKey, choiceHandle, confirmed: true });
           return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
         },
+      )!;
+    },
+    async readCabinOccupancy(admission: ComposedReferenceGameBrowserLifecycleActivationAdmission) {
+      return consumeComposedReferenceGameBrowserLifecycleActivationAdmission(
+        issuer!,
+        admission,
+        "cabin_occupancy",
+        () => ({
+          apiVersion: 1 as const,
+          occupancy: {
+            answer: "unknown" as const,
+            reason: "session_document_missing" as const,
+            cabinId: null,
+            boundBy: null,
+            publishedAtUnixMs: null,
+            observedAtUnixMs: 1,
+          },
+          release: "not_licensed" as const,
+        }),
       )!;
     },
   });

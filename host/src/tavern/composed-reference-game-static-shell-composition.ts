@@ -220,16 +220,21 @@ export async function startComposedReferenceGameStaticShellComposition(
         }),
     ...(options.lifecycleActivationBindingSink === undefined ||
     (options.lifecycleActivationBindingSink.readCabinChoices === undefined &&
-      options.lifecycleActivationBindingSink.confirmCabinChoice === undefined)
+      options.lifecycleActivationBindingSink.confirmCabinChoice === undefined &&
+      options.lifecycleActivationBindingSink.readCabinOccupancy === undefined)
       ? {}
       : options.lifecycleActivationBindingSink.readCabinChoices !== undefined &&
-          options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined
+          options.lifecycleActivationBindingSink.confirmCabinChoice !== undefined &&
+          options.lifecycleActivationBindingSink.readCabinOccupancy !== undefined
         ? {
             stardewCabins: Object.freeze({
               read: options.lifecycleActivationBindingSink.readCabinChoices.bind(
                 options.lifecycleActivationBindingSink,
               ),
               confirm: options.lifecycleActivationBindingSink.confirmCabinChoice.bind(
+                options.lifecycleActivationBindingSink,
+              ),
+              occupancy: options.lifecycleActivationBindingSink.readCabinOccupancy.bind(
                 options.lifecycleActivationBindingSink,
               ),
             }),

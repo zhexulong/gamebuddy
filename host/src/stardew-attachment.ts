@@ -1,6 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
+import type { StardewCabinOccupancyUnknownReasonV1 } from "./game-browser-contract/index.js";
 
 export const STARDew_PROVISIONING_VERSION = 1;
 export const STARDew_INTEGRATION_ID = "stardew";
@@ -102,7 +103,14 @@ export type StardewJoinManifest = Readonly<{
  * document five beats old means the publisher stopped while its expiry still claims a live world.
  */
 const SESSION_CLOCK_SKEW_MS = 30_000;
-const CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS = 5_000;
+/**
+ * How old the Mod's own stamp may be before its document stops being evidence about the world.
+ *
+ * Exported because the release that a `not_bound` answer licenses has to hold the SAME bound to
+ * the answer it releases on: two numbers for one freshness rule would let a release outlive the
+ * proof it was allowed by.
+ */
+export const STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS = 5_000;
 
 /**
  * What the Mod's own published advertisement says about THIS companion's cabin, in the save the
@@ -136,16 +144,7 @@ export type StardewCabinOccupancy =
   | Readonly<{ status: "unknown"; reason: StardewCabinOccupancyUnknownReason }>;
 
 /** Every reason a live advertisement could not decide the question, each naming the layer that failed. */
-export type StardewCabinOccupancyUnknownReason =
-  | "session_document_missing"
-  | "session_document_unreadable"
-  | "session_document_unauthenticated"
-  | "session_document_stale"
-  | "session_document_clock_ahead"
-  | "session_document_other_world"
-  | "session_host_not_ready"
-  | "session_protocol_mismatch"
-  | "manifest_farmhand_unavailable";
+export type StardewCabinOccupancyUnknownReason = StardewCabinOccupancyUnknownReasonV1;
 
 /**
  * The world and the farmhand the answer has to be about.
@@ -159,6 +158,22 @@ export type StardewCabinOccupancyExpectation = Readonly<{
   saveId: string;
   worldId: string;
   farmhandId: string | null;
+}>;
+
+/**
+ * One answer together with what makes it evidence: the world and farmhand it is about, the Mod
+ * document's own stamp, and this Host's clock when it read that document.
+ *
+ * The answer alone decides the step; the rest is what a release can re-check at its own moment
+ * instead of trusting a value that was true a while ago. `publishedAtUnixMs` is null exactly when no
+ * authenticated document answered - an absent, unreadable or forged one carries no stamp this side
+ * can attribute, and inventing one would make the freshness claim unfalsifiable.
+ */
+export type StardewCabinOccupancyReading = Readonly<{
+  occupancy: StardewCabinOccupancy;
+  expectation: StardewCabinOccupancyExpectation;
+  publishedAtUnixMs: number | null;
+  observedAtUnixMs: number;
 }>;
 
 export type StardewAttachmentOptions = Readonly<{
@@ -233,52 +248,75 @@ export class StardewAttachmentFlow {
    * forward step is decided from; the refusals it can give are the ones `StardewCabinOccupancy`
    * enumerates. A malformed EXPECTATION is not an answer: that is a caller defect and refuses.
    *
-   * NOTHING CALLS THIS YET, and that is deliberate. The player-visible control that asks it is declared
-   * (`read_game_again` in `dialogue-web/src/game-lifecycle-controls.ts`), and the step its answer licenses
-   * is decided in `host/src/games/stardew/lifecycle/stardew-cabin-quarantine-forward-step.internal.ts`;
-   * the release that step names has its own seam and its own preconditions there. Until that seam is
-   * wired, this is a proof with no production caller rather than a wired one.
+   * The answer travels with the expectation it was asked under and both clocks (`StardewCabinOccupancyReading`),
+   * so the one release this answer licenses can re-check freshness and world identity at its own moment
+   * rather than trusting a value read earlier.
    */
-  public async readCabinOccupancy(expected: StardewCabinOccupancyExpectation): Promise<StardewCabinOccupancy> {
+  public async readCabinOccupancy(
+    expected: StardewCabinOccupancyExpectation,
+  ): Promise<StardewCabinOccupancyReading> {
     if (!isOpaque(expected.saveId) || !isOpaque(expected.worldId))
       throw new Error("invalid_cabin_occupancy_expectation");
     if (expected.farmhandId !== null && !isNativeId(expected.farmhandId))
       throw new Error("invalid_cabin_occupancy_expectation");
+    const observedAtUnixMs = this.now();
+    const reading = (occupancy: StardewCabinOccupancy, publishedAtUnixMs: number | null): StardewCabinOccupancyReading =>
+      Object.freeze({
+        occupancy,
+        expectation: Object.freeze({
+          saveId: expected.saveId,
+          worldId: expected.worldId,
+          farmhandId: expected.farmhandId,
+        }),
+        publishedAtUnixMs,
+        observedAtUnixMs,
+      });
     let raw: string;
     try {
       raw = await readFile(resolve(this.#options.sessionDirectory, "stardew-session.json"), "utf8");
     } catch (error) {
-      return unknownOccupancy(isFileNotFound(error) ? "session_document_missing" : "session_document_unreadable");
+      return reading(
+        unknownOccupancy(isFileNotFound(error) ? "session_document_missing" : "session_document_unreadable"),
+        null,
+      );
     }
     let session: StardewSessionAdvertisement;
     try {
       session = validateSession(JSON.parse(raw) as unknown);
     } catch {
-      return unknownOccupancy("session_document_unreadable");
+      return reading(unknownOccupancy("session_document_unreadable"), null);
     }
     if (!verifySignature(session, this.#options.sessionToken))
-      return unknownOccupancy("session_document_unauthenticated");
-    const now = this.now();
-    if (session.expiresAtUnixMs <= now || now - session.publishedAtUnixMs > CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS)
-      return unknownOccupancy("session_document_stale");
+      return reading(unknownOccupancy("session_document_unauthenticated"), null);
+    const now = observedAtUnixMs;
+    if (session.expiresAtUnixMs <= now || now - session.publishedAtUnixMs > STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS)
+      return reading(unknownOccupancy("session_document_stale"), session.publishedAtUnixMs);
     if (session.publishedAtUnixMs > now + SESSION_CLOCK_SKEW_MS)
-      return unknownOccupancy("session_document_clock_ahead");
+      return reading(unknownOccupancy("session_document_clock_ahead"), session.publishedAtUnixMs);
     if (session.saveId !== expected.saveId || session.worldId !== expected.worldId)
-      return unknownOccupancy("session_document_other_world");
-    if (session.state === "protocol_mismatch") return unknownOccupancy("session_protocol_mismatch");
-    if (session.state !== "ready") return unknownOccupancy("session_host_not_ready");
+      return reading(unknownOccupancy("session_document_other_world"), session.publishedAtUnixMs);
+    if (session.state === "protocol_mismatch")
+      return reading(unknownOccupancy("session_protocol_mismatch"), session.publishedAtUnixMs);
+    if (session.state !== "ready") return reading(unknownOccupancy("session_host_not_ready"), session.publishedAtUnixMs);
     const held = session.cabins.find((cabin) => cabin.boundCompanionId === this.#options.companionId);
     if (held !== undefined)
-      return Object.freeze({ status: "already_bound" as const, cabinId: held.cabinId, boundBy: "companion" as const });
-    if (expected.farmhandId === null) return unknownOccupancy("manifest_farmhand_unavailable");
+      return reading(
+        Object.freeze({ status: "already_bound" as const, cabinId: held.cabinId, boundBy: "companion" as const }),
+        session.publishedAtUnixMs,
+      );
+    if (expected.farmhandId === null)
+      return reading(unknownOccupancy("manifest_farmhand_unavailable"), session.publishedAtUnixMs);
     const farmhandCabin = session.cabins.find((cabin) => cabin.ownerFarmhandId === expected.farmhandId);
     if (farmhandCabin !== undefined)
-      return Object.freeze({
-        status: "already_bound" as const,
-        cabinId: farmhandCabin.cabinId,
-        boundBy: "manifest_farmhand" as const,
-      });
-    return Object.freeze({ status: "not_bound" as const });
+      return reading(
+        Object.freeze({
+          status: "already_bound" as const,
+          cabinId: farmhandCabin.cabinId,
+          boundBy: "manifest_farmhand" as const,
+        }),
+        session.publishedAtUnixMs,
+      );
+    return reading(Object.freeze({ status: "not_bound" as const }), session.publishedAtUnixMs);
   }
 
   public async verifyCabinChoice(

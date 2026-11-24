@@ -69,6 +69,9 @@ import type {
 } from "../../../containment/runtime/contract/game-runtime.js";
 import {
   StardewAttachmentFlow,
+  STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS,
+  type StardewCabinOccupancyExpectation,
+  type StardewCabinOccupancyReading,
   type StardewJoinManifest,
   type StardewVerifiedCabinChoice,
 } from "../../../stardew-attachment.js";
@@ -484,6 +487,36 @@ export type StardewManifestHandoffCoordinator = Readonly<{
    * name a request whose manifest belongs to another world or another surface.
    */
   readAdmittedJoinRequestId(owner: StardewOwnedPlayerHostBootstrap, admission: StardewManifestAdmission): string;
+  /**
+   * Whether the admission's publication took effect in the save the Player Host has loaded.
+   *
+   * This is the ONE reader of the question the cabin press's quarantine turns on, and it is private to
+   * this composition for the two facts only it holds: the admission (so the answer is about the world
+   * and farmhand THIS attempt's manifest named, never about "some world") and the attempt's own session
+   * material (so it reads the document the Mod published for this attempt). The reading carries both
+   * clocks and the attempt record it was taken under, which is what the release re-checks.
+   *
+   * A quarantined owner stays readable HERE and nowhere else: every other member of this object refuses a
+   * quarantined attempt (`assertManifestHandoffOwnerAdmissible`), because a quarantined attempt may be
+   * asked what happened but never driven.
+   */
+  readCabinOccupancy(
+    owner: StardewOwnedPlayerHostBootstrap,
+    admission: StardewManifestAdmission,
+  ): Promise<StardewCabinOccupancyEvidence>;
+  /**
+   * The ONE release of the cabin press's quarantined attempt, behind the four assertions in
+   * `releaseCabinPublicationQuarantine`, which is the only writer it reaches.
+   *
+   * The admission is required, not optional: assertion (d) is about this attempt's own world, and the
+   * manifest this admission names is the only place that world identity exists.
+   */
+  releaseQuarantinedCabinPublication(
+    owner: StardewOwnedPlayerHostBootstrap,
+    admission: StardewManifestAdmission,
+    evidence: StardewCabinOccupancyEvidence,
+    probe: StardewGuardianNamedObjectProbe,
+  ): Promise<void>;
 }>;
 
 type StardewManifestAdmissionValue = Awaited<ReturnType<StardewManifestHandoffCoordinator["confirmAndAdmit"]>>;
@@ -580,6 +613,13 @@ export type StardewPrivateBootstrapInternalComposition = Readonly<{
   noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
   /**
+   * Drops the attempt's private session material when this Host forgets the attempt.
+   *
+   * The quarantine deliberately keeps it (`quarantineOwner` says why: the cabin-occupancy probe authenticates a
+   * read of the Mod's document with that token), so the attempt's end is the one place the secret goes.
+   */
+  forgetOwnedPlayerHostMaterial(owner: StardewOwnedPlayerHostBootstrap): void;
+  /**
    * Best effort: merge the player's action policy into the config of the attempt
    * this owner owns, so a save reaches a running world through the Mod's own
    * 120-tick reread. `written: false` means there was no config to write (no
@@ -655,6 +695,7 @@ export function createStardewPrivateBootstrapProductionCore(
     terminalizeOwnedPlayerHostOwner: closed.terminalizeOwnedPlayerHostOwner,
     noteAttemptEnded: closed.noteAttemptEnded,
     quarantineOwnedPlayerHostOwner: closed.quarantineOwnedPlayerHostOwner,
+    forgetOwnedPlayerHostMaterial: closed.forgetOwnedPlayerHostMaterial,
     projectPlayerActionPolicyIntoOwnedAttempt: closed.projectPlayerActionPolicyIntoOwnedAttempt,
     reconcileHeldBootstrapRegistration: closed.reconcileHeldBootstrapRegistration,
   });
@@ -782,6 +823,13 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
    */
   noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  /**
+   * Drops the attempt's private session material when this Host forgets the attempt.
+   *
+   * The quarantine deliberately keeps it (`quarantineOwner` says why: the cabin-occupancy probe authenticates a
+   * read of the Mod's document with that token), so the attempt's end is the one place the secret goes.
+   */
+  forgetOwnedPlayerHostMaterial(owner: StardewOwnedPlayerHostBootstrap): void;
   projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
     policy: StardewModActionPolicyProjection,
@@ -876,6 +924,9 @@ export function createStardewPrivateBootstrapTestCore(dependencies: StardewPriva
     quarantineOwnedPlayerHostOwner(owner) {
       return base.quarantineOwnedPlayerHostOwner(owner);
     },
+    forgetOwnedPlayerHostMaterial(owner) {
+      base.forgetOwnedPlayerHostMaterial(owner);
+    },
     projectPlayerActionPolicyIntoOwnedAttempt(owner, policy) {
       return base.projectPlayerActionPolicyIntoOwnedAttempt(owner, policy);
     },
@@ -915,8 +966,7 @@ function createStardewPrivateBootstrapCore(dependencies: StardewPrivateBootstrap
  * and the dedicated test composition hold it.
  */
 type ClosedBootstrapCore = Readonly<{
-  readonly composition: StardewPrivateBootstrapComposition;
-  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
+  readonly composition: StardewPrivateBootstrapComposition;  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow;
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
@@ -987,6 +1037,7 @@ type ClosedBootstrapCore = Readonly<{
    */
   noteAttemptEnded(): void;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  forgetOwnedPlayerHostMaterial(owner: StardewOwnedPlayerHostBootstrap): void;
   projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
     policy: StardewModActionPolicyProjection,
@@ -1381,6 +1432,20 @@ function createClosedComposition(dependencies: StardewPrivateBootstrapCoreDepend
       const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
       return facts.quarantineOwner();
     },
+    /**
+     * Drops the attempt's private session material when this Host forgets the attempt.
+     *
+     * It is the ONE place the clearing happens. The quarantine no longer clears it, because the ONE probe that
+     * can free a quarantined cabin attempt authenticates the Mod's own document with this token: without it the
+     * probe cannot tell "no cabin holds her" from a forged claim, and a forged `not_bound` licenses exactly the
+     * second signed manifest the quarantine exists to prevent. The token authenticates a READ only, it never
+     * leaves this Host, and it is already written to the AI client's config by materialisation.
+     */
+    forgetOwnedPlayerHostMaterial: (owner: StardewOwnedPlayerHostBootstrap): void => {
+      const facts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+      facts.privateMaterial.value = null;
+      facts.privateBridgeMaterial.value = null;
+    },
     reconcileHeldBootstrapRegistration,
   });
 }
@@ -1587,6 +1652,161 @@ async function releaseSettledPlayerHostRegistrationAttempt(
     throw new Error("stardew_bootstrap_registration_unavailable");
   }
   await registration.clearMarker(marker);
+}
+
+/**
+ * The evidence a `not_bound` answer has to be for the quarantine release to read it: the answer, the
+ * world it is about, both clocks, and the attempt record it was taken under.
+ *
+ * The record half is what makes assertion (a) an assertion rather than a restatement: the release
+ * re-reads the record under its own lock and refuses when it is not the one this evidence was taken
+ * under, so a decision and the write it licenses cannot be separated by a change nobody saw.
+ */
+export type StardewCabinOccupancyEvidence = Readonly<{
+  reading: StardewCabinOccupancyReading;
+  record: Readonly<{
+    bootstrapId: string;
+    ownerRecordRevision: number;
+    state: StardewPrivateBootstrapOwnerRecord["state"];
+    cleanupDisposition: StardewPrivateBootstrapOwnerRecord["cleanupDisposition"];
+  }>;
+}>;
+
+/**
+ * Why a cabin-press quarantine release refused, one name per assertion.
+ *
+ * The names are the product's, not the assertion's position: a player asked "why did the press not
+ * free the attempt" has to be answered by the fact that refused, and a release that cannot name the
+ * fact it rested on is not allowed to write anything.
+ */
+export type StardewCabinQuarantineReleaseRefusal =
+  /** (a) The record in the transaction is not the quarantined attempt this evidence was taken under. */
+  | "record_is_not_the_quarantined_attempt"
+  /** (b) The installation registration holds another attempt, so the pointer is not this one to release. */
+  | "registration_names_another_attempt"
+  /** (c) The attempt's Guardian-owned objects were not proven gone. */
+  | "guardian_objects_not_proven_dead"
+  /** (d) The answer is not a fresh `not_bound` about this attempt's own world. */
+  | "evidence_not_fresh_for_this_world";
+
+const CABIN_QUARANTINE_RELEASE_REFUSALS: Readonly<Record<StardewCabinQuarantineReleaseRefusal, string>> = Object.freeze({
+  record_is_not_the_quarantined_attempt: "stardew_cabin_quarantine_record_is_not_the_quarantined_attempt",
+  registration_names_another_attempt: "stardew_cabin_quarantine_registration_names_another_attempt",
+  guardian_objects_not_proven_dead: "stardew_cabin_quarantine_guardian_objects_not_proven_dead",
+  evidence_not_fresh_for_this_world: "stardew_cabin_quarantine_evidence_not_fresh_for_this_world",
+});
+
+/** The error the release throws for one refusal, so a caller classifies it by the same name it reports. */
+export function stardewCabinQuarantineReleaseRefusalName(refusal: StardewCabinQuarantineReleaseRefusal): string {
+  return CABIN_QUARANTINE_RELEASE_REFUSALS[refusal];
+}
+
+/** The refusal a thrown release error names, or null for any other failure. */
+export function stardewCabinQuarantineRefusalOf(error: unknown): StardewCabinQuarantineReleaseRefusal | null {
+  if (!(error instanceof Error)) return null;
+  for (const [refusal, name] of Object.entries(CABIN_QUARANTINE_RELEASE_REFUSALS))
+    if (error.message === name) return refusal as StardewCabinQuarantineReleaseRefusal;
+  return null;
+}
+
+/**
+ * Assertion (d), in one place: a fresh `not_bound` about THIS attempt's world.
+ *
+ * Every clause is a different way the answer could stop being evidence: another answer (only absence
+ * licenses a release), another world or farmhand (the answer would be about a save this attempt never
+ * published into), no authenticated document (`publishedAtUnixMs` null is a document nobody could
+ * attribute), or a reading older than the freshness bound the probe itself applies.
+ */
+function assertCabinOccupancyEvidenceForThisWorld(
+  evidence: StardewCabinOccupancyEvidence,
+  expected: StardewCabinOccupancyExpectation,
+  nowMs: number,
+): void {
+  const refuse: () => never = () => {
+    throw new Error(CABIN_QUARANTINE_RELEASE_REFUSALS.evidence_not_fresh_for_this_world);
+  };
+  const { reading } = evidence;
+  if (reading.occupancy.status !== "not_bound") refuse();
+  if (
+    reading.expectation.saveId !== expected.saveId ||
+    reading.expectation.worldId !== expected.worldId ||
+    reading.expectation.farmhandId !== expected.farmhandId
+  )
+    refuse();
+  if (reading.publishedAtUnixMs === null) refuse();
+  if (nowMs - reading.publishedAtUnixMs > STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS) refuse();
+  if (reading.observedAtUnixMs > nowMs) refuse();
+  if (nowMs - reading.observedAtUnixMs > STARDEW_CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS) refuse();
+}
+
+/**
+ * The ONE release of the cabin press's quarantined attempt, behind four assertions.
+ *
+ * The quarantine exists because the press's signed manifest WAS admitted and the attach that follows
+ * it refused (`stardew_cabin_publication_uncertain`): a second press would write a second manifest
+ * into the same world. So the only thing that may release it is a proof that the first publication did
+ * NOT take effect - and a proof is four facts, not one:
+ *
+ * 1. (a) the record under the transaction is the quarantined attempt the evidence was taken under,
+ *    by bootstrap id and exact revision, in the state only this press writes;
+ * 2. (b) the installation registration still names that attempt, so the pointer released is the held
+ *    one and not a successor's;
+ * 3. (c) the attempt's Guardian-owned objects are proven gone, because a second Player Host launched
+ *    over a world the first one still owns is the same double binding by another route;
+ * 4. (d) the answer is a fresh `not_bound` about this attempt's own world.
+ *
+ * Any one of them failing refuses by its own name and writes nothing. The write itself is the same
+ * `releaseSettledPlayerHostRegistrationAttempt` every other terminal uses - one release, one CAS,
+ * one verified revision - never a second implementation of it.
+ */
+async function releaseCabinPublicationQuarantine(
+  runtimeRoot: string,
+  bootstrapCorrelation: string,
+  evidence: StardewCabinOccupancyEvidence,
+  expectedWorld: StardewCabinOccupancyExpectation,
+  probe: StardewGuardianNamedObjectProbe,
+  readClock: () => number,
+): Promise<void> {
+  const ownerPath = join(runtimeRoot, "stardew-private-bootstrap", bootstrapCorrelation, OWNER_FILE);
+  const terminal = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), {
+    containmentRoot: runtimeRoot,
+  });
+  if (
+    terminal.bootstrapId !== evidence.record.bootstrapId ||
+    terminal.bootstrapId !== bootstrapCorrelation ||
+    terminal.ownerRecordRevision !== evidence.record.ownerRecordRevision ||
+    terminal.state !== "quarantined" ||
+    terminal.cleanupDisposition !== "retry_required"
+  )
+    throw new Error(CABIN_QUARANTINE_RELEASE_REFUSALS.record_is_not_the_quarantined_attempt);
+  const registration = await readStardewInstallationRegistration(runtimeRoot);
+  if (
+    registration === null ||
+    registration.state !== "ready" ||
+    registration.activeAttempt?.bootstrapCorrelation !== bootstrapCorrelation
+  )
+    throw new Error(CABIN_QUARANTINE_RELEASE_REFUSALS.registration_names_another_attempt);
+  const verdict = await probeStardewGuardianObjects(probe, {
+    playerJobName: terminal.guardian.playerJobName,
+    leaseName: terminal.guardian.leaseName,
+  });
+  if (verdict.presence !== "absent")
+    throw new Error(CABIN_QUARANTINE_RELEASE_REFUSALS.guardian_objects_not_proven_dead);
+  assertCabinOccupancyEvidenceForThisWorld(evidence, expectedWorld, readClock());
+  // The four assertions are made OUTSIDE the registration owner lock, because that lock maps every error it does
+  // not own to its own `stardew_installation_registration_unavailable` - a refusal that names nothing about a
+  // cabin attempt. The write below is still the ONE release, and it re-reads the record, the fence, the exact
+  // revision and the pointer's own attempt inside the lock: a pointer that moved between these checks and the
+  // lock refuses as that layer's own unavailable, which is fail-closed and never a wrong release.
+  await withStardewLifecycleInstallationRegistrationOwner(runtimeRoot, async (ownerRegistration) => {
+    await releaseSettledPlayerHostRegistrationAttempt(
+      runtimeRoot,
+      bootstrapCorrelation,
+      immutableFenceFor(terminal),
+      terminal.ownerRecordRevision,
+      ownerRegistration,
+    );
+  });
 }
 
 /**
@@ -2390,6 +2610,28 @@ function createManifestHandoffCoordinatorCore(
 ): ManifestHandoffCoordinatorCore {
   const selections = new WeakMap<StardewManifestHandoffSelection, ManifestHandoffSelectionFacts>();
   const admissions = new WeakMap<StardewManifestAdmission, ManifestHandoffAdmissionFacts>();
+  /**
+   * The facts of an admission THIS composition minted for THIS owner, or a refusal.
+   *
+   * `consumed` is deliberately not asked. Materialising the AI-client profile consumes the admission,
+   * and the failure that quarantines the attempt happens after that - so the consumed admission is
+   * exactly the one whose publication fate the occupancy evidence is about. Every other member of this
+   * object still refuses a consumed admission for its own write; this one only reads.
+   */
+  function requireAdmissionOfThisAttempt(
+    owner: StardewOwnedPlayerHostBootstrap,
+    admission: StardewManifestAdmission,
+  ): ManifestHandoffAdmissionFacts {
+    requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+    const admissionFacts = admissions.get(admission);
+    if (
+      admissionFacts === undefined ||
+      admissionFacts.compositionIdentity !== compositionIdentity ||
+      admissionFacts.owner !== owner
+    )
+      throw new Error("invalid_stardew_manifest_admission");
+    return admissionFacts;
+  }
   const coordinator = {
     async list(owner: StardewOwnedPlayerHostBootstrap): Promise<readonly StardewManifestHandoffChoice[]> {
       const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
@@ -2532,6 +2774,68 @@ function createManifestHandoffCoordinatorCore(
       )
         throw new Error("stardew_admitted_join_request_not_admissible");
       return admissionFacts.requestId;
+    },
+    async readCabinOccupancy(
+      owner: StardewOwnedPlayerHostBootstrap,
+      admission: StardewManifestAdmission,
+    ): Promise<StardewCabinOccupancyEvidence> {
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+      const admissionFacts = requireAdmissionOfThisAttempt(owner, admission);
+      const material = ownerFacts.privateMaterial.value;
+      // `terminal` is the state the quarantine this read exists for leaves the binding in
+      // (`quarantineOwnedPlayerHostOwner` -> `terminalizeOwnedPlayerHostOwner`), so the one thing that
+      // makes the read impossible is the material being gone or the bind still in flight.
+      if (material === null || ownerFacts.bindingState.value === "unbound" || ownerFacts.bindingState.value === "binding")
+        throw new Error("stardew_cabin_occupancy_unavailable");
+      const runtimeRoot = dirname(dirname(ownerFacts.durableOwner.transactionDirectory));
+      const ownerPath = join(ownerFacts.durableOwner.transactionDirectory, OWNER_FILE);
+      // The record is read under the same lock every writer takes, so the evidence names the exact
+      // revision the release will compare against rather than one this side remembered.
+      const record = await withPathLock(ownerPath, () => readAndValidateOwner(ownerPath, runtimeRoot), {
+        containmentRoot: runtimeRoot,
+      });
+      const flow = new StardewAttachmentFlow({
+        sessionDirectory: material.sessionDirectory,
+        sessionToken: material.sessionToken,
+        companionId: material.companionId,
+        nowMs: readClock,
+      });
+      const reading = await flow.readCabinOccupancy({
+        saveId: admissionFacts.manifest.saveId,
+        worldId: admissionFacts.manifest.worldId,
+        farmhandId: admissionFacts.manifest.farmhandId,
+      });
+      return Object.freeze({
+        reading,
+        record: Object.freeze({
+          bootstrapId: record.bootstrapId,
+          ownerRecordRevision: record.ownerRecordRevision,
+          state: record.state,
+          cleanupDisposition: record.cleanupDisposition,
+        }),
+      });
+    },
+    async releaseQuarantinedCabinPublication(
+      owner: StardewOwnedPlayerHostBootstrap,
+      admission: StardewManifestAdmission,
+      evidence: StardewCabinOccupancyEvidence,
+      probe: StardewGuardianNamedObjectProbe,
+    ): Promise<void> {
+      const ownerFacts = requireOwnedPlayerHostBootstrapFacts(owner, compositionIdentity);
+      const admissionFacts = requireAdmissionOfThisAttempt(owner, admission);
+      const runtimeRoot = dirname(dirname(ownerFacts.durableOwner.transactionDirectory));
+      await releaseCabinPublicationQuarantine(
+        runtimeRoot,
+        ownerFacts.durableOwner.record.bootstrapId,
+        evidence,
+        Object.freeze({
+          saveId: admissionFacts.manifest.saveId,
+          worldId: admissionFacts.manifest.worldId,
+          farmhandId: admissionFacts.manifest.farmhandId,
+        }),
+        probe,
+        readClock,
+      );
     },
   } satisfies StardewManifestHandoffCoordinator;
   const materialize: MaterializeAiClientProfileAfterManifestAdmission = async (owner, admission) => {
@@ -4061,7 +4365,13 @@ function composeOwnedPlayerHostOwner(
     quarantineOwner: () => {
       if (quarantinePromise !== null) return quarantinePromise;
       quarantineStarted = true;
-      facts.privateMaterial.value = null;
+      // The session material is deliberately NOT cleared here. Its `sessionToken` authenticates a READ of
+      // the Mod's own document (`readCabinOccupancy`), never a write: the one probe that can tell "this save
+      // does not hold her" from a forged claim needs it, and a forged `not_bound` is precisely the second
+      // signed manifest a cabin quarantine exists to prevent. Keeping it costs one HMAC secret in Host memory
+      // for an attempt whose record is still on disk - a secret this Host already wrote to the AI client's
+      // config at materialisation - and it is dropped where the attempt is forgotten
+      // (`forgetOwnedPlayerHostMaterial`). The BRIDGE material below is a write authority and goes now.
       facts.privateBridgeMaterial.value = null;
       facts.bridgeConnectionState.value = "consumed";
       if (playerHostLaunchState === "available") playerHostLaunchState = "binding";

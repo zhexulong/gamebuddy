@@ -127,6 +127,7 @@ const gameProfile = composeGameProfile({
     "game.installation.discovery.manual_picker",
     "game.stardew.cabins.read",
     "game.stardew.cabins.confirm",
+    "game.stardew.cabins.occupancy",
   ],
   navigationItemIds: ["game"],
 });
@@ -444,6 +445,7 @@ async function createAdmissionBroker(
           stardewCabins: Object.freeze({
             read: gameSurface.coordinator.activationOwner.readCabinChoices,
             confirm: gameSurface.coordinator.activationOwner.confirmCabinChoice,
+            occupancy: gameSurface.coordinator.activationOwner.readCabinOccupancy,
           }),
           gameDiscovery: gameDiscovery ?? {
             read: async () => ({ apiVersion: 1, candidates: [], diagnostics: [] }),
@@ -512,6 +514,7 @@ async function createAdmissionBroker(
       | "lifecycle_activation"
       | "cabin_read"
       | "cabin_confirm"
+      | "cabin_occupancy"
       | "discovery_read"
       | "discovery_confirm"
       | "discovery_retry"
@@ -546,6 +549,8 @@ async function createAdmissionBroker(
                     ? "/api/composed-reference-game/v1/game/stardew/cabins"
                     : operation === "cabin_confirm"
                       ? "/api/composed-reference-game/v1/game/stardew/cabins/confirm"
+                      : operation === "cabin_occupancy"
+                        ? "/api/composed-reference-game/v1/game/stardew/cabins/occupancy"
                       : operation === "game_setup"
                         ? "/api/composed-reference-game/v1/game/prerequisites/setup"
                         : operation === "game_launch"
@@ -580,6 +585,7 @@ async function createAdmissionBroker(
       | "lifecycle_activation"
       | "cabin_read"
       | "cabin_confirm"
+      | "cabin_occupancy"
       | "discovery_read"
       | "discovery_confirm"
       | "discovery_retry"

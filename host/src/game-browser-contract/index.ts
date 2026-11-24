@@ -533,6 +533,68 @@ export const StardewCabinChoicesV1Schema = strictObject({
   ),
 });
 
+/**
+ * Every way the Mod's own document can fail to decide whether this save holds her.
+ *
+ * The vocabulary is the wire's, and the Host's probe derives its union from this one
+ * (`StardewCabinOccupancyUnknownReason` in `stardew-attachment.ts`): a reason the browser can receive
+ * without the probe being able to produce it, or the reverse, would be two vocabularies for one fact.
+ * Each member names the LAYER that failed, because "the game did not say" is not a fact a player can act
+ * on and "the advertisement stopped three beats ago" is.
+ */
+export const StardewCabinOccupancyUnknownReasonV1 = Type.Union([
+  Type.Literal("session_document_missing"),
+  Type.Literal("session_document_unreadable"),
+  Type.Literal("session_document_unauthenticated"),
+  Type.Literal("session_document_stale"),
+  Type.Literal("session_document_clock_ahead"),
+  Type.Literal("session_document_other_world"),
+  Type.Literal("session_host_not_ready"),
+  Type.Literal("session_protocol_mismatch"),
+  Type.Literal("manifest_farmhand_unavailable"),
+]);
+export type StardewCabinOccupancyUnknownReasonV1 = Static<typeof StardewCabinOccupancyUnknownReasonV1>;
+
+/**
+ * What the press that asks "does this save hold her" did with the answer it read.
+ *
+ * `not_licensed` is every answer that licenses nothing: she is in the save (the handoff is over), or the
+ * document could not decide (the quarantine stays). The four refusal members are the release's own
+ * assertions, one name each, so a press that kept the quarantine says WHICH fact it could not establish
+ * instead of reporting a generic failure.
+ */
+export const StardewCabinQuarantineReleaseV1 = Type.Union([
+  Type.Literal("released"),
+  Type.Literal("not_licensed"),
+  Type.Literal("record_is_not_the_quarantined_attempt"),
+  Type.Literal("registration_names_another_attempt"),
+  Type.Literal("guardian_objects_not_proven_dead"),
+  Type.Literal("evidence_not_fresh_for_this_world"),
+]);
+export type StardewCabinQuarantineReleaseV1 = Static<typeof StardewCabinQuarantineReleaseV1>;
+
+/**
+ * The cabin-quarantine press's answer: the Mod's three answers, with their reason, their cabin, and the
+ * two clocks that make the answer evidence instead of a memory.
+ *
+ * `publishedAtUnixMs` is null exactly when no AUTHENTICATED document answered - an absent, unreadable or
+ * forged one carries a stamp nobody can attribute, and publishing it would make the freshness claim
+ * unfalsifiable. The world and farmhand the answer is about are deliberately absent: they are the
+ * attempt's own identity, they travel nowhere, and the release re-derives them on the Host.
+ */
+export const StardewCabinOccupancyAnswerV1Schema = strictObject({
+  apiVersion: ApiVersion,
+  occupancy: strictObject({
+    answer: Type.Union([Type.Literal("not_bound"), Type.Literal("already_bound"), Type.Literal("unknown")]),
+    reason: Type.Union([StardewCabinOccupancyUnknownReasonV1, Type.Null()]),
+    cabinId: Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()]),
+    boundBy: Type.Union([Type.Literal("companion"), Type.Literal("manifest_farmhand"), Type.Null()]),
+    publishedAtUnixMs: Type.Union([Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }), Type.Null()]),
+    observedAtUnixMs: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+  }),
+  release: StardewCabinQuarantineReleaseV1,
+});
+
 // ─── Mutation commands ──────────────────────────────────────────────────────
 
 export const GamePrerequisitesSetupCommandV1Schema = strictObject({
@@ -858,6 +920,7 @@ export const GAME_BROWSER_OPERATION_IDS_V1 = Object.freeze([
   "game.installation.discovery.manual_picker",
   "game.stardew.cabins.read",
   "game.stardew.cabins.confirm",
+  "game.stardew.cabins.occupancy",
   /**
    * The player's own mod settings. Declared as the pair it is: one read the settings
    * surface mounts on, and one revision-checked save. Nothing else about the Mod's
@@ -1046,6 +1109,7 @@ export const GameBrowserContractV1 = Object.freeze({
     StardewCabinChoicesV1Schema,
     StardewCabinConfirmCommandV1Schema,
     StardewCabinConfirmResultV1Schema,
+    StardewCabinOccupancyAnswerV1Schema,
     StardewPlayerSettingsV1Schema,
     StardewPlayerSettingsReadCommandV1Schema,
     StardewPlayerSettingsCommandV1Schema,
@@ -1085,6 +1149,7 @@ export type GameDisconnectCommandV1 = Static<typeof GameDisconnectCommandV1Schem
 export type GameEndgameCommandV1 = Static<typeof GameEndgameCommandV1Schema>;
 export type GameEndgameResultV1 = Static<typeof GameEndgameResultV1Schema>;
 export type StardewCabinChoicesV1 = Static<typeof StardewCabinChoicesV1Schema>;
+export type StardewCabinOccupancyAnswerV1 = Static<typeof StardewCabinOccupancyAnswerV1Schema>;
 export type StardewCabinConfirmCommandV1 = Static<typeof StardewCabinConfirmCommandV1Schema>;
 export type StardewCabinConfirmResultV1 = Static<typeof StardewCabinConfirmResultV1Schema>;
 export type StardewPlayerSettingsV1 = Static<typeof StardewPlayerSettingsV1Schema>;

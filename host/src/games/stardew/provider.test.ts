@@ -166,6 +166,7 @@ test("stardew presentation projection declares the game preview surface and bind
       "game.installation.discovery.manual_picker",
       "game.stardew.cabins.read",
       "game.stardew.cabins.confirm",
+      "game.stardew.cabins.occupancy",
       "game.stardew.settings.read",
       "game.stardew.settings.update",
     ],

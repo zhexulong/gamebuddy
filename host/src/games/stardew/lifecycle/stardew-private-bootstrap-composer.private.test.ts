@@ -125,6 +125,7 @@ export type _ProductionInternalCompositionHasExactKeys = Assert<
     | "stageOwnedPlayerHostProfile"
     | "terminalizeOwnedPlayerHostOwner"
     | "quarantineOwnedPlayerHostOwner"
+    | "forgetOwnedPlayerHostMaterial"
     | "noteAttemptEnded"
     | "projectPlayerActionPolicyIntoOwnedAttempt"
     | "reconcileHeldBootstrapRegistration"

@@ -94,6 +94,7 @@ export type StardewPrivateBootstrapTestingComposition = Readonly<{
   noteAttemptEnded(): void;
   bindOwnedPlayerHostPhaseAOwner(owner: StardewOwnedPlayerHostBootstrap): StardewOwnedPlayerHostPhaseATestView;
   quarantineOwnedPlayerHostOwner(owner: StardewOwnedPlayerHostBootstrap): Promise<void>;
+  forgetOwnedPlayerHostMaterial(owner: StardewOwnedPlayerHostBootstrap): void;
   projectPlayerActionPolicyIntoOwnedAttempt(
     owner: StardewOwnedPlayerHostBootstrap,
     policy: import("../stardew-mod-action-policy-projection.js").StardewModActionPolicyProjection,

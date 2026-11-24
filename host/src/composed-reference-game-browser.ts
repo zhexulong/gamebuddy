@@ -28,6 +28,7 @@ import {
   type StardewCabinChoicesV1,
   type StardewCabinConfirmCommandV1,
   type StardewCabinConfirmResultV1,
+  type StardewCabinOccupancyAnswerV1,
   type StardewPlayerSettingsCommandV1,
   type StardewPlayerSettingsV1,
   type GameDiscoveryReadResultV1,
@@ -124,6 +125,17 @@ export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
       admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
       command: StardewCabinConfirmCommandV1,
     ): Promise<StardewCabinConfirmResultV1>;
+    /**
+     * The press that asks the Mod's own document whether this save holds her.
+     *
+     * It is a POST rather than a GET because the answer can license ONE write - the release of the
+     * quarantine a failed cabin press left behind - and a read that writes is a lie about what a GET
+     * does. It carries no body: the attempt is the admission's own, and a body naming one would be a
+     * second way to point a write at an attempt.
+     */
+    occupancy(
+      admission: ComposedReferenceGameBrowserLifecycleActivationAdmission,
+    ): Promise<StardewCabinOccupancyAnswerV1>;
   }>;
   /**
    * The player's own mod settings: the action consent and the co-op night floor.
@@ -190,6 +202,7 @@ export type ComposedReferenceGameBrowserLifecycleActivationBindingSink = Readonl
   gameDiscovery?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["gameDiscovery"]>;
   readCabinChoices?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["read"];
   confirmCabinChoice?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["confirm"];
+  readCabinOccupancy?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewCabins"]>["occupancy"];
   readPlayerSettings?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewSettings"]>["read"];
   updatePlayerSettings?: NonNullable<ComposedReferenceGameBrowserRequestHandlerOptions["stardewSettings"]>["update"];
 }>;
@@ -229,6 +242,7 @@ const DISCOVERY_CANCEL_PATH = `${DISCOVERY_PATH}/cancel`;
 const DISCOVERY_PICKER_PATH = `${DISCOVERY_PATH}/manual-picker`;
 const STARDEW_CABINS_PATH = "/api/composed-reference-game/v1/game/stardew/cabins";
 const STARDEW_CABINS_CONFIRM_PATH = `${STARDEW_CABINS_PATH}/confirm`;
+const STARDEW_CABINS_OCCUPANCY_PATH = `${STARDEW_CABINS_PATH}/occupancy`;
 const STARDEW_SETTINGS_PATH = "/api/composed-reference-game/v1/game/stardew/settings";
 const SESSION_COOKIE_NAME = "gb_composed_reference_game_session";
 const SESSION_DURATION_MS = 7_200_000;
@@ -990,6 +1004,7 @@ type LifecycleActivationIssuerState = Readonly<{
 type LifecycleAdmissionOperation =
   | "lifecycle_activation"
   | "cabin_read"
+  | "cabin_occupancy"
   | "discovery_read"
   | "discovery_confirm"
   | "discovery_retry"
@@ -1499,7 +1514,11 @@ export function createComposedReferenceGameBrowserRequestHandler(
   ) {
     throw new Error("Composed reference-game discovery operations are mismounted");
   }
-  const cabinOperationIds = ["game.stardew.cabins.read", "game.stardew.cabins.confirm"] as const;
+  const cabinOperationIds = [
+    "game.stardew.cabins.read",
+    "game.stardew.cabins.confirm",
+    "game.stardew.cabins.occupancy",
+  ] as const;
   const cabinOperationsMounted = cabinOperationIds.map(
     (id) => options.profile.gameProfile?.operationIds.includes(id) === true,
   );
@@ -1507,7 +1526,8 @@ export function createComposedReferenceGameBrowserRequestHandler(
   const cabinCallbacksMounted =
     options.stardewCabins !== undefined &&
     typeof options.stardewCabins.read === "function" &&
-    typeof options.stardewCabins.confirm === "function";
+    typeof options.stardewCabins.confirm === "function" &&
+    typeof options.stardewCabins.occupancy === "function";
   if (cabinMounted !== cabinCallbacksMounted || cabinOperationsMounted.some((mounted) => mounted !== cabinMounted)) {
     throw new Error("Composed reference-game cabin operations are mismounted");
   }
@@ -2110,6 +2130,19 @@ export function createComposedReferenceGameBrowserRequestHandler(
       run: (admission, command: StardewCabinConfirmCommandV1) => options.stardewCabins!.confirm(admission, command),
       reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewCabinConfirmResultV1Schema) },
       failure: { statusCode: 409, code: stardewCabinProblemCode },
+    }),
+    // The press the surface already offers (`read_game_again`): it asks the Mod's own document one question,
+    // and a `not_bound` answer can license the ONE release of a quarantined attempt. Every refusal it can give
+    // is a state (`state_unavailable`): none of them is a fault the player caused, and the answer's own
+    // `release` field names which of the four assertions kept the quarantine.
+    cabin_occupancy: lifecycleRoute({
+      method: "POST",
+      path: STARDEW_CABINS_OCCUPANCY_PATH,
+      mounted: options.stardewCabins !== undefined,
+      body: { kind: "absent" },
+      run: (admission) => options.stardewCabins!.occupancy(admission),
+      reply: { kind: "result", check: boundCheck(GameBrowserValidatorsV1.StardewCabinOccupancyAnswerV1Schema) },
+      failure: { statusCode: 409, code: () => "state_unavailable" },
     }),
   } satisfies Record<LifecycleAdmissionOperation, ComposedBrowserRoute>;
 
