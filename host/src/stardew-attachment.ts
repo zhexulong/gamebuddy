@@ -232,6 +232,12 @@ export class StardewAttachmentFlow {
    * It answers instead of throwing, because every way of not knowing is one of the THREE answers the
    * forward step is decided from; the refusals it can give are the ones `StardewCabinOccupancy`
    * enumerates. A malformed EXPECTATION is not an answer: that is a caller defect and refuses.
+   *
+   * NOTHING CALLS THIS YET, and that is deliberate. The player-visible control that asks it is declared
+   * (`read_game_again` in `dialogue-web/src/game-lifecycle-controls.ts`), and the step its answer licenses
+   * is decided in `host/src/games/stardew/lifecycle/stardew-cabin-quarantine-forward-step.internal.ts`;
+   * the release that step names has its own seam and its own preconditions there. Until that seam is
+   * wired, this is a proof with no production caller rather than a wired one.
    */
   public async readCabinOccupancy(expected: StardewCabinOccupancyExpectation): Promise<StardewCabinOccupancy> {
     if (!isOpaque(expected.saveId) || !isOpaque(expected.worldId))

@@ -15,6 +15,26 @@ import type { StardewCabinOccupancy, StardewCabinOccupancyUnknownReason } from "
  * cannot be reached from any other reading: `not_bound` is the only answer that releases, and it is
  * only reachable from a document the probe had already refused to trust if it was stale, forged,
  * unreadable, of another world, or published while the host was not ready.
+ *
+ * NOTHING CALLS THIS YET, and that is deliberate: this lane lands the proof chain and the decision, and
+ * the release is the next unit. An uncalled decision is a declared step, not a wired one - the caller is
+ * the cabin press's own surface step, and the write it will reach is
+ * `releaseSettledPlayerHostRegistrationAttempt` (`stardew-private-bootstrap-composer.core.internal.ts`)
+ * through `withStardewLifecycleInstallationRegistrationOwner`. That release may run on `not_bound` ONLY
+ * together with three facts of its own, because the proof answers a question about the WORLD and not about
+ * the attempt:
+ *
+ * 1. the record it releases is the one this answer is about - the same `bootstrapId`, the same
+ *    `ownerRecordRevision` the decision was taken under, and `state: "quarantined"` with
+ *    `cleanupDisposition: "retry_required"`, which is the state only the cabin press's post-admission
+ *    failure writes;
+ * 2. the installation registration still names that attempt as its active attempt, so the pointer being
+ *    released is the held one and not a successor's;
+ * 3. the attempt's Guardian-owned objects are proven gone (`probeStardewGuardianObjects`), because a second
+ *    Player Host launched over a world the first one still owns is the same double binding by another route.
+ *
+ * A release whose evidence is stale, of another world, or about another attempt is the double-manifest
+ * write the quarantine exists to prevent.
  */
 export type StardewCabinQuarantineStep =
   /** The save does not hold her: the publication did not take effect, so the held attempt may be released and the cabin choice offered again. */
