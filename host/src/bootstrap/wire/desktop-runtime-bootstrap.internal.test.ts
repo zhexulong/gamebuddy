@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -393,6 +393,62 @@ test("desktop bootstrap helper leaves when its owner quits after an attempt sett
     0,
     `the Host must leave by its own reclamation (exit ${String(result.workerExitCode)})`,
   );
+});
+
+// ADR-0012's eight reclamation steps, step 3, on the path where the player is leaving: the drain
+// contains the AI role it launched.
+//
+// `settled-session-owner-quit` above proves the quit reaches the Host when the attempt is already
+// over. This is the same quit with the attempt STILL LIVE: her client was launched through the
+// Guardian and never contained, so `drain_game_lifecycle` owns the only authenticated way to contain
+// it - `contain_role ai_client` on the attempt's session. This peer is the broker, and it stays up
+// until the child has left: that is the launcher's order after `3f49bbfd`, and it answers the contain.
+test("desktop bootstrap helper drains a live attempt through its broker session on the owner's quit", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("drain-owner-quit");
+
+  // The drain's own frame reached the broker and was answered: the reading is that frame, not the
+  // absence of an error.
+  assert.match(result.stderr, /wire_drain_contain:role_contained\n/);
+  assert.deepEqual(result.containedRoleFrames, ["player_host", "ai_client"]);
+  // A drain whose every step settled leaves no record at all: the Host writes one exactly when a step
+  // of its own failed, so "no record" is the positive reading of a completed drain.
+  assert.equal(result.hostExitRecord, undefined);
+  assert.equal(
+    result.workerExitCode,
+    0,
+    `the Host must leave by its own reclamation (exit ${String(result.workerExitCode)})`,
+  );
+});
+
+// The same quit with the order `3f49bbfd` replaced by the one before it: the broker goes first.
+//
+// The drain then asks a broker that is gone to contain her client, the step fails, and the Host writes
+// the one diagnostic an operator reads. The record asserted here is the production one - the same
+// `runDesktopHostReclamation` and exit-record writer a real Host runs - so a drain that could not
+// finish is named, in the file, by its own step and its own reason.
+test("desktop bootstrap helper names the failed role step when the broker goes before the drain", async (t) => {
+  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
+  const result = await runWireFixture("drain-owner-quit-broker-first");
+
+  // The step really tried: the child looked for the session and did not find it (a pipe that is gone
+  // - not an EPIPE on a frame it could still write).
+  assert.match(result.stderr, /wire_drain_contain:refused:\S+\n/);
+  // And the answer never came, so the peer saw no AI containment at all on this quit.
+  assert.deepEqual(result.containedRoleFrames, ["player_host"]);
+  // The Host's own record: an incomplete exit, the step that failed, and the reason it names.
+  const record = result.hostExitRecord;
+  assert.ok(record !== undefined, "the failed drain left no host-exit record");
+  assert.equal(record.kind, "incomplete_exit");
+  assert.equal(record.reason, "stardew_lifecycle_close_incomplete");
+  const steps = record.steps as { step: string; status: string; failure: string | null }[];
+  const failed = steps.filter((step) => step.status === "failed");
+  assert.deepEqual(
+    failed.map((step) => step.step),
+    ["drain_game_lifecycle"],
+    `the record named ${JSON.stringify(failed)} instead of the drain's role step`,
+  );
+  assert.equal(failed[0]!.failure, "stardew_lifecycle_close_incomplete");
 });
 
 // ADR-0015 §3: attempt = session. The Desktop settles the finished attempt, proves its
@@ -1147,6 +1203,8 @@ async function runWireFixture(
     | "long-path-role-environment"
     | "settled-session"
     | "settled-session-owner-quit"
+    | "drain-owner-quit"
+    | "drain-owner-quit-broker-first"
     | "settle-and-rearm"
     | "settle-leaves-nothing"
     | "composition-failure"
@@ -1186,6 +1244,13 @@ async function runWireFixture(
   /** The pid of the Host child this fixture spawned and served. */
   workerPid: number | undefined;
   /**
+   * The Host's own exit record under `<operationalRoot>\host-exit`, or `undefined` when the exit was
+   * clean - the production Host writes one exactly when a reclamation step of its own failed.
+   */
+  hostExitRecord: Record<string, unknown> | undefined;
+  /** The role of every `contain_role` frame the peer answered, in the order it answered them. */
+  containedRoleFrames: readonly string[];
+  /**
    * How long the child took to leave after the quit closed the two channels this launcher owns,
    * or `undefined` when it was still serving at the end of the measured window.
    */
@@ -1210,6 +1275,9 @@ async function runWireFixture(
   peerRefusals: readonly string[];
 }> {
   const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
+  // The two quit scenarios put a LIVE attempt in front of a quit: her client was launched and never
+  // contained, which is the state the production drain's third step exists for.
+  const liveDrainQuit = scenario === "drain-owner-quit" || scenario === "drain-owner-quit-broker-first";
   const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), "gamebuddy-wire-"));
   const bootstrapId = (
     scenario === "success"
@@ -1289,6 +1357,17 @@ async function runWireFixture(
   const sessions: Record<string, unknown>[][] = [];
   let connected = false;
   let containRoles = 0;
+  /**
+   * The authenticated sockets this peer has open.
+   *
+   * A quit that closes the broker destroys the Host-facing pipe (`DesktopHostBootstrapBroker.CloseAsync`
+   * -> `server.Dispose()`); `server.close()` alone would only stop accepting while the live session kept
+   * serving. The two quit scenarios below take the sockets away themselves, so "the broker is gone" is a
+   * real destroyed pipe and not a server that merely stopped listening.
+   */
+  const liveSockets = new Set<{ destroy(): void }>();
+  /** The Host's own `host-exit` record, when the drain did not end cleanly. */
+  let hostExitRecord: Record<string, unknown> | undefined;
   let recoveryAttempts = 0;
   let operationsResolve!: () => void;
   const operationsComplete = new Promise<void>((resolve) => {
@@ -1321,9 +1400,11 @@ async function runWireFixture(
     // Host says on connection 2 is a fact about its own attempt boundary.
     const session: Record<string, unknown>[] = [];
     sessions.push(session);
+    liveSockets.add(socket);
     /** The correlation this session's own arm established, as `ValidateTransition` keeps it. */
     let armedCorrelation: string | undefined;
     socket.once("close", () => {
+      liveSockets.delete(socket);
       guardianClosed = true;
       guardianClosedResolve();
       guardianCloses += 1;
@@ -1469,9 +1550,12 @@ async function runWireFixture(
         if (operation === "contain_role") {
           containRoles += 1;
           // Every attempt of the per-attempt scenarios arms, launches and contains its
-          // own Player role; the peer has nothing left to answer once the last one did.
-          if (containRoles >= (scenario === "settle-and-rearm" ? 2 : 1)) operationsResolve();
+          // own Player role; the peer has nothing left to answer once the last one did. The quit
+          // scenarios are the exception: their attempt is still live at the quit, so the reading that
+          // says the attempt is up is the AI role's launch and not a containment.
+          if (!liveDrainQuit && containRoles >= (scenario === "settle-and-rearm" ? 2 : 1)) operationsResolve();
         }
+        if (liveDrainQuit && operation === "launch_role" && request.role === "ai_client") operationsResolve();
       }
     });
   });
@@ -1592,6 +1676,13 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       '// Hermetic wire-fixture stub: the bootstrap entry imports this seam but the\n// fixture configures no Voice surface, so it is never invoked.\nexport async function connectHealthyVoiceGateway() { throw new Error("wire_fixture_voice_stub_unused"); }\nexport async function connectHealthyVoiceGatewayWith() { throw new Error("wire_fixture_voice_stub_unused"); }\n',
     );
     await cp(compiledArtifact("deployment-manifest.js"), join(moduleDirectory, "deployment-manifest.js"));
+    // `deployment-manifest.js` imports the generated principal key set, which is a module of its own:
+    // the fixture ships every module the entry resolves by relative URL, so this one travels beside it.
+    // Missing it failed all 19 wire cases with ERR_MODULE_NOT_FOUND before their first assertion.
+    await cp(
+      compiledArtifact("deployment-principal.generated.js"),
+      join(moduleDirectory, "deployment-principal.generated.js"),
+    );
     // The bootstrap entry imports the presentation-handoff publisher (introduced
     // with the private presentation pipe) . The fixture ships every module the
     // compiled entry actually imports; a missing one fails every wire scenario
@@ -1629,6 +1720,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         .href,
       compositionUrl: pathToFileURL(join(moduleDirectory, "composition", "desktop-host-composition.js")).href,
       platformUrl: pathToFileURL(join(moduleDirectory, "composition", "stardew", "stardew-guardian-platform.js")).href,
+      reclamationUrl: pathToFileURL(join(moduleDirectory, "composition", "desktop-host-reclamation.js")).href,
       inspectorUrl: pathToFileURL(join(moduleDirectory, "windows-reparse-inspector", "index.js")).href,
       guardianInstanceId,
       attemptId,
@@ -1834,6 +1926,40 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       ]);
       exitCodeWhileServing = worker.exitCode;
       if (worker.exitCode === null) worker.kill("SIGTERM");
+    } else if (liveDrainQuit) {
+      await withTimeout(operationsComplete, 15_000, "the live attempt's arm, launch and player containment");
+      // The attempt is LIVE and her client is not contained. This is the quit, and the launcher's
+      // order is the whole variable: the fixed order closes the controller first and the broker only
+      // once the child's drain has had its chance, while the injected old order takes the broker away
+      // first - which is what leaves the drain's role step with no peer.
+      const quitStarted = performance.now();
+      if (scenario === "drain-owner-quit-broker-first") {
+        for (const socket of liveSockets) socket.destroy();
+        await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+        if (!worker.stdin!.destroyed) worker.stdin!.end();
+      } else {
+        if (!worker.stdin!.destroyed) worker.stdin!.end();
+        controllerQuitExitMs = await Promise.race([
+          workerClose.then(() => performance.now() - quitStarted),
+          new Promise<undefined>((resolveWindow) => setTimeout(() => resolveWindow(undefined), 15_000)),
+        ]);
+        // The child left on its own; anything still open is this peer's own leftover, not a session
+        // the drain needed.
+        for (const socket of liveSockets) socket.destroy();
+        await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+      }
+      await withTimeout(workerClose, 15_000, "the quit's exit").catch(() => undefined);
+      controllerQuitExitMs ??= performance.now() - quitStarted;
+      exitCodeWhileServing = worker.exitCode;
+      if (worker.exitCode === null) worker.kill("SIGTERM");
+      const hostExitDirectory = join(rootLayout.operationalRoot, "host-exit");
+      const recordNames = existsSync(hostExitDirectory)
+        ? (await readdir(hostExitDirectory)).filter((name) => name.startsWith("host-exit-") && name.endsWith(".json"))
+        : [];
+      hostExitRecord =
+        recordNames.length === 0
+          ? undefined
+          : (JSON.parse(await readFile(join(hostExitDirectory, recordNames[0]!), "utf8")) as Record<string, unknown>);
     } else if (scenario === "settle-and-rearm") {
       await withTimeout(operationsComplete, 15_000, "guardian operations");
       // Both attempts' sessions must close - the first on its settle, the second on the
@@ -1909,6 +2035,10 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       workerExitedNaturally: worker.exitCode === 0,
       exitCodeWhileServing,
       workerPid: worker.pid,
+      hostExitRecord,
+      containedRoleFrames: requests
+        .filter((request) => request.operation === "contain_role")
+        .map((request) => String(request.role)),
       controllerQuitExitMs,
       stateReadAfterLoss,
       attemptObjects:
@@ -2077,6 +2207,45 @@ async function drive(session) {
       attemptId: fixture.attemptId,
       operationWaitBudgetMs: 123,
       launchedRoles: ["player_host"],
+    });
+    return;
+  }
+  if (scenario === "drain-owner-quit" || scenario === "drain-owner-quit-broker-first") {
+    const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+    const platform = createDesktopGuardianGameRuntimePlatform(session);
+    await platform.arm({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      armFacts: fixture.armFacts,
+      authorization: { executable: fixture.approvedExecutable },
+    });
+    await platform.launch({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      deadlineUnixMs: Date.now() + 60000,
+      role: "player_host",
+      authorization: fixture.launchFacts,
+    });
+    await platform.contain({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      operationWaitBudgetMs: 123,
+      role: "player_host",
+    });
+    // Her client is in the world and NOT contained. That is the state the production drain's third
+    // step exists for: an attempt that is still live when the player leaves, whose AI role may only
+    // be contained through this authenticated session.
+    await platform.launch({
+      guardianInstanceId: fixture.guardianInstanceId,
+      guardianEpoch: 1,
+      attemptId: fixture.attemptId,
+      deadlineUnixMs: Date.now() + 60000,
+      role: "ai_client",
+      authorization: fixture.launchFacts,
     });
     return;
   }
@@ -2422,7 +2591,52 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   const operationTask = (async () => { await drive(session); })();
   operationTask.catch(() => undefined);
   if (scenario === "lost-session-rearm") return mountStateSurface(session, operationTask, assemblyInput);
+  if (scenario === "drain-owner-quit" || scenario === "drain-owner-quit-broker-first")
+    return { close: () => closeWithLiveDrain(session, operationTask) };
   return { async close() { await operationTask; await session.close(); return cleanExitReason; } };
+}
+
+/**
+ * The quit's drain, as the Host runs it: the REAL reclamation runner over the composition's own step
+ * order, with the third step spelled the one way production spells it - an authenticated
+ * contain_role ai_client on this attempt's session (stardew-guardian-platform.ts:560,
+ * containAiClient), whose refusal the lifecycle coordinator turns into
+ * stardew_lifecycle_close_incomplete.
+ *
+ * The steps this fixture never mounted carry no close and are reported not_applicable, not
+ * completed: a composition that never had a Chat runtime must not claim it drained one.
+ */
+async function closeWithLiveDrain(session, operationTask) {
+  await operationTask;
+  const reclamation = await import(fixture.reclamationUrl);
+  const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
+  const platform = createDesktopGuardianGameRuntimePlatform(session);
+  const outcomes = await reclamation.runDesktopHostReclamation([
+    { step: "release_shared_authority" },
+    { step: "reflect_session" },
+    {
+      step: "drain_game_lifecycle",
+      close: async () => {
+        try {
+          await platform.contain({
+            guardianInstanceId: fixture.guardianInstanceId,
+            guardianEpoch: 1,
+            attemptId: fixture.attemptId,
+            operationWaitBudgetMs: 123,
+            role: "ai_client",
+          });
+          process.stderr.write("wire_drain_contain:role_contained\\n");
+        } catch (error) {
+          process.stderr.write("wire_drain_contain:refused:" + String(error && error.message ? error.message : error) + "\\n");
+          throw new Error("stardew_lifecycle_close_incomplete");
+        }
+      },
+    },
+    { step: "drain_chat_runtime" },
+    { step: "stop_admission" },
+  ]);
+  await session.close();
+  return reclamation.buildDesktopHostExitReason(outcomes);
 }
 
 /**
