@@ -7,6 +7,10 @@
  *
  * red-proof: inject  a field added to the real `BridgeBodyProgramNodeStatus`, and `"refusalDetail"` deleted from the
  *   real `isBodyProgramNodeStatus` key list -> `wire_field_unaccepted:program_status_result:<field>:<C# type>`
+ * red-proof: inject  the declared-empty row for `destination_index_request` deleted -> `frame_without_fields:` names the
+ *   frame and BLOCKS; a `redProofProbe` field added to the real `BridgeDestinationIndexRequest` ->
+ *   `stale_wire_exemption:destination_index_request` naming the field; the same field declared on the Host's
+ *   `DestinationIndexRequest` -> `wire_field_unknown_to_mod:destination_index_request:redProofProbe`
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -14,9 +18,10 @@ import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-
+import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   checkCrossLanguageWireParity,
+  DECLARED_EMPTY_FRAMES,
   EXIT,
   extractNamingPolicy,
   formatWireParity,
@@ -33,7 +38,6 @@ import {
   UNPAIRED_FRAME_EXEMPTIONS,
   wireNameOf,
 } from "./check-cross-language-wire-parity.mjs";
-import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 
 const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
 const GATE = join(REPOSITORY_ROOT, "gates/product/check-cross-language-wire-parity.mjs");
@@ -79,7 +83,7 @@ test("the shipped tree is read, not blocked, and the numbers are printed", () =>
   const line = formatWireParity(report)[0] ?? "";
   assert.match(
     line,
-    /^frames examined \d+ · paired \d+ · measured here \d+ · owned elsewhere \d+ · exempt \d+ · unmeasured \d+$/u,
+    /^frames examined \d+ · paired \d+ · empty declared \d+ · measured here \d+ · owned elsewhere \d+ · exempt \d+ · unmeasured \d+$/u,
     `the run must print its frame population on one line: ${line}`,
   );
   assert.match(
@@ -90,6 +94,23 @@ test("the shipped tree is read, not blocked, and the numbers are printed", () =>
   // The population this run claims has to be the one it read: every frame is paired, owned by another gate, or exempt.
   assert.equal(report.frames.unpaired.length, 0, `no frame may be silently unmeasured: ${report.reason}`);
   assert.equal(report.frames.exempt, 1, "exactly one frame is exempt today, and it is printed with its owner");
+  // The empty payloads are DECLARED, not silent: each row is printed with the owner who owes the decision, and the count
+  // on the population line is the number of rows this run re-proved.
+  assert.deepEqual(
+    report.frames.emptyDeclared.map((entry) => entry.frame),
+    DECLARED_EMPTY_FRAMES.map((entry) => entry.frame),
+    `every declared-empty frame must be re-proved on this tree: ${JSON.stringify(report.frames.emptyDeclared)}`,
+  );
+  for (const entry of DECLARED_EMPTY_FRAMES)
+    assert.ok(
+      formatWireParity(report).some((printed) => printed.startsWith(`  empty declared ${entry.frame} (`)),
+      `the run must name the empty frame and its payload: ${entry.frame}`,
+    );
+  assert.match(
+    line,
+    new RegExp(`· empty declared ${DECLARED_EMPTY_FRAMES.length} ·`, "u"),
+    `the population line must count the rows it re-proved: ${line}`,
+  );
 });
 
 test("the naming policy is read from the serialiser and printed, not assumed", () => {
@@ -233,7 +254,9 @@ test("a frame the Mod answers from its dispatch pairs, and renaming that arm blo
   // population, and the run blocked on a frame both languages handle (38 Host arms, 36 pairs, one exempt).
   const shipped = checkCrossLanguageWireParity();
   assert.equal(shipped.status, "passed", `the shipped tree must pass: ${shipped.reason}`);
-  assert.equal(shipped.frames.examined, 38, "every Host arm is in the population");
+  const arms = hostFrameArms(realHostProtocol()).size;
+  assert.ok(arms > 30, `the Host's own switch is the frame population: ${arms} arm(s)`);
+  assert.equal(shipped.frames.examined, arms, "every Host arm is in the population");
   assert.ok(
     !shipped.frames.unpaired.includes("farmhand_action_policy_request"),
     "the pushed policy frame is answered by the Mod, so it must not be unmeasured",
@@ -252,11 +275,17 @@ test("a frame the Mod answers from its dispatch pairs, and renaming that arm blo
     ["farmhand_action_policy_request"],
     `the frame must be named, not dropped: ${report.frames.unpaired.join(", ")}`,
   );
-  // Both sides on the printed line: the Host's 38 arms and the Mod's 36 pairs are what makes the missing one visible.
-  assert.equal(report.frames.examined, 38);
-  assert.equal(report.frames.paired, 36);
+  // Both sides on the printed line: the Host's arms and the Mod's pairs are what makes the missing one visible, and the
+  // difference is the one exemption the Mod cannot pair plus the frame this injection unhooked.
+  assert.equal(report.frames.examined, arms);
+  const expectedPairs = arms - UNPAIRED_FRAME_EXEMPTIONS.length - 1;
+  assert.equal(report.frames.paired, expectedPairs);
   const line = formatWireParity(report)[1] ?? "";
-  assert.match(line, /the Host dispatches on 38 frame\(s\) · the Mod pairs 36 of them/u, line);
+  assert.match(
+    line,
+    new RegExp(`the Host dispatches on ${arms} frame\\(s\\) · the Mod pairs ${expectedPairs} of them`, "u"),
+    line,
+  );
   assert.match(line, /unmeasured farmhand_action_policy_request$/u, line);
 });
 
@@ -332,6 +361,73 @@ test("a frame that pairs to a type carrying no fields is blocked too", () => {
   assert.ok(
     report.frames.gaps.some((gap) => gap.startsWith("frame_without_fields:program_submit")),
     `a paired frame with no fields must be blocked by name:\n${report.frames.gaps.join("\n")}`,
+  );
+});
+
+test("an empty frame is declared, and deleting the row blocks it by name again", () => {
+  // `destination_index_request` carries the empty object on purpose (the directory is the world's), and a payload with no
+  // fields is indistinguishable from a declaration this reader never found. The row is the difference, and removing it has
+  // to reproduce the block - otherwise "declared empty" would be a silent pass instead of a stated fact.
+  const shipped = checkCrossLanguageWireParity();
+  assert.ok(
+    shipped.frames.emptyDeclared.some((entry) => entry.frame === "destination_index_request"),
+    `the shipped tree must declare the frame's empty payload: ${JSON.stringify(shipped.frames.emptyDeclared)}`,
+  );
+
+  const undeclared = checkCrossLanguageWireParity({ emptyFrames: [] });
+  assert.equal(undeclared.status, "blocked", `an undeclared empty payload is not a measurement: ${undeclared.reason}`);
+  assert.ok(
+    undeclared.frames.gaps.includes("frame_without_fields:destination_index_request:BridgeDestinationIndexRequest"),
+    `the block must name the frame and its payload:\n${undeclared.frames.gaps.join("\n")}`,
+  );
+  assert.deepEqual(undeclared.frames.emptyDeclared, [], "no row survived, and the run says so");
+  // The block is about that frame, not about abandoning the tree: the fields that CAN be compared are still compared.
+  assert.ok(undeclared.fields.examined > 0, "a population block still reads the rest of the tree");
+});
+
+test("an empty-frame row does not excuse a field the Host declares on the frame", () => {
+  const protocol = realHostProtocol().replace(
+    "export type DestinationIndexRequest = Readonly<Record<string, never>>;",
+    "export type DestinationIndexRequest = Readonly<{ redProofProbe?: string }>;",
+  );
+  assert.notEqual(protocol, realHostProtocol(), "the injection must change the Host declaration");
+  const report = checkCrossLanguageWireParity({ overrides: { [HOST_PROTOCOL_PATH]: protocol } });
+  assert.equal(report.status, "failed", `a key on an empty payload is a crossing, not a declaration: ${report.status}`);
+  assert.ok(
+    codes(report).includes("wire_field_unknown_to_mod:destination_index_request:redProofProbe"),
+    `the crossing must be named with its field:\n${codes(report).join("\n")}`,
+  );
+});
+
+test("a declared-empty payload that grows a field makes its row stale, naming the field", () => {
+  const models = real(MODELS_FILE).replace(
+    "public sealed record BridgeDestinationIndexRequest;",
+    "public sealed record BridgeDestinationIndexRequest(string? RedProofProbe = null);",
+  );
+  assert.notEqual(models, real(MODELS_FILE), "the injection must give the empty payload a field");
+  const report = checkCrossLanguageWireParity({ overrides: { [MODELS_FILE]: models } });
+  assert.equal(report.status, "failed", `a row that outlived its payload is drift: ${report.status} ${report.reason}`);
+  const stale = report.violations.find(
+    (violation) => violation.code === "stale_wire_exemption:destination_index_request",
+  );
+  assert.ok(stale, `the row must go red by name:\n${codes(report).join("\n")}`);
+  assert.match(stale.detail, /redProofProbe/u, `the row must name the field that made it false: ${stale.detail}`);
+  assert.ok(
+    !report.frames.emptyDeclared.some((entry) => entry.frame === "destination_index_request"),
+    "a frame that now carries a field is no longer counted as declared empty",
+  );
+});
+
+test("an empty-frame row with no reason or no owner is refused", () => {
+  const report = checkCrossLanguageWireParity({
+    emptyFrames: [
+      { frame: "destination_index_request", payload: "BridgeDestinationIndexRequest", reason: " ", owner: "" },
+    ],
+  });
+  assert.equal(report.status, "blocked");
+  assert.ok(
+    report.frames.gaps.includes("exemption_without_owner:destination_index_request"),
+    `a silent declaration is what the row exists against:\n${report.frames.gaps.join("\n")}`,
   );
 });
 

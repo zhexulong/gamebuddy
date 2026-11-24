@@ -43,14 +43,18 @@
  *                           with a Mod payload, owned by another gate (named), or exempt by name with an owner who owes the
  *                           pairing. A frame that is none of those is `frame_not_measured:<frame>` and the run is BLOCKED
  *                           (exit 2) - not `passed` with a trailing sentence saying otherwise. A frame that pairs to a type
- *                           carrying no fields is `frame_without_fields:<frame>` and is blocked for the same reason. An
- *                           exemption whose frame pairs is `stale_wire_exemption:<frame>`.
+ *                           carrying no fields is `frame_without_fields:<frame>` and is blocked for the same reason,
+ *                           UNLESS a declared empty-frame row (`DECLARED_EMPTY_FRAMES`) states that the empty payload is
+ *                           the design and re-proves it on this tree - then it is counted as `empty declared` and printed
+ *                           with the owner who owes the decision. An exemption whose frame pairs is
+ *                           `stale_wire_exemption:<frame>`.
  *   field_accepted        - every field of every payload the Mod SENDS (and of the records it publishes) is a name the
  *                           Host accepts for that frame, and every field the Host declares on a request is a field the Mod
  *                           can read.
  *
- * VERDICT. `frames examined N · paired P · measured here M · owned elsewhere O · exempt E · unmeasured U` and
- * `fields examined M · accepted A · unaccepted K` on two lines, then the naming policy, then one line per drifting member:
+ * VERDICT. `frames examined N · paired P · empty declared D · measured here M · owned elsewhere O · exempt E ·
+ * unmeasured U` and `fields examined M · accepted A · unaccepted K` on two lines, then the naming policy, then one line
+ * per declared-empty and owned-elsewhere frame, then one line per drifting member:
  *   wire_field_unaccepted:<frame>:<field>:<csharpType>   the Mod sends it, the Host's validators never name it
  *   wire_field_unknown_to_mod:<frame>:<field>            the Host writes it, the Mod's decoder declares no such field
  *   stale_wire_exemption:<field>                         an exemption whose field is gone or has stopped drifting
@@ -59,6 +63,15 @@
  * the owner who owes the fix, and it goes red the moment the field or frame it exempts disappears. ONE frame is exempt
  * today - `body_node_admission_grant` - because the Mod names that frame through a `grant ? A : B` ternary inside a generic
  * decoder, so the literal and the payload type never share a declaration; the exemption names the owner who owes it.
+ *
+ * AN EMPTY PAYLOAD IS A DESIGN STATEMENT OR IT IS NOTHING. `destination_index_request` and `observe_request` carry the
+ * empty object on purpose - the directory and the snapshot are the world's, so an argument here would be the Mod deciding
+ * something it was moved out of - and `frame_without_fields` was reporting exactly that, because a payload with no fields
+ * and a payload whose declaration this reader never found looked identical. The two cases are now told apart rather than
+ * excused: `modRecords` reads the semicolon-bodied `record X;` as a field-legal empty declaration, and
+ * `DECLARED_EMPTY_FRAMES` names each empty frame with its owner, re-proving on every run that the Mod's type carries no
+ * field and that the Host's arm for the frame names no accepted key at all. A row whose frame grows a field, changes its
+ * payload, or whose Host arm starts accepting a key is `stale_wire_exemption:<frame>`.
  *
  * DIRECTION 2 (Host -> Mod) is derived from the Host's own `BridgeMessage` payload types: the fields the Host's type says
  * it puts on a request must be fields the Mod's request record declares. Its limit is stated rather than hidden - it
@@ -92,6 +105,10 @@
  *   (tools/check-cross-language-wire-parity.test.mjs)
  * red-proof: inject  the pushed policy's frame renamed in the real `ModEntry.cs` -> `frame_not_measured:` names it and the
  *   blocked line prints 38 Host arms against 36 Mod pairs (tools/check-cross-language-wire-parity.test.mjs)
+ * red-proof: inject  the empty-frame row for `destination_index_request` deleted -> `frame_without_fields:` names the
+ *   frame and the run BLOCKS; a `redProofProbe` field added to the real `BridgeDestinationIndexRequest` ->
+ *   `stale_wire_exemption:destination_index_request`; the same field added to the Host's `DestinationIndexRequest` ->
+ *   `wire_field_unknown_to_mod:destination_index_request:redProofProbe` (tools/check-cross-language-wire-parity.test.mjs)
  */
 
 export const gateDeclaration = {
@@ -163,6 +180,38 @@ export const UNPAIRED_FRAME_EXEMPTIONS = Object.freeze([
       'the Mod names this frame through a `grant ? "body_node_admission_grant" : "body_node_admission_challenge"` ternary inside `TryDeserializeAdmission<T>`, whose envelope is the generic `T`: the literal and the payload type are never in the same declaration, so the reader has nothing to join',
     owner:
       "the body-program admission lane (pair it when the decoder stops naming the frame through a parameter, or when this reader learns to join a generic decoder to its callers)",
+  }),
+]);
+
+/**
+ * Inbound frames whose payload is the EMPTY object on BOTH sides, as a design statement rather than an omission.
+ *
+ * A frame that pairs to a payload carrying no fields is BLOCKED (`frame_without_fields:<frame>:<type>`) because "carries
+ * nothing" and "this reader never found the declaration" produce the same field walk and only one of them is a
+ * measurement. These rows are the difference, and they are not a tolerance: each one is re-proved on the tree at EVERY
+ * run - the Mod declares `payload` as a field-legal empty record this reader holds, the Mod's decoder pairs exactly that
+ * type with the frame, and the Host's arm for the frame names no accepted key at all - so a row whose payload grows a
+ * field, whose pairing changes, or whose Host arm begins accepting a key is `stale_wire_exemption:<frame>` naming the half
+ * that moved, never an excuse.
+ *
+ * The row covers an INBOUND (request) frame only. An outbound frame whose payload came out empty is a walk that found
+ * nothing where fields were expected, which is the gap itself and has no design to declare.
+ */
+export const DECLARED_EMPTY_FRAMES = Object.freeze([
+  Object.freeze({
+    frame: "destination_index_request",
+    payload: "BridgeDestinationIndexRequest",
+    reason:
+      "the Mod declares `public sealed record BridgeDestinationIndexRequest;` with no field and its deserializer requires `HasExactProperties(payload)` with no names (`Core/Protocol/BridgeProtocol.cs`), the Host declares `Readonly<Record<string, never>>` and validates `hasExactKeys(value, [])`, and the caller writes `{}`: the directory is the world's, so a selector or a limit here would move the matching decision back to the Mod (`design/adr/0014-thin-stardew-mod.md`)",
+    owner:
+      "the navigation destination-index lane (a field here is a decision about who ranks the world's places, and it needs that decision made on the Host side first)",
+  }),
+  Object.freeze({
+    frame: "observe_request",
+    payload: "BridgeObserveRequest",
+    reason:
+      "the Mod declares `internal sealed record BridgeObserveRequest();` with no field (`integrations/stardew/BridgeSession.cs`), the Host declares `Readonly<Record<string, never>>` and its arm refuses any key (`hasExactKeys(payload, [])`), and every sender writes `{}`: an observation is asked for with no argument, and the snapshot it answers is the whole reply",
+    owner: "the observation lane (a field here would be a request shape the Mod's own `TryObserve` has never read)",
   }),
 ]);
 
@@ -414,9 +463,10 @@ export function modRecords(source) {
       const field = readParameter(parameter);
       if (field !== null) fields.push(field);
     }
-    // A FIELD-LEGAL EMPTY declaration is recorded as empty rather than dropped: `internal sealed record
-    // BridgeObserveRequest();` is the Mod's statement that the frame carries no fields, and a reader that dropped it would
-    // report that frame as "paired to a type it cannot find" - a gap where the truth is "declared, and it carries none".
+    // A FIELD-LEGAL EMPTY declaration is recorded as empty rather than dropped, in both forms the Mod writes it:
+    // `internal sealed record BridgeObserveRequest();` and `public sealed record BridgeDestinationIndexRequest;`. Each is
+    // the Mod's statement that the frame carries no fields, and a reader that dropped it would report that frame as "paired
+    // to a type it cannot find" - a gap where the truth is "declared, and it carries none".
     if (!records.has(name.value)) records.set(name.value, Object.freeze(fields));
   }
   for (let index = 0; index < tokens.length; index += 1) {
@@ -425,6 +475,10 @@ export function modRecords(source) {
     if (name?.type !== "word" || records.has(name.value)) continue;
     let bodyOpen = index + 2;
     while (bodyOpen < tokens.length && tokens[bodyOpen].value !== "{" && tokens[bodyOpen].value !== ";") bodyOpen += 1;
+    if (tokens[bodyOpen]?.value === ";") {
+      if (!records.has(name.value)) records.set(name.value, Object.freeze([]));
+      continue;
+    }
     if (tokens[bodyOpen]?.value !== "{") continue;
     const bodyClose = balanced(tokens, bodyOpen);
     if (bodyClose < 0) continue;
@@ -1126,6 +1180,7 @@ export function checkCrossLanguageWireParity({
   overrides = {},
   exemptions = EXEMPTIONS,
   frameExemptions = UNPAIRED_FRAME_EXEMPTIONS,
+  emptyFrames = DECLARED_EMPTY_FRAMES,
 } = {}) {
   const read = (relativePath) => overrides[relativePath] ?? readFileSync(join(root, relativePath), "utf8");
   const protocol = readProtocolDirectory(root, overrides).join("\n");
@@ -1141,7 +1196,14 @@ export function checkCrossLanguageWireParity({
       status: "blocked",
       reason,
       policy: null,
-      frames: Object.freeze({ examined: 0, paired: 0, unpaired: Object.freeze([]) }),
+      frames: Object.freeze({
+        examined: 0,
+        paired: 0,
+        unpaired: Object.freeze([]),
+        emptyDeclared: Object.freeze([]),
+        exempt: 0,
+        gaps: Object.freeze([]),
+      }),
       fields: Object.freeze({ examined: 0, accepted: 0, unaccepted: 0, exempt: 0 }),
       violations: Object.freeze([]),
       checks: Object.freeze([
@@ -1182,6 +1244,39 @@ export function checkCrossLanguageWireParity({
   );
   /** frame -> how many fields the walk over that frame's payload contributed, so "paired but empty" is visible. */
   const examinedFrames = new Map();
+
+  /**
+   * Why a declared-empty row no longer describes this tree, or null while it does.
+   *
+   * Every clause is one half of the claim the row makes, so a frame that moved fails with the half that moved named -
+   * the row cannot decay into a shrug once its payload, its pairing or its Host arm changes.
+   */
+  const emptyRowProblem = (row) => {
+    if (!arms.has(row.frame)) return "the Host no longer dispatches on this frame";
+    const pair = paired.pairs.get(row.frame);
+    if (pair === undefined || pair.inbound === undefined)
+      return `the Mod pairs no inbound payload with this frame (the row declares \`${row.payload}\`)`;
+    if (pair.inbound !== row.payload)
+      return `the Mod now pairs \`${pair.inbound}\` with this frame instead of \`${row.payload}\``;
+    if (!records.has(row.payload)) return `\`${row.payload}\` is no longer a declaration this gate reads`;
+    const fields = records.get(row.payload) ?? [];
+    const derived = derivations.get(row.payload) ?? new Set();
+    if (fields.length > 0 || derived.size > 0)
+      return `the Mod's \`${row.payload}\` now declares ${[
+        ...fields.map((field) => wireNameOf(field.name, naming.policy)),
+        ...derived,
+      ].join(", ")}`;
+    const acceptedNames = hostAcceptedNames(
+      arms.get(row.frame) ?? "",
+      bodies,
+      hostSource,
+      8,
+      frameEntryPoints(row.frame, bodies),
+    );
+    if (acceptedNames.size > 0)
+      return `the Host's \`${row.frame}\` arm now names accepted key(s) [${[...acceptedNames].sort().join(", ")}]`;
+    return null;
+  };
 
   const violations = [];
   const examined = [];
@@ -1267,11 +1362,23 @@ export function checkCrossLanguageWireParity({
   for (const [frame, hostType] of [...hostTypes].sort((left, right) => left[0].localeCompare(right[0]))) {
     const pair = paired.pairs.get(frame);
     if (pair === undefined || pair.inbound === undefined) continue;
-    const declared = records.get(pair.inbound);
-    if (declared === undefined) continue;
+    // A declaration this reader does not hold is the population check's finding, never an agreement: comparing against an
+    // empty field list would report every key the Host writes as unreadable.
+    if (!records.has(pair.inbound)) continue;
     const properties = hostTypeProperties(hostProtocol, hostType);
     if (properties === null) continue;
-    const fields = new Set(declared.map((field) => wireNameOf(field.name, naming.policy)));
+    // A UNION payload names an abstract base whose fields live on the records that derive from it - the same shape the
+    // walk above unions, and `body_node_admission_result` is the frame that caught this reader reading only the base: its
+    // three derived records carry `result` and the base carries nothing.
+    const fields = new Set();
+    const seen = new Set();
+    const collect = (typeName, depth) => {
+      if (seen.has(typeName) || depth > 4) return;
+      seen.add(typeName);
+      for (const field of records.get(typeName) ?? []) fields.add(wireNameOf(field.name, naming.policy));
+      for (const child of [...(derivations.get(typeName) ?? new Set())].sort()) collect(child, depth + 1);
+    };
+    collect(pair.inbound, 0);
     for (const property of properties)
       if (!fields.has(property))
         violations.push({
@@ -1289,8 +1396,10 @@ export function checkCrossLanguageWireParity({
   // who owes the pairing, or BLOCKED here - and an exemption whose frame is paired (or gone) is red.
   const ownedElsewhereFrames = new Set(FRAMES_OWNED_ELSEWHERE.map((entry) => entry.frame));
   const exemptFrames = new Map(frameExemptions.map((entry) => [entry.frame, entry]));
+  const declaredEmptyFrames = new Map(emptyFrames.map((entry) => [entry.frame, entry]));
   const unpaired = [];
   const gaps = [];
+  const emptyDeclared = [];
   let frameExemptCount = 0;
   for (const frame of [...arms.keys()].sort()) {
     if (ownedElsewhereFrames.has(frame)) continue;
@@ -1313,13 +1422,46 @@ export function checkCrossLanguageWireParity({
       gaps.push(`frame_without_fields:${frame}:${pair.outbound}`);
     // An INBOUND frame is never walked for fields (its record is a reader, judged by direction 2), but a record this gate
     // cannot find is still a frame it cannot speak about - the state `program_submit` was in while its declaration file was
-    // outside the reader.
+    // outside the reader. A record it CAN find and that carries no field is the same block for the same reason, and it is
+    // visually identical: `frame_without_fields` = "this frame contributes nothing this gate can compare". A payload that is
+    // empty BY DESIGN is not excused by silence but by a row that re-proves it, so removing the row reproduces the block.
     if (pair.inbound !== undefined) {
       const declared = records.get(pair.inbound) ?? [];
       const derived = derivations.get(pair.inbound) ?? new Set();
-      if (declared.length === 0 && derived.size === 0 && !records.has(pair.inbound))
+      const carriesNothing = declared.length === 0 && derived.size === 0;
+      if (!carriesNothing) continue;
+      const row = declaredEmptyFrames.get(frame);
+      if (!records.has(pair.inbound) || row === undefined) {
         gaps.push(`frame_without_fields:${frame}:${pair.inbound}`);
+        continue;
+      }
+      if (row.reason.trim().length === 0 || row.owner.trim().length === 0) {
+        gaps.push(`exemption_without_owner:${frame}`);
+        continue;
+      }
+      const problem = emptyRowProblem(row);
+      if (problem !== null) {
+        // The row exists, so the frame's design is declared - what is gone is the fact the row states. One report site
+        // (the loop below) names the half that moved, so this frame is not flagged twice.
+        continue;
+      }
+      emptyDeclared.push(Object.freeze({ frame, payload: row.payload, owner: row.owner }));
     }
+  }
+  for (const row of declaredEmptyFrames.values()) {
+    if (emptyDeclared.some((entry) => entry.frame === row.frame)) continue;
+    // A row that states no reason or no owner is the in-loop `exemption_without_owner` gap above, which already blocks.
+    if (row.reason.trim().length === 0 || row.owner.trim().length === 0) continue;
+    // An UNPAIRED frame is BLOCKED by name above; anything else means the row outlived the fact it declares.
+    if (arms.has(row.frame) && paired.pairs.get(row.frame) === undefined) continue;
+    const problem = emptyRowProblem(row) ?? "the frame it names is no longer empty";
+    violations.push({
+      code: `${STALE_EXEMPTION}:${row.frame}`,
+      frame: row.frame,
+      field: row.frame,
+      csharpType: row.payload,
+      detail: `this declared-empty row no longer describes the tree and must be deleted (or the payload re-decided): ${problem} - ${row.reason}`,
+    });
   }
   for (const entry of frameExemptions) {
     // An exemption that outlives what it exempted is a licence nobody re-read: the frame is paired now, owned by another
@@ -1347,6 +1489,7 @@ export function checkCrossLanguageWireParity({
       examined: arms.size,
       paired: paired.pairs.size,
       unpaired: Object.freeze(unpaired),
+      emptyDeclared: Object.freeze(emptyDeclared),
       exempt: frameExemptCount,
       gaps: Object.freeze(gaps),
       ownedElsewhere: Object.freeze(FRAMES_OWNED_ELSEWHERE),
@@ -1369,7 +1512,7 @@ export function checkCrossLanguageWireParity({
         ? check(
             "population_complete",
             "passed",
-            `${paired.pairs.size} of ${arms.size} frame(s) paired · ${FRAMES_OWNED_ELSEWHERE.length} owned by another gate · ${frameExemptCount} exempt with an owner · ${unpaired.length} unmeasured`,
+            `${paired.pairs.size} of ${arms.size} frame(s) paired · ${emptyDeclared.length} declared empty with an owner · ${FRAMES_OWNED_ELSEWHERE.length} owned by another gate · ${frameExemptCount} exempt with an owner · ${unpaired.length} unmeasured`,
           )
         : check("population_complete", "blocked", `not measured: ${gaps.join(", ")}`),
       drift
@@ -1388,16 +1531,19 @@ export function formatWireParity(report) {
     if (report.frames.examined > 0)
       lines.push(
         `  the Host dispatches on ${report.frames.examined} frame(s) · the Mod pairs ${report.frames.paired} of them · ` +
-          `${report.frames.exempt} exempt with an owner · unmeasured ${report.frames.unpaired.join(", ") || "none"}`,
+          `${report.frames.emptyDeclared.length} empty declared · ${report.frames.exempt} exempt with an owner · ` +
+          `unmeasured ${report.frames.unpaired.join(", ") || "none"}`,
       );
     return lines;
   }
   const lines = [
-    `frames examined ${report.frames.examined} · paired ${report.frames.paired} · measured here ${report.frames.paired - report.frames.ownedElsewhere.length} · owned elsewhere ${report.frames.ownedElsewhere.length} · exempt ${report.frames.exempt} · unmeasured ${report.frames.unpaired.length}`,
+    `frames examined ${report.frames.examined} · paired ${report.frames.paired} · empty declared ${report.frames.emptyDeclared.length} · measured here ${report.frames.paired - report.frames.ownedElsewhere.length} · owned elsewhere ${report.frames.ownedElsewhere.length} · exempt ${report.frames.exempt} · unmeasured ${report.frames.unpaired.length}`,
     `fields examined ${report.fields.examined} · accepted ${report.fields.accepted} · unaccepted ${report.fields.unaccepted} · exempt ${report.fields.exempt}`,
     `  naming policy ${report.policy.policy} (${report.policy.where})`,
     `  unmeasured frames ${report.frames.unpaired.join(", ") || "none"}`,
   ];
+  for (const empty of report.frames.emptyDeclared)
+    lines.push(`  empty declared ${empty.frame} (${empty.payload}) -> ${empty.owner}`);
   for (const owned of report.frames.ownedElsewhere) lines.push(`  owned elsewhere ${owned.frame} -> ${owned.owner}`);
   for (const gap of report.frames.gaps) lines.push(`  BLOCKED ${gap}`);
   for (const ambiguous of report.frames.ambiguous) lines.push(`  ambiguous ${ambiguous}`);
