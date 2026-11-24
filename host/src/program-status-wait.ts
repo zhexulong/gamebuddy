@@ -168,6 +168,80 @@ export interface ProgramStatusWaitOutcome<TResult> {
 }
 
 /**
+ * A wait bounded by the PLAN'S SILENCE instead of by the clock: hold until it settles, or until it has settled no node
+ * for `silenceMs`. (A snapshot that froze with nothing in flight is handed back sooner - that is
+ * `UNCHANGED_POLLS_BEFORE_EARLY_RETURN`'s arm, and it is a strict subset: with no node running, nothing can settle it.)
+ *
+ * <p>
+ * THE TWO BOUNDS ANSWER TWO QUESTIONS, and telling them apart is the defect this exists for. A NUMBER is a duration the
+ * caller named - "give me at most this long" - so it starts when the call does and nothing extends it. A silence bound is
+ * what `stardew_plan_work` needs to hold its own turn with, and the number it holds it with today was wrong: measured
+ * `round94`/`round95`, nine of 49 holds spent the whole 6,000 ms and came back `in_flight_not_done`, for plans whose own
+ * journal span ran from 6,865 ms (`refill_watering_can`) to 328,317 ms (`sleep`). None of the nine was stuck - all nine
+ * had `snapshotChanged: true` for the whole hold and all nine published a terminal state later. What decided their wait
+ * was the plan's NODE COUNT (`planSelfWaitDecision`), so a `sleep` and a `move_to_tile` were given the same 6,000 ms and
+ * neither was given the time it actually took.
+ * </p>
+ *
+ * <p>
+ * WHAT RENEWS IT IS A NODE THAT FINISHED, not a frame that differed. A dispatch, a republished `running` row and a node
+ * churning between `pending` and `awaiting_host_admission` all publish without saying anything about the work left, so
+ * none of them buys another window; a node reaching a SETTLED state does. The window itself is capped by
+ * `MAX_PROGRAM_STATUS_WAIT_MS`, the same maximum a caller-named wait obeys.
+ * </p>
+ *
+ * <p>
+ * THAT RENEWAL IS ALSO THE FLOOR, and it is a node ceiling rather than a duration: a hold cannot outlast
+ * `(1 + settledWhileHeld)` windows, and the settled set is monotone and cannot exceed the plan's own node count, so a
+ * program that republishes something every 900 ms forever is handed back after one silent window. It is not
+ * `PLAN_NODE_PACE_MS` in disguise: 629 ms per node was a duration assumed BEFORE anything ran, which is why a `sleep`
+ * and a `move_to_tile` were handed the same 6,000 ms, where here a window is bought only by an observed settlement and
+ * nothing is predicted. The arithmetic is published on the answer (`settledWhileHeld`) rather than kept here.
+ * </p>
+ *
+ * <p>
+ * WHAT IT DOES NOT BUY: one node that outruns a whole window - measured `sleep` at 174 s and `navigate_to_destination`
+ * at 54 s - settles nothing while it runs, so that turn comes back at the window exactly as it does today. The gain
+ * there is the answer rather than the duration: `unsettled` names the node, its state and the receipt that would have
+ * ended it, so the caller decides on a fact instead of on the word `in_flight_not_done`.
+ * </p>
+ */
+export interface ProgramStatusSilenceBound {
+  /** How long the plan may settle nothing before the wait hands back what it has. */
+  readonly silenceMs: number;
+}
+
+/**
+ * The wait's bound: a duration the caller named, or the silence window `ProgramStatusSilenceBound` describes.
+ *
+ * The MODE IS THE TYPE rather than a flag on one shape, because the two produce different answers: only a silence bound
+ * reports `settledWhileHeld`, so a caller that wants that fact has to have asked the question that produces it.
+ */
+export type ProgramStatusWaitBound = number | ProgramStatusSilenceBound;
+
+/**
+ * What a SILENCE-bounded wait proved: every fact a wait reports, plus the progress that bought the hold its time.
+ *
+ * `settledWhileHeld` is what explains a hold longer than one window AND proves it cannot be much longer: nodes that
+ * reached a settled state while the call held the turn, counted by the journal's own node id, each one restarting the
+ * window. A hold that returns at 40 s with `settledWhileHeld: 39` was working the whole way; one that returns at 40 s
+ * with `settledWhileHeld: 0` was resting on `first` and had a bound that was never renewed.
+ *
+ * The rest of "what progress was made" is already published beside it and is deliberately not repeated: the node the
+ * plan is on and the publication that ends it are `unsettled`, and how long that node has been in its state is
+ * `programStatusProgress`'s per-node `observedInStateMs` - which the caller refreshes by feeding this answer's `result`
+ * through `observe` - and which every plan answer publishes for itself as `elapsedMs`.
+ */
+export interface PlanSettlementWaitFacts extends ProgramStatusWaitFacts {
+  readonly settledWhileHeld: number;
+}
+
+export interface PlanSettlementWaitOutcome<TResult> {
+  readonly result: TResult;
+  readonly waited: PlanSettlementWaitFacts;
+}
+
+/**
  * The node states in which the Mod owes this plan a publication, so a still snapshot is not news.
  *
  * A node's state is the only part of the compared snapshot that moves during an action, and it moves exactly once per
@@ -220,6 +294,21 @@ function hasNothingInFlight(payload: unknown): boolean {
       node !== null &&
       NODE_STATES_IN_FLIGHT.has((node as Record<string, unknown>).state as string),
   );
+}
+
+/**
+ * The nodes this payload shows SETTLED, by the journal's own id.
+ *
+ * Identity, not a count: a plan can hold its `remaining` steady while one node finishes and another is admitted, and a
+ * renewal keyed on that number would grant a window for work it had already counted. `NODE_STATES_SETTLED` is the
+ * module's one statement about which states have stopped for good, so this cannot disagree with the counts beside it.
+ */
+function settledNodeIds(payload: unknown): ReadonlySet<string> {
+  const plan = readPlanProgressSource(payload);
+  if (plan === null) return new Set();
+  const settled = new Set<string>();
+  for (const node of plan.nodes) if (NODE_STATES_SETTLED.has(node.state)) settled.add(node.nodeId);
+  return settled;
 }
 
 /**
@@ -1094,7 +1183,7 @@ function unreadableAnswer(unreadable: string): ProgramStatusReadTerminality {
 }
 
 /**
- * Poll until the plan stops or the wait expires, then return the LAST read either way.
+ * Poll until the plan stops or the bound runs out, then return the LAST read either way.
  *
  * `first` is the caller's own read, which it already made; the wait starts from it rather than repeating it, so a plan
  * that finished before the wait began costs nothing extra and every later comparison is against what the caller was
@@ -1104,21 +1193,49 @@ function unreadableAnswer(unreadable: string): ProgramStatusReadTerminality {
  * structure of the fix: an arm that says `false` by itself is a claim about a plan that read said had finished, and
  * two of these arms did exactly that - one on expiry, one on the unchanged-poll return - so a plan that rolled over
  * on the last poll came back as "did not reach terminal" and a caller re-dispatched work that had already run.
+ *
+ * `bound` decides what "runs out" MEANS: a NUMBER is a duration the caller named and nothing extends it; a
+ * `ProgramStatusSilenceBound` is the plan's own silence, so every node that reaches a settled state restarts the window.
+ * The loop, the reader and the facts are the same either way - one waiter, two questions - and the silence arm answers
+ * with the progress that bought it its time (`settledWhileHeld`) so a long hold explains itself. The loop branches only on
+ * whether anything can renew the bound, not on what to report, so its own type is the union of the two answers; the
+ * overloads above are what tell a caller which one it asked for.
  */
+export function waitForTerminalProgramStatus<TResult>(
+  read: () => Promise<TResult>,
+  first: TResult,
+  bound: number,
+  now?: () => number,
+  sleep?: (milliseconds: number) => Promise<void>,
+): Promise<ProgramStatusWaitOutcome<TResult>>;
+export function waitForTerminalProgramStatus<TResult>(
+  read: () => Promise<TResult>,
+  first: TResult,
+  bound: ProgramStatusSilenceBound,
+  now?: () => number,
+  sleep?: (milliseconds: number) => Promise<void>,
+): Promise<PlanSettlementWaitOutcome<TResult>>;
 export async function waitForTerminalProgramStatus<TResult>(
   read: () => Promise<TResult>,
   first: TResult,
-  waitMs: number,
+  bound: ProgramStatusWaitBound,
   now: () => number = Date.now,
   sleep: (milliseconds: number) => Promise<void> = defaultSleep,
-): Promise<ProgramStatusWaitOutcome<TResult>> {
-  const bounded = Math.max(0, Math.min(MAX_PROGRAM_STATUS_WAIT_MS, Math.trunc(waitMs)));
-  const deadline = now() + bounded;
+): Promise<ProgramStatusWaitOutcome<TResult> | PlanSettlementWaitOutcome<TResult>> {
+  const windowMs = Math.max(
+    0,
+    Math.min(MAX_PROGRAM_STATUS_WAIT_MS, Math.trunc(typeof bound === "number" ? bound : bound.silenceMs)),
+  );
+  let deadline = now() + windowMs;
   let previous = first;
   let snapshotChanged = false;
   let unchangedPolls = 0;
+  // `null` for a duration: nothing renews a bound the caller named. A silence window starts from the settlements
+  // `first` already carried, because a node that was done before this call cannot buy it another window.
+  const settledNodes = typeof bound === "number" ? null : new Set(settledNodeIds(first));
+  let settledWhileHeld = 0;
   // The flag comes from the read, not from the path. `settle` takes no terminality argument, so no arm can state one.
-  const settle = (result: TResult): ProgramStatusWaitOutcome<TResult> => {
+  const settle = (result: TResult): ProgramStatusWaitOutcome<TResult> | PlanSettlementWaitOutcome<TResult> => {
     const readTerminality = programStatusTerminality(result);
     return Object.freeze({
       result,
@@ -1127,6 +1244,7 @@ export async function waitForTerminalProgramStatus<TResult>(
         unreadable: readTerminality.unreadable,
         snapshotChanged,
         unsettled: unsettledProgramme(result),
+        ...(settledNodes === null ? {} : { settledWhileHeld }),
       }),
     });
   };
@@ -1143,12 +1261,28 @@ export async function waitForTerminalProgramStatus<TResult>(
       // and must not spend the early return's allowance.
       unchangedPolls++;
     }
+    if (settledNodes !== null)
+      // THE ONE THING THAT BUYS A SILENCE WINDOW: a node that was not settled before and is now. A dispatch, a
+      // republished row or a node moving between two unsettled states changes this snapshot and renews nothing - which
+      // is what keeps a plan that publishes every 900 ms forever from keeping the turn forever.
+      for (const nodeId of settledNodeIds(result))
+        if (!settledNodes.has(nodeId)) {
+          settledNodes.add(nodeId);
+          settledWhileHeld += 1;
+          deadline = now() + windowMs;
+        }
     previous = result;
     return result;
   };
   for (;;) {
     const remaining = deadline - now();
-    if (remaining <= 0) return settle(await readOnce());
+    if (remaining <= 0) {
+      const result = await readOnce();
+      // The read that ended the window may be the one that carried a settlement, and then it has just been replaced.
+      // Returning here would abandon a plan that is visibly working, which is the whole defect this bound closes.
+      if (deadline - now() > 0) continue;
+      return settle(result);
+    }
     // Nothing has moved for a while: hand back what is known NOW rather than what will still be known at the deadline.
     // `snapshotChanged` tells the caller the same thing it would have told it thirty seconds later, and the run keeps
     // its turn. The read is fresh, so the caller never receives a stale payload for this decision.
