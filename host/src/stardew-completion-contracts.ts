@@ -129,18 +129,16 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
 function hasMineExitCompletionEvidence(detail: string): boolean {
   const evidence = evidenceFields(detail);
   if (evidence === null) return false;
-  // The union of the two shapes' fields: a receipt carrying anything else is refused BY NAME rather than by a count.
-  if (!hasOnlyDeclaredEvidenceFields(evidence, ["from", "question", "response", "ladder", "actual", "expected"]))
-    return false;
-  const keys = Object.keys(evidence);
-  if (
-    keys.length === 5 &&
-    "from" in evidence &&
-    "question" in evidence &&
-    "response" in evidence &&
-    "ladder" in evidence &&
-    "actual" in evidence
-  )
+  // The union of the two shapes' fields plus the identity pair, whose ABSENCE is legal and whose presence is judged
+  // (`hasTargetIdentitySourceEvidence`): a receipt recorded before the executor could resolve this action's ladder still
+  // decides its own success, exactly as the tile-addressed terminals keep theirs. A receipt carrying anything outside
+  // that union is refused BY NAME rather than by a count.
+  if (!hasOnlyDeclaredEvidenceFields(evidence, MINE_EXIT_EVIDENCE_KEYS)) return false;
+  if (!hasTargetIdentitySourceEvidence(evidence)) return false;
+  // WHICH SHAPE IS WHICH IS ITS OWN ANCHORS, NEVER A KEY COUNT. The arms used to compare `keys.length` against 5 and 4,
+  // which is the same defect the retired `length === 7` was: declaring one more field on this rule left both arms
+  // rejecting a receipt the declared set allows. A shape is the set of fields it cannot be missing.
+  if (carriesEvidenceFields(evidence, MINE_EXIT_SYNCHRONOUS_KEYS))
     return (
       hasOpaqueEvidenceValue(evidence.from) &&
       evidence.question === "ExitMine" &&
@@ -148,13 +146,7 @@ function hasMineExitCompletionEvidence(detail: string): boolean {
       hasTileEvidenceValue(evidence.ladder) &&
       hasOpaqueEvidenceValue(evidence.actual)
     );
-  if (
-    keys.length === 4 &&
-    "expected" in evidence &&
-    "actual" in evidence &&
-    "question" in evidence &&
-    "response" in evidence
-  )
+  if (carriesEvidenceFields(evidence, MINE_EXIT_ARRIVAL_KEYS))
     return (
       evidence.question === "ExitMine" &&
       evidence.response === "Leave" &&
@@ -612,8 +604,12 @@ function declaredCompletionEvidence(
  * unreadable receipt, and dropping it changes no verdict: `expected ⊆ emitted ⊆ expected` is the same acceptance, minus
  * the length comparison that could never name anything.
  */
-function declaresEvidenceKeys(evidence: Readonly<Record<string, string>>, expected: readonly string[]): boolean {
-  return expected.every((key) => key in evidence) && hasOnlyDeclaredEvidenceFields(evidence, expected);
+function declaresEvidenceKeys(
+  evidence: Readonly<Record<string, string>>,
+  expected: readonly string[],
+  extraDeclared: readonly string[] = [],
+): boolean {
+  return expected.every((key) => key in evidence) && hasOnlyDeclaredEvidenceFields(evidence, [...expected, ...extraDeclared]);
 }
 
 /**
@@ -860,6 +856,60 @@ const TILL_SOIL_EVIDENCE_KEYS = Object.freeze([
   "tool_restored",
 ]);
 
+/**
+ * WHICH HALF ANSWERED FOR THE IDENTITY A RECEIPT ACTED ON, when the producer says so.
+ *
+ * <p>
+ * `targetId_source=caller` is a request that named the object and had the live tile compared against it;
+ * `targetId_source=resolved_at_execution` is one that named only the tile and had the executor mint the identity. The pair
+ * is OPTIONAL for the same reason `reason` is on a pickup: receipts harvested before the field existed still decide their
+ * own success, and the value the rule can read is `targetId_kind` - the family the identity belongs to, so a resolved
+ * identity is a fact about a tile rather than a hash nobody can check.
+ * </p>
+ */
+function hasTargetIdentitySourceEvidence(evidence: Readonly<Record<string, string>>): boolean {
+  const source = evidence.targetId_source;
+  if (source === undefined) return true;
+  return (
+    (source === "caller" || source === "resolved_at_execution") &&
+    hasBoundedNonemptyEvidenceValue(evidence.targetId_kind) &&
+    evidence.targetId_kind !== "none"
+  );
+}
+
+/** The two fields that pair with it, declared once for the four tile-addressed terminals. */
+const TARGET_IDENTITY_EVIDENCE_KEYS = Object.freeze(["targetId_source", "targetId_kind"]);
+
+/** The fields a synchronous mine exit cannot be missing: the question it answered, the ladder it used, where it landed. */
+const MINE_EXIT_SYNCHRONOUS_KEYS = Object.freeze(["from", "question", "response", "ladder", "actual"]);
+
+/** The fields an asynchronous mine exit cannot be missing: the destination the engine's warp chose, and where it landed. */
+const MINE_EXIT_ARRIVAL_KEYS = Object.freeze(["expected", "actual", "question", "response"]);
+
+/**
+ * The union `use_mine_ladder`'s two exits may name, plus the identity pair.
+ *
+ * <p>
+ * THE PAIR IS DECLARED AND NOT REQUIRED, which is the answer to "would an older receipt still settle?": one produced
+ * before the Mod could resolve this action's ladder carries five fields, and `hasTargetIdentitySourceEvidence` accepts an
+ * absent pair while judging a present one. There is no migration because there is nothing to migrate - the receipt is a
+ * record of a run, and the run it recorded is still a run that left the mine.
+ * </p>
+ */
+const MINE_EXIT_EVIDENCE_KEYS = Object.freeze([
+  ...MINE_EXIT_SYNCHRONOUS_KEYS,
+  ...MINE_EXIT_ARRIVAL_KEYS,
+  ...TARGET_IDENTITY_EVIDENCE_KEYS,
+]);
+
+/** Whether every field a shape cannot be missing is present, whatever else the receipt carries. */
+function carriesEvidenceFields(
+  evidence: Readonly<Record<string, string>>,
+  required: readonly string[],
+): boolean {
+  return required.every((key) => key in evidence);
+}
+
 /** The same declaration for `water_crop`, plus `water_expected_cost` (the engine spends `power + 1` water, not one). */
 const WATER_CROP_EVIDENCE_KEYS = Object.freeze([
   "location",
@@ -1031,9 +1081,10 @@ function hasWaterCropCompletionEvidence(detail: string): boolean {
       evidence.water_consumed === "true" &&
       hasToolChargeEvidence(evidence) &&
       hasAreaFootprintEvidence(evidence) &&
+      hasTargetIdentitySourceEvidence(evidence) &&
       hasStaminaConservationEvidence(evidence)
     );
-  });
+  }, TARGET_IDENTITY_EVIDENCE_KEYS);
 }
 
 /**
@@ -1740,9 +1791,11 @@ function hasPickupForageCompletionEvidence(detail: string): boolean {
         evidence.removed === "true" &&
         before !== null &&
         after !== null &&
-        after === before + 1
+        after === before + 1 &&
+        hasTargetIdentitySourceEvidence(evidence)
       );
     },
+    TARGET_IDENTITY_EVIDENCE_KEYS,
   );
 }
 function hasPickupItemCompletionEvidence(detail: string): boolean {
@@ -1767,7 +1820,7 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
   // carries them is readable, and checked when they are present - a pair that disagrees with `stack` is refused rather
   // than ignored. A receipt recorded before they existed still decides its own success, which is the same footing
   // `reason` has: the verdict is the world facts below.
-  if (!hasOnlyDeclaredEvidenceFields(evidence, [...expectedKeys, "reason", "object_consumed", "object_after"]))
+  if (!hasOnlyDeclaredEvidenceFields(evidence, [...expectedKeys, "reason", "object_consumed", "object_after", ...TARGET_IDENTITY_EVIDENCE_KEYS]))
     return false;
   const stack = integerEvidenceValue(evidence.stack);
   const before = integerEvidenceValue(evidence.inventory_before);
@@ -1782,6 +1835,7 @@ function hasPickupItemCompletionEvidence(detail: string): boolean {
     evidence.native_auto_collect === "true" &&
     chunkRemovalAccountedFor(evidence) &&
     pickupMovementAccountedFor(evidence, stack) &&
+    hasTargetIdentitySourceEvidence(evidence) &&
     before !== null &&
     after !== null &&
     after >= before + stack
@@ -1898,7 +1952,7 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     "quality_counts_before",
     "quality_counts_after",
   ];
-  if (!declaresEvidenceKeys(evidence, expectedKeys)) return false;
+  if (!declaresEvidenceKeys(evidence, expectedKeys, TARGET_IDENTITY_EVIDENCE_KEYS)) return false;
   const phaseBefore = integerEvidenceValue(evidence.phase_before);
   const dayOfPhaseBefore = integerEvidenceValue(evidence.day_of_phase_before);
   const before = integerEvidenceValue(evidence.inventory_before);
@@ -1916,6 +1970,7 @@ function hasHarvestCropCompletionEvidence(detail: string): boolean {
     ) ||
     evidence.native_accepted !== "true" ||
     evidence.inventory_gained !== "true" ||
+    !hasTargetIdentitySourceEvidence(evidence) ||
     before === null ||
     after === null ||
     after <= before ||

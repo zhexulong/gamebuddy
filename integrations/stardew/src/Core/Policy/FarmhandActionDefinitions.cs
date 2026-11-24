@@ -953,7 +953,11 @@ public static class FarmhandActionCatalog
         // way. Round30 measured the gap: a companion inside a freshly generated level was published no ladder at all
         // and stayed in the mine until it passed out. Experimental: it has no live gate yet, and promotion to
         // LiveVerified is a separate catalog edit owned by the parent.
-        E("use_mine_ladder", "world_navigation", FarmhandActionHandlerGroup.Movement, SelfWalked(TileA(null, null, "mine_left", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string"))), FarmhandActionLifecycle.LiveVerified, "mineEntranceTargets"),
+        // AND IT RESOLVES ITS OWN TARGET: the floor is what the caller knows, the ladder is what the game thread can
+        // count. `ResolvedTargetAtExecutionDeclarationTests` holds this declaration, and the four facility actions that
+        // keep `expectedTargetId` mandatory (ship_item, enter_mine, ride_minecart, shop_purchase) stay that way because
+        // their scope can hold two of the thing - which is the same test's other half.
+        E("use_mine_ladder", "world_navigation", FarmhandActionHandlerGroup.Movement, SelfWalked(ResolvesTargetAtExecution(TileA(null, null, "mine_left", ("x", "integer"), ("y", "integer"), ("expectedTargetId", "string")), ResolvedMineExitLadderMeaning)), FarmhandActionLifecycle.LiveVerified, "mineEntranceTargets"),
         // `enter_exit` resolves a warp from (x,y) and refuses when the actor is more than one tile from it
 // (`Utility.tileWithinRadiusOfPlayer(sourceX, sourceY, 1, player)`), so the body must already stand beside the
 // door. Measured 2026-10-25: the companion submitted this as a one-node program from its bed six tiles away and
@@ -1620,13 +1624,13 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// written from is not.
     /// </para>
     /// </summary>
-    private static FarmhandActionDescriptor ResolvesTargetAtExecution(FarmhandActionDescriptor descriptor) =>
+    private static FarmhandActionDescriptor ResolvesTargetAtExecution(FarmhandActionDescriptor descriptor, string? meaning = null) =>
         descriptor.Arguments.Any(argument => string.Equals(argument.Name, ExpectedTargetIdArgument, StringComparison.Ordinal))
             ? descriptor with
             {
                 Arguments = descriptor.Arguments
                     .Select(argument => string.Equals(argument.Name, ExpectedTargetIdArgument, StringComparison.Ordinal)
-                        ? argument with { ResolvedAtExecution = true, Description = ResolvedTargetIdentityMeaning }
+                        ? argument with { ResolvedAtExecution = true, Description = meaning ?? ResolvedTargetIdentityMeaning }
                         : argument)
                     .ToArray(),
             }
@@ -1646,6 +1650,21 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// </summary>
     private const string ResolvedTargetIdentityMeaning =
         "The identity of the object on this tile. OMIT IT: the body mints it from the LIVE tile at execution (`resolvedAtExecution`), by the family this action's own row declares, and the receipt states `targetId_source=resolved_at_execution` with the identity and kind it used. Sent anyway, it is compared against what the tile holds now and a different object answers `<action>_target_changed:<expected>:<found>`.";
+
+    /// <summary>
+    /// What the identity argument means on the ONE action whose target is a FACILITY scoped by the floor she stands on,
+    /// rather than an object on a tile she names.
+    ///
+    /// <para>
+    /// A separate sentence from <see cref="ResolvedTargetIdentityMeaning"/> because the refusal a stale value earns is a
+    /// different one: a tile mints whichever object stands there now, while a facility is looked up by its own opaque id
+    /// and a floor that no longer answers to it has no ladder to act on
+    /// (<c>mine_exit_ladder_target_unavailable</c>) - the word the resolver already answers, not a second one invented
+    /// for this declaration.
+    /// </para>
+    /// </summary>
+    private const string ResolvedMineExitLadderMeaning =
+        "The way out of this mine floor. OMIT IT: the body resolves the level's own exit ladder on the game thread (`resolvedAtExecution`) - the floor the actor stands on carries one, and the receipt states `targetId_source=resolved_at_execution` with the ladder it used. Refused `facility_absent:mine_exit_ladder:<location>` when the floor carries none and `facility_ambiguous:mine_exit_ladder:<location>:count=<n>` when it carries several, because then only the caller can say which. Sent anyway, it is compared against the live ladder and a different one answers `mine_exit_ladder_target_unavailable`.";
 
     /// <summary>The argument name every target-carrying action uses, so the wrapper above cannot misspell what it marks.</summary>
     private const string ExpectedTargetIdArgument = "expectedTargetId";

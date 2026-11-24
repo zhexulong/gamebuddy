@@ -264,6 +264,11 @@ public sealed class ModEntryFixtureBoundaryTests
         "RequireFixtureUpgradedTool",
         "SetFixtureToolUpgradeLevel",
         "InitializeNativeLocalToggleFenceGateFixture",
+        // 2026-11-25：the two "put one carried item INTO a placed thing" Givens. Neither action had any world that could
+        // hold the furniture it acts on; these four members are the tank the registry yields, the item that tank accepts,
+        // the tiles the room must keep, and the two initialisers.
+        "InitializeNativeLocalPutItemInFishTankFixture", "InitializeNativeLocalPlaceItemOnPedestalFixture",
+        "RequireNativeLocalFixtureFishTank", "NativeLocalFixtureFishTankDeposit", "NativeLocalRoomNeededTiles",
         "InitializeNativeLocalToggleToolLightFixture",
         "InitializeNativeLocalUseItemFixture",
         "InitializeNativeLocalUseRaftFixture",

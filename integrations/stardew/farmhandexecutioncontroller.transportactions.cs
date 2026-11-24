@@ -6,6 +6,7 @@ using StardewValley.Tools;
 using StardewValley.Characters;
 using StardewValley.Locations;
 using GameBuddy.Stardew.Core.Models;
+using GameBuddy.Stardew.Core.Policy;
 using MineFloorCapability = GameBuddy.Stardew.Core.MineFloorCapability;
 
 namespace GameBuddy.Stardew;
@@ -67,10 +68,11 @@ internal sealed partial class ExecutionManager
     internal static bool TryFindMineExitLadderTile(GameLocation? location, out int tileX, out int tileY) =>
         TryFindMineTileWithIndex(location, MineExitLadderTileIndex, out tileX, out tileY);
 
-    private static bool TryFindMineTileWithIndex(GameLocation? location, int tileIndex, out int tileX, out int tileY)
+    private static bool TryFindMineTileWithIndex(GameLocation? location, int tileIndex, out int tileX, out int tileY, out int matches)
     {
         tileX = 0;
         tileY = 0;
+        matches = 0;
         if (location is not MineShaft shaft)
             return false;
         xTile.Layers.Layer? buildings = shaft.map?.GetLayer("Buildings");
@@ -82,14 +84,25 @@ internal sealed partial class ExecutionManager
             {
                 if (buildings.Tiles[x, y]?.TileIndex == tileIndex)
                 {
-                    tileX = x;
-                    tileY = y;
-                    return true;
+                    // THE FIRST match is the tile the resolvers have always used; the COUNT is what says whether the
+                    // floor holds one facility or several, and it is the same read rather than a second scan that could
+                    // disagree with this one.
+                    if (matches == 0)
+                    {
+                        tileX = x;
+                        tileY = y;
+                    }
+
+                    matches++;
                 }
             }
         }
-        return false;
+
+        return matches > 0;
     }
+
+    private static bool TryFindMineTileWithIndex(GameLocation? location, int tileIndex, out int tileX, out int tileY) =>
+        TryFindMineTileWithIndex(location, tileIndex, out tileX, out tileY, out _);
 
     /// <summary>
     /// The opaque id of one live mine-entry object. Three kinds share the family: a
@@ -286,25 +299,92 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         GameLocation location = Game1.player.currentLocation;
+        // THE OMISSION IS RESOLVED ONCE, HERE. The identity the approach leg, the executed body and the receipt all name
+        // is the level's own ladder, read on the game thread before the walk - a request that resolved on arrival would
+        // have named two things at its two ends.
+        bool resolvedAtExecution = string.IsNullOrEmpty(expectedTargetId);
+        if (resolvedAtExecution)
+        {
+            MineLadderFacilityResolution facility = ResolveMineExitLadderFacility(location);
+            if (!facility.Accepted)
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, facility.RefusalCode, facility.Evidence);
+            targetX = facility.TileX;
+            targetY = facility.TileY;
+            expectedTargetId = facility.TargetId;
+        }
+
         MineLadderTargetResolution exit = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit);
         if (!exit.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, exit.RefusalCode, exit.Evidence);
         if (!IsTileWithinChebyshevRadius(Game1.player, exit.TileX, exit.TileY, 1))
             return this.TryBeginToolApproach(requestId, executionId, "use_mine_ladder", location, exit.TileX, exit.TileY, expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecuteUseMineLadder(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, requestedDeadlineMs), nowMs, requestedDeadlineMs);
+                (arrivalExecutionId, arrivalRequestId) => this.ExecuteUseMineLadder(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedTargetId, resolvedAtExecution, requestedDeadlineMs), nowMs, requestedDeadlineMs);
 
-        return this.ExecuteUseMineLadder(executionId, requestId, targetX, targetY, expectedTargetId, requestedDeadlineMs);
+        return this.ExecuteUseMineLadder(executionId, requestId, targetX, targetY, expectedTargetId, resolvedAtExecution, requestedDeadlineMs);
     }
 
-    private LocalExecutionReceipt ExecuteUseMineLadder(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, long requestedDeadlineMs)
+    /// <summary>
+    /// The exit ladder of the floor the actor stands on, for a request that named no identity
+    /// (<see cref="FarmhandActionArgument.ResolvedAtExecution"/>).
+    ///
+    /// <para>
+    /// THE FLOOR IS THE SCOPE AND THE ENGINE KEEPS ONE ANSWER FOR IT. <c>MineShaft.findLadder</c> scans this level's own
+    /// Buildings layer and retains ONE tile - <c>tileBeneathLadder</c>, a single field overwritten by each 115 it meets
+    /// (MineShaft.cs:832-857) - and nothing at run time ever writes a 115: the indices the game does write there are the
+    /// descent ladder (173, <c>doCreateLadderDown</c>, :3606) and the shaft (174, :3601). The way out is therefore one
+    /// facility per floor, and WHICH 115 she stands at cannot change the outcome either, because the exit the tile opens
+    /// is a pure function of the LEVEL (<c>ExitMine_Leave</c> reads <c>mineLevel</c> and nothing else,
+    /// GameLocation.cs:12388-12401). That is why the caller names the floor (by being on it) and the executor names the
+    /// ladder.
+    /// </para>
+    ///
+    /// <para>
+    /// ZERO AND TWO ARE REFUSALS, NOT A CHOICE. The scan reports every match, so a floor carrying none answers
+    /// <c>facility_absent:mine_exit_ladder:&lt;location&gt;</c> and one carrying several answers
+    /// <c>facility_ambiguous:mine_exit_ladder:&lt;location&gt;:count=&lt;n&gt;</c>: picking the first would be this half
+    /// choosing an identity the caller did not name.
+    /// </para>
+    /// </summary>
+    private static MineLadderFacilityResolution ResolveMineExitLadderFacility(GameLocation? location)
+    {
+        string locationName = location?.NameOrUniqueName ?? "none";
+        TryFindMineTileWithIndex(location, MineExitLadderTileIndex, out int tileX, out int tileY, out int matches);
+        if (SingletonFacility.RefusalFor(SingletonFacility.MineExitLadder, locationName, matches) is not { } refusal)
+        {
+            return new MineLadderFacilityResolution(
+                true,
+                tileX,
+                tileY,
+                BuildMineEntryTargetId(locationName, tileX, tileY, MineExitLadderSelector),
+                string.Empty,
+                string.Empty);
+        }
+
+        return new MineLadderFacilityResolution(
+            false,
+            tileX,
+            tileY,
+            string.Empty,
+            refusal,
+            $"location={locationName};kind={SingletonFacility.MineExitLadder};tile_index={MineExitLadderTileIndex};matches={matches};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
+    }
+
+    private sealed record MineLadderFacilityResolution(bool Accepted, int TileX, int TileY, string TargetId, string RefusalCode, string Evidence);
+
+    private LocalExecutionReceipt ExecuteUseMineLadder(string executionId, string requestId, int targetX, int targetY, string expectedTargetId, bool resolvedAtExecution, long requestedDeadlineMs)
     {
         GameLocation location = Game1.player.currentLocation;
+        // WHO ANSWERED FOR THE IDENTITY, on every terminal that names the exit. The Host declares the pair beside the
+        // fields its completion contract already reads (`hasMineExitCompletionEvidence`, whose declared set carries
+        // `TARGET_IDENTITY_EVIDENCE_KEYS`), and accepts its ABSENCE too - a receipt from before this action could resolve
+        // its ladder still settles, because the pair is declared and not required.
+        string identity = DescribeTargetIdentity("use_mine_ladder", resolvedAtExecution);
         MineLadderTargetResolution exit = ResolveMineLadderTarget(location, targetX, targetY, expectedTargetId, MineLadderKind.Exit);
         if (!exit.Accepted)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, exit.RefusalCode, exit.Evidence);
         if (!IsTileWithinChebyshevRadius(Game1.player, exit.TileX, exit.TileY, 1))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_ladder_out_of_range",
-                $"ladder={exit.TileX},{exit.TileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=did_not_arrive");
+                $"ladder={exit.TileX},{exit.TileY};actor_tile={Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};reach=1;approach=did_not_arrive;{identity}");
 
         MineShaft shaft = (MineShaft)location;
         string origin = shaft.NameOrUniqueName;
@@ -319,11 +399,11 @@ internal sealed partial class ExecutionManager
         catch (Exception nativeException)
         {
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "mine_exit_native_exception",
-                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_dispatched=false;native_exception={nativeException.GetType().Name}");
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_dispatched=false;native_exception={nativeException.GetType().Name};{identity}");
         }
         if (!handled)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_ladder_not_handled",
-                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_handled=false");
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};native_handled=false;{identity}");
 
         this.RegisterModalOwner(executionId);
 
@@ -338,7 +418,7 @@ internal sealed partial class ExecutionManager
             && offeredKeys.Split(',').Contains(MineExitResponseKey, StringComparer.Ordinal);
         if (!answerOffered)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "mine_exit_question_not_offered",
-                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};modal_type={(Game1.activeClickableMenu?.GetType().Name ?? "none")};question={(question?.isQuestion ?? false).ToString().ToLowerInvariant()};question_key={(questionKey.Length == 0 ? "none" : questionKey)};response_keys={(offeredKeys.Length == 0 ? "none" : offeredKeys)}");
+                $"from={origin}:{originLevel};ladder={exit.TileX},{exit.TileY};modal_type={(Game1.activeClickableMenu?.GetType().Name ?? "none")};question={(question?.isQuestion ?? false).ToString().ToLowerInvariant()};question_key={(questionKey.Length == 0 ? "none" : questionKey)};response_keys={(offeredKeys.Length == 0 ? "none" : offeredKeys)};{identity}");
 
         bool answered;
         try
@@ -349,21 +429,21 @@ internal sealed partial class ExecutionManager
         catch (Exception nativeException)
         {
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "mine_exit_native_exception",
-                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_dispatched=true;native_exception={nativeException.GetType().Name}");
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_dispatched=true;native_exception={nativeException.GetType().Name};{identity}");
         }
 
         if (!answered)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Failed, "mine_exit_answer_not_accepted",
-                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_answered=false");
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};native_answered=false;{identity}");
 
         if (Game1.player.currentLocation is not MineShaft stillInside)
             return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "mine_left",
-                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};actual={Game1.player.currentLocation?.NameOrUniqueName ?? "none"}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y}");
+                $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};actual={Game1.player.currentLocation?.NameOrUniqueName ?? "none"}:{Game1.player.TilePoint.X},{Game1.player.TilePoint.Y};{identity}");
 
         LocalTravelSpec exitSpecification = new(executionId, requestId, "use_mine_ladder", origin, exit.TileX, exit.TileY, destinationLocation, destinationX, destinationY, this.revision, requestedDeadlineMs);
         this.slots.Travel.Assign(exitSpecification);
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "mine_exit_pending",
-            $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};target={destinationLocation}:{destinationX},{destinationY};still_in={stillInside.NameOrUniqueName}");
+            $"from={origin}:{originLevel};question={MineExitQuestionKey};response={MineExitResponseKey};ladder={exit.TileX},{exit.TileY};target={destinationLocation}:{destinationX},{destinationY};still_in={stillInside.NameOrUniqueName};{identity}");
     }
 
     /// <summary>

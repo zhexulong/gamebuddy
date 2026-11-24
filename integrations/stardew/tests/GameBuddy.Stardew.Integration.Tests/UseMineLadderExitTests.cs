@@ -85,10 +85,11 @@ public sealed class UseMineLadderExitTests
 
     /// <summary>
     /// The acceptance layer is where a request that is not even shaped like this action dies. The tile checks (is this
-    /// the exit ladder? is it the one the id names?) happen later, on the game thread.
+    /// the exit ladder? is it the one the id names?) happen later, on the game thread - and the FLOOR answers for its own
+    /// ladder, so the identity may be absent while a value that IS sent still has to be an opaque id.
     /// </summary>
     [Fact]
-    public void ALadderRequestMissingItsTargetIdentityIsRefusedBeforeAnyTileIsRead()
+    public void ALadderRequestMayOmitItsTargetIdentityButNotMisspellIt()
     {
         FarmhandActionDescriptor descriptor = FarmhandActionCatalog.Registrations
             .Single(candidate => candidate.ActionId == "use_mine_ladder").Descriptor!;
@@ -102,8 +103,14 @@ public sealed class UseMineLadderExitTests
         FarmhandExecutionAcceptance.TryValidate(descriptor, exact, out string acceptedReason)
             .Should().BeTrue($"the declared shape must pass its own acceptance; it answered '{acceptedReason}'");
 
+        // The omission the row's own `resolvedAtExecution` grants: the body counts the floor's exit ladders itself.
         var noTarget = new BridgeExecutionArgs { X = 12, Y = 8 };
-        FarmhandExecutionAcceptance.TryValidate(descriptor, noTarget, out string refusedReason).Should().BeFalse();
+        FarmhandExecutionAcceptance.TryValidate(descriptor, noTarget, out string omittedReason)
+            .Should().BeTrue($"`expectedTargetId` is declared resolved at execution, so an absent one is legal; it answered '{omittedReason}'");
+
+        // The omission is the ONLY thing the flag grants: a value that is sent is judged exactly as it always was.
+        var wronglyShaped = new BridgeExecutionArgs { X = 12, Y = 8, ExpectedTargetId = "not an opaque id" };
+        FarmhandExecutionAcceptance.TryValidate(descriptor, wronglyShaped, out string refusedReason).Should().BeFalse();
         refusedReason.Should().Be("invalid_execution_request");
     }
 
@@ -222,8 +229,8 @@ public sealed class UseMineLadderExitTests
         discovery.Should().Contain("MineExitLadderSelector");
         discovery.Should().Contain("MineLadderSelector");
         // The two rows must not be able to collide, which is what the selector half of the hash input buys.
-        discovery.Should().Contain("BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, MineExitLadderSelector)");
-        discovery.Should().Contain("BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, MineLadderSelector)");
+        discovery.Should().Contain("ExecutionManager.BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, ExecutionManager.MineExitLadderSelector)");
+        discovery.Should().Contain("ExecutionManager.BuildMineEntryTargetId(shaft.NameOrUniqueName, ladderX, ladderY, ExecutionManager.MineLadderSelector)");
 
         string finder = MethodBody(source, "private static bool TryFindMineTileWithIndex(");
         finder.Should().Contain("location is not MineShaft shaft",

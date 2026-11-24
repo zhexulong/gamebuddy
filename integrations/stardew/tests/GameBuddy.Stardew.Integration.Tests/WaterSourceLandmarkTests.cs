@@ -92,20 +92,20 @@ public sealed class WaterSourceLandmarkTests
             "generation",
             1,
             System.DateTimeOffset.UnixEpoch);
-        var search = new DestinationSearch();
 
-        DestinationSearchResult waterResult = search.Find(set, "Pond", references, context);
-        waterResult.Status.Should().Be("resolved");
-        waterResult.Reason.Should().Be("exact_current_locale");
-        waterResult.Destination.Should().Be(new NavigationDestinationSelector("label", "Pond", null));
-
-        DestinationSearchResult waterAliasResult = search.Find(set, "水源", references, context);
-        waterAliasResult.Status.Should().Be("resolved");
-        waterAliasResult.Reason.Should().Be("exact_alias");
-
-        // The shared Farm identity must stay independently reachable.
-        DestinationSearchResult farmResult = search.Find(set, "Farm", references, context);
-        farmResult.Status.Should().Be("resolved");
-        farmResult.Destination.Should().Be(new NavigationDestinationSelector("label", "Farm", null));
+        // The landmark is a published ROW with its own label and its own names, and it shares the farm's handle because it
+        // declares the farm's identity: the search that reads those names is the Host's now
+        // (`host/src/stardew-destination-search.test.ts`, "the farm's water landmark answers to its own names"), and what
+        // this side owes it is the row.
+        BridgeDestinationIndexResult publication = DestinationIndexPublication.Build(set, references, context);
+        publication.Status.Should().Be("index");
+        BridgeDestinationIndexRow pond = publication.Destinations!.Single(row => row.Label == "Pond");
+        pond.Aliases.Should().Contain(new[] { "Pond", "水源" });
+        BridgeDestinationIndexRow farmRow = publication.Destinations!.Single(row => row.Label == "Farm");
+        pond.Ref.Should().Be(farmRow.Ref, "the landmark declares the farm's identity, so one handle names both rows");
+        references.TryResolveDestination(
+            new NavigationDestinationSelector("ref", null, pond.Ref), context, out NavigationDestinationBinding? binding, out string reason, out _)
+            .Should().BeTrue(reason);
+        binding!.CanonicalDestinationIdentity.Should().Be("Farm");
     }
 }

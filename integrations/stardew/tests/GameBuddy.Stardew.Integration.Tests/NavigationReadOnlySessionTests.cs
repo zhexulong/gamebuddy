@@ -228,9 +228,9 @@ public sealed class NavigationReadOnlySessionTests
     }
 
     [Fact]
-    public void FindDestination_MapsExactCandidatesAndNotFound_FromFreshSetWithoutExecutionReceipt()
+    public void DestinationIndex_PublishesEveryRowWithAHandle_AndCreatesNoReceipt()
     {
-        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination", "inspect_world_map" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         int providerCalls = 0;
@@ -246,43 +246,72 @@ public sealed class NavigationReadOnlySessionTests
             runtimeAttestation: BridgeRuntimeAttestation.Default);
         Authenticate(session, scope);
 
-        session.TryNavigationRead(1, FindRequest(scope, "mine", "find_exact_request_01"), out BridgeEnvelope<BridgeNavigationReadResult>? exact, out string reason)
+        session.TryDestinationIndex(1, IndexRequest(scope), out BridgeEnvelope<BridgeDestinationIndexResult>? first, out string reason)
             .Should().BeTrue(reason);
-        exact!.Payload.Status.Should().Be("resolved");
-        exact.Payload.Reason.Should().Be("exact_current_locale");
-        exact.Payload.Destination.Should().Be(new BridgeNavigationDestinationSelector("label", "Mine", null));
-        exact.Payload.Candidates.Should().BeNull();
+        first!.Payload.Status.Should().Be("index");
+        first.Payload.Reason.Should().Be("destination_index_published");
+        first.Payload.Destinations.Should().ContainSingle().Which.Label.Should().Be("Mine");
 
-        currentSet = Set(Leaf("Mine", "Mine"), Leaf("Mines", "Mines"), Leaf("Minecart", "Minecart"));
-        session.TryNavigationRead(1, FindRequest(scope, "min", "find_candidates_request_01"), out BridgeEnvelope<BridgeNavigationReadResult>? candidates, out reason)
+        // A fresh set is published fresh: the directory is the live world's, never a cached answer.
+        currentSet = Set(Leaf("Mine", "Mine"), Leaf("Farm", "Farm"));
+        session.TryDestinationIndex(1, IndexRequest(scope), out BridgeEnvelope<BridgeDestinationIndexResult>? second, out reason)
             .Should().BeTrue(reason);
-        candidates!.Payload.Status.Should().Be("candidates");
-        candidates.Payload.Reason.Should().Be("fuzzy_match");
-        candidates.Payload.Destination.Should().BeNull();
-        candidates.Payload.Candidates.Should().NotBeNull().And.HaveCountGreaterThan(1);
-        candidates.Payload.Candidates!.Should().OnlyContain(candidate =>
-            candidate.Destination.Kind == "ref"
-            && candidate.Destination.Label == null
-            && NavigationReferenceStore.IsWellFormedHandle(candidate.Destination.Ref, "dr1_"));
+        second!.Payload.Destinations.Should().HaveCount(2);
+        second.Payload.Generation.Should().Be(currentSet.Generation);
+        foreach (BridgeDestinationIndexRow row in second.Payload.Destinations!)
+            NavigationReferenceStore.IsWellFormedHandle(row.Ref, "dr1_").Should().BeTrue();
 
-        currentSet = Set(Leaf("Farm", "Farm"));
-        session.TryNavigationRead(1, FindRequest(scope, "mine", "find_not_found_request_01"), out BridgeEnvelope<BridgeNavigationReadResult>? notFound, out reason)
-            .Should().BeTrue(reason);
-        notFound!.Payload.Status.Should().Be("not_found");
-        notFound.Payload.Reason.Should().Be("destination_not_found");
-        notFound.Payload.Destination.Should().BeNull();
-        notFound.Payload.Candidates.Should().BeNull();
-
-        providerCalls.Should().Be(3, "each request must search a freshly provided destination set");
-        executions.TryGetReceipt("find_exact_request_01", out _).Should().BeFalse();
-        executions.TryGetReceipt("find_candidates_request_01", out _).Should().BeFalse();
-        executions.TryGetReceipt("find_not_found_request_01", out _).Should().BeFalse();
+        providerCalls.Should().Be(2, "each request must publish the freshly provided destination set");
+        executions.TryGetReceipt("destination_index_request_01", out _).Should().BeFalse();
     }
 
     [Fact]
-    public void FindDestination_RechecksCurrentCapability_AndRequiresOwnerThread()
+    public void DestinationIndex_RequiresAuthenticationAndOwnerThread_AndIsNotCapabilityGated()
     {
-        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal));
+        var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
+        var executions = new ExecutionManager(new DummyMonitor(), () => publication);
+        int providerCalls = 0;
+        var session = new BridgeSession(
+            executions,
+            new FarmhandActionRouter(),
+            scope,
+            "navigation_token_0123456789abcdef",
+            () => publication,
+            () => "en-US",
+            () => { providerCalls++; return Set(Leaf("Mine", "Mine")); },
+            runtimeAttestation: BridgeRuntimeAttestation.Default);
+
+        session.TryDestinationIndex(1, IndexRequest(scope), out _, out string reason).Should().BeFalse();
+        reason.Should().Be("unauthenticated");
+        providerCalls.Should().Be(0);
+
+        Authenticate(session, scope);
+        // Deliberately NOT gated on a published capability, like `data_query_request` and `tile_area_request`: the names
+        // are the world the actor already stands in, and the action policy is enforced where the model asks
+        // (`stardew_find_destination`'s own readiness check). This publication advertises nothing.
+        publication.EnabledActionIds.Should().BeEmpty();
+        session.TryDestinationIndex(1, IndexRequest(scope), out BridgeEnvelope<BridgeDestinationIndexResult>? published, out reason)
+            .Should().BeTrue(reason);
+        published!.Payload.Status.Should().Be("index");
+
+        (bool Accepted, string? OffThreadReason) offThread = OnAnotherThread(() =>
+        {
+            bool accepted = session.TryDestinationIndex(1, IndexRequest(scope), out _, out string offThreadReason);
+            return (accepted, offThreadReason);
+        });
+        offThread.Accepted.Should().BeFalse();
+        offThread.OffThreadReason.Should().Be("game_thread_required");
+        providerCalls.Should().Be(1);
+    }
+
+    [Fact]
+    public void FindDestination_IsRefusedOnTheNavigationReadRoute_WithoutTouchingTheSet()
+    {
+        // `find_destination` is the Host's answer now, read from the published directory; the Mod's own navigation-read route
+        // names the world map and refuses the search BY NAME, so a client that still asks for it is told so instead of
+        // receiving a second, differently-ranked answer from this side.
+        FarmhandCapabilityPublication publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination", "inspect_world_map" });
         var scope = new BridgeScope("stardew", "save_01", "world_01", "player_01", "companion_01");
         var executions = new ExecutionManager(new DummyMonitor(), () => publication);
         int providerCalls = 0;
@@ -297,22 +326,10 @@ public sealed class NavigationReadOnlySessionTests
             runtimeAttestation: BridgeRuntimeAttestation.Default);
         Authenticate(session, scope);
 
-        publication = publication.WithEnabledActions(new HashSet<string>(StringComparer.Ordinal));
-        session.TryNavigationRead(1, FindRequest(scope, "mine", "withdrawn_find_request_01"), out _, out string reason).Should().BeFalse();
+        session.TryNavigationRead(1, FindRequest(scope, "mine", "find_destination_request_01"), out _, out string reason).Should().BeFalse();
         reason.Should().Be("operation_not_available");
         providerCalls.Should().Be(0);
-
-        publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "find_destination" });
-        (bool Accepted, string? Reason) offThread = OnAnotherThread(() =>
-        {
-            bool accepted = session.TryNavigationRead(1, FindRequest(scope, "mine", "off_thread_find_request_01"), out _, out string offThreadReason);
-            return (accepted, offThreadReason);
-        });
-        offThread.Accepted.Should().BeFalse();
-        offThread.Reason.Should().Be("game_thread_required");
-        providerCalls.Should().Be(0);
-        executions.TryGetReceipt("withdrawn_find_request_01", out _).Should().BeFalse();
-        executions.TryGetReceipt("off_thread_find_request_01", out _).Should().BeFalse();
+        executions.TryGetReceipt("find_destination_request_01", out _).Should().BeFalse();
     }
 
     [Fact]
@@ -391,6 +408,10 @@ public sealed class NavigationReadOnlySessionTests
     private static BridgeEnvelope<BridgeNavigationReadRequest> FindRequest(BridgeScope scope, string query, string requestId) => new(
         BridgeProtocol.Version, requestId, requestId + "_correlation", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope,
         "navigation_read_request", new BridgeNavigationReadRequest("find_destination", new BridgeNavigationReadArgs { Query = query }));
+
+    private static BridgeEnvelope<BridgeDestinationIndexRequest> IndexRequest(BridgeScope scope) => new(
+        BridgeProtocol.Version, "destination_index_request_01", "destination_index_correlation_01", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), scope,
+        "destination_index_request", new BridgeDestinationIndexRequest());
 
     private static DerivedDestinationSet Set(params NavigationSourceNode[] nodes) =>
         new("generation_01", new NavigationSourceNode("root", null, null, null, nodes));

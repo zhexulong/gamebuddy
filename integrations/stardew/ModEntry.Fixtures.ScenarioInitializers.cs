@@ -177,6 +177,11 @@ public sealed partial class ModEntry
         NativeLocalFixtureScenarioRow.ActorPrepared("native_accept_daily_quest_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalAcceptDailyQuestFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_color_placed_object_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalColorPlacedObjectFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_rotate_furniture_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalRotateFurnitureFixture(player, farm)),
+        // The two "put one carried item INTO a placed thing" actions. Both containers start EMPTY - depositing and
+        // placing are the things under test - and both are placed by the engine's own tile rule rather than by a
+        // coordinate here (see ModEntry.Fixtures.PlacedDepositTargets.cs).
+        NativeLocalFixtureScenarioRow.ActorPrepared("native_put_item_in_fish_tank_v1", static (mod, player, _, _) => mod.InitializeNativeLocalPutItemInFishTankFixture(player)),
+        NativeLocalFixtureScenarioRow.ActorPrepared("native_place_item_on_pedestal_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalPlaceItemOnPedestalFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_remove_fence_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalRemoveFenceFixture(player, farm)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_accept_special_order_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalAcceptSpecialOrderFixture(player)),
         NativeLocalFixtureScenarioRow.ActorPrepared("native_claim_museum_reward_v1", static (mod, player, farm, _) => mod.InitializeNativeLocalClaimMuseumRewardFixture(player)),

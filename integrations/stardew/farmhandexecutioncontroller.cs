@@ -26,6 +26,12 @@ internal sealed partial class ExecutionManager : IExecutionLedger, IDispatchExec
 {
     private const int DefaultDeadlineTicks = 60 * 20;
     internal const int TargetDiscoveryRadius = 6;
+    /// <summary>
+    /// How many other human players one observation publishes. Stardew's own co-op tops out at four players in total, so
+    /// this is the wire's declared bound (<c>protocol/bridge-v1.schema.json</c> <c>otherFarmers.maxItems</c>) rather than a
+    /// window a real session reaches; the radius decides what is SEEN, and the rows it withheld are counted beside them.
+    /// </summary>
+    internal const int OtherFarmerLimit = 16;
     // Animal-product discovery is the one place where the ACTING range is wider
     // than adjacency (milk/shear reach). Named for what it gates: the execution
     // precondition, not the snapshot radius (which is TargetDiscoveryRadius).
@@ -1382,6 +1388,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             SeedSupplyTargets: seedSupplyTargets,
             SeedSupplyTargetsOmitted: seedSupplyTargets is null ? null : seedSupplyTargetsOmitted,
             WorldObjectTargetsOmitted: worldObjectTargets is null ? null : worldObjectTargetsOmitted,
+            // The humans beside her: a perception fact with no action behind it, so it is published on every ready-world
+            // snapshot rather than gated on a capability the way the target families are.
+            OtherFarmers: FarmhandTargetDiscovery.DiscoverOtherFarmers(player, out int otherFarmersOmitted),
+            OtherFarmersOmitted: otherFarmersOmitted,
             WaterTargets: advertisedCapabilities.Contains("fish_here", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWaterTargets(player) : null,
             // The same `HomeOf` the night's own eligibility refuses `not_home` from, so the projection's Sleep line can
             // state where the day ends instead of claiming it ends anywhere. Published on every ready-world snapshot:
