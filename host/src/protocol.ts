@@ -1004,6 +1004,38 @@ export type Snapshot = Readonly<{
     inCurrentLocation: boolean;
   }>[];
   /**
+   * The OTHER HUMAN PLAYERS standing where the observation can see them, read from `Game1.otherFarmers` - the engine's
+   * dictionary of the players who are not the local one.
+   *
+   * It is the one fact the observation was missing: crops, weeds, objects, chests, animals, villagers, buildings and ground
+   * were all published, and a co-op session in which someone stood three tiles away with a watering can read as a farm
+   * with nobody else on it.
+   *
+   * A PERCEPTION FACT, NOT A TARGET: no published action takes a human player as its target, so a row carries no
+   * `targetId` and nothing may be addressed through one. The family label says the same thing to the model. The local
+   * player is never a row: her body is `tile`, `currentTool`, `stamina` and the disposition fields.
+   */
+  otherFarmers?: readonly Readonly<{
+    /** The map the other player stands on - the observation's own location, since only that map is read. */
+    location: string;
+    x: number;
+    y: number;
+    /** That player's own character name (`Farmer.Name`). Two humans may share a name; the tile tells such rows apart. */
+    name: string;
+    /** The engine's own four directions, or `not_measured` for a value outside them. */
+    facing: "up" | "right" | "down" | "left" | "not_measured";
+    /** What that player is holding right now, or `none` when the engine answers that the hand is empty. */
+    heldQualifiedItemId: string;
+    heldDisplayName: string;
+    /** The first of the engine's own action predicates that holds, else a measured `idle`. */
+    doing: "using_tool" | "emoting" | "sitting" | "walking" | "idle" | "not_measured";
+  }>[];
+  /**
+   * The other farmers the window withheld - on another map, or on this one past the radius - so a session whose other
+   * human is across the farm reads as one omitted rather than as nobody. Absent means the family was not measured.
+   */
+  otherFarmersOmitted?: number;
+  /**
    * Every loaded location's ready-for-harvest crop summary, across the loaded
    * world. The per-location harvestTargets array is Chebyshev-bounded to the
    * player's neighbourhood, so this is the only planning fact that tells the
@@ -1840,6 +1872,69 @@ export type NavigationReadResult =
       unlockState: null;
     }>;
 
+/**
+ * One destination's published names: every spelling this generation's directory DECLARES for one place, and the opaque
+ * handle that names the place itself.
+ *
+ * <p>
+ * WHY THE FIELDS ARE SPLIT BY WHERE A NAME CAME FROM. The Mod is the only side that can read `Data/Locations`, the
+ * world-map area labels, `Data/Characters` and `Data/Shops`, so it publishes what each name IS - the place's own label in
+ * this locale and in the fallback locale, the other spellings it declares, the residents that live there, the goods its
+ * shop sells. How much each of those counts towards a match is a ranking decision, and ranking is the Host's business
+ * (`design/adr/0014-thin-stardew-mod.md`: the Mod does not interpret, sort or compose), so the weights are not published
+ * and are not the Mod's to state.
+ * </p>
+ * <p>
+ * `ref` is the place's `dr1_` handle, minted once per destination identity for this publication and bound to the same
+ * runtime, scope and source generation as every other Navigation handle. A caller who copies one into the next call is
+ * held to the handle's own five-minute life, exactly as it was held to the one `find_destination` used to mint per query.
+ * Two rows may share one handle: the farm's water landmark declares the farm's identity on purpose so arrival semantics
+ * keep working, and a handle names the IDENTITY, not a spelling.
+ * </p>
+ */
+export type DestinationIndexRow = Readonly<{
+  label: string;
+  contextLabel: string | null;
+  fallbackLabel: string | null;
+  aliases: readonly string[];
+  relatedNpcs: readonly string[];
+  serviceTerms: readonly string[];
+  ref: string;
+}>;
+
+/** One destination-name publication request: the whole directory of the current generation, and nothing else. */
+export type DestinationIndexRequest = Readonly<Record<string, never>>;
+
+/**
+ * One generation's flat destination-name directory.
+ *
+ * <p>
+ * `blocked` is the Mod's own named refusal to publish at all (`world_map_unavailable`, `destination_index_too_large`), and
+ * it carries no half list: a directory the Mod could not publish completely is not a directory the Host may match against,
+ * because a missing row would silently turn "that place does not exist" into a true answer.
+ * </p>
+ * <p>
+ * The Host holds no copy between calls. Each `find_destination` asks for the directory again, so the publication is read
+ * as the fresh fact it is: two answers for one `generation` cannot disagree about anything a caller sees, because the
+ * generation is derived from the destination identities themselves (`DerivedDestinationSet.ComputeGeneration`) and the
+ * names are re-read from the live world with it. That is the whole of the staleness rule - there is no cached list to
+ * replace and no revision to compare.
+ * </p>
+ */
+export type DestinationIndexResult =
+  | Readonly<{
+      status: "index";
+      reason: "destination_index_published";
+      generation: string;
+      destinations: readonly DestinationIndexRow[];
+    }>
+  | Readonly<{
+      status: "blocked";
+      reason: string;
+      generation: null;
+      destinations: null;
+    }>;
+
 export type LocalObservation = Readonly<{
   location: string;
   tileX: number;
@@ -2543,6 +2638,8 @@ export type BridgeMessage =
   | Envelope<"observe_request", Readonly<Record<string, never>>>
   | Envelope<"navigation_read_request", NavigationReadRequest>
   | Envelope<"navigation_read_result", NavigationReadResult>
+  | Envelope<"destination_index_request", DestinationIndexRequest>
+  | Envelope<"destination_index_result", DestinationIndexResult>
   | Envelope<"data_query_request", DataQueryRequest>
   | Envelope<"data_query_result", DataQueryResult>
   | Envelope<"tile_area_request", TileAreaRequest>
@@ -2586,6 +2683,8 @@ const BRIDGE_MESSAGE_TYPES = [
   "observe_request",
   "navigation_read_request",
   "navigation_read_result",
+  "destination_index_request",
+  "destination_index_result",
   "data_query_request",
   "data_query_result",
   "tile_area_request",
@@ -2703,6 +2802,8 @@ export const SNAPSHOT_KEYS = [
   "scytheCropTargets",
   "npcRelationshipTargets",
   "villagerWhereabouts",
+  "otherFarmers",
+  "otherFarmersOmitted",
   "harvestWhereabouts",
   "wateringWhereabouts",
   "petTargets",
@@ -2892,6 +2993,10 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
       return validateNavigationReadRequest(payload);
     case "navigation_read_result":
       return validateNavigationReadResult(payload);
+    case "destination_index_request":
+      return validateDestinationIndexRequest(payload);
+    case "destination_index_result":
+      return validateDestinationIndexResult(payload);
     case "data_query_request":
       return validateDataQueryRequest(payload);
     case "data_query_result":
@@ -3649,6 +3754,68 @@ function validateNavigationReadResult(value: Record<string, unknown>): string | 
     value.unlockState === null
     ? null
     : "invalid_navigation_read_result";
+}
+
+/**
+ * One generation's destination directory, refused at the element: a name the wire cannot bound, a handle that is not a
+ * `dr1_` one, and a directory with no rows are all corrupt frames rather than empty answers.
+ */
+function validateDestinationIndexRequest(value: Record<string, unknown>): string | null {
+  return hasExactKeys(value, []) ? null : "invalid_destination_index_request";
+}
+
+function validateDestinationIndexResult(value: Record<string, unknown>): string | null {
+  if (!hasExactKeys(value, ["status", "reason", "generation", "destinations"]) || !isReasonCode(value.reason))
+    return "invalid_destination_index_result";
+  if (value.status === "blocked")
+    return value.generation === null && value.destinations === null ? null : "invalid_destination_index_result";
+  if (value.status !== "index" || value.reason !== "destination_index_published")
+    return "invalid_destination_index_result";
+  return isOpaqueId(value.generation) &&
+    Array.isArray(value.destinations) &&
+    value.destinations.length >= 1 &&
+    value.destinations.length <= DESTINATION_INDEX_ROW_LIMIT &&
+    value.destinations.every(isDestinationIndexRow)
+    ? null
+    : "invalid_destination_index_result";
+}
+
+/**
+ * Rows one publication may carry, and names one row's list may carry.
+ *
+ * <p>
+ * Both mirror the Mod's own bound (`DestinationIndexPublication.MaximumDestinations`, which answers
+ * `destination_index_too_large` rather than sending a partial list). The row count is the engine's loaded-location count,
+ * which a real world holds in the tens; a modded world can raise it, and past this ceiling the publication is refused by
+ * name instead of being truncated into a directory that denies places it holds. The per-list ceiling is a shop's stock
+ * length - the largest `Data/Shops` row in 1.6 is under fifty entries - and exists so one frame stays bounded.
+ * </p>
+ */
+const DESTINATION_INDEX_ROW_LIMIT = 512;
+const DESTINATION_INDEX_NAME_LIMIT = 256;
+
+function isDestinationIndexRow(value: unknown): value is DestinationIndexRow {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["label", "contextLabel", "fallbackLabel", "aliases", "relatedNpcs", "serviceTerms", "ref"]) &&
+    isBoundedNonEmptyString(value.label, 128) &&
+    (value.contextLabel === null || isBoundedNonEmptyString(value.contextLabel, 128)) &&
+    (value.fallbackLabel === null || isBoundedNonEmptyString(value.fallbackLabel, 128)) &&
+    isDestinationNameList(value.aliases) &&
+    isDestinationNameList(value.relatedNpcs) &&
+    isDestinationNameList(value.serviceTerms) &&
+    // The same grammar a selector's `ref` arm is held to (`readDestinationSelector`, `argument`): one handle, one reader.
+    typeof value.ref === "string" &&
+    NAVIGATION_RUN_REF.test(value.ref)
+  );
+}
+
+function isDestinationNameList(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= DESTINATION_INDEX_NAME_LIMIT &&
+    value.every((name) => isBoundedNonEmptyString(name, 128))
+  );
 }
 
 /**
@@ -5263,6 +5430,58 @@ function isDiscoveryExclusionFact(entry: unknown): boolean {
   return isNonNegativeSafeInteger(entry.count) && entry.count >= 1;
 }
 
+/**
+ * One other human player, in the eight facts that player's own body answers.
+ *
+ * THE SHAPE IS THE MOD'S `BridgeOtherFarmerTarget`, member for member, and the two closed vocabularies are the engine's
+ * own: `facing` is `FacingDirection` (0 up, 1 right, 2 down, 3 left) and `doing` is the first of `UsingTool`,
+ * `isEmoting`, `IsSitting()`, `isMoving()` that holds, with `idle` for a body all four answered no about and
+ * `not_measured` for a body the engine holds no sprite for. `not_measured` is also what an engine direction outside the
+ * four publishes, so a value this vocabulary has not met is never translated into one it has.
+ *
+ * NO `targetId`, deliberately: no published action takes a human player as its target, so there is no address any row of
+ * this family could carry. A validator that demanded one would be demanding an address nothing mints.
+ */
+function isOtherFarmerFact(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "location",
+      "x",
+      "y",
+      "name",
+      "facing",
+      "heldQualifiedItemId",
+      "heldDisplayName",
+      "doing",
+    ]) &&
+    typeof value.location === "string" &&
+    value.location.length > 0 &&
+    value.location.length <= 256 &&
+    isTileCoordinate(value.x) &&
+    isTileCoordinate(value.y) &&
+    typeof value.name === "string" &&
+    value.name.length <= 128 &&
+    (value.facing === "up" ||
+      value.facing === "right" ||
+      value.facing === "down" ||
+      value.facing === "left" ||
+      value.facing === "not_measured") &&
+    typeof value.heldQualifiedItemId === "string" &&
+    value.heldQualifiedItemId.length > 0 &&
+    value.heldQualifiedItemId.length <= 256 &&
+    typeof value.heldDisplayName === "string" &&
+    value.heldDisplayName.length > 0 &&
+    value.heldDisplayName.length <= 256 &&
+    (value.doing === "using_tool" ||
+      value.doing === "emoting" ||
+      value.doing === "sitting" ||
+      value.doing === "walking" ||
+      value.doing === "idle" ||
+      value.doing === "not_measured")
+  );
+}
+
 export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freeze([
   { field: "worldObjectTargets", maxItems: 48, accepts: isWorldObjectTargetFact },
   { field: "farmBuildingTargets", maxItems: 16, accepts: isFarmBuildingTargetFact },
@@ -5332,6 +5551,7 @@ export const SNAPSHOT_FAMILY_RULES: readonly SnapshotFamilyRule[] = Object.freez
   { field: "scytheCropTargets", maxItems: 16, accepts: isScytheCropTargetFact },
   { field: "npcRelationshipTargets", maxItems: 64, accepts: isNpcRelationshipTargetFact },
   { field: "villagerWhereabouts", maxItems: 64, accepts: isVillagerWhereaboutsFact },
+  { field: "otherFarmers", maxItems: 16, accepts: isOtherFarmerFact },
   { field: "harvestWhereabouts", maxItems: 64, accepts: isHarvestWhereaboutsFact },
   { field: "wateringWhereabouts", maxItems: 64, accepts: isWateringWhereaboutsFact },
   { field: "petTargets", maxItems: 16, accepts: isPetTargetFact },
@@ -5545,6 +5765,15 @@ function diagnoseSnapshot(value: Record<string, unknown>): string {
     !isNonNegativeSafeInteger(value.worldObjectTargetsOmitted)
   )
     return "invalid_snapshot:worldObjectTargetsOmitted";
+  // The same count for the human players beside her: the family is radius-bounded, so the number of other farmers the
+  // window left out is what keeps "nobody else is here" from being printed over a co-op session with one human across the
+  // farm. A count that is not a non-negative integer is a number nobody can subtract.
+  if (
+    value.otherFarmersOmitted !== undefined &&
+    value.otherFarmersOmitted !== null &&
+    !isNonNegativeSafeInteger(value.otherFarmersOmitted)
+  )
+    return "invalid_snapshot:otherFarmersOmitted";
   // The same count for the exclusion register: it says how many distinct (family, reason) rows the Mod's cap left
   // out, and without it a bounded register reads as a complete one.
   if (
@@ -5666,6 +5895,9 @@ function snapshotDecisionScalarsAccepted(value: Record<string, unknown>): boolea
     (value.seedSupplyTargetsOmitted === undefined ||
       value.seedSupplyTargetsOmitted === null ||
       isNonNegativeSafeInteger(value.seedSupplyTargetsOmitted)) &&
+    (value.otherFarmersOmitted === undefined ||
+      value.otherFarmersOmitted === null ||
+      isNonNegativeSafeInteger(value.otherFarmersOmitted)) &&
     (value.discoveryExclusionsOmitted === undefined ||
       value.discoveryExclusionsOmitted === null ||
       isNonNegativeSafeInteger(value.discoveryExclusionsOmitted)) &&

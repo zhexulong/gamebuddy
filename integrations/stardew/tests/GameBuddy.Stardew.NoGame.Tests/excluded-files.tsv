@@ -70,8 +70,6 @@ DeclaredArgumentAcceptanceTests.cs	mod-assembly	Navigation
 DiscoverySurfaceEquivalenceDump.cs	game	ExecutionManager, Farmer, GameLocation, Item, DiscoveryExclusionRecorder
 DeclaredToolSelectionTests.cs	mod-assembly	Axe, DeclaredToolResolution, FishingRod, Hoe, Item
 DecompiledSource.cs	reference-tree	StardewValleyDecompiled named in its source; /ref/ is gitignored, so a hosted checkout has no tree to read
-DestinationSearchByteBudgetEquivalenceTests.cs	mod-assembly	Navigation, DestinationSearchResult, NavigationBindingContext
-destinationsearchtests.cs	mod-assembly	Navigation, DerivedDestinationSet, DestinationSearchResult, NavigationBindingContext, NavigationSourceNode
 DirectionalRadiusCensusTests.cs	game	EngineParityCandidateScan@EngineParityCandidateScan.cs (the shared comment stripper), whose own row is game (Microsoft.Xna.Framework)
 DispatchEnvelopeTests.cs	mod-assembly	ExecutionManager
 DoorRangeIsTileSpaceTests.cs	game	Xna, Farmer, Game1, GameLocation, Netcode
@@ -273,3 +271,5 @@ FarmhandConstructionInitializationGateTests.cs	reference-tree	DecompiledSource@D
 GameOwnedIdGuardGateTests.cs	reference-tree	DecompiledSource@DecompiledSource.cs (the shared comment stripper); it reads the Mod's source text, so it needs neither Core alone nor this project's compile set
 TargetDiscoveryOrderTests.cs	mod-assembly	Xna, ExecutionManager, Game1, Farm, GameLocation, Item, HoeDirt
 WorkThatIsAlreadyDoneIsTheOutcomeTests.cs	mod-assembly	TargetFamilyCompletenessTests@TargetFamilyCompletenessTests.cs, Handlers, ExecutionManager (and Xna, StardewValley, StardewValley.Tools from the game)
+DestinationIndexPublicationTests.cs	mod-assembly	Navigation, DerivedDestinationSet, NavigationSourceNode, NavigationDestination, NavigationReferenceStore, NavigationBindingContext, DestinationIndexPublication, BridgeDestinationIndexResult
+NavigationPolicySurfaceTests.cs	mod-assembly	ModConfig, NativeLocalPlayerFixtureConfig, BridgeSession

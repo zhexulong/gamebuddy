@@ -588,7 +588,13 @@ export async function runOneProgram({ plan, session, modules, context = emptyCon
     });
 
   const nodes = compiled.program.nodes;
-  const programId = modules.script.planProgramId(compiled.snapshotRevision, nodes);
+  // The slice's session name stands where the mounted Host passes its own `gameSessionId`: the identity must be stable
+  // for this connected session (a second identical call is the same program) and different from any other session's.
+  const programId = modules.script.planProgramId(
+    session.client.state?.sessionId ?? "live-program-slice",
+    compiled.snapshotRevision,
+    nodes,
+  );
   context.nodes = nodes;
   context.programId = programId;
 

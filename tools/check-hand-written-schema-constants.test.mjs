@@ -112,7 +112,10 @@ test("a pasted bound is red even though every constant is still declared and use
 test("a shared constant's expression pasted under another name is red", () => {
   const injected = HEAD_SOURCE.replace(
     "expectedTargetId: OPAQUE_ID_SCHEMA,",
-    "expectedTargetId: OPAQUE_ID_SCHEMA,\n          targetRef: Type.String(opaqueIdShape()),",
+    // The constant's OWN initializer, character for character after whitespace folding: that is what makes this the
+    // second way to restate a bound. It has to follow `OPAQUE_ID_SCHEMA`'s declaration, which reads the two exported
+    // lengths rather than a probe of the predicate.
+    "expectedTargetId: OPAQUE_ID_SCHEMA,\n          targetRef: Type.String({ minLength: OPAQUE_ID_MINIMUM_LENGTH, maxLength: OPAQUE_ID_MAXIMUM_LENGTH, }),",
   );
   assert.notEqual(injected, HEAD_SOURCE, "the fixture injection matched");
   const reading = readingOf(injected);

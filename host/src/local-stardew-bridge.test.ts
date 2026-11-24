@@ -1735,7 +1735,10 @@ test("local Stardew bridge sends the typed cancel identity tuple for every cance
 
 async function withNavigationBridge(
   name: string,
-  onNavigation: (socket: Socket, request: Extract<BridgeMessage, { type: "navigation_read_request" }>) => void,
+  onNavigation: (
+    socket: Socket,
+    request: Extract<BridgeMessage, { type: "navigation_read_request" | "destination_index_request" }>,
+  ) => void,
   run: (client: LocalStardewBridgeClient, peer: Socket) => Promise<void>,
 ): Promise<void> {
   const pipeName = `gamebuddy_navigation_${name}_${process.pid}_${Date.now()}`;
@@ -1777,7 +1780,8 @@ async function withNavigationBridge(
               },
             }),
           );
-        } else if (request.type === "navigation_read_request") onNavigation(socket, request);
+        } else if (request.type === "navigation_read_request" || request.type === "destination_index_request")
+          onNavigation(socket, request);
       }
     });
   });
@@ -1795,25 +1799,51 @@ async function withNavigationBridge(
   }
 }
 
-test("navigationRead dispatches an exact-correlated request without mutating bridge state or facts", async () => {
-  let received: Extract<BridgeMessage, { type: "navigation_read_request" }> | undefined;
+test("navigationRead forwards inspect_world_map and answers find_destination from the published index", async () => {
+  const received: string[] = [];
   await withNavigationBridge(
     "success",
     (socket, request) => {
-      received = request;
+      received.push(request.type);
+      if (request.type === "destination_index_request") {
+        socket.write(
+          frame({
+            ...request,
+            messageId: "destination_index_success",
+            type: "destination_index_result",
+            payload: {
+              status: "index",
+              reason: "destination_index_published",
+              generation: "a".repeat(64),
+              destinations: [
+                {
+                  label: "Farm",
+                  contextLabel: null,
+                  fallbackLabel: null,
+                  aliases: [],
+                  relatedNpcs: [],
+                  serviceTerms: [],
+                  ref: `dr1_${"A".repeat(21)}A`,
+                },
+              ],
+            },
+          }),
+        );
+        return;
+      }
       socket.write(
         frame({
           ...request,
           messageId: "nav_result_success",
           type: "navigation_read_result",
           payload: {
-            status: "resolved",
-            reason: "exact_current_locale",
-            entries: null,
+            status: "succeeded",
+            reason: "world_map_observed",
+            entries: [],
             nextCursor: null,
             candidates: null,
-            destination: { kind: "label", label: "Farm", ref: null },
-            unlockState: "unknown",
+            destination: null,
+            unlockState: null,
           },
         }),
       );
@@ -1822,14 +1852,48 @@ test("navigationRead dispatches an exact-correlated request without mutating bri
       const before = client.state;
       let facts = 0;
       client.onFact(() => facts++);
-      const result = await client.navigationRead({ operation: "find_destination", args: { query: "Farm" } });
-      assert.equal(received?.type, "navigation_read_request");
-      assert.deepEqual(received?.payload, { operation: "find_destination", args: { query: "Farm" } });
-      assert.equal(result.status, "resolved");
+
+      const map = await client.navigationRead({ operation: "inspect_world_map", args: {} });
+      assert.equal(map.status, "succeeded");
+      assert.deepEqual(received, ["navigation_read_request"]);
+
+      // The search never reaches the wire: the Mod publishes names, the Host matches them, and the request the peer sees
+      // is the publication rather than a second, differently-ranked answer from the game thread.
+      received.length = 0;
+      const search = await client.navigationRead({ operation: "find_destination", args: { query: "Farm" } });
+      assert.deepEqual(received, ["destination_index_request"]);
+      assert.equal(search.status, "resolved");
+      assert.deepEqual(search.destination, { kind: "label", label: "Farm", ref: null });
+
       assert.equal(facts, 0);
       assert.equal(client.state.snapshot, before.snapshot);
       assert.equal(client.state.latestReceipt, before.latestReceipt);
       assert.deepEqual(client.state.enabledActionIds, before.enabledActionIds);
+    },
+  );
+});
+
+test("a publication the Mod could not complete is the same named refusal a Mod-side wrong answer was", async () => {
+  await withNavigationBridge(
+    "blocked",
+    (socket, request) => {
+      socket.write(
+        frame({
+          ...request,
+          messageId: "destination_index_blocked",
+          type: "destination_index_result",
+          payload: { status: "blocked", reason: "destination_index_too_large", generation: null, destinations: null },
+        }),
+      );
+    },
+    async (client) => {
+      // A partial directory would answer "no such place" for places it holds, so the refusal is thrown as the same
+      // `bridge_rejected:<reason>` shape every Mod-side refusal has always had - the model sees a refused read, not an
+      // empty world.
+      await assert.rejects(
+        client.navigationRead({ operation: "find_destination", args: { query: "Farm" } }),
+        /bridge_rejected:destination_index_too_large/,
+      );
     },
   );
 });

@@ -2715,9 +2715,22 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     validateExecutionRequest(pickupItem, { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] }, now),
     null,
   );
+  // THE IDENTITY IS THE EXECUTOR'S. `pickup_item`'s own row declares `expectedTargetId` resolved at execution
+  // (`FarmhandActionArgument.ResolvedAtExecution`), so the tile and the item are the whole call: the handler mints the
+  // ground drop's identity from the LIVE tile and reports it as `targetId_source=resolved_at_execution`. Demanding the
+  // key here was the wire refusing the call this action's own argument description teaches.
   assert.equal(
     validateExecutionRequest(
       { ...pickupItem, args: { x: 10, y: 12, expectedQualifiedItemId: "(O)388" } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] },
+      now,
+    ),
+    null,
+  );
+  // AND THE ITEM IS STILL HERS: the omission that became legal is the identity alone.
+  assert.equal(
+    validateExecutionRequest(
+      { ...pickupItem, args: { x: 10, y: 12 } },
       { ...snapshot, capabilities: [...snapshot.capabilities, "pickup_item"] },
       now,
     ),
@@ -2907,9 +2920,20 @@ test("execution validation fails closed for stale, unknown, malformed, and unact
     ),
     "invalid_args",
   );
+  // THE CROP IS THE EXECUTOR'S, THE TILE AND THE CHARGE ARE HERS: `water_crop`'s row declares `expectedTargetId`
+  // resolved at execution, so this is a request the wire admits and the handler answers by minting the crop from the LIVE
+  // tile. The charge is still required, and its omission is the refusal below.
   assert.equal(
     validateExecutionRequest(
       { ...waterCrop, args: { x: 10, y: 12, charge: 0 } },
+      { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] },
+      now,
+    ),
+    null,
+  );
+  assert.equal(
+    validateExecutionRequest(
+      { ...waterCrop, args: { x: 10, y: 12 } },
       { ...snapshot, capabilities: [...snapshot.capabilities, "water_crop"] },
       now,
     ),

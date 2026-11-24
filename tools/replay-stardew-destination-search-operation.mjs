@@ -79,6 +79,62 @@ for (const payload of [
   );
 }
 
+// The publication the Host matches against instead of asking the game a second time: one flat list per generation, and
+// the refusals that keep it a bounded, complete answer.
+const destinationRef = `dr1_${"A".repeat(21)}A`;
+const indexRow = {
+  label: "矿井",
+  contextLabel: "山",
+  fallbackLabel: "Mines",
+  aliases: ["Mines"],
+  relatedNpcs: [],
+  serviceTerms: ["山洞萝卜"],
+  ref: destinationRef,
+};
+assert.equal(validateBridgeMessage(frame("destination_index_request", {}), scope, now), null);
+assert.equal(
+  validateBridgeMessage(
+    frame("destination_index_result", {
+      status: "index",
+      reason: "destination_index_published",
+      generation: "a".repeat(64),
+      destinations: [indexRow],
+    }),
+    scope,
+    now,
+  ),
+  null,
+);
+assert.equal(
+  validateBridgeMessage(
+    frame("destination_index_result", {
+      status: "blocked",
+      reason: "destination_index_too_large",
+      generation: null,
+      destinations: null,
+    }),
+    scope,
+    now,
+  ),
+  null,
+);
+for (const payload of [
+  { status: "index", reason: "destination_index_published", generation: "a".repeat(64), destinations: [] },
+  { status: "index", reason: "destination_index_published", generation: "a".repeat(64), destinations: [{ ...indexRow, ref: "dr1_short" }] },
+  { status: "index", reason: "destination_index_published", generation: "a".repeat(64), destinations: [indexRow], score: 1 },
+  { status: "blocked", reason: "destination_index_too_large", generation: "a".repeat(64), destinations: null },
+  { status: "index", reason: "destination_index_published", generation: "a".repeat(64) },
+]) {
+  assert.equal(
+    validateBridgeMessage(frame("destination_index_result", payload), scope, now),
+    "invalid_destination_index_result",
+  );
+}
+assert.equal(
+  validateBridgeMessage(frame("destination_index_request", { generation: "a".repeat(64) }), scope, now),
+  "invalid_destination_index_request",
+);
+
 console.log(
   JSON.stringify({
     state: "destination_search_replay_completed",

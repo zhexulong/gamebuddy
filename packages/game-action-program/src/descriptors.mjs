@@ -41,7 +41,20 @@ const DESCRIPTOR_OPTIONAL_KEYS = Object.freeze([
 // a Host-side sentence about a shared argument name that is false for the action it is calling. The Host's registration
 // descriptor has carried it since `693c19a8`; this entry whitelist still refused it.
 const ARGUMENT_SCHEMA_REQUIRED_KEYS = Object.freeze(["type"]);
-const ARGUMENT_SCHEMA_OPTIONAL_KEYS = Object.freeze(["enum", "description"]);
+// `resolvedAtExecution` is the Mod's grant that the BODY answers for the value at execution, and the four range members
+// are the value domain its acceptance validator enforces (`FarmhandArgumentBounds`). Both reach this projection because a
+// consumer that refuses them cannot read the declaration it is supposed to project - and before the range members
+// existed, the Host derived the same numbers by probing its own wire predicates.
+const ARGUMENT_SCHEMA_OPTIONAL_KEYS = Object.freeze([
+  "enum",
+  "description",
+  "resolvedAtExecution",
+  "minimum",
+  "maximum",
+  "minLength",
+  "maxLength",
+]);
+const ARGUMENT_SCHEMA_RANGE_KEYS = Object.freeze(["minimum", "maximum", "minLength", "maxLength"]);
 
 export const DESCRIPTOR_PROJECTION_VOCABULARY = Object.freeze({
   descriptor: Object.freeze({
@@ -351,6 +364,12 @@ function validArgumentSchemaEntry(entry) {
   if (!VALUE_TYPES.has(ownValue(entry, "type"))) return false;
   const description = ownValue(entry, "description");
   if (description !== INVALID && !validArgumentDescription(description)) return false;
+  const resolved = ownValue(entry, "resolvedAtExecution");
+  if (resolved !== INVALID && resolved !== true) return false;
+  for (const key of ARGUMENT_SCHEMA_RANGE_KEYS) {
+    const range = ownValue(entry, key);
+    if (range !== INVALID && !Number.isSafeInteger(range)) return false;
+  }
   const vocabulary = ownValue(entry, "enum");
   if (vocabulary === INVALID) return true;
   return isDenseArray(vocabulary, MAX_VOCABULARY_VALUES)

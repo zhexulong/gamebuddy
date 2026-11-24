@@ -38,6 +38,8 @@
         "observe_scene_result",
         "navigation_read_request",
         "navigation_read_result",
+        "destination_index_request",
+        "destination_index_result",
         "data_query_request",
         "data_query_result",
         "tile_area_request",
@@ -224,6 +226,38 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/navigationReadResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "destination_index_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/destinationIndexRequest"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "destination_index_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/destinationIndexResult"
           }
         }
       }
@@ -2483,6 +2517,71 @@
         }
       }
     },
+    "otherFarmer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "location",
+        "x",
+        "y",
+        "name",
+        "facing",
+        "heldQualifiedItemId",
+        "heldDisplayName",
+        "doing"
+      ],
+      "properties": {
+        "location": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "x": {
+          "$ref": "#/$defs/tile"
+        },
+        "y": {
+          "$ref": "#/$defs/tile"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "The other player's own character name (`Farmer.Name`), as the engine holds it. Two humans may carry the same name; the tile is what tells such rows apart."
+        },
+        "facing": {
+          "type": "string",
+          "enum": [
+            "up",
+            "right",
+            "down",
+            "left",
+            "not_measured"
+          ],
+          "description": "The engine's own four directions (`FacingDirection`: 0 up, 1 right, 2 down, 3 left), or `not_measured` for a value outside them."
+        },
+        "heldQualifiedItemId": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "`Farmer.CurrentItem.QualifiedItemId` - what that player is holding right now - or `none` when the engine answers that the hand is empty."
+        },
+        "heldDisplayName": {
+          "type": "string",
+          "maxLength": 256,
+          "description": "The held item's own display name, or `none` beside `heldQualifiedItemId: none`."
+        },
+        "doing": {
+          "type": "string",
+          "enum": [
+            "using_tool",
+            "emoting",
+            "sitting",
+            "walking",
+            "idle",
+            "not_measured"
+          ],
+          "description": "The first of the engine's own action predicates that holds (`UsingTool`, `isEmoting`, `IsSitting()`, `isMoving()`), else a measured `idle`; `not_measured` when the engine holds no sprite for that farmer, so no animation state was asked."
+        }
+      }
+    },
     "petTarget": {
       "type": "object",
       "additionalProperties": false,
@@ -3173,6 +3272,20 @@
             "$ref": "#/$defs/npcRelationshipTarget"
           },
           "maxItems": 64
+        },
+        "otherFarmers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/otherFarmer"
+          },
+          "maxItems": 16,
+          "description": "The other HUMAN PLAYERS this observation can see (`Game1.otherFarmers`, the engine's dictionary of the players that are not the local one), bounded to the Mod's own discovery window like every entity family. A perception fact only: no published action takes a human player as its target, so a row carries no address."
+        },
+        "otherFarmersOmitted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "How many other farmers this observation did NOT publish - on another map, or on this one past the window - so a session whose other human is across the farm reads as one omitted rather than as nobody."
         },
         "petTargets": {
           "type": "array",
@@ -6264,6 +6377,132 @@
           "minimum": 0
         }
       }
+    },
+    "destinationIndexRequest": {
+      "$ref": "#/$defs/empty"
+    },
+    "destinationIndexRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "contextLabel",
+        "fallbackLabel",
+        "aliases",
+        "relatedNpcs",
+        "serviceTerms",
+        "ref"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "contextLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fallbackLabel": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "aliases": {
+          "$ref": "#/$defs/destinationIndexNames"
+        },
+        "relatedNpcs": {
+          "$ref": "#/$defs/destinationIndexNames"
+        },
+        "serviceTerms": {
+          "$ref": "#/$defs/destinationIndexNames"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^dr1_[A-Za-z0-9_-]{21}[AQgw]$"
+        }
+      }
+    },
+    "destinationIndexNames": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "destinationIndexResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "generation",
+            "destinations"
+          ],
+          "properties": {
+            "status": {
+              "const": "index"
+            },
+            "reason": {
+              "const": "destination_index_published"
+            },
+            "generation": {
+              "$ref": "#/$defs/opaqueId"
+            },
+            "destinations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 512,
+              "items": {
+                "$ref": "#/$defs/destinationIndexRow"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reason",
+            "generation",
+            "destinations"
+          ],
+          "properties": {
+            "status": {
+              "const": "blocked"
+            },
+            "reason": {
+              "$ref": "#/$defs/reasonCode"
+            },
+            "generation": {
+              "type": "null"
+            },
+            "destinations": {
+              "type": "null"
+            }
+          }
+        }
+      ]
     },
     "navigationReadRequest": {
       "oneOf": [

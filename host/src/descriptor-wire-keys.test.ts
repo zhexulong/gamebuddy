@@ -72,6 +72,11 @@ const SINGLE_SIDED_MEMBERS: Readonly<Record<string, Readonly<{ carriedBy: "wire"
     reason:
       "the claim that an action performs its effect without the NPC counter that owns it; no Host code branches on it (`isValidActionDescriptor` only admits `true`), and it cannot refuse `hello_ack` either because `KNOWN_ACTION_DESCRIPTOR_KEYS` already names the key - it is stated on the artifact because that is the only descriptor a consumer outside a running game can read",
   },
+  effects: {
+    carriedBy: "surface",
+    reason:
+      "what the action requires of the world and what it changes, in the four classes a cross-tile dependency is built from. No Host code reads it from the hello_ack wire - `body-program-script.ts` builds a script's dependency edges from the artifact descriptor, which is the only one a compiler outside a running game holds - so the live wire omits it and this list states that rather than leaving the omission to look like a forgotten member",
+  },
 };
 
 /** Parameter names of one C# positional record, camelCased the way the wire spells them. */

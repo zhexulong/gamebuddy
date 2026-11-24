@@ -3,6 +3,7 @@ import type { GameIntegrationAdapter } from "./game-integration-adapter.js";
 import type { StardewBridgeConnection, StardewBridgeConnectionState } from "./game-connection.js";
 import type { KnowledgeBundle } from "./knowledge.js";
 import { NamedPipeTransport } from "./named-pipe.js";
+import { findDestination } from "./stardew-destination-search.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
@@ -21,6 +22,8 @@ import {
   diagnoseBridgeMessage,
   type DataQueryRequest,
   type DataQueryResult,
+  type DestinationIndexRequest,
+  type DestinationIndexResult,
   type ExecutionReceipt,
   type FarmhandPolicyIdentity,
   type ExecutionReceiptQuery,
@@ -217,6 +220,7 @@ type OutboundRequestType =
   | "hello"
   | "observe_request"
   | "navigation_read_request"
+  | "destination_index_request"
   | "data_query_request"
   | "tile_area_request"
   | "observe_scene_request"
@@ -517,11 +521,49 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
     }
   }
 
+  /**
+   * The read-only Navigation port: the world map as the Mod projects it, and the destination search as the HOST answers
+   * it.
+   *
+   * <p>
+   * WHY `find_destination` IS ANSWERED HERE AND NOT BY THE MOD. Searching a destination needs no game thread, no engine
+   * object and no world state - it is text matching over a name list - so it is Host business (`design/adr/0014-thin-
+   * stardew-mod.md`: the Mod does not interpret, sort or compose), and keeping it in C# meant every tuning attempt needed
+   * a real game launch. The Mod publishes what only it can read (`destinationIndex`, one flat list of the names the live
+   * directory declares); the ranking below runs over that list, in the Host, offline.
+   * </p>
+   * <p>
+   * WHAT A CALLER SEES IF THIS BRANCH WERE ABSENT. The request would be forwarded to the Mod as
+   * `navigation_read_request/operation=find_destination`, and the Mod - which no longer searches - would answer the
+   * envelope with `error: operation_not_available`, so `navigationRead` would throw `bridge_rejected:
+   * operation_not_available` and `stardew_find_destination` would report a refused read rather than a place. Nothing would
+   * silently answer with a list: the seam is visible as a named wire refusal, not as a degraded-but-working search.
+   * </p>
+   */
   public async navigationRead(request: NavigationReadRequest): Promise<NavigationReadResult> {
     this.requireAuthenticated();
+    if (request.operation === "find_destination") return findDestination(await this.destinationIndex(), request.args.query);
     const response = await this.request("navigation_read_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "navigation_read_result") throw new Error("unexpected_navigation_read_response");
+    return response.payload;
+  }
+
+  /**
+   * The current generation's flat destination directory, published by the Mod.
+   *
+   * Read-only and receipt-free, like `dataQuery` and `tileArea`: it creates no execution, mutates nothing, and is
+   * deliberately not gated on a published capability - the names are the world the actor can already see, and the action
+   * policy is enforced where the model asks (`stardew_find_destination`'s own readiness check), not on the facts behind it.
+   * A publication the Mod could not complete is refused by NAME and thrown as the same `bridge_rejected:<reason>` a
+   * Mod-side refusal always produced, because a partial directory would answer "no such place" for places it holds.
+   */
+  public async destinationIndex(): Promise<Extract<DestinationIndexResult, { status: "index" }>> {
+    this.requireAuthenticated();
+    const response = await this.request("destination_index_request", {} satisfies DestinationIndexRequest);
+    if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
+    if (response.type !== "destination_index_result") throw new Error("unexpected_destination_index_response");
+    if (response.payload.status === "blocked") throw new Error(`bridge_rejected:${response.payload.reason}`);
     return response.payload;
   }
 
@@ -1377,6 +1419,8 @@ function isExpectedResponse(requestType: OutboundRequestType, responseType: Brid
       return responseType === "snapshot";
     case "navigation_read_request":
       return responseType === "navigation_read_result";
+    case "destination_index_request":
+      return responseType === "destination_index_result";
     case "data_query_request":
       return responseType === "data_query_result";
     case "tile_area_request":

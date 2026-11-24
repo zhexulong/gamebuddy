@@ -9,11 +9,17 @@
  * it is a coincidence waiting to drift, and it had drifted: the descriptor-derived mounts described `x`/`y` up to
  * 100000 while `tileRow` refused a value above 1000, so a schema-conformant call was refused before the bridge.
  *
- * THE FIX IS ONE DECLARATION PER DOMAIN, DERIVED FROM THE WIRE. `TILE_COORDINATE_SCHEMA` and `TOOL_SLOT_SCHEMA` are read
- * from `isTileCoordinate`/`isToolSlot` - the predicates `tileRow`/`slotRow` enforce - by probing them; `OPAQUE_ID_SCHEMA`
- * is read from `isOpaqueId`, which is the wire's own rule for `expectedTargetId`, `chestId`, `requestId` and
- * `idempotencyKey`; `CALLER_REQUEST_SCHEMA` is that same domain wrapped in `Type.Optional`; `ITEM_ID_SCHEMA` is the
- * 1..128 the wire's `boundedItemRow` rows enforce, which exists only in their call sites. This gate protects the fix.
+ * THE FIX IS ONE DECLARATION PER DOMAIN, DERIVED FROM THE WIRE. `TILE_COORDINATE_SCHEMA`, `TOOL_SLOT_SCHEMA` and
+ * `OPAQUE_ID_SCHEMA` are the exported bounds of `isTileCoordinate`/`isToolSlot`/`isOpaqueId` - the predicates
+ * `tileRow`/`slotRow`/`targetRow` enforce; `WARP_SOURCE_COORDINATE_SCHEMA` is `isWarpSourceCoordinate`, the predicate
+ * `warpSourceRow` enforces for the two actions whose x/y is a warp SOURCE and not a walk target;
+ * `CALLER_REQUEST_SCHEMA` is the opaque-id domain wrapped in `Type.Optional`; `ITEM_ID_SCHEMA` is the 1..128 the wire's
+ * `boundedItemRow` rows enforce, which exists only in their call sites. This gate protects the fix.
+ *
+ * THE BOUNDS THE MOD DECLARES ARE NOT THIS GATE'S POPULATION. A descriptor-derived schema (`buildCandidateToolSchema`'s
+ * fallback loop) reads the range the Mod publishes (`candidateArgumentSchema`), because there the number is the Mod's and
+ * a constant here would be a second authority for it. This gate reads the HAND-WRITTEN members - the mount blocks and the
+ * explicit arms - where no descriptor is consulted and a shared constant is the only correct spelling.
  *
  * THE POPULATION is derived by parsing `host/src/game-tools.ts`, never from a list: every property of the object
  * literal that is a mounted tool's `parameters` schema (`makeGameActionTool({ ..., parameters: Type.Object({...}) })`),
@@ -79,6 +85,23 @@ const DOMAINS = Object.freeze(
     ["expectedTargetId", "OPAQUE_ID_SCHEMA"],
     ["chestId", "OPAQUE_ID_SCHEMA"],
     ["expectedQualifiedItemId", "ITEM_ID_SCHEMA"],
+  ]),
+);
+
+/**
+ * The members whose shared constant is a NARROWER domain than their name's, keyed `<action>:<member>`.
+ *
+ * `travel` and `enter_exit` name a warp SOURCE tile, whose floor is -1 because an edge exit warps from one tile outside
+ * the map, while every other `x`/`y` is a walk target on an ordinary map cell. One domain per member NAME would state
+ * the walk-target floor for both and refuse the only tile an edge exit has - which is exactly what the probing version
+ * did, because the probe could only read the family predicate.
+ */
+const ACTION_DOMAIN = Object.freeze(
+  new Map([
+    ["travel:x", "WARP_SOURCE_COORDINATE_SCHEMA"],
+    ["travel:y", "WARP_SOURCE_COORDINATE_SCHEMA"],
+    ["enter_exit:x", "WARP_SOURCE_COORDINATE_SCHEMA"],
+    ["enter_exit:y", "WARP_SOURCE_COORDINATE_SCHEMA"],
   ]),
 );
 
@@ -266,7 +289,7 @@ export function auditHandWrittenSchemaConstants({ root = REPOSITORY_ROOT, source
           localMembers.push({ action, member: member.name, expression: member.expression, reason: override });
           continue;
         }
-        const owner = DOMAINS.get(member.name);
+        const owner = ACTION_DOMAIN.get(`${action}:${member.name}`) ?? DOMAINS.get(member.name);
         if (owner !== undefined) {
           if (member.expression === owner) {
             fromConstant += 1;
@@ -293,7 +316,7 @@ export function auditHandWrittenSchemaConstants({ root = REPOSITORY_ROOT, source
       }
     }
   }
-  const declared = [...DOMAINS.values()];
+  const declared = [...DOMAINS.values(), ...ACTION_DOMAIN.values()];
   const missing = [...new Set(declared)].filter((name) => !constants.has(name));
   const used = new Set(
     sites
@@ -302,12 +325,16 @@ export function auditHandWrittenSchemaConstants({ root = REPOSITORY_ROOT, source
   );
   const unused = [...new Set(declared)].filter((name) => constants.has(name) && !used.has(name));
   const staleOverrides = [...ACTION_LOCAL.keys()].filter((key) => !observed.has(key));
+  // The narrowed domains expire the same way an action-local bound does: an entry whose (action, member) is no longer
+  // written would otherwise keep narrowing a member nobody writes.
+  const staleNarrowedDomains = [...ACTION_DOMAIN.keys()].filter((key) => !observed.has(key));
   const unobservedDomains = [...DOMAINS.keys()].filter(
     (name) => ![...observed.values()].some((member) => member.name === name),
   );
   for (const name of missing) findings.push(`shared_constant_missing:${name}`);
   for (const name of unused) findings.push(`shared_constant_unused:${name}`);
   for (const key of staleOverrides) findings.push(`action_local_override_no_longer_written:${key}`);
+  for (const key of staleNarrowedDomains) findings.push(`narrowed_domain_no_longer_written:${key}`);
   for (const name of unobservedDomains) findings.push(`shared_domain_member_never_written:${name}`);
   return {
     file: source,
@@ -325,6 +352,7 @@ export function auditHandWrittenSchemaConstants({ root = REPOSITORY_ROOT, source
     missing,
     unused,
     staleOverrides,
+    staleNarrowedDomains,
     unobservedDomains,
     unparsed,
   };

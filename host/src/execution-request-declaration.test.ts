@@ -324,8 +324,12 @@ test("every action's exact argument set is the one its fixture carries, and the 
     Object.fromEntries(Object.entries(args).filter(([key]) => key !== name));
 
   for (const action of ACTIONS) {
-    const declared = rowsOf(action).find((row) => row.argumentNames !== undefined)?.argumentNames;
+    const pinned = rowsOf(action).find((row) => row.argumentNames !== undefined);
+    const declared = pinned?.argumentNames;
     assert.ok(declared !== undefined, `${action}: no row pins the exact argument set`);
+    // A NAME THE ACTION'S OWN ROW DECLARES RESOLVED AT EXECUTION IS NOT THE CALLER'S TO SEND, so the fixture carries it
+    // when it has one to copy and the omission is legal when it does not - the two halves are asserted apart below.
+    const resolvable = new Set(pinned?.resolvableArguments ?? []);
     assert.deepEqual(
       [...Object.keys(VALID_ARGS[action])].sort(),
       [...declared].sort(),
@@ -345,6 +349,15 @@ test("every action's exact argument set is the one its fixture carries, and the 
     );
     for (const name of declared) {
       const missing = readingOf(action, without(VALID_ARGS[action], name));
+      if (resolvable.has(name)) {
+        assert.equal(
+          validateExecutionRequest(missing.request, SNAPSHOT, NOW),
+          null,
+          `${action}: dropping \`${name}\` is legal - the row declares the body resolves it at execution`,
+        );
+        continue;
+      }
+
       assert.equal(
         validateExecutionRequest(missing.request, SNAPSHOT, NOW),
         rowsOf(action)[0]?.refusal,

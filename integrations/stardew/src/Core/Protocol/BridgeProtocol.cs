@@ -86,6 +86,18 @@ public static class BridgeProtocol
             reasonCode = "invalid_body_program_result";
             return false;
         }
+        BridgeDestinationIndexResult? destinationIndex = value switch
+        {
+            BridgeDestinationIndexResult result => result,
+            BridgeEnvelope<BridgeDestinationIndexResult> envelope => envelope.Payload,
+            _ => null,
+        };
+        if (destinationIndex is not null && !IsValidDestinationIndexResult(destinationIndex))
+        {
+            json = string.Empty;
+            reasonCode = "invalid_destination_index_result";
+            return false;
+        }
         try
         {
             json = WireJson.Canonical(value switch
@@ -366,7 +378,14 @@ public static class BridgeProtocol
         return BodyProgramValidation.IsOpaquePolicyValue(text);
     }
 
-    public static bool IsOpaqueId(string? value) => value is not null && value.Length is >= 1 and <= 128 && value.All(character =>
+    /// <summary>
+    /// The opaque identity grammar's length bounds, stated once for the grammar and for the descriptor that publishes
+    /// them (<see cref="Policy.FarmhandArgumentBounds.LengthBound"/>).
+    /// </summary>
+    public const int OpaqueIdMinimumLength = 1;
+    public const int OpaqueIdMaximumLength = 128;
+
+    public static bool IsOpaqueId(string? value) => value is not null && value.Length is >= OpaqueIdMinimumLength and <= OpaqueIdMaximumLength && value.All(character =>
         (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character is '_' or '-');
 
     /// <summary>
@@ -374,6 +393,18 @@ public static class BridgeProtocol
     /// </summary>
     public static bool IsReasonCode(string? value) => BodyProgramValidation.IsReasonCode(value);
 
+    /// <summary>
+    /// The closed shape of a <c>navigation_read_result</c>, which this side still mirrors in full.
+    ///
+    /// <para>
+    /// The Mod now emits two arms of it - <c>succeeded</c> for the world map and <c>blocked</c> for a map it cannot project -
+    /// because the destination search is the Host's (`host/src/stardew-destination-search.ts`). The search arms stay
+    /// declared here anyway: this method is the Mod's mirror of the wire contract, the Host's authority for it is
+    /// <c>host/src/protocol.ts</c>, and the cross-language parity fixture (`BridgeProtocolSerializationTests`,
+    /// <c>host/src/stardew-navigation-wire-parity.test.ts</c>) serializes through THIS shape. Deleting the arms would not
+    /// remove a code path - nothing here produces them - it would remove the wire contract from the side that serializes it.
+    /// </para>
+    /// </summary>
     private static bool IsValidNavigationReadResult(BridgeNavigationReadResult result)
     {
         bool noMap = result.Entries is null && result.NextCursor is null;
@@ -435,6 +466,44 @@ public static class BridgeProtocol
         (selector.Kind == "label" && selector.Label is { Length: >= 1 and <= 128 } && selector.Ref is null)
         || (selector.Kind == "ref" && selector.Label is null
             && (selector.Ref is null || IsNavigationHandle(selector.Ref, "dr1_")));
+
+    /// <summary>
+    /// Rows one publication may carry, and names one row's list may carry.
+    ///
+    /// <para>
+    /// The row count is the engine's loaded-location count, which a real world holds in the tens (a save with the island and
+    /// every cellar open measured 87) and a modded world can raise. Past this ceiling the publication is REFUSED BY NAME
+    /// rather than truncated, because a directory with a missing row turns "that place does not exist" into a true answer.
+    /// The Host states the same two numbers on its own side of the wire (`host/src/protocol.ts`,
+    /// `DESTINATION_INDEX_ROW_LIMIT` / `DESTINATION_INDEX_NAME_LIMIT`); they are two because each side refuses a different
+    /// thing - the Mod refuses to compose a partial list, the Host refuses a frame that claims one.
+    /// </para>
+    /// </summary>
+    private const int MaximumDestinationIndexRows = 512;
+    private const int MaximumDestinationIndexNames = 256;
+
+    private static bool IsValidDestinationIndexResult(BridgeDestinationIndexResult result) =>
+        result.Status switch
+        {
+            "index" => result.Reason == "destination_index_published"
+                && IsOpaqueId(result.Generation)
+                && result.Destinations is { Count: >= 1 and <= MaximumDestinationIndexRows }
+                && result.Destinations.All(IsValidDestinationIndexRow),
+            "blocked" => result.Generation is null && result.Destinations is null && IsReasonCode(result.Reason),
+            _ => false,
+        };
+
+    private static bool IsValidDestinationIndexRow(BridgeDestinationIndexRow row) =>
+        row.Label.Length is >= 1 and <= 128
+        && row.ContextLabel is null or { Length: >= 1 and <= 128 }
+        && row.FallbackLabel is null or { Length: >= 1 and <= 128 }
+        && IsValidDestinationIndexNames(row.Aliases)
+        && IsValidDestinationIndexNames(row.RelatedNpcs)
+        && IsValidDestinationIndexNames(row.ServiceTerms)
+        && IsNavigationHandle(row.Ref, "dr1_");
+
+    private static bool IsValidDestinationIndexNames(IReadOnlyList<string> names) =>
+        names.Count <= MaximumDestinationIndexNames && names.All(name => name.Length is >= 1 and <= 128);
 
     /// <summary>
     /// Whether an execution argument names a destination the closed shape admits.
@@ -1886,6 +1955,52 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
                 if (envelope is null || envelope.Payload.Args is null)
                 {
                     reasonCode = "invalid_navigation_read_request";
+                    return false;
+                }
+                reasonCode = "accepted";
+                return true;
+            }
+            catch (JsonException)
+            {
+                reasonCode = "invalid_json";
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// One destination-index publication request: the current generation's names, and nothing else.
+    ///
+    /// <para>
+    /// The payload is an EMPTY object. There is no argument because the answer is not a query: it is the one directory the
+    /// world has, published so the Host can match a query against it without a game launch, a game thread or a ranking
+    /// algorithm in the Mod (`design/adr/0014-thin-stardew-mod.md`). A shape with a selector or a limit would move the
+    /// decision back to this side of the wire.
+    /// </para>
+    /// </summary>
+    public static bool TryDeserializeDestinationIndexRequest(
+        string json,
+        out BridgeEnvelope<BridgeDestinationIndexRequest>? envelope,
+        out string reasonCode)
+    {
+        envelope = null;
+        if (!TryReadInboundPayload(json, "destination_index_request", out JsonDocument? document, out JsonElement payload, out reasonCode))
+            return false;
+
+        JsonDocument parsedDocument = document ?? throw new InvalidOperationException("Inbound destination-index parser returned no document.");
+        using (parsedDocument)
+        {
+            if (!HasExactProperties(payload))
+            {
+                reasonCode = "invalid_destination_index_request";
+                return false;
+            }
+            try
+            {
+                envelope = JsonSerializer.Deserialize<BridgeEnvelope<BridgeDestinationIndexRequest>>(parsedDocument.RootElement.GetRawText(), JsonOptions);
+                if (envelope is null)
+                {
+                    reasonCode = "invalid_destination_index_request";
                     return false;
                 }
                 reasonCode = "accepted";

@@ -220,7 +220,7 @@ internal sealed class DerivedDestinationSet
     /// <c>mineEntranceTargets</c>) is NOT one of them: the game calls that place 矿井 / "Mines", and a
     /// hand-written synonym table here would only cover the places somebody remembered. A query for a
     /// word no location declares is answered as no such place, which is why the search floor is
-    /// measured over the query's words (see <c>DestinationSearchIndex</c>) rather than over whatever
+    /// measured over the query's words (see `host/src/stardew-destination-search.ts`) rather than over whatever
     /// characters happen to be in the index.
     /// </summary>
     private static IReadOnlyList<string>? BuildExplicitAliases(string canonicalLabel, string? currentLabel, string? fallbackLabel)
