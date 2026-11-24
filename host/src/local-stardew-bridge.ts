@@ -542,7 +542,8 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
    */
   public async navigationRead(request: NavigationReadRequest): Promise<NavigationReadResult> {
     this.requireAuthenticated();
-    if (request.operation === "find_destination") return findDestination(await this.destinationIndex(), request.args.query);
+    if (request.operation === "find_destination")
+      return findDestination(await this.destinationIndex(), request.args.query);
     const response = await this.request("navigation_read_request", request);
     if (response.type === "error") throw new Error(`bridge_rejected:${response.payload.reasonCode}`);
     if (response.type !== "navigation_read_result") throw new Error("unexpected_navigation_read_response");
@@ -1087,7 +1088,13 @@ export class LocalStardewBridgeClient implements StardewBridgeConnection {
       // `diagnose(...) ?? fault` used that truthy string as the close reason — turning
       // "I do not recognise this fault" into a bogus reason that hides the real one. That
       // is exactly how a rejected snapshot surfaced as `bridge_disconnected:accepted`.
-      const diagnosis = fault === "invalid_snapshot" ? diagnoseBridgeMessage(message, this.scope) : null;
+      // The two frames whose refusal has enough members to be worth naming. A snapshot's families and a handshake's
+      // members are each a list of unrelated predicates behind one code, and a live failure that names only the code
+      // cannot be acted on (see `helloAckMemberFaults`). Every other frame's code already names its own rule.
+      const diagnosis =
+        fault === "invalid_snapshot" || fault === "invalid_hello_ack"
+          ? diagnoseBridgeMessage(message, this.scope)
+          : null;
       const reasonCode =
         diagnosis !== null && diagnosis !== "accepted" ? diagnosis : (fault ?? "unexpected_inbound_request");
       // The externally visible diagnostic taxonomy is deliberately narrower

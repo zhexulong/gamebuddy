@@ -2946,7 +2946,74 @@ export function diagnoseBridgeMessage(value: unknown, expectedScope: Scope, nowM
   const envelopeError = validateEnvelope(value, expectedScope, nowMs);
   if (envelopeError !== null) return envelopeError;
   if (isRecord(value) && value.type === "snapshot" && isRecord(value.payload)) return diagnoseSnapshot(value.payload);
+  if (isRecord(value) && value.type === "hello_ack" && isRecord(value.payload)) {
+    const faults = helloAckMemberFaults(value.payload);
+    return faults.length === 0 ? null : `hello_ack_member:${faults[0]}`;
+  }
   return validateBridgeMessage(value, expectedScope, nowMs);
+}
+
+/** The members a `hello_ack` carries, in the order the contract states them; the reason is the one optional member. */
+const HELLO_ACK_KEYS = [
+  "sessionId",
+  "capabilities",
+  "catalogRevision",
+  "policyIdentity",
+  "enabledActionIds",
+  "presentationLocale",
+  "registrations",
+  "runtimeRole",
+  "launchGeneration",
+] as const;
+
+/**
+ * Which members of a `hello_ack` this frame fails, named.
+ *
+ * ONE declaration, two readers. `validateBridgeMessage` asks only whether the list is empty - `invalid_hello_ack` is the
+ * bounded code the wire contract states for every refusal, and the Mod and the fixtures pin it - while
+ * `diagnoseBridgeMessage` names the member a fixer has to look at. Two hand-kept copies of these predicates would be
+ * the defect, not the repair.
+ *
+ * It exists because the refusal had no member: run `round32b` (pin `c0d3ce83`) answered a live cabin hand-off with
+ * `bridge_disconnected:invalid_hello_ack` and nothing else - the session id, the capability list, the policy identity,
+ * the locale, the key set and all 106 registrations were indistinguishable, so the attach could be neither fixed nor
+ * accounted for. `diagnoseSnapshot` already answers this way for the snapshot frame; a handshake deserves the same.
+ */
+function helloAckMemberFaults(payload: Readonly<Record<string, unknown>>): readonly string[] {
+  const faults: string[] = [];
+  // The members FIRST and the key set last: a member that is absent fails its own predicate, so it is named by the
+  // fact it states rather than by the shape that follows from it, and only an UNKNOWN member reaches the key set.
+  if (payload.bodyProgramUnavailableReason !== undefined && !isOpaqueId(payload.bodyProgramUnavailableReason))
+    faults.push("bodyProgramUnavailableReason");
+  if (!isOpaqueId(payload.sessionId)) faults.push("sessionId");
+  if (!isStringArray(payload.capabilities)) faults.push("capabilities");
+  if (!isNonNegativeSafeInteger(payload.catalogRevision)) faults.push("catalogRevision");
+  if (!isFarmhandPolicyIdentity(payload.policyIdentity)) faults.push("policyIdentity");
+  if (!isUniqueOpaqueIdArray(payload.enabledActionIds)) faults.push("enabledActionIds");
+  if (!isBcp47Locale(payload.presentationLocale)) faults.push("presentationLocale");
+  if (!isValidRuntimeAttestation(payload.runtimeRole, payload.launchGeneration)) faults.push("runtimeAttestation");
+  if (!Array.isArray(payload.registrations)) faults.push("registrations");
+  else if (payload.registrations.length === 0 || payload.registrations.length > 128)
+    faults.push("registrations.length");
+  else {
+    const refused = payload.registrations.findIndex((item) => !isValidActionRegistration(item));
+    if (refused >= 0) faults.push(`registrations.${registrationName(payload.registrations[refused], refused)}`);
+    else if (new Set(payload.registrations.map((item) => item.actionId)).size !== payload.registrations.length)
+      faults.push("registrations.actionId");
+  }
+  if (
+    !hasExactKeys(payload, [...HELLO_ACK_KEYS]) &&
+    !hasExactKeys(payload, [...HELLO_ACK_KEYS, "bodyProgramUnavailableReason"])
+  )
+    faults.push("keySet");
+  return faults;
+}
+
+/** One refused registration's own name, so the refusal identifies the action instead of its position alone. */
+function registrationName(item: unknown, index: number): string {
+  return isRecord(item) && typeof item.actionId === "string" && isOpaqueId(item.actionId)
+    ? item.actionId
+    : `[${index}]`;
 }
 
 export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowMs = Date.now()): string | null {
@@ -2969,45 +3036,9 @@ export function validateBridgeMessage(value: unknown, expectedScope: Scope, nowM
     case "hello":
       return hasExactKeys(payload, ["token"]) && validToken(payload.token) ? null : "invalid_hello_token";
     case "hello_ack":
-      // `bodyProgramUnavailableReason` is OPTIONAL, and the two shapes are accepted on purpose: the Mod
-      // serializes it only when it has one, so a session that can honour a program keeps the ack byte-identical
-      // to before (every existing fixture and the golden sequence stay valid), while a session that cannot says so
-      // and the Host refuses to mount the program tools. Two exact-key shapes beat one permissive shape here: an
-      // unknown key is still a defect.
-      return (hasExactKeys(payload, [
-        "sessionId",
-        "capabilities",
-        "catalogRevision",
-        "policyIdentity",
-        "enabledActionIds",
-        "presentationLocale",
-        "registrations",
-        "runtimeRole",
-        "launchGeneration",
-      ]) ||
-        hasExactKeys(payload, [
-          "sessionId",
-          "capabilities",
-          "catalogRevision",
-          "policyIdentity",
-          "enabledActionIds",
-          "presentationLocale",
-          "registrations",
-          "runtimeRole",
-          "launchGeneration",
-          "bodyProgramUnavailableReason",
-        ])) &&
-        (payload.bodyProgramUnavailableReason === undefined || isOpaqueId(payload.bodyProgramUnavailableReason)) &&
-        isOpaqueId(payload.sessionId) &&
-        isStringArray(payload.capabilities) &&
-        isNonNegativeSafeInteger(payload.catalogRevision) &&
-        isFarmhandPolicyIdentity(payload.policyIdentity) &&
-        isUniqueOpaqueIdArray(payload.enabledActionIds) &&
-        isBcp47Locale(payload.presentationLocale) &&
-        isValidActionRegistrations(payload.registrations) &&
-        isValidRuntimeAttestation(payload.runtimeRole, payload.launchGeneration)
-        ? null
-        : "invalid_hello_ack";
+      // One declaration, two readers: this arm asks only whether the list is empty, because `invalid_hello_ack` is the
+      // bounded code the wire contract states for every refusal, while `diagnoseBridgeMessage` names the member.
+      return helloAckMemberFaults(payload).length === 0 ? null : "invalid_hello_ack";
     case "observe_request":
       return hasExactKeys(payload, []) ? null : "invalid_observe_request";
     case "navigation_read_request":
@@ -7008,31 +7039,31 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
   return true;
 }
 
-function isValidActionRegistrations(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length === 0 || value.length > 128) return false;
-  const seen = new Set<string>();
-  for (const item of value) {
-    if (!isRecord(item)) return false;
-    const allowedKeys =
-      "descriptor" in item
-        ? ["actionId", "familyId", "identityVersion", "lifecycle", "kind", "descriptor"]
-        : ["actionId", "familyId", "identityVersion", "lifecycle", "kind"];
-    if (!hasExactKeys(item, allowedKeys)) return false;
-    if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
-    if (
-      typeof item.identityVersion !== "number" ||
-      !Number.isSafeInteger(item.identityVersion) ||
-      item.identityVersion < 1
-    )
-      return false;
-    if (item.lifecycle !== "published" && item.lifecycle !== "live_verified" && item.lifecycle !== "experimental")
-      return false;
-    if (item.kind !== "execution" && item.kind !== "read_only") return false;
-    if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor)))
-      return false;
-    if (seen.has(item.actionId)) return false;
-    seen.add(item.actionId);
-  }
+/**
+ * One registration of the list `hello_ack` publishes, in the Mod's own declaration.
+ *
+ * Uniqueness among the list is the LIST's fact and stays in `helloAckMemberFaults`; every other question is this one
+ * member's, so the validator and the refusal that names the drifting registration cannot state two contracts.
+ */
+function isValidActionRegistration(item: unknown): item is Readonly<Record<string, unknown>> & { actionId: string } {
+  if (!isRecord(item)) return false;
+  const allowedKeys =
+    "descriptor" in item
+      ? ["actionId", "familyId", "identityVersion", "lifecycle", "kind", "descriptor"]
+      : ["actionId", "familyId", "identityVersion", "lifecycle", "kind"];
+  if (!hasExactKeys(item, allowedKeys)) return false;
+  if (!isOpaqueId(item.actionId) || !isOpaqueId(item.familyId)) return false;
+  if (
+    typeof item.identityVersion !== "number" ||
+    !Number.isSafeInteger(item.identityVersion) ||
+    item.identityVersion < 1
+  )
+    return false;
+  if (item.lifecycle !== "published" && item.lifecycle !== "live_verified" && item.lifecycle !== "experimental")
+    return false;
+  if (item.kind !== "execution" && item.kind !== "read_only") return false;
+  if ("descriptor" in item && (item.descriptor === undefined || !isValidActionDescriptor(item.descriptor)))
+    return false;
   return true;
 }
 function isNonNegativeInt32(value: unknown): value is number {
