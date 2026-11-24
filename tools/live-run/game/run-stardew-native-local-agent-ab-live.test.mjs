@@ -643,7 +643,7 @@ test("the run computes the deterministic claim-fulfillability presence projectio
   // data; the parser applies the first-person guardrail.
   assert.match(
     RUNNER_SOURCE,
-    /import \{ buildPresenceProjection \} from "\.\.\/\..\/lib\/stardew-companion-presence-projection\.mjs"/,
+    /import \{ buildPresenceProjection, readBodyClaims \} from "\.\.\/\.\.\/lib\/stardew-companion-presence-projection\.mjs"/,
   );
   assert.match(RUNNER_SOURCE, /PRESENCE_ACTION_VOCABULARY/);
   assert.match(RUNNER_SOURCE, /const presenceProjection =\n {4}presentationPieces\.length > 0/);
@@ -786,13 +786,15 @@ test("a session that did work cannot report `completed` for a task whose purpose
     "task_unproven:mine_delve:task_purpose_evidence_without_postcondition",
     "an undecidable criterion is a verdict that names the criterion and its own reason, never `completed`",
   );
+  // A REAL GAP DAY, not any id: `home_and_hearth` is the rotation's own `unjudged` entry (no action's postcondition
+  // is "the room tidied"), so this fixture cannot drift into claiming a judgeable day was judged by nothing.
   const gapDay = Object.freeze({
     day: 1,
-    task: "clear_east_patch",
-    taskId: "clear_east_patch",
+    task: "home_and_hearth",
+    taskId: "home_and_hearth",
     state: "unjudged",
     reasonCode: "task_purpose_needs_an_unpublished_fact",
-    missingFact: "no farm-region fact",
+    missingFact: "an action whose postcondition is the room tidied",
   });
   assert.equal(
     deriveSessionVerdict({ ...worked, taskPurposes: [gapDay] }),
@@ -4294,6 +4296,16 @@ test("a clause whose reader throws publishes not_measured:<clause>:<reason> inst
         },
       },
     },
+    // A reading of HER speech that cannot be taken is the same kind of fact as a breadth reading that cannot be taken:
+    // it is not a finding about her, so it passes the clause and names the gap.
+    body_claims: {
+      expectedState: "passed",
+      globals: {
+        readBodyClaims: () => {
+          throw new Error("body_claim_utterance_invalid");
+        },
+      },
+    },
     delivery_account: {
       expectedState: "blocked",
       globals: {
@@ -4354,6 +4366,7 @@ test("a clause whose reader throws publishes not_measured:<clause>:<reason> inst
       // act on - the same failure as a measurement that failed silently.
       const codes = [
         result.actionBreadth?.verdict,
+        result.bodyClaims?.verdict,
         result.reasonCode,
         ...(result.failedClauses ?? []).map((entry) => entry.reasonCode),
       ].filter((code) => typeof code === "string");
@@ -4390,6 +4403,68 @@ test("a clause whose reader throws publishes not_measured:<clause>:<reason> inst
     console.error = originalError;
   }
 });
+test("a line that says she is climbing up, with no receipt to prove it, blocks the run by its own code", async () => {
+  // THE PROPERTY, driven through the real assembly: one ongoing claim, its window, and the receipts `round99` held in it -
+  // a walked tile and a refused exit navigation, no ladder. The finding's own code is the clause's reason, so a run cannot
+  // read green while the line disagrees with its receipts.
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SURFACE_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({
+      gameClock: clockFrom(600, 660),
+      interactionValue: { measurements: { lines: [{ atMs: 2_000, text: "还在往上爬。" }] } },
+      factLog: [
+        {
+          atMs: 1_500,
+          reasonCode: "target_reached",
+          worldFactPayload: { actionId: "move_to_tile", state: "succeeded" },
+          evidence: { detail: "tile=11,4;target=11,4;arrival=exact" },
+        },
+        {
+          atMs: 1_600,
+          reasonCode: "destination_access_indeterminate",
+          worldFactPayload: { actionId: "navigate_to_destination", state: "blocked" },
+          evidence: { detail: "destination=Farm;topology=route_topology_invalid" },
+        },
+      ],
+    }),
+  );
+  const result = await buildRunResult({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.equal(result.failedClause, "body_claims", "a blocked run names this clause, not the scenario it ran in");
+  assert.deepEqual(
+    result.failedClauses.filter((clause) => clause.id === "body_claims"),
+    [{ id: "body_claims", reasonCode: "presence_claim_without_a_receipt:place_change:start-2000" }],
+  );
+  assert.equal(result.bodyClaims.findings[0].refusedInWindow, true, "the refusal it was answering is published too");
+});
+
+test("the same line with the ladder that answered it clears the clause, and says what it examined", async () => {
+  const [, buildRunResult] = extractRunnerFunction(
+    RUNNER_SURFACE_SOURCE,
+    ["summarizeDispatchedActions", "buildRunResult", "deriveRungVerdict", "planPollCount"],
+    builderGlobals({
+      gameClock: clockFrom(600, 660),
+      interactionValue: { measurements: { lines: [{ atMs: 2_000, text: "在往上爬。" }] } },
+      factLog: [
+        {
+          atMs: 1_500,
+          reasonCode: "mine_left",
+          worldFactPayload: { actionId: "use_mine_ladder", state: "succeeded" },
+          evidence: { detail: "expected=Mine:23,8;actual=Mine:23,8" },
+        },
+      ],
+    }),
+  );
+  const result = await buildRunResult({ rungClauses: ALL_CLAUSES_PASSED, settlement: null });
+  assert.deepEqual(
+    result.failedClauses.filter((clause) => clause.id === "body_claims"),
+    [],
+    "the ladder receipt is the proof the line needed",
+  );
+  assert.equal(result.bodyClaims.claims[0].dischargedBy, "transit");
+  assert.deepEqual(result.bodyClaims.examined, { utterances: 1, ongoingClaims: 1, receipts: 1 });
+});
+
 test("a run whose execution record could not be read to the end cannot be `passed`", async () => {
   // `executionTrace.ok` was published and consumed by nobody: measured 2026-11-06, round38 published
   // `{ ok: false, unobservedPrograms: 9, rows: 379, expectedRows: 379 }` and the field never reached a verdict. A red

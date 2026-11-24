@@ -22,6 +22,7 @@ import { decideDayWake, WAKE_REASON, WAKE_REASONS } from "../../lib/multiday-loo
 import { deliveryAccountClause, summarizeDeliveryAccount } from "../../lib/presentation-delivery-account.mjs";
 import { describeRunCost, summarizeRunCost } from "../../lib/run-cost-account.mjs";
 import { sessionEntries } from "../../lib/session-jsonl.mjs";
+import { readBodyClaims } from "../../lib/stardew-companion-presence-projection.mjs";
 import { publishCadence } from "./action-cadence-reading.mjs";
 import { executedActionIds, executionTraceInvariant, programExecutionRows } from "./execution-trace.mjs";
 import { createGameClock } from "./game-clock.mjs";
@@ -527,6 +528,11 @@ export function builderGlobals(overrides = {}) {
     lastObservedSnapshot: null,
     lastObservedPose: null,
     actionTrace: [],
+    // The two populations `readBodyClaims` reads, empty rather than absent: a clause measured behind the boundary must
+    // fail for the reason its test injects, never for a `ReferenceError` that only looks like a gap.
+    factLog: [],
+    readBodyClaims,
+    interactionValue: Object.freeze({ measurements: Object.freeze({ lines: Object.freeze([]) }) }),
     programSubmissions: [],
     programOutcomes: [],
     sampleProgramOutcomes: async () => [],
@@ -890,7 +896,7 @@ export const sessionLine = (text) =>
 // words instead of by a position in the record. The words come from the table that WRITES them rather than being spelled
 // again here.
 const PROMPT_SCOPE = loadPromptScope();
-export const DAY_ONE_WORDS = PROMPT_SCOPE.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
+export const DAY_ONE_WORDS = PROMPT_SCOPE.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_ground_clutter");
 
 export const DAY_TWO_WORDS = PROMPT_SCOPE.SCENARIO_PROMPTS.multiday_routine.zh(2, "tend_the_animals");
 

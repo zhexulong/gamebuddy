@@ -225,3 +225,20 @@ const onCompanionTextPresented = (text, locale) => {
 记录,只有语音通道保持 ladder 3/4 限定;互动 gate 纳入 ladder 5。
 用真机文本离线跑 gate:passed=true(length=70、hasPlayerAddress=true、claimedNpcReaction=false)。
 这两次归档是**修复前**的产物,故其 presentation 字段仍为空——不要当作"伴侣未发言"的证据。
+
+---
+
+## run-99-body-claims.json(2026-11-24,身体自述 vs 回执)
+
+`2026-11-24T09-55-06-982Z-multiday_routine` 的 `result.json` 中两个总体(`interactionValue.measurements.lines[]` 与
+`bridgeFacts[]`)**逐字**投影到 `readBodyClaims` 读取的字段(`atMs` / `reasonCode` / `state` / `actionId` / `detail`)。
+不增删、不排序,只去掉不读的键。它是这条规则的**红证**,不是手工构造的 fixture:
+
+- 10:34:56「还在往上爬。」——上一句(10:34:05)以来,窗口里只有一次 `target_reached move_to_tile tile=11,4` 的走位
+  和一次 `blocked/destination_access_indeterminate` 的出口导航拒绝,没有梯子、没有传送;01:40 她还在矿里,02:00 在
+  矿洞口昏过去。产出 `presence_claim_without_a_receipt:place_change:1795516445706-1795516496761`。
+- 10:35:09 同一句「在往上爬。」——窗口里有 `mine_left`(`use_mine_ladder`,succeeded)与 `warped`,**被回执兑现**,
+  不产出 finding。这就是"说了并且真做了"的绿例:规则看过它,不是跳过了它。
+
+总体:38 句里 4 句是在场的身体自述,353 条回执,1 条 finding。用 `readBodyClaims` 重跑即可复现
+(`tools/lib/stardew-companion-presence-projection.test.mjs`)。

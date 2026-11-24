@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  PresenceProjectionError,
   buildPresenceProjection,
+  PresenceProjectionError,
   parseCompanionClaims,
+  readBodyClaims,
 } from "./stardew-companion-presence-projection.mjs";
+
+/**
+ * `round99`'s own populations, projected from its `result.json` (see the fixture's `source` field): 38 spoken lines and
+ * 353 receipts. Real history, not a synthetic construction - the rule's red case is the line the run actually said.
+ */
+const ROUND_99 = JSON.parse(
+  readFileSync(new URL("../fixtures/stardew-presence-live-runs/run-99-body-claims.json", import.meta.url), "utf8"),
+);
 
 const VOCAB = {
   "stardew.water_crop": ["浇水", "汲水"],
@@ -130,4 +140,151 @@ test("invalid inputs fail closed with a typed error", () => {
       }),
     PresenceProjectionError,
   );
+});
+
+test("parseCompanionClaims refuses a question about the same commitment", () => {
+  // A question is not an assertion, in either reading: 「我这就去浇水吗?」 asks about the water, it does not claim it.
+  assert.deepEqual(parseCompanionClaims("我这就去浇水吗?", VOCAB), []);
+  assert.deepEqual(parseCompanionClaims("我这就去浇水吗", VOCAB), []);
+});
+
+test("readBodyClaims charges round99's 「还在往上爬。」, whose window held a walk and a refused exit, never a ladder", () => {
+  const reading = readBodyClaims({ utterances: ROUND_99.utterances, receipts: ROUND_99.receipts });
+  assert.equal(reading.verdict, "failed");
+  assert.deepEqual(
+    reading.findings.map((finding) => finding.finding),
+    ["presence_claim_without_a_receipt:place_change:1795516445706-1795516496761"],
+    "the line said she was climbing up; the window held target_reached move_to_tile tile=11,4 and a blocked navigate_to_destination",
+  );
+  assert.equal(reading.findings[0].text, "还在往上爬。");
+  assert.equal(reading.findings[0].claimKind, "place_change");
+  // The population the rule examined, printed rather than implied.
+  assert.deepEqual(reading.examined, { utterances: 38, ongoingClaims: 4, receipts: 353 });
+  assert.equal(reading.reading, "body claims: 4 of 38 utterances assert an ongoing claim · receipts 353 · findings 1");
+});
+
+test("the same run's second 「在往上爬。」 is examined and discharged by the ladder it named", () => {
+  // 10:35:04 the ladder answered (`mine_left` on `use_mine_ladder`) and the world warped her out, 5 s before the line.
+  // Green here means the rule LOOKED and the receipt backed it - not that the rule skipped her.
+  const reading = readBodyClaims({ utterances: ROUND_99.utterances, receipts: ROUND_99.receipts });
+  const backed = reading.claims.find((claim) => claim.atMs === 1795516509505);
+  assert.equal(backed.text, "在往上爬。");
+  assert.equal(backed.claimKind, "place_change");
+  assert.equal(backed.dischargedBy, "transit");
+});
+
+test("a question about her body is not a claim", () => {
+  const reading = readBodyClaims({
+    utterances: [
+      { atMs: 1_000, text: "要我过去吗?" },
+      { atMs: 2_000, text: "还在往上爬吗" },
+      { atMs: 3_000, text: "我现在还在矿洞里吗?" },
+    ],
+    receipts: [],
+  });
+  assert.deepEqual(reading.claims, []);
+  assert.deepEqual(reading.findings, []);
+  assert.deepEqual(reading.examined, { utterances: 3, ongoingClaims: 0, receipts: 0 });
+});
+
+test("a hedge, another actor's move, or a promise is not a claim about her body", () => {
+  const reading = readBodyClaims({
+    utterances: [
+      { atMs: 1_000, text: "我可能还在往上爬。" },
+      { atMs: 2_000, text: "乔迪说她还在往上爬。" },
+      { atMs: 3_000, text: "我这就往上爬。" },
+      { atMs: 4_000, text: "我下去敲两层铜矿。" },
+      { atMs: 5_000, text: "这层的石头敲穿了，一块铜都没见着。" },
+    ],
+    receipts: [],
+  });
+  assert.deepEqual(reading.claims, []);
+  assert.deepEqual(reading.findings, []);
+});
+
+test("a progress claim is discharged by the world recording that her work landed", () => {
+  const reading = readBodyClaims({
+    utterances: [{ atMs: 5_000, text: "在敲石头，还没完。" }],
+    receipts: [
+      {
+        atMs: 4_000,
+        reasonCode: "rock_source_broken",
+        state: "succeeded",
+        actionId: "break_rock",
+        detail: "target=rock_source_1",
+      },
+    ],
+  });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.claims[0].claimKind, "progress");
+  assert.equal(reading.claims[0].dischargedBy, "recorded");
+});
+
+test("a progress claim in an empty window is the finding, and names its window", () => {
+  const reading = readBodyClaims({ utterances: [{ atMs: 5_000, text: "在敲石头，还没完。" }], receipts: [] });
+  assert.equal(reading.verdict, "failed");
+  assert.deepEqual(
+    reading.findings.map((finding) => finding.finding),
+    ["presence_claim_without_a_receipt:progress:start-5000"],
+  );
+});
+
+test("a refused body move is carried by the finding, not counted as the move she described", () => {
+  // `round99`'s window held exactly this: `destination_access_indeterminate` on the exit navigation. A refusal is the
+  // receipt that the body did NOT leave, so it cannot discharge a claim that it is climbing out - and the finding says
+  // the refusal was there rather than spending it silently.
+  const reading = readBodyClaims({
+    utterances: [{ atMs: 5_000, text: "还在往上爬。" }],
+    receipts: [
+      {
+        atMs: 4_000,
+        reasonCode: "destination_access_indeterminate",
+        state: "blocked",
+        actionId: "navigate_to_destination",
+        detail: "destination=Farm;topology=route_topology_invalid",
+      },
+    ],
+  });
+  assert.equal(reading.verdict, "failed");
+  assert.equal(reading.findings[0].finding, "presence_claim_without_a_receipt:place_change:start-5000");
+  assert.equal(reading.findings[0].refusedInWindow, true);
+});
+
+test("a refused ATTEMPT does discharge a claim of work, because the attempt is what it claims", () => {
+  // The fourth backing, in the one place it belongs: "在敲石头" is true while the rock refuses to break.
+  const reading = readBodyClaims({
+    utterances: [{ atMs: 5_000, text: "在敲石头，还没完。" }],
+    receipts: [
+      { atMs: 4_000, reasonCode: "emote_busy", state: "rejected", actionId: "break_rock", detail: "blocked_by=item" },
+    ],
+  });
+  assert.deepEqual(reading.findings, []);
+  assert.equal(reading.claims[0].dischargedBy, "refusal");
+});
+
+test("a refusal of something other than a body move does not discharge a claim of motion", () => {
+  // `emote_busy` is exactly what sat in round99's window beside the walk; a refused emote is not a refused climb.
+  const reading = readBodyClaims({
+    utterances: [{ atMs: 5_000, text: "还在往上爬。" }],
+    receipts: [
+      { atMs: 4_000, reasonCode: "emote_busy", state: "rejected", actionId: "express_emote", detail: "emote=note" },
+    ],
+  });
+  assert.equal(reading.verdict, "failed");
+  assert.equal(reading.findings[0].finding, "presence_claim_without_a_receipt:place_change:start-5000");
+});
+
+test("a population of no lines is named, never passed", () => {
+  const reading = readBodyClaims({ utterances: [], receipts: [] });
+  assert.equal(reading.verdict, "not_measured");
+  assert.equal(reading.reason, "no_spoken_lines");
+});
+
+test("readBodyClaims fails closed on malformed input", () => {
+  assert.throws(() => readBodyClaims({}), PresenceProjectionError);
+  assert.throws(
+    () => readBodyClaims({ utterances: [{ atMs: null, text: "在往上爬。" }], receipts: [] }),
+    PresenceProjectionError,
+  );
+  assert.throws(() => readBodyClaims({ utterances: [], receipts: [{ atMs: "1" }] }), PresenceProjectionError);
 });

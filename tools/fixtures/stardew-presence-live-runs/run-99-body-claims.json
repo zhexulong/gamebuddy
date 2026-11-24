@@ -1,0 +1,2631 @@
+{
+ "run": "2026-11-24T09-55-06-982Z-multiday_routine",
+ "source": "result.json of .live-runs/game-ladder/2026-11-24T09-55-06-982Z-multiday_routine: interactionValue.measurements.lines[] and bridgeFacts[] verbatim, projected to the fields a proof reads (atMs, reasonCode, state, actionId, detail). Nothing added, nothing reordered.",
+ "utterances": [
+  {
+   "atMs": 1795514136230,
+   "text": "早啊，我先瞅瞅外头那几棵苗什么成色。"
+  },
+  {
+   "atMs": 1795514301784,
+   "text": "行，东头那片归我。你镇上办完吱一声就行。"
+  },
+  {
+   "atMs": 1795514514578,
+   "text": "东头这圈草和石头都清了，还剩一棵树、一个树桩在那儿杵着。我接着整。"
+  },
+  {
+   "atMs": 1795514707547,
+   "text": "三棵树放倒了，剩三个树桩戳在那儿。你镇上一趟办得咋样了？"
+  },
+  {
+   "atMs": 1795514785948,
+   "text": "天开始擦黑了。我再拾掇两把就回屋，你有话就现在说。"
+  },
+  {
+   "atMs": 1795514820575,
+   "text": "天黑了，不干了，回屋。"
+  },
+  {
+   "atMs": 1795514860101,
+   "text": "进屋了，我睡了啊。"
+  },
+  {
+   "atMs": 1795514873691,
+   "text": "早，睡踏实了。昨晚那堆石头草清得手都麻了——先看看我是不是升级了。"
+  },
+  {
+   "atMs": 1795514970578,
+   "text": "昨晚那点货刘易斯给结了三十五块。东头还有三棵能收，我出去接着整。"
+  },
+  {
+   "atMs": 1795514992195,
+   "text": "在等过场。"
+  },
+  {
+   "atMs": 1795514998298,
+   "text": "行，牲口棚归我。克林特刚堵门口塞了张熔炉蓝图，回头再说。"
+  },
+  {
+   "atMs": 1795515022150,
+   "text": "我摸过牛了，也收了一桶牛奶。剩下的我去院子收拾。"
+  },
+  {
+   "atMs": 1795515041462,
+   "text": "在敲石头，还没完。"
+  },
+  {
+   "atMs": 1795515098524,
+   "text": "敲出个晶球，回头拿去铁匠那儿开了。"
+  },
+  {
+   "atMs": 1795515257726,
+   "text": "院子这圈草和石头都清下去了，还剩两棵树和几根嫩枝。我去把树放倒攒点木头。"
+  },
+  {
+   "atMs": 1795515369929,
+   "text": "（举了个「等着」的表情）"
+  },
+  {
+   "atMs": 1795515387955,
+   "text": "有棵树被杂草挡着，靠近不了。我先把那丛草割了再补一刀，体力不多了，这棵完事就收。"
+  },
+  {
+   "atMs": 1795515435979,
+   "text": "天擦黑了，我把牛奶丢进出货箱就回屋。"
+  },
+  {
+   "atMs": 1795515448892,
+   "text": "天黑了，我往屋里走了。"
+  },
+  {
+   "atMs": 1795515483588,
+   "text": "东头那片大面清下去了，还剩几处零碎。木头也攒到三十份。我睡了。"
+  },
+  {
+   "atMs": 1795515548924,
+   "text": "早。牛奶卖了一百二十五块，钱袋到六百六了。"
+  },
+  {
+   "atMs": 1795515684430,
+   "text": "我刚在敲石头，被个对话框卡住了，人就杵在那儿了。机器还一个没立起来——熔炉蓝图有了，铜只攒到五块，差十五。我下矿敲去。"
+  },
+  {
+   "atMs": 1795515731195,
+   "text": "北边那条道被一丛草堵死了，割不着。我改从大路绕出去。"
+  },
+  {
+   "atMs": 1795515794047,
+   "text": "在等过场，别急，我这边动不了。"
+  },
+  {
+   "atMs": 1795515822605,
+   "text": "还在过场里，我动不了，等它放完。"
+  },
+  {
+   "atMs": 1795515845893,
+   "text": "我被拽进社区中心了，又是这场。等放完再说。"
+  },
+  {
+   "atMs": 1795515857469,
+   "text": "还在过场里，我动不了。"
+  },
+  {
+   "atMs": 1795515943134,
+   "text": "我到矿井口了，马龙在那跟我说话，等他讲完我再下去。"
+  },
+  {
+   "atMs": 1795516178053,
+   "text": "马龙总算讲完了。我下去敲两层铜矿，赶在天黑前上来。"
+  },
+  {
+   "atMs": 1795516291952,
+   "text": "底下的石头不少，铜还没见着。我先把手边这几块敲了。"
+  },
+  {
+   "atMs": 1795516354650,
+   "text": "这层的石头敲穿了，一块铜都没见着。天太晚了，我先撤，明早再下来。"
+  },
+  {
+   "atMs": 1795516389512,
+   "text": "走错口了，往上爬的梯子在另一头，我绕过去。"
+  },
+  {
+   "atMs": 1795516445706,
+   "text": "都过零点二十了，我得上去了。找梯子。"
+  },
+  {
+   "atMs": 1795516496761,
+   "text": "还在往上爬。"
+  },
+  {
+   "atMs": 1795516503392,
+   "text": "一点四十了，我还在矿洞里！赶紧上去。"
+  },
+  {
+   "atMs": 1795516509505,
+   "text": "在往上爬。"
+  },
+  {
+   "atMs": 1795516541144,
+   "text": "得，两点整在矿洞口昏过去了。哈维那笔急救费又跑不掉，我这脸丢得。"
+  },
+  {
+   "atMs": 1795516545459,
+   "text": "早……昨晚这一觉睡得可真难看。急救费扣了多少回头我再算。"
+  }
+ ],
+ "receipts": [
+  {
+   "atMs": 1795514143760,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=hi;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514190280,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=3,11;target=3,11;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=2,target=3,11,requested=3,12,approach=substituted"
+  },
+  {
+   "atMs": 1795514191006,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=Farm:64,15;actual=Farm:64,15;steps=1;folded=accepted@source=FarmHouse:3,12,target=Farm:64,15,entry=resolved_warp_fallback"
+  },
+  {
+   "atMs": 1795514191009,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514229576,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=33,17;target=33,17;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=6,target=33,17"
+  },
+  {
+   "atMs": 1795514260039,
+   "reasonCode": "actor_facing_matches",
+   "state": "succeeded",
+   "actionId": "face_direction",
+   "detail": "direction=left;moving=false"
+  },
+  {
+   "atMs": 1795514382090,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_56c2c3aa15616e5a;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_56c2c3aa15616e5a,tile=33,19,distance=2,reach=1,approach=adjacent,stand_at=32,18|tool_approach_completed@tile=32,18,target=32,18,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514382122,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514383143,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_0c5a451090d4125e;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_0c5a451090d4125e,tile=32,20,distance=2,reach=1,approach=adjacent,stand_at=31,19|tool_approach_completed@tile=31,19,target=31,19,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514383218,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_7bba4bfaeae7affd;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795514383293,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_4c1105aa36526b98;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795514384227,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_03e8254a0b914e9f;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_03e8254a0b914e9f,tile=35,16,distance=4,reach=1,approach=adjacent,stand_at=34,17|tool_approach_completed@tile=34,17,target=34,17,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514384710,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ea134cafeb8c5cc5;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ea134cafeb8c5cc5,tile=36,15,distance=2,reach=1,approach=adjacent,stand_at=35,16|tool_approach_completed@tile=35,16,target=35,16,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514385160,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_c7213985c507b1e9;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_c7213985c507b1e9,tile=36,13,distance=3,reach=1,approach=adjacent,stand_at=35,14|tool_approach_completed@tile=35,14,target=35,14,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514385577,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_1d08900b07f73e4b;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_1d08900b07f73e4b,tile=38,13,distance=3,reach=1,approach=adjacent,stand_at=37,14|tool_approach_completed@tile=37,14,target=37,14,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514385813,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_bcf2506bf97fd8fc;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_bcf2506bf97fd8fc,tile=39,14,distance=2,reach=1,approach=adjacent,stand_at=38,14|tool_approach_completed@tile=38,14,target=38,14,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514387629,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ecd4a2b6f54074c4;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ecd4a2b6f54074c4,tile=39,17,distance=3,reach=1,approach=adjacent,stand_at=38,17|tool_approach_completed@tile=38,17,target=38,17,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514387713,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ad4d69e70d0f97b5;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795514391245,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_b1c462c019aba9b6;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_b1c462c019aba9b6,tile=36,21,distance=4,reach=1,approach=adjacent,stand_at=37,21|tool_approach_completed@tile=37,21,target=37,21,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514391494,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_a9b3f7c0b09c4fd7;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_a9b3f7c0b09c4fd7,tile=35,21,distance=2,reach=1,approach=adjacent,stand_at=36,21|tool_approach_completed@tile=36,21,target=36,21,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514391591,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_c1088a5b403fa2bb;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795514391928,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_e1ac8176a09d56ca;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_e1ac8176a09d56ca,tile=39,20,distance=3,reach=1,approach=adjacent,stand_at=38,21|tool_approach_completed@tile=38,21,target=38,21,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514395160,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ccda473ee7b7a324;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ccda473ee7b7a324,tile=37,11,distance=10,reach=1,approach=adjacent,stand_at=38,12|tool_approach_completed@tile=38,12,target=38,12,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514395802,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_a6483944d69f2bd7;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=270;stamina_after=268;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_a6483944d69f2bd7,tile=38,16,distance=4,reach=1,approach=adjacent,stand_at=38,15|tool_approach_completed@tile=38,15,target=38,15,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514398310,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_811114dc194fcd53;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=268;stamina_after=266;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_811114dc194fcd53,tile=39,21,distance=6,reach=1,approach=adjacent,stand_at=38,21|tool_approach_completed@tile=38,21,target=38,21,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514399527,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_85b52291e2ae8884;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=266;stamina_after=264;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_85b52291e2ae8884,tile=33,23,distance=5,reach=1,approach=adjacent,stand_at=34,22|tool_approach_completed@tile=34,22,target=34,22,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514399676,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_44a5b9416628e421;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=264;stamina_after=262;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_44a5b9416628e421,tile=33,20,distance=2,reach=1,approach=adjacent,stand_at=34,21|tool_approach_completed@tile=34,21,target=34,21,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514400845,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_86ea4ff2f40dd5c7;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)2;durability_before=1;durability_after=removed;removed=true;stamina_before=262;stamina_after=260;stamina_delta=-2;expected_stamina_cost=2;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_86ea4ff2f40dd5c7,tile=33,15,distance=6,reach=1,approach=adjacent,stand_at=34,16|tool_approach_completed@tile=34,16,target=34,16,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514401027,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_445b9aab1e8cc0b0;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=260;stamina_after=258.1;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_445b9aab1e8cc0b0,tile=33,18,distance=2,reach=1,approach=adjacent,stand_at=34,17|tool_approach_completed@tile=34,17,target=34,17,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514402148,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_fcf15e2fc84c8846;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=258.1;stamina_after=256.2;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_fcf15e2fc84c8846,tile=29,19,distance=5,reach=1,approach=adjacent,stand_at=30,18|tool_approach_completed@tile=30,18,target=30,18,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514403010,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_317f15d8f3ff8e9b;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=256.2;stamina_after=254.3;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_317f15d8f3ff8e9b,tile=27,21,distance=3,reach=1,approach=adjacent,stand_at=28,20|tool_approach_completed@tile=28,20,target=28,20,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514433484,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=yes;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514483919,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=music;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514515886,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_154da435a6a94f3d;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=254.3;stamina_after=234.3;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_154da435a6a94f3d,tile=24,19,distance=4,reach=1,approach=adjacent,stand_at=25,19|tool_approach_completed@tile=25,19,target=25,19,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514517612,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_756fa61b50d35a3c;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=234.3;stamina_after=214.3;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_756fa61b50d35a3c,tile=22,23,distance=4,reach=1,approach=adjacent,stand_at=23,22|tool_approach_completed@tile=23,22,target=23,22,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514518895,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_ae664b8a7eee7651;tool=axe;tree=2;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=214.3;stamina_after=194.3;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_ae664b8a7eee7651,tile=26,25,distance=3,reach=1,approach=adjacent,stand_at=25,24|tool_approach_completed@tile=25,24,target=25,24,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514524201,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514530434,
+   "reasonCode": "actor_facing_matches",
+   "state": "succeeded",
+   "actionId": "face_direction",
+   "detail": "direction=up;moving=false"
+  },
+  {
+   "atMs": 1795514539955,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514581048,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=happy;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514644858,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514820048,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514833893,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=63,15;target=63,15;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=91,target=63,15,requested=64,14,approach=substituted"
+  },
+  {
+   "atMs": 1795514834577,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=FarmHouse:3,11;actual=FarmHouse:3,11;steps=1;folded=accepted@source=Farm:64,14,target=FarmHouse:3,11,entry=building_do_action"
+  },
+  {
+   "atMs": 1795514834578,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514853121,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=sleep;native_dispatched=true"
+  },
+  {
+   "atMs": 1795514861974,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514862020,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514862892,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514862905,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514866471,
+   "reasonCode": "level_up_resolved",
+   "state": "succeeded",
+   "actionId": "respond_level_up",
+   "detail": "modal_type=LevelUpMenu;skill=3;level=1;is_profession=false;chosen_profession=none;remaining_new_levels=0;menu_closed=true;pair_settled=true;profession_settled=true"
+  },
+  {
+   "atMs": 1795514866485,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514866502,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514869100,
+   "reasonCode": "saving",
+   "state": "world_unavailable",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514871380,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514871380,
+   "reasonCode": "day_started",
+   "state": "connected",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514871409,
+   "reasonCode": "day_advanced",
+   "state": "succeeded",
+   "actionId": "sleep",
+   "detail": "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=false;shipping_summary_settled=already_committed;engine_crossing_menu=already_committed;overnight_menu_not_recognised=none;day_before=4;days_before=5;day_after=5;days_after=6;enteredVia=native_sleep_prompt;topology=single_player;dayBefore=4;dayAfter=5;daysPlayedBefore=5;daysPlayedAfter=6;savingObserved=False;savedObserved=True;dayStartedObserved=True;saveBoundaryNotObserved=False;readyCheckObserved=False;steps=1;folded=accepted@target=own_bed,never_direct_new_day=true"
+  },
+  {
+   "atMs": 1795514874296,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514907507,
+   "reasonCode": "nothing_to_dismiss",
+   "state": "succeeded",
+   "actionId": "dismiss_modal",
+   "detail": "modal=none;settled_by=engine_flag:activeClickableMenu=none"
+  },
+  {
+   "atMs": 1795514972246,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=3,11;target=3,11;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=100,target=3,11,requested=3,12,approach=substituted"
+  },
+  {
+   "atMs": 1795514972901,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=Farm:64,15;actual=Farm:64,15;steps=1;folded=accepted@source=FarmHouse:3,12,target=Farm:64,15,entry=resolved_warp_fallback"
+  },
+  {
+   "atMs": 1795514972973,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514975117,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514976249,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514976429,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514977479,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514978307,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514978509,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514979546,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514980162,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514980362,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514984697,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514985067,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514985068,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514986425,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514986727,
+   "reasonCode": "cutscene_active",
+   "state": "rejected",
+   "actionId": "express_emote",
+   "detail": "emote=note;event_running=true;native_dispatched=false;next_step=wait_for_event_to_advance"
+  },
+  {
+   "atMs": 1795514987231,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514987430,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514990079,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514991510,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514991692,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795514994929,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_f8296424d86e6c54;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_f8296424d86e6c54,tile=63,20,distance=5,reach=1,approach=adjacent,stand_at=64,19|tool_approach_completed@tile=64,19,target=64,19,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514995376,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_cb6e988a51e8bb92;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_cb6e988a51e8bb92,tile=62,21,distance=2,reach=1,approach=adjacent,stand_at=63,20|tool_approach_completed@tile=63,20,target=63,20,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514995930,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_e67319e613f4404d;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_e67319e613f4404d,tile=61,18,distance=2,reach=1,approach=adjacent,stand_at=62,18|tool_approach_completed@tile=62,18,target=62,18,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514996613,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_f29466b04040247a;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_f29466b04040247a,tile=58,18,distance=4,reach=1,approach=adjacent,stand_at=59,18|tool_approach_completed@tile=59,18,target=59,18,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514996700,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_1c8c5205604f82e4;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=270;stamina_after=270;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795514997030,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_b28e123d7e4a9e60;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=270;stamina_after=268.1;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_b28e123d7e4a9e60,tile=59,21,distance=3,reach=1,approach=adjacent,stand_at=59,20|tool_approach_completed@tile=59,20,target=59,20,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514997139,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_21f15f69cc76533b;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=268.1;stamina_after=266.2;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets"
+  },
+  {
+   "atMs": 1795514997834,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_79de8738420f4288;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=266.2;stamina_after=264.3;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_79de8738420f4288,tile=62,19,distance=3,reach=1,approach=adjacent,stand_at=61,20|tool_approach_completed@tile=61,20,target=61,20,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514998246,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_6f600bfda40fbb32;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=264.3;stamina_after=262.4;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_6f600bfda40fbb32,tile=64,20,distance=3,reach=1,approach=adjacent,stand_at=63,20|tool_approach_completed@tile=63,20,target=63,20,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795514999693,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=67,22;target=67,22;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=130,target=67,22,requested=68,21,approach=substituted"
+  },
+  {
+   "atMs": 1795515000329,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3:11,14;actual=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3:11,14;steps=1;folded=accepted@source=Farm:68,21,target=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3:11,14,entry=building_do_action"
+  },
+  {
+   "atMs": 1795515000330,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515013957,
+   "reasonCode": "farm_animal_petted",
+   "state": "succeeded",
+   "actionId": "pet_farm_animal",
+   "detail": "location=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3;target=farm_animal_128c8a3589d706c4;animal=2088027783;type=White Cow;tile=14,13;friendship_before=0;friendship_after=15;friendship_floor=15;happiness_before=217;happiness_after=253;was_auto_pet_before=false;was_pet=true;time_of_day=830;chore=farmAnimalPetTargets;steps=2;folded=accepted@location=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3,target=farm_animal_128c8a3589d706c4,tile=14,13,distance=3,reach=1,approach=adjacent,stand_at=13,12|tool_approach_completed@tile=13,12,target=13,12,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515015583,
+   "reasonCode": "animal_product_collected",
+   "state": "succeeded",
+   "actionId": "collect_animal_product",
+   "detail": "location=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3;target=animal_product_9c874543b2e286c8;animal=2088027783;tool=milk_pail;produce=(O)184;produce_stack=1;produce_cleared=true;inventory_before=0;inventory_after=1;inventory_gained=true;animation_complete=true;stamina_before=262.4;stamina_after=258.4;stamina_delta=-4;expected_stamina_cost=4;chore=animalProductTargets;steps=1;folded=accepted@location=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3,target=animal_product_9c874543b2e286c8,animal=2088027783,bound_animal=2088027783,tool=milk_pail,tool_tile=14,13,produce=(O)184,produce_stack=1"
+  },
+  {
+   "atMs": 1795515022978,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=11,14;target=11,14;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=140,target=11,14,requested=11,15,approach=substituted"
+  },
+  {
+   "atMs": 1795515023649,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=Farm:68,22;actual=Farm:68,22;steps=1;folded=accepted@source=Barn08d3f914-a472-44cb-9083-206f7c3cc8e3:11,15,target=Farm:68,22,entry=none"
+  },
+  {
+   "atMs": 1795515023650,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515029788,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_8bac8e1d54f79367;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515029932,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_fea840ae15044880;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515030117,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_100bf3bc04530f06;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_100bf3bc04530f06,tile=71,23,distance=3,reach=1,approach=adjacent,stand_at=70,22|tool_approach_completed@tile=70,22,target=70,22,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515030277,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ba032d935c5ae499;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=1;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ba032d935c5ae499,tile=72,22,distance=2,reach=1,approach=adjacent,stand_at=71,22|tool_approach_completed@tile=71,22,target=71,22,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515030674,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_fc6081835219af81;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_fc6081835219af81,tile=73,24,distance=2,reach=1,approach=adjacent,stand_at=72,23|tool_approach_completed@tile=72,23,target=72,23,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515031041,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_b1aa4c84b2375743;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_b1aa4c84b2375743,tile=74,21,distance=2,reach=1,approach=adjacent,stand_at=73,22|tool_approach_completed@tile=73,22,target=73,22,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515033330,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_4bd0537eb5446892;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_4bd0537eb5446892,tile=71,27,distance=5,reach=1,approach=adjacent,stand_at=72,26|tool_approach_completed@tile=72,26,target=72,26,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515034637,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_5c88646cb6b78210;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_5c88646cb6b78210,tile=67,27,distance=5,reach=1,approach=adjacent,stand_at=68,26|tool_approach_completed@tile=68,26,target=68,26,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515034860,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_28be4349881c5983;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_28be4349881c5983,tile=66,26,distance=2,reach=1,approach=adjacent,stand_at=67,26|tool_approach_completed@tile=67,26,target=67,26,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515034994,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_69c5ef8699e5edf5;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515035141,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_3606648a4fcb89ea;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_3606648a4fcb89ea,tile=68,28,distance=2,reach=1,approach=adjacent,stand_at=67,27|tool_approach_completed@tile=67,27,target=67,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515035397,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true;stale_reading_accepted_by=1"
+  },
+  {
+   "atMs": 1795515035911,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_77e4e6fbb88aa7fe;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_77e4e6fbb88aa7fe,tile=62,28,distance=5,reach=1,approach=adjacent,stand_at=63,27|tool_approach_completed@tile=63,27,target=63,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515036035,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_32b027c31347ee2d;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515036319,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_4e62f07fa63b9e4f;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=258.4;stamina_after=258.4;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_4e62f07fa63b9e4f,tile=63,24,distance=3,reach=1,approach=adjacent,stand_at=63,25|tool_approach_completed@tile=63,25,target=63,25,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515036584,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_a48aa83a00b50ab1;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=258.4;stamina_after=256.5;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets"
+  },
+  {
+   "atMs": 1795515040053,
+   "reasonCode": "modal_interrupted",
+   "state": "invalidated",
+   "actionId": "break_rock",
+   "detail": "location=Farm;target=rock_source_44f1b37c8dae4a93;tile=66,28;reach=1;approach=invalidated;body_evidence=interrupted_by=DialogueBox;target_tile=65,27;interrupted_at=65,27;remaining_distance=0;revision=182;chore=rockSourceTargets;steps=1;folded=accepted@location=Farm,target=rock_source_44f1b37c8dae4a93,tile=66,28,distance=3,reach=1,approach=adjacent,stand_at=65,27"
+  },
+  {
+   "atMs": 1795515040087,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515040876,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515040878,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515046667,
+   "reasonCode": "nothing_to_dismiss",
+   "state": "succeeded",
+   "actionId": "dismiss_modal",
+   "detail": "modal=none;settled_by=engine_flag:activeClickableMenu=none"
+  },
+  {
+   "atMs": 1795515100907,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_30ccd5363bc2c471;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_30ccd5363bc2c471,tile=67,29,distance=2,reach=1,approach=adjacent,stand_at=66,29|tool_approach_completed@tile=66,29,target=66,29,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515101132,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_373d8259665a72b2;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515101320,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ebbfbcd98372adc1;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ebbfbcd98372adc1,tile=65,31,distance=2,reach=1,approach=adjacent,stand_at=66,30|tool_approach_completed@tile=66,30,target=66,30,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515101522,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_4a47cc1629095d0f;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_4a47cc1629095d0f,tile=63,31,distance=3,reach=1,approach=adjacent,stand_at=64,30|tool_approach_completed@tile=64,30,target=64,30,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515101770,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_0eca9645c973ff0f;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=1;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_0eca9645c973ff0f,tile=62,31,distance=2,reach=1,approach=adjacent,stand_at=63,30|tool_approach_completed@tile=63,30,target=63,30,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515102409,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_6419ca0c3a97374f;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_6419ca0c3a97374f,tile=60,31,distance=3,reach=1,approach=adjacent,stand_at=61,31|tool_approach_completed@tile=61,31,target=61,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515102638,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_7c5b257d924246f3;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_7c5b257d924246f3,tile=59,32,distance=2,reach=1,approach=adjacent,stand_at=60,31|tool_approach_completed@tile=60,31,target=60,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515102854,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_6bbde9a6756bc428;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_6bbde9a6756bc428,tile=59,29,distance=2,reach=1,approach=adjacent,stand_at=60,30|tool_approach_completed@tile=60,30,target=60,30,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515103063,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_57be92fbf3330956;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_57be92fbf3330956,tile=60,28,distance=2,reach=1,approach=adjacent,stand_at=60,29|tool_approach_completed@tile=60,29,target=60,29,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515103289,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_41fc44ad3672a849;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_41fc44ad3672a849,tile=61,27,distance=2,reach=1,approach=adjacent,stand_at=60,28|tool_approach_completed@tile=60,28,target=60,28,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515106966,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_014d7fad4196c4cd;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_014d7fad4196c4cd,tile=60,24,distance=4,reach=1,approach=adjacent,stand_at=59,24|tool_approach_completed@tile=59,24,target=59,24,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515107176,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ea483a3d62bb65e2;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515110835,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_2813cbcdf1689883;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_2813cbcdf1689883,tile=63,32,distance=8,reach=1,approach=adjacent,stand_at=62,31|tool_approach_completed@tile=62,31,target=62,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515111437,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ded9fedee0299dcf;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ded9fedee0299dcf,tile=66,32,distance=4,reach=1,approach=adjacent,stand_at=65,31|tool_approach_completed@tile=65,31,target=65,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515112121,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_85c533de69b29e86;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_85c533de69b29e86,tile=68,32,distance=3,reach=1,approach=adjacent,stand_at=67,32|tool_approach_completed@tile=67,32,target=67,32,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515113281,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_a6773893415493a7;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=256.5;stamina_after=256.5;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_a6773893415493a7,tile=69,29,distance=3,reach=1,approach=adjacent,stand_at=68,29|tool_approach_completed@tile=68,29,target=68,29,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515113997,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_ba5f614387279436;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=256.5;stamina_after=254.6;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_ba5f614387279436,tile=70,26,distance=3,reach=1,approach=adjacent,stand_at=69,27|tool_approach_completed@tile=69,27,target=69,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515114271,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_0cdba90664c75a35;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=254.6;stamina_after=252.7;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_0cdba90664c75a35,tile=69,25,distance=2,reach=1,approach=adjacent,stand_at=69,26|tool_approach_completed@tile=69,26,target=69,26,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515114802,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_44f1b37c8dae4a93;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=252.7;stamina_after=250.8;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_44f1b37c8dae4a93,tile=66,28,distance=3,reach=1,approach=adjacent,stand_at=67,27|tool_approach_completed@tile=67,27,target=67,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515115677,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_bf80ddcd099da4d5;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=250.8;stamina_after=248.9001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_bf80ddcd099da4d5,tile=64,29,distance=3,reach=1,approach=adjacent,stand_at=65,29|tool_approach_completed@tile=65,29,target=65,29,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515116899,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_315dafacac72e20b;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)343;durability_before=1;durability_after=removed;removed=true;stamina_before=248.9001;stamina_after=247.0001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_315dafacac72e20b,tile=59,27,distance=6,reach=1,approach=adjacent,stand_at=60,28|tool_approach_completed@tile=60,28,target=60,28,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515117168,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_8d1f469ee07289f7;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=247.0001;stamina_after=245.1001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_8d1f469ee07289f7,tile=60,26,distance=2,reach=1,approach=adjacent,stand_at=60,27|tool_approach_completed@tile=60,27,target=60,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515117613,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_9f6bdd325a59c304;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=245.1001;stamina_after=243.2001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_9f6bdd325a59c304,tile=61,24,distance=3,reach=1,approach=adjacent,stand_at=60,25|tool_approach_completed@tile=60,25,target=60,25,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515118087,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_6994ab2b5dfb60b5;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)450;durability_before=1;durability_after=removed;removed=true;stamina_before=243.2001;stamina_after=241.3001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=Farm,target=rock_source_6994ab2b5dfb60b5,tile=61,22,distance=3,reach=1,approach=adjacent,stand_at=60,23|tool_approach_completed@tile=60,23,target=60,23,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515118339,
+   "reasonCode": "item_picked_up",
+   "state": "succeeded",
+   "actionId": "pickup_item",
+   "detail": "location=Farm;target=item_fa367ca3f5ef578d;tile=59,21;item=(O)390;stack=1;native_auto_collect=true;chunk_removed=true;inventory_before=36;inventory_after=40;chore=itemTargets"
+  },
+  {
+   "atMs": 1795515120163,
+   "reasonCode": "item_picked_up",
+   "state": "succeeded",
+   "actionId": "pickup_item",
+   "detail": "location=Farm;target=item_d7d210a8b0482b1a;tile=58,32;item=(O)771;stack=1;object_consumed=1;object_after=0;native_auto_collect=true;chunk_removed=true;inventory_before=24;inventory_after=25;chore=itemTargets;steps=2;folded=accepted@location=Farm,target=item_d7d210a8b0482b1a,tile=58,32,named_tile=67,23,item=(O)771,stack=1,inventory_before=24,native_auto_collect=true,within_magnet=true,radius=128,stand_at=59,31|item_pickup_approach_completed@tile=59,31,target=59,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515120422,
+   "reasonCode": "item_target_gone",
+   "state": "rejected",
+   "actionId": "pickup_item",
+   "detail": "expected=item_06ca639ce8c086e1;item=(O)771;tile=67,26;location=Farm;actual=none;chore=itemTargets"
+  },
+  {
+   "atMs": 1795515120607,
+   "reasonCode": "item_target_gone",
+   "state": "rejected",
+   "actionId": "pickup_item",
+   "detail": "expected=item_f4d6a01830f9c070;item=(O)771;tile=68,28;location=Farm;actual=none;chore=itemTargets"
+  },
+  {
+   "atMs": 1795515120777,
+   "reasonCode": "item_target_gone",
+   "state": "rejected",
+   "actionId": "pickup_item",
+   "detail": "expected=item_e3a738a9d1cf31d0;item=(O)771;tile=63,27;location=Farm;actual=none;chore=itemTargets"
+  },
+  {
+   "atMs": 1795515165948,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515177557,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=uh;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515182569,
+   "reasonCode": "actor_facing_matches",
+   "state": "succeeded",
+   "actionId": "face_direction",
+   "detail": "direction=right;moving=false"
+  },
+  {
+   "atMs": 1795515196415,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515211482,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515225598,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=sleep;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515231085,
+   "reasonCode": "actor_facing_matches",
+   "state": "succeeded",
+   "actionId": "face_direction",
+   "detail": "direction=down;moving=false"
+  },
+  {
+   "atMs": 1795515237048,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=game;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515242070,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515258260,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_1ec43f103aaef241;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=241.3001;stamina_after=221.3001;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_1ec43f103aaef241,tile=61,30,distance=2,reach=1,approach=adjacent,stand_at=60,31|tool_approach_completed@tile=60,31,target=60,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515258486,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_2aa864ed99301003;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=221.3001;stamina_after=201.3001;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_2aa864ed99301003,tile=58,32,distance=2,reach=1,approach=adjacent,stand_at=59,31|tool_approach_completed@tile=59,31,target=59,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515258729,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_c628cf78652d26e6;tool=axe;tree=2;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=201.3001;stamina_after=181.3001;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_c628cf78652d26e6,tile=56,30,distance=3,reach=1,approach=adjacent,stand_at=57,31|tool_approach_completed@tile=57,31,target=57,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515259010,
+   "reasonCode": "no_reachable_approach:54:27",
+   "state": "rejected",
+   "actionId": "chop_tree",
+   "detail": "target=54,27;actor=57,31;reach=1;approach=none;standable_neighbour=unreachable;standable_tiles=5;footprint=1;clear_step=weed@55,28;stand_at=55,29;remaining_clears=1;blocker_occupant=weed@55,28;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);blocker_target=weed_5c1081e49e6c80b0;candidates=649;described=8;blocked_by=range:reach:4;chore=treeChopSourceTargets"
+  },
+  {
+   "atMs": 1795515259405,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_bc7ff91f2af4363a;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=181.3001;stamina_after=161.3001;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_bc7ff91f2af4363a,tile=53,31,distance=4,reach=1,approach=adjacent,stand_at=54,31|tool_approach_completed@tile=54,31,target=54,31,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515261356,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_d65a87a703f2361e;tool=axe;tree=2;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=161.3001;stamina_after=141.3001;stamina_delta=-20;expected_stamina_cost=20;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_d65a87a703f2361e,tile=54,35,distance=4,reach=1,approach=adjacent,stand_at=54,34|tool_approach_completed@tile=54,34,target=54,34,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515262448,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_2f1b0831f24546ee;tool=axe;tree=2;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=141.3001;stamina_after=122.3001;stamina_delta=-19;expected_stamina_cost=19;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_2f1b0831f24546ee,tile=59,36,distance=5,reach=1,approach=adjacent,stand_at=58,35|tool_approach_completed@tile=58,35,target=58,35,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515263036,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_7d923d090590ca7a;tool=axe;tree=3;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=122.3001;stamina_after=103.3001;stamina_delta=-19;expected_stamina_cost=19;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_7d923d090590ca7a,tile=61,35,distance=3,reach=1,approach=adjacent,stand_at=60,34|tool_approach_completed@tile=60,34,target=60,34,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515264771,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_0d5c11509147c434;tool=axe;tree=3;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=103.3001;stamina_after=84.3001;stamina_delta=-19;expected_stamina_cost=19;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets;steps=2;folded=accepted@location=Farm,target=tree_chop_source_0d5c11509147c434,tile=64,34,distance=4,reach=1,approach=adjacent,stand_at=63,33|tool_approach_completed@tile=63,33,target=63,33,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515265187,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ac26127c2848b182;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515265403,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_cf8f156981d4ebd6;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515265652,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_3b3f21af4f02a968;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_3b3f21af4f02a968,tile=61,33,distance=2,reach=1,approach=adjacent,stand_at=62,33|tool_approach_completed@tile=62,33,target=62,33,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515266043,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_e07725cfedab837e;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_e07725cfedab837e,tile=58,33,distance=4,reach=1,approach=adjacent,stand_at=59,33|tool_approach_completed@tile=59,33,target=59,33,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515266312,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_206128f7e7b28431;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_206128f7e7b28431,tile=57,34,distance=2,reach=1,approach=adjacent,stand_at=58,33|tool_approach_completed@tile=58,33,target=58,33,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515266754,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_493e28864938de01;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_493e28864938de01,tile=57,36,distance=3,reach=1,approach=adjacent,stand_at=58,35|tool_approach_completed@tile=58,35,target=58,35,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515268109,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_3461c4ec78f03f35;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_3461c4ec78f03f35,tile=62,36,distance=4,reach=1,approach=adjacent,stand_at=61,36|tool_approach_completed@tile=61,36,target=61,36,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515269944,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515270439,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_90c56c660d088f0d;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_90c56c660d088f0d,tile=54,33,distance=7,reach=1,approach=adjacent,stand_at=55,34|tool_approach_completed@tile=55,34,target=55,34,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515272061,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_9854e028c0887b6d;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_9854e028c0887b6d,tile=54,32,distance=2,reach=1,approach=adjacent,stand_at=55,32|tool_approach_completed@tile=55,32,target=55,32,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515272432,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_b73917689eb2ae94;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=1;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_b73917689eb2ae94,tile=56,29,distance=3,reach=1,approach=adjacent,stand_at=55,30|tool_approach_completed@tile=55,30,target=55,30,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515272680,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_ce1f4e721b1821f7;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=1;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_ce1f4e721b1821f7,tile=56,28,distance=2,reach=1,approach=adjacent,stand_at=55,29|tool_approach_completed@tile=55,29,target=55,29,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515272921,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_5c1081e49e6c80b0;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets"
+  },
+  {
+   "atMs": 1795515273155,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_63db3e70b2ab8149;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)674;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_63db3e70b2ab8149,tile=56,27,distance=2,reach=1,approach=adjacent,stand_at=55,28|tool_approach_completed@tile=55,28,target=55,28,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515273416,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_eaffbef5a9f39c8d;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_eaffbef5a9f39c8d,tile=58,27,distance=3,reach=1,approach=adjacent,stand_at=57,28|tool_approach_completed@tile=57,28,target=57,28,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515273768,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_1d9b286ee3535cc5;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)675;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_1d9b286ee3535cc5,tile=55,26,distance=2,reach=1,approach=adjacent,stand_at=56,27|tool_approach_completed@tile=56,27,target=56,27,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515274419,
+   "reasonCode": "weeds_cut",
+   "state": "succeeded",
+   "actionId": "cut_weeds",
+   "detail": "target=weed_a359cf0940e155f7;type=weed;tool=scythe;tool_selected=scythe;slot=4;tool_before=scythe;slot_before=4;qualified_item_id=(O)784;health_before=0;health_after=removed;swings=1;removed=true;stamina_before=84.3001;stamina_after=84.3001;stamina_delta=0;expected_stamina_cost=0;tool_restored=scythe;chore=weedTargets;steps=2;folded=accepted@location=Farm,target=weed_a359cf0940e155f7,tile=53,25,distance=3,reach=1,approach=adjacent,stand_at=54,26|tool_approach_completed@tile=54,26,target=54,26,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515283625,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=uh;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515294419,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515299950,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515308426,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515318242,
+   "reasonCode": "actor_facing_matches",
+   "state": "succeeded",
+   "actionId": "face_direction",
+   "detail": "direction=down;moving=false"
+  },
+  {
+   "atMs": 1795515328617,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515341710,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515358232,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515388543,
+   "reasonCode": "tree_source_chopped",
+   "state": "succeeded",
+   "actionId": "chop_tree",
+   "detail": "target=tree_chop_source_a28840b35b594cda;tool=axe;tree=1;health_before=10;health_after=5;stump_before=false;stump_after=true;source_transformed=true;swings=10;stamina_before=84.3001;stamina_after=65.3001;stamina_delta=-19;expected_stamina_cost=19;tool_selected=axe;slot=0;tool_before=axe;slot_before=0;tool_restored=axe;chore=treeChopSourceTargets"
+  },
+  {
+   "atMs": 1795515417290,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515429108,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515442434,
+   "reasonCode": "item_shipped",
+   "state": "succeeded",
+   "actionId": "ship_item",
+   "detail": "location=Farm;target=shipping_bin_fcfc08b380a8ca22;bin=71,14;tile=71,14;item=(O)184;slot=19;stack=1;inventory_before=1;inventory_after=0;bin_before=0;bin_after=1;last_item_shipped_matched=true;native_menu_opened=false;steps=2;folded=accepted@location=Farm,target=shipping_bin_fcfc08b380a8ca22,tile=71,14,distance=17,reach=1,approach=adjacent,stand_at=70,15,anchor=71,14,reached=footprint|tool_approach_completed@tile=70,15,target=70,15,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795515450748,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=65,15;target=65,15;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=354,target=65,15,requested=64,14,approach=substituted"
+  },
+  {
+   "atMs": 1795515451422,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=FarmHouse:3,11;actual=FarmHouse:3,11;steps=1;folded=accepted@source=Farm:64,14,target=FarmHouse:3,11,entry=building_do_action"
+  },
+  {
+   "atMs": 1795515451423,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515485443,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515485476,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515486967,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515486974,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515487094,
+   "reasonCode": "level_up_resolved",
+   "state": "succeeded",
+   "actionId": "respond_level_up",
+   "detail": "modal_type=LevelUpMenu;skill=2;level=1;is_profession=false;chosen_profession=none;remaining_new_levels=0;menu_closed=true;pair_settled=true;profession_settled=true"
+  },
+  {
+   "atMs": 1795515487095,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515487108,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515489713,
+   "reasonCode": "saving",
+   "state": "world_unavailable",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515491838,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515491839,
+   "reasonCode": "day_started",
+   "state": "connected",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515492060,
+   "reasonCode": "day_advanced",
+   "state": "succeeded",
+   "actionId": "sleep",
+   "detail": "state=passed;reason=day_advanced;topology=single_player;entered_via=native_sleep_prompt;saving_observed=false;saved_observed=true;day_started_observed=true;save_boundary_not_observed=false;shipping_summary_settled=already_committed;engine_crossing_menu=already_committed;overnight_menu_not_recognised=none;day_before=5;days_before=6;day_after=6;days_after=7;enteredVia=native_sleep_prompt;topology=single_player;dayBefore=5;dayAfter=6;daysPlayedBefore=6;daysPlayedAfter=7;savingObserved=False;savedObserved=True;dayStartedObserved=True;saveBoundaryNotObserved=False;readyCheckObserved=False;steps=1;folded=accepted@target=own_bed,never_direct_new_day=true"
+  },
+  {
+   "atMs": 1795515494734,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515549199,
+   "reasonCode": "nothing_to_dismiss",
+   "state": "succeeded",
+   "actionId": "dismiss_modal",
+   "detail": "modal=none;settled_by=engine_flag:activeClickableMenu=none"
+  },
+  {
+   "atMs": 1795515559442,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=3,11;target=3,11;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=362,target=3,11,requested=3,12,approach=substituted"
+  },
+  {
+   "atMs": 1795515560108,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=Farm:64,15;actual=Farm:64,15;steps=1;folded=accepted@source=FarmHouse:3,12,target=Farm:64,15,entry=resolved_warp_fallback"
+  },
+  {
+   "atMs": 1795515560109,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515636500,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=56,28;target=56,28;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=366,target=56,28"
+  },
+  {
+   "atMs": 1795515674108,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515712542,
+   "reasonCode": "no_native_path",
+   "state": "rejected",
+   "actionId": "navigate_to_destination",
+   "detail": "from=56,28;to=40,0;location=Farm;native=not_attempted;probe=cardinal_flood;route_exists_cardinal=false;target_enclosed=true;component_tiles=1905;gate=reachability_flood;approaches=north:off_map,east:unreachable,south:unreachable,west:buildings_tile:blocked@39,0;target_standable=true;target_walkable=true;blocked_by=none;progress=none;clear_to_reach=weed@40,9;clear_tiles=1;clear_cost=5;clear_step=weed@40,9;stand_at=40,10;remaining_clears=1;blocker_occupant=weed@40,9;clears_with=cut_weeds(stamina:0,tool:scythe,turns:1);blocker_target=unpublished:weedTargets;next_steps=move_to_tile@40,10>publishes:weedTargets>cut_weeds@40,9>move_to_tile@40,0;reachable=34,6;detour_steps=none;walk_limit_steps=44"
+  },
+  {
+   "atMs": 1795515719404,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515731486,
+   "reasonCode": "warp_out_of_range",
+   "state": "rejected",
+   "actionId": "enter_exit",
+   "detail": "source=40,-1;door=40,-1;actor_tile=56,28;actor_px=3621,1796;allowed_px=64;measured_px=1828;distance=29;target=Backwoods:14,39;blocked_by=range:adjacent:29"
+  },
+  {
+   "atMs": 1795515741558,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515757608,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true;stale_reading_accepted_by=1"
+  },
+  {
+   "atMs": 1795515757688,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=79,16;target=79,16;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=373,target=79,16,requested=80,15,approach=substituted"
+  },
+  {
+   "atMs": 1795515758344,
+   "reasonCode": "enter_exit_completed",
+   "state": "succeeded",
+   "actionId": "enter_exit",
+   "detail": "expected=BusStop:11,23;actual=BusStop:11,23;steps=1;folded=accepted@source=Farm:80,15,target=BusStop:11,23,entry=none"
+  },
+  {
+   "atMs": 1795515758345,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515760298,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515764054,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=pause;native_dispatched=true"
+  },
+  {
+   "atMs": 1795515778669,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true;stale_reading_accepted_by=1"
+  },
+  {
+   "atMs": 1795515779092,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515784826,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515785346,
+   "reasonCode": "cutscene_active",
+   "state": "rejected",
+   "actionId": "express_emote",
+   "detail": "emote=pause;event_running=true;native_dispatched=false;next_step=wait_for_event_to_advance"
+  },
+  {
+   "atMs": 1795515785434,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515785626,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515791243,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515791843,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515792043,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515795209,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515796026,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515796226,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515799276,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515800092,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515800293,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515802710,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515804110,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515804321,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515805665,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515806293,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515806477,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515807562,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515809985,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515810178,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515811754,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515812358,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515812542,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515815030,
+   "reasonCode": "cutscene_active",
+   "state": "rejected",
+   "actionId": "express_emote",
+   "detail": "emote=note;event_running=true;native_dispatched=false;next_step=wait_for_event_to_advance"
+  },
+  {
+   "atMs": 1795515820352,
+   "reasonCode": "navigation_warp_arrived_on_another_map",
+   "state": "uncertain",
+   "actionId": "navigate_to_destination",
+   "detail": "phase=awaiting_warp;expected_map=Town;arrived_map=CommunityCenter;destination_tile=0,54;arrived_tile=0,0;never_retry=true;next_step=observe_before_acting;steps=1;folded=accepted@navigation=accepted,phase=approaching"
+  },
+  {
+   "atMs": 1795515820354,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515830177,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515831367,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515831559,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515832620,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515833231,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515833434,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515837637,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515838229,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515838426,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515844581,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515845177,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515845385,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515850967,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515851779,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515851986,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515860927,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515861547,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515861743,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515862997,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515863616,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515863812,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515868093,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515868909,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515869109,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515873276,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515873659,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515873663,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515874194,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515874576,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515874576,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515876861,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515890933,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515907940,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515912093,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515912694,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515912892,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515919176,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515920389,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515920576,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515921626,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515923043,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515923243,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515924826,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515925443,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515925643,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515929797,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515930204,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515930205,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515932210,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515933826,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515934026,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795515935999,
+   "reasonCode": "destination_locked",
+   "state": "rejected",
+   "actionId": "navigate_to_destination",
+   "detail": "destination=Mine;phase=awaiting_warp;grace_expired=true;window_ticks=120;actionable=false;held_by=transient:warping;transient_kind=warping;retry_window_ms=2000;can_move=false;hold_reason=native_world_transient;hold_remaining_ms=2000;admissible_actions=none;next_step=wait_for_retry_window;steps=2;folded=accepted@navigation=accepted,phase=approaching|navigation_multi_hop_leg_armed@navigation=multi_hop,phase=approaching"
+  },
+  {
+   "atMs": 1795516155445,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516180331,
+   "reasonCode": "mine_entered",
+   "state": "succeeded",
+   "actionId": "enter_mine",
+   "detail": "expected=UndergroundMine1:6,6;actual=UndergroundMine1:10,4;level=1;steps=3;folded=accepted@location=Mine,target=mine_entrance_23265d129118da7b,tile=23,9,distance=5,reach=1,approach=adjacent,stand_at=22,10|tool_approach_completed@tile=22,10,target=22,10,arrival=exact,path=stardew_native|mine_entry_pending@source=Mine:23,9,target=UndergroundMine1:6,6,level=1"
+  },
+  {
+   "atMs": 1795516180332,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516203394,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795516228198,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_24f111bd55a3ef4a;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)40;durability_before=1;durability_after=removed;removed=true;stamina_before=270;stamina_after=268.1;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_24f111bd55a3ef4a,tile=10,8,distance=4,reach=1,approach=adjacent,stand_at=10,7|tool_approach_completed@tile=10,7,target=10,7,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516228619,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_3fc151b0ecbca75a;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)32;durability_before=1;durability_after=removed;removed=true;stamina_before=268.1;stamina_after=266.2;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_3fc151b0ecbca75a,tile=8,9,distance=2,reach=1,approach=adjacent,stand_at=9,8|tool_approach_completed@tile=9,8,target=9,8,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516229044,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_4a91ff3d879a37fc;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=266.2;stamina_after=264.3;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_4a91ff3d879a37fc,tile=6,8,distance=3,reach=1,approach=adjacent,stand_at=7,8|tool_approach_completed@tile=7,8,target=7,8,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516229283,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_95d755fff13f12ca;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=264.3;stamina_after=262.4;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_95d755fff13f12ca,tile=7,6,distance=2,reach=1,approach=adjacent,stand_at=7,7|tool_approach_completed@tile=7,7,target=7,7,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516229526,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_5f7529f445eef250;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)42;durability_before=1;durability_after=removed;removed=true;stamina_before=262.4;stamina_after=260.5;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_5f7529f445eef250,tile=8,5,distance=2,reach=1,approach=adjacent,stand_at=7,6|tool_approach_completed@tile=7,6,target=7,6,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516229767,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_423b8b61982c9b37;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)42;durability_before=1;durability_after=removed;removed=true;stamina_before=260.5;stamina_after=258.6;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_423b8b61982c9b37,tile=9,6,distance=2,reach=1,approach=adjacent,stand_at=8,6|tool_approach_completed@tile=8,6,target=8,6,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516230095,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_ed251e5d7a947dc6;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=258.6;stamina_after=256.7;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_ed251e5d7a947dc6,tile=11,6,distance=3,reach=1,approach=adjacent,stand_at=10,6|tool_approach_completed@tile=10,6,target=10,6,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516230777,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_140be8e68966465e;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)42;durability_before=1;durability_after=removed;removed=true;stamina_before=256.7;stamina_after=254.8;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_140be8e68966465e,tile=14,6,distance=4,reach=1,approach=adjacent,stand_at=13,6|tool_approach_completed@tile=13,6,target=13,6,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516254137,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795516292744,
+   "reasonCode": "item_picked_up",
+   "state": "succeeded",
+   "actionId": "pickup_item",
+   "detail": "location=UndergroundMine1;target=item_89728b64892dedcb;tile=10,6;item=(O)390;stack=1;object_consumed=1;object_after=0;native_auto_collect=true;chunk_removed=true;inventory_before=48;inventory_after=49;chore=itemTargets;steps=2;folded=accepted@location=UndergroundMine1,target=item_89728b64892dedcb,tile=10,6,named_tile=10,6,item=(O)390,stack=1,inventory_before=48,native_auto_collect=true,within_magnet=true,radius=128,stand_at=11,6|item_pickup_approach_completed@tile=11,6,target=11,6,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516294010,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_61ab655067de40ab;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)42;durability_before=1;durability_after=removed;removed=true;stamina_before=254.8;stamina_after=252.9001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_61ab655067de40ab,tile=9,12,distance=6,reach=1,approach=adjacent,stand_at=10,11|tool_approach_completed@tile=10,11,target=10,11,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516294346,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_5bed7c015233c8fa;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=252.9001;stamina_after=251.0001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets"
+  },
+  {
+   "atMs": 1795516294582,
+   "reasonCode": "rock_source_damaged",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_9e782227b39d973b;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)668;durability_before=2;durability_after=1;removed=false;stamina_before=251.0001;stamina_after=249.1001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_9e782227b39d973b,tile=12,9,distance=2,reach=1,approach=adjacent,stand_at=11,10|tool_approach_completed@tile=11,10,target=11,10,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516294828,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_9846e1958baf49bf;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)40;durability_before=1;durability_after=removed;removed=true;stamina_before=249.1001;stamina_after=247.2001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_9846e1958baf49bf,tile=14,9,distance=3,reach=1,approach=adjacent,stand_at=13,10|tool_approach_completed@tile=13,10,target=13,10,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516295065,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_a787cfc7ec80ec58;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=247.2001;stamina_after=245.3001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_a787cfc7ec80ec58,tile=15,11,distance=2,reach=1,approach=adjacent,stand_at=14,10|tool_approach_completed@tile=14,10,target=14,10,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516295290,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_bc0fc10a56e803aa;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=245.3001;stamina_after=243.4001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets"
+  },
+  {
+   "atMs": 1795516295533,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_719614c51b2de21a;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)40;durability_before=1;durability_after=removed;removed=true;stamina_before=243.4001;stamina_after=241.5001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_719614c51b2de21a,tile=16,10,distance=2,reach=1,approach=adjacent,stand_at=15,10|tool_approach_completed@tile=15,10,target=15,10,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516295776,
+   "reasonCode": "rock_source_broken",
+   "state": "succeeded",
+   "actionId": "break_rock",
+   "detail": "target=rock_source_234b19cef1dcbf12;tool=pickaxe;tool_selected=pickaxe;slot=3;tool_before=pickaxe;slot_before=3;qualified_item_id=(O)38;durability_before=1;durability_after=removed;removed=true;stamina_before=241.5001;stamina_after=239.6001;stamina_delta=-1.9;expected_stamina_cost=1.9;tool_restored=pickaxe;chore=rockSourceTargets;steps=2;folded=accepted@location=UndergroundMine1,target=rock_source_234b19cef1dcbf12,tile=17,8,distance=2,reach=1,approach=adjacent,stand_at=16,9|tool_approach_completed@tile=16,9,target=16,9,arrival=exact,path=stardew_native"
+  },
+  {
+   "atMs": 1795516326628,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795516331285,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516405485,
+   "reasonCode": "destination_access_indeterminate",
+   "state": "blocked",
+   "actionId": "navigate_to_destination",
+   "detail": "destination=Farm;topology=route_topology_invalid;next_step=observe_before_acting"
+  },
+  {
+   "atMs": 1795516409898,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795516418877,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516445977,
+   "reasonCode": "destination_access_indeterminate",
+   "state": "blocked",
+   "actionId": "navigate_to_destination",
+   "detail": "destination=Farm;topology=route_topology_invalid;next_step=observe_before_acting"
+  },
+  {
+   "atMs": 1795516452337,
+   "reasonCode": "emote_started",
+   "state": "succeeded",
+   "actionId": "express_emote",
+   "detail": "emote=note;native_dispatched=true"
+  },
+  {
+   "atMs": 1795516460777,
+   "reasonCode": "target_reached",
+   "state": "succeeded",
+   "actionId": "move_to_tile",
+   "detail": "tile=11,4;target=11,4;arrival=exact;path=stardew_native;steps=1;folded=accepted@route_revision=446,target=11,4,requested=10,3,approach=substituted"
+  },
+  {
+   "atMs": 1795516463007,
+   "reasonCode": "emote_busy",
+   "state": "rejected",
+   "actionId": "express_emote",
+   "detail": "emote=note;emoting=true;current_emote=24;native_dispatched=false;retry_window_ms=2000;next_step=wait_for_retry_window"
+  },
+  {
+   "atMs": 1795516503722,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516503732,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516503733,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516504223,
+   "reasonCode": "mine_left",
+   "state": "succeeded",
+   "actionId": "use_mine_ladder",
+   "detail": "expected=Mine:23,8;actual=Mine:23,8;question=ExitMine;response=Leave;steps=1;folded=mine_exit_pending@from=UndergroundMine1:1,question=ExitMine,response=Leave,ladder=10,3,target=Mine:23,8,still_in=UndergroundMine1"
+  },
+  {
+   "atMs": 1795516504224,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516507805,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516513146,
+   "reasonCode": "warped",
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516513244,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516513244,
+   "reasonCode": "saving",
+   "state": "world_unavailable",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516515294,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516515295,
+   "reasonCode": "day_started",
+   "state": "connected",
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516515296,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516515303,
+   "reasonCode": null,
+   "state": null,
+   "actionId": null,
+   "detail": null
+  },
+  {
+   "atMs": 1795516545709,
+   "reasonCode": "nothing_to_dismiss",
+   "state": "succeeded",
+   "actionId": "dismiss_modal",
+   "detail": "modal=none;settled_by=engine_flag:activeClickableMenu=none"
+  }
+ ]
+}

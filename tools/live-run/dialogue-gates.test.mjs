@@ -941,7 +941,7 @@ test("the day's note is what the run was asked to do, so it must arrive before a
   const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
   const verdict = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [
       {
         day: 1,
@@ -959,19 +959,19 @@ test("the day's note is what the run was asked to do, so it must arrive before a
   assert.deepEqual(
     verdict.findings.map((finding) => finding.code),
     [
-      "day_note_not_delivered:1:clear_east_patch",
+      "day_note_not_delivered:1:clear_ground_clutter",
       "dialogue_gate_preempted_the_day_note:turn-initiative-split:1",
       "dialogue_gate_fired_early:turn-initiative-split:1200:0620",
     ],
   );
   assert.equal(verdict.passed, false);
-  assert.equal(verdict.verdictCode, "day_note_not_delivered:1:clear_east_patch");
+  assert.equal(verdict.verdictCode, "day_note_not_delivered:1:clear_ground_clutter");
 });
 
 test("the note's absence names WHY it is absent, from the delivery the runner recorded", () => {
   const admittedButLost = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [{ day: 1, channel: "harness", text: `桌上留着便签：“${NOTE_ZH}”`, admitted: true }],
     sessionTexts: ["unrelated"],
   });
@@ -979,7 +979,7 @@ test("the note's absence names WHY it is absent, from the delivery the runner re
 
   const refused = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [{ day: 1, channel: "harness", text: NOTE_ZH, admitted: false }],
     sessionTexts: [],
   });
@@ -987,7 +987,7 @@ test("the note's absence names WHY it is absent, from the delivery the runner re
 
   const never = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [],
     sessionTexts: [],
   });
@@ -1000,7 +1000,7 @@ test("a note that arrives AFTER a gate's prompt has still been preempted", () =>
   const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
   const verdict = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [
       { day: 1, channel: "gate", gateId: stance.id, text: stance.prompt, declaredGameTime: "1200", gameTime: 1205 },
     ],
@@ -1020,7 +1020,7 @@ test("a run that delivers the note first, then the gate on its own hour, has no 
   const verdict = assessPlayerInputSchedule({
     schedulesDayNotes: true,
     scheduled: [
-      { day: 1, task: "clear_east_patch", note: NOTE_ZH },
+      { day: 1, task: "clear_ground_clutter", note: NOTE_ZH },
       { day: 2, task: "water_and_harvest", note: NOTE_DAY2_ZH },
     ],
     inputs: [
@@ -1039,7 +1039,7 @@ test("a run that delivers the note first, then the gate on its own hour, has no 
 test("a session nobody could read is not a note that was not delivered, and neither is a pass", () => {
   const unmeasured = assessPlayerInputSchedule({
     schedulesDayNotes: true,
-    scheduled: [{ day: 1, task: "clear_east_patch", note: NOTE_ZH }],
+    scheduled: [{ day: 1, task: "clear_ground_clutter", note: NOTE_ZH }],
     inputs: [{ day: 1, channel: "harness", text: NOTE_ZH, admitted: true }],
     sessionTexts: null,
     sessionReason: "no_session_record_for_run_surface_session",

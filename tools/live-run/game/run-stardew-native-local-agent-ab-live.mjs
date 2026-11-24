@@ -178,7 +178,7 @@ import {
   executionsFromJournalEvents,
   stardewDataPath,
 } from "../../lib/stardew-body-program-journal.mjs";
-import { buildPresenceProjection } from "../../lib/stardew-companion-presence-projection.mjs";
+import { buildPresenceProjection, readBodyClaims } from "../../lib/stardew-companion-presence-projection.mjs";
 import { explainAuthorityIdentityMismatch } from "../core/authority-identity.mjs";
 import { openLiveRunCapture, resolveLiveRunRoot } from "../core/capture.mjs";
 import { writeInputManifest } from "../core/input-manifest.mjs";
@@ -872,9 +872,13 @@ await assertLiveRunArtifactFresh();
  * prompt.
  */
 const DAILY_TASK_PROMPT_ZH = Object.freeze({
-  clear_east_patch: "东头那片地该收拾了，杂草和石头都清一清。",
+  // A QUANTITY, NOT A PART OF THE FARM. This day used to say 「东头那片地该收拾了」 - a compass end of a farm whose
+  // partition no published family states, so she was asked to hold a place the world never gave her. What a clearing
+  // receipt DOES prove is which thing it removed, so the sentence asks for twenty pieces and `task-purpose.mjs`
+  // counts them (`clear_ground_clutter`). The four kinds are named because they are the four the day's actions clear.
+  clear_ground_clutter: "农场上的杂草、乱草、石头和树桩，今天清够二十样。",
   water_and_harvest: "地里熟了的菜全收下来丢进出货箱卖钱，空出来的地补买些种子重新种满并浇上水。",
-  forage_and_trees: "林子和农场周边的野货捡一捡、树也多摇几棵，顺便砍几棵挡路的树收点木头。",
+  forage_and_trees: "林子里的野货捡一捡、树也多摇几棵，顺手砍几棵挡路的树收点木头。",
   craft_and_place_machine: "自己做一台机器放下去，再用起来。",
   // `town_errand` was the key here and it is no species of task: the rotation asks for `town_market` and
   // `town_visit`, so both days were handed the literal string "undefined" instead of a task. The prompt table is
@@ -906,20 +910,20 @@ const DAILY_TASK_PROMPT_ZH = Object.freeze({
 });
 const DAILY_TASK_PROMPT_EN = Object.freeze({
   home_and_hearth: "the house feels bare - tidy it up and put a few things out so it feels lived in.",
-  clear_east_patch: "the east patch wants clearing - weeds and rocks. ",
+  clear_ground_clutter: "clear twenty pieces of the clutter on the farm today - weeds, grass, rocks and stumps. ",
   water_and_harvest:
     "harvest everything ripe in the field and ship it for gold, buy more seeds in town if needed, and replant and water the ground. ",
   forage_and_trees:
-    "sweep the woods and farm edges for forage, shake plenty of trees, and chop down a few in the way for wood. ",
+    "sweep the woods for forage, shake plenty of trees, and chop down a few in the way for wood. ",
   craft_and_place_machine: "make a machine yourself, put it down, and put it to use. ",
   town_market: "go into town, buy something at a shop, and bring the post in. ",
   town_visit: "go into town and talk to somebody there. ",
   mine_delve: "go down the mine and come back with some ore. ",
   store_and_sort: "sort what you are carrying into a chest, and take it back out when you need it. ",
   clear_and_plant_long_patch:
-    "open up a long strip out front - three tiles wide, twenty long - clear it and plant it. ",
+    "open up a long strip in front of the house - three tiles wide, twenty long - clear it and plant it. ",
   buy_seeds_and_expand_plot:
-    "open up a new vegetable plot out front of at least twenty tiles; buy enough worthwhile spring seeds in town if what you have falls short, and get every tile tilled, planted, and watered.",
+    "open up a new vegetable plot in front of the house, at least twenty tiles; buy enough worthwhile spring seeds in town if what you have falls short, and get every tile tilled, planted, and watered.",
   a_fish_from_the_water: "find some water and bring a fish back from it. ",
   tidy_and_repair: "clear what is left lying around the field and the yard, and put away what is not needed. ",
   tend_the_animals: "look in on the animals - pet what wants petting, feed what wants feeding, collect what is there. ",
@@ -6212,12 +6216,67 @@ async function buildRunResult({
           reasonCode: clockReadout.reasonCode ?? "game_clock_advanced",
         })
       : gapClause("game_clock", clockReading.notMeasured, { passed: false });
+  // WHAT SHE SAID ABOUT HER OWN BODY, against the receipts of the same window (`readBodyClaims`), measured HERE with
+  // every other clause. The two populations are this run's own: her spoken lines with their timestamps (the session
+  // record's lines, the population `interactionValue` counts) and the fact log projected to the fields a proof reads.
+  //
+  // THE DEFECT THIS NAMES, measured 2026-11-24 (`round99`, day 3): at 10:34:56 she presented "还在往上爬。" while the
+  // window since her previous line held a BLOCKED exit navigation (`destination_access_indeterminate`) and one walked
+  // tile (`target_reached move_to_tile tile=11,4`) - no ladder, no warp - and she was still in the mine at 01:40, passing
+  // out at its entrance at 02:00. `presenceProjection` is right by design not to charge that (it judges promises, and a
+  // claim with no receipt at all is a countable row), and the interaction gate judges the world rather than her body, so
+  // the line disagreed with the receipts and the run still read green.
+  //
+  // The receipt populations differ ON PURPOSE: the claim projection reads the flat trace (one turn's promises against
+  // the actions that turn dispatched), while a description of the body is answered by whatever the run recorded, which
+  // for a multi-day run is almost entirely the fact log. The flat trace held one of `round99`'s 136 rows.
+  const bodyClaimReading = await measureOrNotMeasured("body_claims", () =>
+    readBodyClaims({
+      utterances: interactionValue.measurements.lines.map((line) => ({ atMs: line.atMs, text: line.text })),
+      receipts: factLog.map((entry) => ({
+        atMs: entry.atMs,
+        reasonCode: entry.reasonCode ?? null,
+        state: entry.worldFactPayload?.state ?? null,
+        actionId: entry.worldFactPayload?.actionId ?? null,
+        detail: entry.evidence?.detail ?? null,
+      })),
+    }),
+  );
+  const bodyClaims = bodyClaimReading.value;
+  if (bodyClaims !== null)
+    console.error("BODY_CLAIMS", bodyClaims.reading, bodyClaims.findings.map((finding) => finding.finding).join(","));
+  // A GAP IN THIS READING DOES NOT FAIL THE RUN - our reader failing says nothing about her - but the gap is named as
+  // the clause's reason and published as the reading's own `not_measured`, so a green run cannot hide it.
+  const bodyClaimsClause =
+    bodyClaimReading.notMeasured === null
+      ? Object.freeze({
+          id: "body_claims",
+          passed: bodyClaims.verdict !== "failed",
+          reasonCode: bodyClaims.findings[0]?.finding ?? bodyClaims.reason ?? "body_claims_backed",
+        })
+      : gapClause("body_claims", bodyClaimReading.notMeasured, { passed: true });
+  const publishedBodyClaims =
+    bodyClaims ??
+    Object.freeze({
+      // THE GAP IS THE VERDICT, never a bare `not_measured`: "a reading nobody took is not a pass", and a reader of the
+      // artifact has to be able to match on the code that names the reader that threw.
+      verdict: bodyClaimReading.notMeasured,
+      reason: bodyClaimReading.notMeasured,
+      examined: null,
+      claims: Object.freeze([]),
+      findings: Object.freeze([]),
+      reading: bodyClaimReading.notMeasured,
+    });
   const rung =
     rungClauses === null
       ? null
       : deriveRungVerdict([
           clockClause,
           ...rungClauses,
+          // HER BODY, beside what she said about the world: the finding's own code
+          // (`presence_claim_without_a_receipt:<claim kind>:<window>`) is the reason the clause fails, so a reader can
+          // open that window in the timeline instead of being told that some line was off.
+          bodyClaimsClause,
           actionBreadthClause(actionBreadth),
           // The run's own delivery account, beside the ledger's: `presentation.pieceCount` pieces were committed and
           // every one of them has to be either a presented paragraph, a piece emitted ahead of one, or a named
@@ -6379,6 +6438,9 @@ async function buildRunResult({
     // 124 executions and a completed session while addressing a small part of the world it was given, and nothing in
     // its artifact could say so; a narrow run is now visible in its own bundle rather than in a report nobody opened.
     actionBreadth,
+    // What her lines said about her own body against the receipts of the same window, with the population it examined -
+    // or the `not_measured` that says the reading could not be taken (see `publishedBodyClaims`).
+    bodyClaims: publishedBodyClaims,
     // The world the reading above was measured against: the families this run's own snapshots published, one entry per
     // target family in the catalog - `rows: 0` included, so an empty family and an unobserved one stay different
     // answers. Published rather than kept inside the reading, because it is the run's account of its own surface and a

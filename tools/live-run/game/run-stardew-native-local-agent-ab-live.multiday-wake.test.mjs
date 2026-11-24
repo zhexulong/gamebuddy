@@ -377,8 +377,8 @@ test("round49's shape is three findings and a zero, and the same run with its no
   // runner's own scenario prompt, and the fragment is the table entry that note is built from.
   const scope = loadPromptScope();
   const stance = SCHEDULED_DIALOGUE_GATES.find((entry) => entry.id === "turn-initiative-split");
-  const note = scope.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
-  const scheduled = [{ day: 1, task: "clear_east_patch", note: scope.dayNoteFragment("clear_east_patch", "zh") }];
+  const note = scope.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_ground_clutter");
+  const scheduled = [{ day: 1, task: "clear_ground_clutter", note: scope.dayNoteFragment("clear_ground_clutter", "zh") }];
   const readSessionPlayerTexts = extractRunnerFunction(RUNNER_SURFACE_SOURCE, "readSessionPlayerTexts", {
     readFileSync,
     sessionEntries,
@@ -410,7 +410,7 @@ test("round49's shape is three findings and a zero, and the same run with its no
   assert.deepEqual(
     lost.findings.map((finding) => finding.code),
     [
-      "day_note_not_delivered:1:clear_east_patch",
+      "day_note_not_delivered:1:clear_ground_clutter",
       "dialogue_gate_preempted_the_day_note:turn-initiative-split:1",
       "dialogue_gate_fired_early:turn-initiative-split:1200:0620",
     ],
