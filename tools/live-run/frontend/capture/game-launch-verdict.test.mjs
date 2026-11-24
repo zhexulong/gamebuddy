@@ -48,6 +48,7 @@ import {
   classifyLaunchRefusal,
   classifySilentLaunch,
   describeChain,
+  describeConfirmAcceptance,
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
@@ -712,6 +713,48 @@ test("one side of the farmhand gap is not the gap, so a run holding one stays fa
   );
   assert.equal(farmhandReading({ confirmPressedAtMs: null }), null);
   assert.equal(farmhandReading({ cabinConfirm: { ...FARMHAND_RUN.cabinConfirm, requested: 0 } }), null);
+});
+
+/*
+ * ---- the confirmation's two answers ----
+ */
+test("a confirmation's acceptance is the Mod's document, and the Host's answer is reported beside it", () => {
+  // `round32b` (2026-11-24), the exact pair this run held: the Mod's own document 37ms after the press, and the
+  // Host's single answer 13.2s later. The rung's proof then said "the game took the choice and the Mod answered this
+  // press 37ms later" with no Host half, so the furthest reached rung read as an acceptance the Host never gave.
+  const proof = describeConfirmAcceptance({
+    attachmentResponse: {
+      file: "f11ab116-0fa6-40e8-80e0-2499b9dfe89f",
+      state: "ready",
+      reasonCode: "manifest_issued",
+      updatedAtUnixMs: 1_795_557_234_891,
+    },
+    acceptStamp: 1_795_557_234_891,
+    confirmAnswer: {
+      status: 409,
+      code: "stardew_manifest_handoff_uncertain",
+      cause: "stardew_cabin_publication_uncertain",
+      atMs: 1_795_557_248_122,
+    },
+    confirmPressedAtMs: 1_795_557_234_854,
+  });
+  assert.equal(
+    proof,
+    "mod_document: ready/manifest_issued @2026-11-24T21:53:54.891Z (37ms after the press) " +
+      "(f11ab116-0fa6-40e8-80e0-2499b9dfe89f/session/stardew-attachment-response.json) - " +
+      "host_answer: HTTP 409 stardew_manifest_handoff_uncertain (cause: stardew_cabin_publication_uncertain) " +
+      "@2026-11-24T21:54:08.122Z (13.3s after the press)",
+  );
+
+  // A Host that has not answered yet says so: the Mod's word may not stand in for the answer.
+  const unanswered = describeConfirmAcceptance({
+    attachmentResponse: { file: "f11ab116", state: "ready", reasonCode: "manifest_issued" },
+    acceptStamp: 1_795_557_234_891,
+    confirmAnswer: null,
+    confirmPressedAtMs: 1_795_557_234_854,
+  });
+  assert.match(unanswered, /^mod_document: ready\/manifest_issued @2026-11-24T21:53:54\.891Z/u);
+  assert.match(unanswered, /host_answer: none \(the Host has answered no game\/stardew\/cabins\/confirm\)$/u);
 });
 
 test("the Mod's stamp belongs to the press only within the freshness window, and the driver reads the same rule", () => {

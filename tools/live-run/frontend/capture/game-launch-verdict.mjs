@@ -681,6 +681,48 @@ export function responseStampForPress(response, confirmPressedAtMs) {
 }
 
 /**
+ * What the confirmation's acceptance is: the Mod's own document for this press, and the Host's answer beside it.
+ *
+ * <p>
+ * TWO ANSWERS, NEVER ONE INSIDE THE OTHER. The Mod publishes `session/stardew-attachment-response.json` when it
+ * issues the manifest, so `state=ready`/`manifest_issued` proves the GAME took the choice - and nothing about the
+ * Host, which can still answer `409 stardew_manifest_handoff_uncertain` after it. Measured `round32b`
+ * (2026-11-24): the Mod's document was stamped 21:53:54.891Z, 37ms after the press, and the Host's single answer
+ * was `409` at 21:54:08.122Z, 13.2s later - and the rung printed "the game took the choice and the Mod answered
+ * this press 37ms later" with no Host half at all, so the chain's furthest reached rung read as an acceptance.
+ * </p>
+ *
+ * <p>
+ * Both halves carry their own instant, because that is what separates them: the rung is stamped at the Mod's
+ * write, so an `@42s` beside a Host answer that arrived at `@55s` makes the two moments look simultaneous.
+ * </p>
+ */
+export function describeConfirmAcceptance({ attachmentResponse, acceptStamp, confirmAnswer, confirmPressedAtMs } = {}) {
+  const stamp = Number(acceptStamp);
+  const pressed = Number(confirmPressedAtMs);
+  const modLatency = Number.isFinite(stamp) && Number.isFinite(pressed) && pressed > 0 ? stamp - pressed : null;
+  const mod =
+    `mod_document: ${String(attachmentResponse?.state)}/${String(attachmentResponse?.reasonCode ?? "no_reason_code")} ` +
+    `@${new Date(stamp).toISOString()}` +
+    (modLatency === null ? "" : ` (${String(modLatency)}ms after the press)`) +
+    ` (${String(attachmentResponse?.file)}/session/stardew-attachment-response.json)`;
+  const answered = Number(confirmAnswer?.atMs);
+  const host =
+    confirmAnswer === null || confirmAnswer === undefined
+      ? "host_answer: none (the Host has answered no game/stardew/cabins/confirm)"
+      : `host_answer: HTTP ${String(confirmAnswer.status)}` +
+        (typeof confirmAnswer.code === "string" && confirmAnswer.code.length > 0 ? ` ${confirmAnswer.code}` : "") +
+        (typeof confirmAnswer.cause === "string" && confirmAnswer.cause.length > 0
+          ? ` (cause: ${confirmAnswer.cause})`
+          : "") +
+        (Number.isFinite(answered) ? ` @${new Date(answered).toISOString()}` : "") +
+        (Number.isFinite(answered) && Number.isFinite(pressed) && pressed > 0
+          ? ` (${String(Math.round((answered - pressed) / 100) / 10)}s after the press)`
+          : "");
+  return `${mod} - ${host}`;
+}
+
+/**
  * The Mod's own word for a confirmation it took and rolled back, or `null` when this run proved nothing of the
  * kind.
  *

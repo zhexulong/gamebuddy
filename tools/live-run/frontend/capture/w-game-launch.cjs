@@ -130,6 +130,7 @@ const {
   classifyLaunchRefusal,
   classifySilentLaunch,
   describeChain,
+  describeConfirmAcceptance,
   describeGameState,
   describeLaunchPlateau,
   describeLaunchProgress,
@@ -1264,15 +1265,14 @@ async function hostAnswers(port) {
       confirmPressedAtMs,
     );
     /*
-     * The next rung, and it is a different fact from the one above: the game TOOK the choice. The proof is
-     * the Mod's own stamp for this press, which arrives in milliseconds and carries the latency here; a
-     * confirmation the page answered itself, or one written by an earlier launch, has no such stamp and the
-     * rung stays "not reached".
+     * The next rung: the game TOOK the choice - and the Host's answer is printed BESIDE the Mod's document, never folded
+     * into it (`round32b`: the document 37ms after the press, the Host's single 409 13.2s later). Both, with their own
+     * instants, come from `describeConfirmAcceptance`.
      */
     if (acceptStamp !== null)
       chainReached(
         CHAIN_STEPS.cabinConfirmAccepted,
-        `the game took the choice and the Mod answered this press ${String(acceptStamp - Number(confirmPressedAtMs))}ms later: state=${String(attachmentResponse.state)}/reason=${String(attachmentResponse.reasonCode ?? "no_reason_code")}, stamped ${new Date(acceptStamp).toISOString()} (${String(attachmentResponse.file)}/session/stardew-attachment-response.json)`,
+        describeConfirmAcceptance({ attachmentResponse, acceptStamp, confirmAnswer, confirmPressedAtMs }),
         acceptStamp,
       );
     const attachLanded = attached.ok === true && attached.attachmentStatus === "attached";
