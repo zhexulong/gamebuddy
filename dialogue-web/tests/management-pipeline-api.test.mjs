@@ -1210,7 +1210,7 @@ test("the appearance client refuses a fourth appearance before it sends a write"
   const written = await api.updateAppearancePreference({ expectedRevision: 0, appearance: "light" }, HANDLE);
   assert.deepEqual(written, { revision: 1, appearance: "light" });
   assert.deepEqual(sent, [
-    { path: "/api/tavern/v1/settings/appearance", method: "PUT" },
+    { path: "/api/platform/v1/appearance", method: "PUT" },
   ]);
 });
 

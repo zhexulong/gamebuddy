@@ -50,17 +50,18 @@
  *      violation when a shell subject is drawn inside what it withholds:
  *      `game_mount_is_gated_on_the_chat_half`, naming the condition's own site.
  *
- *   3. PLATFORM ROUTE PURITY, as DECLARED DEBT. Four public platform concerns - the provider connection,
- *      the UI locale, the appearance and the session's CSRF token - are public platform facts that today
- *      are reachable only through the Chat half: `/api/tavern/v1/settings/connection*`,
- *      `/api/tavern/v1/settings/ui-language`, `/api/tavern/v1/settings/appearance` and `snapshot.csrfToken`.
- *      Moving them is a separate unit, so each is a row in `PLATFORM_DEBT` with an OWNER and an EXPIRY, and
- *      the gate holds the row current in both directions: a row whose declared reach is no longer in the
- *      tree is `platform_debt_reach_gone` (the row is stale and its owner must rewrite it), and a
- *      `/api/platform/v1/...` caller in the browser expires the row it serves - `platform_debt_expired`
- *      naming the row, the site and the owner, so the debt cannot outlive its subject by one commit. A
- *      platform route no row names is `platform_route_unjudged`, because a new public route with no concern
- *      on record is the one case this reading must not pass over.
+ *   3. THE PLATFORM'S ROUTE FAMILY IS ITS OWN, as an INVARIANT rather than debt. The four public platform facts -
+ *      the session's CSRF token, the appearance, the interface language and the connection directory - used to be
+ *      reachable only through the Chat half (`/api/tavern/v1/settings/{appearance,ui-language,connection*}` and
+ *      `snapshot.csrfToken`), which is why a mount with no readable Chat half could not paint itself or
+ *      authenticate. They now have a family of their own (`/api/platform/v1/*`, served by the composed broker) and
+ *      a member on the root. The POPULATION is the Host's own declaration of that family,
+ *      `COMPOSED_PLATFORM_ROUTES_V1` in the root schema module - never a second list here - and each declared row
+ *      is held in BOTH directions: a route no browser module reads is `platform_route_unread` (the Host publishes a
+ *      wire shape nobody asks for), and a Chat-half spelling the route took over (`replaces`) that is still read is
+ *      `platform_fact_read_through_the_chat_half` at its own line, naming the concern, the route that replaced it
+ *      and the owner to move. A platform route the declaration does not name is `platform_route_unjudged`, because
+ *      a new public route with no concern on record is the one case this reading must not pass over.
  *
  * ZERO IS NOT GREEN. Six populations can come back empty and each of them BLOCKS rather than passing,
  * because a reading that lost its subject cannot tell a clean tree from a renamed one:
@@ -69,8 +70,8 @@
  *   shell_modules_empty               no module under the shell's directory
  *   shell_subjects_not_found          no `<AppBar />`, `<GameSurface />` or shell container in any module
  *   chat_half_conditions_empty        no condition anywhere reaches the Chat half
- *   platform_debt_rows_empty          no declared debt row
- *   platform_reaches_not_found        no declared reach (route literal or `snapshot.csrfToken`) in the tree
+ *   platform_routes_not_declared      the Host's platform route family could not be read, or declares no route
+ *   platform_reaches_not_found        no declared platform route is read by any browser module
  *
  * Usage:
  *   node gates/product/check-game-mount-does-not-depend-on-the-chat.mjs              # the verdict; exit 1 on a violation, 2 blocked
@@ -83,9 +84,11 @@
  * red-proof: history  `{view.kind === "ready" && view.session.snapshot.chat !== null && (` at HEAD's
  *   `ComposedReferenceGameApp.tsx:1287` -> `game_mount_is_gated_on_the_chat_half` naming that line and the
  *   AppBar, the ready region and the Game surface it withholds (`.tmp/lane-gamemount/head/`)
- * red-proof: inject   a `/api/platform/v1/settings/connection` read in `management-pipeline-api.ts` ->
- *   `platform_debt_expired:connection` naming the row's owner, and a `/api/platform/v1/status` read no row
- *   names -> `platform_route_unjudged` (gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs)
+ * red-proof: inject   a browser read of `/api/tavern/v1/settings/appearance` after the platform route exists ->
+ *   `platform_fact_read_through_the_chat_half` naming the concern, the retired spelling and the route that replaced
+ *   it; a declared platform route with no browser caller -> `platform_route_unread`; a `/api/platform/v1/status`
+ *   read no declaration names -> `platform_route_unjudged`
+ *   (gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs)
  * red-proof: inject   a shell condition on a Chat-half fact (`mountedChat !== null && (<AppBar ... />)`) ->
  *   `game_mount_is_gated_on_the_chat_half`; the same condition over a fallback that the Game half also
  *   answers (`chatToken ?? gameToken`) is not a Chat-half fact and stays green
@@ -147,48 +150,120 @@ export const SHELL_SUBJECTS = Object.freeze([
   { id: "shell-region", className: "app-main-content" },
 ]);
 
-/** The platform routes a moved concern would be read from. */
+/** The prefix a platform route lives under, and the declaration the family is read from. */
 export const PLATFORM_ROUTE_PREFIX = "/api/platform/v1/";
+export const PLATFORM_ROUTE_DECLARATION = "COMPOSED_PLATFORM_ROUTES_V1";
 
 /**
- * The public platform concerns that are reachable only through the Chat half, as declared debt.
+ * The Host's own declaration of the platform's route family, read out of the root schema module.
  *
- * Each row is a unit of work that has not happened yet: the `owner` is what must be edited, the `expires`
- * is the commit that ends the row, `today` is the source text that must still be there (a route literal or
- * the Chat half's own token), and `platform` is the route whose arrival expires it. Moving a concern is a
- * separate change; this gate only refuses to let the debt go un-noticed in either direction.
+ * It is a DECLARATION rather than an implementation the gate infers: `composed-browser-contract/index.ts` exports
+ * `COMPOSED_PLATFORM_ROUTES_V1` as a frozen table of `{ concern, method, path, replaces }`, the handler builds its
+ * routes from it (`createComposedReferenceGameBrowserRequestHandler`), and this gate reads the same table instead of
+ * keeping a second copy of the paths. A second copy would agree today and drift on the first route anybody adds -
+ * which is exactly the shape `PLATFORM_DEBT` had, and why the reading it served could only expire.
+ *
+ * `replaces` is the Chat-half spelling the route took over. It is empty for a route that took over nothing, and a
+ * non-empty one is a claim the gate holds the browser to: read `path`, and no longer read what `replaces` names.
  */
-export const PLATFORM_DEBT = Object.freeze([
-  Object.freeze({
-    concern: "connection",
-    owner: "dialogue-web/src/management-pipeline-api.ts (SettingsSurface's connection panel) and its Host route",
-    expires: "when the browser reads /api/platform/v1/connection - delete this row in that commit",
-    today: Object.freeze(["/api/tavern/v1/settings/connection", "/api/tavern/v1/settings/connections"]),
-    platform: Object.freeze(["/api/platform/v1/connection"]),
-  }),
-  Object.freeze({
-    concern: "locale",
-    owner: "dialogue-web/src/management-pipeline-api.ts (SettingsSurface's UI language) and dialogue-web/src/i18n.ts",
-    expires: "when the browser reads /api/platform/v1/locale - delete this row in that commit",
-    today: Object.freeze(["/api/tavern/v1/settings/ui-language"]),
-    platform: Object.freeze(["/api/platform/v1/locale"]),
-  }),
-  Object.freeze({
-    concern: "appearance",
-    owner:
-      "dialogue-web/src/management-pipeline-api.ts (SettingsSurface's appearance) and dialogue-web/src/appearance.ts",
-    expires: "when the browser reads /api/platform/v1/appearance - delete this row in that commit",
-    today: Object.freeze(["/api/tavern/v1/settings/appearance"]),
-    platform: Object.freeze(["/api/platform/v1/appearance"]),
-  }),
-  Object.freeze({
-    concern: "csrf",
-    owner: "the Tavern broker session (dialogue-web/src/components/use-composed-bootstrap.ts mints it)",
-    expires: "when a platform session route answers the browser's CSRF token - delete this row in that commit",
-    today: Object.freeze(["snapshot.csrfToken"]),
-    platform: Object.freeze(["/api/platform/v1/session", "/api/platform/v1/csrf"]),
-  }),
-]);
+function declaredPlatformRoutes({ root }) {
+  const path = join(root, ROOT_SCHEMA);
+  let source;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch {
+    return { rows: [], unreadable: `platform_routes_not_declared: ${ROOT_SCHEMA} could not be read` };
+  }
+  const sourceFile = typescript.createSourceFile(
+    ROOT_SCHEMA,
+    source,
+    typescript.ScriptTarget.Latest,
+    true,
+    typescript.ScriptKind.TS,
+  );
+  let declaration = null;
+  const visit = (node) => {
+    if (declaration !== null) return;
+    if (
+      typescript.isVariableDeclaration(node) &&
+      typescript.isIdentifier(node.name) &&
+      node.name.text === PLATFORM_ROUTE_DECLARATION &&
+      node.initializer !== undefined
+    ) {
+      declaration = node.initializer;
+    }
+    typescript.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (declaration === null)
+    return {
+      rows: [],
+      unreadable: `platform_routes_not_declared: ${ROOT_SCHEMA} declares no \`${PLATFORM_ROUTE_DECLARATION}\``,
+    };
+  const array = asArrayLiteral(declaration);
+  if (array === null)
+    return {
+      rows: [],
+      unreadable: `platform_routes_not_declared: \`${PLATFORM_ROUTE_DECLARATION}\` is not an array literal`,
+    };
+  const rows = [];
+  for (const element of array.elements) {
+    const object = asObjectLiteral(element);
+    if (object === null) continue;
+    const fields = new Map();
+    for (const property of object.properties) {
+      if (!typescript.isPropertyAssignment(property)) continue;
+      fields.set(property.name.getText(sourceFile), property.initializer);
+    }
+    const concern = stringOf(fields.get("concern"), sourceFile);
+    const method = stringOf(fields.get("method"), sourceFile);
+    const routePath = stringOf(fields.get("path"), sourceFile);
+    if (concern === null || method === null || routePath === null) continue;
+    rows.push({ concern, method, path: routePath, replaces: stringsOf(fields.get("replaces"), sourceFile) });
+  }
+  return { rows, unreadable: null };
+}
+
+/** `Object.freeze([...])` and a bare `[...]` are the same array; `Object.freeze({...})` and `{...}` the same object. */
+function asArrayLiteral(node) {
+  const inner = unwrap(node);
+  if (typescript.isArrayLiteralExpression(inner)) return inner;
+  if (typescript.isCallExpression(inner) && inner.arguments.length === 1) {
+    const argument = unwrap(inner.arguments[0]);
+    return typescript.isArrayLiteralExpression(argument) ? argument : null;
+  }
+  return null;
+}
+
+function asObjectLiteral(node) {
+  const inner = unwrap(node);
+  if (typescript.isObjectLiteralExpression(inner)) return inner;
+  if (typescript.isCallExpression(inner) && inner.arguments.length === 1) {
+    const argument = unwrap(inner.arguments[0]);
+    return typescript.isObjectLiteralExpression(argument) ? argument : null;
+  }
+  return null;
+}
+
+/** One string initializer's text, through `as const` and `Object.freeze("x")`. */
+function stringOf(node, sourceFile) {
+  if (node === undefined) return null;
+  const inner = unwrap(node);
+  if (typescript.isStringLiteral(inner) || typescript.isNoSubstitutionTemplateLiteral(inner)) return inner.text;
+  if (typescript.isCallExpression(inner) && inner.arguments.length === 1) {
+    const argument = unwrap(inner.arguments[0]);
+    if (typescript.isStringLiteral(argument)) return argument.text;
+  }
+  return null;
+}
+
+/** A list of string initializers, each read the way `stringOf` reads one. */
+function stringsOf(node, sourceFile) {
+  if (node === undefined) return [];
+  const array = asArrayLiteral(node);
+  if (array === null) return [];
+  return array.elements.map((element) => stringOf(element, sourceFile)).filter((text) => text !== null);
+}
 
 const COMPARISON_OPERATORS = Object.freeze([
   "EqualsEqualsEqualsToken",
@@ -612,25 +687,48 @@ export function checkTheShellIsNotGatedOnTheChat({ root = REPOSITORY_ROOT, scope
   return { ...reading, status: reading.violations.length === 0 ? "passed" : "failed" };
 }
 
-/** Every route and member literal a module names, with the line it is on. */
-function literalSites({ root, modules, needle }) {
+/**
+ * Every STRING LITERAL in these modules whose text contains `needle`, with the line it is on.
+ *
+ * The population is the literals and not the lines, because a route is READ where a string names it: a doc comment
+ * that quotes `/api/tavern/v1/settings/ui-language` while explaining why nothing goes there any more is not a read,
+ * and a gate that counted it would demand the sentence be deleted to go green - which is how a gate teaches people
+ * to delete the explanation instead of the defect.
+ */
+function routeSites({ root, modules, needle }) {
   const sites = [];
   for (const file of modules) {
-    const source = readFileSync(join(root, file), "utf8");
-    source.split("\n").forEach((line, index) => {
-      if (line.includes(needle)) sites.push({ file, line: index + 1, text: line.trim() });
-    });
+    let source;
+    try {
+      source = readFileSync(join(root, file), "utf8");
+    } catch {
+      continue;
+    }
+    const sourceFile = typescript.createSourceFile(
+      file,
+      source,
+      typescript.ScriptTarget.Latest,
+      true,
+      file.endsWith("x") ? typescript.ScriptKind.TSX : typescript.ScriptKind.TS,
+    );
+    const visit = (node) => {
+      if (typescript.isStringLiteral(node) && node.text.includes(needle))
+        sites.push({ file, line: lineOf(sourceFile, node), text: node.text });
+      typescript.forEachChild(node, visit);
+    };
+    visit(sourceFile);
   }
   return sites;
 }
 
-/** Reading 3: the platform concerns are declared debt, and the debt expires by name. */
+/** Reading 3: the platform's route family is its own, and the browser reads it and nothing else. */
 export function checkPlatformRoutePurity({ root = REPOSITORY_ROOT, scope = WEB_SOURCES } = {}) {
   const reading = {
     scope,
     population: 0,
-    rows: [],
+    routes: [],
     reaches: [],
+    retired: [],
     platformRoutes: [],
     violations: [],
     blocked: null,
@@ -639,53 +737,62 @@ export function checkPlatformRoutePurity({ root = REPOSITORY_ROOT, scope = WEB_S
   reading.population = modules.length;
   if (modules.length === 0)
     return { ...reading, status: "blocked", blocked: `platform_reaches_not_found: no module under ${scope}` };
-  if (PLATFORM_DEBT.length === 0)
-    return { ...reading, status: "blocked", blocked: "platform_debt_rows_empty: no declared platform debt" };
-  for (const row of PLATFORM_DEBT) {
-    const reach = row.today.flatMap((needle) =>
-      literalSites({ root, modules, needle }).map((site) => ({ ...site, needle })),
-    );
-    reading.rows.push({ concern: row.concern, owner: row.owner, expires: row.expires, reach: reach.length });
-    reading.reaches.push(
-      ...reach.map((site) => ({ concern: row.concern, at: `${site.file}:${site.line}`, text: site.needle })),
-    );
+  const declared = declaredPlatformRoutes({ root });
+  if (declared.unreadable !== null) return { ...reading, status: "blocked", blocked: declared.unreadable };
+  if (declared.rows.length === 0)
+    return {
+      ...reading,
+      status: "blocked",
+      blocked: `platform_routes_not_declared: \`${PLATFORM_ROUTE_DECLARATION}\` declares no route`,
+    };
+  for (const row of declared.rows) {
+    const reach = routeSites({ root, modules, needle: row.path });
+    reading.routes.push({
+      concern: row.concern,
+      method: row.method,
+      path: row.path,
+      clients: reach.length,
+      replaces: row.replaces.length,
+    });
+    reading.reaches.push(...reach.map((site) => ({ concern: row.concern, at: `${site.file}:${site.line}`, text: row.path })));
     if (reach.length === 0)
       reading.violations.push({
-        code: "platform_debt_reach_gone",
-        at: `${scope} (${row.concern})`,
+        code: "platform_route_unread",
+        at: `${ROOT_SCHEMA} (${row.concern})`,
         detail:
-          `${row.concern}'s declared reach (${row.today.join(", ")}) is no longer in the tree; the row is stale - ` +
-          `${row.owner} must rewrite it, and the expiry is: ${row.expires}`,
+          `the Host declares \`${row.method} ${row.path}\` for the ${row.concern}, and no browser module under ` +
+          `${scope} reads it; a wire shape nobody asks for is a platform fact the page cannot get`,
       });
-    const arrived = row.platform.flatMap((prefix) => {
-      const found = literalSites({ root, modules, needle: prefix });
-      return found.map((site) => ({ ...site, prefix }));
-    });
-    for (const site of arrived)
-      reading.violations.push({
-        code: "platform_debt_expired",
-        at: `${site.file}:${site.line}`,
-        detail:
-          `${site.prefix} is read by the browser, so the ${row.concern} debt has expired: delete its row in ` +
-          `PLATFORM_DEBT (owner ${row.owner}) with this commit, and update the expiry (${row.expires})`,
-      });
+    for (const retired of row.replaces) {
+      const sites = routeSites({ root, modules, needle: retired });
+      reading.retired.push({ concern: row.concern, needle: retired, sites: sites.length });
+      for (const site of sites)
+        reading.violations.push({
+          code: "platform_fact_read_through_the_chat_half",
+          at: `${site.file}:${site.line}`,
+          detail:
+            `\`${retired}\` is the Chat half's spelling of the ${row.concern}, and \`${row.method} ${row.path}\` took ` +
+            `it over; ${site.file} still reads it, so this concern is reachable only where a Chat half is`,
+        });
+    }
   }
-  const declaredPlatform = PLATFORM_DEBT.flatMap((row) => row.platform);
-  for (const site of literalSites({ root, modules, needle: PLATFORM_ROUTE_PREFIX })) {
-    const named = declaredPlatform.some((prefix) => site.text.includes(prefix));
+  const declaredPaths = new Set(declared.rows.map((row) => row.path));
+  for (const site of routeSites({ root, modules, needle: PLATFORM_ROUTE_PREFIX })) {
+    if ([...declaredPaths].some((routePath) => site.text.includes(routePath))) continue;
     reading.platformRoutes.push({ at: `${site.file}:${site.line}`, text: site.text });
-    if (!named)
-      reading.violations.push({
-        code: "platform_route_unjudged",
-        at: `${site.file}:${site.line}`,
-        detail: `\`${site.text}\` reads ${PLATFORM_ROUTE_PREFIX}* and no concern in PLATFORM_DEBT names it; declare which public concern it serves, or it is a route with no owner`,
-      });
+    reading.violations.push({
+      code: "platform_route_unjudged",
+      at: `${site.file}:${site.line}`,
+      detail: `\`${site.text}\` reads ${PLATFORM_ROUTE_PREFIX}* and \`${PLATFORM_ROUTE_DECLARATION}\` names no such route; declare it, or it is a route with no concern on record`,
+    });
   }
   if (reading.reaches.length === 0)
     return {
       ...reading,
       status: "blocked",
-      blocked: `platform_reaches_not_found: none of the ${PLATFORM_DEBT.length} declared concern(s) has its reach in ${scope}`,
+      blocked:
+        `platform_reaches_not_found: none of the ${declared.rows.length} declared platform route(s) is read under ` +
+        `${scope} - the family exists on the Host and nothing in the browser asks for it`,
     };
   return { ...reading, status: reading.violations.length === 0 ? "passed" : "failed" };
 }
@@ -719,9 +826,11 @@ export function checkTheGameMountDoesNotDependOnTheChat({ root = REPOSITORY_ROOT
         `${shell.comparisons.length} Chat-half comparison(s) in ${shell.conditions.length} condition(s)`,
     },
     {
-      id: "the_platform_debt_is_current",
+      id: "the_platform_family_is_the_browsers_only_source",
       status: verdictOf(platform),
-      detail: `${platform.rows.length} declared concern(s), ${platform.reaches.length} reach(es), ${platform.platformRoutes.length} platform route site(s)`,
+      detail:
+        `${platform.routes.length} declared route(s), ${platform.reaches.length} browser client(s), ` +
+        `${platform.retired.length} retired Chat-half spelling(s) over ${platform.retired.reduce((total, row) => total + row.sites, 0)} site(s)`,
     },
     {
       id: "every_module_parsed",
@@ -741,8 +850,9 @@ export function checkTheGameMountDoesNotDependOnTheChat({ root = REPOSITORY_ROOT
     shellSubjects: shell.shellSubjects,
     comparisons: shell.comparisons,
     conditions: shell.conditions,
-    debtRows: platform.rows,
+    debtRows: platform.routes,
     reaches: platform.reaches,
+    retired: platform.retired,
     violations,
     unparsed: shell.unparsed,
     blocked: blocked.length === 0 ? null : blocked.join(" · "),
@@ -763,11 +873,13 @@ export function renderGameMountReport(result, out = process.stdout) {
   for (const subject of result.shellSubjects) out.write(`  shell subject ${subject.id}: ${subject.at}\n`);
   for (const comparison of result.comparisons) out.write(`  comparison ${comparison.at} - ${comparison.text}\n`);
   out.write(
-    `modules examined ${result.platformPopulation} under ${WEB_SOURCES} · platform debt row(s) ${result.debtRows.length} · ` +
-      `reach(es) ${result.reaches.length}\n`,
+    `modules examined ${result.platformPopulation} under ${WEB_SOURCES} · platform route(s) ${result.debtRows.length} · ` +
+      `browser client(s) ${result.reaches.length} · retired Chat-half spelling(s) ${result.retired.length}\n`,
   );
   for (const row of result.debtRows)
-    out.write(`  debt ${row.concern}: owner ${row.owner}; expires ${row.expires} (${row.reach} reach site(s))\n`);
+    out.write(`  platform ${row.method} ${row.path} (${row.concern}): ${row.clients} client(s), ${row.replaces} retired\n`);
+  for (const row of result.retired)
+    out.write(`  retired ${row.concern}: ${row.needle} - ${row.sites} remaining site(s)\n`);
   for (const violation of result.violations) out.write(`✖ ${violation.code}: ${violation.at} - ${violation.detail}\n`);
   for (const entry of result.unparsed) out.write(`✖ module_unparsed: ${entry}\n`);
   if (result.blocked !== null && result.blocked !== undefined) out.write(`blocked: ${result.blocked}\n`);
@@ -784,6 +896,7 @@ export function renderGameMountReport(result, out = process.stdout) {
       conditions: result.conditions,
       debtRows: result.debtRows,
       reaches: result.reaches,
+      retired: result.retired,
       violations: result.violations,
       unparsed: result.unparsed,
       ...(result.blocked === null || result.blocked === undefined ? {} : { blocked: result.blocked }),

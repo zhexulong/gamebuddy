@@ -59,7 +59,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contrastRatio } from "../../tools/check-contrast-tokens.mjs";
-import { jsonOk, root, token } from "./composed-reference-game-fixtures";
+import { jsonOk, root, rootWithPlatformPreference, token } from "./composed-reference-game-fixtures";
 import { type Page, expect, test } from "./frontend-coverage";
 
 const STYLESHEET = join(dirname(fileURLToPath(import.meta.url)), "..", "src", "style.css");
@@ -248,15 +248,16 @@ function channelsBetween(enabled: ControlPaint, disabled: ControlPaint): readonl
  * the file that declares them, and a spec that stubbed less would judge a page nobody launches into.
  */
 async function stubRoutes(page: Page, appearance: "dark" | "light"): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  const painted = rootWithPlatformPreference({ appearance, locale: "en" });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(painted)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(painted)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: "" })),
   );
-  await page.route("**/api/tavern/v1/settings/appearance", (route) =>
+  await page.route("**/api/platform/v1/appearance", (route) =>
     route.fulfill(jsonOk({ revision: 0, appearance })),
   );
-  await page.route("**/api/tavern/v1/settings/ui-language", (route) =>
+  await page.route("**/api/platform/v1/locale", (route) =>
     route.fulfill(jsonOk({ revision: 0, locale: "en" })),
   );
   await page.route("**/api/tavern/v1/settings/language", (route) =>

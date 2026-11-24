@@ -71,15 +71,29 @@ const composedGame = {
 };
 
 const json200 = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
-const composedRoot = () => ({
+/**
+ * The composed root this mount is given, with the platform's own member.
+ *
+ * `preference` is projected from the SAME mutable record the write lands in, so a relaunch reads back what the
+ * write stored: that is what makes "the Host record is what carries it" measurable rather than asserted.
+ */
+const composedRoot = (record: StoredUiLanguage) => ({
   apiVersion: 1,
   build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" },
+  platform: {
+    apiVersion: 1,
+    csrfToken,
+    browserSession: { expiresAtMs },
+    preference: { revision: record.revision, appearance: "system", locale: record.locale },
+    connection: "available",
+  },
   chat: composedChat,
   game: composedGame,
 });
 
 /** The Host's own record for this one field group, mutable so a write is visible to the reload. */
 type StoredUiLanguage = { revision: number; locale: "en" | "zh-CN" | null };
+
 
 /**
  * Every route this shell reads on the way to the Settings surface.
@@ -89,8 +103,8 @@ type StoredUiLanguage = { revision: number; locale: "en" | "zh-CN" | null };
  * accept.
  */
 async function stubRoutes(page: Page, record: StoredUiLanguage): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot())));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot())));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot(record))));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(json200(composedRoot(record))));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 0, text: "" })),
   );
@@ -123,10 +137,10 @@ async function stubRoutes(page: Page, record: StoredUiLanguage): Promise<void> {
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 0, active: null, connections: [], providers: [] })),
   );
-  await page.route("**/api/tavern/v1/settings/appearance", (route) =>
+  await page.route("**/api/platform/v1/appearance", (route) =>
     route.fulfill(json200({ revision: 0, appearance: "system" })),
   );
-  await page.route("**/api/tavern/v1/settings/ui-language", async (route) => {
+  await page.route("**/api/platform/v1/locale", async (route) => {
     if (route.request().method() === "GET") return await route.fulfill(json200(record));
     expect(
       route.request().headers()["x-csrf-token"],
@@ -205,6 +219,12 @@ test("a chosen interface language outlives a relaunch, and the Host's record is 
   await page.reload();
 
   await expect(page.getByTestId("settings-surface")).toBeVisible();
+  // The surface opens on its first tab, as it does for any player arriving at it. It is pressed by its own id here
+  // rather than by the shared helper's English words: after the relaunch this page is in CHINESE, which is the
+  // whole point of the journey, so `openSettingsTab`'s catalogue word no longer names the tab.
+  const preferencesTab = page.getByTestId("settings-surface").locator("#settings-tab-preferences");
+  await preferencesTab.click();
+  await expect(preferencesTab).toHaveAttribute("aria-selected", "true");
   await expect
     .poll(async () => page.evaluate(() => document.documentElement.lang), {
       message: "the interface language survived a launch with no local store",

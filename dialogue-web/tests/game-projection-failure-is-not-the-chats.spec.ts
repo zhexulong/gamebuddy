@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "./frontend-coverage";
-import { chat, game, jsonOk, root as composedRoot, tavernRefusal, token } from "./composed-reference-game-fixtures";
+import { chat, game, jsonOk, platform, root as composedRoot, tavernRefusal, token } from "./composed-reference-game-fixtures";
 
 /**
  * A Game projection that cannot be read is not a conversation that cannot be read - and neither is the
@@ -52,7 +52,7 @@ const chatProjectionRefusal = {
  * Not `chat: null`: that is the mount whose profile carries no Chat, and the difference is the same one the
  * Game half's absence has (`gameUnreadableRoot` below).
  */
-const chatUnreadableRoot = { apiVersion: 1, build: composedRoot.build, game };
+const chatUnreadableRoot = { apiVersion: 1, build: composedRoot.build, platform, game };
 
 const js = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
 
@@ -87,7 +87,7 @@ async function stubCharactersSurface(page: Page): Promise<void> {
  * a client that flattened the absence into `null` could not tell "this build has no game" from "your game
  * could not be read".
  */
-const gameUnreadableRoot = { apiVersion: 1, build: composedRoot.build, chat };
+const gameUnreadableRoot = { apiVersion: 1, build: composedRoot.build, platform, chat };
 
 /** The two windows the shell has to stand in: a phone-width one and a desktop one. */
 const VIEWPORTS = [

@@ -98,6 +98,30 @@ const json200 = (body: unknown) => ({ status: 200, contentType: "application/jso
 type StoredAppearance = { revision: number; appearance: "system" | "light" | "dark" };
 
 /**
+ * The mounted root, with the appearance the page is painted from on the platform member.
+ *
+ * It is projected from the SAME mutable record the platform's own route answers and the panel's write lands in, so
+ * a reload paints what the store holds: the member is the first frame's authority and the route is the panel's read
+ * of the same fact.
+ */
+const composedRoot = (record: StoredAppearance) => ({
+  apiVersion: 1,
+  build: {
+    browserContract: "composed_reference_game_browser_api/v1",
+    profileId: "gamebuddy.composed.reference-game",
+  },
+  platform: {
+    apiVersion: 1,
+    csrfToken: composedChat.csrfToken,
+    browserSession: { expiresAtMs: composedChat.browserSession.expiresAtMs },
+    preference: { revision: record.revision, appearance: record.appearance, locale: "en" },
+    connection: "available",
+  },
+  chat: composedChat,
+  game: composedGame,
+});
+
+/**
  * Every route this shell reads, with the appearance record supplied by the caller.
  *
  * The PUT handler is not a formality: it refuses a write without the CSRF header the contract
@@ -105,9 +129,9 @@ type StoredAppearance = { revision: number; appearance: "system" | "light" | "da
  * anything would let a broken client pass.
  */
 async function stubRoutes(page: Page, record: StoredAppearance): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200({ apiVersion: 1, build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" }, chat: composedChat, game: composedGame })));
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(json200(composedRoot(record))));
   await page.route("**/api/composed-reference-game/v1/state", (route) =>
-    route.fulfill(json200({ apiVersion: 1, build: { browserContract: "composed_reference_game_browser_api/v1", profileId: "gamebuddy.composed.reference-game" }, chat: composedChat, game: composedGame })),
+    route.fulfill(json200(composedRoot(record))),
   );
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 0, text: "" })),
@@ -141,7 +165,7 @@ async function stubRoutes(page: Page, record: StoredAppearance): Promise<void> {
   await page.route("**/api/tavern/v1/settings/connection", (route) =>
     route.fulfill(json200({ apiVersion: 1, revision: 0, active: null, connections: [], providers: [] })),
   );
-  await page.route("**/api/tavern/v1/settings/appearance", async (route) => {
+  await page.route("**/api/platform/v1/appearance", async (route) => {
     if (route.request().method() === "GET") return await route.fulfill(json200(record));
     expect(
       route.request().headers()["x-csrf-token"],
@@ -228,10 +252,16 @@ test.describe("the appearance is the player's choice, and the system's until the
     // A reload starts from nothing but the cookie and the stored record.
     await page.reload();
     await expect(page.locator(".tavern-app-shell")).toBeVisible();
+    // The appearance arrives with the mounted root rather than with a read of its own, so the reading polls: the
+    // shell's container is visible while the page is still loading, and a single read there would be the OS answer.
+    await expect
+      .poll(async () => (await readAppearance(page)).attribute, {
+        message: "the stored choice outlives the reload and outranks the OS",
+      })
+      .toBe("light");
     const reloaded = await readAppearance(page);
     console.log(`[appearance-reloaded] ${JSON.stringify(reloaded)}`);
     expect(reloaded.prefersLight, "the OS still asks for dark after the reload").toBe(false);
-    expect(reloaded.attribute, "the stored choice outlives the reload and outranks the OS").toBe("light");
     expect(reloaded.shellBackground, "and the reloaded page is painted light").toBe(CANVAS.light.painted);
 
     // Returning to `system` is a choice too, and it hands the page back to the OS answer.

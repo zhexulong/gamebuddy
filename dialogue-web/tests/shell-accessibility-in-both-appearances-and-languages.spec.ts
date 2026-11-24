@@ -42,7 +42,7 @@ import { readFileSync } from "node:fs";
 import { AxeBuilder } from "@axe-core/playwright";
 import { type AccessibilityFinding, BASELINE_TAGS, readAccessibility } from "./frontend-criteria.js";
 import { type Page, expect, test } from "./frontend-coverage";
-import { jsonOk, root, token } from "./composed-reference-game-fixtures";
+import { jsonOk, root, rootWithPlatformPreference, token } from "./composed-reference-game-fixtures";
 
 const CELLS = [
   { appearance: "dark", locale: "zh-CN" },
@@ -74,15 +74,16 @@ async function stubRoutes(
   page: Page,
   cell: Readonly<{ appearance: "dark" | "light"; locale: "zh-CN" | "en" }>,
 ): Promise<void> {
-  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(root)));
-  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(root)));
+  const painted = rootWithPlatformPreference({ appearance: cell.appearance, locale: cell.locale });
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(painted)));
+  await page.route("**/api/composed-reference-game/v1/state", (route) => route.fulfill(jsonOk(painted)));
   await page.route("**/api/tavern/v1/draft", (route) =>
     route.fulfill(jsonOk({ apiVersion: 1, revision: 0, text: "" })),
   );
-  await page.route("**/api/tavern/v1/settings/appearance", (route) =>
+  await page.route("**/api/platform/v1/appearance", (route) =>
     route.fulfill(jsonOk({ revision: 0, appearance: cell.appearance })),
   );
-  await page.route("**/api/tavern/v1/settings/ui-language", (route) =>
+  await page.route("**/api/platform/v1/locale", (route) =>
     route.fulfill(jsonOk({ revision: 0, locale: cell.locale })),
   );
   await page.route("**/api/tavern/v1/settings/language", (route) =>
@@ -218,7 +219,7 @@ test("every notice reads its own ink over its own wash, in both appearances", as
   for (const appearance of APPEARANCES) {
     // The record is re-answered per cell, and a route registered for the previous cell would answer
     // first: the appearance is the one fact that changes between these two loads.
-    await page.unroute("**/api/tavern/v1/settings/appearance");
+    await page.unroute("**/api/platform/v1/appearance");
     await stubRoutes(page, { appearance, locale: "en" });
     // A real load per cell: the two cells share one URL, and a same-document hash navigation would
     // keep the first cell's appearance on screen and read it under the second cell's name.

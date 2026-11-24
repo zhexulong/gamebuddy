@@ -2,7 +2,9 @@ import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import {
   type ComposedTavernProfile,
+  TavernAppearanceChoiceV1Schema,
   TavernStateSnapshotV1Schema,
+  TavernUiLocaleV1Schema,
   isComposedTavernProfile,
   referenceTavernProfileFitsCanonicalGroups,
   TavernBrowserFixtureV1,
@@ -144,6 +146,89 @@ export function isComposedReferenceGameBrowserProfile(value: unknown): value is 
   return typeof value === "object" && value !== null && composedReferenceGameBrowserProfiles.has(value);
 }
 
+// ─── Platform ───────────────────────────────────────────────────────────────
+
+/**
+ * The two page-level preferences the platform owns, with the ONE revision of the record that holds them.
+ *
+ * `appearance` is a choice and never an absence (`system` is a real choice), while `locale` is null when the
+ * player has never chosen one and the page then follows the browser's own language. They share a revision
+ * because they share a record: writing either advances one number, and a client that carried two revisions
+ * would have one authority for a fact and two spellings of it.
+ */
+export const ComposedPlatformPreferenceV1Schema = strictObject({
+  revision: Type.Integer({ minimum: 0 }),
+  appearance: TavernAppearanceChoiceV1Schema,
+  locale: Type.Union([TavernUiLocaleV1Schema, Type.Null()]),
+});
+
+export type ComposedPlatformPreferenceV1 = Static<typeof ComposedPlatformPreferenceV1Schema>;
+
+/**
+ * What this Host owes the shell regardless of which half is up: the session it must act under, the two
+ * page-level preferences it must paint itself with, and whether it has a connection directory to offer.
+ *
+ * It is not a third surface. The two halves are projections of two producers and either may be missing; this
+ * member is the SESSION's own facts, which no producer can take away and which no half publishes on the
+ * other's behalf - the shell reads its CSRF token here and nowhere else, because the token used to be taken
+ * from whichever half happened to be readable, which is exactly why a mount with no Chat could not
+ * authenticate anything.
+ */
+export const ComposedPlatformStateV1Schema = strictObject({
+  apiVersion: Type.Literal(COMPOSED_REFERENCE_GAME_BROWSER_API_VERSION),
+  csrfToken: Type.String({ minLength: 22, maxLength: 128 }),
+  browserSession: strictObject({ expiresAtMs: Type.Integer({ minimum: 0 }) }),
+  preference: ComposedPlatformPreferenceV1Schema,
+  /**
+   * Whether this Host has the connection/model directory the Settings surface reads, at all.
+   *
+   * A fact about the BUILD rather than about a record: a Host composed without a connection service has no
+   * directory to offer, so the surface says so instead of asking a route that was never mounted. The records
+   * themselves are the management route's, not this member's.
+   */
+  connection: Type.Union([Type.Literal("available"), Type.Literal("unavailable")]),
+});
+
+export type ComposedPlatformStateV1 = Static<typeof ComposedPlatformStateV1Schema>;
+
+/** The public platform concerns: one per fact the shell reads from this member or from its routes. */
+export type ComposedPlatformConcernV1 = "appearance" | "locale";
+
+/**
+ * The platform's own route family, declared once: the handler builds its routes from this table, and the gate
+ * reads it instead of keeping a second list of paths that would drift from it.
+ *
+ * `replaces` is the Chat-half route the platform route took over, and it is what makes a route family an
+ * invariant rather than a rename: the browser may read `path`, and must no longer read what `replaces` names.
+ * A route that took over nothing carries an empty list - there was no Chat-half spelling of it to retire.
+ */
+export const COMPOSED_PLATFORM_ROUTES_V1 = Object.freeze([
+  Object.freeze({
+    concern: "appearance" as const,
+    method: "GET" as const,
+    path: "/api/platform/v1/appearance",
+    replaces: Object.freeze(["/api/tavern/v1/settings/appearance"]),
+  }),
+  Object.freeze({
+    concern: "appearance" as const,
+    method: "PUT" as const,
+    path: "/api/platform/v1/appearance",
+    replaces: Object.freeze(["/api/tavern/v1/settings/appearance"]),
+  }),
+  Object.freeze({
+    concern: "locale" as const,
+    method: "GET" as const,
+    path: "/api/platform/v1/locale",
+    replaces: Object.freeze(["/api/tavern/v1/settings/ui-language"]),
+  }),
+  Object.freeze({
+    concern: "locale" as const,
+    method: "PUT" as const,
+    path: "/api/platform/v1/locale",
+    replaces: Object.freeze(["/api/tavern/v1/settings/ui-language"]),
+  }),
+]);
+
 // ─── Root snapshot schema ───────────────────────────────────────────────────
 
 /**
@@ -157,6 +242,15 @@ export const ComposedReferenceGameBrowserRootV1Schema = strictObject({
     browserContract: Type.Literal(COMPOSED_REFERENCE_GAME_BROWSER_API_V1),
     profileId: Type.String({ minLength: 1, maxLength: 128 }),
   }),
+  /**
+   * The platform: this Host's session, its page-level preferences and whether it has a connection directory.
+   *
+   * Two answers, not three. The halves below answer three ways because a profile may mount neither - `null` is
+   * "this build has no such surface" - and there is no build that mounts no platform: its absence is always
+   * "this root could not publish it", which is the one thing the shell must say out loud rather than draw
+   * `undefined` into a surface with. A Host that composes no platform seam omits it for the same reason.
+   */
+  platform: Type.Optional(ComposedPlatformStateV1Schema),
   /**
    * The Chat half, and the same two answers that are not a projection: `null` is a mount whose profile carries
    * no Chat at all - there was never a conversation to read - and an ABSENT member is a mount that carries one
@@ -185,13 +279,30 @@ export type ComposedReferenceGameBrowserRootV1 = Static<typeof ComposedReference
 
 export const ComposedReferenceGameBrowserValidatorsV1: Readonly<{
   ComposedReferenceGameBrowserRootV1Schema: Validator;
+  ComposedPlatformStateV1Schema: Validator;
 }> = Object.freeze({
   ComposedReferenceGameBrowserRootV1Schema: Compile(ComposedReferenceGameBrowserRootV1Schema),
+  ComposedPlatformStateV1Schema: Compile(ComposedPlatformStateV1Schema),
 });
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 
+/** The platform member of a mount whose session and preferences are the reference ones. */
+const fixtureCsrfToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
+const platform = (): ComposedPlatformStateV1 =>
+  Object.freeze({
+    apiVersion: 1 as const,
+    // The same session the two fixture halves publish: one root, one browser session (`readComposedRoot` refuses
+    // a pair that disagrees, and this member is that session's own statement).
+    csrfToken: fixtureCsrfToken,
+    browserSession: Object.freeze({ expiresAtMs: 1 }),
+    preference: Object.freeze({ revision: 0, appearance: "system" as const, locale: null }),
+    connection: "available" as const,
+  });
+
 export const ComposedReferenceGameBrowserFixtureV1 = Object.freeze({
+  /** The platform member every fixture root carries: the session the shell acts under. */
+  platform,
   /** Chat-only root with null game, using the Tavern fixture snapshot. */
   chatOnly: (): ComposedReferenceGameBrowserRootV1 =>
     Object.freeze({
@@ -200,6 +311,7 @@ export const ComposedReferenceGameBrowserFixtureV1 = Object.freeze({
         browserContract: COMPOSED_REFERENCE_GAME_BROWSER_API_V1,
         profileId: COMPOSED_REFERENCE_PROFILE_ID,
       }),
+      platform: platform(),
       chat: TavernBrowserFixtureV1.snapshot(),
       game: null,
     }),
@@ -211,6 +323,7 @@ export const ComposedReferenceGameBrowserFixtureV1 = Object.freeze({
         browserContract: COMPOSED_REFERENCE_GAME_BROWSER_API_V1,
         profileId: COMPOSED_REFERENCE_PROFILE_ID,
       }),
+      platform: platform(),
       chat: TavernBrowserFixtureV1.snapshot(),
       game: GameBrowserFixtureV1.state(),
     }),

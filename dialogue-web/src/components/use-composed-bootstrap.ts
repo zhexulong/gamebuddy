@@ -20,7 +20,6 @@ import {
 } from "../composed-reference-game-browser-api";
 import { PANEL_PARAM } from "../composed-surface-route";
 import { applyDocumentLocale, type Locale, type Messages, messages, persistLocale } from "../i18n";
-import type { ManagementPipelineApi } from "../management-pipeline-api";
 import {
   type BrowserTurnV1,
   createReferencePipelineApi,
@@ -43,7 +42,7 @@ import type { ViewState } from "./composed-reference-game-view";
  * Game slice it carries. Every later Chat refresh is the Chat half's own route, and the nested Reference
  * pipeline client remains the sole Chat mutation/events client.
  * This hook owns the first read of that root (the mounted conversation, its
- * durable draft and the display language), the view state that read commits, and
+ * durable draft and the display language its platform member carries), the view state that read commits, and
  * the fallback poll that settles a turn no event stream is delivering. The shell
  * keeps every other concern - the stream, the mutations, the surfaces and the
  * JSX - and reads what it needs from the returned cell.
@@ -121,7 +120,6 @@ export function readShellRoot(
 export function useComposedBootstrap(
   localeRef: RefObject<Locale>,
   setPreview: Dispatch<SetStateAction<ComposedPreviewV1 | null>>,
-  managementApi: ManagementPipelineApi,
 ): ComposedBootstrap {
   const composedApiRef = useRef(createComposedReferenceGameBrowserApi());
   const tavernApiRef = useRef(createReferencePipelineApi());
@@ -184,24 +182,20 @@ export function useComposedBootstrap(
           pair = null;
         }
         if (!active) return;
-        // The interface language the player CHOSE, from the one record that outlives the launch.
+        // The interface language the player CHOSE, carried by the SAME document as the session it is painted
+        // under.
         //
-        // It is read here, after the session exists and before the first commit, because that is the
-        // only moment it can still be a first paint: this browser's own storage is discarded with the
-        // ephemeral loopback origin the Desktop serves the shell from, so `resolveLocale` at mount can
-        // carry the last confirmed language across a start but can never establish it. The Host's
-        // answer wins over that cache, and the cache is rewritten from it so the next launch's first
-        // frame is right too. A profile that does not publish the route (or a Host that cannot answer)
-        // leaves the cache in force - the same one frame, never a failed surface.
-        try {
-          const stored = await managementApi.readUiLanguagePreference();
-          if (stored.locale !== null) {
-            localeRef.current = stored.locale;
-            applyDocumentLocale(stored.locale);
-            persistLocale(stored.locale);
-          }
-        } catch {
-          // The first-paint cache stands in; nothing about the conversation depends on this read.
+        // It is applied here, before the first commit, because that is the only moment it can still be a first
+        // paint: this browser's own storage is discarded with the ephemeral loopback origin the Desktop serves
+        // the shell from, so `resolveLocale` at mount can carry the last confirmed language across a start but
+        // can never establish it. The member's answer wins over that cache, and the cache is rewritten from it so
+        // the next launch's first frame is right too. A root with no platform member leaves the cache in force -
+        // the same one frame, never a failed surface; the shell states that absence itself.
+        const stored = root.platform?.preference.locale ?? null;
+        if (stored !== null) {
+          localeRef.current = stored;
+          applyDocumentLocale(stored);
+          persistLocale(stored);
         }
         setPreview(null);
         commit(
@@ -241,7 +235,7 @@ export function useComposedBootstrap(
       active = false;
       cancelledRef.current = true;
     };
-  }, [commit, managementApi]);
+  }, [commit]);
 
   /**
    * The pair a poll hop projects: the Chat half's own route, which carries the draft's revision *and* its

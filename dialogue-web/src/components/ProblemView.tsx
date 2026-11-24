@@ -14,8 +14,11 @@ export type ProblemViewAction = Readonly<{
  *    surfaces (`design/architecture/product-surfaces.md`), so the card takes the Chat region and
  *    the Game surface keeps its place, its projection and its running Player Host. The wrapper is
  *    the caller's: this card is a `<section>` in either case.
+ *  - `platform` - this Host answered a root with no `platform` member, so the page's own session and
+ *    preferences are what is missing. Nothing is drawn under such a root, because no peer can
+ *    authenticate without it; the card takes the region the peers would have shared.
  */
-export type ProblemViewRegion = "window" | "chat";
+export type ProblemViewRegion = "window" | "chat" | "platform";
 
 /**
  * The shell's own problem screen: a refusal it could not resolve, its own words, and the step it
@@ -74,7 +77,7 @@ export function ProblemView({
   // `<main id="main-content">` by the surface it belongs to, so it must not claim that id or a
   // second `main`; `.state-placeholder` (the region's own centred container, already in the
   // stylesheet) is the wrapper it is handed there.
-  if (region === "chat") return card;
+  if (region !== "window") return card;
   return (
     <main className="problem-view" id="main-content" tabIndex={-1}>
       {card}

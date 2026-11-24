@@ -3,11 +3,20 @@ import { StardewPlayerSettingsRevisionConflict } from "./games/stardew/stardew-p
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import {
+  COMPOSED_PLATFORM_ROUTES_V1,
   ComposedReferenceGameBrowserValidatorsV1,
+  type ComposedPlatformPreferenceV1,
   type ComposedReferenceGameBrowserProfile,
   isComposedReferenceGameBrowserProfile,
 } from "./composed-browser-contract/index.js";
-import { TavernBrowserValidatorsV1, type TavernStateSnapshotV1 } from "./tavern/browser-contract/index.js";
+import {
+  TavernBrowserValidatorsV1,
+  type TavernAppearancePreferenceCommandV1,
+  type TavernAppearancePreferenceV1,
+  type TavernStateSnapshotV1,
+  type TavernUiLanguagePreferenceCommandV1,
+  type TavernUiLanguagePreferenceV1,
+} from "./tavern/browser-contract/index.js";
 import {
   GameBrowserValidatorsV1,
   type GameBrowserStateV1,
@@ -44,11 +53,40 @@ export type ComposedReferenceGameBrowserReadContext = Readonly<{
   browserSessionExpiresAtMs: number;
 }>;
 
+/**
+ * The platform seam: the player's page-level preferences as this Host stores them, plus whether it holds the
+ * connection directory at all.
+ *
+ * `read` is what the root's `platform` member and both reads are projected from; the two writes take the wire
+ * command verbatim, so the revision a caller CASes on is the one the record holds and there is no second spelling
+ * of it here. A write that finds a stale revision throws, and the throw is bounded into the route's own refusal -
+ * the caller learns the write was refused, and its re-read of `read` is the authority on what the record says now.
+ */
+export type ComposedReferenceGameBrowserPlatformSeam = Readonly<{
+  read(): Promise<ComposedPlatformPreferenceV1>;
+  updateAppearance(command: TavernAppearancePreferenceCommandV1): Promise<ComposedPlatformPreferenceV1>;
+  updateLocale(command: TavernUiLanguagePreferenceCommandV1): Promise<ComposedPlatformPreferenceV1>;
+  connection: "available" | "unavailable";
+}>;
+
 export type ComposedReferenceGameBrowserRequestHandlerOptions = Readonly<{
   profile: ComposedReferenceGameBrowserProfile;
   bootstrapToken: string;
   readChat: (context: ComposedReferenceGameBrowserReadContext) => Promise<TavernStateSnapshotV1>;
   readGame?: (context: ComposedReferenceGameBrowserReadContext) => Promise<GameBrowserStateV1>;
+  /**
+   * The platform's own seam: the two page-level preferences this Host owns, and whether it has a connection
+   * directory at all.
+   *
+   * It is deliberately not one of the halves' seams. The halves are projections of two producers, either of
+   * which may be missing - that is what makes them peers - while the session, the appearance and the interface
+   * language belong to the page. Reading them out of whichever half happened to be readable is what made a
+   * mount with no Chat unable to authenticate anything: its management peers took `chat.csrfToken`, and there
+   * was no Chat to take it from. Absent, this Host publishes no `platform` member and serves no
+   * `/api/platform/v1/*` route - a mount that owes no page-level facts, rather than one that answers them
+   * empty.
+   */
+  platform?: ComposedReferenceGameBrowserPlatformSeam;
   /**
    * The Game surface's own push channel, when this Host holds one.
    *
@@ -1217,7 +1255,7 @@ type RouteRequest = Readonly<{
 
 /** One declared inbound kind: the wire shape it answers, and the handler that answers it. */
 type ComposedBrowserRoute = Readonly<{
-  method: "GET" | "POST";
+  method: "GET" | "POST" | "PUT";
   path: string;
   handle(request: RouteRequest): Promise<void>;
 }>;
@@ -1265,12 +1303,35 @@ type LifecycleRouteSpec<C> = Readonly<{
   failure: RouteFailure;
 }>;
 
+/** One platform route's own seams: what it runs, what it answers, and the two wire shapes it binds. */
+type PlatformRouteSpec = Readonly<{
+  run(command: unknown): Promise<ComposedPlatformPreferenceV1>;
+  project(preference: ComposedPlatformPreferenceV1): unknown;
+  commandCheck: ((value: unknown) => boolean) | null;
+  replyCheck(value: unknown): boolean;
+}>;
+
 /**
  * A compiled validator's own `Check`, carried with its receiver: the validator keeps its state on `this`, so a bare
  * method reference in a row would be called on nothing.
  */
 function boundCheck(validator: Readonly<{ Check(value: unknown): boolean }>): (value: unknown) => boolean {
   return (value) => validator.Check(value);
+}
+
+/**
+ * One of the platform member's two page-level preferences, as the wire shape its own route publishes.
+ *
+ * The record holds both in one revision and each route answers only its own field, so a panel reads the fact it
+ * shows rather than a record whose other half it would have to ignore. The revision is the record's: two routes
+ * answering the same number are one authority read twice, not two revisions.
+ */
+function appearancePreferenceOf(preference: ComposedPlatformPreferenceV1): TavernAppearancePreferenceV1 {
+  return { revision: preference.revision, appearance: preference.appearance };
+}
+
+function localePreferenceOf(preference: ComposedPlatformPreferenceV1): TavernUiLanguagePreferenceV1 {
+  return { revision: preference.revision, locale: preference.locale };
 }
 
 /**
@@ -1656,14 +1717,58 @@ export function createComposedReferenceGameBrowserRequestHandler(
   };
 
   /**
+   * The platform member of this root, or `undefined` when this Host could not publish it.
+   *
+   * It carries the SESSION's own facts, so it is built here rather than read from a producer: the token, the
+   * expiry and the connection's availability are this broker's own, and only the preferences come from a seam.
+   * `undefined` is the same answer a half's fault gets and it is answered differently on purpose - a root without
+   * a `platform` member is a root the shell can stand over only by saying so, whereas a root without a half is the
+   * shell missing one surface. Nothing here is derived from a half, which is the whole point of the member.
+   */
+  const readPlatformMember = async (
+    context: ComposedReferenceGameBrowserReadContext,
+  ): Promise<unknown | undefined> => {
+    const platform = options.platform;
+    if (platform === undefined) {
+      return undefined;
+    }
+
+    let preference: ComposedPlatformPreferenceV1;
+    try {
+      preference = await platform.read();
+    } catch {
+      return undefined;
+    }
+
+    const member = {
+      apiVersion: 1,
+      csrfToken: context.csrfToken,
+      browserSession: { expiresAtMs: context.browserSessionExpiresAtMs },
+      preference,
+      connection: platform.connection,
+    };
+
+    if (!ComposedReferenceGameBrowserValidatorsV1.ComposedPlatformStateV1Schema.Check(member)) {
+      return undefined;
+    }
+
+    return member;
+  };
+
+  /**
    * One read of the composed root: each half from its own producer, and each half's failure costing that half.
    *
    * A Chat half that cannot be read answers a root with no `chat` member at all, exactly as a Game half that
    * cannot be read answers one with no `game` - the two surfaces are peers, and neither producer is the other's
    * document. That is what keeps the one-time bootstrap credential usable, and the session it minted readable,
    * on a Host whose Chat side is the broken one: the Game surface still mounts and still runs the game.
+   *
+   * The `platform` member is neither half's: it is read first because it is the session both halves are read
+   * under, so a root whose platform could not be projected has no token to act with and the shell says exactly
+   * that instead of drawing a surface with nothing behind it.
    */
   const readComposedRoot = async (context: ComposedReferenceGameBrowserReadContext): Promise<unknown> => {
+    const platform = await readPlatformMember(context);
     const chat = await readChatHalf(context);
     const game = options.readGame === undefined ? null : await readGameHalf(options.readGame, context);
 
@@ -1673,6 +1778,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         browserContract: "composed_reference_game_browser_api/v1",
         profileId: "gamebuddy.composed.reference-game",
       },
+      ...(platform === undefined ? {} : { platform }),
       ...(chat === undefined ? {} : { chat }),
       ...(game === undefined ? {} : { game }),
     };
@@ -1869,6 +1975,84 @@ export function createComposedReferenceGameBrowserRequestHandler(
    * The subscription goes through `listen`, so the frame that starts the connection and the frames that follow it
    * arrive in one order: no publication can slip between the replay and the live subscription.
    */
+  /**
+   * The write admission the platform's two PUTs share: no query, an exact same-origin caller, a JSON body, the
+   * broker's own live session cookie, and the CSRF header that session minted. It is the same admission the
+   * management dispatcher makes for its own writes - these routes act on the player's page-level preferences, and
+   * a cross-origin page that could repaint or relabel the shell is exactly what the header is for.
+   */
+  const openPlatformWrite = async (context: RouteRequest): Promise<boolean> => {
+    if (!isEmptyQuery(context.url)) {
+      sendProblem(context.response, 409, "malformed_request");
+      return false;
+    }
+    if (
+      !isExactOrigin(context.request, context.origin) ||
+      !isExactJsonContentType(context.request.headers["content-type"])
+    ) {
+      sendProblem(context.response, 401, "unauthorized");
+      return false;
+    }
+
+    const activeSession = session;
+    const bearerToken = parseSingleCookie(context.request.headers.cookie, SESSION_COOKIE_NAME);
+    const submitted = singleHeaderValue(context.request.headers["x-csrf-token"]);
+    if (
+      activeSession === undefined ||
+      activeSession.expiresAtMs <= Date.now() ||
+      bearerToken === undefined ||
+      !timingSafeStringEqual(bearerToken, activeSession.bearerToken) ||
+      submitted === undefined ||
+      !timingSafeStringEqual(submitted, activeSession.csrfToken)
+    ) {
+      if (activeSession !== undefined && activeSession.expiresAtMs <= Date.now()) {
+        session = undefined;
+      }
+      sendProblem(context.response, 401, "unauthorized");
+      return false;
+    }
+
+    return true;
+  };
+
+  /**
+   * One platform route: its mount check, the admission its method takes, the command its row declares, and the
+   * projection it answers. Every failure on this family answers the one `state_unavailable` refusal, because none
+   * of them is a fault the player caused - a preference store that could not be read or CASed is this Host's.
+   */
+  const platformRoute = (
+    row: (typeof COMPOSED_PLATFORM_ROUTES_V1)[number],
+    spec: PlatformRouteSpec,
+  ): ComposedBrowserRoute => ({
+    method: row.method,
+    path: row.path,
+    handle: async (context: RouteRequest): Promise<void> => {
+      if (options.platform === undefined) {
+        sendProblem(context.response, 404, "not_found");
+        return;
+      }
+      if (row.method === "GET") {
+        if ((await openSessionContext(context)) === undefined) return;
+      } else if (!(await openPlatformWrite(context))) {
+        return;
+      }
+
+      let command: unknown;
+      if (spec.commandCheck !== null) {
+        const read = await readRouteCommand(context, { kind: "command", check: spec.commandCheck });
+        if (!read.ok) return;
+        command = read.command;
+      }
+
+      try {
+        const preference = await spec.run(command);
+        writeRouteReply(context.response, { kind: "result", check: spec.replyCheck }, spec.project(preference));
+      } catch {
+        sendProblem(context.response, 409, "state_unavailable");
+      }
+    },
+  });
+
   const readGameEventsRoute = async (context: RouteRequest): Promise<void> => {
     const stream = options.gameEventStream;
     const readContext = await openSessionContext(context, ["cursor"]);
@@ -2153,6 +2337,58 @@ export function createComposedReferenceGameBrowserRequestHandler(
     admissionOperations.set(key, kind);
   }
   for (const route of Object.values(sessionRoutes)) {
+    routes.set(routeKey(route.method, route.path), route);
+  }
+  /**
+   * The platform's family, mounted from its own declaration: the wire shapes are the contract's table, and this
+   * table supplies the one handler each row names. A declared route with no handler is refused at construction -
+   * a path the contract publishes and this handler cannot answer is a route that looks served and is not.
+   */
+  const platformRouteSpecs: ReadonlyMap<string, PlatformRouteSpec> = new Map<string, PlatformRouteSpec>([
+    [
+      "appearance:GET",
+      {
+        run: async (_command: unknown) => options.platform!.read(),
+        project: appearancePreferenceOf,
+        commandCheck: null,
+        replyCheck: boundCheck(TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema),
+      },
+    ],
+    [
+      "appearance:PUT",
+      {
+        run: async (command: unknown) =>
+          options.platform!.updateAppearance(command as TavernAppearancePreferenceCommandV1),
+        project: appearancePreferenceOf,
+        commandCheck: boundCheck(TavernBrowserValidatorsV1.TavernAppearancePreferenceCommandV1Schema),
+        replyCheck: boundCheck(TavernBrowserValidatorsV1.TavernAppearancePreferenceV1Schema),
+      },
+    ],
+    [
+      "locale:GET",
+      {
+        run: async (_command: unknown) => options.platform!.read(),
+        project: localePreferenceOf,
+        commandCheck: null,
+        replyCheck: boundCheck(TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema),
+      },
+    ],
+    [
+      "locale:PUT",
+      {
+        run: async (command: unknown) => options.platform!.updateLocale(command as TavernUiLanguagePreferenceCommandV1),
+        project: localePreferenceOf,
+        commandCheck: boundCheck(TavernBrowserValidatorsV1.TavernUiLanguagePreferenceCommandV1Schema),
+        replyCheck: boundCheck(TavernBrowserValidatorsV1.TavernUiLanguagePreferenceV1Schema),
+      },
+    ],
+  ]);
+  for (const row of COMPOSED_PLATFORM_ROUTES_V1) {
+    const spec = platformRouteSpecs.get(`${row.concern}:${row.method}`);
+    if (spec === undefined) {
+      throw new Error("composed_platform_route_unhandled");
+    }
+    const route = platformRoute(row, spec);
     routes.set(routeKey(route.method, route.path), route);
   }
   lifecycleActivationIssuers.set(lifecycleActivationIssuer, { currentSession, admissionOperations });

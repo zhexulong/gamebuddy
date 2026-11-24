@@ -4,6 +4,7 @@ import {
   createComposedReferenceGameBrowserRequestHandler,
   type ComposedReferenceGameBrowserLifecycleActivationAdmission,
   type ComposedReferenceGameBrowserLifecycleActivationBindingSink,
+  type ComposedReferenceGameBrowserPlatformSeam,
   type ComposedReferenceGameBrowserReadContext,
 } from "../composed-reference-game-browser.js";
 import { createReferencePipelineDialogueWebDelegatedHandler } from "../reference-pipeline-dialogue-web.delegated.js";
@@ -27,7 +28,11 @@ import type { ChatPipelineService } from "./chat-pipeline-service.js";
 import type { ReferencePipelineStateFacade } from "./reference-pipeline-state.js";
 import type { WindowsReparseInspectorCapability } from "../windows-reparse-inspector/index.js";
 import type { GameEventStream } from "../game-browser/game-event-stream.js";
-import type { ComposedReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
+import type { PlayerPreference } from "../settings/player-preference-store.js";
+import type {
+  ComposedPlatformPreferenceV1,
+  ComposedReferenceGameBrowserProfile,
+} from "../composed-browser-contract/index.js";
 import type {
   GameBrowserStateV1,
   GameLaunchCommandV1,
@@ -119,6 +124,14 @@ export async function startComposedReferenceGameStaticShellComposition(
     bootstrapToken: options.bootstrapToken,
     readChat,
     ...(options.readGame === undefined ? {} : { readGame: options.readGame }),
+    ...(options.management?.playerPreferenceStore === undefined
+      ? {}
+      : {
+          platform: composedPlatformSeam(
+            options.management.playerPreferenceStore,
+            options.management.connectionService === undefined ? "unavailable" : "available",
+          ),
+        }),
     ...(options.gameEventStream === undefined ? {} : { gameEventStream: options.gameEventStream }),
     ...(options.lifecycleActivationBindingSink === undefined ||
     options.lifecycleActivationBindingSink.activate === undefined
@@ -422,6 +435,38 @@ async function listenLoopback(server: Server): Promise<number> {
   if (!address || typeof address === "string" || address.address !== LOOPBACK_HOST)
     throw new Error("dialogue_loopback_bind_failed");
   return address.port;
+}
+
+/**
+ * The platform seam this shell publishes: the ONE player-preference record the Settings surface also writes,
+ * projected per field, plus whether this composition bound a connection directory at all.
+ *
+ * It reads and writes the same record the management dispatcher does, so the appearance a player picks in Settings
+ * and the appearance the page was painted with at mount are one fact with one revision - a second copy of the
+ * record here would be a second authority for it. A stale write throws the store's own revision conflict and the
+ * route answers its generic refusal; the panel's re-read is then the authority on what the record says, exactly as
+ * it already is for the Chat-owned settings beside it.
+ *
+ * `connection` is a fact about the COMPOSITION, not about a record: a Host composed without the connection service
+ * has no directory to offer, and the shell says so instead of asking a route that was never mounted.
+ */
+function composedPlatformSeam(
+  playerPreferenceStore: NonNullable<TavernManagementDelegatedOptions["playerPreferenceStore"]>,
+  connection: "available" | "unavailable",
+): ComposedReferenceGameBrowserPlatformSeam {
+  const project = (preference: PlayerPreference): ComposedPlatformPreferenceV1 => ({
+    revision: preference.revision,
+    appearance: preference.appearance ?? "system",
+    locale: preference.uiLocale ?? null,
+  });
+  return Object.freeze({
+    read: async () => project(await playerPreferenceStore.read()),
+    updateAppearance: async (command) =>
+      project(await playerPreferenceStore.update(command.expectedRevision, { action: "setAppearance", appearance: command.appearance })),
+    updateLocale: async (command) =>
+      project(await playerPreferenceStore.update(command.expectedRevision, { action: "setUiLocale", uiLocale: command.locale })),
+    connection,
+  });
 }
 
 /**

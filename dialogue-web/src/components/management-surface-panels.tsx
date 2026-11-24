@@ -1700,6 +1700,7 @@ function SettingsTabPanel({
 export function SettingsSurfacePanel({
   api,
   csrfToken,
+  connectionAvailable,
   labels,
   uiLocale,
   onSelectUiLocale,
@@ -1709,6 +1710,8 @@ export function SettingsSurfacePanel({
 }: Readonly<{
   api: ManagementPipelineApi;
   csrfToken: string;
+  /** Whether this Host composed a connection/model directory at all: `false` means the route was never mounted. */
+  connectionAvailable?: boolean;
   labels: Messages;
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
@@ -1885,14 +1888,20 @@ export function SettingsSurfacePanel({
       let profilesRead:
         | Readonly<{ ok: true; profiles: TavernModelProfilesV1 }>
         | Readonly<{ ok: false; error: unknown }> = { ok: false, error: undefined };
-      try {
-        const state = await api.readConnection();
-        connectionRead = { ok: true, state };
-        // The projected readiness IS the durable record's readiness; the panel
-        // never derives a ready state from local intent.
-        if (active) setConnectionView({ kind: "ready", state, pending: false, notice: null });
-      } catch {
+      if (connectionAvailable === false) {
+        // The mount's platform member said this Host composed no connection directory at all, so the group says
+        // that rather than asking a route that was never mounted - and rather than reading as a failed read.
         if (active) setConnectionView({ kind: "unavailable" });
+      } else {
+        try {
+          const state = await api.readConnection();
+          connectionRead = { ok: true, state };
+          // The projected readiness IS the durable record's readiness; the panel
+          // never derives a ready state from local intent.
+          if (active) setConnectionView({ kind: "ready", state, pending: false, notice: null });
+        } catch {
+          if (active) setConnectionView({ kind: "unavailable" });
+        }
       }
       try {
         // The read-probe is how the panel learns whether the mounted profile
@@ -1961,7 +1970,7 @@ export function SettingsSurfacePanel({
     return () => {
       active = false;
     };
-  }, [api, csrfToken, settingsReads]);
+  }, [api, csrfToken, connectionAvailable, settingsReads]);
 
   /**
    * Writes the companion language. It is the player's own BCP-47 tag, so nothing

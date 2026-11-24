@@ -6,7 +6,7 @@
  * its verdict. The claims:
  *
  *   1. THE TREE PASSES, with the populations printed: the schema's two members both optional, the shell's five
- *      subjects, the Chat-half comparisons, the four declared platform debt rows.
+ *      subjects, the Chat-half comparisons, the Host's four declared platform routes with a browser client each.
  *   2. A REQUIRED CHAT MEMBER IS RED, naming BOTH members and both shapes - the schema the PLATFORMSPLIT lane
  *      was written against, where a missing Chat half was a root the broker refuses.
  *   3. A SHELL CONDITION ON THE CHAT HALF IS RED AT ITS OWN LINE, naming the AppBar and the Game surface the
@@ -14,9 +14,10 @@
  *   4. A FALLBACK THE GAME HALF ALSO ANSWERS IS NOT A CHAT-HALF CONDITION: the same guard over
  *      `chatSession?.snapshot.csrfToken ?? view.root.game?.csrfToken ?? null` stays green, because the Game half
  *      can answer it alone.
- *   5. THE DEBT EXPIRES BY NAME: a `/api/platform/v1/connection` caller is `platform_debt_expired` naming the
- *      row's owner; a platform route no row names is `platform_route_unjudged`; a row whose declared reach is
- *      gone is `platform_debt_reach_gone`.
+ *   5. THE FAMILY IS THE BROWSER'S ONLY SOURCE: a Chat-half spelling that came back is
+ *      `platform_fact_read_through_the_chat_half` at its own line; a declared route nobody reads is
+ *      `platform_route_unread`; a `/api/platform/v1/...` route the Host's declaration does not name is
+ *      `platform_route_unjudged`.
  *   6. ZERO POPULATION BLOCKS: an empty tree, a tree with no shell subject, and a tree where nothing reads the
  *      Chat half are each blocked with the population named.
  *
@@ -26,10 +27,10 @@
  *   -> `game_mount_is_gated_on_the_chat_half` at the condition's line, naming app-bar, shell-region and
  *   game-surface; the same guard over a token the Game half also answers is green
  *   (gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs)
- * red-proof: inject   a `/api/platform/v1/connection` read -> `platform_debt_expired:connection` naming the
- *   owner and the expiry; `/api/platform/v1/status` with no row -> `platform_route_unjudged`; the locale row's
- *   reach deleted -> `platform_debt_reach_gone`
- *   (gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs)
+ * red-proof: inject   a browser read of `/api/tavern/v1/settings/appearance` after the platform route took it over
+ *   -> `platform_fact_read_through_the_chat_half` naming the concern and the route that replaced it; a declared
+ *   route with no browser caller -> `platform_route_unread`; `/api/platform/v1/status` with no declaration ->
+ *   `platform_route_unjudged` (gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs)
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -39,7 +40,7 @@ import test from "node:test";
 import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import {
   checkTheGameMountDoesNotDependOnTheChat,
-  PLATFORM_DEBT,
+  PLATFORM_ROUTE_DECLARATION,
   ROOT_SCHEMA,
   SHELL_COMPONENTS,
 } from "./check-game-mount-does-not-depend-on-the-chat.mjs";
@@ -52,6 +53,27 @@ const ROUTES_FILE = `${WEB_SOURCES}/management-pipeline-api.ts`;
 const CHAT_OPTIONAL = "chat: Type.Optional(Type.Union([TavernStateSnapshotV1Schema, Type.Null()])),";
 const GAME_OPTIONAL = "game: Type.Optional(Type.Union([GameBrowserStateV1Schema, Type.Null()])),";
 
+/**
+ * The Host's own declaration of the platform's route family, as the root schema module publishes it.
+ *
+ * It lives in the same file as the root schema because that is where the product declares it
+ * (`COMPOSED_PLATFORM_ROUTES_V1` in `host/src/composed-browser-contract/index.ts`), so a case that moves a route
+ * changes one file and the gate reads the declaration rather than a second list.
+ */
+const platformRoutes = ({
+  appearance = "/api/platform/v1/appearance",
+  locale = "/api/platform/v1/locale",
+  replacesAppearance = ["/api/tavern/v1/settings/appearance"],
+  replacesLocale = ["/api/tavern/v1/settings/ui-language"],
+} = {}) => `
+export const ${PLATFORM_ROUTE_DECLARATION} = Object.freeze([
+  Object.freeze({ concern: "appearance" as const, method: "GET" as const, path: "${appearance}", replaces: Object.freeze([${replacesAppearance.map((entry) => `"${entry}"`).join(", ")}]) }),
+  Object.freeze({ concern: "appearance" as const, method: "PUT" as const, path: "${appearance}", replaces: Object.freeze([${replacesAppearance.map((entry) => `"${entry}"`).join(", ")}]) }),
+  Object.freeze({ concern: "locale" as const, method: "GET" as const, path: "${locale}", replaces: Object.freeze([${replacesLocale.map((entry) => `"${entry}"`).join(", ")}]) }),
+  Object.freeze({ concern: "locale" as const, method: "PUT" as const, path: "${locale}", replaces: Object.freeze([${replacesLocale.map((entry) => `"${entry}"`).join(", ")}]) }),
+]);
+`;
+
 /** The root schema as its own declaration, with the two members a case supplies. */
 const schema = ({ chat = CHAT_OPTIONAL, game = GAME_OPTIONAL } = {}) => `
 export const ComposedReferenceGameBrowserRootV1Schema = strictObject({
@@ -60,15 +82,19 @@ export const ComposedReferenceGameBrowserRootV1Schema = strictObject({
   ${chat}
   ${game}
 });
+${platformRoutes()}
 `;
 
-/** The Chat half's routes: every declared concern's reach, so a case that changes one changes only that one. */
+/**
+ * The browser's side: it reads the platform's four wire shapes and no Chat-half spelling of either concern.
+ *
+ * A case that wants a Chat-half read back, or a declared route nobody asks for, changes one line here.
+ */
 const routes = (lines = []) => `
-export const connection = "/api/tavern/v1/settings/connection";
-export const connections = "/api/tavern/v1/settings/connections";
-${lines.includes("locale") ? "" : 'export const uiLanguage = "/api/tavern/v1/settings/ui-language";'}
-export const appearance = "/api/tavern/v1/settings/appearance";
-export const token = (snapshot) => snapshot.csrfToken;
+export const readAppearance = () => fetch("/api/platform/v1/appearance");
+export const writeAppearance = () => fetch("/api/platform/v1/appearance", { method: "PUT" });
+export const readLocale = () => fetch("/api/platform/v1/locale");
+export const writeLocale = () => fetch("/api/platform/v1/locale", { method: "PUT" });
 ${lines.join("\n")}
 `;
 
@@ -168,7 +194,15 @@ test("the tree passes: the halves are peers and no shell subject hangs from the 
     "the shell's own subjects are resolved, or reading 2 measured nothing",
   );
   assert.ok(reading.comparisons.length > 0, "the Chat half's presence is compared somewhere in the shell's tree");
-  assert.equal(reading.debtRows.length, PLATFORM_DEBT.length);
+  assert.equal(reading.debtRows.length, 4, "the Host declares four platform wire shapes");
+  assert.ok(
+    reading.debtRows.every((row) => row.clients > 0),
+    `every declared platform route has a browser client: ${JSON.stringify(reading.debtRows)}`,
+  );
+  assert.ok(
+    reading.retired.every((row) => row.sites === 0),
+    `no Chat-half spelling of a platform concern is read: ${JSON.stringify(reading.retired)}`,
+  );
 });
 
 test("a required Chat member beside an optional Game is named with both members and both shapes", (t) => {
@@ -214,33 +248,46 @@ test("a fallback the Game half also answers is not a Chat-half condition", (t) =
   );
 });
 
-test("the debt expires by name: a platform route is named with its row's owner", (t) => {
-  const root = greenTree(t, {
-    [ROUTES_FILE]: routes(['export const moved = "/api/platform/v1/connection";']),
-  });
-  const reading = checkTheGameMountDoesNotDependOnTheChat({ root });
+test("a Chat-half spelling that came back is red at its own line, naming the route that replaced it", (t) => {
+  const browser = routes(['export const moved = fetch("/api/tavern/v1/settings/appearance");']);
+  const reading = checkTheGameMountDoesNotDependOnTheChat({ root: greenTree(t, { [ROUTES_FILE]: browser }) });
   assert.equal(reading.status, "failed");
-  const expired = reading.violations.find((violation) => violation.code === "platform_debt_expired");
-  assert.ok(expired !== undefined, codes(reading).join(", "));
-  assert.match(expired.detail, /connection debt has expired/u);
-  assert.match(expired.detail, /delete its row in PLATFORM_DEBT/u);
-  assert.match(expired.detail, /management-pipeline-api\.ts/u);
+  const violation = reading.violations.find((entry) => entry.code === "platform_fact_read_through_the_chat_half");
+  assert.ok(violation !== undefined, codes(reading).join(", "));
+  assert.equal(violation.at, `${ROUTES_FILE}:${lineOfSource(browser, "/api/tavern/v1/settings/appearance")}`);
+  assert.match(violation.detail, /the Chat half's spelling of the appearance/u);
+  assert.match(violation.detail, /`GET \/api\/platform\/v1\/appearance` took it over/u);
+  assert.match(violation.detail, /reachable only where a Chat half is/u);
 });
 
-test("a platform route no row names is unjudged, never passed", (t) => {
-  const declared = routes(['export const status = "/api/platform/v1/status";']);
+test("a declared platform route nobody reads is red, naming the wire shape", (t) => {
+  const declared = schema();
+  const root = greenTree(t, {
+    [ROOT_SCHEMA]: declared.replace(
+      /path: "\/api\/platform\/v1\/locale", replaces: Object\.freeze\(\["\/api\/tavern\/v1\/settings\/ui-language"\]\) \}\),\n  Object\.freeze\(\{ concern: "locale" as const, method: "PUT" as const/u,
+      'path: "/api/platform/v1/nowhere", replaces: Object.freeze(["/api/tavern/v1/settings/ui-language"]) }),\n  Object.freeze({ concern: "locale" as const, method: "PUT" as const',
+    ),
+  });
+  const reading = checkTheGameMountDoesNotDependOnTheChat({ root });
+  const violation = reading.violations.find((entry) => entry.code === "platform_route_unread");
+  assert.ok(violation !== undefined, codes(reading).join(", "));
+  assert.match(violation.detail, /GET \/api\/platform\/v1\/nowhere/u);
+  assert.match(violation.detail, /no browser module under dialogue-web\/src reads it/u);
+});
+
+test("a platform route no declaration names is unjudged, never passed", (t) => {
+  const declared = routes(['export const status = fetch("/api/platform/v1/status");']);
   const reading = checkTheGameMountDoesNotDependOnTheChat({ root: greenTree(t, { [ROUTES_FILE]: declared }) });
   assert.deepEqual(codes(reading), ["platform_route_unjudged"]);
   assert.equal(reading.violations[0].at, `${ROUTES_FILE}:${lineOfSource(declared, "/api/platform/v1/status")}`);
+  assert.match(reading.violations[0].detail, new RegExp(PLATFORM_ROUTE_DECLARATION, "u"));
 });
 
-test("a row whose declared reach is gone is stale, and names its owner", (t) => {
-  const root = greenTree(t, { [ROUTES_FILE]: routes(["locale"]) });
+test("a Host whose declaration cannot be read blocks rather than passing", (t) => {
+  const root = greenTree(t, { [ROOT_SCHEMA]: schema().replace(PLATFORM_ROUTE_DECLARATION, "SOMETHING_ELSE") });
   const reading = checkTheGameMountDoesNotDependOnTheChat({ root });
-  assert.deepEqual(codes(reading), ["platform_debt_reach_gone"]);
-  assert.match(reading.violations[0].detail, /locale's declared reach/u);
-  assert.match(reading.violations[0].detail, /i18n\.ts/u);
-  assert.match(reading.violations[0].detail, /expiry is/u);
+  assert.equal(reading.status, "blocked");
+  assert.match(String(reading.blocked), /platform_routes_not_declared/u);
 });
 
 test("zero populations block, each naming the population it lost", (t) => {

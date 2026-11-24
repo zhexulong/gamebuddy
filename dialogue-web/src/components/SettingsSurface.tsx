@@ -23,6 +23,7 @@ import { SurfaceView } from "./SurfaceView";
 export function SettingsSurface({
   api,
   csrfToken,
+  connectionAvailable,
   labels,
   uiLocale,
   onSelectUiLocale,
@@ -32,6 +33,13 @@ export function SettingsSurface({
 }: {
   api: ManagementPipelineApi;
   csrfToken: string;
+  /**
+   * Whether this Host composed a connection/model directory at all, from the mount's platform member.
+   *
+   * `false` is not a failed read: the directory was never mounted, so the group says so instead of asking a
+   * route that cannot answer. `true` keeps the panel's own read, which is still how it learns the records.
+   */
+  connectionAvailable: boolean;
   labels: Messages;
   uiLocale: Locale;
   onSelectUiLocale: (locale: Locale) => void;
@@ -51,6 +59,7 @@ export function SettingsSurface({
       <SettingsSurfacePanel
         api={api}
         csrfToken={csrfToken}
+        connectionAvailable={connectionAvailable}
         labels={labels}
         uiLocale={uiLocale}
         onSelectUiLocale={onSelectUiLocale}

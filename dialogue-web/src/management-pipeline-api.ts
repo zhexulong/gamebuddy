@@ -4018,22 +4018,25 @@ export type ManagementPipelineApi = Readonly<{
     csrfToken: string,
   ): Promise<TavernGamePromptAdditionV1>;
   /**
-   * GET /api/tavern/v1/settings/appearance (browser session; no CSRF header): which appearance this
-   * browser paints itself in. `system` is a stored choice, not an absence, so the client substitutes
-   * nothing.
+   * GET /api/platform/v1/appearance (browser session; no CSRF header): which appearance this browser paints
+   * itself in. `system` is a stored choice, not an absence, so the client substitutes nothing.
+   *
+   * The appearance is the PAGE's, not a conversation's, so it is answered by the platform's own route family:
+   * a mount with no readable Chat half still paints itself in the appearance the player chose, and this client
+   * is the one place the panel reads it (`useAppearance` reads the same fact off the mount's platform member).
    */
   readAppearancePreference(): Promise<TavernAppearancePreferenceV1>;
-  /** PUT /api/tavern/v1/settings/appearance with browser-session CSRF protection. */
+  /** PUT /api/platform/v1/appearance with browser-session CSRF protection. */
   updateAppearancePreference(
     command: TavernAppearancePreferenceCommandV1,
     csrfToken: string,
   ): Promise<TavernAppearancePreferenceV1>;
   /**
-   * GET /api/tavern/v1/settings/ui-language (browser session; no CSRF header): the language this
-   * browser paints its own interface in, or null when the player never chose one.
+   * GET /api/platform/v1/locale (browser session; no CSRF header): the language this browser paints its own
+   * interface in, or null when the player never chose one.
    */
   readUiLanguagePreference(): Promise<TavernUiLanguagePreferenceV1>;
-  /** PUT /api/tavern/v1/settings/ui-language with browser-session CSRF protection. */
+  /** PUT /api/platform/v1/locale with browser-session CSRF protection. */
   updateUiLanguagePreference(
     command: TavernUiLanguagePreferenceCommandV1,
     csrfToken: string,
@@ -4571,7 +4574,7 @@ export function createManagementPipelineApi(
       return result;
     },
     async readAppearancePreference(): Promise<TavernAppearancePreferenceV1> {
-      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/appearance", 200, validateAppearancePreference);
+      return exchange(fetchLike, "GET", "/api/platform/v1/appearance", 200, validateAppearancePreference);
     },
     async updateAppearancePreference(
       command: TavernAppearancePreferenceCommandV1,
@@ -4581,7 +4584,7 @@ export function createManagementPipelineApi(
       const result = await exchange(
         fetchLike,
         "PUT",
-        "/api/tavern/v1/settings/appearance",
+        "/api/platform/v1/appearance",
         200,
         validateAppearancePreference,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },
@@ -4590,7 +4593,7 @@ export function createManagementPipelineApi(
       return result;
     },
     async readUiLanguagePreference(): Promise<TavernUiLanguagePreferenceV1> {
-      return exchange(fetchLike, "GET", "/api/tavern/v1/settings/ui-language", 200, validateUiLanguagePreference);
+      return exchange(fetchLike, "GET", "/api/platform/v1/locale", 200, validateUiLanguagePreference);
     },
     async updateUiLanguagePreference(
       command: TavernUiLanguagePreferenceCommandV1,
@@ -4600,7 +4603,7 @@ export function createManagementPipelineApi(
       return await exchange(
         fetchLike,
         "PUT",
-        "/api/tavern/v1/settings/ui-language",
+        "/api/platform/v1/locale",
         200,
         validateUiLanguagePreference,
         { "Content-Type": "application/json", "x-csrf-token": csrfToken },

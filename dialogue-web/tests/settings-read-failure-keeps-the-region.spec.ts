@@ -43,6 +43,14 @@ const composedRoot = {
     eventStream: null,
   },
   game: null,
+  platform: {
+    apiVersion: 1,
+    // The same session the Chat half publishes: one root is one browser session.
+    csrfToken,
+    browserSession: { expiresAtMs },
+    preference: { revision: 1, appearance: "system", locale: "en" },
+    connection: "available",
+  },
 };
 
 const profilesBody = {
@@ -83,10 +91,10 @@ async function mountWithFailingReads(page: Page, profilesAnswersOn: number): Pro
   );
   // The four groups that are NOT under test answer, so the reading below is about the two that do not:
   // a group that failed for its own reason would put a second, unrelated retry on the screen.
-  await page.route("**/api/tavern/v1/settings/appearance", (route) =>
+  await page.route("**/api/platform/v1/appearance", (route) =>
     route.fulfill(json200({ revision: 1, appearance: "system" })),
   );
-  await page.route("**/api/tavern/v1/settings/ui-language", (route) =>
+  await page.route("**/api/platform/v1/locale", (route) =>
     route.fulfill(json200({ revision: 1, locale: "en" })),
   );
   await page.route("**/api/tavern/v1/settings/sampler", (route) =>

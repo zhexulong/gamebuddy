@@ -4,6 +4,7 @@ import { chatHalfPair, chatSnapshotPairFromRoot, readChatSnapshotPair, withChatH
 import {
   declaredProblemSentence,
   composedProblemView as problemView,
+  platformProblemView,
   problemStepPresentation,
 } from "../composed-problem-view";
 import type { ComposedReferenceGameBrowserRootV1 } from "../composed-reference-game-browser-api";
@@ -215,10 +216,6 @@ export function ComposedReferenceGameApp() {
     applyDocumentLocale(localeRef.current);
   }, []);
 
-  // The appearance lives on the page, not on one panel: it is read and applied at mount, so a
-  // player who chose the light appearance never sees the dark one while the conversation loads.
-  const appearance = useAppearance(managementPipelineApiRef.current);
-
   const { shownSurface, openPanelOf, leaveSurface } = useSurfaceRoute({
     returnFocusTo: composerFieldRef,
     // The preset readout is the one surface opened from inside another surface (Settings' own
@@ -226,7 +223,7 @@ export function ComposedReferenceGameApp() {
     parentOf: { [PRESETS_PANEL]: SETTINGS_PANEL },
   });
 
-  const bootstrap = useComposedBootstrap(localeRef, setPreview, managementPipelineApiRef.current);
+  const bootstrap = useComposedBootstrap(localeRef, setPreview);
   const {
     view,
     viewRef,
@@ -241,6 +238,21 @@ export function ComposedReferenceGameApp() {
     setPollFailure,
     startPolling,
   } = bootstrap;
+
+  /**
+   * The platform's own facts, read once from the committed root.
+   *
+   * `platform` is the SESSION's member and no half's: the token every management call authenticates with, the
+   * appearance this page is painted in, the interface language, and whether this Host has a connection directory
+   * at all. It used to be borrowed from whichever half was readable - the shell's token was
+   * `session.snapshot.csrfToken` first and the Game half's second - which is why a mount with no readable Chat
+   * half had no token to act with. `null` is a root whose platform could not be published, and the shell says so
+   * in `platformProblem` rather than drawing a surface with `undefined` behind it.
+   */
+  const platform = view.kind === "ready" ? (view.root.platform ?? null) : null;
+  // The appearance lives on the page, not on one panel: it is applied from the mount's own member, so a player
+  // who chose the light appearance never sees the dark one while the conversation loads.
+  const appearance = useAppearance(platform?.preference.appearance ?? null);
 
   /**
    * Commits a failed CHAT read to the place it belongs: the Chat region.
@@ -1285,12 +1297,23 @@ export function ComposedReferenceGameApp() {
   const chatProblemCard = chatProblem === null ? null : problemStepPresentation(chatProblem.step, labels());
 
   // The conversation's own facts, read once. A root with no readable Chat half has no session, so everything
-  // derived from the conversation is absent with it - and everything the Game region owns, including the session
-  // token both halves publish, is not.
+  // derived from the conversation is absent with it - and the SESSION, which belongs to neither half, is not.
   const chatSession = view.kind === "ready" ? view.session : null;
   const mountedChat = chatSession?.snapshot.chat ?? null;
-  const shellCsrfToken =
-    chatSession?.snapshot.csrfToken ?? (view.kind === "ready" ? (view.root.game?.csrfToken ?? null) : null);
+  /**
+   * The one token every management call carries: the platform's.
+   *
+   * It is the session both halves are read under, so it is here whether or not either half published anything -
+   * which is exactly what a mount with no readable Chat half needs, and what the Settings, Chats, Characters,
+   * Memory and Game-settings routes authenticate with. It is deliberately NOT `session.snapshot.csrfToken` with a
+   * Game-half fallback: a fact with two spellings is a fact that disagrees with itself the first time one of them
+   * goes missing.
+   */
+  const shellCsrfToken = platform?.csrfToken ?? null;
+  /** The card this shell stands over when the root carried no platform member: the token, the appearance and the
+   * interface language are the page's, so there is nothing here to act with and the shell says so by name. */
+  const platformProblem = view.kind === "ready" && platform === null ? platformProblemView(labels()) : null;
+  const platformCard = platformProblem === null ? null : problemStepPresentation(platformProblem.step, labels());
 
   return (
     // One draft store for every surface: the shell is the only thing that outlives them.
@@ -1312,6 +1335,25 @@ export function ComposedReferenceGameApp() {
             stepLine={problemCard.stepLine}
             action={problemCard.drawsOwnRead ? { label: labels().problemRetryRead, run: retryProblemView } : null}
           />
+        )}
+        {view.kind === "ready" && platformProblem !== null && platformCard !== null && (
+          // The root carried no platform member: this Host could not publish the session the page acts under,
+          // so there is no surface to draw that would not be acting with a token it does not have. The card is
+          // the region's and it says so by NAME (`platform-problem`), which is the difference between a shell
+          // that states its one missing fact and a shell that passes `undefined` into six surfaces at once.
+          // It stands beside the ready branch rather than inside it because `shellCsrfToken` is exactly what
+          // this root did not publish.
+          <main id="main-content" className="app-main-content" tabIndex={-1}>
+            <div className="state-placeholder" data-testid="platform-problem">
+              <ProblemView
+                region="platform"
+                title={platformProblem.title}
+                detail={platformProblem.detail}
+                stepLine={platformCard.stepLine}
+                action={null}
+              />
+            </div>
+          </main>
         )}
         {view.kind === "ready" && shellCsrfToken !== null && (
           <>
@@ -1473,12 +1515,12 @@ export function ComposedReferenceGameApp() {
               {/* The Chat-owned peers, behind one guard: Chats, Characters, Settings, Memory and the preset readout
                   are all read through the Chat half, and a root with no readable Chat half offers none of them - the
                   bar already drops their entries for the same fact (`surfaceBarEntries`). */}
-              {chatSession !== null && (
+              {platform !== null && chatSession !== null && (
                 <>
                   {shownSurface === CHATS_PANEL && (
                     <ChatsSurface
                       api={managementPipelineApiRef.current}
-                      csrfToken={chatSession.snapshot.csrfToken}
+                      csrfToken={platform.csrfToken}
                       labels={labels()}
                       selectionGeneration={chatSession.snapshot.selection?.generation ?? 0}
                       currentChatHandle={chatSession.snapshot.selection?.chatHandle ?? ""}
@@ -1492,7 +1534,7 @@ export function ComposedReferenceGameApp() {
                   {shownSurface === CHARACTERS_PANEL && (
                     <CharactersSurface
                       api={managementPipelineApiRef.current}
-                      csrfToken={chatSession.snapshot.csrfToken}
+                      csrfToken={platform.csrfToken}
                       labels={labels()}
                       locale={view.locale}
                       read={readProductWorldInfo}
@@ -1504,7 +1546,8 @@ export function ComposedReferenceGameApp() {
                   {shownSurface === SETTINGS_PANEL && (
                     <SettingsSurface
                       api={managementPipelineApiRef.current}
-                      csrfToken={chatSession.snapshot.csrfToken}
+                      csrfToken={platform.csrfToken}
+                      connectionAvailable={platform.connection === "available"}
                       labels={labels()}
                       uiLocale={view.locale}
                       onSelectUiLocale={adoptUiLocale}
@@ -1516,7 +1559,7 @@ export function ComposedReferenceGameApp() {
                   {shownSurface === MEMORY_PANEL && (
                     <MemorySurface
                       api={managementPipelineApiRef.current}
-                      csrfToken={chatSession.snapshot.csrfToken}
+                      csrfToken={platform.csrfToken}
                       labels={labels()}
                       locale={view.locale}
                       conversationTurn={mountedTurn}

@@ -1,5 +1,10 @@
 // @zone contract:platform
 import { assertNever } from "./assert-never.js";
+// The appearance union and the interface-language union are the application's own, imported as TYPES for the same
+// reason `management-pipeline-api.ts` imports them: this module emits nothing for either, and the guard beside the
+// platform member re-spells the members the Host contract declares.
+import type { AppearanceChoice } from "./appearance.js";
+import type { Locale } from "./i18n.js";
 import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeline-api.js";
 import {
   CABIN_OCCUPANCY_UNKNOWN_REASONS,
@@ -167,16 +172,17 @@ export const GAME_PROBLEM_CODES = [
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
 /**
- * The composed root's members, as the two facts a reader has to hold separately: which are always here, and
+ * The root's members, as the two facts a reader has to hold separately: which are always here, and
  * which a degraded Host may leave out.
  *
- * `chat` and `game` are the two surface halves, and each answers three ways - a projection, `null` for a Host
- * whose profile mounts none, and ABSENT for a Host that mounts one and could not read it. Enumerating one key
- * list per combination is what the installation candidate above already had to stop doing: two optional members
- * are four lists, and the forgotten one is silent.
+ * `platform` is the session's own facts and the two page-level preferences; `chat` and `game` are the two
+ * surface halves. Each of the three answers by its own presence: a member that is there was read, and a member
+ * that is absent could not be - which is why the key sets are required + optional rather than one list per
+ * combination. Enumerating one key list per combination is what the installation candidate above already had to
+ * stop doing: three optional members are eight lists, and the forgotten one is silent.
  */
 const ROOT_REQUIRED_KEYS = ["apiVersion", "build"] as const;
-const ROOT_OPTIONAL_KEYS = ["chat", "game"] as const;
+const ROOT_OPTIONAL_KEYS = ["platform", "chat", "game"] as const;
 const ROOT_ALLOWED_KEYS: ReadonlySet<string> = new Set([...ROOT_REQUIRED_KEYS, ...ROOT_OPTIONAL_KEYS]);
 const ROOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_KEYS = [
@@ -379,6 +385,16 @@ export type ComposedReferenceGameBrowserRootV1 = Readonly<{
     profileId: typeof COMPOSED_REFERENCE_GAME_PROFILE_ID;
   }>;
   /**
+   * The platform: this Host's session, the two page-level preferences it paints the page with, and whether it has
+   * a connection directory to offer.
+   *
+   * Two answers, not three. The halves below answer three ways because a profile may mount neither - `null` is
+   * "this build has no such surface" - while no build mounts "no platform": a root without this member is a root
+   * whose platform could not be published, and the shell says exactly that instead of acting on a token it does
+   * not have.
+   */
+  platform?: ComposedPlatformStateV1;
+  /**
    * The Chat half: a projection, `null` for a Host whose profile mounts no Chat at all, and ABSENT when this
    * Host mounts one and could not read it.
    *
@@ -397,6 +413,48 @@ export type ComposedReferenceGameBrowserRootV1 = Readonly<{
    */
   game?: GameBrowserStateV1 | null;
 }>;
+
+/**
+ * The platform member: the session, the two page-level preferences with the ONE revision of the record that
+ * holds them, and whether this Host has a connection directory at all.
+ *
+ * It is not a third surface. `preference` carries both fields because one record holds them - `appearance` is a
+ * choice (`system` is a real one) and `locale` is null until the player chooses - so a client cannot carry two
+ * revisions for one fact.
+ */
+export type ComposedPlatformStateV1 = Readonly<{
+  apiVersion: 1;
+  csrfToken: string;
+  browserSession: Readonly<{ expiresAtMs: number }>;
+  preference: Readonly<{
+    revision: number;
+    appearance: AppearanceChoice;
+    locale: Locale | null;
+  }>;
+  connection: "available" | "unavailable";
+}>;
+
+const PLATFORM_KEYS = ["apiVersion", "csrfToken", "browserSession", "preference", "connection"] as const;
+const PLATFORM_PREFERENCE_KEYS = ["revision", "appearance", "locale"] as const;
+const PLATFORM_BROWSER_SESSION_KEYS = ["expiresAtMs"] as const;
+
+/** The three appearances, exactly: a fourth value is a protocol fault and never a silently accepted string. */
+const APPEARANCE_CHOICES = ["system", "light", "dark"] as const;
+/** The interface languages this build ships a catalogue for; a third value cannot be painted at all. */
+const UI_LOCALES = ["en", "zh-CN"] as const;
+
+function isComposedPlatform(value: Record<string, unknown>): value is ComposedPlatformStateV1 {
+  if (!hasExactKeys(value, PLATFORM_KEYS)) return false;
+  if (value.apiVersion !== 1) return false;
+  if (typeof value.csrfToken !== "string" || !isOpaqueHandle(value.csrfToken)) return false;
+  if (!isRecord(value.browserSession) || !hasExactKeys(value.browserSession, PLATFORM_BROWSER_SESSION_KEYS)) return false;
+  if (!isSafeInteger(value.browserSession.expiresAtMs, 0)) return false;
+  if (!isRecord(value.preference) || !hasExactKeys(value.preference, PLATFORM_PREFERENCE_KEYS)) return false;
+  if (!isSafeInteger(value.preference.revision, 0)) return false;
+  if (!isOneOf(value.preference.appearance, APPEARANCE_CHOICES)) return false;
+  if (value.preference.locale !== null && !isOneOf(value.preference.locale, UI_LOCALES)) return false;
+  return value.connection === "available" || value.connection === "unavailable";
+}
 
 export class ComposedReferenceGameProtocolError extends Error {
   readonly reason: string;
@@ -1334,6 +1392,7 @@ function validateGameState(value: unknown, csrfToken: string | undefined): GameB
 export function validateComposedReferenceGameRoot(value: unknown): ComposedReferenceGameBrowserRootV1 {
   const chatPresent = isRecord(value) && value.chat !== undefined;
   const gamePresent = isRecord(value) && value.game !== undefined;
+  const platformPresent = isRecord(value) && value.platform !== undefined;
   if (
     !isRecord(value) ||
     !ROOT_REQUIRED_KEYS.every((key) => Object.hasOwn(value, key)) ||
@@ -1346,6 +1405,12 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
   ) {
     throw new ComposedReferenceGameProtocolError("invalid_composed_root");
   }
+
+  const platform = platformPresent && isComposedPlatform(value.platform as Record<string, unknown>)
+    ? (value.platform as ComposedPlatformStateV1)
+    : null;
+  if (platformPresent && platform === null)
+    throw new ComposedReferenceGameProtocolError("invalid_composed_platform");
 
   let chat: TavernStateSnapshotV1 | null = null;
   if (chatPresent && value.chat !== null) {
@@ -1363,18 +1428,29 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
     if (!isGameProjection(value.game)) {
       throw new ComposedReferenceGameProtocolError("invalid_composed_game");
     }
-    // The one check that needs BOTH halves: two projections on one root are two reads of one browser session,
-    // and a root that pairs them across sessions is a page that would act as one session with another's token.
-    // With a half absent there is no pair to compare, and that half's own route is where its session is bound
-    // (`readGameState` compares against the token this client holds).
+    // One root, one browser session: two members that pair different credentials are a page acting as one session
+    // with another's. A half that could not be read is absent from the answer and has nothing to compare with;
+    // the platform is the session ITSELF, so it is compared with every member that is here.
     if (
-      chat !== null &&
-      (value.game.csrfToken !== chat.csrfToken ||
-        value.game.browserSession.expiresAtMs !== chat.browserSession.expiresAtMs)
+      (chat !== null &&
+        (value.game.csrfToken !== chat.csrfToken ||
+          value.game.browserSession.expiresAtMs !== chat.browserSession.expiresAtMs)) ||
+      (platform !== null &&
+        (value.game.csrfToken !== platform.csrfToken ||
+          value.game.browserSession.expiresAtMs !== platform.browserSession.expiresAtMs))
     ) {
       throw new ComposedReferenceGameProtocolError("mismatched_composed_session");
     }
     game = value.game;
+  }
+  if (
+    platform !== null &&
+    chat !== null &&
+    (platform.csrfToken !== chat.csrfToken ||
+      platform.browserSession.expiresAtMs !== chat.browserSession.expiresAtMs)
+  ) {
+    // The half no Game member narrows above: the platform against the Chat half alone.
+    throw new ComposedReferenceGameProtocolError("mismatched_composed_session");
   }
   return Object.freeze({
     apiVersion: value.apiVersion,
@@ -1382,9 +1458,10 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
       browserContract: value.build.browserContract,
       profileId: value.build.profileId,
     }),
-    // A half that could not be read is answered with no member at all, so the absence this client was handed
+    // A member that could not be read is answered with no member at all, so the absence this client was handed
     // survives the validation instead of being flattened into `null`: the two are different facts, and a shell
     // that lost the difference here could not tell its surface why it has nothing to draw.
+    ...(platformPresent ? { platform: platform as ComposedPlatformStateV1 } : {}),
     ...(chatPresent ? { chat } : {}),
     ...(gamePresent ? { game } : {}),
   });

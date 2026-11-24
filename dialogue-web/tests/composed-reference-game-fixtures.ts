@@ -80,12 +80,30 @@ export const game = {
   },
 };
 
+/**
+ * The platform member: the session the shell acts under, the two page-level preferences and the connection
+ * directory's availability.
+ *
+ * It is the same session the two halves publish (`csrfToken`/`expiresAtMs` below), because one root is one
+ * browser session - a member that disagreed could only be a page acting with another session's credentials. The
+ * preference is the player's UNCHOSEN record: `system` is a real choice, and `locale: null` means the page follows
+ * the browser's own language, which is where every fresh product starts.
+ */
+export const platform = {
+  apiVersion: 1,
+  csrfToken,
+  browserSession: { expiresAtMs },
+  preference: { revision: 0, appearance: "system", locale: null },
+  connection: "available",
+};
+
 export const root = {
   apiVersion: 1,
   build: {
     browserContract: "composed_reference_game_browser_api/v1",
     profileId: "gamebuddy.composed.reference-game",
   },
+  platform,
   chat,
   game,
 };
@@ -170,6 +188,34 @@ export const installedGame = {
 
 /** The composed root around `installedGame`: the Chat half, then the installed Game projection. */
 export const installedRoot = { ...root, game: installedGame };
+
+/**
+ * The mounted root with the platform member's two page-level preferences set.
+ *
+ * The APPEARANCE and the INTERFACE LANGUAGE are painted from that member at mount - the page is theirs, not a
+ * panel's or a surface's - so a journey that needs one of them says so on the root it mounts. The panel's own reads
+ * (and its writes) go through the platform's routes, which is why the journeys stub those too: one fact, read twice,
+ * and the member is the one the first frame comes from.
+ */
+export function rootWithPlatformPreference(
+  preference: Readonly<{
+    appearance: "system" | "light" | "dark";
+    locale: "en" | "zh-CN" | null;
+    revision?: number;
+  }>,
+) {
+  return {
+    ...root,
+    platform: {
+      ...platform,
+      preference: {
+        revision: preference.revision ?? 0,
+        appearance: preference.appearance,
+        locale: preference.locale,
+      },
+    },
+  };
+}
 
 export const jsonOk = (body: unknown) => ({
   status: 200,

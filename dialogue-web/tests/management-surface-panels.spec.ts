@@ -94,7 +94,7 @@ async function stubUiLanguage(
   options: Readonly<{ revision: () => number; locale?: "en" | "zh-CN" | null }>,
 ): Promise<void> {
   let locale: "en" | "zh-CN" | null = options.locale ?? null;
-  await page.route("**/api/tavern/v1/settings/ui-language", async (route) => {
+  await page.route("**/api/platform/v1/locale", async (route) => {
     if (route.request().method() === "GET") return await route.fulfill(json200({ revision: options.revision(), locale }));
     const command = route.request().postDataJSON() as { expectedRevision: number; locale: "en" | "zh-CN" };
     if (command.expectedRevision !== options.revision())

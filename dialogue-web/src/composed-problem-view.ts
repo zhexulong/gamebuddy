@@ -1085,6 +1085,7 @@ const MOUNT_MISMATCH_PROBLEM_CODES: ReadonlySet<string> = new Set([
  */
 const UNREADABLE_ANSWER_REASONS: ReadonlySet<string> = new Set([
   "invalid_composed_root",
+  "invalid_composed_platform",
   "invalid_composed_chat",
   "invalid_composed_chat_profile",
   "invalid_composed_game",
@@ -1150,6 +1151,20 @@ export function composedBootstrapProblemView(error: unknown, labels: Messages): 
  * conversation (`no_conversation`, which no read taken again will change).
  */
 export type ChatHalfAbsence = "chat_half_unreadable" | "no_conversation";
+
+/**
+ * The card a root with no `platform` member earns, inside the shell region.
+ *
+ * It is the page's own failure and not a surface's: the platform carries the session token, the appearance and the
+ * interface language, so a root without it has nothing for any peer to act under. `bootPageMismatch` is the
+ * catalogue's sentence for exactly this class - the page and the Host answering it do not agree on what a root
+ * carries - and its step is to start GameBuddy again rather than take a read that repeats the same answer. The
+ * absence is named where it is read, by the region's own `platform-problem` marker, because a shell that passed
+ * `undefined` into six surfaces would state nothing at all.
+ */
+export function platformProblemView(labels: Messages): ProblemViewState {
+  return bootPageMismatch(labels);
+}
 
 export function chatHalfProblemView(absence: ChatHalfAbsence, labels: Messages): ProblemViewState {
   return absence === "chat_half_unreadable" ? bootChatsUnreadableForNow(labels) : bootNoChat(labels);
