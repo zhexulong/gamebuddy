@@ -149,7 +149,7 @@ the value never enters a command line, a log, or this README.
 `--wait-for-cdp=<seconds>` (default `0`) is the only way to wait for a held CDP port instead of being
 refused by name; `GB_SHOTS_CDP_WAIT_MS` is the same budget from the environment.
 
-## The four worktree prerequisites (each one bit a lane)
+## The five worktree prerequisites (each one bit a lane)
 
 A detached worktree is bare: no `node_modules`, no submodules, no build outputs. `pin` materializes
 everything from the MAIN checkout (`<repo>` in the recipe below):
@@ -160,12 +160,25 @@ everything from the MAIN checkout (`<repo>` in the recipe below):
 | 2 | `dialogue-web/node_modules/vite` + its pnpm siblings | vite **physical copy**; the 8 siblings (`rolldown`, `postcss`, `esbuild`, `picomatch`, `tinyglobby`, `jiti`, `lightningcss`, `yaml`) **junctioned** | robocopy vite; junction the 8 from `<repo>\node_modules\.pnpm\node_modules\<name>` |
 | 3 | `host/native/windows-stale-lock-reclaimer/.dist` | copied from main **only if its own builder accepts the copy** (`probes/verified-helper-pair.mjs`); an absent pair is rebuilt fresh in the build phase from the pinned source | robocopy `.dist` (pin), `node host/scripts/build-windows-stale-lock-reclaimer.mjs` (build phase) |
 | 4 | `integrations/stardew/bin/Release/net6.0` | compiled from the pinned source — never copied | `dotnet build .../GameBuddy.Stardew.csproj -c Release -p:GamePath=<gameDir>` (build phase) |
+| 5 | `vendor/{pi-koe,magic-context}` + their install and `dist` | a **real checkout at the pin's recorded commit**, never a junction of some checkout's copy; the two gitignored build outputs are supplied only from a checkout proven to be at that commit with a clean source tree | `git submodule update --init <path>`, then pi-koe's two `tsc --project` runs and the `pi-plugin/dist` copy (pin §2/§2b) |
 
-`pin.ps1` also junctions the root `node_modules` and the `vendor/{pi-koe,magic-context}` submodules
-(which is why the worktree checks use `git diff --name-only HEAD --ignore-submodules=all`, never
-`git status`). The pinned worktree must report 0 changed files before AND after the build — that is
-the **no-overlay** proof. If a phase could only proceed via a patch, the kit stops and reports
-instead (`DONE-PIN-FAIL` / `DONE-BUILD-FAIL`).
+`pin.ps1` also junctions the root `node_modules`. The `vendor/{pi-koe,magic-context}` submodules are
+**not** junctioned: a bare worktree holds an empty stub for each, so `pin` §2 supplies them with
+`git submodule update --init` at the commit the pin records and prints
+`submodule_supplied: <path> <sha> (N files)` — an empty stub must never reach the build as
+`ERR_MODULE_NOT_FOUND .../vendor/pi-koe/scripts/build-release-artifact.mjs`, four steps late. §2b then
+supplies what a submodule checkout cannot carry (its `node_modules` and its gitignored `dist`): the
+pi-koe install is junctioned from a checkout whose pi-koe is at the recorded commit, pi-koe's two
+`tsc --project` runs compile `dist/main.js` and `packages/voice-protocol/dist/index.js` from the pinned
+source, and `magic-context/packages/pi-plugin/dist` is copied from a checkout at the recorded commit
+with a clean source tree, printing `source_sha=` beside `pin=`. A checkout at any other commit is
+refused as `submodule_mismatch: <path> pin=<a> checkout=<b>`, never consumed.
+
+The worktree checks use `git diff --name-only HEAD --ignore-submodules=all`, never `git status`. The
+pinned worktree must report 0 changed files before AND after the build — that is the **no-overlay**
+proof, and it still holds with real submodule checkouts and their build outputs in place. If a phase
+could only proceed via a patch, the kit stops and reports instead (`DONE-PIN-FAIL` /
+`DONE-BUILD-FAIL`).
 
 ## Runtime fixture
 

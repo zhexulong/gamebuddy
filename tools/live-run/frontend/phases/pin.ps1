@@ -1,10 +1,10 @@
 # Phase pin: create a detached worktree at the pinned commit and materialize the worktree
-# prerequisites a bare worktree lacks, all from the MAIN checkout. NO OVERLAY: if anything here
-# needs a patch, the phase stops and reports instead of patching.
+# prerequisites a bare worktree lacks, from the MAIN checkout (and, for the submodules, from their own
+# clones at the commits the pin records). NO OVERLAY: if anything here needs a patch, the phase stops and
+# reports instead of patching.
 #
 # Materialized from `$Repo` (the main checkout):
 #   - root node_modules                  junction
-#   - vendor/{pi-koe,magic-context}      junction (keeps `git diff --ignore-submodules` sane)
 #   - host/node_modules                  real dir; junction every child EXCEPT typescript,
 #                                        which is ROBACOPIED (a junction makes host's tsc entry
 #                                        resolve out of the repo root: typescript_entry_escapes_repository_root)
@@ -19,6 +19,15 @@
 #                                        publishes, which is a restore against the package source.
 #   - .tmp/*/nuget-packages              ROBACOPIED (every helper cache on disk; a sixth joins itself)
 #   - integrations/stardew/bin/Release/net6.0   built fresh in the build phase (never copied)
+#
+# Checked out IN the worktree, at the commits the pin records (never junctioned from a checkout):
+#   - vendor/{pi-koe,magic-context}      submodule gitlinks (§2), supplied by `git submodule update
+#                                        --init` when the fresh worktree holds the empty stub
+#   - vendor/pi-koe/node_modules         junction from a checkout whose pi-koe is at the recorded
+#                                        commit; the tsc + esbuild install the compiles resolve from
+#   - vendor/pi-koe/dist, packages/voice-protocol/dist   compiled here from the pinned source (§2b)
+#   - vendor/magic-context/packages/pi-plugin/dist       copied from a checkout at the recorded commit
+#                                        with a clean source tree, and the proof is printed (§2b)
 param(
   [Parameter(Mandatory = $true)][string]$Repo,
   [Parameter(Mandatory = $true)][string]$Worktree,
@@ -88,26 +97,226 @@ function LinkDir($target, $link) {
 Log "=== 1. root node_modules junction ==="
 LinkDir (Join-Path $Repo "node_modules") (Join-Path $Worktree "node_modules")
 
-Log "=== 2. vendor submodules: junction when the worktree copy is an empty stub ==="
-New-Item -ItemType Directory -Force (Join-Path $Worktree "vendor") | Out-Null
-foreach ($name in @('pi-koe','magic-context')) {
-  $link = Join-Path $Worktree "vendor\$name"
-  if (-not (Test-Path $link)) { LinkDir (Join-Path $Repo "vendor\$name") $link; continue }
-  $entry = Get-Item $link -Force -ErrorAction SilentlyContinue
-  $linkType = if ($entry) { $entry.LinkType } else { $null }
-  $count = if ($entry -and -not $linkType) { @(Get-ChildItem $link -Force -ErrorAction SilentlyContinue).Count } else { -1 }
-  if ($entry -and -not $linkType -and $count -le 1) {
-    Remove-Item $link -Recurse -Force -ErrorAction SilentlyContinue
-    try {
-      New-Item -ItemType Junction -Path $link -Target (Join-Path $Repo "vendor\$name") -ErrorAction Stop | Out-Null
-      Log ("  junctioned " + $name)
-    } catch {
-      Log ("  junction FAILED for " + $name + ": " + $_.Exception.Message)
-    }
+# A submodule checkout the pin is about to read: how many files it holds, and the commit it is on.
+# An unpopulated gitlink has no `.git` of its own, so BOTH readings are 0/empty rather than an error.
+function SubmoduleFiles($dir) {
+  if (-not (Test-Path (Join-Path $dir ".git"))) { return 0 }
+  $listed = @(git -C $dir ls-files 2>$null)
+  if ($LASTEXITCODE -ne 0) { return 0 }
+  return $listed.Count
+}
+function SubmoduleHead($dir) {
+  if (-not (Test-Path (Join-Path $dir ".git"))) { return "" }
+  # No `Select-Object -First 1` here: stopping a native command's pipeline early leaves $LASTEXITCODE
+  # unset, and `$null -ne 0` is true - which turned a successful read into "not-a-checkout".
+  $head = @(git -C $dir rev-parse HEAD 2>$null)
+  if ($LASTEXITCODE -ne 0) { return "" }
+  if ($head.Count -eq 0) { return "" }
+  return "$($head[0])"
+}
+# ONE spelling for the invariant, at every population it is asked of (this worktree, and each checkout
+# whose dependency install or build output §2b is about to consume).
+function LogSubmoduleMismatch($where, $expected, $found) {
+  $checkout = if ($found) { $found } else { "not-a-checkout" }
+  Log ("  submodule_mismatch: " + $where + " pin=" + $expected + " checkout=" + $checkout)
+}
+
+Log "=== 2. submodules: the pin's gitlinks, supplied before anything junctions or builds ==="
+# `git worktree add` does not populate git submodules: a fresh worktree holds an EMPTY `vendor/<name>`
+# directory. Until 2026-11-25 this step junctioned that empty directory from the materialization source,
+# which is empty whenever the kit is run FROM a bare worktree (the reusable recipe in
+# `.tmp/lane-round31.md` §5, which round32 followed). The first sign was then
+#   ERR_MODULE_NOT_FOUND .../vendor/pi-koe/scripts/build-release-artifact.mjs
+# at generation-build step 4 - four steps and ~200 s below the empty directory - and two live rounds
+# were spent on it. A pin step that cannot tell "empty checkout" from "broken module" costs a round,
+# so every gitlink in the pinned tree is asserted HERE, before §3 or §4 builds anything.
+# A linked worktree keeps its own module clone (`git worktree list` + `git submodule status` in the
+# main checkout stay untouched), so the supply clones once per pin: measured 32 s for both submodules
+# from cold, at the recorded commits c212554f / d4bc32df.
+$submodules = @()
+foreach ($line in @(git -C $Worktree ls-tree -r $resolved)) {
+  if ($line -match '^160000 commit ([0-9a-f]{40})\t(.+)$') {
+    $submodules += [pscustomobject]@{ path = $Matches[2]; sha = $Matches[1] }
   }
 }
-Log ("  vendor/magic-context packages=" + ((Get-ChildItem (Join-Path $Worktree 'vendor\magic-context\packages') -Force -Name -ErrorAction SilentlyContinue | Select-Object -First 2) -join ','))
-Log ("  vendor/pi-koe LinkType=" + (Get-Item (Join-Path $Worktree 'vendor\pi-koe') -Force).LinkType)
+Log ("  gitlinks in the pinned tree = [" + (($submodules | ForEach-Object { $_.path + '@' + $_.sha.Substring(0, 8) }) -join ', ') + "]")
+foreach ($sub in $submodules) {
+  $dir = Join-Path $Worktree $sub.path
+  New-Item -ItemType Directory -Force (Split-Path $dir) | Out-Null
+  $files = SubmoduleFiles $dir
+  $supplied = $false
+  if ($files -eq 0) {
+    Log ("  submodule_empty: " + $sub.path + " (the pin records " + $sub.sha + " here; a bare worktree never populates a submodule)")
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    git -C $Worktree submodule update --init $sub.path 2>&1 | ForEach-Object { Log ("  | " + $_) }
+    $supplyExit = $LASTEXITCODE
+    $sw.Stop()
+    $files = SubmoduleFiles $dir
+    if ($files -eq 0) {
+      Log ("  submodule_supply_failed: " + $sub.path + " (git submodule update --init exited " + $supplyExit + " and the directory still holds no tracked file; the captured lines above are its own)")
+      Log ("  remedy: that command needs the recorded commit fetchable from `"git -C $Worktree config -f .gitmodules submodule.$($sub.path).url`" - a linked worktree clones the submodule for itself, so this is once per pin")
+      Log "DONE-PIN-FAIL (a submodule the pin needs is not in the worktree)"
+      exit 1
+    }
+    $supplied = $true
+  }
+  $head = SubmoduleHead $dir
+  if ($head -ne $sub.sha) {
+    LogSubmoduleMismatch $sub.path $sub.sha $head
+    Log ("  remedy: the pin never re-points a populated submodule (that would be an overlay); delete " + $dir + " and re-run so it is supplied at the recorded commit")
+    Log "DONE-PIN-FAIL (a submodule is not at the commit the pin records)"
+    exit 1
+  }
+  if ($supplied) { Log ("  submodule_supplied: " + $sub.path + " " + $head + " (" + $files + " files) elapsed=" + [int]$sw.Elapsed.TotalSeconds + "s") }
+  else { Log ("  submodule_present: " + $sub.path + " " + $head + " (" + $files + " files)") }
+}
+
+Log "=== 2b. submodule dependency installs and build outputs: proven, then supplied ==="
+# A submodule checkout carries source only. Its `node_modules` and its `dist` are gitignored, so neither
+# arrives with `git submodule update --init`, and all four of these are inputs of the generation build:
+#   vendor/pi-koe/node_modules                          tsc + esbuild (the compiles below, and the release
+#                                                       bundle host/scripts/build-production-artifact.mjs
+#                                                       imports from vendor/pi-koe/scripts)
+#   vendor/pi-koe/dist, packages/voice-protocol/dist     the bundle's entry sources
+#   vendor/magic-context/packages/pi-plugin/dist         manifest-compared by the generation build against
+#                                                       the shipped node_modules/@cortexkit/pi-magic-context
+# Measured 2026-11-25 (round32): supplying them was three hand steps; the pin must supply them, and each
+# is only worth anything when it is PROVEN to come from the source the pin records - a dist built from a
+# different commit is an overlay nobody can see. So the candidates are the two checkouts an operator holds
+# (`-Repo` and this repository's main worktree), a candidate is accepted only at the recorded sha (and, for
+# the copied build output, only with a clean source tree), and a rejected candidate is named with the
+# reading that rejected it.
+$checkouts = @([System.IO.Path]::GetFullPath($Repo))
+# The main worktree is the OTHER checkout an operator deliberately holds, and `git worktree list` prints it
+# first. Sibling lane worktrees are deliberately NOT in this population: their submodule state is another
+# lane's, and a dist copied out of a lane that is mid-write is exactly the unprovable artifact this step
+# refuses. -Repo first, because that is the checkout this run was started from.
+foreach ($line in @(git -C $Worktree worktree list --porcelain)) {
+  if ($line -match '^worktree (.+)$') {
+    $mainCheckout = [System.IO.Path]::GetFullPath($Matches[1].Trim())
+    if ($checkouts -notcontains $mainCheckout) { $checkouts += $mainCheckout }
+    break
+  }
+}
+Log ("  checkouts examined = [" + ($checkouts -join ', ') + "]")
+function GitlinkSha($path) {
+  $found = @($submodules | Where-Object { $_.path -eq $path })
+  if ($found.Count -eq 1) { return $found[0].sha }
+  return ""
+}
+
+$piKoeSha = GitlinkSha 'vendor/pi-koe'
+if ($piKoeSha) {
+  $install = Join-Path $Worktree "vendor\pi-koe\node_modules"
+  if (Test-Path $install) {
+    Log ("  pi_koe_node_modules_already_present: " + $install)
+  } else {
+    $source = ""
+    foreach ($checkout in $checkouts) {
+      $candidate = Join-Path $checkout "vendor\pi-koe\node_modules"
+      if (-not (Test-Path (Join-Path $candidate "typescript\lib\tsc.js")) -or -not (Test-Path (Join-Path $candidate "esbuild\package.json"))) {
+        Log ("  pi_koe_node_modules_absent: " + $checkout)
+        continue
+      }
+      $candidateSha = SubmoduleHead (Join-Path $checkout "vendor\pi-koe")
+      if ($candidateSha -ne $piKoeSha) {
+        LogSubmoduleMismatch (Join-Path $checkout "vendor\pi-koe") $piKoeSha $candidateSha
+        continue
+      }
+      $source = $candidate
+      break
+    }
+    if (-not $source) {
+      Log ("  pi_koe_node_modules_unavailable: no checkout of this repository holds vendor\pi-koe\node_modules with typescript + esbuild while its vendor/pi-koe is at the commit this pin records (" + $piKoeSha + "); examined " + $checkouts.Count + " checkout(s)")
+      Log ("  remedy: once, in a checkout whose `"git -C <checkout>/vendor/pi-koe rev-parse HEAD`" is " + $piKoeSha + ", run `"pnpm --dir vendor/pi-koe install`"")
+      Log "DONE-PIN-FAIL (a submodule dependency install the pin needs is not on this machine)"
+      exit 1
+    }
+    LinkDir $source $install
+    Log ("  pi_koe_node_modules_junctioned: " + $source + " -> " + $install + " (that checkout's pi-koe is at " + $piKoeSha + ", the commit this pin records)")
+  }
+  $tsc = Join-Path $install "typescript\lib\tsc.js"
+  if (-not (Test-Path $tsc)) {
+    Log ("  pi_koe_typescript_missing: " + $tsc + " (the pi-koe dependency install must carry its own typescript devDependency)")
+    Log "DONE-PIN-FAIL (the pin cannot compile the pi-koe submodule)"
+    exit 1
+  }
+  # WHY NOT `pnpm --dir vendor/pi-koe run build:all`: pnpm's pre-run install check inspects the junctioned
+  # `vendor/pi-koe/node_modules` and tries to purge it, aborting with
+  # ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY (measured 2026-11-25, round32). It refused rather than
+  # deleted - the safe direction - but it cannot run here. `build:all` is exactly two `tsc --project`
+  # invocations (vendor/pi-koe/package.json: build:protocol, then build), so the pin runs those two
+  # directly, in `build:all`'s order: the gateway's tsconfig imports `@gamebuddy/voice-protocol`, whose
+  # `dist` the first run produces.
+  # EXPIRY: the day `pnpm --dir vendor/pi-koe run build:all` can run against a junctioned node_modules
+  # (pnpm's check learns to skip one), delete this workaround and call that instead - it keeps the build
+  # recipe in the submodule's own package.json instead of in this file.
+  $compiles = @(
+    @{ label = 'voice-protocol'; project = 'vendor\pi-koe\packages\voice-protocol\tsconfig.json'; entry = 'vendor\pi-koe\packages\voice-protocol\dist\index.js' },
+    @{ label = 'voice-gateway'; project = 'vendor\pi-koe\tsconfig.json'; entry = 'vendor\pi-koe\dist\main.js' }
+  )
+  foreach ($compile in $compiles) {
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $compileOutput = node $tsc --project (Join-Path $Worktree $compile.project) 2>&1
+    $compileExit = $LASTEXITCODE
+    $sw.Stop()
+    $entry = Join-Path $Worktree $compile.entry
+    if ($compileExit -ne 0 -or -not (Test-Path $entry)) {
+      ($compileOutput | Select-Object -First 12) | ForEach-Object { Log ("  | " + $_) }
+      Log ("  pi_koe_dist_build_failed: " + $compile.label + " (tsc exited " + $compileExit + ", entry " + $compile.entry + " present=" + (Test-Path $entry) + ")")
+      Log "DONE-PIN-FAIL (the pi-koe submodule did not compile from the pinned source)"
+      exit 1
+    }
+    Log ("  pi_koe_dist_compiled: " + $compile.label + " exit=0 entry=" + $compile.entry + " elapsed=" + [int]$sw.Elapsed.TotalSeconds + "s")
+  }
+}
+
+$magicContextSha = GitlinkSha 'vendor/magic-context'
+if ($magicContextSha) {
+  $target = Join-Path $Worktree "vendor\magic-context\packages\pi-plugin\dist"
+  if (Test-Path (Join-Path $target "index.js")) {
+    Log ("  magic_context_dist_already_present: " + $target)
+  } else {
+    $source = ""
+    $sourceSha = ""
+    foreach ($checkout in $checkouts) {
+      $candidate = Join-Path $checkout "vendor\magic-context\packages\pi-plugin\dist"
+      if (-not (Test-Path (Join-Path $candidate "index.js"))) {
+        Log ("  magic_context_dist_absent: " + $checkout)
+        continue
+      }
+      $candidateSub = Join-Path $checkout "vendor\magic-context"
+      $candidateSha = SubmoduleHead $candidateSub
+      if ($candidateSha -ne $magicContextSha) {
+        LogSubmoduleMismatch $candidateSub $magicContextSha $candidateSha
+        continue
+      }
+      $dirty = @(git -C $candidateSub status --porcelain -- packages/pi-plugin/src packages/pi-plugin/package.json 2>$null)
+      if ($dirty.Count -gt 0) {
+        Log ("  magic_context_dist_source_dirty: " + $candidateSub + " [" + ($dirty -join ',') + "]")
+        continue
+      }
+      $source = $candidate
+      $sourceSha = $candidateSha
+      break
+    }
+    if (-not $source) {
+      Log ("  magic_context_dist_unavailable: no checkout of this repository holds vendor\magic-context\packages\pi-plugin\dist with its vendor/magic-context at the commit this pin records (" + $magicContextSha + ") and a clean packages/pi-plugin source; examined " + $checkouts.Count + " checkout(s)")
+      Log ("  remedy: once, in a checkout whose `"git -C <checkout>/vendor/magic-context rev-parse HEAD` is " + $magicContextSha + ", run `"bun install --cwd vendor/magic-context --frozen-lockfile`" then `"bun run --cwd vendor/magic-context/packages/pi-plugin build`" (host/scripts/run-test-suite.mjs does both); this pipeline needs bun, so the pin never builds it")
+      Log "DONE-PIN-FAIL (a submodule build output the pin needs is not on this machine)"
+      exit 1
+    }
+    New-Item -ItemType Directory -Force $target | Out-Null
+    robocopy $source $target /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    $copied = @(Get-ChildItem $target -Recurse -File -Force).Count
+    if (-not (Test-Path (Join-Path $target "index.js"))) {
+      Log ("  magic_context_dist_copy_failed: " + $source + " -> " + $target + " (" + $copied + " file(s) arrived, the entry did not)")
+      Log "DONE-PIN-FAIL (the magic-context build output did not survive the copy)"
+      exit 1
+    }
+    Log ("  magic_context_dist_supplied: " + $source + " -> " + $target + " source_sha=" + $sourceSha + " pin=" + $magicContextSha + " source_clean=yes (" + $copied + " files)")
+  }
+}
 
 Log "=== 3. host/node_modules: real dir, REAL typescript (robocopy), junctions for the rest ==="
 $hostNm = Join-Path $Worktree "host\node_modules"
