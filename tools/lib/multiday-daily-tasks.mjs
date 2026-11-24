@@ -1,10 +1,12 @@
 /**
  * The daily tasks a multiday run rotates through, and which one each day gets.
  *
- * The problem this replaces: every day of a multiday run asked the SAME thing - "the east patch needs
- * clearing, weeds and rocks" - so two days of evidence covered one capability, and the cross-night crossing
- * itself was the only thing day two could prove. A run that died on day one also took the whole scenario with
- * it, because there was nothing else it was ever going to do.
+ * The problem this replaces: every day of a multiday run asked the SAME thing - one hard-coded patch to clear -
+ * so two days of evidence covered one capability, and the cross-night crossing itself was the only thing day two
+ * could prove. A run that died on day one also took the whole scenario with it, because there was nothing else it
+ * was ever going to do. The patch was also named by a COMPASS END (`clear_east_patch`, 「东头那片地」) - a part of the
+ * farm no published family states, so she had no way to identify the ground the judge was asking about; see
+ * `clear_ground_clutter` for what replaced it.
  *
  * Two rotations, deliberately separate:
  *
@@ -62,7 +64,13 @@ const SCENARIO_TASK_ACTION_HINTS = Object.freeze({
     "set_sign_display",
     "craft_item",
   ]),
-  clear_east_patch: Object.freeze(["cut_weeds", "cut_grass", "break_rock", "chop_stump"]),
+  // THE CLEARING DAY ASKS FOR A QUANTITY AND NAMES NO PLACE. It used to be `clear_east_patch`, and the two halves of
+  // that name were both defects: 「东头」 is a compass end of a farm whose partition no published family states (so the
+  // owner's rule - anchors only, never a hard-coded east area - is what it broke), and `patch` named a shape nothing
+  // measures. What replaced it is the only thing a clearing receipt can prove: `cut_weeds`, `cut_grass`, `break_rock`
+  // and `chop_stump` each name the opaque `target` id they removed, so a day's work is a COUNT of separate pieces - see
+  // `clear_ground_clutter` in `task-purpose.mjs`, which is the criterion that decides it.
+  clear_ground_clutter: Object.freeze(["cut_weeds", "cut_grass", "break_rock", "chop_stump"]),
   water_and_harvest: Object.freeze(["harvest_crop", "scythe_crop", "plant_seed", "water_crop"]),
   forage_and_trees: Object.freeze(["pickup_forage", "shake_tree", "harvest_fruit_tree", "chop_tree"]),
   craft_and_place_machine: Object.freeze(["craft_item", "place_owned_object", "machine_inspect"]),
@@ -320,7 +328,11 @@ const SCENARIO_TASK_PRECONDITIONS = Object.freeze({
   tend_the_animals: sig(rowsOf(["petTargets", "farmAnimalPetTargets", "feedTroughTargets", "animalProductTargets"])),
   // A counter that stocks something she carries, and a box with post in it.
   town_market: sig(rowsOf(["seedSupplyTargets"]), rowsOf(["mailboxTargets"])),
-  clear_east_patch: sig(rowsOf(["weedTargets", "grassTargets", "rockSourceTargets", "treeStumpTargets"])),
+  // The clearing day owes twenty pieces and asks the world for ONE: the four families are discovered around her, so a
+  // window with a single standing weed is a farm this day can start on. Twenty visible rows would be a second census of
+  // the map taken through a six-tile window, and refusing a day because the window is thinner than a day's walk is the
+  // kind of false `task_precondition_unmet` `seedMarket` above is written to avoid.
+  clear_ground_clutter: sig(rowsOf(["weedTargets", "grassTargets", "rockSourceTargets", "treeStumpTargets"])),
   // THE TWO HALVES THAT WERE BOTH ABSENT. Something to put on, and somewhere to display it.
   dress_and_display: sig(packHolds("wearable"), rowsOf(["mannequinTargets", "signTargets"])),
   // Same shape as the mine, for the same reason: villagers are discovered around her, so a Farm snapshot holds none of
@@ -544,13 +556,14 @@ export function sweepTaskPrompts() {
  * </p>
  */
 export const TASK_PILLARS = Object.freeze({
-  // The fields: the strip, the plot, the crop day that harvests and replants, and the east patch that keeps the ground
-  // open. Both of the days that draw a shape longer than one view are here, which is what a farm pillar is for.
+  // The fields: the strip, the plot, the crop day that harvests and replants, and the clearing day that keeps the
+  // ground open. The strip and the plot are the days that draw a shape longer than one view, which is what a farm
+  // pillar is for; the clearing day asks for a count instead, because a clearing receipt names no tile.
   farm: Object.freeze([
     "clear_and_plant_long_patch",
     "buy_seeds_and_expand_plot",
     "water_and_harvest",
-    "clear_east_patch",
+    "clear_ground_clutter",
   ]),
   // The water and the town: a cast, a counter with post in it, and the forage and trees on the way back.
   water: Object.freeze(["a_fish_from_the_water", "town_market", "forage_and_trees"]),
@@ -768,8 +781,8 @@ export function describeScheduledPillars(scheduled = []) {
  *
  * `runOffset` advances the FIRST day's task between runs; `day` advances it within one. Both are 1-based.
  *
- *   run 0, day 1 -> clear_east_patch      run 1, day 1 -> water_and_harvest
- *   run 0, day 2 -> water_and_harvest     run 1, day 2 -> forage_and_trees
+ *   run 0, day 1 -> clear_and_plant_long_patch   run 1, day 1 -> a_fish_from_the_water
+ *   run 0, day 2 -> a_fish_from_the_water        run 1, day 2 -> craft_and_place_machine
  *
  * `day` may be anything the runner has already validated; the modulo keeps the function total rather than
  * throwing on a day outside the rotation length, because a run may legitimately be configured for more days

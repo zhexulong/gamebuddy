@@ -102,15 +102,25 @@ const LEFT_BY_LADDER = receipt("use_mine_ladder", {
 const HOST_COMPLETION_CONTRACT = new URL("../../host/src/stardew-completion-contracts.ts", import.meta.url);
 
 function declaredEvidenceKeys(actionId) {
-  const { contracts, findings } = readHostCompletionContracts(readFileSync(HOST_COMPLETION_CONTRACT, "utf8"));
-  const contract = contracts.get(actionId);
-  if (contract === undefined || contract.keys.length === 0)
+  const keys = readableEvidenceKeys(actionId);
+  if (keys.length === 0)
     throw new Error(
       `blocked: the Host's completion contract declares no evidence keys for ${actionId}, so this file's ${actionId} ` +
         `fixture would be built from nothing and no receipt it minted would prove a tile ` +
-        `(parser findings: ${findings.join(" | ") || "none"})`,
+        `(parser findings: ${readHostCompletionContracts(readFileSync(HOST_COMPLETION_CONTRACT, "utf8")).findings.join(" | ") || "none"})`,
     );
-  return contract.keys;
+  return keys;
+}
+
+/**
+ * The same read, for a caller that can live with a row this gate cannot read: `[]` rather than a throw.
+ *
+ * `break_rock` folds a module constant into its row, which the parser does not follow, so a caller asking about ONE field
+ * must be able to tell "the row does not carry it" from "the row is not readable here" - the three zeroes, told apart.
+ */
+function readableEvidenceKeys(actionId) {
+  const { contracts } = readHostCompletionContracts(readFileSync(HOST_COMPLETION_CONTRACT, "utf8"));
+  return contracts.get(actionId)?.keys ?? [];
 }
 
 /**
@@ -687,6 +697,30 @@ test("a purpose is either a criterion of more than one fact, a declared shape, o
         );
       continue;
     }
+    // A CLEARING purpose is the sixth kind: a count of distinct things, with no place and no shape. It must name the
+    // count and, per action, the field that names the thing removed - a count nothing proves is a purpose nothing can
+    // decide, and a field nothing declares is a zero that looks like a reading.
+    if (entry.pieces !== undefined) {
+      assert.equal(entry.steps, undefined, `${task}: a count of pieces is not a step list`);
+      assert.ok(
+        Number.isInteger(entry.pieces.atLeast) && entry.pieces.atLeast > 1,
+        `${task}: clearing needs an integer count of more than one piece`,
+      );
+      assert.ok(
+        typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
+        `${task}: a clearing criterion states its purpose`,
+      );
+      assert.ok(
+        Array.isArray(entry.clearedBy) && entry.clearedBy.length > 0,
+        `${task}: a clearing criterion must say which actions prove a piece was removed`,
+      );
+      for (const proof of entry.clearedBy)
+        assert.ok(
+          typeof proof.actionId === "string" && typeof proof.targetField === "string",
+          `${task}: every clearing proof names an action and the evidence field that carries the thing it removed`,
+        );
+      continue;
+    }
     assert.ok(
       typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
       `${task}: a criterion states its purpose`,
@@ -846,6 +880,24 @@ function receiptFactsOf(entry) {
       producer: missing.length === 0 ? { path: HOST_CONTRACT_PATH, anchor: `${proof.actionId}: (claim) =>` } : null,
     });
   }
+  // A clearing criterion counts the THINGS its receipts removed, so each action's target field is a fact it requires -
+  // and the field comes from the action's own completion contract, exactly as a tile field does above. A row the Host's
+  // parser cannot read (`break_rock` builds its keys in a module constant) is not a missing fact but a CEILING of this
+  // gate: the row is named as the producer and the key is not claimed either way.
+  for (const proof of entry.clearedBy ?? []) {
+    const keys = readableEvidenceKeys(proof.actionId);
+    const unreadable = keys.length === 0;
+    const carried = unreadable || keys.includes(proof.targetField);
+    facts.push({
+      name:
+        carried && !unreadable
+          ? `\`${proof.actionId}\`'s \`${proof.targetField}\`, the thing it removed`
+          : unreadable
+            ? `\`${proof.actionId}\`'s \`${proof.targetField}\`, the thing it removed (its row's keys are not readable here)`
+            : `\`${proof.actionId}\`'s \`${proof.targetField}\`, which its own completion contract does not carry`,
+      producer: carried ? { path: HOST_CONTRACT_PATH, anchor: `${proof.actionId}: (claim) =>` } : null,
+    });
+  }
   // A city-shaped fact needs its own producer too: a town criterion reads a map field out of two receipt shapes, so each
   // action and the field it writes are facts this criterion requires.
   for (const shape of [entry.town?.arrival, entry.town?.conversation]) {
@@ -966,6 +1018,15 @@ test("every action a criterion reads is published by the Mod", async () => {
       ...(entry.sownBy ?? []),
       ...(entry.wateredBy ?? []),
     ]) {
+      if (published.has(proof.actionId)) continue;
+      drifting.push(
+        experimental.has(proof.actionId)
+          ? `${task} reads ${proof.actionId}, which the Mod registers Experimental - no run can dispatch it`
+          : `${task} reads ${proof.actionId}, which the Mod does not publish`,
+      );
+    }
+    // A clearing criterion reads one action per proof too, and those are dispatches like any other.
+    for (const proof of entry.clearedBy ?? []) {
       if (published.has(proof.actionId)) continue;
       drifting.push(
         experimental.has(proof.actionId)
@@ -2670,6 +2731,161 @@ const ROUND96_SOWN_DAY = Object.freeze([
   WATERED(29, 17),
   ROUND96_PURCHASE,
 ]);
+
+/**
+ * The clearing day's four actions, in the wire text their handlers print.
+ *
+ * `cut_weeds` and `break_rock` are written out rather than built from `contractEvidence`: `cut_weeds` answers two
+ * terminals whose key sets differ (`weeds_cut` and the `weed_target_gone` settlement), so the action's contract list is
+ * their UNION and a fixture built from it carries keys the `weeds_cut` arm refuses; and `break_rock`'s keys live in a
+ * module constant its row folds over, which the Host's parser does not read. The green assertions below prove the text is
+ * admitted, so a contract change surfaces here instead of in a run.
+ */
+const CLEARING_RECEIPTS = Object.freeze({
+  cut_weeds: (target) =>
+    receipt("cut_weeds", {
+      reasonCode: "weeds_cut",
+      evidence: {
+        detail:
+          `target=${target};type=weed;tool=scythe;tool_selected=scythe;slot=1;tool_before=axe;slot_before=0;` +
+          "qualified_item_id=(O)313;health_before=2;health_after=removed;swings=2;removed=true;" +
+          "stamina_before=100;stamina_after=100;stamina_delta=0;expected_stamina_cost=0;tool_restored=axe",
+      },
+    }),
+  cut_grass: (target) =>
+    receipt("cut_grass", {
+      reasonCode: "grass_cut",
+      evidence: {
+        detail: contractEvidence("cut_grass", {
+          target,
+          type: "grass",
+          tool: "scythe",
+          tool_selected: "scythe",
+          slot: "1",
+          tool_before: "axe",
+          slot_before: "0",
+          grass_type: "1",
+          weeds_before: "2",
+          weeds_after: "0",
+          swings: "1",
+          removed: "true",
+          tuft_removed: "true",
+          stamina_before: "100",
+          stamina_after: "100",
+          stamina_delta: "0",
+          expected_stamina_cost: "0",
+          tool_restored: "axe",
+        }),
+      },
+    }),
+  break_rock: (target) =>
+    receipt("break_rock", {
+      reasonCode: "rock_source_broken",
+      evidence: {
+        detail:
+          `target=${target};tool=pickaxe;tool_selected=pickaxe;slot=2;tool_before=axe;slot_before=0;` +
+          "qualified_item_id=(O)32;durability_before=1;durability_after=removed;removed=true;" +
+          "stamina_before=100;stamina_after=98;stamina_delta=-2;expected_stamina_cost=2;tool_restored=axe",
+      },
+    }),
+  chop_stump: (target) =>
+    receipt("chop_stump", {
+      reasonCode: "stump_cleared",
+      evidence: {
+        detail: contractEvidence("chop_stump", {
+          target,
+          type: "tree_stump",
+          tree: "tree_07",
+          tool: "axe",
+          tool_level: "2",
+          health_before: "10",
+          health_after: "0",
+          swings: "3",
+          stump_removed: "true",
+          stamina_before: "100",
+          stamina_after: "98",
+          stamina_delta: "-2",
+          expected_stamina_cost: "2",
+          tool_selected: "axe",
+          slot: "3",
+          tool_before: "pickaxe",
+          slot_before: "0",
+          tool_restored: "pickaxe",
+        }),
+      },
+    }),
+});
+
+/**
+ * THE CLEARING DAY: a count of pieces, and no place in the sentence.
+ *
+ * <p>
+ * IT REPLACES A GAP. `clear_east_patch` asked for "the east patch" left without weeds and rocks, which nothing
+ * publishes - so the day could never be judged, and the region it named was one the perception layer does not have. The
+ * four clearing receipts do state which thing they removed (`target`), so the day is now a count of DISTINCT things: a
+ * completed clearing, a floor when a clearing receipt was refused, and a count when it fell short.
+ * </p>
+ *
+ * red-proof: inject  judging the purpose by receipt count instead of distinct targets -> the same-target case reads `2/2`
+ *                   instead of `1/2` and goes red naming it; answering `achieved` on a short count -> the five-piece
+ *                   case goes red (tools/lib/task-purpose.test.mjs)
+ */
+test("a clearing day is the pieces it took off the ground, and a target named twice is one piece", () => {
+  const day = [
+    ...Array.from({ length: 8 }, (_, index) => CLEARING_RECEIPTS.cut_weeds(`weed_${String(index)}`)),
+    ...Array.from({ length: 6 }, (_, index) => CLEARING_RECEIPTS.cut_grass(`grass_${String(index)}`)),
+    ...Array.from({ length: 4 }, (_, index) => CLEARING_RECEIPTS.break_rock(`rock_${String(index)}`)),
+    ...Array.from({ length: 2 }, (_, index) => CLEARING_RECEIPTS.chop_stump(`stump_${String(index)}`)),
+  ];
+  // Every fixture is a receipt its own contract admits: a refused one would make this test measure admission instead.
+  assert.deepEqual(purposeReceipts(day).refused, [], "every clearing receipt is its own postcondition");
+  const judged = judgeTaskPurpose("clear_ground_clutter", day);
+  assert.equal(judged.state, "achieved", "twenty separate pieces cleared is the day the task asks for");
+  assert.equal(judged.clearedPieces, 20);
+  assert.equal(judged.clearedDeclared, 20);
+  assert.deepEqual(
+    { ...judged.clearedByAction },
+    { cut_weeds: 8, cut_grass: 6, break_rock: 4, chop_stump: 2 },
+    "the count keeps the split by action, so 'no rocks' and 'no clearing' read differently",
+  );
+
+  // THE SAME THING TWICE IS ONE PIECE. `weed_target_gone` is the settlement a scythe answers on a tile an earlier node
+  // already cut, and it carries the `target` that earlier receipt carried.
+  const settledAgain = receipt("cut_weeds", {
+    reasonCode: "weed_target_gone",
+    evidence: { detail: "target=weed_0;named_tile=12,4;tile=none;settled_by=consumes:weedTargets" },
+  });
+  assert.deepEqual(purposeReceipts([settledAgain]).refused, [], "the settlement is a completed `cut_weeds`");
+  assert.equal(
+    judgeTaskPurpose("clear_ground_clutter", [CLEARING_RECEIPTS.cut_weeds("weed_0"), settledAgain]).clearedPieces,
+    1,
+    "two receipts naming one weed are one piece cleared: a count of receipts is not a count of things (rounds-96 rule)",
+  );
+});
+
+test("a clearing day short of its count says how far it got, and never reads as the day", () => {
+  const five = Array.from({ length: 5 }, (_, index) => CLEARING_RECEIPTS.cut_weeds(`weed_${String(index)}`));
+  const short = judgeTaskPurpose("clear_ground_clutter", five);
+  assert.equal(short.state, "not_achieved");
+  assert.equal(short.reasonCode, "task_purpose_not_achieved");
+  assert.equal(short.clearedPieces, 5);
+  assert.equal(short.detail, "5/20 pieces cleared (cut_weeds 5)");
+
+  const none = judgeTaskPurpose("clear_ground_clutter", []);
+  assert.equal(none.state, "not_achieved");
+  assert.equal(none.detail, "0/20 pieces cleared \u00b7 nothing_cleared");
+
+  // A REFUSED CLEARING RECEIPT IS A FLOOR, NOT A FAILURE: the evidence that would have decided the day exists and proved
+  // nothing, so the count can only ever be a lower bound.
+  const broken = Object.freeze({
+    ...CLEARING_RECEIPTS.cut_weeds("weed_9"),
+    evidence: { detail: "target=weed_9;type=weed" },
+  });
+  const floor = judgeTaskPurpose("clear_ground_clutter", [...five, broken]);
+  assert.equal(floor.state, "unproven");
+  assert.equal(floor.reasonCode, "task_purpose_evidence_without_postcondition");
+  assert.equal(floor.clearedPieces, 5, "the admitted five are still counted, which is what makes it a floor");
+});
 
 /**
  * NAMED `round96, day 3`: the plot was laid, and five swings were not twenty.

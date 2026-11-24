@@ -49,9 +49,9 @@
  * rather than silently missed.
  *
  * WHAT A CRITERION MAY NOT DO. It may not read a fact the receipts do not publish, and it may not substitute a
- * readable neighbour for the purpose (clearing "one patch somewhere" is not clearing the east patch). Where the
- * purpose needs a fact nothing publishes, the entry carries `missingFact` instead of `steps`: the day is then
- * `unjudged` with that sentence attached, and `judgeTaskPurpose` still cannot return `achieved` for it.
+ * readable neighbour for the purpose (clearing twenty pieces of clutter somewhere is not clearing the twenty the day
+ * was given). Where the purpose needs a fact nothing publishes, the entry carries `missingFact` instead of `steps`: the
+ * day is then `unjudged` with that sentence attached, and `judgeTaskPurpose` still cannot return `achieved` for it.
  *
  * UNJUDGED IS A THIRD ANSWER, NOT A QUIETER UNPROVEN. Measured 2026-11-20 (`round81`): day 3 was `sweep_yard_and_work`,
  * whose purpose is a fact nothing publishes, and its `unproven` verdict read as a failed day - the run was blocked for a
@@ -112,15 +112,14 @@ const criterion = (purpose, steps, { ordered = true, because } = {}) =>
  */
 const actionLifecycle = (actionId, lifecycle) => Object.freeze({ kind: "action_lifecycle", actionId, lifecycle });
 const actionPostcondition = (actionId, name) => Object.freeze({ kind: "action_postcondition", actionId, name });
-const absentEvidenceField = (actionId, field) => Object.freeze({ kind: "absent_evidence_field", actionId, field });
 const presentEvidenceField = (actionId, field) => Object.freeze({ kind: "present_evidence_field", actionId, field });
 
 /**
  * The half of a reason no artifact can decide, with the artifact that would refute it.
  *
- * Declared rather than implied, because an absence nobody enumerates - "no map of the Farm says which part is the east
- * patch" - is a debt: the reader has to be able to check it without a run, and the next lane has to know which file to
- * change to retire it.
+ * Declared rather than implied, because an absence nobody enumerates - "no published family says which tile the piece of
+ * furniture came to rest on" - is a debt: the reader has to be able to check it without a run, and the next lane has to
+ * know which file to change to retire it.
  */
 const proseReason = (refutableBy) => Object.freeze({ kind: "prose", refutableBy });
 
@@ -178,6 +177,43 @@ const patch = (purpose, { width, height, tilledBy, croppedBy }) =>
 
 /** One action that proves a tile is tilled or carries a crop, and the evidence field that names the tile. */
 const tileProof = (actionId, tileField) => Object.freeze({ actionId, tileField });
+
+/**
+ * A purpose that is a COUNT OF SEPARATE THINGS TAKEN OFF THE GROUND, and no place anywhere in it.
+ *
+ * <p>
+ * THIS IS WHAT A CLEARING DAY CAN PROVE. It used to be a gap: `clear_east_patch` asked for "the east patch" left
+ * without weeds and rocks, and no published fact says which part of the farm is east - the farm arrives as one `Farm`
+ * map with one tile grid, and `cut_weeds`, `cut_grass`, `break_rock` and `chop_stump` publish no `location` at all. So
+ * the day was `unjudged` by construction, and what she was asked to hold was a region the world never states (the
+ * owner's rule: the perception layer publishes anchors, never a hard-coded east area).
+ * </p>
+ * <p>
+ * WHAT THE FOUR RECEIPTS DO STATE is the opaque `target` id of the thing each one removed - `target=weed_01` on
+ * `weeds_cut`, the same `target` on the `*_gone` settlements those actions answer with - so the honest purpose is a
+ * COUNT: twenty separate pieces cleared, wherever they stood. No shape and no place, because neither is published.
+ * </p>
+ * <p>
+ * THE JUDGE COUNTS DISTINCT TARGETS, NEVER RECEIPTS, and that is the rounds-96 rule applied to loot rather than to
+ * ground: twenty receipts can name fifteen things (`weed_target_gone` answers the tile an earlier node already cut, and
+ * `rock_source_gone` the stone an earlier swing removed), exactly as twenty hoe swings are not a plot. `clearedBy` states,
+ * per action, the field that names the thing - beside the id, so a clearing action that names its target differently is a
+ * declaration and not an assumption.
+ * </p>
+ */
+const clearedPieces = (purpose, { atLeast, clearedBy }) => {
+  if (!Number.isInteger(atLeast) || atLeast < 1) throw new Error("stardew_cleared_pieces_needs_its_count");
+  if (!Array.isArray(clearedBy) || clearedBy.length === 0)
+    throw new Error("stardew_cleared_pieces_needs_its_actions");
+  return Object.freeze({
+    purpose,
+    pieces: Object.freeze({ atLeast }),
+    clearedBy: Object.freeze(clearedBy),
+  });
+};
+
+/** One action that removed something, and the evidence field that names the thing it removed. */
+const targetProof = (actionId, targetField) => Object.freeze({ actionId, targetField });
 
 /**
  * A purpose that is a COUNT OF TILES on one map, with no shape declared.
@@ -592,23 +628,18 @@ export const inTownMap = (map) => typeof map === "string" && TOWN_MAP_SET.has(ma
  * requires at least two of them, so no single action's success can satisfy a task.
  */
 export const TASK_PURPOSE_CRITERIA = Object.freeze({
-  clear_east_patch: gap(
-    "the east patch has no weeds and rocks left in it",
-    "no fact says which part of the farm is the east patch. `cut_weeds`, `cut_grass`, `break_rock` and `chop_stump` each publish the target they removed and the tool they used, and not one of their evidence key sets admits a `location` at all (`host/src/stardew-completion-contracts.ts`), so the removal is proved and the map it happened on is not. Even a map name would not bound it: the farm is one `Farm` map with one tile grid and no subdivision fact, so 'a patch was cleared somewhere on the Farm' is the strongest statement a run can make.",
-    {
-      reason: "prose",
-      fact: unpublishedFact("a sub-area of the Farm named the east patch"),
-      claims: [
-        absentEvidenceField("cut_weeds", "location"),
-        absentEvidenceField("cut_grass", "location"),
-        absentEvidenceField("break_rock", "location"),
-        absentEvidenceField("chop_stump", "location"),
-        proseReason(
-          "a published fact naming a sub-area of the Farm would refute this: the Farm arrives as one map with one tile grid and no family or receipt carries a region or plot id, so the declaration that would retire this entry is a reading of the farm's own partition",
-        ),
-      ],
-    },
-  ),
+  clear_ground_clutter: clearedPieces("twenty separate pieces of clutter were cleared off the ground", {
+    atLeast: 20,
+    // ALL FOUR ARE THE DAY'S OWN DECLARED ACTIONS (`DAILY_TASK_ACTION_HINTS.clear_ground_clutter`), and each names what it
+    // removed in `target`. `clear_debris` is deliberately NOT among them: its receipt names the debris it cleared, and the
+    // day's own declaration does not offer it, so adding it here would widen a criterion past the work it asks for.
+    clearedBy: [
+      targetProof("cut_weeds", "target"),
+      targetProof("cut_grass", "target"),
+      targetProof("break_rock", "target"),
+      targetProof("chop_stump", "target"),
+    ],
+  }),
   // THE DAY AFTER A HARVEST DAY OWES THE GROUND, NOT THE HARVEST.
   //
   // Measured (`round89`, `.live-runs/game-ladder/2026-11-21T20-38-52-354Z-multiday_routine`, day 2): she bought fifteen
@@ -735,12 +766,12 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
         "`dress_mannequin` and `set_sign_display` both display what she is wearing or holding, so `equip_wearable` has to come first for the display to be of THAT thing",
     },
   ),
-  // THE ONLY CRITERION THAT COUNTS TILES, and the only one that asks for a SHAPE rather than naming actions: a
+  // THE ONE CRITERION THAT COUNTS TILES IN A SHAPE, and the only one that asks for a SHAPE rather than naming actions: a
   // purpose made of steps is satisfied by one receipt per step, and "tilled, then planted, then watered" is three
-  // steps a single tile answers in three dispatches. `clear_east_patch` cannot say which part of the farm was cleared
-  // or how much of it, because a receipt names one tile and the criterion asks for none. This one does: sixty tiles,
-  // all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the 13x13 window one snapshot sees, so
-  // the boundary has to survive her walking out of view.
+  // steps a single tile answers in three dispatches. The clearing day cannot prove a shape at all - its receipts name an
+  // opaque target and no tile (`clear_ground_clutter` above) - so it asks for a COUNT, and this entry asks for the shape
+  // nothing else measures: sixty tiles, all tilled, all carrying a crop, inside a 3x20 strip - a plot longer than the
+  // 13x13 window one snapshot sees, so the boundary has to survive her walking out of view.
   //
   // "SIXTY" IS THE RECTANGLE, NOT A COUNT OF GROUND: a tile a tree stands on is a tile this strip is not made of
   // (`PATCH_OCCUPANT_REFUSAL` above, measured `round96`), so the denominator is the tiles of that rectangle the day's
@@ -1684,6 +1715,91 @@ function judgePlot(entry, admitted, refused) {
 }
 
 /**
+ * The distinct things one day's receipts removed, by the action that removed each, and the count they add up to.
+ *
+ * <p>
+ * A TARGET ID IS THE THING, and the same id twice is one thing: `cut_weeds` answers `weed_target_gone` on a tile an
+ * earlier node already cut, `break_rock` answers `rock_source_gone` on the stone an earlier swing removed, and both carry
+ * the `target` the earlier receipt carried. Counting receipts would read that as two pieces cleared, which is the
+ * rounds-96 defect (twenty hoe swings on one tile is not a plot) in its other direction.
+ * </p>
+ * <p>
+ * THE FIELD IS DECLARED PER ACTION (`clearedBy`), not assumed: every clearing action publishes its target today, and an
+ * action that names it otherwise is a declaration here rather than a silent zero.
+ * </p>
+ * <p>
+ * ONE COUNT FOR THE WHOLE DAY, WITH NO MAP AROUND IT, and that is safe BECAUSE OF THE PRODUCER: a clearing target id is
+ * `<location>:<x>,<y>:<kind>:<item>` hashed (`BuildWeedTargetId` and its three siblings in
+ * `integrations/stardew/farmhandexecutioncontroller.cs`), so the map is inside the identity this counts. Two maps can
+ * therefore never mint one id for two pieces - which is what the receipts, carrying no `location`, could not prove on
+ * their own.
+ * </p>
+ */
+function clearedTargets(entry, admitted) {
+  const fieldOf = new Map(entry.clearedBy.map((proof) => [proof.actionId, proof.targetField]));
+  const targets = new Set();
+  const byAction = new Map();
+  for (const admittedReceipt of admitted) {
+    const field = fieldOf.get(admittedReceipt.actionId);
+    if (field === undefined) continue;
+    const detail = admittedReceipt.receipt?.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    const target = evidenceFields(detail).get(field);
+    if (typeof target !== "string" || target.length === 0 || targets.has(target)) continue;
+    targets.add(target);
+    byAction.set(admittedReceipt.actionId, (byAction.get(admittedReceipt.actionId) ?? 0) + 1);
+  }
+  return { targets, byAction };
+}
+
+/**
+ * The verdict for a clearing purpose: how many separate pieces came off the ground, against the declared count.
+ *
+ * <p>
+ * THREE OUTCOMES, and the middle one is the floor the other criteria keep: `achieved` is the declared count of DISTINCT
+ * targets; `unproven` is a day whose clearing receipts were refused - the evidence that would have decided it exists and
+ * proved nothing - so the count is a floor rather than a total; `not_achieved` is a complete reading of a day that fell
+ * short, and it carries the count it reached with the split by action so a reader can tell "four weeds and no rocks" from
+ * "nothing found".
+ * </p>
+ * <p>
+ * IT NAMES NO PLACE, deliberately. The purpose this replaces asked for "the east patch", which no published family
+ * states - see `clearedPieces` - and inventing a place here would put the same unjudgeable demand back one layer down.
+ * </p>
+ */
+function judgeClearedPieces(entry, admitted, refused) {
+  const declared = entry.pieces.atLeast;
+  const { targets, byAction } = clearedTargets(entry, admitted);
+  const cleared = targets.size;
+  const split = [...byAction].map(([actionId, count]) => `${actionId} ${String(count)}`).join(", ");
+  const tally = Object.freeze({
+    clearedPieces: cleared,
+    clearedDeclared: declared,
+    clearedByAction: Object.freeze(Object.fromEntries(byAction)),
+    detail: `${String(cleared)}/${String(declared)} pieces cleared${split.length === 0 ? "" : ` (${split})`}`,
+  });
+  const readActionIds = new Set(entry.clearedBy.map((proof) => proof.actionId));
+  const refusedReadings = refused.filter((receipt) => readActionIds.has(receipt.actionId)).length;
+  const common = Object.freeze({ ...tally, purpose: entry.purpose, missingFact: null });
+  if (cleared >= declared) return Object.freeze({ ...common, state: "achieved", reasonCode: "task_purpose_achieved" });
+  if (refusedReadings > 0) {
+    return Object.freeze({
+      ...common,
+      state: "unproven",
+      reasonCode: "task_purpose_evidence_without_postcondition",
+      detail:
+        `${tally.detail} \u00b7 ${String(refusedReadings)} clearing receipt(s) were refused, so this count is a floor ` +
+        "rather than the day's total",
+    });
+  }
+  return Object.freeze({
+    ...common,
+    state: "not_achieved",
+    reasonCode: "task_purpose_not_achieved",
+    detail: `${tally.detail}${cleared === 0 ? " \u00b7 nothing_cleared" : ""}`,
+  });
+}
+/**
  * The map a door transition's `actual` names, or null.
  *
  * The grammar is the Mod's own and the Host's (`parseWarpDestination` in `host/src/stardew-completion-contracts.ts`):
@@ -1880,6 +1996,11 @@ export function judgeTaskPurpose(taskId, receipts, observations = null) {
   // out of two receipt shapes, so it is neither a step list nor a shape on a map (see the entry's own note).
   if (entry.town !== undefined) {
     return Object.freeze({ ...common, ...judgeTownVisit(entry, admitted, refused) });
+  }
+  // A clearing purpose is a COUNT of the things the receipts named, so it reads neither a step list nor a map: the
+  // receipts it counts publish no map and no tile (see the entry's own note).
+  if (entry.pieces !== undefined) {
+    return Object.freeze({ ...common, ...judgeClearedPieces(entry, admitted, refused) });
   }
   if (criterionSatisfied(entry, admitted)) {
     return Object.freeze({
