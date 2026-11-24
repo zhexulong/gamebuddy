@@ -141,7 +141,7 @@ test("memory service source keeps the store, lease and coordinator authority pri
 });
 
 const mountedPreamble = `
-  const [coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath] = process.argv.slice(2);
+  const [coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath, teardownCheckUrl] = process.argv.slice(2);
   const { bindWindowsStaleLockReclaimer } = await import(new URL("../path-lock.js", coordinatorUrl).href);
   const { createBuildWindowsStaleLockReclaimer } = await import(new URL("../windows-stale-lock-reclaimer/index.js", coordinatorUrl).href);
   await bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
@@ -169,6 +169,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
   ).href;
   const deploymentUrl = new URL("../../deployment-manifest.js", import.meta.url).href;
   const serviceUrl = new URL("./memory-management.js", import.meta.url).href;
+  const teardownCheckUrl = new URL("../../test-fixtures/in-flight-teardown.js", import.meta.url).href;
   const contractUrl = new URL("../browser-contract/index.js", import.meta.url).href;
   const manifestPath = join(root, "manifest.json");
   await writeFile(
@@ -190,7 +191,7 @@ async function runMountedChild(body: string, root: string): Promise<Record<strin
   await writeFile(childPath, mountedPreamble + body);
   const child = spawn(
     process.execPath,
-    [childPath, coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath],
+    [childPath, coordinatorUrl, deploymentUrl, serviceUrl, contractUrl, manifestPath, teardownCheckUrl],
     { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   );
   const output: Buffer[] = [];
@@ -611,6 +612,62 @@ test("a projection the browser holds still verifies after the service is rebuilt
   assert.equal(rebuilt.projectionRevision, held.projectionRevision);
   // And the revision is still a CAS: the row it changed now projects a different one.
   assert.notEqual(outcome.value!.projectionRevision, held.projectionRevision);
+});
+
+test("a read parked inside the service when it is closed is refused by name, and the handle it was holding still addresses the row", async () => {
+  const results = await mounted(`
+    const { withInFlightTeardownCheck } = await import(teardownCheckUrl);
+    let rows = [{ playerAuthored: false, stateToken: "tok_keep", content: "The farmer loves blueberries.", category: "semantic", status: "active" }];
+    const writes = [];
+    let park;
+    const stub = Object.freeze({
+      // The second read of this case parks here: that is the panel's read still inside the service
+      // when the service behind it is closed.
+      listMemories: async () => {
+        const held = park;
+        park = undefined;
+        if (held !== undefined) { held.enter(); await held.released; }
+        return rows;
+      },
+      listChapters: async () => [],
+      create: async () => { throw new Error("unexpected create"); },
+      update: async ({ stateToken, content }) => {
+        writes.push({ stateToken, content });
+        rows = rows.map((entry) => entry.stateToken === stateToken ? { ...entry, stateToken: "tok_keep_v2", content } : entry);
+      },
+      archive: async () => { throw new Error("unexpected archive"); },
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
+    });
+    const before = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const held = await before.read();
+    const reading = await withInFlightTeardownCheck({
+      name: "memory management service: a read parked inside the service when it is closed",
+      start: async (inFlight) => { park = inFlight; return await before.read(); },
+      teardown: () => before.close(),
+      refusals: ["memory_read_service_unavailable"],
+    });
+    // The service that answers the NEXT request, over the same durable row.
+    const after = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const outcome = await run(async () => await after.mutate({
+      apiVersion: 1,
+      operation: "update",
+      expectedProjectionRevision: held.projectionRevision,
+      handle: held.memories[0].handle,
+      content: "The farmer loves strawberries.",
+    }));
+    process.stdout.write(JSON.stringify({ reading, outcome, writes, held }));
+    await after.close();
+    await lease.close();
+    await authority.close();
+  `);
+  // The read that was inside the closed service ends: it is refused by the service's own code, not by a
+  // closed storage handle and not by hanging.
+  assert.equal((results.reading as { outcome: string }).outcome, "refused");
+  assert.equal((results.reading as { refusal: string }).refusal, "memory_read_service_unavailable");
+  // And the handle the refused read held still addresses the row for the service that replaced it.
+  assert.equal((results.outcome as { ok: boolean }).ok, true, (results.outcome as { error?: string }).error);
+  assert.deepEqual(results.writes, [{ stateToken: "tok_keep", content: "The farmer loves strawberries." }]);
 });
 
 test("a handle minted for another continuity never resolves here, even over the same row", async () => {
