@@ -769,6 +769,14 @@ export const STARDEW_EXPERIMENTAL_ACTION_RUNNERS = Object.freeze({
   // The transient body hold, live: it starts the till-soil contract and sends a follow-up while that action is in
   // flight - the shape that used to be refused to the agent instead of being absorbed and recorded as `held_ms`.
   hold_absorption: "run-stardew-native-local-player-hold-absorption-smoke.mjs",
+  // The two "put one carried item INTO a placed thing" actions. Each is registered `Experimental` in the Mod catalog -
+  // the container was the missing Given until the fixture could stand an EMPTY fish tank and an EMPTY pedestal - so
+  // their gates resolve here and not from `STARDEW_PUBLISHED_ACTION_GATES`, which by contract is the published set. A
+  // runner is neither a capability grant nor a success claim: both actions stay `experimental` until a live run returns
+  // `fish_tank_item_deposited` / `pedestal_item_placed`. Until this entry existed the coverage gate reported both as
+  // `action_without_a_live_gate`, and the route resolver refused them with `stardew_action_gate_route_absent`.
+  put_item_in_fish_tank: "run-stardew-native-local-player-put-item-in-fish-tank-smoke.mjs",
+  place_item_on_pedestal: "run-stardew-native-local-player-place-item-on-pedestal-smoke.mjs",
   // WIA world-interruption live proofs (world-interruption-arbitration.md
   // §4.1 ② / §4.3): drive the SAME published move_to_tile action over fixtures
   // that stage a world-change mid-move, measuring that the running body loop
