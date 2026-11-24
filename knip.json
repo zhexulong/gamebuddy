@@ -2,13 +2,28 @@
   "workspaces": {
     ".": {
       "entry": [
-        "tools/*.mjs",
+        // knip reads the file arguments of `package.json` scripts itself, so a tool a script runs needs no row
+        // here; a tool a PowerShell or Python entry point runs does not have that path into the graph. The three
+        // rows that used to stand here (`tools/*.mjs`, `tools/sandbox/*.mjs`, `tools/live-run/**/*.mjs`) covered
+        // 115 files between them, and 33 of those are covered by no row below because nothing in this tree runs or
+        // reads them: they are reported as unused files, which is the finding the governance doc asks for rather
+        // than an entry asserting a reachability nothing backs (measured 2026-11-24, `.tmp/lane-governance.md`).
+        //
+        // Each row names the one consumer knip cannot follow. A row whose file disappears is an unmatched pattern,
+        // which knip prints as a configuration hint, so the lists expire themselves; a new tool is uncovered until
+        // a row names what runs it.
+
+        // Two directory scans own their population, so the pattern mirrors the scan rather than guessing at it:
+        // `RUNNER_FILE_PATTERN` (gates/stardew/check-stardew-live-runner-coverage.mjs:112, and the same shape in
+        // gates/stardew/audit-stardew-native-local-runner-contract.mjs:202) and `benchFiles()`
+        // (tools/perf/run-benchmarks.mjs:28 - `readdirSync(...).filter(name => name.endsWith(".bench.mjs"))`).
+        "tools/run-stardew-native-local-player-*-smoke.mjs",
         "tools/perf/*.bench.mjs",
-        // The Windows Sandbox harness: a human runs these by hand from tools/sandbox/FINDINGS.md, so no npm
-        // script reaches them and `sandbox-bus.mjs` is an entry rather than dead code.
-        "tools/sandbox/*.mjs",
-        "tools/lib/stardew-csharp-syntax-structural-canary.mjs",
-        "tools/live-run/**/*.mjs",
+
+        // Spawned by a sibling by path rather than imported, or run against the file as its subject. A file whose
+        // only consumer is a `spawn` is unreachable to an import-graph tool, and deleting it because knip called it
+        // unused would remove a working gate. `report-run-cost.mjs` is run by `run-chat-live-audit.mjs` and imports
+        // `run-cost-usage.mjs`; `check-lockfile-freeze.mjs` is spawned twice by `scripts/pre-commit.mjs`.
         "tools/lib/chat-run-audit.mjs!",
         "tools/lib/stardew-decompile-root.mjs!",
         "tools/lib/stardew-native-multiplayer-sensitivity.mjs!",
@@ -21,13 +36,68 @@
         "tools/live-run/frontend/phases/report.mjs!",
         "tools/live-run/frontend/probes/prerequisite-check.mjs!",
         "tools/live-run/frontend/probes/runtime-discover.mjs!",
-        // Named because knip cannot see the caller: both are spawned as a subprocess by a sibling,
-        // not imported. `report-run-cost.mjs` is run by `run-chat-live-audit.mjs` and imports
-        // `run-cost-usage.mjs`; `check-lockfile-freeze.mjs` is spawned twice by `scripts/pre-commit.mjs`.
-        // A file whose only consumer is a spawn is unreachable to an import-graph tool, and deleting it
-        // because knip called it unused would remove a working gate.
         "tools/perf/report-run-cost.mjs!",
-        "tools/scripts/check-lockfile-freeze.mjs!"
+        "tools/scripts/check-lockfile-freeze.mjs!",
+        // Each `//` names the spawner that builds the path.
+        "tools/compare-live-run-findings.mjs", // tools/compare-live-run-findings.test.mjs:8
+        "tools/live-run/analysis/airp-scorecard.mjs", // tools/live-run/analysis/airp-scorecard.test.mjs:22
+        "tools/live-run/frontend/capture/reconciliation-verdict.mjs", // require()d by capture/{m-opening-picker,t-installation-discovery,u-preset-assembly}.cjs
+        "tools/prepare-tavern-live-fixture.mjs", // tools/prepare-tavern-live-fixture.test.mjs:10
+        "tools/run-live-chat-card-e2e.mjs", // tools/live-run/memory/run-memory-live-loop.mjs:261
+        "tools/run-tavern-management-operation-evidence.mjs", // tools/run-tavern-management-operation-evidence.test.mjs:19
+        "tools/score-stardew-companion-live-scenarios.mjs", // tools/stardew-companion-live-scorer.test.mjs:134
+
+        // Spawned by a PowerShell entry point, which knip cannot read at all.
+        "tools/apply-stardew-fixture-bridge-override.mjs", // tools/start-farmhand-launcher.ps1:478
+        "tools/await-stardew-fixture-readiness.mjs", // tools/run-stardew-attachment-regression.ps1:161
+        "tools/bootstrap-stardew-native-local-player-fixture.mjs", // tools/run-stardew-native-local-player-move-fixture.ps1:422
+        "tools/capture-mimo-contract.mjs", // tools/capture-mimo-contract.ps1:11
+        "tools/live-run/frontend/probes/verified-helper-pair.mjs", // tools/live-run/frontend/phases/pin.ps1:17
+        "tools/prepare-stardew-fixture-profile.mjs", // tools/start-farmhand-launcher.ps1:432
+        "tools/prepare-stardew-native-local-player-fixture.mjs", // tools/launch-stardew-navigation-fixture.ps1:59
+        "tools/restore-stardew-fixture-profile.mjs", // tools/start-farmhand-launcher.ps1:726
+        "tools/restore-stardew-native-local-player-fixture.mjs", // tools/lib/live-run-teardown.mjs (spawn), gates/data/check-live-run-isolation.mjs
+        "tools/run-stardew-shared-world-action.mjs", // tools/run-stardew-shared-world-action.ps1:461
+        "tools/stardew-attachment-request.mjs", // tools/run-stardew-attachment-regression.ps1:265
+        "tools/stardew-shared-world-attachment-request.mjs", // tools/run-stardew-shared-world-action.ps1:379
+
+        // Rows of `integrations/stardew/action-development/tool-inventory.json`, which enumerates the tools its
+        // `governedPatterns` cover and fails when one is unregistered. These are read-only probes and smoke
+        // harnesses: run by hand, never imported.
+        "tools/replay-stardew-destination-search-operation.mjs",
+        "tools/replay-stardew-world-map-operation.mjs",
+        "tools/run-stardew-agent-context-reentry.mjs",
+        "tools/run-stardew-agent-game-smoke.mjs",
+        "tools/run-stardew-body-smoke.mjs",
+        "tools/run-stardew-bridge-disconnect-smoke.mjs",
+        "tools/run-stardew-bridge-reconnect-smoke.mjs",
+        "tools/run-stardew-native-local-player-clear-debris-probe.mjs",
+        "tools/run-stardew-native-local-stop-deadline-probe.mjs",
+
+        // Named by a gate that judges the file, or the generator of an artifact a gate compares byte for byte.
+        "tools/check-live-run-closures.mjs", // gates/meta/prelive-register-tables.mjs:94
+        "tools/generate-vocabulary.mjs", // VOCABULARY_GENERATOR, gates/data/check-generated-artifact-reproducibility.mjs:129
+        "tools/harvest-stardew-receipts.mjs", // producer of host/src/test-fixtures/stardew-receipts/corpus.json, named by host/src/stardew-receipt-corpus.ts:5
+        "tools/lib/source-citation.mjs", // imported by gates/stardew/check-stardew-source-citations.mjs:87
+        "tools/lib/stardew-actor-holds.mjs", // imported by gates/stardew/check-stardew-actor-admissibility.mjs:80
+        "tools/live-run/game/capability-audit.mjs", // read by tools/live-run/game/run-stardew-native-local-agent-ab-live.support.mjs:48
+        "tools/live-run/game/stardew-world-survival-live.mjs", // silent-catch site row in tools/lib/silent-failure.mjs:691
+        "tools/record-stardew-live-receipts.mjs", // regenerates host/src/test-fixtures/stardew-live-receipts.json, named by gates/stardew/check-stardew-action-promotion.mjs:48
+        "tools/run-windows-sensevoice-final-transcript-gate.mjs", // read by tools/lib/voice-gateway-probe-client.test.mjs:54
+        "tools/run-windows-voice-output-gate.mjs", // read by tools/lib/voice-gateway-probe-client.test.mjs:53
+        "tools/lib/voice-final-gate-server.mjs", // spawned by tools/run-windows-sensevoice-final-transcript-gate.mjs:29
+
+        // The memory live-loop's manifests: the test reads the directory, not a list of names
+        // (tools/live-run/memory/run-memory-live-loop.test.mjs:16), so the pattern is the population.
+        "tools/fixtures/chat-run-audit/memory-probes/*.manifest.mjs",
+
+        // Declared by a register or a runbook as a gate or tool a person runs by hand.
+        "tools/live-run/chat/check-post-history-instructions-live.mjs", // UNSCANNED_GATES, "typed by hand" (gates/meta/prelive-register-tables.mjs)
+        "tools/live-run/analysis/long-session-metrics.mjs", // tools/live-run/analysis/README.md:28
+        "tools/live-run/analysis/round3-verdict.mjs", // tools/live-run/analysis/README.md:25
+        "tools/run-stardew-native-local-path-predicate-probe.mjs", // fixtures/stardew/RUNBOOK.md:1269
+        "tools/sandbox/sandbox-bus.mjs", // tools/sandbox/FINDINGS.md:77
+        "tools/verify-phase0b-host.mjs" // host/README.md:139
       ],
       "project": [
         "tools/**/*.mjs"
@@ -67,6 +137,14 @@
         "scripts/compiled-test-bootstrap.mjs",
         "scripts/production-artifact-esm-resolution-probe.mjs",
         "scripts/start-test-artifact.mjs",
+        // Spawned by a test, by absolute path, after a build: the worker is a process, not an import.
+        //   desktop-host-composition-drain-fixture-worker.ts <- host/src/composition/desktop-host-composition.test.ts:303
+        //   desktop-presentation-admission-{chat-only,management,owner}-worker.ts
+        //     <- host/src/composition/desktop-presentation-admission-owner.private.test.ts:73,109,201
+        "src/composition/desktop-host-composition-drain-fixture-worker.ts!",
+        "src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts!",
+        "src/test-fixtures/desktop-presentation-admission-management-worker.ts!",
+        "src/test-fixtures/desktop-presentation-admission-owner-worker.ts!",
         "src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.test-support.ts",
         "src/wire-declaration.test-support.ts!",
         "src/test-support/deterministic-bridge.ts!",
@@ -166,16 +244,13 @@
       ]
     }
   },
-  "ignore": [
-    "host/src/composition/desktop-host-composition-drain-fixture-worker.ts",
-    "host/src/test-fixtures/desktop-presentation-admission-chat-only-worker.ts",
-    "host/src/test-fixtures/desktop-presentation-admission-management-worker.ts",
-    "host/src/test-fixtures/desktop-presentation-admission-owner-worker.ts",
-    "integrations/stardew/action-development/src/devkit-local/**",
-    "tools/lib/voice-final-gate-server.mjs",
-    "tools/fixtures/chat-run-audit/memory-probes/**",
-    "tools/.tmp-*"
-  ],
+  // No `ignore` list: each row it held named a worker, a fixture directory or a devkit CLI that the
+  // entry model now covers (the four spawned workers are `host` entries, the memory manifests are a
+  // pattern the test scans). `integrations/stardew/action-development/src/devkit-local/**` and
+  // `tools/.tmp-*` were dropped rather than narrowed: the first hid two files nothing imports
+  // (`game-action-cli.mjs`, whose `pnpm exec game-action` scripts name a bin no package declares, and
+  // the `index.mjs` barrel), which are reported as unused files now, and the second matched no file at
+  // all.
   "ignoreBinaries": [
     "playwright",
     "pwsh",
