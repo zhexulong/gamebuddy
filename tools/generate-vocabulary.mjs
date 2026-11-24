@@ -23,16 +23,25 @@
  *
  * THE CONTRACT (`contracts/<name>.v1.json`) states:
  *   schema    the contract's own identity, for a reader
- *   purpose   one sentence, emitted as the generated type's doc comment
- *   symbol    the array's name in both languages
- *   type      the member type's name in the host module
+ *   purpose   one sentence, emitted as the generated symbol's doc comment
  *   members   the closed set, in the order the fact is written
- *   outputs   where `--write` puts each language's module
+ *   outputs   one entry per target: where `--write` puts it, and what it is CALLED there
+ *
+ * The contract states no symbol of its own, because one fact rarely has one name on both sides: the Host's TypeBox
+ * union is `StardewCabinOccupancyUnknownReasonV1` and the browser's array is `CABIN_OCCUPANCY_UNKNOWN_REASONS`. Each
+ * output therefore names its own `symbol` - and its own `type`, where that target declares one - rather than the
+ * contract carrying a name that half its outputs would override.
+ *
+ * TARGETS. `typebox` is the Host's `Type.Union([Type.Literal(...)])`: the members stay LITERAL types, because
+ * `Type.Literal(value)` over a value a JSON import types as `string[]` widens `Static<>` to `string`, and the answer
+ * schemas embedding these unions would stop being the wire's closed set. `ts` is the `as const` array both TypeScript
+ * packages read, and `mjs` the plain ESM array the `tools/` tree reads, which carries no types at all. A contract
+ * names only the targets it needs.
  *
  * USAGE
- *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --target ts   # stdout, the host module
- *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --target mjs  # stdout, the tools module
- *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --write       # both tracked files
+ *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --target typebox  # stdout, one output
+ *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --target mjs      # stdout, one output
+ *   node tools/generate-vocabulary.mjs --contract contracts/<name>.v1.json --write           # every declared output
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -41,19 +50,27 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SELF = "tools/generate-vocabulary.mjs";
-const TARGETS = Object.freeze(["ts", "mjs"]);
+
+/**
+ * The targets a contract may name, and whether that target declares a type beside its value.
+ *
+ * A target is a language shape, not a package: `typebox` and `ts` are both TypeScript, and which package an output
+ * lands in is its `path`. `mjs` is the plain ESM array the `tools/` tree reads, which has no types at all.
+ */
+const TARGETS = Object.freeze({ mjs: { typed: false }, ts: { typed: true }, typebox: { typed: true } });
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/u;
 /** A member is a wire token or a key name: both languages spell it the same way, so this is the whole alphabet. */
 const MEMBER = /^[A-Za-z][A-Za-z0-9_]*$/u;
+/**
+ * The formatter's line width (`biome.json`). The tracked file IS the generated text, so a line the formatter would
+ * rewrap is a byte that does not reproduce - and the reproducibility gate compares bytes.
+ */
+const LINE_WIDTH = 120;
 
 /** The contract as this generator needs it, or a refusal naming what is wrong with the contract. */
 export function readContract(contractPath, read = (target) => readFileSync(target, "utf8")) {
   const contract = JSON.parse(read(contractPath));
-  for (const key of ["symbol", "type"]) {
-    if (typeof contract[key] !== "string" || !IDENTIFIER.test(contract[key]))
-      throw new Error(`contract_${key}_not_an_identifier:${String(contract[key])}`);
-  }
   const members = contract.members;
   if (!Array.isArray(members) || members.length === 0) throw new Error("contract_members_missing");
   for (const member of members) {
@@ -61,17 +78,25 @@ export function readContract(contractPath, read = (target) => readFileSync(targe
       throw new Error(`contract_member_not_a_token:${String(member)}`);
   }
   if (new Set(members).size !== members.length) throw new Error("contract_members_duplicated");
-  const outputs = contract.outputs ?? {};
-  for (const target of TARGETS) {
-    if (typeof outputs[target] !== "string" || outputs[target].length === 0)
+  const declared = contract.outputs;
+  if (typeof declared !== "object" || declared === null || Object.keys(declared).length === 0)
+    throw new Error("contract_outputs_missing");
+  const outputs = {};
+  for (const [target, output] of Object.entries(declared)) {
+    const shape = TARGETS[target];
+    if (shape === undefined) throw new Error(`contract_output_unknown_target:${target}`);
+    if (typeof output?.path !== "string" || output.path.length === 0)
       throw new Error(`contract_output_missing:${target}`);
+    if (typeof output.symbol !== "string" || !IDENTIFIER.test(output.symbol))
+      throw new Error(`contract_symbol_not_an_identifier:${target}:${String(output.symbol)}`);
+    if (shape.typed && (typeof output.type !== "string" || !IDENTIFIER.test(output.type)))
+      throw new Error(`contract_type_not_an_identifier:${target}:${String(output.type)}`);
+    outputs[target] = { path: output.path, symbol: output.symbol, type: shape.typed ? output.type : null };
   }
   const purpose = typeof contract.purpose === "string" && contract.purpose.length > 0 ? contract.purpose : null;
   return {
     contractPath: path.relative(ROOT, path.resolve(contractPath)).split(path.sep).join("/"),
     purpose,
-    symbol: contract.symbol,
-    type: contract.type,
     members,
     outputs,
   };
@@ -93,44 +118,72 @@ function header(contract) {
 }
 
 /**
- * The host module's bytes.
+ * One declaration, on one line when that line fits the formatter's width and one member per line when it does not.
  *
- * The array is written on one line because the formatter would collapse it: this text IS the tracked file, so it has to
- * be what `biome format` leaves alone. `tools/check-generated-artifact-reproducibility.mjs` re-runs this producer and
- * compares the bytes, which is what keeps that claim true.
+ * `biome format` rewraps a longer line, so the generator has to make the same decision it makes; otherwise the tracked
+ * bytes are not what the formatter leaves and the reproducibility gate disagrees with the producer.
  */
-function renderHost(contract) {
+function declared(head, tail, elements) {
+  const inline = `${head}${elements.join(", ")}${tail}`;
+  if (inline.length <= LINE_WIDTH) return [inline];
+  return [head, ...elements.map((element) => `  ${element},`), tail];
+}
+
+const quoted = (contract) => contract.members.map((member) => `"${member}"`);
+const purpose = (contract) => (contract.purpose === null ? [] : [`/** ${contract.purpose} */`]);
+
+/** The `as const` array: what both TypeScript packages read, and the type of its own members. */
+function renderTs(contract, output) {
   return [
     ...header(contract),
-    `export const ${contract.symbol} = [${contract.members.map((member) => `"${member}"`).join(", ")}] as const;`,
+    ...declared(`export const ${output.symbol} = [`, "] as const;", quoted(contract)),
     "",
-    ...(contract.purpose === null ? [] : [`/** ${contract.purpose} */`]),
-    `export type ${contract.type} = (typeof ${contract.symbol})[number];`,
+    ...purpose(contract),
+    `export type ${output.type} = (typeof ${output.symbol})[number];`,
   ].join("\n");
 }
 
-function renderTools(contract) {
+/** The Host's TypeBox union: one `Type.Literal` per member, so `Static<>` is the closed union the wire validates. */
+function renderTypebox(contract, output) {
   return [
     ...header(contract),
-    `export const ${contract.symbol} = Object.freeze([${contract.members.map((member) => `"${member}"`).join(", ")}]);`,
+    'import { type Static, Type } from "typebox";',
+    "",
+    ...purpose(contract),
+    ...declared(
+      `export const ${output.symbol} = Type.Union([`,
+      "]);",
+      contract.members.map((member) => `Type.Literal("${member}")`),
+    ),
+    `export type ${output.type} = Static<typeof ${output.symbol}>;`,
   ].join("\n");
 }
+
+function renderMjs(contract, output) {
+  return [
+    ...header(contract),
+    ...declared(`export const ${output.symbol} = Object.freeze([`, "]);", quoted(contract)),
+  ].join("\n");
+}
+
+const RENDERERS = Object.freeze({ mjs: renderMjs, ts: renderTs, typebox: renderTypebox });
 
 export function render(contract, target) {
-  if (target === "ts") return `${renderHost(contract)}\n`;
-  if (target === "mjs") return `${renderTools(contract)}\n`;
-  throw new Error(`unknown_target:${String(target)}`);
+  const output = contract.outputs[target];
+  const renderer = RENDERERS[target];
+  if (output === undefined || renderer === undefined) throw new Error(`contract_output_missing:${String(target)}`);
+  return `${renderer(contract, output)}\n`;
 }
 
 export function writeOutputs(contract) {
-  for (const target of TARGETS)
-    writeFileSync(path.join(ROOT, contract.outputs[target]), render(contract, target), "utf8");
+  for (const target of Object.keys(contract.outputs))
+    writeFileSync(path.join(ROOT, contract.outputs[target].path), render(contract, target), "utf8");
 }
 
 function main(argv) {
   const contractFlag = argv.indexOf("--contract");
   if (contractFlag < 0 || argv[contractFlag + 1] === undefined)
-    throw new Error(`usage: node ${SELF} --contract <path> [--target ts|mjs | --write]`);
+    throw new Error(`usage: node ${SELF} --contract <path> [--target typebox|ts|mjs | --write]`);
   const contract = readContract(argv[contractFlag + 1]);
   if (argv.includes("--write")) {
     writeOutputs(contract);

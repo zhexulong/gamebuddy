@@ -1,6 +1,14 @@
 // @zone contract:platform
 import { assertNever } from "./assert-never.js";
 import { type TavernStateSnapshotV1, validateSnapshot } from "./reference-pipeline-api.js";
+import {
+  CABIN_OCCUPANCY_UNKNOWN_REASONS,
+  type CabinOccupancyUnknownReason,
+} from "./stardew-cabin-occupancy-unknown-reasons.generated.js";
+import {
+  CABIN_QUARANTINE_RELEASES,
+  type CabinQuarantineRelease,
+} from "./stardew-cabin-quarantine-releases.generated.js";
 
 /**
  * Browser-only boundary for the composed reference-game profile.
@@ -81,31 +89,8 @@ const CABIN_OCCUPANCY_FIELDS_KEYS = [
   "publishedAtUnixMs",
   "observedAtUnixMs",
 ] as const;
-/** The Mod's three answers, and every reason its document could not decide. */
+/** The Mod's three answers. */
 const CABIN_OCCUPANCY_ANSWERS = ["not_bound", "already_bound", "unknown"] as const;
-const CABIN_OCCUPANCY_UNKNOWN_REASONS = [
-  "session_document_missing",
-  "session_document_unreadable",
-  "session_document_unauthenticated",
-  "session_document_stale",
-  "session_document_clock_ahead",
-  "session_document_other_world",
-  "session_host_not_ready",
-  "session_protocol_mismatch",
-  "manifest_farmhand_unavailable",
-] as const;
-/**
- * What the press did with its answer. `not_licensed` is every answer that licenses nothing; the four
- * refusals are the release's own assertions, one name each.
- */
-const CABIN_QUARANTINE_RELEASES = [
-  "released",
-  "not_licensed",
-  "record_is_not_the_quarantined_attempt",
-  "registration_names_another_attempt",
-  "guardian_objects_not_proven_dead",
-  "evidence_not_fresh_for_this_world",
-] as const;
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
 const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
 /**
@@ -541,13 +526,13 @@ export type StardewCabinOccupancyAnswerV1 = Readonly<{
   apiVersion: 1;
   occupancy: Readonly<{
     answer: (typeof CABIN_OCCUPANCY_ANSWERS)[number];
-    reason: (typeof CABIN_OCCUPANCY_UNKNOWN_REASONS)[number] | null;
+    reason: CabinOccupancyUnknownReason | null;
     cabinId: string | null;
     boundBy: "companion" | "manifest_farmhand" | null;
     publishedAtUnixMs: number | null;
     observedAtUnixMs: number;
   }>;
-  release: (typeof CABIN_QUARANTINE_RELEASES)[number];
+  release: CabinQuarantineRelease;
 }>;
 
 type StardewCabinConfirmationRequestV1 = Readonly<{
@@ -818,10 +803,7 @@ function validateStardewCabinOccupancy(value: unknown): StardewCabinOccupancyAns
   if (!isRecord(occupancy) || !hasExactKeys(occupancy, CABIN_OCCUPANCY_FIELDS_KEYS)) throw invalid;
   if (!CABIN_OCCUPANCY_ANSWERS.includes(occupancy.answer as (typeof CABIN_OCCUPANCY_ANSWERS)[number])) throw invalid;
   const reason = occupancy.reason;
-  if (
-    reason !== null &&
-    !CABIN_OCCUPANCY_UNKNOWN_REASONS.includes(reason as (typeof CABIN_OCCUPANCY_UNKNOWN_REASONS)[number])
-  )
+  if (reason !== null && !CABIN_OCCUPANCY_UNKNOWN_REASONS.includes(reason as CabinOccupancyUnknownReason))
     throw invalid;
   if ((occupancy.answer === "unknown") !== (reason !== null)) throw invalid;
   if (!isNullableLabel(occupancy.cabinId, MAX_CABIN_DISPLAY_LABEL_LENGTH)) throw invalid;
@@ -831,7 +813,7 @@ function validateStardewCabinOccupancy(value: unknown): StardewCabinOccupancyAns
     throw invalid;
   if (occupancy.publishedAtUnixMs !== null && !isSafeInteger(occupancy.publishedAtUnixMs, 0)) throw invalid;
   if (!isSafeInteger(occupancy.observedAtUnixMs, 0)) throw invalid;
-  if (!CABIN_QUARANTINE_RELEASES.includes(value.release as (typeof CABIN_QUARANTINE_RELEASES)[number])) throw invalid;
+  if (!CABIN_QUARANTINE_RELEASES.includes(value.release as CabinQuarantineRelease)) throw invalid;
   return Object.freeze({
     apiVersion: 1,
     occupancy: Object.freeze({

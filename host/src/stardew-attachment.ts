@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
-import type { StardewCabinOccupancyUnknownReasonV1 } from "./game-browser-contract/index.js";
+import type { StardewCabinOccupancyUnknownReasonV1 } from "./game-browser-contract/stardew-cabin-occupancy-unknown-reasons.generated.js";
 
 export const STARDew_PROVISIONING_VERSION = 1;
 export const STARDew_INTEGRATION_ID = "stardew";

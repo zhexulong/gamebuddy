@@ -335,6 +335,49 @@ export const SEAMS = Object.freeze([
     },
     owner: "the composed game client lane",
   },
+  // ─── The cabin press's two vocabularies: generated, because the bundle cannot import the Host package ───
+  //
+  // The Host's end is a TypeBox union (one literal type per member) and the browser's a `readonly string[]`; neither can
+  // import the other, and a runtime read of a JSON artifact would widen `Type.Literal(value)` to `string` and take
+  // `Static<>` with it. Both are outputs of one contract, and the reproducibility gate re-runs the producer for each.
+  {
+    fact: "stardew cabin occupancy unknown reasons",
+    authority: {
+      file: "host/src/game-browser-contract/stardew-cabin-occupancy-unknown-reasons.generated.ts",
+      name: "StardewCabinOccupancyUnknownReasonV1",
+    },
+    readers: [
+      {
+        file: "dialogue-web/src/stardew-cabin-occupancy-unknown-reasons.generated.ts",
+        name: "CABIN_OCCUPANCY_UNKNOWN_REASONS",
+      },
+    ],
+    derives: {
+      kind: "generated",
+      file: "contracts/stardew-cabin-occupancy-unknown-reasons.v1.json",
+      generator: "tools/generate-vocabulary.mjs",
+    },
+    owner: "the cabin-occupancy lane",
+  },
+  {
+    fact: "stardew cabin quarantine releases",
+    authority: {
+      file: "host/src/game-browser-contract/stardew-cabin-quarantine-releases.generated.ts",
+      name: "StardewCabinQuarantineReleaseV1",
+    },
+    readers: [
+      {
+        file: "dialogue-web/src/stardew-cabin-quarantine-releases.generated.ts",
+        name: "CABIN_QUARANTINE_RELEASES",
+      },
+    ],
+    derives: {
+      kind: "generated",
+      file: "contracts/stardew-cabin-quarantine-releases.v1.json",
+      generator: "tools/generate-vocabulary.mjs",
+    },
+    owner: "the cabin-quarantine lane",
+  },
   // ─── The tavern contract's vocabularies, held to the contract by the same drift gate ───
   //
   // These are the DEBT rows' neighbours on the other side: the crossing is the same one (the browser bundle has no

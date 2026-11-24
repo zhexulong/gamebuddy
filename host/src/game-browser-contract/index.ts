@@ -1,6 +1,8 @@
 import { type Static, type TSchema, Type } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 import { Format } from "typebox/format";
+import { StardewCabinOccupancyUnknownReasonV1 } from "./stardew-cabin-occupancy-unknown-reasons.generated.js";
+import { StardewCabinQuarantineReleaseV1 } from "./stardew-cabin-quarantine-releases.generated.js";
 
 export const GAME_BROWSER_API_V1 = "game_browser_api/v1" as const;
 const GAME_BROWSER_API_VERSION = 1 as const;
@@ -534,46 +536,6 @@ export const StardewCabinChoicesV1Schema = strictObject({
 });
 
 /**
- * Every way the Mod's own document can fail to decide whether this save holds her.
- *
- * The vocabulary is the wire's, and the Host's probe derives its union from this one
- * (`StardewCabinOccupancyUnknownReason` in `stardew-attachment.ts`): a reason the browser can receive
- * without the probe being able to produce it, or the reverse, would be two vocabularies for one fact.
- * Each member names the LAYER that failed, because "the game did not say" is not a fact a player can act
- * on and "the advertisement stopped three beats ago" is.
- */
-export const StardewCabinOccupancyUnknownReasonV1 = Type.Union([
-  Type.Literal("session_document_missing"),
-  Type.Literal("session_document_unreadable"),
-  Type.Literal("session_document_unauthenticated"),
-  Type.Literal("session_document_stale"),
-  Type.Literal("session_document_clock_ahead"),
-  Type.Literal("session_document_other_world"),
-  Type.Literal("session_host_not_ready"),
-  Type.Literal("session_protocol_mismatch"),
-  Type.Literal("manifest_farmhand_unavailable"),
-]);
-export type StardewCabinOccupancyUnknownReasonV1 = Static<typeof StardewCabinOccupancyUnknownReasonV1>;
-
-/**
- * What the press that asks "does this save hold her" did with the answer it read.
- *
- * `not_licensed` is every answer that licenses nothing: she is in the save (the handoff is over), or the
- * document could not decide (the quarantine stays). The four refusal members are the release's own
- * assertions, one name each, so a press that kept the quarantine says WHICH fact it could not establish
- * instead of reporting a generic failure.
- */
-export const StardewCabinQuarantineReleaseV1 = Type.Union([
-  Type.Literal("released"),
-  Type.Literal("not_licensed"),
-  Type.Literal("record_is_not_the_quarantined_attempt"),
-  Type.Literal("registration_names_another_attempt"),
-  Type.Literal("guardian_objects_not_proven_dead"),
-  Type.Literal("evidence_not_fresh_for_this_world"),
-]);
-export type StardewCabinQuarantineReleaseV1 = Static<typeof StardewCabinQuarantineReleaseV1>;
-
-/**
  * The cabin-quarantine press's answer: the Mod's three answers, with their reason, their cabin, and the
  * two clocks that make the answer evidence instead of a memory.
  *
@@ -581,6 +543,12 @@ export type StardewCabinQuarantineReleaseV1 = Static<typeof StardewCabinQuaranti
  * forged one carries a stamp nobody can attribute, and publishing it would make the freshness claim
  * unfalsifiable. The world and farmhand the answer is about are deliberately absent: they are the
  * attempt's own identity, they travel nowhere, and the release re-derives them on the Host.
+ *
+ * Both vocabularies it carries are generated from one contract each
+ * (`contracts/stardew-cabin-occupancy-unknown-reasons.v1.json` and
+ * `contracts/stardew-cabin-quarantine-releases.v1.json`): the browser cannot import this package, so the
+ * union validated here and the array the client validates against are outputs of the same fact, and the
+ * Host's probe derives its reason union from the same one (`stardew-attachment.ts`).
  */
 export const StardewCabinOccupancyAnswerV1Schema = strictObject({
   apiVersion: ApiVersion,

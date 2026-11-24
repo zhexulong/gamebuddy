@@ -1,11 +1,16 @@
 {
   "schema": "gamebuddy-chat-turn-terminal-states/v1",
   "purpose": "The states in which a Chat turn has settled: nothing further happens to it without a new turn.",
-  "symbol": "TERMINAL_TURN_STATES",
-  "type": "ChatTurnTerminalState",
   "members": ["completed", "cancelled", "failed"],
   "outputs": {
-    "ts": "dialogue-web/src/chat-turn-terminal-states.generated.ts",
-    "mjs": "tools/chat-turn-terminal-states.generated.mjs"
+    "ts": {
+      "path": "dialogue-web/src/chat-turn-terminal-states.generated.ts",
+      "symbol": "TERMINAL_TURN_STATES",
+      "type": "ChatTurnTerminalState"
+    },
+    "mjs": {
+      "path": "tools/chat-turn-terminal-states.generated.mjs",
+      "symbol": "TERMINAL_TURN_STATES"
+    }
   }
 }

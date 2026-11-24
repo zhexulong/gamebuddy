@@ -126,7 +126,7 @@ const MOD_EXPORT_RESOLUTION = Object.freeze({
 const REGISTER_PRODUCER = "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs";
 const PROJECTION_PRODUCER = "integrations/stardew/action-development/src/action-source-projection-producer.mjs";
 
-/** The vocabulary contracts: one generator, one output per language, per fact. */
+/** The vocabulary contracts: one generator, one output entry per target, per fact. */
 const VOCABULARY_GENERATOR = "tools/generate-vocabulary.mjs";
 const DEPLOYMENT_PRINCIPAL_CONTRACT = "contracts/deployment-principal.v1.json";
 const DEPLOYMENT_PRINCIPAL_KEY_INPUTS = Object.freeze([DEPLOYMENT_PRINCIPAL_CONTRACT, VOCABULARY_GENERATOR]);
@@ -134,6 +134,10 @@ const OBSERVE_SCENE_TRUNCATION_CONTRACT = "contracts/observe-scene-truncation-re
 const OBSERVE_SCENE_TRUNCATION_INPUTS = Object.freeze([OBSERVE_SCENE_TRUNCATION_CONTRACT, VOCABULARY_GENERATOR]);
 const CHAT_TURN_TERMINAL_CONTRACT = "contracts/chat-turn-terminal-states.v1.json";
 const CHAT_TURN_TERMINAL_INPUTS = Object.freeze([CHAT_TURN_TERMINAL_CONTRACT, VOCABULARY_GENERATOR]);
+const CABIN_OCCUPANCY_CONTRACT = "contracts/stardew-cabin-occupancy-unknown-reasons.v1.json";
+const CABIN_OCCUPANCY_INPUTS = Object.freeze([CABIN_OCCUPANCY_CONTRACT, VOCABULARY_GENERATOR]);
+const CABIN_RELEASES_CONTRACT = "contracts/stardew-cabin-quarantine-releases.v1.json";
+const CABIN_RELEASES_INPUTS = Object.freeze([CABIN_RELEASES_CONTRACT, VOCABULARY_GENERATOR]);
 const SNAPSHOT_SAMPLE_PROJECT =
   "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/GameBuddy.Stardew.Integration.Tests.csproj";
 const SNAPSHOT_SAMPLE_TEST =
@@ -232,6 +236,50 @@ export const ARTEFACT_PRODUCERS = Object.freeze([
     },
     requires: { commands: [], paths: [...CHAT_TURN_TERMINAL_INPUTS] },
     inputs: [...CHAT_TURN_TERMINAL_INPUTS],
+  },
+  {
+    artefact: "host/src/game-browser-contract/stardew-cabin-occupancy-unknown-reasons.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CABIN_OCCUPANCY_CONTRACT} --target typebox`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CABIN_OCCUPANCY_CONTRACT, "--target", "typebox"],
+    },
+    requires: { commands: [], paths: [...CABIN_OCCUPANCY_INPUTS] },
+    inputs: [...CABIN_OCCUPANCY_INPUTS],
+  },
+  {
+    artefact: "dialogue-web/src/stardew-cabin-occupancy-unknown-reasons.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CABIN_OCCUPANCY_CONTRACT} --target ts`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CABIN_OCCUPANCY_CONTRACT, "--target", "ts"],
+    },
+    requires: { commands: [], paths: [...CABIN_OCCUPANCY_INPUTS] },
+    inputs: [...CABIN_OCCUPANCY_INPUTS],
+  },
+  {
+    artefact: "host/src/game-browser-contract/stardew-cabin-quarantine-releases.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CABIN_RELEASES_CONTRACT} --target typebox`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CABIN_RELEASES_CONTRACT, "--target", "typebox"],
+    },
+    requires: { commands: [], paths: [...CABIN_RELEASES_INPUTS] },
+    inputs: [...CABIN_RELEASES_INPUTS],
+  },
+  {
+    artefact: "dialogue-web/src/stardew-cabin-quarantine-releases.generated.ts",
+    producer: `node ${VOCABULARY_GENERATOR} --contract ${CABIN_RELEASES_CONTRACT} --target ts`,
+    run: {
+      kind: "stdout",
+      command: process.execPath,
+      args: [VOCABULARY_GENERATOR, "--contract", CABIN_RELEASES_CONTRACT, "--target", "ts"],
+    },
+    requires: { commands: [], paths: [...CABIN_RELEASES_INPUTS] },
+    inputs: [...CABIN_RELEASES_INPUTS],
   },
   {
     artefact: SURFACE,

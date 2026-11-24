@@ -100,15 +100,18 @@ const typescript = createRequire(join(WEB_ROOT, "package.json"))("typescript");
 export const SOURCES = {
   lifecycle: join(WEB_ROOT, "src", "game-lifecycle-controls.ts"),
   catalogue: join(WEB_ROOT, "src", "i18n.ts"),
+  /** The wire vocabulary the surface derives its own from: the Mod's three answers. */
+  api: join(WEB_ROOT, "src", "composed-reference-game-browser-api.ts"),
   /**
-   * The wire vocabulary the surface derives its own from.
+   * The release's vocabulary, read from the module the client's own array is generated into.
    *
    * The release's refusal members are read HERE rather than from the lifecycle module, because the lifecycle
    * module derives them (`Exclude<StardewCabinOccupancyAnswerV1["release"], "released" | "not_licensed">`): a
-   * derived type has no literal members for a source reader to enumerate, and enumerating them from the wire's
-   * own array is what keeps one spelling of a fact that crosses a process boundary.
+   * derived type has no literal members for a source reader to enumerate. The array is an output of
+   * `contracts/stardew-cabin-quarantine-releases.v1.json`, so enumerating it holds every sentence to the same fact
+   * the Host validates its own reply against.
    */
-  api: join(WEB_ROOT, "src", "composed-reference-game-browser-api.ts"),
+  releases: join(WEB_ROOT, "src", "stardew-cabin-quarantine-releases.generated.ts"),
 };
 
 /**
@@ -162,6 +165,7 @@ export function checkStateSentencesOf(overrides) {
       lifecycle: saved.lifecycle,
       catalogue: saved.catalogue,
       api: saved.api,
+      releases: saved.releases,
     });
     FORWARD_PATH_SOURCES.lifecycle = saved.lifecycle;
   }
@@ -401,14 +405,14 @@ export function checkStateSentences() {
   // release vocabulary minus the two members that are not refusals: `released` is a state the panel leaves, and
   // `not_licensed` is "no release was attempted". A press that kept the quarantine with no sentence would leave
   // the player reading the screen they were already on, with the fact that refused named nowhere.
-  const releases = stringArray(api, "CABIN_QUARANTINE_RELEASES") ?? [];
+  const releases = stringArray(parseFile(SOURCES.releases), "CABIN_QUARANTINE_RELEASES") ?? [];
   const refusals = releases.filter((member) => member !== "released" && member !== "not_licensed");
   if (refusals.length === 0)
     blocked.push(
       finding(
         "population_empty",
-        "CABIN_QUARANTINE_RELEASES was not read from the wire contract, so no release refusal could be held to " +
-          "stating a sentence",
+        "CABIN_QUARANTINE_RELEASES was not read from the generated release vocabulary, so no release refusal could " +
+          "be held to stating a sentence",
       ),
     );
   for (const refusal of refusals)

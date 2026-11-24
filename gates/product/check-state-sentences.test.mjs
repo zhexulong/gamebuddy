@@ -310,10 +310,10 @@ describe("check-state-sentences: the cabin release's refusals", () => {
   });
 
   test("a tree that declares no release vocabulary is blocked rather than green over a press nobody answers", (t) => {
-    const api = copy(SOURCES.api, "no-release-vocabulary.ts", [
+    const releases = copy(SOURCES.releases, "no-release-vocabulary.ts", [
       ["const CABIN_QUARANTINE_RELEASES =", "const CABIN_QUARANTINE_RELEASES_GONE ="],
     ]);
-    const verdict = checkStateSentencesOf({ api });
+    const verdict = checkStateSentencesOf({ releases });
     assert.equal(verdict.status, "blocked");
     assert.ok(
       verdict.findings.some(

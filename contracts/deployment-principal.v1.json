@@ -1,11 +1,16 @@
 {
   "schema": "gamebuddy-deployment-principal-key-set/v1",
   "purpose": "The keys a deployment manifest's `principal` object must carry, and no others.",
-  "symbol": "DEPLOYMENT_PRINCIPAL_KEYS",
-  "type": "DeploymentPrincipalKey",
   "members": ["continuityId", "companionId", "playerId"],
   "outputs": {
-    "ts": "host/src/deployment-principal.generated.ts",
-    "mjs": "tools/deployment-principal.generated.mjs"
+    "ts": {
+      "path": "host/src/deployment-principal.generated.ts",
+      "symbol": "DEPLOYMENT_PRINCIPAL_KEYS",
+      "type": "DeploymentPrincipalKey"
+    },
+    "mjs": {
+      "path": "tools/deployment-principal.generated.mjs",
+      "symbol": "DEPLOYMENT_PRINCIPAL_KEYS"
+    }
   }
 }

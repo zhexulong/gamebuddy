@@ -399,9 +399,11 @@ test("every generated pair resolves to its contract, and an edit at either end i
         `${record.fact}: both outputs come from the contract and say so, so this fact is one authority`,
       );
 
-      // One output learns a member the contract never had: the outputs stop agreeing, and the member is named.
+      // One output learns a member the contract never had: the outputs stop agreeing, and the member is named. The
+      // injection is placed before the first member rather than after a `["` the layout happens to carry, because a
+      // generated array is written one member per line once it outgrows the formatter's width.
       const drifted = join(root, record.readers[0].file);
-      writeFileSync(drifted, readFileSync(drifted, "utf8").replace('["', '["gate_invented_member", "'));
+      writeFileSync(drifted, readFileSync(drifted, "utf8").replace(/"[^"]+"/u, '"gate_invented_member", $&'));
       const drift = about(evaluate(root));
       assert.equal(drift.length, 1, `${record.fact}: ${drift.join(" | ")}`);
       assert.ok(drift[0].startsWith(`fact_seam_drift:${record.fact}`), drift[0]);
