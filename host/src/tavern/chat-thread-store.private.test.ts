@@ -956,6 +956,9 @@ test("a v4 root keeps the companion's own book and the attached managed item acr
       -- ...and it predates the rewrite stamp on a message (schema v12), so that column goes too: a v4
       -- root never had a way to say a row's words had been rewritten in place.
       ALTER TABLE tavern_messages DROP COLUMN edit_tail_ordinal;
+      -- ...and it predates the profile a Chat was OPENED under (schema v13): a v4 pin was the only record there
+      -- was, so the upgrade under test has to add the authored hash back, not find it already there.
+      ALTER TABLE tavern_threads DROP COLUMN profile_authored_canonical_hash;
       -- Unlike those, the opening's seal is a column a v4 root HAS: schema v10 drops it because the
       -- transcript derives the same fact, so putting it back is what makes this a real old shape.
       ALTER TABLE tavern_threads ADD COLUMN opening_locked_at_event_id TEXT;
@@ -2960,6 +2963,9 @@ test("a v11 root gains the rewrite stamp and keeps every row it already holds", 
       -- A genuine v11 root predates the rewrite stamp: the column goes, and the version stamp with it, so
       -- the upgrade under test has to add both.
       ALTER TABLE tavern_messages DROP COLUMN edit_tail_ordinal;
+      -- A v11 root also predates the profile a Chat was opened under, so that column goes too: the same
+      -- upgrade has to add it, and the rows it already holds are backfilled from their own pin.
+      ALTER TABLE tavern_threads DROP COLUMN profile_authored_canonical_hash;
       PRAGMA user_version = 11;
     `);
   } finally {
@@ -2977,6 +2983,35 @@ test("a v11 root gains the rewrite stamp and keeps every row it already holds", 
     assert.deepEqual(
       state.messages.map((message) => message.answeredEarlierWording),
       [undefined, undefined, undefined],
+    );
+    // The upgrade states no divergence it cannot know: a row carried over from a pin-only schema was authored
+    // under the very pin it holds, so the authored hash is backfilled from that pin and the thread says nothing.
+    assert.equal(state.thread.authoredProfileCanonicalHash, undefined);
+    // ...and the backfill is what lets the NEXT save state one: the pin moves to a revision the profile now has,
+    // and what the conversation was written under stays where the upgrade put it.
+    const refresh = migrated.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined);
+    assert.equal(
+      await refresh({
+        companionId: "companion_01",
+        continuityId: "continuity_01",
+        previous: Object.freeze({
+          profileId: state.thread.profileId,
+          revision: state.thread.profileRevision,
+          canonicalHash: state.thread.profileCanonicalHash,
+        }),
+        binding: Object.freeze({
+          profileId: state.thread.profileId,
+          revision: state.thread.profileRevision + 1,
+          canonicalHash: "e".repeat(64),
+        }),
+      }),
+      1,
+    );
+    assert.equal(
+      (await migrated.resumeThread("thread_01", "surface_01")).thread.authoredProfileCanonicalHash,
+      state.thread.profileCanonicalHash,
+      "the upgraded row still says which profile its history was written under",
     );
     // The column is not merely present: it is the one the edit writes, on the upgraded root.
     const edited = await migrated.editTranscriptMessage!(testTransitionAuthority.authority, "thread_01", {

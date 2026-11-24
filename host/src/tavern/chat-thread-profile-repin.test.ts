@@ -230,3 +230,120 @@ test("a Chat that is answering holds the pin: the save is refused and every row 
     await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
+
+/**
+ * The pin and the authored hash are two different facts, and the save is the case that separates them: the pin follows
+ * the profile, and the hash the conversation was OPENED under does not.
+ *
+ * Without the second column the pin was the only record, so after any save the thread claimed the new profile had
+ * written every word of a history the old one wrote. `authoredProfileCanonicalHash` is absent while the two agree.
+ */
+test("a save carries the pin and leaves the profile the Chat was opened under alone", async () => {
+  const fixtureValue = await fixture();
+  try {
+    const { store } = fixtureValue;
+    await createChat(store, FIRST_PROFILE, A);
+    assert.equal(
+      (await store.resumeThread(A.chatThreadId, A.chatSurfaceSessionId)).thread.authoredProfileCanonicalHash,
+      undefined,
+      "a Chat that still runs with the profile it opened under states no divergence",
+    );
+    const refresh = store.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined);
+    assert.equal(
+      await refresh({
+        companionId: COMPANION.companionId,
+        continuityId: COMPANION.continuityId,
+        previous: FIRST_PROFILE,
+        binding: SECOND_PROFILE,
+      }),
+      1,
+    );
+    const saved = (await store.resumeThread(A.chatThreadId, A.chatSurfaceSessionId)).thread;
+    assert.deepEqual(
+      { profileId: saved.profileId, revision: saved.profileRevision, canonicalHash: saved.profileCanonicalHash },
+      SECOND_PROFILE,
+    );
+    assert.equal(saved.authoredProfileCanonicalHash, FIRST_PROFILE.canonicalHash);
+  } finally {
+    fixtureValue.store.close?.();
+    await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * The same writer the save uses is the writer the mount uses, so the divergence a mount finds is recorded exactly once
+ * and the profile the history was authored under is never rewritten by either of them.
+ */
+test("a divergence is recorded once, and no writer moves the profile the history was authored under", async () => {
+  const fixtureValue = await fixture();
+  try {
+    const { store } = fixtureValue;
+    await createChat(store, FIRST_PROFILE, A);
+    const refresh = store.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined, "the store that owns the pins must be able to move them");
+    const request = Object.freeze({
+      companionId: COMPANION.companionId,
+      continuityId: COMPANION.continuityId,
+      previous: FIRST_PROFILE,
+      binding: SECOND_PROFILE,
+    });
+    assert.equal(await refresh(request), 1);
+    const recorded = (await store.resumeThread(A.chatThreadId, A.chatSurfaceSessionId)).thread;
+    assert.equal(recorded.profileRevision, SECOND_PROFILE.revision);
+    assert.equal(recorded.profileCanonicalHash, SECOND_PROFILE.canonicalHash);
+    assert.equal(recorded.authoredProfileCanonicalHash, FIRST_PROFILE.canonicalHash);
+
+    // The whole point of recording it: the same divergence is not found a second time.
+    assert.equal(await refresh(request), 0, "a pass whose previous triple matches no row moves nothing");
+    const afterSecond = (await store.resumeThread(A.chatThreadId, A.chatSurfaceSessionId)).thread;
+    assert.equal(afterSecond.authoredProfileCanonicalHash, FIRST_PROFILE.canonicalHash);
+  } finally {
+    fixtureValue.store.close?.();
+    await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
+
+/**
+ * A profile edited outside the product moves the bytes without moving the revision counter, and that is the one shape
+ * the pin cannot detect by version. It is still a re-pin, so the writer accepts it - and a pass that names the very
+ * triple the row already holds is refused, because that moves nothing.
+ */
+test("a same-revision hash change is a re-pin, and an identical triple is not", async () => {
+  const fixtureValue = await fixture();
+  try {
+    const { store } = fixtureValue;
+    await createChat(store, FIRST_PROFILE, A);
+    const refresh = store.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined);
+    await assert.rejects(
+      refresh({
+        companionId: COMPANION.companionId,
+        continuityId: COMPANION.continuityId,
+        previous: FIRST_PROFILE,
+        binding: FIRST_PROFILE,
+      }),
+      /invalid_chat_thread_profile/,
+    );
+    const handEdited = Object.freeze({
+      profileId: FIRST_PROFILE.profileId,
+      revision: FIRST_PROFILE.revision,
+      canonicalHash: "d".repeat(64),
+    });
+    assert.equal(
+      await refresh({
+        companionId: COMPANION.companionId,
+        continuityId: COMPANION.continuityId,
+        previous: FIRST_PROFILE,
+        binding: handEdited,
+      }),
+      1,
+    );
+    const moved = (await store.resumeThread(A.chatThreadId, A.chatSurfaceSessionId)).thread;
+    assert.equal(moved.profileCanonicalHash, handEdited.canonicalHash);
+    assert.equal(moved.authoredProfileCanonicalHash, FIRST_PROFILE.canonicalHash);
+  } finally {
+    fixtureValue.store.close?.();
+    await rm(fixtureValue.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});

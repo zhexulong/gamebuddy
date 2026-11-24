@@ -443,6 +443,8 @@ test("Chat construction derives model and exact stable Tavern snapshot from the 
     assert.deepEqual(prepared.identity, principal);
     assert.equal(prepared.runtimeRoot, value.runtimeRoot);
     assert.equal(prepared.surfaceSessionId, "chat_session_01");
+    // Nothing to reconcile: the thread runs with the profile it opened under, so the mount states no divergence.
+    assert.equal(prepared.profileReconciliation, undefined);
     // The provider and the model are the connection the player activated, read through the same
     // identity-scoped directory the runtime resolves its provider entry from.
     assert.equal(prepared.modelConfig?.provider, "deepseek");
@@ -982,5 +984,136 @@ test("Chat construction carries the thread's bound persona and scenario for the 
   } finally {
     await bare.binding.close();
     await releaseConstructionAndFixture(preparedBare, bare);
+  }
+});
+
+/**
+ * The profile file is MUTABLE and the transcript is not: a Chat written under profile revision 1 must still open after
+ * the player saves her character to revision 2, even when nothing carried the pin forward.
+ *
+ * `character.voice.update` writes the profile FILE and then the thread pins, as two separate durable writes; a process
+ * that dies between them - or a player who restores a root by hand - leaves every Chat of that companion pinned to a
+ * profile the file no longer holds. Before this test the mount answered `chat_runtime_exact_content_unavailable` for
+ * every such Chat, permanently, which made one interrupted save silently destroy the readability of the whole history.
+ */
+test("a profile saved behind the Chat still opens: the mount binds the current profile and says the pin moved", async () => {
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
+    const authored = Object.freeze({
+      ...DEFAULT_IDENTITY_PROFILE,
+      profileId: "profile_01",
+      identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }),
+    });
+    // The save the crash interrupted: the FILE moved to revision 2, the pins did not.
+    const saved = Object.freeze({
+      ...authored,
+      revision: 2,
+      identity: Object.freeze({ ...authored.identity, continuity: "Keep the shared evening, and remember the rain." }),
+    });
+    await writeIdentityProfile(paths.identityProfilePath, saved);
+    const savedHash = identityProfileHash(saved);
+
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    // The catalog the model reads is the CURRENT profile, not the one the pin still named.
+    const catalog = await prepared.materializeStableContextForPiSession("pi_session_after_profile_save");
+    assert.equal(catalog.scope.profile.revision, 2);
+    assert.equal(catalog.scope.profile.canonicalHash, savedHash);
+    // The mount says what it did, and both hashes are on the thread afterwards.
+    const reconciled = prepared.profileReconciliation;
+    assert.deepEqual(reconciled?.pinned, { revision: 1, canonicalHash: identityProfileHash(authored) });
+    assert.deepEqual(reconciled?.mounted, { revision: 2, canonicalHash: savedHash });
+    const thread = (await value.threads.resumeThread("thread_01", "chat_session_01")).thread;
+    assert.equal(thread.profileRevision, 2);
+    assert.equal(thread.profileCanonicalHash, savedHash);
+    assert.equal(
+      thread.authoredProfileCanonicalHash,
+      identityProfileHash(authored),
+      "the thread still says which profile its history was written under",
+    );
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+/**
+ * The same divergence with the two sides swapped: the pin was carried to revision 2 while the file stayed at 1 (a save
+ * whose file write was rolled back, or a hand-restored root).
+ *
+ * The file is the only profile that exists, so that is what the mount runs with - and the pin is re-recorded to it, so
+ * nothing durable keeps claiming a revision the profile does not have.
+ */
+test("a pin ahead of the profile file still opens, and it is re-recorded to the profile the file holds", async () => {
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const authored = Object.freeze({
+      ...DEFAULT_IDENTITY_PROFILE,
+      profileId: "profile_01",
+      identity: Object.freeze({ ...DEFAULT_IDENTITY_PROFILE.identity }),
+    });
+    const refresh = value.threads.refreshCompanionProfileBinding;
+    assert.ok(refresh !== undefined, "the store that owns the pins must be able to move them");
+    const ahead = Object.freeze({ profileId: "profile_01", revision: 2, canonicalHash: "c".repeat(64) });
+    const moved = await refresh({
+      companionId: principal.companionId,
+      continuityId: principal.continuityId,
+      previous: Object.freeze({
+        profileId: authored.profileId,
+        revision: authored.revision,
+        canonicalHash: identityProfileHash(authored),
+      }),
+      binding: ahead,
+    });
+    assert.equal(moved, 1);
+
+    prepared = await value.binding.executeWithBinding((token) =>
+      withConsumedChatRuntimeBinding(token, (execution) =>
+        prepareExactChatRuntimeConstruction(execution, permit(execution)),
+      ),
+    );
+    const reconciled = prepared.profileReconciliation;
+    assert.deepEqual(reconciled?.pinned, { revision: 2, canonicalHash: "c".repeat(64) });
+    assert.deepEqual(reconciled?.mounted, { revision: 1, canonicalHash: identityProfileHash(authored) });
+    const thread = (await value.threads.resumeThread("thread_01", "chat_session_01")).thread;
+    assert.equal(thread.profileRevision, 1);
+    assert.equal(thread.profileCanonicalHash, identityProfileHash(authored));
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
+  }
+});
+
+/**
+ * The one refusal that must survive: a profile file that cannot be parsed has no canonical bytes to bind to, so there is
+ * nothing to run the conversation with - and the refusal names the parse failure instead of hiding it behind the
+ * generic name.
+ */
+test("a profile file that cannot be parsed still refuses the mount, and it names the parse failure", async () => {
+  const value = await fixture();
+  let prepared: Awaited<ReturnType<typeof prepareExactChatRuntimeConstruction>> | undefined;
+  try {
+    const paths = resolveRuntimePaths(principal, value.runtimeRoot, "chat_session_01");
+    await writeFile(paths.identityProfilePath, "{ not a profile", "utf8");
+    await assert.rejects(
+      value.binding.executeWithBinding((token) =>
+        withConsumedChatRuntimeBinding(token, (execution) =>
+          prepareExactChatRuntimeConstruction(execution, permit(execution)),
+        ),
+      ),
+      (error: Error) =>
+        /chat_runtime_exact_content_unavailable/u.test(error.message) &&
+        /the identity profile could not be read: /u.test(error.message) &&
+        /JSON/u.test(error.message),
+    );
+  } finally {
+    await value.binding.close();
+    await releaseConstructionAndFixture(prepared, value);
   }
 });

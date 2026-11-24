@@ -29,6 +29,21 @@ import { resolveTavernPaths, type TavernPaths } from "../tavern/tavern-paths.js"
 import type { Scenario, UserPersona } from "../tavern/types.js";
 
 /**
+ * The profile behind the conversation moved while nothing was mounted, and this mount is what reconciled it.
+ *
+ * It is the mount's OWN event, which is why it is present only on the mount that found the divergence: the pin it
+ * records is what leaves the next mount with nothing to reconcile. The durable half of the same fact lives on the
+ * thread (`ChatThread.authoredProfileCanonicalHash`), because that is the object every reader of the transcript holds
+ * and a mount-scoped fact would be gone by the next session.
+ */
+type ChatProfileReconciliation = Readonly<{
+  /** The triple the thread was pinned to when this mount read it. */
+  pinned: Readonly<{ revision: number; canonicalHash: string }>;
+  /** The triple this mount bound it to: the profile the file holds, which is what the runtime runs with. */
+  mounted: Readonly<{ revision: number; canonicalHash: string }>;
+}>;
+
+/**
  * Immutable construction facts for exactly one selected Chat runtime. This is
  * intentionally internal: neither a browser nor a semantic caller may supply
  * a model, identity profile, presentation sink, content snapshot, or root.
@@ -37,6 +52,11 @@ export type ExactChatRuntimeConstruction = Readonly<{
   identity: CompanionIdentity;
   runtimeRoot: string;
   surfaceSessionId: string;
+  /**
+   * Present only when this mount had to carry the thread's profile pin forward, and it says which profile the pin
+   * named and which one the runtime now runs with.
+   */
+  profileReconciliation?: ChatProfileReconciliation;
   modelConfig: CompanionModelConfig | null;
   /** Durable revision of the model selection this construction used. */
   modelProfileRevision: number;
@@ -177,15 +197,31 @@ async function buildExactChatRuntimeConstruction(
     profileMetadata = identityProfileMetadata(
       await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE),
     );
-  } catch {
-    throw new Error("chat_runtime_exact_content_unavailable");
+  } catch (error) {
+    // The ONE profile failure that is still a refusal, and it names its cause: bytes that cannot be read or parsed
+    // are not a profile that moved, they are no profile at all, so there is nothing to bind the transcript to. The
+    // parse failure stays in the message because it is the only thing that tells a corrupt file from a missing one.
+    throw new Error(
+      `chat_runtime_exact_content_unavailable: the identity profile could not be read: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
   }
-  if (
-    selectedThread.profileId !== profileMetadata.profileId ||
-    selectedThread.profileRevision !== profileMetadata.revision ||
-    selectedThread.profileCanonicalHash !== profileMetadata.canonicalHash
-  )
-    throw new Error("chat_runtime_exact_content_unavailable");
+  // The pin is a CHANGE DETECTOR over a mutable file, never a precondition for reading a durable transcript.
+  //
+  // The profile file and the pins are two separate durable writes (`updateMountedCompanionVoice` writes the file, then
+  // `refreshCompanionProfileBinding` moves the pins), and a process that dies between them - or a root restored by
+  // hand - leaves every Chat of that companion pinned to a profile the file no longer holds. Refusing that divergence
+  // as "exact content unavailable" let one interrupted save make a whole history permanently unreadable, which is the
+  // wrong authority: the transcript is durable and the profile is mutable.
+  //
+  // So the mount opens on the profile the file holds NOW and records the pin it bound (`recordMountedProfileBinding`),
+  // which is what makes the reconciliation one-shot: the next mount reads a thread that already agrees with the profile
+  // and has nothing to report. What is NOT reconciled is a different `profileId`: that is another profile, not this one
+  // carried forward, and attaching the conversation to it would claim her history belongs to someone she never was.
+  if (selectedThread.profileId !== profileMetadata.profileId) throw new Error("chat_runtime_exact_content_unavailable");
+  const profileReconciliation = await reconcileMountedProfileBinding(threads, selectedThread, profileMetadata);
   // The companion's language is the player's choice, held in the one preference
   // the management surface writes; the runtime reads it at mount instead of
   // carrying a locale of its own. It is read once here because the authored
@@ -205,12 +241,24 @@ async function buildExactChatRuntimeConstruction(
         throw new Error("chat_runtime_exact_content_unavailable");
       const freshProfile = await readOrCreateIdentityProfile(paths.identityProfilePath, DEFAULT_IDENTITY_PROFILE);
       const freshProfileMetadata = identityProfileMetadata(freshProfile);
-      if (
-        freshState.thread.profileId !== freshProfileMetadata.profileId ||
-        freshState.thread.profileRevision !== freshProfileMetadata.revision ||
-        freshState.thread.profileCanonicalHash !== freshProfileMetadata.canonicalHash
-      )
+      // A different PROFILE is still a refusal, and so is everything above: those are identity facts about the thread.
+      // A moved profile is not - the same reconciliation the mount just made applies to the profile as it is read NOW,
+      // because a save that landed while this runtime was open must reach the next prompt, not refuse it.
+      if (freshState.thread.profileId !== freshProfileMetadata.profileId)
         throw new Error("chat_runtime_exact_content_unavailable");
+      // The catalogue's own binding check compares the triple it is handed with the thread's, so the thread handed to
+      // it is the one this materialization is bound to: a pin that still records the profile the file no longer holds
+      // is carried here, and never published as the profile the runtime is running with (`freshProfileMetadata`, which
+      // the scope below carries, is that profile).
+      const boundThread =
+        freshState.thread.profileRevision === freshProfileMetadata.revision &&
+        freshState.thread.profileCanonicalHash === freshProfileMetadata.canonicalHash
+          ? freshState.thread
+          : Object.freeze({
+              ...freshState.thread,
+              profileRevision: freshProfileMetadata.revision,
+              profileCanonicalHash: freshProfileMetadata.canonicalHash,
+            });
       // Layer 1 (the companion's own book) is part of who she is and is always applied;
       // only layer 2, the attached managed item, has a desired/applied pair to reconcile.
       // The thread's own binding overrides the continuity activation; with none, the
@@ -236,9 +284,9 @@ async function buildExactChatRuntimeConstruction(
         sameWorldInfoBinding(effectiveManaged, desiredManaged) &&
         sameWorldInfoBinding(effectiveManaged, freshState.thread.appliedManagedWorldInfoBinding) &&
         activatedManaged === undefined
-          ? freshState.thread
+          ? boundThread
           : Object.freeze({
-              ...freshState.thread,
+              ...boundThread,
               ...(managedBinding === undefined ? {} : { managedWorldInfoBinding: managedBinding }),
             });
       const macros = macroTable({ char: freshProfile.identity.name, locale: presentationLocale });
@@ -250,7 +298,7 @@ async function buildExactChatRuntimeConstruction(
           continuityId: identity.continuityId!,
           sessionId: piSessionId,
           surface: "tavern",
-          threadId: freshState.thread.chatThreadId,
+          threadId: boundThread.chatThreadId,
           profile: Object.freeze({
             profileId: freshProfileMetadata.profileId,
             revision: freshProfileMetadata.revision,
@@ -291,6 +339,7 @@ async function buildExactChatRuntimeConstruction(
     materializeStableContextForPiSession,
     materializeDesiredStableContextForPiSession,
     openingGreeting: openingGreetingOf(state),
+    ...(profileReconciliation === undefined ? {} : { profileReconciliation }),
     /**
      * The rows this mount read, in order. `runtime-core` compares them with the Pi session it reopens, because the two can
      * disagree: an offline delete or rewind changes only the store, and re-opening the session file lands the leaf where the
@@ -304,6 +353,43 @@ async function buildExactChatRuntimeConstruction(
       ? {}
       : { tavernNarrativeGateNonceSha256: options.tavernNarrativeGateNonceSha256 }),
   });
+}
+
+/**
+ * The mount's own reconciliation of a profile the conversation outlived, and the helper that records it.
+ *
+ * The long reasoning is at the call site; what this function owns is the answer the mount needs - WHICH profile it bound
+ * - and the one write that makes it one-shot: the same `refreshCompanionProfileBinding` a save uses, so no second writer
+ * moves a pin. It is companion-scoped because that is what the interrupted save would have done: every Chat of that
+ * companion is pinned to the profile the file no longer holds, and each of them is read by its own mount.
+ *
+ * Nothing here may refuse the mount. A refused or failed pass (`chat_profile_binding_turn_active` while a sibling turn
+ * is live, or any store fault) leaves the divergence exactly where it was - reported by this mount and found again by
+ * the next one - while the conversation opens either way. That asymmetry is the rule: the transcript is the authority
+ * for whether this Chat can be read, and the pin only ever said which profile to run it with.
+ */
+async function reconcileMountedProfileBinding(
+  threads: ChatThreadStore,
+  thread: ChatThread,
+  profile: Readonly<{ profileId: string; revision: number; canonicalHash: string }>,
+): Promise<ChatProfileReconciliation | undefined> {
+  if (thread.profileRevision === profile.revision && thread.profileCanonicalHash === profile.canonicalHash)
+    return undefined;
+  const pinned = Object.freeze({ revision: thread.profileRevision, canonicalHash: thread.profileCanonicalHash });
+  const mounted = Object.freeze({ revision: profile.revision, canonicalHash: profile.canonicalHash });
+  const refresh = threads.refreshCompanionProfileBinding;
+  if (refresh === undefined) return Object.freeze({ pinned, mounted });
+  try {
+    await refresh({
+      companionId: thread.companionId,
+      continuityId: thread.continuityId,
+      previous: Object.freeze({ profileId: thread.profileId, ...pinned }),
+      binding: Object.freeze({ profileId: profile.profileId, ...mounted }),
+    });
+  } catch {
+    // Deliberately silent on the mount's own log: the divergence is durable, so the next mount states it again.
+  }
+  return Object.freeze({ pinned, mounted });
 }
 
 /**

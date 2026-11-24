@@ -15,7 +15,7 @@ import {
  * append-only messages, swipe variants, turn lifecycle, and where a branch was cut
  * from; it neither reads Pi/Magic Context state nor implements any Game operation.
  */
-export const CHAT_THREAD_SCHEMA_VERSION = 12 as const;
+export const CHAT_THREAD_SCHEMA_VERSION = 13 as const;
 
 /** Individual message text remains bounded; normalized transcripts have no entry ceiling. */
 export const MAX_CHAT_MESSAGE_TEXT_UTF8_BYTES = 16_384 as const;
@@ -66,6 +66,17 @@ export type ChatThread = Readonly<{
   profileId: string;
   profileRevision: number;
   profileCanonicalHash: string;
+  /**
+   * The profile canonical hash this Chat was OPENED under, present only when the profile has moved since - i.e. when the
+   * words already in this transcript were written under a profile it no longer runs with.
+   *
+   * Not a second copy of the pin: `profileCanonicalHash` follows the profile (a save carries it, and so does a mount),
+   * while this one is written at creation and no writer moves it. So the two differ exactly while the profile beneath
+   * the conversation has changed, and a reader can say which profile the history began under instead of silently
+   * crediting the current one with words it never wrote. Absent means the thread still runs with the profile it opened
+   * under, which is why it is stated by presence rather than beside a boolean.
+   */
+  authoredProfileCanonicalHash?: string;
   /** Tavern-only selected presentation sources; never runtime identity or Game state. */
   personaId?: string;
   scenarioId?: string;
@@ -902,7 +913,8 @@ export type ChatThreadStore = Readonly<{
    * the fork is a view of ONE conversation: `refreshCompanionProfileBinding` moves every thread of a
    * companion pinned to the revision it replaces, so an origin and its forks keep ageing together. A
    * fork re-pinned to a newer revision than its origin would be the one pair the next save could
-   * split.
+   * split. The authored hash is copied beside the pin for the same reason, and for one more: the
+   * branch's rows are the origin's rows, so they were written under the origin's profile.
    *
    * No turn rows are copied. A turn is the ledger of a provider run that happened in the origin; a
    * branch has none, so the new thread's current turn is `null` and its first submission starts a
@@ -1040,10 +1052,13 @@ export type ChatThreadStore = Readonly<{
    *
    * The identity profile is ONE mutable file (the directive, the persona, the identity lines) whose
    * revision and content-derived hash change with every save, while each thread pins the exact
-   * profile it was created against and the runtime construction refuses a profile that does not
-   * match its thread's pin. So a save has to carry the pins with it, exactly as an edit of her own
-   * world book does (`refreshCompanionWorldBookBinding`), or every existing Chat of that companion
-   * stops mounting.
+   * profile it was created against. A save carries the pins with it, exactly as an edit of her own
+   * world book does (`refreshCompanionWorldBookBinding`).
+   *
+   * It is no longer the ONLY writer that can: a mount that finds a pin behind the profile file carries it forward by
+   * calling this, because a save interrupted between its two durable writes must not leave durable history unreadable.
+   * What both callers leave alone is `profile_authored_canonical_hash`: the pin follows the profile, and the authored
+   * hash keeps saying which profile the words already in the transcript were written under.
    *
    * Two facts bound what this may touch. The match is the whole triple - `profileId`, `revision` AND
    * `canonicalHash` - so a thread already on the new revision, or one pinned to any other profile,
@@ -1719,6 +1734,39 @@ const MESSAGE_EDIT_TAIL_ORDINAL_V12 = `
       ADD COLUMN edit_tail_ordinal INTEGER CHECK(edit_tail_ordinal IS NULL OR edit_tail_ordinal >= 0);
 `;
 
+/**
+ * v13 adds the one durable statement of which profile a transcript's words were written under.
+ *
+ * The pin (`profile_revision`/`profile_canonical_hash`) follows the profile - a save carries it forward, and so does a
+ * mount that finds it behind the profile file - so it cannot say what the conversation was authored under, and after any
+ * save it credited the new profile with words the old one wrote. The authored hash is written once and never moved.
+ * Existing rows are backfilled with their own pin: a root that has not opened since this column existed is given no
+ * divergence it never had.
+ */
+const THREAD_AUTHORED_PROFILE_V13 = `
+    ALTER TABLE tavern_threads
+      ADD COLUMN profile_authored_canonical_hash TEXT;
+    UPDATE tavern_threads SET profile_authored_canonical_hash = profile_canonical_hash;
+`;
+
+/**
+ * The upgrade chain, newest last. A root at version v replays every step recorded after v and is stamped at the end,
+ * which is why a new version appends ONE entry here instead of one more copy of every earlier step in every branch.
+ *
+ * v5 is the single step that is not in this table: it converted one binding row per thread into one row per slot, and
+ * `migrateWorldInfoBindingsToSlots` is that conversion (a v4 root runs it before the steps below).
+ */
+const SCHEMA_STEPS: readonly Readonly<{ version: number; sql: string }>[] = Object.freeze([
+  { version: 6, sql: MESSAGE_ENTRIES_TABLE_V6 },
+  { version: 7, sql: TURN_PRESENTATION_TRUNCATION_V7 },
+  { version: 8, sql: TURN_TERMINALIZATION_PROVIDER_FAILURE_V8 },
+  { version: 9, sql: TURN_REPLY_TARGETS_TABLE_V9 },
+  { version: 10, sql: DROP_OPENING_SEAL_COLUMN_V10 },
+  { version: 11, sql: THREAD_FORKS_TABLE_V11 },
+  { version: 12, sql: MESSAGE_EDIT_TAIL_ORDINAL_V12 },
+  { version: 13, sql: THREAD_AUTHORED_PROFILE_V13 },
+]);
+
 function initSchema(db: DatabaseSync): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
   const version = Number(versionRow?.user_version ?? 0);
@@ -1726,89 +1774,9 @@ function initSchema(db: DatabaseSync): void {
     assertNormalizedSchema(db);
     return;
   }
-  // v5 recorded no message -> Pi entry binding at all, so a single mid-transcript
-  // delete had no way to name the session entry the row it removes was carried by
-  // and could only guess from a position. v6 adds the binding; v7 adds the
-  // generation's own stop fact to the presentation record; v8 adds the classified
-  // provider cause to the terminalization record; v9 adds the row a reply-target
-  // turn answers; v10 drops the opening's seal, which the transcript derives; v11 adds the record of
-  // where a branch was cut from; v12 adds when a row's own words were rewritten in place, which is what
-  // names the rows beneath it that still answer the earlier wording.
-  if (version === 5) {
-    db.exec(MESSAGE_ENTRIES_TABLE_V6);
-    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
-    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
-    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 6) {
-    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
-    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
-    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 7) {
-    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
-    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 8) {
-    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 9) {
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 10) {
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  if (version === 11) {
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
-    db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
-    assertNormalizedSchema(db);
-    return;
-  }
-  // v4 held ONE binding row per thread, keyed by source family. v5 splits it into
-  // one row per slot. The old row's family names the slot it belongs to, so the
-  // companion's book and an attached managed item both survive the upgrade.
-  if (version === 4) {
-    migrateWorldInfoBindingsToSlots(db);
-    db.exec(MESSAGE_ENTRIES_TABLE_V6);
-    db.exec(TURN_PRESENTATION_TRUNCATION_V7);
-    db.exec(TURN_TERMINALIZATION_PROVIDER_FAILURE_V8);
-    db.exec(TURN_REPLY_TARGETS_TABLE_V9);
-    db.exec(DROP_OPENING_SEAL_COLUMN_V10);
-    db.exec(THREAD_FORKS_TABLE_V11);
-    db.exec(MESSAGE_EDIT_TAIL_ORDINAL_V12);
+  if (version >= 4 && version < CHAT_THREAD_SCHEMA_VERSION) {
+    if (version === 4) migrateWorldInfoBindingsToSlots(db);
+    for (const step of SCHEMA_STEPS) if (step.version > version) db.exec(step.sql);
     db.exec(`PRAGMA user_version = ${CHAT_THREAD_SCHEMA_VERSION}`);
     assertNormalizedSchema(db);
     return;
@@ -1828,6 +1796,7 @@ function initSchema(db: DatabaseSync): void {
       profile_id TEXT NOT NULL,
       profile_revision INTEGER NOT NULL CHECK(profile_revision > 0),
       profile_canonical_hash TEXT NOT NULL,
+      profile_authored_canonical_hash TEXT,
       title TEXT,
       persona_id TEXT,
       scenario_id TEXT,
@@ -2128,6 +2097,7 @@ function assertNormalizedSchema(db: DatabaseSync): void {
     "profile_id",
     "profile_revision",
     "profile_canonical_hash",
+    "profile_authored_canonical_hash",
     "chat_surface_session_id",
     "opening_kind",
     "opening_message_id",
@@ -2311,10 +2281,11 @@ export function createChatThreadStore(
         `INSERT INTO tavern_threads (
             thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
             chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
+            profile_authored_canonical_hash,
             lifecycle_status, management_revision, created_at_ms, updated_at_ms,
             opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
             greeting_variant_id, greeting_profile_revision, greeting_scenario_revision
-          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         profileAwareRequest.chatThreadId,
         profileAwareRequest.companionId,
@@ -2324,6 +2295,9 @@ export function createChatThreadStore(
         profileAwareRequest.chatSurfaceSessionId,
         profileAwareRequest.profileId,
         profileAwareRequest.profileRevision,
+        profileAwareRequest.profileCanonicalHash,
+        // The profile this Chat OPENS under, which no later writer moves: the pin beside it follows the profile, and
+        // this is what keeps the thread able to say what its history was written under.
         profileAwareRequest.profileCanonicalHash,
         timestamp,
         timestamp,
@@ -2410,7 +2384,13 @@ export function createChatThreadStore(
       assertId("continuityId", input.continuityId);
       const previous = validateProfileBindingTriple(input.previous);
       const binding = validateProfileBindingTriple(input.binding);
-      if (previous.profileId !== binding.profileId || previous.revision === binding.revision)
+      // A different profile id would attach a history to another companion, and an identical triple is not a re-pin at
+      // all. A same-revision hash change IS one: a profile edited outside the product moves the bytes without moving
+      // the counter, and the mount that finds that divergence records it here.
+      if (
+        previous.profileId !== binding.profileId ||
+        (previous.revision === binding.revision && previous.canonicalHash === binding.canonicalHash)
+      )
         throw new Error("invalid_chat_thread_profile");
       return withDb((db) => {
         const rows = db
@@ -2434,12 +2414,7 @@ export function createChatThreadStore(
           const liveTurn = db
             .prepare("SELECT status FROM tavern_turns WHERE thread_id = ? AND is_current = 1")
             .get(row.thread_id) as any;
-          if (
-            liveTurn !== undefined &&
-            liveTurn.status !== "completed" &&
-            liveTurn.status !== "cancelled" &&
-            liveTurn.status !== "failed"
-          )
+          if (liveTurn !== undefined && !isTerminalTurnStatus(liveTurn.status))
             throw new Error("chat_profile_binding_turn_active");
         }
         const repin = db.prepare(
@@ -2809,10 +2784,11 @@ export function createChatThreadStore(
           `INSERT INTO tavern_threads (
               thread_id, companion_id, continuity_id, title, persona_id, scenario_id,
               chat_surface_session_id, profile_id, profile_revision, profile_canonical_hash,
+              profile_authored_canonical_hash,
               lifecycle_status, management_revision, created_at_ms, updated_at_ms,
               opening_kind, opening_message_id, greeting_set_id, greeting_source_revision, greeting_canonical_hash,
               greeting_variant_id, greeting_profile_revision, greeting_scenario_revision
-            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         ).run(
           request.chatThreadId,
           originRow.companion_id,
@@ -2823,6 +2799,9 @@ export function createChatThreadStore(
           originRow.profile_id,
           originRow.profile_revision,
           originRow.profile_canonical_hash,
+          // A fork is a view of ONE conversation, so it inherits the profile its prefix was authored under - the
+          // origin's, not a fresh reading of the profile file.
+          originRow.profile_authored_canonical_hash ?? originRow.profile_canonical_hash,
           timestamp,
           timestamp,
           originRow.opening_kind,
@@ -3888,6 +3867,12 @@ function rowToThread(db: DatabaseSync, row: any): ChatThread {
     profileId: validateProfileId(row.profile_id),
     profileRevision: validatePositiveInteger(row.profile_revision, "profile_revision"),
     profileCanonicalHash: validateCanonicalHash(row.profile_canonical_hash),
+    // Stated only when it differs: the same hash twice would be a second spelling of the pin.
+    ...(row.profile_authored_canonical_hash === null ||
+    row.profile_authored_canonical_hash === undefined ||
+    row.profile_authored_canonical_hash === row.profile_canonical_hash
+      ? {}
+      : { authoredProfileCanonicalHash: validateCanonicalHash(row.profile_authored_canonical_hash) }),
     ...(row.persona_id ? { personaId: row.persona_id } : {}),
     ...(row.scenario_id ? { scenarioId: row.scenario_id } : {}),
     stableArtifactBindings,
