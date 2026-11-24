@@ -5,7 +5,7 @@
     "dialogue-web/src/components/management-panels.tsx": 2265,
     "dialogue-web/src/components/management-surface-panels.tsx": 2587,
     "dialogue-web/src/management-pipeline-api.ts": 5111,
-    "dialogue-web/src/style.css": 7956,
+    "dialogue-web/src/style.css": 7976,
     "dialogue-web/tests/composed-reference-game-browser-api.test.mjs": 1777,
     "gates/meta/audit-totality.mjs": 3372,
     "gates/product/check-refusal-informativeness.mjs": 1764,
