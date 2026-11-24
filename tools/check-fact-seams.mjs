@@ -548,6 +548,24 @@ export const DEBT = Object.freeze([
     `${GAME_CLIENT}:STARDEW_WINDOW_MODES`,
   ]),
   // ─── The tavern contract's vocabularies ───
+  mirrorDebt(
+    "tavern appearance choices",
+    `${TAVERN_CONTRACT}:TavernAppearanceChoiceV1Schema`,
+    [
+      "host/src/settings/player-preference-store.ts:APPEARANCE_CHOICES",
+      "dialogue-web/src/composed-reference-game-browser-api.ts:APPEARANCE_CHOICES",
+    ],
+    {
+      reason:
+        "three declarations of one closed set (`system`/`light`/`dark`), and the SEAMS table above has no entry because " +
+        "neither end derives from the other: the settings store restates the contract's members IN THE SAME PACKAGE, so " +
+        "the Host end is payable today (the union must publish its member list beside the schema, and the store imports " +
+        "it instead of spelling three strings), while the browser copy is the unavoidable mirror `dialogue-web` keeps of " +
+        "every contract vocabulary. No test names the two ends, and the member sets agree - this record is drift-checked, " +
+        "so a fourth appearance on either side is red by name rather than silently accepted",
+      owner: "the settings surface lane (Host end) and the browser client lane (the mirror)",
+    },
+  ),
 
   // ─── The Host's own vocabularies, restated by the harnesses and the audits ───
   mirrorDebt(
@@ -574,6 +592,25 @@ export const DEBT = Object.freeze([
         "its direction names (a protocol change, another lane's work). A codegen here would mint a third spelling of a " +
         "fact no file on this side owns, and the Host-side 'authority' is a *.test.ts, which is never a producer",
       owner: "the failure-dump lane, after the Mod publishes its direction names",
+    },
+  ),
+  // The contract generates a PAIR (`dialogue-web/src` and `tools/`), and the Host keeps a third spelling by hand: the
+  // list `isTerminalTurnStatusForCoordinator` asks and the startup settlement's per-state decision reads. It is not a
+  // `generated` record because the Host is not one of the contract's outputs - paying it is what makes it one.
+  mirrorDebt(
+    "the coordinator's terminal turn statuses",
+    "dialogue-web/src/chat-turn-terminal-states.generated.ts:TERMINAL_TURN_STATES",
+    [
+      "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts:TERMINAL_TURN_STATUSES",
+    ],
+    {
+      reason:
+        "the coordinator's own list is the third spelling of a fact the contract generates twice; its members are " +
+        'constrained by `ChatTurnLedger["status"]`, so it cannot be DERIVED from that type alone. Paying this is not an ' +
+        "import: `contracts/chat-turn-terminal-states.v1.json` names two outputs and neither is the Host, so the contract " +
+        "must gain a `host/src` output (`node tools/generate-vocabulary.mjs --contract ... --write`) and the coordinator " +
+        "must import it - a host/src edit, which is the only reason this is recorded rather than resolved",
+      owner: "the chat live-run lane",
     },
   ),
 ]);
