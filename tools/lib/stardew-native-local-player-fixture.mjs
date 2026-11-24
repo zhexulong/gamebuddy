@@ -83,7 +83,11 @@ async function validateNativeLocalPlayerFixturePreparationInternal(options) {
     assertSourceTopologyIsolated(original);
   }
   assertNativeLocalBinding(options.binding, options.saveName);
-  const timeoutSeconds = options.timeoutSeconds ?? 90;
+  // 300 s, not 90: the Mod's own load deadline cannot fire while `SaveGame.Load` is occupying the game's
+  // update loop, so this value is the ONLY bound that can end a slow load - and a 2.9 MB fixture save measured
+  // 90 s+ on this machine (round99), where the world did load and the fixture had already declared its terminal
+  // state, leaving a live farmhouse nobody could attach to. The ceiling this accepts is the profiler's own 300.
+  const timeoutSeconds = options.timeoutSeconds ?? 300;
   if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 10 || timeoutSeconds > 300)
     throw new Error("invalid_native_local_fixture_timeout");
   if (!options.stardewSaveRoot || !isAbsolute(options.stardewSaveRoot))
