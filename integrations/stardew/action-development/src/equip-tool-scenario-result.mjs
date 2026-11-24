@@ -20,6 +20,8 @@ const TOOL_SELECTOR_VALUES = new Set([
   "shears",
   "milk_pail",
   "pan",
+  "lantern",
+  "raft",
 ]);
 const SUCCESS_REASON_CODES = new Set(["tool_equipped", "already_equipped"]);
 

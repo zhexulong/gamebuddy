@@ -83,6 +83,26 @@ export function isDeclaredWindow(opensAt: unknown, closesAt: unknown): boolean {
 /**
  * The Mod's canonical tool categories (`FarmhandActionCatalog.ToolEnum`): the words a `tool:<category>` claim and an
  * `equip_tool` selector share. Kept here because the tool slot's published `category` is that same vocabulary.
+ *
+ * <p>
+ * TWELVE, and the two that used to be missing here are why this list is the one to check against the Mod rather than
+ * against intuition. `Lantern` and `Raft` are real `Tool` subclasses of the target game version
+ * (`ref/external/StardewValleyDecompiled/Stardew Valley/StardewValley.Tools/{Lantern,Raft}.cs`, Stardew Valley 1.6.15
+ * build 24356 - the assembly's own `AssemblyFileVersion`), and the Mod's one tool-to-word mapping names them
+ * (`farmhandexecutioncontroller.resourcetoolactions.cs` `ToolCategory`: `Lantern => "lantern"`, `Raft => "raft"`). Two
+ * published actions declare them as requirements (`toggle_tool_light` claims `tool:lantern`, `use_raft` claims
+ * `tool:raft`), so a planner that satisfies its claim with the action it already has needs the selector to name them.
+ * </p>
+ *
+ * <p>
+ * A word missing here is not a narrow list, it is two different refusals: `isToolSelector` answers
+ * `invalid_tool_selector` for a selector the Mod's own `RequestLocalEquipTool` admits, and `isToolSlotCategory` answers
+ * `invalid_snapshot:toolSlots` for the WHOLE snapshot the moment the pack holds a lantern or a raft. Measured
+ * 2026-11-25: both lists agreed except for exactly these two words, in four files.
+ * </p>
+ *
+ * `host/src/tool-category-vocabulary-agreement.test.ts` holds this set, the Mod's published `equip_tool` enum and the
+ * wire schema's `toolSlot.category` enum to each other, so the two cannot drift apart again.
  */
 export const TOOL_CATEGORY_VALUES: ReadonlySet<string> = new Set([
   "axe",
@@ -95,6 +115,8 @@ export const TOOL_CATEGORY_VALUES: ReadonlySet<string> = new Set([
   "shears",
   "milk_pail",
   "pan",
+  "lantern",
+  "raft",
 ]);
 
 /** The category a tool the Mod has no word for reports, instead of the nearest-looking guess. */
