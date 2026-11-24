@@ -96,12 +96,35 @@ public sealed partial class ModEntry
     {
         Point door = building.getPointForHumanDoor();
         // Reachable means WALKABLE-TO, and the door tile itself is a building tile an actor never stands on: the
-        // measured fact is an approach tile beside it the session's own start can walk to.
-        Point from = new((int)startTile.X, (int)startTile.Y);
-        bool approach = PlaySessionAnimalDoorApproach(farm, building)
-            .Any(tile => NativeLocalMultiDayWalkableFrom(farm, from, new Point((int)tile.X, (int)tile.Y)));
+        // measured fact is an approach tile beside it the anchor can walk to.
+        //
+        // THE ANCHOR IS THE ONE THE SITE WAS BUILT FROM. This block used to ask from the session's spawn tile while
+        // `PlaySessionAnimalFixedSite` placed the barn one offset from the FARMHOUSE door - two anchors, one question -
+        // and measured `round99`: `no_approach:door=68,21;from=4,39`, a free apron tile at `68,22` that the farmhouse
+        // front door reaches in six tiles and the spawn tile sixty away could not reach at all. The road the day walks
+        // is the farmhouse one (asserted separately, below, from `mustRemainReachable`), so the approach is asked from
+        // that same tile and a spawn point cannot refuse a world the day can use.
+        Point from = mustRemainReachable is { } anchor
+            ? new Point((int)anchor.X, (int)anchor.Y)
+            : NativeLocalMultiDayDoorStandingSpot(player, farm);
+        // The four tiles are asked one by one and each answer is kept: a bare `no_approach:door=68,21` said a door
+        // could not be used while naming neither the ring tile that was standing-room nor what stood there, and
+        // `round99` spent five launches between "the map walls it", "a prop took it" and "the site is wrong"
+        // because the refusal carried none of the three.
+        List<(Vector2 Tile, string Why)> ring = PlaySessionAnimalDoorApproach(farm, building)
+            .Select(tile =>
+            {
+                Point point = new((int)tile.X, (int)tile.Y);
+                string kind = NativeLocalMultiDayTileKind(farm, point);
+                bool reachable = NativeLocalMultiDayWalkableFrom(farm, from, point);
+                return (tile, $"{point.X},{point.Y}:kind={kind}:reachable={(reachable ? "true" : "false")}");
+            })
+            .ToList();
+        bool approach = ring.Exists(entry => entry.Why.EndsWith(":reachable=true", StringComparison.Ordinal));
         if (!approach)
-            return $"{PlaySessionAnimalNoApproachRefusal}:door={door.X},{door.Y}";
+        {
+            return $"{PlaySessionAnimalNoApproachRefusal}:door={door.X},{door.Y};from={from.X},{from.Y};ring=[{string.Join("|", ring.Select(entry => entry.Why))}]";
+        }
         // THE ROAD THE DAY WALKS TO THIS HOUSE, from the tile it begins at: the farmhouse door when the composed world
         // promises one, the session's own start otherwise. It is asked HERE, of the building standing on the fixed site,
         // because the props below can only be held off a road this file has measured - and a road the map walls off is
@@ -272,7 +295,7 @@ public sealed partial class ModEntry
         // rather than armed on a world with no way to its animals.
         Point routeFrom = mustRemainReachable is { } home
             ? new Point((int)home.X, (int)home.Y)
-            : new Point((int)startTile.X, (int)startTile.Y);
+            : NativeLocalMultiDayDoorStandingSpot(player, farm);
         NativeLocalMultiDayRoad route = NativeLocalMultiDayAnimalPorchRoad(
             routeFrom,
             door,
