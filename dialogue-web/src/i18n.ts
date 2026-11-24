@@ -125,13 +125,20 @@ const en = {
   // that holds the state (`launchTerminal` in `stardew-production-lifecycle-coordinator.internal.ts`)
   // is named in neither sentence, because a player cannot act on it. The explicit endgame is not a
   // way out either: it is a control of an attached game and does not clear that hold even when it
-  // succeeds.
+  // succeeds. So what they are told apart by is the one fact the player can see: whether GameBuddy
+  // watched the attempt end.
   //
   // Both are shaped the same way, because a player reads a wall differently depending on where it
   // stands: what happened first, then the hold and why the page's own controls cannot reach it, then
   // the one step left and the state that is true once it is taken. The page's limit is the reason
   // the step is the tray icon, not the opening threat - `player-vocabulary.5` holds both to that
   // order.
+  //
+  // The pair exists so neither sentence has to be vague about the other. `gameLaunchQuarantined` is
+  // the attempt whose outcome nobody has: GameBuddy never saw whether it reached the game, so nothing
+  // in this run can let go of it (`STARDEW_GAME_LIFECYCLE_TRAPPED_TERMINALS.launch_quarantined`), and a
+  // fresh GameBuddy is the one step left - which is why that sentence keeps it and says, in its last
+  // movement, that the ending GameBuddy DID watch is the other case and needs no such step.
   //
   // TRANSITIONAL, owned by the generation-2 recovery lane, which deletes the restart: today the hold
   // lasts for the rest of this GameBuddy run, so starting GameBuddy again is the only step that
@@ -144,15 +151,15 @@ const en = {
   // a screen with nothing to press that says only "quit GameBuddy and start it again" leaves the
   // player with the task manager as the one thing that matches the words.
   gameLaunchQuarantined:
-    "This start failed. GameBuddy keeps that attempt until it is started again, so starting this page over will not change it: the way forward is a fresh GameBuddy. If Stardew Valley is still running, close it, then quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again. Once it is open again, the game starts normally.",
-  // The same dead end without the failure claim, for the ending the Guardian really reported
-  // (`instance.status: stopped`, `playerHostExitCode`). The one fact that tells the two apart is
-  // the exit the Host published, and it changes one thing in the sentence: a reported exit is a
-  // game that is gone, so "if it is still running, close it" would send the player to look for a
-  // process that does not exist. The clause stays in the sentence above, where the launch's
-  // outcome is unknown and the game may well still be running.
+    "This start failed. GameBuddy keeps that attempt until it is started again, so starting this page over will not change it: the way forward is a fresh GameBuddy. If Stardew Valley is still running, close it, then quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again. Once it is open again, the game starts normally. This is the one start that needs that, because GameBuddy never saw whether it reached the game. A game that ended with GameBuddy watching is the other case: GameBuddy holds that ending, so pressing again starts another game without quitting.",
+  // The same pair's other half: the ending GameBuddy really reported (`instance.status: stopped`,
+  // `playerHostExitCode`), which the attempt after it does NOT need a fresh GameBuddy for. The one
+  // fact that tells the two shapes apart is the exit the Host published, and it changes every part of
+  // the sentence: a reported exit is a game that is gone, so "if it is still running, close it" would
+  // send the player to look for a process that does not exist, and the hold has already been handed
+  // back by the settle, so the step is the activation control's own words rather than the tray.
   gameEndedQuarantined:
-    "Stardew Valley ended before your companion moved in. GameBuddy keeps that ending until it is started again, so it will not launch the game, and starting this page over will not change it. Quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again: once it is open again, the game starts normally.",
+    "Stardew Valley ended before your companion moved in. GameBuddy watched it end, so that start is over and nothing of it is kept: the game starts again without quitting GameBuddy. Enable companion play again, and the next game begins the way the first one did.",
   gameWaitingForGame:
     "Waiting for the game to hand this window your farm. Load the farm you want to play, and this panel updates when it does.",
   // The state where nothing is coming: the player disconnected, and the disconnect stops the companion rather
@@ -1718,9 +1725,9 @@ const zh: Messages = {
   gameLaunch: "启动游戏",
   gameLaunchFailed: "游戏启动结果不确定；这里显示的是最近一次从游戏读到的状态。",
   gameLaunchQuarantined:
-    "这次启动失败了。GameBuddy 会一直留着那次尝试，直到它重新打开，所以刷新这一页也不会改变这一点：往前的路是重新打开 GameBuddy。如果《星露谷物语》还在运行，请先关掉它，然后从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开。重新打开之后，游戏就能正常启动。",
+    "这次启动失败了。GameBuddy 会一直留着那次尝试，直到它重新打开，所以刷新这一页也不会改变这一点：往前的路是重新打开 GameBuddy。如果《星露谷物语》还在运行，请先关掉它，然后从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开。重新打开之后，游戏就能正常启动。只有这次启动需要这样做，因为 GameBuddy 没看到它有没有进到游戏里。游戏如果是在 GameBuddy 看着的时候结束的，那是另一种情况：GameBuddy 手里有这个结局，所以再按一次就能开始下一局，不用退出 GameBuddy。",
   gameEndedQuarantined:
-    "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏，刷新这一页也不会改变这一点。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开：重新打开之后，游戏就能正常启动。",
+    "《星露谷物语》在伙伴住进农场前就退出了。GameBuddy 看着它结束，所以那次启动已经过去了，什么都没被留住：不用退出 GameBuddy，游戏就能再开下一局。再按一次「启用伙伴陪玩」，下一局会像第一局那样开始。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameDisconnectedWorldRunning:
     "你已经断开这个游戏的连接，而你离开的那个农场仍在运行：断开的是你的伙伴，从来不是你的世界。这个版本里 GameBuddy 还不能重新接进一个已经在运行的游戏——你可以在自己的游戏窗口里继续玩，或者在那里退出游戏后，再在这里重新读取你的游戏，面板会显示那个结局和重新开始的步骤。",
