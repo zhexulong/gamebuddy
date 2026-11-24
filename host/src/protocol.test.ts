@@ -3450,6 +3450,79 @@ test("body-program node status carries a failure code, and only as a code", () =
   assert.equal(verdict({ failureExplanation: "far from the door" }), "invalid_body_program_result");
 });
 
+test("a node's evicted addresses reach the Host, on the states that proved an effect and nowhere else", () => {
+  // The Mod publishes them (`BridgeBodyProgramNodeStatus.Evicted`, the journal's `BodyProgramJournalNode.Evicted`
+  // verbatim) and `fact-brief.ts#provedGoneTargets` subtracts them from the reading in hand. This validator's optional-key
+  // list carried `chore` and not `evicted`, so a `program_status_result` for a programme with ANY eviction was refused
+  // `invalid_body_program_result` and `local-stardew-bridge` closed the transport on it - every fact after that frame
+  // lost, for a field the Mod had already validated. `check-cross-language-wire-parity.mjs` is the gate over that class;
+  // this is the acceptance it reads from, exercised on this side's own validator.
+  const snapshot = (node: Record<string, unknown>) => ({
+    programId: "program_01",
+    state: "succeeded",
+    catalogRevision: 1,
+    stopEpoch: 0,
+    eventHighWater: 0,
+    nodes: [
+      { nodeId: "node_01", state: "succeeded", nodeAttempt: 1, admissionAttempt: 1, actionId: "till_soil", ...node },
+    ],
+  });
+  const verdict = (node: Record<string, unknown>) =>
+    validateBridgeMessage(
+      newEnvelope(
+        "program_status_result",
+        scope,
+        { code: "found", snapshot: snapshot(node), programs: null, programCount: 1 },
+        "status_evicted",
+        now,
+      ),
+      scope,
+      now,
+    );
+  // An opaque row id and a tile are the two spellings of ONE address space, and a `for_each` pass unions its rows here.
+  assert.equal(verdict({ evicted: ["rock_source_d94198ebf7480082"] }), null);
+  assert.equal(verdict({ evicted: ["62:19", "-3:0"] }), null, "a tile address is signed and has no leading zero");
+  assert.equal(verdict({ evicted: null }), null, "null is the node that proved no row gone");
+  assert.equal(verdict({}), null, "an absent field keeps the shape it always had");
+  // A list of strings that happens to work is the `key=val;` form this field replaced: an entry that is not an address is
+  // refused HERE, rather than thrown at a renderer by the reader that subtracts it.
+  assert.equal(verdict({ evicted: ["(O)472"] }), "invalid_body_program_result");
+  assert.equal(verdict({ evicted: ["62:019"] }), "invalid_body_program_result");
+  assert.equal(verdict({ evicted: "62:19" }), "invalid_body_program_result");
+  // The state rule `chore` rides too: a node that proved nothing took nothing out of the world.
+  assert.equal(
+    validateBridgeMessage(
+      newEnvelope(
+        "program_status_result",
+        scope,
+        {
+          code: "found",
+          snapshot: {
+            ...snapshot({}),
+            nodes: [
+              {
+                nodeId: "node_01",
+                state: "failed",
+                nodeAttempt: 1,
+                admissionAttempt: 1,
+                actionId: "till_soil",
+                evicted: ["62:19"],
+              },
+            ],
+          },
+          programs: null,
+          programCount: 1,
+        },
+        "status_evicted_state",
+        now,
+      ),
+      scope,
+      now,
+    ),
+    "invalid_body_program_result",
+  );
+});
+
 test("body-program node states the journal settles nodes in are admitted, and an unmapped name is not", () => {
   // The Mod settles 30 of the 154 nodes in one measured run as `skipped_dependency` (a dependency never became what the
   // node needed) and one as `abandoned` (dispatched, outcome permanently unknown). Neither name was on the wire, so

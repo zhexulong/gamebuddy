@@ -30,6 +30,7 @@ import {
   isDailyQuestTargetFact,
   isDebrisTargetFact,
   isDeclaredWindow,
+  isEvictedAddress,
   isFacilityTargetFact,
   isFarmAnimalPetTargetFact,
   isFarmBuildingTargetFact,
@@ -4302,12 +4303,18 @@ function textOnlyRow(maxLength: number): ExecutionRequestRequirement {
 }
 
 /** The `{x, y, expectedTargetId}` shape, refused under the one code the action's own handler names. */
-function tileAndTarget(refusal: string, executionResolved: readonly string[] = []): readonly ExecutionRequestRequirement[] {
+function tileAndTarget(
+  refusal: string,
+  executionResolved: readonly string[] = [],
+): readonly ExecutionRequestRequirement[] {
   return [tileRow(refusal), targetRow(refusal, executionResolved)];
 }
 
 /** The `{slot, x, y, expectedTargetId}` shape. */
-function toolTileAndTarget(refusal: string, executionResolved: readonly string[] = []): readonly ExecutionRequestRequirement[] {
+function toolTileAndTarget(
+  refusal: string,
+  executionResolved: readonly string[] = [],
+): readonly ExecutionRequestRequirement[] {
   return [slotRow(refusal), tileRow(refusal), targetRow(refusal, executionResolved)];
 }
 
@@ -4846,24 +4853,24 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgsExceptResolved(
       ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
       ExecutorResolvesTargetIdentity,
-      "invalid_args"
+      "invalid_args",
     ),
     ...tileItemAndTarget(
       "invalid_forage_target",
       boundedItemRow("invalid_forage_target", 128),
-      ExecutorResolvesTargetIdentity
+      ExecutorResolvesTargetIdentity,
     ),
   ],
   pickup_item: [
     exactArgsExceptResolved(
       ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
       ExecutorResolvesTargetIdentity,
-      "invalid_args"
+      "invalid_args",
     ),
     ...tileItemAndTarget(
       "invalid_item_target",
       boundedItemRow("invalid_item_target", 128),
-      ExecutorResolvesTargetIdentity
+      ExecutorResolvesTargetIdentity,
     ),
   ],
   // THE TILE IS THE ADDRESS. `water_crop` names the tile and the charge one native use covers; the crop standing there
@@ -4871,11 +4878,7 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
   // happens. The key stays legal, because a caller that knows the crop may still name it - and the handler then compares
   // it, answering `water_crop_target_changed:<expected>:<found>` for a tile that now holds another one.
   water_crop: [
-    exactArgsExceptResolved(
-      ["x", "y", "expectedTargetId", "charge"],
-      ExecutorResolvesTargetIdentity,
-      "invalid_args"
-    ),
+    exactArgsExceptResolved(["x", "y", "expectedTargetId", "charge"], ExecutorResolvesTargetIdentity, "invalid_args"),
     ...tileAndTarget("invalid_crop_target", ExecutorResolvesTargetIdentity),
     integerRow("charge", 0, 5, "invalid_args"),
   ],
@@ -4887,17 +4890,25 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     exactArgsExceptResolved(
       ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
       ExecutorResolvesTargetIdentity,
-      "invalid_args"
+      "invalid_args",
     ),
     ...tileItemAndTarget(
       "invalid_harvest_target",
       boundedItemRow("invalid_harvest_target", 128),
-      ExecutorResolvesTargetIdentity
+      ExecutorResolvesTargetIdentity,
     ),
   ],
   plant_seed: [
-    exactArgsExceptResolved(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
-    ...toolTileItemAndTarget("invalid_seed_target", boundedItemRow("invalid_seed_target", 128), ExecutorResolvesTargetIdentity),
+    exactArgsExceptResolved(
+      ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args",
+    ),
+    ...toolTileItemAndTarget(
+      "invalid_seed_target",
+      boundedItemRow("invalid_seed_target", 128),
+      ExecutorResolvesTargetIdentity,
+    ),
   ],
   fertilize_tile: [
     exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
@@ -5027,8 +5038,16 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     ...toolTileAndTarget("invalid_tool_target", ExecutorResolvesTargetIdentity),
   ],
   plant_sapling: [
-    exactArgsExceptResolved(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
-    ...toolTileItemAndTarget("invalid_sapling_target", itemRow("invalid_sapling_target"), ExecutorResolvesTargetIdentity),
+    exactArgsExceptResolved(
+      ["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args",
+    ),
+    ...toolTileItemAndTarget(
+      "invalid_sapling_target",
+      itemRow("invalid_sapling_target"),
+      ExecutorResolvesTargetIdentity,
+    ),
   ],
   cut_weeds: [
     exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
@@ -5465,16 +5484,7 @@ function isDiscoveryExclusionFact(entry: unknown): boolean {
 function isOtherFarmerFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasExactKeys(value, [
-      "location",
-      "x",
-      "y",
-      "name",
-      "facing",
-      "heldQualifiedItemId",
-      "heldDisplayName",
-      "doing",
-    ]) &&
+    hasExactKeys(value, ["location", "x", "y", "name", "facing", "heldQualifiedItemId", "heldDisplayName", "doing"]) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
     value.location.length <= 256 &&
@@ -6394,6 +6404,7 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
         "evidence",
         "postconditionVerification",
         "chore",
+        "evicted",
         "x",
         "y",
       ],
@@ -6439,7 +6450,18 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     // effect for the same reason `evidence` does - a node that proved nothing finished no chore.
     (value.chore === undefined ||
       value.chore === null ||
-      (typeof value.chore === "string" &&
+      (typeof value.chore === "string" && BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState))) &&
+    // The pair with `chore`, and the same kind of fact: `chore` says what the step's work CONSUMED, `evicted` says what
+    // it INVALIDATED. Same states, for the same reason - a node that proved nothing took nothing out of the world - and
+    // the entries are the Mod's own address union (`BodyProgramValidation.IsEvictedAddress`), checked HERE rather than
+    // left to a reader: `fact-brief.ts#provedGoneTargets` answers a value that is not an address by throwing
+    // `evidence_evicted_not_an_address:<value>`, so a frame this validator refuses never reaches a renderer and one it
+    // admits is one that reader can subtract. Admitting the key alone is what closed the transport in the first place
+    // (`hasExactKeysOrOptional` refuses an unlisted key, and `local-stardew-bridge.ts` answers that refusal by closing).
+    (value.evicted === undefined ||
+      value.evicted === null ||
+      (Array.isArray(value.evicted) &&
+        value.evicted.every(isEvictedAddress) &&
         BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState))) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
@@ -6787,18 +6809,20 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     if (!Array.isArray(value.arguments) || value.arguments.length > 32) return false;
     for (const arg of value.arguments) {
       if (!isRecord(arg)) return false;
-      if (!hasOnlyKeys(arg, [
-        "name",
-        "type",
-        "enum",
-        "boundedEnumValues",
-        "description",
-        "resolvedAtExecution",
-        "minimum",
-        "maximum",
-        "minLength",
-        "maxLength",
-      ]))
+      if (
+        !hasOnlyKeys(arg, [
+          "name",
+          "type",
+          "enum",
+          "boundedEnumValues",
+          "description",
+          "resolvedAtExecution",
+          "minimum",
+          "maximum",
+          "minLength",
+          "maxLength",
+        ])
+      )
         return false;
       if (typeof arg.name !== "string" || !/^[a-z][a-zA-Z0-9_]{0,63}$/.test(arg.name)) return false;
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
@@ -6954,7 +6978,8 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
       value.description.trim().length === 0
     )
       return false;
-    if (!Array.isArray(value.targetKinds) || value.targetKinds.length === 0 || value.targetKinds.length > 8) return false;
+    if (!Array.isArray(value.targetKinds) || value.targetKinds.length === 0 || value.targetKinds.length > 8)
+      return false;
     if (!value.targetKinds.every((kind) => typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind)))
       return false;
   }

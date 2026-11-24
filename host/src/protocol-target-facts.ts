@@ -2466,3 +2466,32 @@ export function isWarpSourceCoordinate(value: unknown): value is number {
 export function isToolSlot(value: unknown): value is number {
   return isFiniteNumber(value) && Number.isInteger(value) && value >= TOOL_SLOT_MINIMUM && value <= TOOL_SLOT_MAXIMUM;
 }
+
+/**
+ * An address a settlement may prove the world reading no longer describes, in the Mod's two spellings of ONE address
+ * space: a row's own opaque id (`rock_source_d94198ebf7480082`), or the tile a row with no identity of its own is
+ * addressed by (`62:19`, signed, no leading zero).
+ *
+ * <p>
+ * The id half is `isOpaqueId`'s alphabet and length and the tile half is `AreaToolFootprint.Format`'s, because the
+ * producing side validates exactly this union before it publishes (`BodyProgramValidation.IsEvictedAddress`, which is
+ * `IsIdentifier(value) || IsTileAddress(value)`) - a frame the wire admits is one the Mod could have sent, and a value
+ * outside it is a row address the reader would have to guess at. `fact-brief.ts#provedGoneTargets` states the same
+ * grammar as `EVIDENCE_ADDRESS`; that copy is the one that must become an import of this declaration, so the field has
+ * one spelling rather than two.
+ * </p>
+ */
+export function isEvictedAddress(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const colon = value.indexOf(":");
+  if (colon > 0 && isTileAddressHalf(value.slice(0, colon)) && isTileAddressHalf(value.slice(colon + 1))) return true;
+  return isOpaqueId(value);
+}
+
+/** One coordinate of a tile address: an optional `-`, then the digits of a canonical integer (`62`, `-3`, no `007`). */
+function isTileAddressHalf(value: string): boolean {
+  const digits = value.startsWith("-") ? value.slice(1) : value;
+  if (digits.length === 0 || digits.length > 9) return false;
+  if (digits.length > 1 && digits.startsWith("0")) return false;
+  return /^\d+$/u.test(digits);
+}
