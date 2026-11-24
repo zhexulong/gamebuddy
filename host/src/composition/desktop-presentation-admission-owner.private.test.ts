@@ -54,6 +54,13 @@ type PresentationAdmissionObservations = Readonly<{
   issuerBoundBeforeClose?: boolean;
   listenerClosedAfterClose?: boolean;
   serviceClosedAfterClose?: number;
+  laneReadStatus?: number;
+  laneReadBody?: string | null;
+  laneReadResumedAfterLaneClose?: boolean;
+  laneClosesBeforeReadResume?: number;
+  laneReadFailure?: string | null;
+  laneSelectStatus?: number;
+  laneSelectBody?: string;
 }>;
 
 function runChatOnlyPresentationAdmissionFixture(
@@ -185,7 +192,7 @@ function runFixture(
 }
 
 function runPresentationAdmissionFixture(
-  scenario: "start-close" | "unverified-artifact" | "facade-failure",
+  scenario: "start-close" | "unverified-artifact" | "facade-failure" | "switch-during-read",
 ): Promise<PresentationAdmissionObservations> {
   const fixturePath = resolve(
     dirname(fileURLToPath(import.meta.url)),
@@ -259,6 +266,31 @@ test("presentation admission owner serves the composed reference-game shell over
   assert.equal(observed.memoryClosed, 1);
   assert.equal(observed.worldInfoClosed, 1);
   assert.equal(observed.connectionClosed, 1);
+});
+
+test("a turn-level Chat switch waits for the read already inside the lane it replaces", async () => {
+  const observed = await runPresentationAdmissionFixture("switch-during-read");
+
+  assert.equal(observed.outcome, "resolved");
+  // The read was admitted on the mounted lane and was still inside its real store when the select
+  // route ran the real `switchChatLane()`. The barrier is what makes the two facts below hold at
+  // once: no lane close had happened when the read resumed, and the read answered.
+  assert.equal(
+    observed.laneClosesBeforeReadResume,
+    0,
+    "the lane was closed while a read was still inside it (reader threw " +
+      String(observed.laneReadFailure ?? "nothing") +
+      ", browser saw " +
+      String(observed.laneReadBody ?? "no body") +
+      ")",
+  );
+  assert.equal(observed.laneReadResumedAfterLaneClose, false);
+  assert.equal(observed.laneReadStatus, 200, "read refused: " + String(observed.laneReadBody ?? "no body"));
+  assert.equal(observed.laneSelectStatus, 200, "select refused: " + String(observed.laneSelectBody ?? "no body"));
+  // Each of the two lanes that served this run was closed exactly once, so the switch closed the
+  // previous lane rather than leaking it.
+  assert.equal(observed.managementClosed, 2);
+  assert.equal(observed.serviceClosed, 2);
 });
 
 test("presentation admission owner drains the Chat pipeline service and propagates an unverified artifact failure", async () => {

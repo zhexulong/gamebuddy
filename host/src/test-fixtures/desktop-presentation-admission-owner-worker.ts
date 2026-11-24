@@ -62,6 +62,64 @@ let serviceSawSharedStream = false;
 let issuerBound = false;
 let eventStream: ReturnType<typeof createChatEventStream> | undefined;
 
+/**
+ * The lane the `switch-during-read` scenario swaps out from under a live management read. The read is
+ * held inside the real `ChatThreadStore` the fake management service is built on, so a lane closed
+ * before the read resumes refuses it with the store's own error - nothing here invents a closed-store
+ * message, and the ordering is the composition's own.
+ */
+const laneChatHandle = `${"C".repeat(42)}A`;
+const fixturePrincipal = Object.freeze({
+  playerId: "player_fixture",
+  companionId: "companion_fixture",
+  continuityId: "continuity_fixture",
+});
+const laneSeeded = Object.freeze({
+  chatThreadId: `chat-${"1".repeat(16)}`,
+  chatSurfaceSessionId: `surface-${"1".repeat(16)}`,
+});
+const laneMounted = Object.freeze({
+  chatThreadId: `chat-${"2".repeat(16)}`,
+  chatSurfaceSessionId: `surface-${"2".repeat(16)}`,
+});
+let laneThreads: ReturnType<typeof import("../tavern/chat-thread-store.js").createChatThreadStore> | undefined;
+let laneCloseCount = 0;
+let laneClosesBeforeReadResume = 0;
+let laneReadResumedAfterLaneClose = false;
+let laneReadFailure: string | null = null;
+let laneReadEntered: () => void = () => undefined;
+const laneReadEnteredGate = new Promise<void>((resolve) => {
+  laneReadEntered = resolve;
+});
+let laneReadRelease: () => void = () => undefined;
+const laneReadReleasedGate = new Promise<void>((resolve) => {
+  laneReadRelease = resolve;
+});
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * A structural lane for the switch scenario. Its services are mocked by URL (as in every scenario here),
+ * but the select route reads the mounted lease's own generation and handle projection, so those two
+ * facts must be real enough for the route to resolve the Chat the browser named.
+ */
+function structuralLane(chatThreadId: string, chatSurfaceSessionId: string): never {
+  return Object.freeze({
+    chatThreadId,
+    chatSurfaceSessionId,
+    browserProjection: Object.freeze({
+      chatHandle: laneChatHandle,
+      selectionGeneration: 1,
+      selectionStateRevision: "lane-state-revision",
+      projectChatHandle: () => laneChatHandle,
+      projectCompanionHandle: () => "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDA",
+      projectMessageHandle: () => "message-lane",
+      projectTurnHandle: () => "turn-lane",
+    }),
+    attachPresentation: () => () => undefined,
+    close: async () => undefined,
+  }) as never;
+}
+
 const handle = `${"B".repeat(42)}A`;
 const base = TavernBrowserFixtureV1.snapshot();
 const fakeFacade = Object.freeze({
@@ -103,7 +161,23 @@ const fakeChatList = Object.freeze({
   ],
 });
 const fakeManagementService = Object.freeze({
-  listChats: async () => fakeChatList,
+  listChats: async () => {
+    if (scenario === "switch-during-read") {
+      // The read the switch must not outrun. It holds until the fixture releases it, then reads the
+      // same real store this lane's close closes - so the observation is the store's own verdict.
+      laneReadEntered();
+      await laneReadReleasedGate;
+      laneClosesBeforeReadResume = laneCloseCount;
+      laneReadResumedAfterLaneClose = laneCloseCount !== 0;
+      try {
+        await laneThreads!.listThreads!();
+      } catch (error) {
+        laneReadFailure = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    }
+    return fakeChatList;
+  },
   renameChatTitle: async () => {
     throw new Error("unused_rename");
   },
@@ -115,6 +189,8 @@ const fakeManagementService = Object.freeze({
     throw new Error("unused_draft_discard");
   },
   close: async () => {
+    laneCloseCount += 1;
+    laneThreads?.close?.();
     counts.managementClosed += 1;
   },
 });
@@ -306,10 +382,13 @@ const presentation: GamePresentationProjection = Object.freeze({
  * never calls it, so every operation refuses rather than fabricating a switch.
  */
 const chatSelectionStub = Object.freeze({
-  async requestChatSelection(): Promise<never> {
+  async requestChatSelection() {
+    if (scenario === "switch-during-read") return Object.freeze({ apiVersion: 1, status: "switched" });
     throw new Error("chat_selection_unused");
   },
-  async startMountedChatRuntime(): Promise<never> {
+  async startMountedChatRuntime() {
+    if (scenario === "switch-during-read")
+      return structuralLane(laneMounted.chatThreadId, laneMounted.chatSurfaceSessionId);
     throw new Error("chat_selection_unused");
   },
 });
@@ -460,24 +539,47 @@ async function main(): Promise<void> {
   eventStream = createChatEventStream();
   const observations: Record<string, unknown> = {
     scenario,
-    runtimeRoot: "E:/fixture/runtime-root",
+    runtimeRoot:
+      scenario === "switch-during-read" ? join(fixture.hostArtifactRoot, "runtime-root") : "E:/fixture/runtime-root",
   };
+  if (scenario === "switch-during-read") {
+    // One durable Chat exists in this root before the admission mounts: the select route resolves the
+    // handle the browser named against the store's own rows, so a switch needs a row to select.
+    const { createChatThreadStore, createProfileAwareChatThreadCreationCapability } = await import(
+      pathToFileURL(join(moduleDirectory, "..", "tavern", "chat-thread-store.js")).href
+    );
+    const { identityKey } = await import(pathToFileURL(join(moduleDirectory, "..", "runtime.js")).href);
+    await mkdir(observations.runtimeRoot as string, { recursive: true });
+    laneThreads = createChatThreadStore(
+      observations.runtimeRoot as string,
+      identityKey(fixturePrincipal),
+    ) as typeof laneThreads;
+    await createProfileAwareChatThreadCreationCapability(laneThreads!, {
+      async readExact() {
+        return { profileId: "profile", revision: 1, canonicalHash: "a".repeat(64) };
+      },
+    }).createExplicit({
+      ...laneSeeded,
+      companionId: fixturePrincipal.companionId,
+      continuityId: fixturePrincipal.continuityId,
+      opening: "blank",
+    });
+  }
   let admission: Awaited<ReturnType<typeof startDesktopPresentationAdmission>> | undefined;
   try {
     try {
       admission = await startDesktopPresentationAdmission({
         manifest: Object.freeze({
           runtimeRoot: observations.runtimeRoot,
-          principal: Object.freeze({
-            playerId: "player_fixture",
-            companionId: "companion_fixture",
-            continuityId: "continuity_fixture",
-          }),
+          principal: fixturePrincipal,
         }) as never,
         hostArtifactRoot: fixture.hostArtifactRoot,
         bootstrapToken,
         eventStream,
-        lease: Object.freeze({}) as never,
+        lease:
+          scenario === "switch-during-read"
+            ? structuralLane(laneMounted.chatThreadId, laneMounted.chatSurfaceSessionId)
+            : (Object.freeze({}) as never),
         chatSelection: chatSelectionStub,
         chatCatalog: chatCatalogStub,
         presentation,
@@ -505,21 +607,62 @@ async function main(): Promise<void> {
       if (bootstrap.status === 200) {
         const root = (await bootstrap.json()) as {
           build: { profileId: string };
-          chat: { build: { profileId: string } };
+          chat: { build: { profileId: string }; csrfToken?: string };
           game: { build: { profileId: string } } | null;
         };
         observations.composedProfileId = root.build.profileId;
         observations.chatProfileId = root.chat.build.profileId;
         observations.gameProfileId = root.game?.build.profileId ?? null;
+        const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
+        if (scenario === "switch-during-read") {
+          // A management read is admitted on the mounted lane and held inside it; the switch then runs
+          // the real `switchChatLane()` through the real select route. Whichever order the composition
+          // chooses, the read's own status is the proof of it.
+          const read = fetch(`${origin}/api/tavern/v1/chats?apiVersion=1`, {
+            headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+          });
+          await laneReadEnteredGate;
+          const select = fetch(`${origin}/api/tavern/v1/chat/select`, {
+            method: "PUT",
+            headers: {
+              Origin: origin,
+              Cookie: cookie,
+              "Sec-Fetch-Site": "same-origin",
+              "Content-Type": "application/json",
+              "X-CSRF-Token": root.chat.csrfToken ?? "",
+            },
+            body: JSON.stringify({ apiVersion: 1, selectionGeneration: 1, chatHandle: laneChatHandle }),
+          });
+          // Release the read once the switch has had its chance to close that lane: bounded only so a
+          // switch that waits for the reader cannot hang the fixture.
+          await Promise.race([
+            select.then(
+              () => undefined,
+              () => undefined,
+            ),
+            sleep(400),
+          ]);
+          laneReadRelease();
+          const readResponse = await read;
+          observations.laneReadStatus = readResponse.status;
+          observations.laneReadBody = readResponse.status === 200 ? null : await readResponse.text();
+          observations.laneReadResumedAfterLaneClose = laneReadResumedAfterLaneClose;
+          observations.laneClosesBeforeReadResume = laneClosesBeforeReadResume;
+          observations.laneReadFailure = laneReadFailure;
+          const selectResponse = await select;
+          observations.laneSelectStatus = selectResponse.status;
+          observations.laneSelectBody = await selectResponse.text();
+        }
         // The management domains are mounted on this same origin: one of their
         // read routes answers from the injected service under broker auth, which
         // is the route the shell previously answered 404 for.
-        const cookie = bootstrap.headers.get("set-cookie")!.split(";", 1)[0]!;
-        const chats = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1`, {
-          headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
-        });
-        observations.managementChatsStatus = chats.status;
-        observations.managementChatsBody = chats.status === 200 ? await chats.json() : null;
+        if (scenario !== "switch-during-read") {
+          const chats = await fetch(`${origin}/api/tavern/v1/chats?apiVersion=1`, {
+            headers: { Cookie: cookie, "Sec-Fetch-Site": "same-origin" },
+          });
+          observations.managementChatsStatus = chats.status;
+          observations.managementChatsBody = chats.status === 200 ? await chats.json() : null;
+        }
       }
       observations.issuerBoundBeforeClose = issuerBound;
       await Promise.all([admission.close(), admission.close()]);

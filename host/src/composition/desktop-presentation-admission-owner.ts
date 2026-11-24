@@ -28,6 +28,7 @@ import { resolveRuntimePaths } from "../runtime-identity.js";
 import { identityKey } from "../runtime.js";
 
 import { mergeMountedCompanionList } from "./companion-library-list.js";
+import { type ChatLaneFence, createChatLaneFence } from "./chat-lane-fence.js";
 
 import { composeReferenceGameBrowserProfile } from "../composed-browser-contract/index.js";
 import type { MountedChatRuntimeLease } from "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js";
@@ -891,8 +892,10 @@ export async function startDesktopPresentationAdmission(
    *
    * It takes only the members it drains, so a lane that failed to finish
    * constructing can be drained without inventing the members it never built.
+   * A lane that did finish reaches this only through its own fence, which waits
+   * for every request still inside it before closing a store under that request.
    */
-  const drainChatLane = async (
+  const closeLaneServices = async (
     target: Readonly<{
       owned: readonly { close(): Promise<void> }[];
       pipelineService: ChatPipelineService;
@@ -1026,6 +1029,9 @@ export async function startDesktopPresentationAdmission(
         ...(input.listVoiceOutputDevices === undefined ? {} : { listVoiceOutputDevices: input.listVoiceOutputDevices }),
       });
       return Object.freeze({
+        // The lane's own fence, bound to this lane's close: it is the only handle to closing the services
+        // above, so no caller can close a store another request is still reading through.
+        fence: createChatLaneFence(() => closeLaneServices({ referenceStateFacade, pipelineService, owned })),
         referenceStateFacade,
         pipelineService,
         management,
@@ -1033,10 +1039,10 @@ export async function startDesktopPresentationAdmission(
         // reverse map, one file, one digest, so the picture an upload stores is
         // exactly the picture that handle's URL then serves.
         companionAvatarService: domains.companionAvatarService,
-        owned: Object.freeze(owned),
       });
     } catch (error) {
-      await drainChatLane({ referenceStateFacade, pipelineService, owned });
+      // No lane exists yet, so nothing can be reading it: this is the construction failure's own drain.
+      await closeLaneServices({ referenceStateFacade, pipelineService, owned });
       throw error;
     }
   }
@@ -1045,24 +1051,38 @@ export async function startDesktopPresentationAdmission(
    * Follows a committed turn-level Chat switch: the coordinator has already
    * released the previous mounted runtime and mounted the selected Chat, so the
    * admission only has to replace its own lane with one built over the successor
-   * lease and drain the previous lane's services.
+   * lease and close the previous lane's services.
+   *
+   * The swap and the seal happen in one tick, so a request that arrives after the
+   * successor is published is admitted on the successor; the previous lane's fence
+   * then waits for every request already inside it before closing anything.
    */
   async function switchChatLane(): Promise<void> {
     if (input.chatSelection === undefined) throw new Error("chat_selection_unavailable");
     const lease = await input.chatSelection.startMountedChatRuntime();
+    const successor = await buildChatLane(lease);
     const previous = lane;
-    lane = await buildChatLane(lease);
-    if (previous !== undefined) await drainChatLane(previous);
+    lane = successor;
+    if (previous !== undefined) await previous.fence.close();
   }
 
   lane = await buildChatLane(input.lease);
+  /**
+   * Resolves the lane that is current when the request arrives and counts it until `read` settles. The
+   * admission and the resolution happen in one tick, so a request cannot slip between resolving a lane
+   * and being counted on it, and a switch closes that lane only after this reader returns from it.
+   */
+  const withCurrentLane: LaneUse = (label, read) => {
+    const current = currentLane();
+    return current.fence.use(label, () => read(current));
+  };
   // The composed shell mounts its one delegated dispatcher and its one
   // reference dispatcher once, so it is handed stable members that resolve to
   // whichever lane is current when a request runs. A lane swap is therefore
   // invisible to the shell and no route can observe a half-switched lane.
   const stableReferenceStateFacade: ReferencePipelineStateFacade = Object.freeze({
-    read: () => currentLane().referenceStateFacade.read(),
-    readDraft: () => currentLane().referenceStateFacade.readDraft(),
+    read: () => withCurrentLane("state.read", (lane) => lane.referenceStateFacade.read()),
+    readDraft: () => withCurrentLane("draft.read", (lane) => lane.referenceStateFacade.readDraft()),
     // The admission owns every lane's lifetime; the shell closes only its own
     // dispatchers, never a lane another owner built.
     close: async () => undefined,
@@ -1077,26 +1097,34 @@ export async function startDesktopPresentationAdmission(
   const stablePipelineService: ChatPipelineService & Required<Pick<ChatPipelineService, ForwardedChatPipelineMember>> =
     Object.freeze({
       submitAfterResponseCommit: (command, idempotencyKey, commit202) =>
-        currentLane().pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
-      readSubmissionStatus: (query) => currentLane().pipelineService.readSubmissionStatus(query),
-      cancel: (turnHandle, command) => currentLane().pipelineService.cancel(turnHandle, command),
+        withCurrentLane("chat.submit", (lane) =>
+          lane.pipelineService.submitAfterResponseCommit(command, idempotencyKey, commit202),
+        ),
+      readSubmissionStatus: (query) =>
+        withCurrentLane("chat.submission_status", (lane) => lane.pipelineService.readSubmissionStatus(query)),
+      cancel: (turnHandle, command) =>
+        withCurrentLane("chat.cancel", (lane) => lane.pipelineService.cancel(turnHandle, command)),
       // Swipe selection, Regenerate, rewind, edit and delete are Chat-owned mutations the reference surface
       // serves through the same lane-swapped service: the delegated dispatcher must reach the current lane's
       // own implementation rather than a snapshot taken at admission time.
-      selectSwipe: (command) => currentLane().pipelineService.selectSwipe!(command),
-      regenerate: (command, idempotencyKey) => currentLane().pipelineService.regenerate!(command, idempotencyKey),
-      rewind: (command) => currentLane().pipelineService.rewind!(command),
-      edit: (command) => currentLane().pipelineService.edit!(command),
-      delete: (command) => currentLane().pipelineService.delete!(command),
+      selectSwipe: (command) => withCurrentLane("chat.swipe", (lane) => lane.pipelineService.selectSwipe!(command)),
+      regenerate: (command, idempotencyKey) =>
+        withCurrentLane("chat.regenerate", (lane) => lane.pipelineService.regenerate!(command, idempotencyKey)),
+      rewind: (command) => withCurrentLane("chat.rewind", (lane) => lane.pipelineService.rewind!(command)),
+      edit: (command) => withCurrentLane("chat.edit", (lane) => lane.pipelineService.edit!(command)),
+      delete: (command) => withCurrentLane("chat.delete", (lane) => lane.pipelineService.delete!(command)),
       close: async () => undefined,
     });
-  const stableManagementOptions = createStableManagementOptions(currentLane);
+  const stableManagementOptions = createStableManagementOptions(currentLane, withCurrentLane);
   // The avatar face, mounted on the shell's own `/assets/companions/` path space.
   // It resolves through whichever lane is current, exactly like the management
   // options: a turn-level Chat switch replaces the mounted lease, and with it the
   // per-mount handles that name a companion.
   const companionAvatar = createCompanionAvatarRequestHandler(
-    Object.freeze({ read: (handle: string) => currentLane().companionAvatarService.read(handle) }),
+    Object.freeze({
+      read: (handle: string) =>
+        withCurrentLane("companion.avatar.read", (lane) => lane.companionAvatarService.read(handle)),
+    }),
   );
   let server: Awaited<ReturnType<typeof startComposedReferenceGameStaticShellComposition>>;
   try {
@@ -1130,9 +1158,10 @@ export async function startDesktopPresentationAdmission(
     });
   } catch (error) {
     // No listener exists yet; the lane this admission just built is the only
-    // owner it holds, so drain it and preserve the construction failure.
-    await drainChatLane(currentLane());
+    // owner it holds, so close it and preserve the construction failure.
+    const built = currentLane();
     lane = undefined;
+    await built.fence.close();
     throw error;
   }
   let closePromise: Promise<void> | undefined;
@@ -1149,7 +1178,7 @@ export async function startDesktopPresentationAdmission(
           // Listener first, then the lane it served: creation order reversed.
           const current = lane;
           lane = undefined;
-          if (current !== undefined) await drainChatLane(current);
+          if (current !== undefined) await current.fence.close();
         }
       })()),
   });
@@ -1157,12 +1186,17 @@ export async function startDesktopPresentationAdmission(
 
 /** One mounted Chat lane: every service the admission built over one mounted lease. */
 type ChatLane = Readonly<{
-  referenceStateFacade: ReferencePipelineStateFacade;
-  pipelineService: ChatPipelineService;
+  /**
+   * The lane's own close, and the only handle to it: it seals the lane, waits for every request
+   * still inside it, then closes the services below. Neither of the two services is closeable
+   * through this type, so a lane cannot be closed without passing that barrier.
+   */
+  fence: ChatLaneFence;
+  referenceStateFacade: Omit<ReferencePipelineStateFacade, "close">;
+  pipelineService: Omit<ChatPipelineService, "close">;
   management: Omit<TavernManagementDelegatedOptions, "capability">;
   /** Served by the shell's own asset face, so it rides the lane rather than `management`. */
   companionAvatarService: CompanionAvatarService;
-  owned: readonly { close(): Promise<void> }[];
 }>;
 
 /**
@@ -1198,7 +1232,8 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
   companionDeletionService: ["delete"],
   newCompanionProvisioner: ["create"],
   newChatProvisioner: ["create"],
-  chatSelectProvisioner: ["select"],
+  // `chatSelectProvisioner` is deliberately absent from this table: that call IS the switch, so it is
+  // forwarded below without admitting a use on the lane it replaces (a use there would wait for itself).
   // Lane-bound like the services above: a turn-level Chat switch replaces the mounted lease, and with it
   // the handle projection every branch is cut through.
   chatForkService: ["fork"],
@@ -1212,12 +1247,22 @@ const LANE_SERVICE_METHODS: Readonly<Record<string, readonly string[]>> = Object
 });
 
 /**
+ * Admits one use of whichever lane is current when the request arrives: every member below that reaches a
+ * lane-owned service does so through this, so a Chat switch closes that lane only after the last reader
+ * returns from it.
+ */
+type LaneUse = <T>(label: string, read: (lane: ChatLane) => Promise<T>) => Promise<T>;
+
+/**
  * The stable management-options projection the composed shell mounts once. Each
  * member resolves to the lane that is current when its route runs, so a
  * turn-level Chat switch replaces every thread-scoped service while the shell's
  * delegated dispatcher stays exactly where it was.
  */
-function createStableManagementOptions(current: () => ChatLane): Omit<TavernManagementDelegatedOptions, "capability"> {
+function createStableManagementOptions(
+  current: () => ChatLane,
+  withLane: LaneUse,
+): Omit<TavernManagementDelegatedOptions, "capability"> {
   const laneOptions = (): Record<string, unknown> => current().management as unknown as Record<string, unknown>;
   const sample = laneOptions();
   const stable: Record<string, unknown> = { profile: sample.profile };
@@ -1228,29 +1273,50 @@ function createStableManagementOptions(current: () => ChatLane): Omit<TavernMana
       const member = (laneOptions()[serviceName] as Record<string, unknown> | undefined)?.[method];
       if (typeof member !== "function") continue;
       forwarded[method] = (...args: unknown[]) =>
-        (laneOptions()[serviceName] as Record<string, (...callArgs: unknown[]) => unknown>)[method]!(...args);
+        withLane(`management.${serviceName}.${method}`, (lane) =>
+          Promise.resolve(
+            (
+              (lane.management as unknown as Record<string, Record<string, (...callArgs: unknown[]) => unknown>>)[
+                serviceName
+              ] as Record<string, (...callArgs: unknown[]) => unknown>
+            )[method]!(...args),
+          ),
+        );
     }
     stable[serviceName] = Object.freeze(forwarded);
   }
+  // Chat selection: the one management call that is not a read of the lane it arrives on. The Host
+  // already committed the successor mount by the time this returns, and the lane swap follows it, so a
+  // use admitted here would be a use the fence waits for while the same call waits for the fence.
+  if (typeof sample.chatSelectProvisioner === "object")
+    stable.chatSelectProvisioner = Object.freeze({
+      select: (command: SelectChatCommandV1) => current().management.chatSelectProvisioner!.select(command),
+    });
   if (typeof sample.confirmStCardImport === "function")
-    stable.confirmStCardImport = (importId: string) => current().management.confirmStCardImport!(importId);
+    stable.confirmStCardImport = (importId: string) =>
+      withLane("management.confirmStCardImport", (lane) => lane.management.confirmStCardImport!(importId));
   // The activation route takes a PER-REQUEST context (the Game read needs the request's own
   // authenticated session), so it is forwarded with both arguments rather than through the
   // argument-less method table above - a generic forward would silently drop the session and
   // leave the service unable to prove no game is running.
-  const laneDomain = (): Record<string, any> => current().management as unknown as Record<string, any>;
   if (typeof sample.companionActivationService === "object")
     stable.companionActivationService = Object.freeze({
       activate: (handle: string, context?: unknown) =>
-        (
-          laneDomain().companionActivationService as {
-            activate(handle: string, context?: unknown): Promise<unknown>;
-          }
-        ).activate(handle, context),
+        withLane("management.companionActivationService.activate", (lane) =>
+          Promise.resolve(
+            (
+              (lane.management as unknown as Record<string, unknown>).companionActivationService as {
+                activate(handle: string, context?: unknown): Promise<unknown>;
+              }
+            ).activate(handle, context),
+          ),
+        ),
     });
+  // These two reach the Host and the Game projection rather than a lane-owned service, so they are
+  // forwarded as they are: the lane's fence never closes either of them.
   if (typeof sample.readGameState === "function")
     stable.readGameState = (context: { csrfToken: string; browserSessionExpiresAtMs: number }) =>
-      laneDomain().readGameState(context);
+      (current().management as unknown as Record<string, any>).readGameState(context);
   if (typeof sample.listVoiceOutputDevices === "function")
     stable.listVoiceOutputDevices = () => current().management.listVoiceOutputDevices!();
   return Object.freeze(stable) as Omit<TavernManagementDelegatedOptions, "capability">;
