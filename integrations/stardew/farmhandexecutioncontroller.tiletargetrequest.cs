@@ -152,6 +152,15 @@ internal sealed partial class ExecutionManager
     /// publishes as `occupant` (<see cref="TileOccupantKind"/>), and what the action removes is joined from its own
     /// <c>Clears</c> declaration, so neither side is a second list beside the catalogue.
     /// </para>
+    ///
+    /// <para>
+    /// A BARE TILE AND A STONE ARE NOT ONE WORD. <see cref="TileTargetMintAnswer"/> answers both - `Nothing` and
+    /// `OtherKind` - and this function may not answer them together: `absent` says the work at that address is done or
+    /// never existed, `changed` says something else stands there and the caller must look before acting again. Collapsing
+    /// them was tried and reverted: a `cut_weeds` swing over the stone where a weed had been answered `absent`, which sends
+    /// the caller to look elsewhere on a tile that is not bare. The tile's ADDRESS travels once, in the evidence's
+    /// `named_tile` field, rather than a second time spliced into the code.
+    /// </para>
     /// </summary>
     private static TileTargetRefusal DescribeTileTargetMintRefusal(string actionId, int x, int y, TileTargetMintResolution mint)
     {
@@ -178,6 +187,29 @@ internal sealed partial class ExecutionManager
         FarmhandActionCatalog.ClearsOf(actionId) is { Occupants.Count: > 0 } clears
             ? string.Join("+", clears.Occupants)
             : TileOccupantKind.None;
+
+    /// <summary>
+    /// WHICH HALF ANSWERED FOR THE IDENTITY A RECEIPT ACTED ON, and the kind it belongs to: `caller` when the request
+    /// named one, `resolved_at_execution` when the body minted it from the live tile.
+    ///
+    /// <para>
+    /// THE RECEIPT IS WHAT REPLACES THE HASH SHE USED TO TYPE. The identity stops being a value the caller must copy and
+    /// becomes a fact the receipt reports, so "which object did this act on, and who said so?" is answerable from the
+    /// terminal alone - and a resolved identity is never mistaken for a stale copy she supplied. The kind is the action's
+    /// own declared <c>TargetFamily</c> (`FarmhandActionCatalog.TargetFamilyOf`), read from the catalogue rather than
+    /// spelled at each handler, so a receipt can never name a kind its row does not declare.
+    /// </para>
+    /// </summary>
+    private static string DescribeTargetIdentity(string actionId, bool resolvedAtExecution) =>
+        $"targetId_source={TargetIdSource(resolvedAtExecution)};targetId_kind={TargetIdKind(actionId)}";
+
+    /// <summary>Which half answered for the identity, in the receipt's own two words.</summary>
+    private static string TargetIdSource(bool resolvedAtExecution) =>
+        resolvedAtExecution ? TileTargetIdentitySource.ResolvedAtExecution : TileTargetIdentitySource.Caller;
+
+    /// <summary>The kind the action itself declares its targets are, from the catalogue and nowhere else.</summary>
+    private static string TargetIdKind(string actionId) =>
+        FarmhandActionCatalog.TargetFamilyOf(actionId) ?? TileOccupantKind.None;
 
     private LocalExecutionReceipt RequestLocalTileTarget(
         string actionId,
@@ -286,6 +318,25 @@ internal sealed partial class ExecutionManager
     }
 
     private static bool IsTileWithinNativeReach(Farmer actor, int x, int y) => IsTileWithinChebyshevRadius(actor, x, y, 1);
+}
+
+/// <summary>
+/// The two halves that can answer for the identity one request acts on, as the receipt's `targetId_source` field spells them.
+///
+/// <para>
+/// TWO WORDS, NOT A BOOLEAN, because the reader of a receipt is comparing this run's proof against another run's: a
+/// resolved identity is not a stale copy the caller supplied, and a boolean would make the two read as the same claim in
+/// two shapes. `caller` is what every request meant before the tile-addressed actions accepted an omission, and
+/// `resolved_at_execution` is what the executor mints when she names the tile and leaves the object to it.
+/// </para>
+/// </summary>
+internal static class TileTargetIdentitySource
+{
+    /// <summary>The request named the identity, and the live tile was compared against it.</summary>
+    internal const string Caller = "caller";
+
+    /// <summary>The identity was absent from the request and the body minted it from the LIVE tile it acted on.</summary>
+    internal const string ResolvedAtExecution = "resolved_at_execution";
 }
 
 /// <summary>

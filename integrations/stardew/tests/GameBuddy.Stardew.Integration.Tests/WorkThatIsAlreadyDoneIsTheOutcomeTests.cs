@@ -287,6 +287,30 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
     }
 
     /// <summary>
+    /// THE THIRD ANSWER ON A CROP TILE: the family's own subject is there and cannot be taken yet, so the code is
+    /// `not_ready` and never `absent` - a crop the scythe does not own is not a bare tile - and the clause is the
+    /// admission's own word. `ScytheCropTarget` is the one minted admission that answers a bare boolean and names no
+    /// reasons, so its clause is `refused_by_admission` rather than an invented `crop_unripe`.
+    /// </summary>
+    [Fact]
+    public void AScytheSwingGivenNoTargetOverACropItDoesNotOwnSaysTheCropIsNotReady()
+    {
+        using TargetFamilyWorld world = TargetFamilyWorld.Create();
+        world.PutToolInPackSlot(0, typeof(StardewValley.Tools.MeleeWeapon), "(W)47", upgradeLevel: 0);
+        world.StandAt(2, 2);
+        world.PlaceWaterableCrop(x: 3, y: 2);
+
+        LocalExecutionReceipt receipt = Request(world.NewExecutionManager("scythe_crop"), "scythe_crop_unnamed_unripe", "scythe_crop", 3, 2, expectedTargetId: null);
+
+        receipt.State.Should().Be(ExecutionState.Rejected, "the scythe does not own a growing Grab crop, so nothing was cut");
+        receipt.ReasonCode.Should().Be(
+            "scythe_crop_target_not_ready:crop:refused_by_admission",
+            "the crop is on the tile, so the tile is not bare, and the clause names the admission that withheld it");
+        receipt.Evidence.Should().Contain("found=crop", "and the receipt says what it found rather than only refusing");
+        receipt.Evidence.Should().Contain("reason=refused_by_admission", "the clause travels in the receipt as well as in the code");
+    }
+
+    /// <summary>
     /// A TAPPED TREE IS THE RIGHT THING AND NOT TAKEABLE YET, which is neither of the other two answers and has its own
     /// code: nothing changed, so calling it `changed` would make the receipt lie about the world - and the clause is the
     /// one the family's own admission published (<c>DiscoveryExclusionReasons.AlreadyTapped</c>), read from
@@ -414,7 +438,7 @@ public sealed class WorkThatIsAlreadyDoneIsTheOutcomeTests
             new BridgeExecutionArgs { X = x, Y = y, Slot = slot, ExpectedTargetId = expectedTargetId },
             1,
             DateTimeOffset.UtcNow.AddSeconds(30).ToUnixTimeMilliseconds());
-        IFarmhandActionHandler handler = string.Equals(action, "till_soil", StringComparison.Ordinal)
+        IFarmhandActionHandler handler = action is "till_soil" or "scythe_crop"
             ? new FarmingActionHandler(manager)
             : new ResourceToolActionHandler(manager);
         return handler.Execute(request, manager);
