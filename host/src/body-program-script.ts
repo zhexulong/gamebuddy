@@ -1449,9 +1449,9 @@ export function planWorkDescription(actions: readonly PublishedPlanAction[]): st
     " });\n" +
     "}\n" +
     "for (const crop of snapshot.cropTargets) {\n" +
-    "  builder.water_crop({ x: crop.x, y: crop.y, expectedTargetId: crop.targetId, " +
+    "  builder.water_crop({ x: crop.x, y: crop.y, " +
     planExampleCharge("water_crop") +
-    " });\n" +
+    " }); // tile and charge only - the executor mints the id\n" +
     "}\n" +
     "// A solid rectangle written one tile per call is PACKED for you: a 3x20 patch at that charge is the few native\n" +
     "// uses whose footprints cover it, not sixty taps, so name the tiles and let the compiler choose the use."
@@ -2147,17 +2147,33 @@ function newPlanScriptState(
 }
 
 /**
- * The id a compiled plan is submitted under.
+ * The id a compiled plan is submitted under: `plan_<snapshotRevision>_<digest>`.
  *
- * Content-addressed on purpose: the SAME plan sent twice in one world must be the same program, so the Mod
- * answers `idempotent` instead of running the work twice; two DIFFERENT plans read from the same snapshot must
- * not collide, or the second would be refused as the first one's duplicate and never run. The snapshot revision
- * keeps a plan in a later world a new program rather than a replay. The digest covers the whole node, its edges
- * included: a plan whose steps are ordered differently - or whose second step consumes its neighbour's state instead
- * of merely following it - is a different graph and therefore a different program.
+ * <p>
+ * WHAT THE DIGEST COVERS: the session that compiled the plan, the snapshot it was read from, and the whole node graph -
+ * its edges included, so a plan whose steps are ordered differently (or whose second step consumes its neighbour's state
+ * instead of merely following it) is a different program.
+ * </p>
+ * <p>
+ * WHY THE SESSION IS IN IT. The Mod's journal and the Host's durable admission records outlive a session: they are keyed
+ * by the save and the world, and the Host refuses to use a durable record to decide any request but its own.
+ * `snapshotRevision` cannot carry that, because it is a per-session counter - every session starts at 0. Measured
+ * `round99`: a plan compiled at revision 0 was given the id `plan_0_01eb956d2f831b31`, a PREVIOUS session had already
+ * recorded an admission for the same tuple under a different policy identity, and the fresh attempt was refused
+ * `policy_identity_mismatch` before anything about it was looked at - so the only way to run that work was to submit it
+ * again under a different id. With the session in the digest, a plan compiled in a new session is a new program, while an
+ * identical re-send inside one session is still the same program the Mod answers `idempotent`.
+ * </p>
+ * <p>
+ * The token must therefore be the session's own stable identity, never a per-call value: an id that changes between two
+ * identical calls would turn the Mod's idempotency into a second submission of the same work.
+ * </p>
  */
-export function planProgramId(snapshotRevision: number, nodes: readonly PlanNode[]): string {
-  const digest = createHash("sha256").update(JSON.stringify(nodes)).digest("hex").slice(0, 16);
+export function planProgramId(sessionToken: string, snapshotRevision: number, nodes: readonly PlanNode[]): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify([sessionToken, snapshotRevision, nodes]))
+    .digest("hex")
+    .slice(0, 16);
   return `plan_${snapshotRevision}_${digest}`;
 }
 
@@ -2959,6 +2975,12 @@ function refuseUnknownArguments(
  * way is never omitted: it is still read from the row or refused by name.
  * </p>
  * <p>
+ * THE BINDING IS AN OPTIMISATION, NOT THE MECHANISM. Inside the six-tile window a published row supplies the id and this
+ * binder copies it (`boundFromSnapshot`); outside it, or where no row matches and the action's own row says the body resolves
+ * the reading (`resolvedAtExecution`), the reading is OMITTED and the Mod mints it from the live tile when it acts - and
+ * neither half refuses where the other can answer. The copy is the cheaper answer, never the condition of the step existing.
+ * </p>
+ * <p>
  * THE TWO OMISSIONS ARE NOT ONE FACT, and they are reported apart. `resolvedAfter` says a node of THIS PROGRAM will make
  * the target (`till_soil` then `plant_seed`); `resolvedFromObservation` says the world already holds it and THIS SESSION
  * read it at a coordinate the submit-moment snapshot never carries. A reader that could not tell them apart would read
@@ -3019,6 +3041,12 @@ function bindSnapshotReadings(
   // nodes on a 3x20 strip the session had just read tile by tile.
   const place = planNamedPlace(canonical);
   const unlisted = (where: string): PlanSnapshotReadings => {
+    // A READING THE BODY ANSWERS FOR IS NOT THIS SIDE'S TO REFUSE. When every reading still outstanding is one the
+    // action's own row declares resolved at execution, "the family lists no row here" is no longer a proof that the step
+    // cannot run - it is the reason the step is written with a tile and no id, and the Mod answers the same question from
+    // the LIVE tile when it acts. Only a reading that has to be COPIED can be refused for a missing row.
+    if (outstanding.every((reading) => !reading.required))
+      return planOutsideTheRead(action, snapshot, familyName, where, outstanding, canonical, state, requirement);
     if (!planTargetOutsideTheWindow(snapshot, canonical))
       rejectPlanCall(`plan_script_target_not_in_the_submitted_snapshot:${familyName}:${where}`, state, requirement);
     return planOutsideTheRead(action, snapshot, familyName, where, outstanding, canonical, state, requirement);
@@ -3150,13 +3178,17 @@ function planOutsideTheRead(
   requirement: PlanArgumentRequirement,
 ): PlanSnapshotReadings {
   const proof = planReadProof(state.tileRead, snapshot, planTileOf(canonical));
-  if (proof === null)
+  const required = outstanding.filter((reading) => reading.required);
+  // A TILE NOTHING ON THIS SIDE READ IS NO OBSTACLE TO A READING THE BODY MINTS: that reading is answered from the live
+  // tile at execution, which is a fact this side never had and does not need (`round99`: she walked twenty tiles to a
+  // crop and the only missing value was one the executor reads on arrival). The refusal below is for the value that has
+  // to be COPIED and cannot be.
+  if (proof === null && required.length > 0)
     rejectPlanCall(
       `plan_script_target_outside_the_read:${familyName}:${place}:read_covers=${planReadCovers(state.tileRead)}`,
       state,
       requirement,
     );
-  const required = outstanding.filter((reading) => reading.required);
   if (required.length > 0)
     rejectPlanCall(
       `plan_script_reading_outside_the_submitted_snapshot:${action.actionId}.${required[0]!.name}:${familyName}:${place}`,
@@ -3168,6 +3200,9 @@ function planOutsideTheRead(
     // Her copy is dropped for the same reason the producer path drops one: the value that has to be true at execution is
     // the one the body computes, not the one she remembers.
     delete canonical[reading.name];
+    // AND IT IS ONLY REPORTED WHEN SOMETHING HERE PROVED THE TILE. `resolvedFromObservation` says she looked; a step with
+    // no read behind it has no proof to report, and inventing one would make an omission look like a measurement.
+    if (proof === null) continue;
     observed.push(
       `resolved_from_observation=${action.actionId}.${reading.name};family=${familyName};tile=${proof.x},${proof.y};kind=${proof.occupantKind}`,
     );

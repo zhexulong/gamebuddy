@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GameBuddy.Stardew.Core.Models;
 
 namespace GameBuddy.Stardew.Core.Policy;
 
@@ -136,7 +137,65 @@ public sealed record FarmhandActionArgumentSchema(
     /// A `false` is omitted from the JSON (it is the absence of the claim), so an action that does not declare the
     /// property publishes exactly the bytes it published before.
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResolvedAtExecution = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResolvedAtExecution = null,
+    /// <summary>
+    /// The value range this argument accepts, from the ONE declaration that decides it
+    /// (<see cref="FarmhandArgumentBounds"/>).
+    ///
+    /// <para>
+    /// Published because the alternative was a GUESS: `host/src/game-tools.ts` read its own wire predicates by probing
+    /// them - `largestAcceptedWholeNumber` doubled and bisected `isTileCoordinate` to learn 0..1000 - and wrote that
+    /// answer into the tool schema the model is handed. A schema built that way is a second authority for a number the
+    /// Mod already decides, and it was WRONG wherever the two disagreed: `travel` and `enter_exit` name a warp SOURCE
+    /// tile, whose floor is `FarmhandWarpCoordinateRange.MinimumSourceCoordinate` (-1) because an edge exit lies one
+    /// tile outside the map, so the probe's 0 refused the one tile an edge exit has.
+    /// </para>
+    ///
+    /// <para>
+    /// OMITTED WHEN THE ARGUMENT IS NOT BOUNDED THIS WAY - a closed set (`enum`), an exact id, free text - so the
+    /// absence says "no range is declared" instead of forcing a consumer to probe for one. `maximum` alone is absent
+    /// for an argument whose ceiling is not the Mod's to state (`colorSelection` indexes a palette the game sizes).
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Minimum = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Maximum = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MinLength = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaxLength = null);
+
+/// <summary>
+/// One descriptor argument projected onto either published shape, from the ONE declaration of what it accepts.
+///
+/// <para>
+/// The two shapes are not the same document - the hello_ack wire carries `arguments` as an array and the static surface
+/// artifact carries `argumentSchema` keyed by name - but they are the same FACTS, and the bounds are the newest of them.
+/// Projecting both here is what keeps a bound from being published on one shape and dropped from the other, which is the
+/// failure a consumer outside a running game would experience as "the artifact declares no range".
+/// </para>
+/// </summary>
+public static class FarmhandActionArgumentPublication
+{
+    public static FarmhandActionArgumentWire ToWire(FarmhandActionDescriptor descriptor, FarmhandActionArgument argument)
+    {
+        FarmhandIntegerArgumentBound? integer = Integer(descriptor, argument);
+        FarmhandStringArgumentBound? length = Length(descriptor, argument);
+        return new FarmhandActionArgumentWire(argument.Name, argument.Type, argument.Enum, argument.Description,
+            integer?.Minimum, integer?.Maximum, length?.Minimum, length?.Maximum);
+    }
+
+    public static FarmhandActionArgumentSchema ToSurface(FarmhandActionDescriptor descriptor, FarmhandActionArgument argument)
+    {
+        FarmhandIntegerArgumentBound? integer = Integer(descriptor, argument);
+        FarmhandStringArgumentBound? length = Length(descriptor, argument);
+        return new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description,
+            argument.ResolvedAtExecution ? true : null, integer?.Minimum, integer?.Maximum, length?.Minimum, length?.Maximum);
+    }
+
+    private static FarmhandIntegerArgumentBound? Integer(FarmhandActionDescriptor descriptor, FarmhandActionArgument argument) =>
+        FarmhandArgumentBounds.IntegerBound(argument, descriptor.Acceptance ?? FarmhandExecutionAcceptance.Default);
+
+    private static FarmhandStringArgumentBound? Length(FarmhandActionDescriptor descriptor, FarmhandActionArgument argument) =>
+        FarmhandArgumentBounds.LengthBound(argument, descriptor.Acceptance ?? FarmhandExecutionAcceptance.Default);
+}
 public sealed record FarmhandActionResourceTemplate(IReadOnlyList<FarmhandActionResourceTemplateValueProjection> Claims);
 public sealed record FarmhandActionResourceTemplateValueProjection(string Key, string Value);
 public sealed record FarmhandActionPostcondition(string Name);
@@ -201,7 +260,7 @@ public static class FarmhandActionSurfacePublication
             ?? throw new InvalidOperationException("Farmhand action registration requires a descriptor.");
         Dictionary<string, FarmhandActionArgumentSchema> argumentSchema = descriptor.Arguments.ToDictionary(
             argument => argument.Name,
-            argument => new FarmhandActionArgumentSchema(argument.Type, argument.Enum, argument.Description, argument.ResolvedAtExecution ? true : null),
+            argument => FarmhandActionArgumentPublication.ToSurface(descriptor, argument),
             StringComparer.Ordinal);
         if (argumentSchema.Count != descriptor.Arguments.Count)
             throw new InvalidOperationException("Farmhand action descriptor argument names must be unique.");

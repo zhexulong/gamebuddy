@@ -721,7 +721,7 @@ test("a transition gets a walk to its own tile prepended, and its own node is ot
   // The prepended step is the compiler's, not the author's: the id says which one it is, and the program it produced is
   // still one the Mod's own request validator accepts.
   assert.equal(nodes[0]!.nodeId.startsWith("auto_walk_"), true);
-  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }), null);
 });
 
 test("a transition the script already walked to gets no second walk", () => {
@@ -793,7 +793,10 @@ test("round89 plan_12: an edge exit's source is outside the grid, so no walk is 
     assert.deepEqual(walkRefusalsOf(result), ["auto_walk_refused:target_off_map:40:-1"]);
     assert.deepEqual(insertedNodeIdsOf(result), [], "nothing was inserted, so nothing can be refused in the program");
     // The transition's own coordinate is the warp's real source, so the program is still one the Mod's validator accepts.
-    assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+    assert.equal(
+      validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
+      null,
+    );
   }
 });
 
@@ -1581,7 +1584,7 @@ test("the program a script produced passes the real Body Program validator", () 
   });
   const nodes = nodesOf(result);
   assert.equal(
-    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }),
+    validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
     null,
     "the compiled program must be one the Mod accepts",
   );
@@ -1593,12 +1596,19 @@ test("the same script and snapshot compile to a byte-identical program and progr
   const second = compile(WATER_BY_DOOR, overrides);
   assert.equal(JSON.stringify(first), JSON.stringify(second));
   if (first.status !== "compiled" || second.status !== "compiled") assert.fail("both compiles must produce a plan");
-  assert.equal(planProgramId(11, first.program.nodes), planProgramId(11, second.program.nodes));
+  assert.equal(
+    planProgramId("session_a", 11, first.program.nodes),
+    planProgramId("session_a", 11, second.program.nodes),
+  );
   // A different plan over the same world is a DIFFERENT program: the id is content-addressed, so the second
   // plan cannot be answered as the first one's duplicate.
   assert.notEqual(
-    planProgramId(11, first.program.nodes),
-    planProgramId(11, nodesOf(compile(WATER_BY_DOOR, { ...overrides, cropTargets: [crop("crop_02", 13, 10)] }))),
+    planProgramId("session_a", 11, first.program.nodes),
+    planProgramId(
+      "session_a",
+      11,
+      nodesOf(compile(WATER_BY_DOOR, { ...overrides, cropTargets: [crop("crop_02", 13, 10)] })),
+    ),
   );
 });
 
@@ -1732,7 +1742,7 @@ test("a step after talk_to_npc gets the dismissal inserted, and the answer says 
     "both of her steps are in the program - the third node is the purchase she wrote at call 3",
   );
   // And what the Mod receives is a request its own validator accepts.
-  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }), null);
 });
 
 test("a plan whose steps never hold the body gets no dismissal inserted", () => {
@@ -1779,7 +1789,10 @@ test("the talk-then-chop plan carries the compiler's dismissal, named by the nod
   assert.deepEqual(insertedNodeIdsOf(result), ["auto_dismiss_02"]);
   assert.deepEqual(insertionsOf(result).inserted, ["inserted=dismiss_modal;before=n03"]);
   assert.equal(
-    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodesOf(result)), nodes: nodesOf(result) }),
+    validateBodyProgramCandidateRequest({
+      programId: planProgramId("session_a", 11, nodesOf(result)),
+      nodes: nodesOf(result),
+    }),
     null,
     "the repaired program is still one the Mod's own validator accepts",
   );
@@ -2705,20 +2718,21 @@ test("an empty plan says whether the script never asked for a step or asked and 
     "plan_script_empty_no_node_added:1",
   );
   // A swallowed refusal is still the refusal, and it names more than the count would: the call, the argument and
-  // where a legal value comes from. The split must not hide it behind `no_node_added`. The argument is `water_crop`'s and
-  // not one the Mod mints at execution: a reading the MOD answers for (`ResolvedAtExecution`) is no longer a refusal at
-  // all, and pinning this rule on one would pin the product's declaration instead of the compiler's.
+  // where a legal value comes from. The split must not hide it behind `no_node_added`. The argument is
+  // `remove_placed_item`'s and not one the Mod mints at execution: a reading the MOD answers for
+  // (`ResolvedAtExecution`) is no longer a refusal at all, and pinning this rule on one would pin the product's
+  // declaration instead of the compiler's.
   assert.match(
     refusalOf(
       compile(
-        "try { builder.water_crop({ x: 5, y: 6, charge: 0 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');",
+        "try { builder.remove_placed_item({ x: 5, y: 6 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');",
         {
           currentToolSlot: 3,
           toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
         },
       ),
     ),
-    /^plan_script_missing_argument:water_crop\.expectedTargetId:/u,
+    /^plan_script_missing_argument:remove_placed_item\.expectedTargetId:/u,
   );
   // And the split does not touch the happy path: one added node is a plan.
   assert.equal(nodesOf(compile("builder.move_to_tile({ x: 4, y: 9 });")).length, 1);
@@ -3032,7 +3046,7 @@ for (const chest of snapshot.chests ?? []) {
   // The plan is one the Mod accepts, so the chest’s own id is a legal target id and not a shape only this compiler
   // would produce.
   assert.equal(
-    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }),
+    validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
     null,
     "the compiled plan must be one the Mod accepts",
   );
@@ -3112,7 +3126,7 @@ for (const clump of snapshot.debrisTargets ?? []) {
   // The action names the target's OWN slot, which is the value equipFor answered.
   assert.deepEqual(nodes[1]!.arguments.slot, { type: "integer", canonicalValue: "3" });
   assert.equal(
-    validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }),
+    validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
     null,
     "the compiled plan must be one the Mod accepts",
   );
@@ -4297,7 +4311,7 @@ builder.harvest_crop({ x: 58, y: 14, expectedQualifiedItemId: "(O)24", expectedT
     snapshot(SOURCE_SNAPSHOT).revision,
     "a partial plan carries the revision it was built against, because it is submitted against one",
   );
-  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId(11, nodes), nodes }), null);
+  assert.equal(validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }), null);
   assert.deepEqual(planResourceConflictCodes(nodes, ACTIONS), []);
   assert.deepEqual(rejectionsOf(result), [
     {
@@ -4997,12 +5011,20 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
  *
  * <p>
  * THE ONE READING THAT REACHES SUCH A TILE is the rectangle query, and its rows reached only the model's answer. This
- * suite drives that reading into the compile the way the bridge now records it, and asserts the three answers apart:
- * (1) INSIDE the window a family listing nothing is a measurement and still refuses, with the same code and the same
- * words; (2) OUTSIDE it, a tile nothing on this side named is refused as `plan_script_target_outside_the_read`, which
- * states how many tiles the surviving read covers - or `replaced`, because only the last read survives; (3) OUTSIDE it,
- * a tile this session DID read is admitted when the action's reading is the body's to mint at execution, and refused by
- * name when it is not.
+ * suite drives that reading into the compile the way the bridge now records it, and asserts the answers apart:
+ * (1) INSIDE the window a family listing nothing is a measurement, and it refuses the step whose value has to be COPIED
+ * (`remove_placed_item`'s id, `plan_script_target_not_in_the_submitted_snapshot`) while the same silence is no refusal at
+ * all for a reading the body MINTS; (2) OUTSIDE it, a tile nothing on this side named is refused as
+ * `plan_script_target_outside_the_read`, which states how many tiles the surviving read covers - or `replaced`, because
+ * only the last read survives; (3) OUTSIDE it, a tile this session DID read is admitted when the action's reading is the
+ * body's to mint at execution, and refused by name when it is not.
+ * </p>
+ *
+ * <p>
+ * WHY THE MINTS DECIDE WHICH SILENCE REFUSES: a value the executor answers for is answered from the LIVE tile at the
+ * moment it acts, so a row this side never read is not a proof that the step cannot run - it is the reason the step is
+ * written with a tile and no id. Only a reading that has to be COPIED can be refused for a missing row, which is the one
+ * distinction every case below turns on.
  * </p>
  *
  * <p>
@@ -5049,57 +5071,67 @@ function stripCalls(actionId: string, extra: string, tiles = 30): string {
   return `for (let y = 4; ${body}; y += 1) for (let x = 30; x <= 32; x += 1) builder.${actionId}({ x, y${extra} });`;
 }
 
-test("inside the window a family that lists nothing for her tile still refuses, read or no read", () => {
-  // (8,8) is Chebyshev 2 from her tile at (10,10): the published families reach it, so `weedTargets: []` is the
-  // snapshot MEASURING the tile - the claim this refusal has always made, and the one the outside case must not borrow.
-  const script = `builder.cut_weeds({ x: 8, y: 8, slot: 3, expectedTargetId: "weed_named_by_hand" });`;
+test("inside the window a family that lists nothing for her tile measures it, and refuses only the reading that must be copied", () => {
+  // (8,8) is Chebyshev 2 from her tile at (10,10): the published families reach it, so `worldObjectTargets: []` is the
+  // snapshot MEASURING the tile. `remove_placed_item`'s identity has to be COPIED - `worldObjectTargets` has no arm in
+  // `TileTargetMint` - so the measurement refuses the step, with the code and the words it always had.
+  const copying = `builder.remove_placed_item({ x: 8, y: 8, expectedTargetId: "twig_named_by_hand" });`;
   assert.equal(
-    firstRefusalOf(compile(script, { weedTargets: [] })),
-    "plan_script_target_not_in_the_submitted_snapshot:weedTargets:8,8",
+    firstRefusalOf(compile(copying, { worldObjectTargets: [] })),
+    "plan_script_target_not_in_the_submitted_snapshot:worldObjectTargets:8,8",
   );
   // AND A READ THAT NAMES THE TILE DOES NOT OVERRULE IT. Inside the radius the family's silence is a measurement; if a
   // session read contradicts one, the compile answers with the snapshot's own claim rather than quietly preferring the
   // reading nobody re-checked.
   assert.equal(
-    firstRefusalOf(compile(script, { weedTargets: [] }, readOf(readRows({ x: 8, y: 8, w: 1, h: 1 }, "weed")))),
-    "plan_script_target_not_in_the_submitted_snapshot:weedTargets:8,8",
+    firstRefusalOf(compile(copying, { worldObjectTargets: [] }, readOf(readRows({ x: 8, y: 8, w: 1, h: 1 }, "twig")))),
+    "plan_script_target_not_in_the_submitted_snapshot:worldObjectTargets:8,8",
+  );
+  // THE SAME SILENCE IS NOT A REFUSAL FOR A READING THE BODY MINTS: `cut_weeds` names `weedTargets` and its identity is
+  // the executor's, so the tile is answered at the swing instead of the plan losing a step over a row nobody had to copy.
+  const minted = compile(`builder.cut_weeds({ x: 8, y: 8 });`, { weedTargets: [] });
+  assert.equal(minted.status, "compiled", JSON.stringify(minted.status === "refused" ? minted.reasonCode : null));
+  assert.deepEqual(
+    Object.keys(nodesOf(minted)[0]!.arguments).sort(),
+    ["x", "y"],
+    "the tile is the whole step - the executor names the weed",
   );
 });
 
 test("outside the window the refusal names the read, and says no reading was made", () => {
-  const result = compile(`builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`, {
-    weedTargets: [],
+  const result = compile(`builder.remove_placed_item({ x: 30, y: 4, expectedTargetId: "world_named_by_hand" });`, {
+    worldObjectTargets: [],
   });
-  assert.equal(firstRefusalOf(result), "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=0");
+  assert.equal(firstRefusalOf(result), "plan_script_target_outside_the_read:worldObjectTargets:30,4:read_covers=0");
 });
 
 test("outside the window a read that does not name the tile covers a stated number of tiles, not hers", () => {
-  const elsewhere = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "weed"));
+  const elsewhere = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "twig"));
   assert.equal(
     firstRefusalOf(
       compile(
-        `builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`,
-        { weedTargets: [] },
+        `builder.remove_placed_item({ x: 30, y: 4, expectedTargetId: "world_named_by_hand" });`,
+        { worldObjectTargets: [] },
         elsewhere,
       ),
     ),
-    "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=9",
+    "plan_script_target_outside_the_read:worldObjectTargets:30,4:read_covers=9",
   );
 });
 
 test("outside the window a session that read twice says replaced, never a count that meant another read", () => {
   // Only the last read survives, so this side cannot say which of the session's readings the plan was written from - and
   // the number of the surviving one would silently mean "a different read".
-  const second = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "weed"), { reads: 2 });
+  const second = readOf(readRows({ x: 40, y: 40, w: 3, h: 3 }, "twig"), { reads: 2 });
   assert.equal(
     firstRefusalOf(
       compile(
-        `builder.cut_weeds({ x: 30, y: 4, slot: 3, expectedTargetId: "weed_named_by_hand" });`,
-        { weedTargets: [] },
+        `builder.remove_placed_item({ x: 30, y: 4, expectedTargetId: "world_named_by_hand" });`,
+        { worldObjectTargets: [] },
         second,
       ),
     ),
-    "plan_script_target_outside_the_read:weedTargets:30,4:read_covers=replaced",
+    "plan_script_target_outside_the_read:worldObjectTargets:30,4:read_covers=replaced",
   );
 });
 
@@ -5229,9 +5261,68 @@ test("the third action of the measured program is refused for the reading the mi
 
 test("a read of another map proves nothing about this one", () => {
   const town = readOf(readRows(STRIP, "none"), { location: "Town" });
+  const result = compile(stripCalls("plant_seed", `, expectedQualifiedItemId: "(O)472"`), { seedTargets: [] }, town);
+  // THE STEPS EXIST BECAUSE THE BODY MINTS THEIR IDS, NOT BECAUSE SHE LOOKED. `plant_seed`'s slot and identity are
+  // declared resolved at execution, so a strip past the snapshot's window is writable without a single row - and the
+  // read she DID make named another map, so not one node claims a proof. A read is a permission this side records, never
+  // the condition of the step existing.
+  assert.equal(result.status, "compiled", JSON.stringify(result.status === "refused" ? result.reasonCode : null));
+  assert.equal(result.status === "compiled" ? result.program.nodes.length : -1, 30, "thirty tiles, thirty plantings");
   assert.equal(
-    firstRefusalOf(compile(stripCalls("plant_seed", `, expectedQualifiedItemId: "(O)472"`), { seedTargets: [] }, town)),
-    "plan_script_target_outside_the_read:seedTargets:30,4:read_covers=60",
+    result.status === "compiled" ? result.resolvedFromObservationCount : -1,
+    0,
+    "a read of another map proved nothing about these tiles, and nothing may report it as if it had",
+  );
+  assert.deepEqual(result.status === "compiled" ? result.resolvedFromObservation : [], []);
+});
+
+/**
+ * THE TILE IS THE ADDRESS, AND NOTHING ELSE HAS TO BE: `round99`'s plan, written as the plan it should have been.
+ *
+ * <p>
+ * Twenty `move_to_tile` steps to a crop nine to thirty-five tiles away, then the swing. `harvestTargets` publishes nothing
+ * for that tile - its family reaches six tiles, so the tile is past the window - and this session made no rectangle read,
+ * so there is no row and no proof to copy. The plan compiles anyway: `harvest_crop`'s own row declares `expectedTargetId`
+ * resolved at execution, so the executor mints the crop's identity from the LIVE tile when it swings.
+ * </p>
+ *
+ * <p>
+ * WHAT IS ASSERTED IS THE OMISSION AND ITS HONESTY. Not one node carries an id, so a caller can write the plan from the
+ * block she is standing on; and nothing reports a reading that was never made (`resolvedFromObservation` empty), because
+ * an omission the executor answers for is not a measurement this side took.
+ * </p>
+ */
+test("a plan that walks twenty tiles and then harvests compiles with no id anywhere in it", () => {
+  const result = compile(
+    [
+      "for (let step = 1; step <= 20; step += 1) builder.move_to_tile({ x: 10, y: 10 + step });",
+      `builder.harvest_crop({ x: 10, y: 30, expectedQualifiedItemId: "(O)24" });`,
+    ].join("\n"),
+    { harvestTargets: [] },
+  );
+  assert.equal(result.status, "compiled", JSON.stringify(result.status === "refused" ? result.reasonCode : null));
+  const nodes = nodesOf(result);
+  assert.equal(nodes.length, 21, "twenty walks and the swing");
+  assert.equal(nodes.at(-1)!.actionId, "harvest_crop");
+  assert.deepEqual(
+    Object.keys(nodes.at(-1)!.arguments).sort(),
+    ["expectedQualifiedItemId", "x", "y"],
+    "the crop she means and the tile she names - the identity is the executor's",
+  );
+  assert.equal(
+    JSON.stringify(nodes).includes("expectedTargetId"),
+    false,
+    "no node of the plan carries an id, so the whole script can be written from the blocks she was handed",
+  );
+  assert.equal(
+    result.status === "compiled" ? result.resolvedFromObservationCount : -1,
+    0,
+    "nobody read this tile, so no proof is reported - the omission is the executor's answer, not this side's measurement",
+  );
+  assert.equal(
+    validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
+    null,
+    "the plan is one the real Body Program validator accepts",
   );
 });
 

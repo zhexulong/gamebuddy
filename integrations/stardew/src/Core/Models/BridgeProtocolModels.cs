@@ -163,7 +163,20 @@ public sealed record BridgeTile(float X, float Y);
 /// <summary>Deterministic Mod-declared action identity projected on hello_ack.
 /// Reflects FarmhandActionCatalog.Registrations exactly; the Host treats this as
 /// the registration authority and rejects unknown extra action IDs.</summary>
-public sealed record FarmhandActionArgumentWire(string Name, string Type, IReadOnlyList<string>? Enum = null, string? Description = null);
+public sealed record FarmhandActionArgumentWire(
+    string Name,
+    string Type,
+    IReadOnlyList<string>? Enum = null,
+    string? Description = null,
+    // The value range the Mod's own acceptance validator enforces, projected from ONE declaration
+    // (`FarmhandArgumentBounds`) rather than restated per action. A consumer that describes the argument - the Host's
+    // tool schema is the one - used to derive these by probing its own wire predicates, which is a second authority for
+    // a number this record already decides. Omitted when the argument is not bounded that way, so an argument whose
+    // value is a closed set or an exact id carries no range rather than a guessed one.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Minimum = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Maximum = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MinLength = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? MaxLength = null);
 public sealed record FarmhandActionResourceTemplateClaimWire(string Key, string Value);
 public sealed record FarmhandActionResourceTemplateWire(IReadOnlyList<FarmhandActionResourceTemplateClaimWire> Claims);
 public sealed record FarmhandActionPostconditionWire(string Name);
@@ -718,6 +731,14 @@ public sealed record BridgeVillagerWhereabouts(string TargetId, string NpcName, 
 /// negative tile, so the two members are nullable and omitted on the wire (WhenWritingNull) - once this row was emitted
 /// only when a nearest tile existed, which dropped every other map's count and told a companion waking in the farmhouse
 /// that nothing on any map was ripe.
+/// </para>
+/// <para>
+/// AND THE ADDRESS IS THE TARGET FAMILY'S. The nearest tile is also withheld when `harvestTargets` would not publish it
+/// (<c>FarmhandTargetDiscovery.IsPublishedHarvestTile</c>: the family's six-tile window, a neighbour the body can stand
+/// on, an item to pick). The count is the whole map's, which is why this row exists; the coordinate is offered only when
+/// the same observation can also hand out that crop's `targetId`. Measured `round99` (`game-1795514126213`): the row read
+/// `3 (nearest 33,16)` while `harvestTargets` was `[]`, and the companion spent four observations and three game hours
+/// looking for an id that no reading carried.
 /// </para>
 /// </summary>
 public sealed record BridgeHarvestWhereabouts(

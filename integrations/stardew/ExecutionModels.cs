@@ -74,7 +74,12 @@ internal sealed record LocalItemPickupSpec(
     int Stack,
     int InventoryBefore,
     long RouteRevision,
-    long DeadlineMs);
+    long DeadlineMs,
+    /// <summary>
+    /// Which half answered for <see cref="TargetId"/>: the caller's own copy, or the body's mint from the LIVE tile.
+    /// Defaults to `caller` because every construction that does not say is a request that named one.
+    /// </summary>
+    string TargetIdSource = "caller");
 
 /// <summary>
 /// A tool-family action that was accepted while the actor stood outside the

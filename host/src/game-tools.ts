@@ -29,7 +29,15 @@ import {
   noSnapshot,
 } from "./game-lookup.js";
 import { describeBodyHoldRefusal } from "./stardew-action-remedy.js";
-import { isOpaqueId, isTileCoordinate, isToolSlot } from "./protocol-target-facts.js";
+import {
+  OPAQUE_ID_MAXIMUM_LENGTH,
+  OPAQUE_ID_MINIMUM_LENGTH,
+  TILE_COORDINATE_MAXIMUM,
+  TILE_COORDINATE_MINIMUM,
+  TOOL_SLOT_MAXIMUM,
+  TOOL_SLOT_MINIMUM,
+  WARP_SOURCE_COORDINATE_MINIMUM,
+} from "./protocol-target-facts.js";
 import {
   type ObservationSelection,
   type SelectionAnswer,
@@ -59,6 +67,7 @@ import {
   type BodyProgramStatusResult,
   type DataQueryRequest,
   type DataQueryResult,
+  type ActionDescriptorArgument,
   type ExecutionReceipt,
   type ExecutionRequest,
   type Snapshot,
@@ -227,42 +236,8 @@ const selectionAxisSchema = Type.Object(
   },
   { additionalProperties: false },
 );
-
-/** The largest whole number `accepts` takes, by doubling to the first refusal and bisecting back to the last acceptance. */
-function largestAcceptedWholeNumber(accepts: (value: number) => boolean): number {
-  let refused = 1;
-  while (accepts(refused)) {
-    if (refused > Number.MAX_SAFE_INTEGER / 2)
-      throw new Error("largest_accepted_whole_number: the predicate accepts every whole number, so it states no bound");
-    refused *= 2;
-  }
-  let accepted = 0;
-  while (refused - accepted > 1) {
-    const middle = Math.floor((accepted + refused) / 2);
-    if (accepts(middle)) accepted = middle;
-    else refused = middle;
-  }
-  return accepted;
-}
-
-/** The closed whole-number interval from 0 that a wire predicate accepts, read from the predicate itself. */
-function intervalAcceptedBy(accepts: (value: number) => boolean): Readonly<{ minimum: number; maximum: number }> {
-  if (!accepts(0) || accepts(-1))
-    throw new Error("interval_accepted_by: the predicate is not an interval of whole numbers starting at 0");
-  return Object.freeze({ minimum: 0, maximum: largestAcceptedWholeNumber(accepts) });
-}
-
-/** `isOpaqueId`'s shape as a schema: it refuses the empty string, and accepts at most its ceiling of that length. */
-function opaqueIdShape(): Readonly<{ minLength: number; maxLength: number }> {
-  if (isOpaqueId("")) throw new Error("opaque_id_shape: the wire's isOpaqueId now accepts the empty string");
-  return Object.freeze({
-    minLength: 1,
-    maxLength: largestAcceptedWholeNumber((length) => isOpaqueId("a".repeat(length))),
-  });
-}
-
 /**
- * The argument domains every Game Action schema shares, each one READ FROM THE WIRE'S OWN DECLARATION.
+ * The argument domains every hand-written Game Action schema shares, each one READ FROM THE WIRE'S OWN DECLARATION.
  *
  * Measured 2026-11-16: the hand-written schemas in this file carried 327 members, and only sixteen (name, expression)
  * pairs between them; 314 of those members wrote out one of five bounds that one place should own. A bound copied fifty
@@ -271,9 +246,17 @@ function opaqueIdShape(): Readonly<{ minLength: number; maxLength: number }> {
  * refused before it reached the bridge. `tools/check-hand-written-schema-constants.mjs` is the gate that keeps each
  * bound declared exactly once.
  *
+ * These constants cover what has no descriptor to read: the caller identity pair, and the actions whose schema IS
+ * hand-written. Where the Mod publishes a descriptor, its own declaration is the authority (`declaredArgumentBound`),
+ * because the number is the Mod's and this file has no business stating it a second time.
+ *
  * Where each bound comes from - the wire's validator, never this file's opinion:
  *
  *   `TILE_COORDINATE_SCHEMA`  `isTileCoordinate`, the predicate `tileRow` enforces for `args.x`/`args.y`.
+ *   `WARP_SOURCE_COORDINATE_SCHEMA`
+ *                             `isWarpSourceCoordinate`, the predicate `warpSourceRow` enforces for the two actions that
+ *                             name a warp SOURCE, whose floor is one tile outside the map because an edge exit warps
+ *                             from there (`Town` declares `-1 53 BusStop`).
  *   `TOOL_SLOT_SCHEMA`        `isToolSlot`, the predicate `slotRow` enforces for `args.slot`.
  *   `OPAQUE_ID_SCHEMA`        `isOpaqueId`: the wire's own rule for `args.expectedTargetId` (`targetRow`), for
  *                             `args.chestId` (`opaqueArgRow("chestId", ...)`) and for `requestId`/`idempotencyKey`
@@ -285,9 +268,11 @@ function opaqueIdShape(): Readonly<{ minLength: number; maxLength: number }> {
  *                             exported predicate, so the ceiling is stated here once - this paragraph is its reason and
  *                             this line is where it moves.
  *
- * A predicate is a function, so its bound is READ by probing it instead of imported as a number: that is the only
- * reading that cannot disagree with the code deciding whether a request may leave the Host. Doubling and bisection cost
- * two logarithms of the ceiling, once, at module load.
+ * Each bound is ONE exported number beside the predicate that enforces it (`protocol-target-facts.ts`). An earlier
+ * version derived them by PROBING the predicates - doubling to the first refusal and bisecting back - because a
+ * function cannot be imported as a number. That made tool assembly depend on being able to provoke refusals, and it
+ * answered with the wrong range wherever an action's own declaration differs from the family predicate:
+ * `travel`/`enter_exit` take a warp source whose floor is -1, and the probe's 0 refused the only tile an edge exit has.
  *
  * Eight members stay literal because they are their own action's and no other's: `respond_level_up`'s published
  * `choice`/`expectedSkill`/`expectedLevel`, `navigate_to_destination`'s typed `destination`, `equip_tool`'s tool
@@ -296,9 +281,19 @@ function opaqueIdShape(): Readonly<{ minLength: number; maxLength: number }> {
  * named with its reason in the gate's `ACTION_LOCAL` declaration, which expires the entry the moment the member stops
  * being written.
  */
-const TILE_COORDINATE_SCHEMA = Type.Integer(intervalAcceptedBy(isTileCoordinate));
-const TOOL_SLOT_SCHEMA = Type.Integer(intervalAcceptedBy(isToolSlot));
-const OPAQUE_ID_SCHEMA = Type.String(opaqueIdShape());
+const TILE_COORDINATE_SCHEMA = Type.Integer({
+  minimum: TILE_COORDINATE_MINIMUM,
+  maximum: TILE_COORDINATE_MAXIMUM,
+});
+const WARP_SOURCE_COORDINATE_SCHEMA = Type.Integer({
+  minimum: WARP_SOURCE_COORDINATE_MINIMUM,
+  maximum: TILE_COORDINATE_MAXIMUM,
+});
+const TOOL_SLOT_SCHEMA = Type.Integer({ minimum: TOOL_SLOT_MINIMUM, maximum: TOOL_SLOT_MAXIMUM });
+const OPAQUE_ID_SCHEMA = Type.String({
+  minLength: OPAQUE_ID_MINIMUM_LENGTH,
+  maxLength: OPAQUE_ID_MAXIMUM_LENGTH,
+});
 const CALLER_REQUEST_SCHEMA = Type.Optional(OPAQUE_ID_SCHEMA);
 const ITEM_ID_SCHEMA = Type.String({ minLength: 1, maxLength: 128 });
 
@@ -1537,18 +1532,8 @@ export function buildCandidateToolSchema(
   if (declaredNames === undefined) throw new Error(`Unsupported candidate action: ${actionId}`);
   const properties: Record<string, TSchema> = {};
   for (const name of declaredNames)
-    properties[name] = candidateArgumentSchema(name, declaredArgumentType(descriptor, name));
+    properties[name] = candidateArgumentSchema(getDescriptorArgument(descriptor, name));
   return Type.Object(properties, { additionalProperties: false });
-}
-
-/** The argument's declared type from EITHER descriptor shape: the Mod's own declaration, not a name convention. */
-function declaredArgumentType(descriptor: ActionRegistrationDescriptor, name: string): string | undefined {
-  if (Array.isArray(descriptor.arguments)) {
-    const argument = descriptor.arguments.find((entry) => entry?.name === name);
-    return typeof argument?.type === "string" ? argument.type : undefined;
-  }
-  const declared = descriptor.argumentSchema?.[name];
-  return declared !== undefined && typeof declared.type === "string" ? declared.type : undefined;
 }
 
 /** The argument names a descriptor declares, in either shape the wire and the surface artifact use. */
@@ -1602,28 +1587,34 @@ function literalUnionSchema(literals: readonly TSchema[]): TSchema {
 }
 
 /**
- * The tool-parameter schema for one declared argument, chosen by the convention the Mod's own argument
- * names follow. Advisory: the Mod re-validates every argument on the game thread, so a wrong guess here
- * cannot widen what an action accepts - it can only make the Host's description of the argument less exact.
+ * The tool-parameter schema for one declared argument, built from THE MOD'S OWN DECLARATION of what it accepts.
+ *
+ * The bound is not a convention of the argument's name and not a guess about its type: the Mod publishes the range its
+ * acceptance validator enforces (`minimum`/`maximum` for a whole number, `minLength`/`maxLength` for a bounded string),
+ * and this reads it. A schema that stated the range a second time had drifted from it - measured 2026-11-16, seventeen
+ * descriptor-derived mounts offered `x`/`y` and `slot` up to 100000 while `tileRow`/`slotRow` refused above 1000 and 36.
+ *
+ * An argument whose declaration carries no range is described WITHOUT one rather than with an invented ceiling: a closed
+ * set is carried by `enum`, an exact id by its description, and free text is bounded by the handler in the words the
+ * description states. The absence is the claim, and it is the only reading that cannot disagree with the Mod.
  */
-function candidateArgumentSchema(name: string, declaredType?: string): TSchema {
-  // The tile and the backpack slot are the two arguments whose domain the WIRE declares as a predicate
-  // (`isTileCoordinate`, `isToolSlot`) and whose numbers every mounted tool states again. Read first, ahead of the
-  // declared type, because the type branch's ceiling described a value the validator refuses: measured 2026-11-16,
-  // 17 descriptor-derived mounts offered `x`/`y` up to 100000 and `slot` up to 100000 while `tileRow`/`slotRow`
-  // answered `invalid_*_tile`/`invalid_*_slot` above 1000 and 36 - the `charge` defect one layer down, where the
-  // schema and the validator disagree about the RANGE instead of about the argument set.
-  if (name === "slot") return Type.Integer({ minimum: 0, maximum: 36 });
-  if (name === "x" || name === "y") return Type.Integer({ minimum: 0, maximum: 1000 });
-  // The Mod's own declaration wins over the remaining name conventions: a name-convention guess can contradict the
-  // wire validator, which is how a mounted tool came to describe integers as strings. `expectedTargetId` keeps its
-  // tighter string bound, and the name refinements below only apply where the declared type is absent.
-  if (declaredType === "integer" || declaredType === "number")
-    return Type.Integer({ minimum: name === "quantity" ? 1 : 0, maximum: 100000 });
-  if (declaredType === "string" && name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
-  if (name === "quantity") return Type.Integer({ minimum: 1, maximum: 9999 });
-  if (name === "expectedTargetId") return Type.String({ minLength: 1, maxLength: 128 });
-  if (declaredType === "boolean") return Type.Boolean();
+function candidateArgumentSchema(argument: ActionDescriptorArgument | undefined): TSchema {
+  if (argument === undefined) return Type.String({ minLength: 1, maxLength: 256 });
+  if (argument.minimum !== undefined || argument.maximum !== undefined)
+    return Type.Integer({
+      ...(argument.minimum === undefined ? {} : { minimum: argument.minimum }),
+      ...(argument.maximum === undefined ? {} : { maximum: argument.maximum }),
+    });
+  if (argument.minLength !== undefined || argument.maxLength !== undefined)
+    return Type.String({
+      ...(argument.minLength === undefined ? {} : { minLength: argument.minLength }),
+      ...(argument.maxLength === undefined ? {} : { maxLength: argument.maxLength }),
+    });
+  if (argument.type === "integer" || argument.type === "number") return Type.Integer();
+  if (argument.type === "boolean") return Type.Boolean();
+  if (argument.type === "string") return Type.String();
+  // No declared type at all: the empty string is the one shape every text argument here refuses, so the fallback is the
+  // least it can say rather than a ceiling nobody declared.
   return Type.String({ minLength: 1, maxLength: 256 });
 }
 
@@ -2034,8 +2025,8 @@ export function createStardewActionTools(
         description:
           "Use a live native warp at the source tile x, y. The Mod resolves the destination and only a Warped postcondition can report success; a named minecart ride is the separate stardew_ride_minecart action.",
         parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
+          x: WARP_SOURCE_COORDINATE_SCHEMA,
+          y: WARP_SOURCE_COORDINATE_SCHEMA,
           requestId: CALLER_REQUEST_SCHEMA,
           idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),
@@ -2051,10 +2042,10 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.enter_exit,
         label: "Enter or Exit Stardew Location",
         description:
-          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; only the Warped postcondition can report success.",
+          "Enter or leave a location through a live native door or warp tile. The target may be a building door or a map tile carrying its own warp action, in which case the game's own gate runs and a refusal is reported instead of being bypassed (a gated door such as the Community Center is refused while its condition is unmet). x and y must be copied exactly from the sourceX and sourceY of a doorTargets entry in the most recent observe result; an edge exit's source lies one tile outside the map, which is why -1 is a real coordinate here. Only the Warped postcondition can report success.",
         parameters: Type.Object({
-          x: TILE_COORDINATE_SCHEMA,
-          y: TILE_COORDINATE_SCHEMA,
+          x: WARP_SOURCE_COORDINATE_SCHEMA,
+          y: WARP_SOURCE_COORDINATE_SCHEMA,
           requestId: CALLER_REQUEST_SCHEMA,
           idempotencyKey: CALLER_REQUEST_SCHEMA,
         }),

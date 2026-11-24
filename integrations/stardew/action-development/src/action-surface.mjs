@@ -42,8 +42,10 @@ export const ACTION_SURFACE_OPTIONAL_ACTION_KEYS = Object.freeze([
   "nativeBinding",
   "synthetic",
   // What the action REQUIRES of the world and what it CHANGES. Published so a consumer without a running game can answer
-  // "can my next step depend on this one" - the script compiler reads nothing but this artifact, and the only cross-step
-  // edge its descriptors declare today is the tile it addressed.
+  // whether its next step can depend on this one - the script compiler reads nothing but this artifact, and the only
+  // cross-step edge its descriptors declare today is the tile it addressed. The sentence carries no quoted phrase because
+  // `audit-stardew-decision-closure.test.mjs` reads this array as a member vocabulary, and a quoted word inside a comment
+  // reads as an entry the Mod does not declare.
   "effects",
 ]);
 export const ACTION_SURFACE_MAX_REGISTRATIONS = 128;
@@ -168,6 +170,11 @@ const ACTION_VALUE_TYPES = new Set(["integer", "string", "boolean", "object", "d
 // with the type because a consumer that cannot read a closed set can only guess it.
 const ARGUMENT_SCHEMA_ENTRY_KEYS = Object.freeze(["type"]);
 const ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS = Object.freeze(["type", "enum"]);
+// The value range the Mod's own acceptance validator enforces, from ONE declaration (`FarmhandArgumentBounds`). They are
+// optional and independent: `maximum` alone is absent for an argument whose ceiling the Mod does not state, and the
+// length pair is the same fact for a bounded string. A consumer that builds a tool schema reads them instead of
+// PROBING its own predicates for a range, which is what this artifact had no way to answer before.
+const ARGUMENT_SCHEMA_RANGE_KEYS = Object.freeze(["minimum", "maximum", "minLength", "maxLength"]);
 const DYNAMIC_PUBLICATION_FIELDS = new Set([
   "advertised",
   "available",
@@ -473,6 +480,7 @@ function validateTypedMap(value, location, entriesAreObjects) {
       // (`FarmhandActionArgument.ResolvedAtExecution`): the member says the body answers for a value the caller may
       // leave out, so it is a claim about one argument of one action and never a property of a shared shape.
       const hasResolved = ownKeys(entry, "invalid_action").includes("resolvedAtExecution");
+      const ranges = ARGUMENT_SCHEMA_RANGE_KEYS.filter((key) => ownKeys(entry, "invalid_action").includes(key));
       // `description` is OPTIONAL, so the exact-key set is the base set plus it only when present. Anything else is
       // still refused by name: an unrecognised key would be a field a consumer silently ignores.
       const base = hasEnum ? ARGUMENT_SCHEMA_ENUM_ENTRY_KEYS : ARGUMENT_SCHEMA_ENTRY_KEYS;
@@ -482,11 +490,15 @@ function validateTypedMap(value, location, entriesAreObjects) {
           ...base,
           ...(hasDescription ? ["description"] : []),
           ...(hasResolved ? ["resolvedAtExecution"] : []),
+          ...ranges,
         ],
         `${location}_entry`,
       );
       if (!ACTION_VALUE_TYPES.has(dataDescriptor(entry, "type").value)) fail("invalid_action");
       if (hasResolved && dataDescriptor(entry, "resolvedAtExecution").value !== true) fail("invalid_action");
+      for (const key of ranges) {
+        if (!Number.isSafeInteger(dataDescriptor(entry, key).value)) fail("invalid_action");
+      }
       if (hasDescription) {
         // The argument's MEANING, in the Mod's own words. Bounded like every other published string: an unbounded one
         // would let a future build spend the agent's context by accident, and empty is refused because a present-but-

@@ -93,6 +93,7 @@ import {
   isTreeStumpTargetFact,
   isVillagerWhereaboutsFact,
   isWarpItemTargetFact,
+  isWarpSourceCoordinate,
   isWateringCanFact,
   isWearableTargetFact,
   isWeedTargetFact,
@@ -2047,12 +2048,40 @@ export type ActionDescriptorArgument = Readonly<{
    * when it has nothing to declare, so its absence is the claim that the argument is the caller's to supply.
    */
   resolvedAtExecution?: boolean;
+  /**
+   * The value range the Mod's own acceptance validator enforces for this argument, or absent when it declares none.
+   *
+   * The tool schema the model is handed must describe the same domain the Mod admits, and this is the Mod's answer:
+   * `x`/`y` are 0..1000 for a walk target and -1..1000 for a warp SOURCE tile, `slot` is 0..36, `charge` is 0..5.
+   * Before this reached the Host, `game-tools.ts` derived those numbers by PROBING its own predicates
+   * (`largestAcceptedWholeNumber`), which made tool assembly depend on provoking refusals and answered with the
+   * walk-target floor for `travel`/`enter_exit` - refusing the one tile an edge exit names.
+   *
+   * `maximum` is absent on its own for an argument whose ceiling is not the Mod's to state (`colorSelection`), and
+   * `minLength`/`maxLength` are the same fact for a bounded string.
+   */
+  minimum?: number;
+  maximum?: number;
+  minLength?: number;
+  maxLength?: number;
 }>;
 
 export type ActionRegistrationDescriptor = Readonly<{
   arguments?: readonly ActionDescriptorArgument[];
   argumentSchema?: Readonly<
-    Record<string, { type: string; enum?: readonly string[]; description?: string; resolvedAtExecution?: boolean }>
+    Record<
+      string,
+      {
+        type: string;
+        enum?: readonly string[];
+        description?: string;
+        resolvedAtExecution?: boolean;
+        minimum?: number;
+        maximum?: number;
+        minLength?: number;
+        maxLength?: number;
+      }
+    >
   >;
   outputFacts?: Readonly<Record<string, string>>;
   resourceTemplate?: Readonly<{ claims: readonly Readonly<{ key: string; value: string }>[] }> | string;
@@ -3754,6 +3783,27 @@ export type ExecutionRequestRequirement = Readonly<{
    */
   argumentNames?: readonly string[];
   /**
+   * The names in `argumentNames` the caller may OMIT, because the Mod's own row declares the body resolves them at
+   * execution (`FarmhandActionArgument.ResolvedAtExecution`).
+   *
+   * <p>
+   * WHY THE HOST CARRIES THIS AT ALL. A value the body mints on the game thread from the live tile is not the caller's to
+   * supply, and the Mod's parser already says so (`BridgeProtocol.HasExecutionArgumentShape` reads the declaration). The
+   * Host's own table still demanded the key, so a `water_crop` that named its tile and left the crop to the executor was
+   * refused `invalid_args` before it left the Host - a wire that refused what its own argument description tells the
+   * caller to do ("OMIT IT: the body mints it from the LIVE tile").
+   * </p>
+   * <p>
+   * THIS LIST IS A COPY AND IS HELD TO ITS AUTHORITY. `validateExecutionRequest` receives the payload and the snapshot
+   * only - the catalogue arrives on `hello_ack` and lives on the integration state, which this validator is never handed -
+   * so the flags cannot be read here at run time. `protocol-catalog-agreement.test.ts` therefore compares these names with
+   * the generated artifact's own `resolvedAtExecution` flags in BOTH directions over the whole table: a row that permits
+   * an omission the catalogue does not declare is red, and so is an action whose catalogue row declares one and whose
+   * Host row still demands the key. A fifth action that declares the flag fails there by name instead of shipping.
+   * </p>
+   */
+  resolvableArguments?: readonly string[];
+  /**
    * The whole-number range this row pins, for the rows that pin one.
    *
    * The range used to exist only inside the predicate and the prose `shape`, so every surface that had to state the same
@@ -3804,6 +3854,7 @@ function requirement(
   violated: ExecutionRequestRequirement["violated"],
   argumentNames?: readonly string[],
   integerBound?: ExecutionRequestIntegerBound,
+  resolvableArguments?: readonly string[],
 ): ExecutionRequestRequirement {
   return Object.freeze({
     field,
@@ -3811,6 +3862,7 @@ function requirement(
     refusal,
     ...(argumentNames === undefined ? {} : { argumentNames }),
     ...(integerBound === undefined ? {} : { integerBound }),
+    ...(resolvableArguments === undefined ? {} : { resolvableArguments }),
     isMet,
     violated,
   });
@@ -3854,6 +3906,39 @@ function exactArgs(names: readonly string[], refusal: string): ExecutionRequestR
   );
 }
 
+/**
+ * The argument set the Mod's parser pins, EXCEPT the names its own row declares the body resolves at execution.
+ *
+ * <p>
+ * ONE ROW, TWO ANSWERS, AND ONLY ONE OF THEM IS PERMISSION. A name in `resolvable` may be absent - the handler mints it
+ * on the game thread from the arguments that are there - while every other name stays mandatory and every name outside
+ * the list stays forbidden. The refusal is `invalid_args` for both halves, because that is the code this validator has
+ * always answered a wrong `args` set with; what differs is which set is wrong.
+ * </p>
+ * <p>
+ * THE VIOLATION REMOVES A NAME THAT CANNOT BE OMITTED. `execution-request-declaration.test.ts` breaks each row and
+ * requires the refusal, so the row it breaks must be the required half: taking out a resolvable name would leave the row
+ * met and the test would be checking nothing.
+ * </p>
+ */
+function exactArgsExceptResolved(
+  names: readonly string[],
+  resolvable: readonly string[],
+  refusal: string,
+): ExecutionRequestRequirement {
+  const required = names.filter((name) => !resolvable.includes(name));
+  return requirement(
+    "args",
+    `exactly [${names.join(", ")}] and nothing else, except [${resolvable.join(", ")}] which the body resolves at execution`,
+    refusal,
+    (reading) => hasExactKeysOrOptional(reading.args, required, resolvable),
+    required.length === 0 ? withArg("unexpected", true) : withoutArg(required[0] ?? ""),
+    names,
+    undefined,
+    resolvable,
+  );
+}
+
 /** `args.x`/`args.y` as a walkable tile: the in-map range, not the warp-source range. */
 function tileRow(refusal: string): ExecutionRequestRequirement {
   return requirement(
@@ -3894,13 +3979,23 @@ function slotRow(refusal: string): ExecutionRequestRequirement {
   );
 }
 
-/** `args.expectedTargetId`: the opaque id a snapshot family published. */
-function targetRow(refusal: string): ExecutionRequestRequirement {
+/**
+ * `args.expectedTargetId`: the opaque id a snapshot family published, or nothing where the row's body mints it.
+ *
+ * `executionResolved` is the SAME list the action's argument row permits to be absent (`exactArgsExceptResolved`), passed
+ * here so the two halves of one action's declaration cannot disagree: the key may be missing exactly where the body
+ * resolves it, and a value that IS sent is still held to an opaque id either way - a caller who states one gets it
+ * compared by the handler.
+ */
+function targetRow(refusal: string, executionResolved: readonly string[] = []): ExecutionRequestRequirement {
+  const optional = executionResolved.includes("expectedTargetId");
   return requirement(
     "args.expectedTargetId",
-    "an opaque target id the snapshot published",
+    optional
+      ? "an opaque target id the snapshot published, or none: the body mints it from the live tile"
+      : "an opaque target id the snapshot published",
     refusal,
-    (reading) => isOpaqueId(reading.args.expectedTargetId),
+    (reading) => (optional && reading.args.expectedTargetId === undefined) || isOpaqueId(reading.args.expectedTargetId),
     withArg("expectedTargetId", "not an id"),
   );
 }
@@ -4020,26 +4115,31 @@ function textOnlyRow(maxLength: number): ExecutionRequestRequirement {
 }
 
 /** The `{x, y, expectedTargetId}` shape, refused under the one code the action's own handler names. */
-function tileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
-  return [tileRow(refusal), targetRow(refusal)];
+function tileAndTarget(refusal: string, executionResolved: readonly string[] = []): readonly ExecutionRequestRequirement[] {
+  return [tileRow(refusal), targetRow(refusal, executionResolved)];
 }
 
 /** The `{slot, x, y, expectedTargetId}` shape. */
-function toolTileAndTarget(refusal: string): readonly ExecutionRequestRequirement[] {
-  return [slotRow(refusal), tileRow(refusal), targetRow(refusal)];
+function toolTileAndTarget(refusal: string, executionResolved: readonly string[] = []): readonly ExecutionRequestRequirement[] {
+  return [slotRow(refusal), tileRow(refusal), targetRow(refusal, executionResolved)];
 }
 
 /** The `{x, y, expectedQualifiedItemId, expectedTargetId}` shape. */
-function tileItemAndTarget(refusal: string, item: ExecutionRequestRequirement): readonly ExecutionRequestRequirement[] {
-  return [tileRow(refusal), item, targetRow(refusal)];
+function tileItemAndTarget(
+  refusal: string,
+  item: ExecutionRequestRequirement,
+  executionResolved: readonly string[] = [],
+): readonly ExecutionRequestRequirement[] {
+  return [tileRow(refusal), item, targetRow(refusal, executionResolved)];
 }
 
 /** The `{slot, x, y, expectedQualifiedItemId, expectedTargetId}` shape. */
 function toolTileItemAndTarget(
   refusal: string,
   item: ExecutionRequestRequirement,
+  executionResolved: readonly string[] = [],
 ): readonly ExecutionRequestRequirement[] {
-  return [slotRow(refusal), tileRow(refusal), item, targetRow(refusal)];
+  return [slotRow(refusal), tileRow(refusal), item, targetRow(refusal, executionResolved)];
 }
 
 /**
@@ -4316,6 +4416,17 @@ const REMOVES_PLACED_OBJECT: readonly ExecutionRequestRequirement[] = Object.fre
 ]);
 
 /**
+ * THE IDENTITY THE FOUR TILE-ADDRESSED ACTIONS BELOW LEAVE TO THE EXECUTOR, spelled once.
+ *
+ * `harvest_crop`, `water_crop`, `pickup_item` and `pickup_forage` name a tile; the object standing on it is minted on the
+ * game thread (`TileTargetMint`, by the family the row's own `TargetFamily` declares) and reported back in the receipt as
+ * `targetId_source=resolved_at_execution`. The name appears in TWO rows of each action - the argument set and the opaque
+ * id's own shape - so it is one constant rather than two lists that happen to agree today, and
+ * `protocol-catalog-agreement.test.ts` holds it to the catalogue's `resolvedAtExecution` flags in both directions.
+ */
+const ExecutorResolvesTargetIdentity: readonly string[] = Object.freeze(["expectedTargetId"]);
+
+/**
  * The argument rows per action id.
  *
  * This is the per-action half of the request as a DECLARATION rather than a ladder of `value.action === …` arms: each
@@ -4545,16 +4656,40 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     integerRow("charge", 0, 5, "invalid_args"),
   ],
   pickup_forage: [
-    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
-    ...tileItemAndTarget("invalid_forage_target", boundedItemRow("invalid_forage_target", 128)),
+    exactArgsExceptResolved(
+      ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args"
+    ),
+    ...tileItemAndTarget(
+      "invalid_forage_target",
+      boundedItemRow("invalid_forage_target", 128),
+      ExecutorResolvesTargetIdentity
+    ),
   ],
   pickup_item: [
-    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
-    ...tileItemAndTarget("invalid_item_target", boundedItemRow("invalid_item_target", 128)),
+    exactArgsExceptResolved(
+      ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args"
+    ),
+    ...tileItemAndTarget(
+      "invalid_item_target",
+      boundedItemRow("invalid_item_target", 128),
+      ExecutorResolvesTargetIdentity
+    ),
   ],
+  // THE TILE IS THE ADDRESS. `water_crop` names the tile and the charge one native use covers; the crop standing there
+  // is the executor's answer (`ResolvedAtExecution`), minted from the LIVE tile by `TileTargetMint` when the swing
+  // happens. The key stays legal, because a caller that knows the crop may still name it - and the handler then compares
+  // it, answering `water_crop_target_changed:<expected>:<found>` for a tile that now holds another one.
   water_crop: [
-    exactArgs(["x", "y", "expectedTargetId", "charge"], "invalid_args"),
-    ...tileAndTarget("invalid_crop_target"),
+    exactArgsExceptResolved(
+      ["x", "y", "expectedTargetId", "charge"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args"
+    ),
+    ...tileAndTarget("invalid_crop_target", ExecutorResolvesTargetIdentity),
     integerRow("charge", 0, 5, "invalid_args"),
   ],
   refill_watering_can: [
@@ -4562,12 +4697,20 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     ...toolTileAndTarget("invalid_refill_watering_can_target"),
   ],
   harvest_crop: [
-    exactArgs(["x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
-    ...tileItemAndTarget("invalid_harvest_target", boundedItemRow("invalid_harvest_target", 128)),
+    exactArgsExceptResolved(
+      ["x", "y", "expectedQualifiedItemId", "expectedTargetId"],
+      ExecutorResolvesTargetIdentity,
+      "invalid_args"
+    ),
+    ...tileItemAndTarget(
+      "invalid_harvest_target",
+      boundedItemRow("invalid_harvest_target", 128),
+      ExecutorResolvesTargetIdentity
+    ),
   ],
   plant_seed: [
-    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
-    ...toolTileItemAndTarget("invalid_seed_target", boundedItemRow("invalid_seed_target", 128)),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileItemAndTarget("invalid_seed_target", boundedItemRow("invalid_seed_target", 128), ExecutorResolvesTargetIdentity),
   ],
   fertilize_tile: [
     exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
@@ -4589,12 +4732,12 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
   // The clump's own native switch decides which tool it needs, so the wire carries no `slot`: the handler resolves,
   // selects and restores the tool itself.
   clear_debris: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_debris_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_debris_target", ExecutorResolvesTargetIdentity),
   ],
   break_resource_clump: [
-    exactArgs(["x", "y", "expectedTargetId"], "invalid_args"),
-    ...tileAndTarget("invalid_clump_target"),
+    exactArgsExceptResolved(["x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...tileAndTarget("invalid_clump_target", ExecutorResolvesTargetIdentity),
   ],
   fish_here: [exactArgs(["x", "y", "expectedTargetId"], "invalid_args"), ...tileAndTarget("invalid_fish_here_target")],
   machine_inspect: [
@@ -4659,12 +4802,12 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     boundedItemRow("invalid_item_use_target", 128),
   ],
   chop_tree: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_chop_tree_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_chop_tree_target", ExecutorResolvesTargetIdentity),
   ],
   break_rock: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_break_rock_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_break_rock_target", ExecutorResolvesTargetIdentity),
   ],
   clear_hoedirt: [
     exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
@@ -4693,20 +4836,20 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     boundedItemRow("invalid_chest_target", 128),
   ],
   chop_stump: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_tool_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target", ExecutorResolvesTargetIdentity),
   ],
   plant_sapling: [
-    exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
-    ...toolTileItemAndTarget("invalid_sapling_target", itemRow("invalid_sapling_target")),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileItemAndTarget("invalid_sapling_target", itemRow("invalid_sapling_target"), ExecutorResolvesTargetIdentity),
   ],
   cut_weeds: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_tool_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target", ExecutorResolvesTargetIdentity),
   ],
   cut_grass: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_tool_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target", ExecutorResolvesTargetIdentity),
   ],
   // sweep_scythe names the tile the actor must FACE and nothing else: no slot (the scythe comes from the action's own
   // `tool:scythe` claim, as till_soil's hoe does) and no target id (the arc covers a SET of occupants, so one occupant's
@@ -4735,8 +4878,8 @@ export const EXECUTION_REQUEST_ARGUMENT_RULES = Object.freeze({
     tileRow("invalid_lantern_slot"),
   ],
   scythe_crop: [
-    exactArgs(["slot", "x", "y", "expectedTargetId"], "invalid_args"),
-    ...toolTileAndTarget("invalid_tool_target"),
+    exactArgsExceptResolved(["slot", "x", "y", "expectedTargetId"], ExecutorResolvesTargetIdentity, "invalid_args"),
+    ...toolTileAndTarget("invalid_tool_target", ExecutorResolvesTargetIdentity),
   ],
   interact_npc_with_item: [
     exactArgs(["slot", "x", "y", "expectedQualifiedItemId", "expectedTargetId"], "invalid_args"),
@@ -6269,10 +6412,6 @@ function isWarp(value: unknown): boolean {
   );
 }
 
-function isWarpSourceCoordinate(value: unknown): value is number {
-  return isFiniteNumber(value) && Number.isInteger(value) && value >= -1 && value <= 1000;
-}
-
 /** The exact key set a wire active execution may carry. */
 const ACTIVE_EXECUTION_KEYS = Object.freeze([
   "executionId",
@@ -6361,6 +6500,19 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   "effects",
 ] as const;
 
+/**
+ * The value range a published argument may carry, as the Mod declares it.
+ *
+ * Each member is optional and each is ONE number, so an argument whose value is a closed set or an exact id carries no
+ * range rather than a guessed one. A range that is present but malformed is refused here: the tool schema is BUILT from
+ * these members, so a string where a number belongs would put a non-number into the schema the model reads.
+ */
+function isDeclaredArgumentRange(argument: Readonly<Record<string, unknown>>): boolean {
+  for (const key of ["minimum", "maximum", "minLength", "maxLength"])
+    if (key in argument && argument[key] !== undefined && !Number.isSafeInteger(argument[key])) return false;
+  return true;
+}
+
 export function isValidActionDescriptor(value: unknown): value is ActionRegistrationDescriptor {
   if (!isRecord(value)) return false;
   if (!hasOnlyKeys(value, KNOWN_ACTION_DESCRIPTOR_KEYS)) return false;
@@ -6369,10 +6521,22 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     if (!Array.isArray(value.arguments) || value.arguments.length > 32) return false;
     for (const arg of value.arguments) {
       if (!isRecord(arg)) return false;
-      if (!hasOnlyKeys(arg, ["name", "type", "enum", "boundedEnumValues", "description", "resolvedAtExecution"]))
+      if (!hasOnlyKeys(arg, [
+        "name",
+        "type",
+        "enum",
+        "boundedEnumValues",
+        "description",
+        "resolvedAtExecution",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+      ]))
         return false;
       if (typeof arg.name !== "string" || !/^[a-z][a-zA-Z0-9_]{0,63}$/.test(arg.name)) return false;
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
+      if (!isDeclaredArgumentRange(arg)) return false;
       if ("description" in arg && arg.description !== undefined) {
         // Bounded like every other published string: an unbounded one would be a way for a future Mod build to spend
         // the agent's context by accident. Empty is refused because a present-but-empty description is a label that
@@ -6404,6 +6568,7 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
     for (const [key, prop] of Object.entries(value.argumentSchema)) {
       if (!/^[a-z][a-zA-Z0-9_]{0,63}$/.test(key)) return false;
       if (!isRecord(prop) || typeof prop.type !== "string") return false;
+      if (!isDeclaredArgumentRange(prop)) return false;
       if ("resolvedAtExecution" in prop && prop.resolvedAtExecution !== undefined && prop.resolvedAtExecution !== true)
         return false;
       if ("enum" in prop && prop.enum !== undefined) {

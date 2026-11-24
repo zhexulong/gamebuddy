@@ -9,6 +9,19 @@ import { planWorkDescription, planActionsFromRegistrations } from "./body-progra
 import { ExecutionCorrelationLedger } from "./execution-correlation-ledger.js";
 import { buildCandidateToolSchema, createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import {
+  OPAQUE_ID_MAXIMUM_LENGTH,
+  OPAQUE_ID_MINIMUM_LENGTH,
+  TILE_COORDINATE_MAXIMUM,
+  TILE_COORDINATE_MINIMUM,
+  TOOL_SLOT_MAXIMUM,
+  TOOL_SLOT_MINIMUM,
+  WARP_SOURCE_COORDINATE_MINIMUM,
+  isOpaqueId,
+  isTileCoordinate,
+  isToolSlot,
+  isWarpSourceCoordinate,
+} from "./protocol-target-facts.js";
+import {
   type ActionRegistration,
   type ActionRegistrationDescriptor,
   EXECUTION_REQUEST_ARGUMENT_RULES,
@@ -97,7 +110,20 @@ type SurfaceAction = Readonly<{
   identityVersion: number;
   lifecycle: string;
   kind: string;
-  argumentSchema?: Readonly<Record<string, Readonly<{ type?: string; enum?: readonly string[] }>>>;
+  argumentSchema?: Readonly<
+    Record<
+      string,
+      Readonly<{
+        type?: string;
+        enum?: readonly string[];
+        minimum?: number;
+        maximum?: number;
+        minLength?: number;
+        maxLength?: number;
+        resolvedAtExecution?: boolean;
+      }>
+    >
+  >;
   effect?: string;
   postcondition?: Readonly<{ name?: string }>;
 }>;
@@ -122,6 +148,15 @@ function registrationFor(action: SurfaceAction): ActionRegistration {
     // exercises the closed set the Mod declares rather than one this test invents or scrapes
     // out of the C# source.
     ...(schema.enum === undefined ? {} : { enum: schema.enum }),
+    // The same rule for the two claims the surface now publishes beside the type: the value range the Mod's
+    // acceptance validator enforces, and the Mod's grant that the BODY may answer for the value at execution. A
+    // fixture that dropped either would hand the Host a descriptor the Mod never emits, and this file's whole subject
+    // is the agreement between what the Mod declares and what the Host builds.
+    ...(schema.minimum === undefined ? {} : { minimum: schema.minimum }),
+    ...(schema.maximum === undefined ? {} : { maximum: schema.maximum }),
+    ...(schema.minLength === undefined ? {} : { minLength: schema.minLength }),
+    ...(schema.maxLength === undefined ? {} : { maxLength: schema.maxLength }),
+    ...(schema.resolvedAtExecution === true ? { resolvedAtExecution: true as const } : {}),
   }));
   const postconditionName = action.postcondition?.name;
   const descriptor: ActionRegistrationDescriptor = {
@@ -540,8 +575,19 @@ test("no mount forwards a constant empty argument object", () => {
  * Every gate below takes its population from this lookup, so an action the declaration grows is examined the moment it
  * exists rather than when someone remembers to add it to a list here.
  */
+/**
+ * The arguments a plan example must carry, which is the wire's list MINUS the names the action's own row declares the body
+ * resolves at execution.
+ *
+ * A name the executor mints is not the caller's to supply: `water_crop`'s example names the tile and the charge and leaves
+ * the crop to the live tile, exactly as the action's own argument description teaches ("OMIT IT"). Reading the full
+ * argument set here would demand a copy of a value that no reading has to carry, which is the defect this gate was pointed
+ * at from the other side.
+ */
 function pinnedArguments(action: ExecutionRequest["action"]): readonly string[] | undefined {
-  return EXECUTION_REQUEST_ARGUMENT_RULES[action].find((row) => row.argumentNames !== undefined)?.argumentNames;
+  const row = EXECUTION_REQUEST_ARGUMENT_RULES[action].find((candidate) => candidate.argumentNames !== undefined);
+  if (row?.argumentNames === undefined) return undefined;
+  return row.argumentNames.filter((name) => !(row.resolvableArguments ?? []).includes(name));
 }
 
 /**
@@ -816,6 +862,109 @@ test("every whole-number value a mounted tool admits is one the Host's own valid
     `a value the schema admits and the validator refuses is a call the model is told it may make: ${findings.join(" | ")}` +
       ` [not measured, the action pins the value to a published target: ${notMeasured.join(", ")}]`,
   );
+});
+
+/**
+ * The range a mounted tool states for an argument, and the range the MOD declares for the same argument.
+ *
+ * <p>
+ * The schema is what the model is shown and what a call is checked against before it is built, so it must describe the
+ * domain the Mod's acceptance validator enforces - not one the Host derived by asking its own wire predicates. That
+ * derivation existed: `largestAcceptedWholeNumber` doubled and bisected `isTileCoordinate` at module load to learn
+ * 0..1000, which made tool assembly depend on being able to provoke refusals, and answered with the wrong floor for
+ * `travel`/`enter_exit`, whose x/y is a warp SOURCE tile (-1) rather than a walk target (0). The declaration answers
+ * this directly now, and this is the assertion that it does.
+ * </p>
+ *
+ * <p>
+ * The population is derived from the artifact, never listed: every integer argument the published surface declares a
+ * range for, joined to the tool the Host really mounts for that action. `colorSelection` contributes the
+ * half-declaration too - a floor with no ceiling - because "no `maximum`" is a statement the schema must also carry.
+ * </p>
+ *
+ * red-proof: inject `minimum: -2` into `move_to_tile`'s `x` in the artifact -> `tool_schema_disagrees_with_declaration:
+ * move_to_tile:x.minimum: tool 0, declared -2`.
+ */
+test("every whole-number range a mounted tool states is the range the Mod declares", () => {
+  const surface = publishedSurface();
+  const declared = new Map<string, Readonly<Record<string, number>>>();
+  for (const action of surface)
+    for (const [name, argument] of Object.entries(action.argumentSchema ?? {}))
+      if (argument.minimum !== undefined || argument.maximum !== undefined)
+        declared.set(`${action.actionId}.${name}`, {
+          ...(argument.minimum === undefined ? {} : { minimum: argument.minimum }),
+          ...(argument.maximum === undefined ? {} : { maximum: argument.maximum }),
+        });
+
+  const findings: string[] = [];
+  const examined: string[] = [];
+  for (const tool of mountedTools()) {
+    const properties = propertiesOf(tool.schema);
+    for (const [key, range] of declared) {
+      const [actionId, argument] = key.split(".");
+      if (actionId !== tool.action) continue;
+      const member = (properties[argument ?? ""] ?? {}) as JsonObject;
+      if (member.type !== "integer") continue;
+      examined.push(`${tool.action}.${argument}`);
+      for (const end of ["minimum", "maximum"] as const) {
+        const want = range[end];
+        const have = member[end];
+        if (want !== have)
+          findings.push(
+            `tool_schema_disagrees_with_declaration:${tool.action}:${argument}.${end}: tool ${String(have)}, declared ${String(want)}`,
+          );
+      }
+    }
+  }
+  assert.ok(
+    examined.length >= 10,
+    `blocked: ${String(examined.length)} declared whole-number ranges reached a mounted tool, so the join is wrong`,
+  );
+  assert.deepEqual(findings, [], `a tool that states a range the Mod does not declare is a second authority: ${findings.join(" | ")}`);
+});
+
+/**
+ * No code derives an argument's range by PROBING the wire's predicate - and the exported numbers are those predicates'.
+ *
+ * <p>
+ * READING OUR OWN SOURCE IS DELIBERATE HERE, and it is admissible for the reason the rule allows: the fact asserted is
+ * the ABSENCE of a declaration. A range derived at runtime cannot be told from a range declared anywhere else by reading
+ * a value - both are `{minimum: 0, maximum: 1000}` - so the only way to say "this is declared, not guessed" is to say
+ * that the guessing functions are gone. The second half of the test then holds the declared numbers to the predicates
+ * that enforce them, so the absence of the probe does not leave a number nobody checks: each constant is the exact range
+ * its predicate accepts, on both ends and one step outside them.
+ * </p>
+ */
+test("the range constants ARE the predicates' own bounds, and nothing probes a predicate for one", () => {
+  const source = readFileSync(GAME_TOOLS_PATH, "utf8");
+  for (const functionName of ["largestAcceptedWholeNumber", "intervalAcceptedBy"])
+    assert.equal(
+      source.includes(functionName),
+      false,
+      `${functionName} derives a bound by probing a predicate at runtime; the Mod declares the bound and the wire exports it`,
+    );
+
+  const domains = [
+    { name: "tile coordinate", accepts: isTileCoordinate, minimum: TILE_COORDINATE_MINIMUM, maximum: TILE_COORDINATE_MAXIMUM },
+    {
+      name: "warp source coordinate",
+      accepts: isWarpSourceCoordinate,
+      minimum: WARP_SOURCE_COORDINATE_MINIMUM,
+      maximum: TILE_COORDINATE_MAXIMUM,
+    },
+    { name: "tool slot", accepts: isToolSlot, minimum: TOOL_SLOT_MINIMUM, maximum: TOOL_SLOT_MAXIMUM },
+  ];
+  for (const domain of domains) {
+    assert.equal(domain.accepts(domain.minimum), true, `${domain.name}: the declared floor must be a value the predicate accepts`);
+    assert.equal(domain.accepts(domain.minimum - 1), false, `${domain.name}: one below the declared floor must be refused`);
+    assert.equal(domain.accepts(domain.maximum), true, `${domain.name}: the declared ceiling must be a value the predicate accepts`);
+    assert.equal(domain.accepts(domain.maximum + 1), false, `${domain.name}: one above the declared ceiling must be refused`);
+  }
+  for (const length of [OPAQUE_ID_MINIMUM_LENGTH, OPAQUE_ID_MAXIMUM_LENGTH]) {
+    assert.equal(isOpaqueId("a".repeat(length)), true, `opaque id: length ${String(length)} must be accepted`);
+  }
+  assert.equal(isOpaqueId("a".repeat(OPAQUE_ID_MINIMUM_LENGTH - 1)), false, "opaque id: one below the declared floor must be refused");
+  assert.equal(isOpaqueId("a".repeat(OPAQUE_ID_MAXIMUM_LENGTH + 1)), false, "opaque id: one above the declared ceiling must be refused");
 });
 
 /**
