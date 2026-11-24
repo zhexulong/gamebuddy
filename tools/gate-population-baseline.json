@@ -10,7 +10,6 @@
     "gate_without_population check:dependency-audit",
     "gate_without_population check:diff",
     "gate_without_population check:eval-instruments",
-    "gate_without_population check:head-typecheck",
     "gate_without_population check:host-module-graph",
     "gate_without_population check:host-windows-test-preflight",
     "gate_without_population check:sandbox-acceptance",

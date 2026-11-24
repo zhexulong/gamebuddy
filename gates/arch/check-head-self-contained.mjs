@@ -39,7 +39,7 @@
  * own parser answers the question the shared grammar defines, so a specifier counts only where the grammar
  * puts one: an `import`/`export` declaration's module specifier, or a `import(...)`/`require(...)` call with
  * a single string literal. The host package owns the TypeScript dependency; `host/` is where this repository
- * keeps it, and tools/check-head-typecheck.mjs already runs `tsc` from there for the same reason.
+ * keeps it, and gates/arch/check-head-build.mjs already runs `tsc` from there for the same reason.
  *
  * WHAT IS SKIPPED, and why each is not a defect this gate can see:
  *   * non-relative specifiers (`node:fs`, `zod`, `@gamebuddy/host/*`) belong to the package resolver, and a

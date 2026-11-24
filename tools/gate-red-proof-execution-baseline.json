@@ -11,7 +11,6 @@
     "check:game-context-pressure",
     "check:game-historian-rubric",
     "check:harness-conformance",
-    "check:head-typecheck",
     "check:live-run-artifact-freshness",
     "check:live-run-failure-dump",
     "check:live-run-multiday-baseline",

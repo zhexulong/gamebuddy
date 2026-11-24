@@ -151,6 +151,12 @@ export const EXEMPTIONS = Object.freeze([
     ],
     ["l1b", "the deploy isolation: the launcher's resolved mods root must not be inside the game installation"],
     ["l2", "the Host test artifact build plus the agreement of every action population the ladder read"],
+    [
+      "l2b",
+      "the committed build: `tsc` over `host/tsconfig.json` and the Mod build, in a throwaway worktree at the commit; CI " +
+        "runs the same gate as `pnpm check:head-build`, but this rung (the ladder's own sequence) has no workflow step · " +
+        "expires when a workflow step runs `tools/prelive.mjs`",
+    ],
     ["l3", "the runner shape: a one-shot `observeFresh({actionable:true})` may not be the basis of an assertion"],
   ].map(([id, detail]) => ({ id, reason: "rung", detail: `${detail} · expires when a workflow step runs it` })),
 ]);

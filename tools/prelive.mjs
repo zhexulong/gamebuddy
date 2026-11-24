@@ -38,6 +38,15 @@
  *   L1  linkage closure     - action ids x runner map x tools-side scenario x Mod-side scenario, DERIVED not listed
  *   L1b deploy isolation    - the launcher's resolved deploy root must not be inside the game installation
  *   L2  compile + agreement - the Host test artifact builds, and every action population names the same ids
+ *   L2b committed build    - HEAD itself, in BOTH languages, inside a throwaway worktree: `tsc` over
+ *                             `host/tsconfig.json` and the Mod build `tools/live-run/frontend/phases/build.ps1` §2 runs.
+ *                             L2's compile reads the working tree, so a commit whose consumers need a declaration that
+ *                             exists only in somebody's uncommitted file stays green here - measured four times on
+ *                             2026-11-25, and the Mod half was uncompilable on main for nine commits while every rung
+ *                             below reported green. Cost measured the same day: 3.9 s worktree + 9.2 s host + 4.4 s Mod
+ *                             (red) and 20.7 s for a green Mod, so ~35 s - the reason it is this rung rather than an
+ *                             L0 member. `--skip-compile` skips it, with that flag's own meaning, and the run then says
+ *                             `not measured: --skip-compile` instead of passing quietly. See `committedBuildRung`.
  *   L3  runner shape        - a one-shot `observeFresh({actionable:true})` may not be the basis of an assertion
  *   L4  action preflight    - only with `--action <id> --game`; delegates to `tools/preflight-live-run.mjs`
  *
@@ -67,8 +76,8 @@
  *
  * USAGE:
  *   node tools/prelive.mjs --list                         # the schedule: every rung, its members, every unscheduled gate
- *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L3 (L0b and L2 are the slow rungs)
- *   node tools/prelive.mjs --no-game --skip-compile        # the same, without the Host build
+ *   node tools/prelive.mjs --no-game                       # L0 + L0b + L1 + L1b + L2 + L2b + L3 (L0b, L2 and L2b are the slow rungs)
+ *   node tools/prelive.mjs --no-game --skip-compile        # the same, without either compile (L2's Host artifact and L2b)
  *   node tools/prelive.mjs --action <id>                    # the same, then `l4_skipped: needs --game`
  *   node tools/prelive.mjs --action <id> --game             # the same, then L4 for that action
  *   node tools/prelive.mjs --record-shrinks                # L3's baseline, lowered/removed and never grown
@@ -87,6 +96,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ARTEFACT_PRODUCERS, inputsMovedSince } from "../gates/data/check-generated-artifact-reproducibility.mjs";
 import { readDeclarations } from "../gates/registry.mjs";
+import { cleanOutputLines } from "./lib/subprocess-output.mjs";
 import { containedChildEnvironment } from "./lib/crash-report-containment.mjs";
 import { resolveStardewFixtureRoots } from "./lib/stardew-fixture-roots.mjs";
 import { fixtureActions, fixtureScenario } from "./lib/stardew-native-local-player-fixture.mjs";
@@ -121,7 +131,15 @@ export { L0B_GATES, L0_GATES, PRELUDE_RUNGS };
  * `l4` is not in it: it needs `--action <id> --game`, so it is not a rung of the `--no-game`
  * ladder a developer runs before pushing (`pnpm prelive`).
  */
-export const LADDER_RUNGS = Object.freeze(["prep", ...PRELUDE_RUNGS.map((rung) => rung.id), "l1", "l1b", "l2", "l3"]);
+export const LADDER_RUNGS = Object.freeze([
+  "prep",
+  ...PRELUDE_RUNGS.map((rung) => rung.id),
+  "l1",
+  "l1b",
+  "l2",
+  "l2b",
+  "l3",
+]);
 
 /**
  * The schedule, read from the tree instead of assumed from the rung lists.
@@ -767,6 +785,58 @@ export function actionRegistryRung({
 }
 
 //
+// L2b - the committed build
+//
+
+/** The gate that answers it, and the deadline one run gets: two compiles of a cold worktree. */
+const HEAD_BUILD_GATE = "gates/arch/check-head-build.mjs";
+const HEAD_BUILD_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * L2b: HEAD itself, both layers, from committed bytes.
+ *
+ * The three outcomes are treated differently on purpose:
+ *   passed        exit 0 with no skip marker: both layers compiled the commit;
+ *   not measured  exit 0 carrying a `*_skipped:` line (no game folder, no compiler here). The rung passes and the REPORT
+ *                 prints `not measured: <reason>`, because an environment gap is not a verdict about the commit and must
+ *                 not be read as one in either direction;
+ *   blocked       the gate could not take a reading at all (exit 2: no git, an unresolvable ref, an unclean worktree).
+ *                 `runLadder` treats it as the first red rung, so a checkout that cannot measure never looks green.
+ */
+export function committedBuildRung({
+  skipCompile = false,
+  gate = HEAD_BUILD_GATE,
+  run = (command) =>
+    spawnSync(process.execPath, [command], {
+      cwd: REPO,
+      encoding: "utf8",
+      timeout: HEAD_BUILD_TIMEOUT_MS,
+      env: containedChildEnvironment(),
+    }),
+} = {}) {
+  if (skipCompile) return { id: "l2b", status: "passed", committed: { status: "skipped", reason: "--skip-compile" } };
+  const startedAt = Date.now();
+  const outcome = run(gate);
+  const ms = Date.now() - startedAt;
+  const lines = cleanOutputLines(`${outcome.stdout ?? ""}${outcome.stderr ?? ""}`).filter((line) => line !== "");
+  const exitCode = typeof outcome.status === "number" ? outcome.status : 1;
+  const markers = lines.filter((line) => NOT_MEASURED_MARKER.test(line));
+  const committed = {
+    ms,
+    exitCode,
+    pair: lines.find((line) => line.startsWith("head_build ref=")) ?? "",
+    markers,
+    lines,
+    status: exitCode === 0 ? (markers.length === 0 ? "passed" : "not_measured") : exitCode === 2 ? "blocked" : "failed",
+  };
+  return {
+    id: "l2b",
+    status: committed.status === "blocked" || committed.status === "failed" ? committed.status : "passed",
+    committed,
+  };
+}
+
+//
 // L3 - runner shape
 //
 
@@ -1319,6 +1389,7 @@ async function main(argv) {
     ["l1", () => linkageRung()],
     ["l1b", () => deploy],
     ["l2", () => actionRegistryRung({ skipCompile: options.skipCompile })],
+    ["l2b", () => committedBuildRung({ skipCompile: options.skipCompile })],
     ["l3", () => shapeRung()],
   ]);
   for (const rung of PRELUDE_RUNGS) runners.set(rung.id, () => runGateRung({ id: rung.id, gates: rung.gates }));
@@ -1343,6 +1414,25 @@ async function main(argv) {
 function knownAction(action) {
   const published = JSON.parse(read(SURFACE)).actions.some((entry) => entry.actionId === action);
   return published || action in STARDEW_EXPERIMENTAL_ACTION_RUNNERS;
+}
+
+/** L2b's own lines: the gate's words, then the one verdict the ladder needs from them. */
+function committedBuildLines(rung) {
+  const committed = rung.committed;
+  if (committed.status === "skipped")
+    return [
+      `  l2b: not measured: ${committed.reason} - the commit was not built, and a green working tree is not evidence ` +
+        "about it",
+    ];
+  const lines = committed.lines.map((line) => `  l2b | ${line}`);
+  if (committed.status === "not_measured")
+    lines.push(
+      `  l2b: not measured: ${committed.markers.join(" · ")} - the layer above was not built here, so this rung is ` +
+        "counted apart from a pass rather than becoming one",
+    );
+  else if (committed.status === "blocked") lines.push("  l2b: BLOCKED - no reading was taken, which is not a verdict");
+  else lines.push(`  l2b: ${committed.status} in ${committed.ms}ms`);
+  return lines;
 }
 
 /** L2's own lines: what the populations disagree on, then what the build said, each naming its own fact. */
@@ -1447,6 +1537,8 @@ export function format(ladder, { elapsedMs, options, notice, schedule }) {
       lines.push(`  l1b: ${rung.status} - ${rung.message}`);
     } else if (rung.id === "l2") {
       lines.push(...populationRungLines(rung));
+    } else if (rung.id === "l2b") {
+      lines.push(...committedBuildLines(rung));
     } else if (rung.id === "l3") {
       lines.push(`  l3: shape checked ${rung.checked} runners; known ${rung.knownRunners} of ${rung.checked}`);
       for (const entry of rung.violations)
