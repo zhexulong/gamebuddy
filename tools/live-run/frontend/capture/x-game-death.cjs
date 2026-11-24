@@ -69,6 +69,24 @@
 // change it. So the three runs since `d7b7ac6a` stop at three DIFFERENT named layers - the attach after a confirmed
 // cabin, the read window, and now the confirm's publication - and none of them may be read as another.
 //
+// THE SIXTH READING IS THAT QUARANTINE'S OWN ANSWER: CORRECT, AND UNATTRIBUTABLE. `.tmp/lane-quarantinewhy.md` took no
+// new run and re-read the fifth one's artifacts instead. Three things follow. (1) The writer is the cabin press's own
+// post-admission branch (`stardew-production-lifecycle-coordinator.internal.ts:2632-2642`), whose condition is
+// `manifestAdmitted` plus any error that is not exactly `bridge_connect_deadline_exceeded` - NOT a join deadline (that
+// rail deliberately keeps the attempt closable), NOT expiry (`owner.expiresAtMs` was 04:44:38), NOT the Player Host
+// attestation failure (that one projects `instance=launching`; this surface read `running`). (2) The record is right:
+// the durable semantic store's last write was 04:34:36 (attempt 1's clean `runtime_torn_down`) and holds no enter for
+// generation 2, so the refusal came at or before `prepareEnter`, and the Mod's own log shows the state really was
+// unknown - at 04:35:01 it had already bound the native AI Farmhand (`formal_attachment=True`) while the Host had
+// published no attachment, so a second press would have published a second signed manifest into that save. (3) What is
+// wrong is what a reader can see: the leaf refusal was written nowhere durable - not the owner record, not the store,
+// not the Host's stderr - and the panel's sentence sends the player to a page reload that cannot release the held
+// registration pointer (release is the Host-boot `reconcileHeldBootstrapRegistration`, and the recovery opener refuses
+// a terminal record). So a later reader must not read this run as an attach bug: it is an attach that refused AFTER the
+// world had bound the companion, and the seam now writes that refusal to the Host's stderr
+// (`GameBuddy Stardew cabin handoff failed: <chain>`), so the next run of this driver can name the leaf from
+// `state/entry-stderr.log` instead of inferring it.
+//
 // SO THE ESCAPE IS STILL ITS OWN NAMED PRESS. When the panel's staging step is not there and its attachment
 // release is, this driver presses that release ONCE, records it as `release_attachment` beside the staging
 // presses, and says what it was. It is the player's panic escape, not the product's answer: a run that reached

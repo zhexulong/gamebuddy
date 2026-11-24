@@ -886,19 +886,23 @@ function containedRoleLaunchRefusal(
 }
 
 /**
- * One operator line naming a Player Host launch failure and every cause behind it.
+ * One operator line naming a failure and every cause behind it.
  *
- * The wrapper (`stardew_player_host_launch_failed`) is the word the surface says, and the wire's
- * bounded-cause projection reads at most one token off this chain. A failure that names no bounded
- * token - an OS error, a path, a transport's own prose - must not cross that boundary at all, so
- * the chain is written down here instead. The Host's operator log is the entry's stderr, which a
+ * The wrapper is the word the surface says, and the wire's bounded-cause projection reads at most one token off this
+ * chain. A failure that names no bounded token - an OS error, a path, a transport's own prose - must not cross that
+ * boundary at all, so the chain is written down here instead. The Host's operator log is the entry's stderr, which a
  * launched run keeps beside its own root (`<stage>/state/entry-stderr.log`).
+ *
+ * Two callers, one spelling: the Player Host launch and the cabin press both fail through a deep chain whose leaf is
+ * the only thing that tells one refusal from another, and neither leaf is durable anywhere else. The cabin press had
+ * no such line at all, which is why the attempt generation 2 quarantined at 04:35:02 could not be attributed from the
+ * attempt's own record, the durable store, the Mod's log or the Host's stderr (`.tmp/lane-quarantinewhy.md`).
  */
-const PLAYER_HOST_LAUNCH_FAILURE_CHAIN_DEPTH = 6;
-function playerHostLaunchFailureLine(error: unknown): string {
+const FAILURE_CHAIN_DEPTH = 6;
+function failureChainLine(error: unknown): string {
   const messages: string[] = [];
   let current: unknown = error;
-  for (let depth = 0; depth < PLAYER_HOST_LAUNCH_FAILURE_CHAIN_DEPTH && current instanceof Error; depth += 1) {
+  for (let depth = 0; depth < FAILURE_CHAIN_DEPTH && current instanceof Error; depth += 1) {
     messages.push(current.message);
     current = current.cause;
   }
@@ -2037,7 +2041,7 @@ function createCoordinator(
         launchPromise = undefined;
         transition("staged");
       }
-      console.error(`GameBuddy Stardew Player Host launch failed: ${playerHostLaunchFailureLine(error)}`);
+      console.error(`GameBuddy Stardew Player Host launch failed: ${failureChainLine(error)}`);
       throw new Error("stardew_player_host_launch_failed", { cause: error });
     }
   };
@@ -2616,6 +2620,10 @@ function createCoordinator(
           return Object.freeze({ apiVersion: 1 as const, status: "manifest_admitted" as const });
         })
         .catch(async (error: unknown) => {
+          // Written before the classification below, because the leaf this line names is the only copy of the reason
+          // that exists: the confirm answer is not durable, the owner record has no field for it, and the surface keeps
+          // only the wrapper's own name (`stardew_cabin_publication_uncertain`). See `failureChainLine`.
+          console.error(`GameBuddy Stardew cabin handoff failed: ${failureChainLine(error)}`);
           // A wait that ran out proves nothing bad. Quarantine is the durable "this attempt's native
           // state is unknown" terminal - nothing may be opened, recovered or ordinarily closed over
           // it - and it is reachable only from a failure of an operation that really ran. On an

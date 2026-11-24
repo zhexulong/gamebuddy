@@ -303,6 +303,61 @@ test("manifest-admitted semantic Game enter failure is one-shot uncertain and cl
   assert.equal(closeCalls, 1);
 });
 
+test("a cabin press that failed after the manifest was admitted names its refusal in the Host's log", async () => {
+  // Measured 2026-11-24 (`.tmp/lane-gen2close.md` section 4, stage `C:/gb-lanes/gen2close`): the retry's cabin
+  // press admitted the signed manifest at 04:34:50, the ai-client said `hello` and answered an `observe_request` at
+  // 04:35:01, and the attempt's own record was quarantined / `retry_required` at 04:35:02 - with the refusal that
+  // caused it written down NOWHERE. The owner record has no field for it, the confirm answer is not durable, the
+  // Game surface keeps only the wrapper's own name, and this path printed nothing at all, so the one fact the next
+  // reader needs (which of the composer's or the runtime's questions refused) went with the process.
+  //
+  // The launch's failure line is the shape this path was missing: an unbounded reason may never cross the wire, and
+  // it must not be lost either ("a Player Host launch that fails with an OS message keeps the wrapper on the wire and
+  // the text in the Host's log").
+  const logged: string[] = [];
+  const realConsoleError = console.error;
+  console.error = ((...parts: unknown[]) => {
+    logged.push(parts.map((part) => String(part)).join(" "));
+  }) as typeof console.error;
+  try {
+    const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000, {
+      overrides: {
+        connectFarmhandGameRuntimeFacade: async () => {
+          throw new Error("bridge_runtime_attestation_mismatch");
+        },
+      },
+    });
+    try {
+      const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+      const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(
+        fixture.broker.issue("cabin_confirm"),
+        {
+          apiVersion: 1 as const,
+          choiceHandle: choices.choices[0]!.choiceHandle,
+          idempotencyKey: "quarantine-reason-key",
+          confirmed: true as const,
+        },
+      );
+      const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+      await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[0]!);
+      await assert.rejects(confirmation, /stardew_cabin_publication_uncertain/);
+      assert.equal((await ownerRecord(fixture.runtimeRoot)).state, "quarantined");
+      assert.equal(
+        logged.some((line) =>
+          line.includes("GameBuddy Stardew cabin handoff failed: bridge_runtime_attestation_mismatch"),
+        ),
+        true,
+        `the refusal behind the quarantine was dropped instead of written to the Host's own log: ${JSON.stringify(logged)}`,
+      );
+    } finally {
+      await fixture.coordinator.close();
+      await fixture.broker.close();
+    }
+  } finally {
+    console.error = realConsoleError;
+  }
+});
+
 test("dynamic cabin confirmation rejects cross-session, expiry, stale revision, conflicts, and closes fail-closed", async () => {
   const fixture = await prepareCabinCoordinator();
   const foreignBroker = await createAdmissionBroker();
