@@ -39,6 +39,7 @@ public sealed partial class ModEntry
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null) || !Game1.game1.parseDebugInput("SpreadDirt", null))
                 throw new InvalidOperationException("fixture_native_empty_dirt_command_unavailable");
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
         finally
         {

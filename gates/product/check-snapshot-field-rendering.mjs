@@ -227,7 +227,6 @@ export const RENDERING_EXEMPTIONS = Object.freeze({
   },
   fixedInteractionPointsOmitted: { reason: TRUNCATION_COUNT_REASON, owedBy: "host/src/fact-brief.ts" },
   soilTilesOmitted: { reason: TRUNCATION_COUNT_REASON, owedBy: "host/src/fact-brief.ts" },
-  farmBuildingTargetsOmitted: { reason: TRUNCATION_COUNT_REASON, owedBy: "host/src/fact-brief.ts" },
   seedSupplyTargetsOmitted: { reason: TRUNCATION_COUNT_REASON, owedBy: "host/src/fact-brief.ts" },
   discoveryExclusionsOmitted: {
     reason:

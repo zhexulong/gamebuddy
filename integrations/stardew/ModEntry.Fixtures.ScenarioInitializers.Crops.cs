@@ -231,6 +231,9 @@ public sealed partial class ModEntry
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null) || !Game1.game1.parseDebugInput("SpreadDirt", null))
                 throw new InvalidOperationException("fixture_native_local_empty_dirt_command_unavailable");
+            // The debug spread tills a building's stone doorstep as readily as the field; the paving is taken back out
+            // before anything counts or plants on the dirt this fixture just made.
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
             // The actual Farmer remains in FarmHouse until the
             // separately receipted travel prerequisite. Do not call
             // canPlantThisSeedHere here: target-version evaluates it
@@ -326,6 +329,8 @@ public sealed partial class ModEntry
             Game1.currentLocation = farm;
             if (!Game1.game1.parseDebugInput("RemoveDirt", null) || !Game1.game1.parseDebugInput("SpreadDirt", null))
                 throw new InvalidOperationException("fixture_native_local_fertilizer_dirt_command_unavailable");
+            // A fertilized doorstep is the same lie as a planted one: the paving is taken back out of the world first.
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
             eligibleDirtCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
                 && dirt.crop is null
                 && dirt.CanApplyFertilizer(fertilizerId)
@@ -351,6 +356,9 @@ public sealed partial class ModEntry
             || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 6", null))
                 throw new InvalidOperationException("fixture_native_local_harvest_crop_setup_unavailable");
+            // THE RIPE CROP ON THE DOORSTEP GOES FIRST, and this is the ladder where that order is load-bearing: the
+            // spread has already grown a crop on the paving, so the cleanup detaches the crop and then removes the dirt.
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
         finally { Game1.currentLocation = harvestSetupPreviousLocation; }
         KeyValuePair<Vector2, StardewValley.TerrainFeatures.HoeDirt>? selected = farm.terrainFeatures.Pairs
@@ -395,6 +403,7 @@ public sealed partial class ModEntry
             || !Game1.game1.parseDebugInput("SpreadSeeds 472", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 6", null))
                 throw new InvalidOperationException("fixture_native_local_harvest_full_bag_setup_unavailable");
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
         finally { Game1.currentLocation = fullBagSetupPreviousLocation; }
 
@@ -734,6 +743,9 @@ public sealed partial class ModEntry
         const string scytheId = "(W)47";
         (Vector2 TargetTile, Vector2 StandingTile)? spot = FindNativeLocalScytheCropFixtureSpot(farm);
         if (spot is null) throw new InvalidOperationException("fixture_native_local_scythe_crop_target_missing");
+        // A HAND-MADE `HoeDirt` goes only where the world calls the ground soil: a building's doorstep is paved ground and
+        // the search that chose this spot never asked.
+        FixtureGround.RequireSoil(farm, (int)spot.Value.TargetTile.X, (int)spot.Value.TargetTile.Y);
         StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(spot.Value.TargetTile, out var maybeDirt)
             ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
             : new StardewValley.TerrainFeatures.HoeDirt();
@@ -858,6 +870,9 @@ public sealed partial class ModEntry
                 throw new InvalidOperationException("fixture_native_spread_seeds_command_unavailable");
         }
         finally { Game1.currentLocation = emptyCanSetupPreviousLocation; }
+        // The spread has just grown a crop on every diggable tile, the paving included; the doorstep crop and its dirt go
+        // before the single dry crop is chosen.
+        this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
 
         if (CountDryCrops(farm) == 0)
             throw new InvalidOperationException("fixture_native_local_water_crop_empty_can_unwatered_crop_missing");
@@ -906,6 +921,7 @@ public sealed partial class ModEntry
                 throw new InvalidOperationException("fixture_native_spread_seeds_command_unavailable");
         }
         finally { Game1.currentLocation = cropSetupPreviousLocation; }
+        this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         int dryCropCount = farm.terrainFeatures.Pairs.Count(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null } dirt
             && dirt.needsWatering() && !dirt.isWatered());
         if (dryCropCount == 0)

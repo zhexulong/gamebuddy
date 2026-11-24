@@ -87,13 +87,14 @@ export function readDeliveredBubbles(pieces) {
   return Object.freeze({ examined: list.length, refused: Object.freeze(refused) });
 }
 
-/** One committed piece as a bubble: its text, where it sits, and the refusal its own text earns (or none). */
+/** One committed piece as a bubble: its text, where it sits, when it landed, and the refusal its own text earns (or none). */
 function readBubble(piece, fallbackIndex) {
   const text = lineOf(piece);
   const locale = typeof piece === "string" ? null : (piece?.locale ?? null);
   return {
     index: Number.isInteger(piece?.index) ? piece.index : fallbackIndex,
     text,
+    atMs: Number.isFinite(piece?.atMs) ? piece.atMs : null,
     code: text.length === 0 ? null : bubbleFragment(text, locale),
   };
 }
@@ -110,6 +111,11 @@ function readBubble(piece, fallbackIndex) {
  * bubble carrying a fragment is not read as speech by any of them. Nothing is lost by that: its text is still in
  * `presentation.pieces`, the code names the piece by index and its first 20 characters, and `refusedBubbles` keeps the
  * turn's count in the population the run presented - `analysis/self-record.mjs` adds the two back together.
+ *
+ * `spokenAtMs` IS THE SAME POPULATION'S CLOCK, line for line: the moment the player was shown each line, from the piece's
+ * own `atMs` (`./presentation-piece-time.mjs`). It is published beside the lines rather than inside them so a reading that
+ * quotes a commitment can date it without holding the presentation population itself - the promise ledger names the hour
+ * she promised at, and `null` where a piece carried no clock is "nobody recorded when", never zero.
  */
 export function attributeTurnSpeech(turns, pieces) {
   const list = Array.isArray(turns) ? turns : [];
@@ -123,12 +129,14 @@ export function attributeTurnSpeech(turns, pieces) {
     // the player was shown (`presentation.pieces` holds its text), so it is NAMED here rather than deleted from the
     // count - `analysis/self-record.mjs` adds the two back together against the run's own `presented` lines.
     const read = committed.slice(from, to).map((piece, offset) => readBubble(piece, from + offset));
+    const spoken = read.filter((bubble) => bubble.text.length > 0 && bubble.code === null);
     return Object.freeze({
       ...turn,
       spokenFromIndex: from,
       spokenToIndex: to,
-      spokenLines: Object.freeze(
-        read.filter((bubble) => bubble.text.length > 0 && bubble.code === null).map((bubble) => bubble.text),
+      spokenLines: Object.freeze(spoken.map((bubble) => bubble.text)),
+      spokenAtMs: Object.freeze(
+        spoken.map((bubble) => (Number.isFinite(bubble.atMs) ? bubble.atMs : null)),
       ),
       refusedBubbles: Object.freeze(
         read.filter((bubble) => bubble.code !== null).map((bubble) => Object.freeze({ index: bubble.index, code: bubble.code })),

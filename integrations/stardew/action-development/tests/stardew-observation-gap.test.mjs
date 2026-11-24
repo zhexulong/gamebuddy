@@ -18,8 +18,14 @@ import {
   publishedRowFields,
   publishedSnapshotSurface,
   reconcile,
+  sceneBuildings,
+  sceneLegality,
+  scenePaving,
+  sceneTileVocabulary,
   snapshotParameterOrder,
   tileChannelCoverage,
+  tileQuestionVocabulary,
+  tileTripleId,
   writeObservationSummary,
 } from "../src/analysis/stardew-action-inventory-reconciliation.mjs";
 import { parseDiscoveries } from "../src/analysis/stardew-mod-csharp-source.mjs";
@@ -184,6 +190,9 @@ function observe(overrides = {}) {
     baseline: EMPTY_BASELINE,
     targetField: { place_owned_object: "WorldObjectTargets" },
     consumption: CONSUMPTION_FIXTURE,
+    // The fixture engine is a three-member subset of the real file, so the draw-order declarations the real tree
+    // records would all read as stale against it. An empty table is the fixture's own statement about its engine.
+    sceneWithheld: Object.freeze({}),
     ...overrides,
   });
 }
@@ -453,7 +462,9 @@ test("a handler mutation no published row carries is reported, and the ratchet r
   );
 
   const reported = observe({ sources });
-  assert.deepEqual(reported.findings.map((finding) => finding.code), [
+  assert.deepEqual(
+    reported.findings.filter((finding) => !finding.kind.startsWith("scene_")).map((finding) => finding.code),
+    [
     "collection_never_read:buildings",
     "collection_never_read:furniture",
     "collection_never_read:animals",
@@ -462,7 +473,8 @@ test("a handler mutation no published row carries is reported, and the ratchet r
     "tile_channel_never_read:TouchAction",
     "tile_channel_never_read:Buildings",
     "mutation_not_observable:rotate_furniture:rotation",
-  ]);
+    ],
+  );
 
   const baselined = observe({
     sources,
@@ -1676,4 +1688,488 @@ test("the field-level section on the real tree: every decision read is a row fie
     [],
     "an equality in both directions: a fixed row reports nothing, and a new gap has to be read rather than absorbed",
   );
+});
+
+/* ------------------------------------------------------------------------------------------------ *
+ * I-L - the SCENE layer.
+ *
+ * Everything above asks about a population of PUBLISHED facts, so "a whole kind of fact was never published" cannot be
+ * a finding there. These cases hold each new section to its own population: the engine's, not ours.
+ * ------------------------------------------------------------------------------------------------ */
+
+const SCENE_GAME_LOCATION = `
+public class GameLocation
+{
+	public bool isWaterTile(int x, int y)
+	{
+		return doesTileHaveProperty(x, y, "Water", "Back") != null;
+	}
+
+	public void playTerrainSound(Vector2 tile)
+	{
+		switch (doesTileHaveProperty((int)tile.X, (int)tile.Y, "Type", "Back"))
+		{
+		case "Dirt":
+			break;
+		case "Stone":
+			break;
+		}
+	}
+
+	public bool Probe(int x, int y)
+	{
+		return hasTileAt(x, y, "Buildings") || doesTileHaveProperty(x, y, "Diggable", "Back") != null;
+	}
+
+	public string? Ground(Vector2 tile)
+	{
+		if (terrainFeatures.TryGetValue(tile, out TerrainFeature value) && value is Flooring)
+		{
+			return "path";
+		}
+		return null;
+	}
+
+	public bool makeHoeDirt(Vector2 tile)
+	{
+		if (doesTileHaveProperty((int)tile.X, (int)tile.Y, "Diggable", "Back") != null)
+		{
+			return true;
+		}
+		return false;
+	}
+}
+`;
+
+const SCENE_BUILDING = `
+public class Building
+{
+	public readonly NetString buildingType = new NetString();
+	public int tileX;
+	public int tileY;
+	public int tilesWide;
+	public int tilesHigh;
+
+	public virtual bool doesTileHaveProperty(int tile_x, int tile_y, string property_name, string layer_name, ref string property_value)
+	{
+		return false;
+	}
+
+	public Point getPointForHumanDoor()
+	{
+		return new Point(0, 0);
+	}
+}
+`;
+
+const SCENE_SOIL = `
+public class HoeDirt
+{
+	public bool isWatered()
+	{
+		return watered;
+	}
+
+	public bool CanApplyFertilizer(Item item)
+	{
+		return false;
+	}
+
+	public bool readyForHarvest()
+	{
+		return false;
+	}
+
+	public readonly NetString Location = new NetString();
+}
+`;
+
+const SCENE_DECOMPILED = Object.freeze({
+  "GameLocation.cs": SCENE_GAME_LOCATION,
+  "Building.cs": SCENE_BUILDING,
+  "HoeDirt.cs": SCENE_SOIL,
+  "GreenhouseBuilding.cs": "",
+});
+
+test("the tile vocabulary is the engine's own questions, and a value is one the engine's switch distinguishes", () => {
+  const vocabulary = tileQuestionVocabulary({ decompiled: { "GameLocation.cs": SCENE_GAME_LOCATION } });
+
+  assert.deepEqual(
+    vocabulary.triples.map(tileTripleId),
+    ["back.diggable", "back.type=dirt", "back.type=stone", "back.water", "buildings"],
+    "the population is what GameLocation.cs asks, including the case labels of a switch on one of those questions",
+  );
+  // The engine asks `Water`/`Back` only inside `isWaterTile`, so a producer that calls the helper HAS asked it. Without
+  // this, the only alternative is publishing the literal name, and a helper-mediated read would stay invisible.
+  assert.deepEqual(vocabulary.helpers.get("back.water"), ["isWaterTile"]);
+});
+
+test("a triple no producer asks is a finding named after the fact; a declared one is not, and it expires", () => {
+  const sources = fixture([
+    `    private static bool IsWater(GameLocation location) => location.isWaterTile(0, 0);`,
+    `    private static bool HasBuilt(GameLocation location) => location.hasTileAt(0, 0, "Buildings");`,
+  ]);
+  const scene = sceneTileVocabulary({ decompiled: SCENE_DECOMPILED, sources, withheld: {} });
+
+  assert.deepEqual(scene.asked.sort(), ["back.water", "buildings"], "the helper call and the literal layer read");
+  assert.deepEqual(
+    scene.undecided,
+    ["back.diggable", "back.type=dirt", "back.type=stone"],
+    "nothing asks the engine whether the tile is diggable, and nothing asks for the map's ground word",
+  );
+  assert.deepEqual(scene.findings.map((finding) => finding.code), [
+    "scene_tile_undecided:back.diggable",
+    "scene_tile_undecided:back.type=dirt",
+    "scene_tile_undecided:back.type=stone",
+  ]);
+  assert.equal(scene.findings[0].kind, "scene_tile");
+  assert.equal(
+    scene.findings[0].id,
+    null,
+    "a triple nobody decided cannot be baselined away - the decision is what the finding asks for",
+  );
+
+  const declared = sceneTileVocabulary({
+    decompiled: SCENE_DECOMPILED,
+    sources,
+    withheld: { "back.diggable": "measured: no action reads the map's own tilling flag", "back.nofishing": "gone" },
+  });
+  assert.deepEqual(declared.findings.map((finding) => finding.code), [
+    "scene_tile_undecided:back.type=dirt",
+    "scene_tile_undecided:back.type=stone",
+    "stale_scene_withheld_tile:back.nofishing",
+  ]);
+
+  // The declaration expires the moment a producer asks the question, which is what keeps the table from becoming a list
+  // of things nobody has to do.
+  const askedNow = sceneTileVocabulary({
+    decompiled: SCENE_DECOMPILED,
+    sources: fixture([`    private static string? Diggable(GameLocation location) => location.doesTileHaveProperty(0, 0, "Diggable", "Back");`]),
+    withheld: { "back.diggable": "measured: no action reads the map's own tilling flag" },
+  });
+  assert.ok(askedNow.findings.some((finding) => finding.code === "stale_scene_withheld_tile:back.diggable"));
+
+  // A declaration with no reason is not a decision: it is the shape silence takes once writing it down is legal, so the
+  // question stays undecided and the finding still asks for the reason.
+  const reasonless = sceneTileVocabulary({ decompiled: SCENE_DECOMPILED, sources, withheld: { "back.diggable": "  " } });
+  assert.ok(reasonless.undecided.includes("back.diggable"), JSON.stringify(reasonless.undecided));
+  assert.ok(reasonless.findings.some((finding) => finding.code === "scene_tile_undecided:back.diggable"));
+});
+
+const BUILDING_MODELS = `
+public sealed record BridgeSnapshot(
+    IReadOnlyList<BridgeFarmBuildingTarget>? FarmBuildingTargets = null
+);
+
+public sealed record BridgeFarmBuildingTarget(string TargetId, int X, int Y, int W, int H, string BuildingType);
+`;
+
+const BUILDING_SCHEMA = Object.freeze({
+  $defs: {
+    snapshot: { properties: { farmBuildingTargets: { type: "array", items: { $ref: "#/$defs/farmBuildingTarget" } } } },
+    farmBuildingTarget: { properties: { targetId: {}, x: {}, y: {}, w: {}, h: {}, buildingType: {} } },
+  },
+});
+
+test("a building fact is readable only if the per-turn text or a projection prints the family carrying it", () => {
+  const readable = sceneBuildings({
+    decompiled: SCENE_DECOMPILED,
+    schema: BUILDING_SCHEMA,
+    perTurnFields: new Set(["farmBuildingTargets"]),
+  });
+  assert.deepEqual(
+    readable.rows.map((row) => [row.id, row.carriers, row.readable]),
+    [
+      ["footprint_origin", ["farmBuildingTargets"], ["farmBuildingTargets"]],
+      ["footprint_extent", ["farmBuildingTargets"], ["farmBuildingTargets"]],
+      ["human_door", [], []],
+      ["own_tile_answer", [], []],
+    ],
+  );
+  assert.deepEqual(readable.findings.map((finding) => finding.code), [
+    "scene_building_fact_unpublished:human_door",
+    "scene_building_fact_unpublished:own_tile_answer",
+  ]);
+  assert.equal(readable.counts.readable, 2);
+
+  // THE FIRST INSTANCE, replayed: with no renderer naming the family - the state measured `round98` - the footprint is
+  // published and unreadable, and the finding says which family and which fact rather than opening a new question.
+  const unread = sceneBuildings({ decompiled: SCENE_DECOMPILED, schema: BUILDING_SCHEMA });
+  assert.deepEqual(unread.findings.map((finding) => finding.code), [
+    "scene_building_fact_unread:farmBuildingTargets:footprint_origin",
+    "scene_building_fact_unread:farmBuildingTargets:footprint_extent",
+    "scene_building_fact_unpublished:human_door",
+    "scene_building_fact_unpublished:own_tile_answer",
+  ]);
+  assert.match(unread.findings[0].detail, /farmBuildingTargets is the first instance/u);
+  assert.equal(unread.counts.unread, 2);
+});
+
+test("a building fact the engine no longer declares is named instead of being reported as covered", () => {
+  const drifted = sceneBuildings({
+    decompiled: { ...SCENE_DECOMPILED, "Building.cs": "public class Building { }" },
+    schema: BUILDING_SCHEMA,
+    perTurnFields: new Set(["farmBuildingTargets"]),
+  });
+  assert.ok(drifted.findings.some((finding) => finding.code === "scene_building_fact_not_in_engine:footprint_origin"));
+  assert.ok(drifted.findings.some((finding) => finding.code === "scene_building_fact_not_in_engine:human_door"));
+});
+
+const SOIL_SCHEMA = Object.freeze({
+  $defs: {
+    snapshot: {
+      properties: {
+        soilTiles: { type: "array", items: { $ref: "#/$defs/soilTile" } },
+        machineTargets: { type: "array", items: { $ref: "#/$defs/machineTarget" } },
+      },
+    },
+    soilTile: { properties: { x: {}, y: {}, hoeDirt: {}, surface: {}, surfaceOwner: {} } },
+    machineTarget: { properties: { x: {}, y: {}, readyForHarvest: {} } },
+  },
+});
+
+const SOIL_FROM_THE_GROUND = `    private static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player)
+    {
+        return player.currentLocation.terrainFeatures.Pairs.Select(pair => new BridgeSoilTile(0, 0, true, 0, 0, 1, 1, "soil")).ToArray();
+    }`;
+
+const MACHINE_FROM_OBJECTS = `    private static IReadOnlyList<BridgeMachineTarget> DiscoverMachineTargets(Farmer player)
+    {
+        return player.currentLocation.objects.Pairs.Select(pair => new BridgeMachineTarget("id", 0, 0, "(BC)12", "Furnace", true, 0, null, null, null, null, null, null, true)).ToArray();
+    }`;
+
+const GROUND_READER = `    private static string? Ground(GameLocation location, Building building, int x, int y)
+    {
+        if (location.terrainFeatures.TryGetValue(new Vector2(x, y), out TerrainFeature? feature) && feature is Flooring)
+            return "path";
+        string value = "";
+        if (building.doesTileHaveProperty(x, y, "Type", "Back", ref value)) return value;
+        if (location.doesTileHaveProperty(x, y, "Type", "Back") is { Length: > 0 } word) return word;
+        return location.hasTileAt(x, y, "Buildings") ? "built" : null;
+    }`;
+
+test("a tilled-tile row that says nothing about the ground cannot be told from an ordinary field tile", () => {
+  const sources = fixture([SOIL_FROM_THE_GROUND, MACHINE_FROM_OBJECTS, GROUND_READER]);
+  const withSurface = scenePaving({ decompiled: SCENE_DECOMPILED, schema: SOIL_SCHEMA, sources });
+
+  assert.deepEqual(
+    withSurface.rows.map((row) => [row.family, row.states, row.distinguishable]),
+    [["soilTiles", ["hoeDirt"], true]],
+    "the machine row states `readyForHarvest` too, and it is not a soil row: its discovery reads objects",
+  );
+  assert.deepEqual(withSurface.notFromTheGround.map((row) => row.family), ["machineTargets"]);
+  assert.deepEqual(withSurface.findings.map((finding) => finding.code), []);
+  assert.deepEqual(withSurface.counts, {
+    routes: 4,
+    routesAnswered: 4,
+    soilRows: 1,
+    distinguishable: 1,
+    indistinguishable: 0,
+    notFromTheGround: 1,
+  });
+
+  // The row that said `hoeDirt: true` and nothing else - the greenhouse's doorstep, measured `round98`.
+  const withoutSurface = scenePaving({ decompiled: SCENE_DECOMPILED, schema: SOIL_SCHEMA, sources });
+  const bare = scenePaving({
+    decompiled: SCENE_DECOMPILED,
+    sources,
+    schema: {
+      $defs: {
+        ...SOIL_SCHEMA.$defs,
+        soilTile: { properties: { x: {}, y: {}, hoeDirt: {} } },
+      },
+    },
+  });
+  assert.equal(withoutSurface.counts.indistinguishable, 0);
+  assert.deepEqual(bare.rows.map((row) => [row.family, row.distinguishable]), [["soilTiles", false]]);
+  assert.deepEqual(bare.findings.map((finding) => finding.code), ["scene_row_cannot_tell_paved_from_soil:soilTiles"]);
+  assert.match(bare.findings[0].detail, /neither surface nor surfaceOwner/u);
+});
+
+test("a ground route nothing asks is named, and a route the engine lost is named", () => {
+  const unasked = scenePaving({ decompiled: SCENE_DECOMPILED, schema: SOIL_SCHEMA, sources: fixture([SOIL_FROM_THE_GROUND]) });
+  assert.deepEqual(
+    unasked.routes.filter((route) => route.askedBy === 0).map((route) => route.id).sort(),
+    ["back_type", "building_type", "buildings_layer", "flooring"],
+    "the soil discovery reads terrainFeatures, and no route is asked by its body",
+  );
+  assert.ok(unasked.findings.some((finding) => finding.code === "scene_paving_route_unread:building_type"));
+
+  const drifted = scenePaving({
+    decompiled: { ...SCENE_DECOMPILED, "Building.cs": "public class Building { }" },
+    schema: SOIL_SCHEMA,
+    sources: fixture([SOIL_FROM_THE_GROUND]),
+  });
+  assert.ok(drifted.findings.some((finding) => finding.code === "scene_paving_route_not_in_engine:building_type"));
+});
+
+/**
+ * L's falsifier is the pre-fix fixture shape, verbatim from the defect: `SpreadDirt` handed the farm a `HoeDirt` at a
+ * tile it had chosen, and nothing in the block asked the engine whether that tile is diggable. The greenhouse's stone
+ * doorstep is such a tile, and the companion then harvested a ripe cauliflower out of a doorway.
+ */
+const PREF_FIX_SPREAD_DIRT = `internal sealed partial class FixtureSetup
+{
+    private static void SpreadDirt(GameLocation location, Vector2 tile)
+    {
+        location.terrainFeatures[tile] = new StardewValley.TerrainFeatures.HoeDirt();
+        location.terrainFeatures[tile].state.Value = 1;
+    }
+}
+`;
+
+const GUARDED_SPREAD_DIRT = `internal sealed partial class FixtureSetup
+{
+    private static void SpreadDirt(GameLocation location, Vector2 tile)
+    {
+        FixtureGround.RequireSoil(location, (int)tile.X, (int)tile.Y);
+        location.terrainFeatures[tile] = new StardewValley.TerrainFeatures.HoeDirt();
+    }
+}
+`;
+
+test("a hand-made tilled tile that never asks the engine's admission is a world state the engine could not make", () => {
+  const unguarded = sceneLegality({ decompiled: SCENE_DECOMPILED, sources: fixture([PREF_FIX_SPREAD_DIRT]) });
+  assert.deepEqual(unguarded.sites.map((site) => [site.rule, site.guardedBy]), [
+    ["hoeDirt_requires_makeHoeDirt_admission", null],
+  ]);
+  assert.deepEqual(unguarded.findings.map((finding) => finding.code), [
+    "observed_state_the_engine_could_not_have_made:integrations/stardew/farmhandexecutioncontroller.fixture.cs:7:hoeDirt_requires_makeHoeDirt_admission",
+  ]);
+  assert.match(unguarded.findings[0].detail, /makeHoeDirt/u, "the finding names the engine rule it bypassed");
+  assert.equal(unguarded.findings[0].kind, "scene_legality");
+
+  const guarded = sceneLegality({ decompiled: SCENE_DECOMPILED, sources: fixture([GUARDED_SPREAD_DIRT]) });
+  assert.deepEqual(guarded.findings, []);
+  assert.equal(guarded.counts.guarded, 1);
+
+  // The rule itself is checked against the engine: a decompiled map with no `makeHoeDirt` means the rule has expired,
+  // and a legality section that kept judging sites against a rule the engine no longer enforces is worse than none.
+  const drifted = sceneLegality({
+    decompiled: { ...SCENE_DECOMPILED, "GameLocation.cs": "public class GameLocation { }" },
+    sources: fixture([GUARDED_SPREAD_DIRT]),
+  });
+  assert.deepEqual(drifted.findings.map((finding) => finding.code), [
+    "scene_legality_rule_not_in_engine:hoeDirt_requires_makeHoeDirt_admission",
+  ]);
+});
+
+test("a scene section without its engine source is blocked, never green", () => {
+  const report = observe({ decompiled: { ...DECOMPILED, "GameLocation.cs": SCENE_GAME_LOCATION } });
+
+  assert.ok(report.scene.blocked.includes("buildings:Building.cs"), JSON.stringify(report.scene.blocked));
+  assert.ok(report.scene.blocked.includes("paving:Building.cs"), JSON.stringify(report.scene.blocked));
+  // The soil half has its own file, so a checkout with Building.cs and no HoeDirt.cs blocks K on the SECOND source.
+  const withoutSoil = observe({
+    decompiled: { ...DECOMPILED, "GameLocation.cs": SCENE_GAME_LOCATION, "Building.cs": SCENE_BUILDING },
+  });
+  assert.ok(withoutSoil.scene.blocked.includes("paving:HoeDirt.cs"), JSON.stringify(withoutSoil.scene.blocked));
+  assert.equal(withoutSoil.scene.paving.measured, false);
+  assert.equal(report.scene.buildings.measured, false);
+  assert.deepEqual(report.scene.buildings.findings, [], "a section that measured nothing reports no verdict either");
+  assert.equal(report.ok, false, "the report fails rather than passing on an empty population");
+  assert.ok(
+    report.scene.tileVocabulary.measured,
+    "the sections are independent: the map vocabulary was measurable from the one file present",
+  );
+});
+
+test("the scene layer on the real tree: the engine's own questions, and the reds it produces today", () => {
+  const report = observeActionGaps({});
+  assert.deepEqual(report.scene.blocked, [], "every scene section measured: the decompiled tree is here");
+
+  // I - 27 questions the engine asks of a map: 17 asked by a producer, 10 declared withheld, 0 undecided. The five the
+  // audit found undecided (back.lockeddoormessage, back.nofurniture, back.spawnable, back.treasure,
+  // buildings.passable) were each decided by hand in SCENE_WITHHELD_TILES, and this asserts they carry a reason rather
+  // than only that the count moved.
+  const vocabulary = report.scene.tileVocabulary;
+  assert.equal(vocabulary.rows.length, 27);
+  assert.equal(vocabulary.asked.length, 17);
+  assert.equal(vocabulary.withheld.length, 10);
+  assert.deepEqual(
+    vocabulary.undecided,
+    [],
+    "no engine question about a map tile is left for nobody to answer: each is asked by a producer or declared withheld with the fact that makes it not a scene fact",
+  );
+  for (const id of [
+    "back.lockeddoormessage",
+    "back.nofurniture",
+    "back.spawnable",
+    "back.treasure",
+    "buildings.passable",
+  ]) {
+    const decided = vocabulary.rows.find((row) => row.id === id);
+    assert.ok(decided !== undefined, `${id} is in the population`);
+    assert.ok(decided.withheld !== null, `${id} is decided`);
+    assert.ok(decided.withheld.trim().length > 0, `${id} carries the reason it was withheld`);
+  }
+  // The values are the engine's ground switch, and `Type` is served by the one reader that asks it.
+  assert.ok(vocabulary.population.includes("back.type=stone"), vocabulary.population.join(", "));
+  assert.ok(vocabulary.population.includes("back.type=wood"));
+  const groundWord = vocabulary.rows.find((row) => row.id === "back.type=stone");
+  assert.ok(groundWord.askedBy >= 1, "the map's ground word is asked by a producer");
+  assert.ok(groundWord.readers.some((reader) => reader.endsWith("GroundSurface.cs")), groundWord.readers.join(", "));
+  assert.equal(vocabulary.unparsed.length, 11, "calls with a computed layer are counted, not silently dropped");
+
+  // J - four engine building facts, and all four are carried by a building row AND printed without an observe. The two
+  // that were red when this section was written are the two `round98` put in front of her: the door at `28,15` that the
+  // line printed as `没有门`, and the stone step its own tile data claims while the map under it says `Diggable`.
+  const buildings = report.scene.buildings;
+  assert.deepEqual(buildings.counts, { facts: 4, carried: 4, readable: 4, unpublished: 0, unread: 0 });
+  assert.deepEqual(
+    buildings.rows.filter((row) => row.carriers.length === 0).map((row) => row.id),
+    [],
+    "every building fact the engine answers has a field on the row it would reach her through",
+  );
+  for (const row of buildings.rows)
+    assert.ok(
+      row.carriers.includes("farmBuildingTargets") && row.readable.includes("farmBuildingTargets"),
+      `${row.id} is carried and printed by farmBuildingTargets: ${JSON.stringify(row)}`,
+    );
+
+  // K - every ground route is asked, and every one of the eight tilled-tile rows says which ground it is about: the
+  // surface is the SAME reading on all of them, because a second spelling of "is this paved" is the defect the round98
+  // fix removed (the six that read as field tiles - a crop, a pick, a scythe crop, a fertilizer, a clear, a dug spot - were
+  // `scene_row_cannot_tell_paved_from_soil` until the SoilTile/SeedTarget pair became the rule rather than the exception).
+  const paving = report.scene.paving;
+  assert.deepEqual(paving.counts, {
+    routes: 4,
+    routesAnswered: 4,
+    soilRows: 8,
+    distinguishable: 8,
+    indistinguishable: 0,
+    notFromTheGround: 1,
+  });
+  assert.deepEqual(
+    paving.rows.map((row) => [row.family, row.ground]),
+    [
+      ["artifactSpotResultTargets", ["surface", "surfaceOwner"]],
+      ["clearHoeDirtTargets", ["surface", "surfaceOwner"]],
+      ["cropTargets", ["surface", "surfaceOwner"]],
+      ["fertilizerTargets", ["surface", "surfaceOwner"]],
+      ["harvestTargets", ["surface", "surfaceOwner"]],
+      ["scytheCropTargets", ["surface", "surfaceOwner"]],
+      ["seedTargets", ["surface", "surfaceOwner"]],
+      ["soilTiles", ["surface", "surfaceOwner"]],
+    ],
+    "a row that states a HoeDirt fact states the ground under it, with the owner field beside the word",
+  );
+
+  // L - one engine rule over the two sites that hand-make ground, and both go through the ground reader today.
+  assert.deepEqual(report.scene.legality.counts, { rules: 1, sites: 2, guarded: 2, violations: 0 });
+  assert.deepEqual(
+    report.scene.legality.sites.map((site) => site.site).sort(),
+    [
+      "integrations/stardew/ModEntry.Fixtures.ScenarioInitializers.Crops.cs:751",
+      "integrations/stardew/ModEntry.Fixtures.cs:1159",
+    ],
+  );
+
+  const sceneFindings = report.findings.filter((finding) => finding.kind.startsWith("scene_"));
+  assert.deepEqual(
+    sceneFindings.map((finding) => finding.code),
+    [],
+    `no engine question about a map tile or a structure is left unpublished or unread: ${sceneFindings.map((finding) => finding.code).join(", ")}`,
+  );
+  assert.ok(report.findings.every((finding) => finding.id === null || !finding.kind.startsWith("scene_")));
 });

@@ -376,8 +376,13 @@ function readPredicates(source: string): Map<string, PredicateReading> {
     // and then names the keys it tolerates. The SECOND bracket is part of that naming: a key a row may omit is still a key
     // the validator names, and reading only the required list reported every optional member as a wire break the other way
     // (`harvestWhereabouts.nearestX: the Mod publishes it and the validator does not name it`).
+    // The body is read with its comments stripped, and that strip is load-bearing: a validator that explains its OPTIONAL
+    // keys does it BETWEEN the two brackets (`["w", "h", "targetId"]`, the prose, then `["w", "h"]`), so a reader that
+    // matched raw text saw the required list and never the tolerated one - which reported every optional member as a wire
+    // break the other way, in this file's own words, for five families at once (`debrisTargets`, `worldObjectTargets` and
+    // `farmBuildingTargets` each publish `w`/`h` that way).
     const keys = /has(?:Exact|Only)Keys(?:OrOptional)?\(\s*\w+\s*,\s*\[([\s\S]*?)\](?:\s*,\s*\[([\s\S]*?)\])?/u.exec(
-      body,
+      withoutComments(body),
     );
     const named = keys === null ? "" : `${captured(keys, 1, `the \`${name}\` key list`)} ${keys[2] ?? ""}`;
     readings.set(name, {

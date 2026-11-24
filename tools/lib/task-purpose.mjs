@@ -73,6 +73,7 @@
 
 import { readFileSync } from "node:fs";
 import { clearedKinds, constantsIn, SOURCES } from "../../gates/stardew/audit-stardew-clearing-vocabulary.mjs";
+import { LOCATION_NAMES_ZH } from "../../host/dist-test/game-world-vocabulary.js";
 import { judgeStardewCompletionEvidence } from "../../host/dist-test/stardew-completion-contracts.js";
 
 import { DAILY_TASK_ACTION_HINTS, SWEEP_DAILY_TASKS } from "./multiday-daily-tasks.mjs";
@@ -203,6 +204,26 @@ const plot = (purpose, { tiles, boughtBy, tilledBy, sownBy, wateredBy }) =>
     tilledBy: Object.freeze(tilledBy),
     sownBy: Object.freeze(sownBy),
     wateredBy: Object.freeze(wateredBy),
+  });
+
+/**
+ * A purpose about WHERE the day's own facts happened: two receipt shapes that state a map, and a declared map set.
+ *
+ * <p>
+ * `steps` cannot state this one. A step list matches ACTION IDS, and the purpose here is not "a receipt of `talk_to_npc`
+ * came back" but "the words happened on a map the declaration answers as town" - a different question about the same
+ * receipt, so the entry names the FIELD that carries the map beside the actions that carry it. The two shapes are not the
+ * same field: a conversation publishes `location`, a door transition publishes `actual=<map>:x,y`, and a criterion that
+ * read one field for both would read nothing.
+ * </p>
+ */
+const townVisit = (purpose, { arrival, conversation }) =>
+  Object.freeze({
+    purpose,
+    town: Object.freeze({
+      arrival: Object.freeze({ actionIds: Object.freeze(arrival.actionIds), field: arrival.field }),
+      conversation: Object.freeze({ actionIds: Object.freeze(conversation.actionIds), field: conversation.field }),
+    }),
   });
 
 /**
@@ -455,6 +476,116 @@ function readMovementActions() {
 const MOVEMENT_ACTIONS = Object.freeze(readMovementActions());
 
 /**
+ * WHICH MAPS ARE THE TOWN, which is a declaration THIS TREE HAS TO MAKE.
+ *
+ * <p>
+ * THE ENGINE HAS NO SUCH GROUPING, and that is a reading of the engine rather than a shortcut: `StardewValley.Locations`
+ * declares one class per map (`Town.cs`, `SeedShop.cs`, `ManorHouse.cs`, `LibraryMuseum.cs`, `JojaMart.cs`,
+ * `CommunityCenter.cs`, `FishShop.cs`, `AnimalShop.cs`, `AdventureGuild.cs`, ...) and no membership set anywhere - `Town`
+ * is the name of ONE map, not of a family. The only word the engine uses for a group of them is
+ * `LocationData.MusicIsTownTheme` (`GameLocation.cs:3186`, read by `Game1.cs:4564`), and that is a music flag in the
+ * location CONTENT data: it says whose music is the town theme, not which maps are the town, and content data is not in
+ * this tree at all. So the set below is OURS, `TOWN_MAP_ANSWERS`, and every answer carries its own reason.
+ * </p>
+ * <p>
+ * THE NAMES ARE THE ENGINE'S OWN, and they have to be: `talk_to_npc` publishes `location=<NameOrUniqueName>` and a door
+ * transition publishes `actual=<NameOrUniqueName>:x,y`, so a receipt names a map the way the engine spells it and a set
+ * written in any other spelling would decide nothing. THE POPULATION is the maps this product can say out loud
+ * (`LOCATION_NAMES_ZH`, the table `位置:` renders from), which is the one place this tree writes map names down: every
+ * one of them is answered here, in both directions, and a map added to that table tomorrow fails at import until it is
+ * answered. Measured 2026-11-23 (`round98`, day 2 `town_visit`): she walked Farm -> BusStop -> Town, the receipt named
+ * `Town`, and the day still answered `task_purpose_needs_an_unpublished_fact` - the only thing missing was this table.
+ * </p>
+ * <p>
+ * A MAP OUTSIDE THE POPULATION IS ANSWERED BY NOTHING, and that is a fact the verdict prints rather than hides
+ * (`townMapsUndeclared`): a conversation in a map no answer covers is not town here, and a reader is told which map it
+ * was instead of being handed a quiet `not_achieved`. A town interior the spoken table gains tomorrow is answered in the
+ * same edit that adds it, by construction.
+ * </p>
+ */
+const inTown = (because) => Object.freeze({ inTown: true, because });
+const outsideTown = (because) => Object.freeze({ inTown: false, because });
+
+export const TOWN_MAP_ANSWERS = Object.freeze({
+  // IN THE TOWN: Pelican Town's own map and the buildings that open off it.
+  Town: inTown("the town map itself - its square, its streets and the doors every errand in it opens"),
+  Saloon: inTown("the Stardrop Saloon stands on the town square, and its door is on that map"),
+  SeedShop: inTown("Pierre's general store stands on the town square, with the family's rooms above it"),
+  ManorHouse: inTown("Mayor Lewis's house is one of the town map's own doors"),
+  ArchaeologyHouse: inTown("the museum and library stand on the town map's north side"),
+  Blacksmith: inTown("Clint's smithy opens off the town square's east side"),
+  Hospital: inTown("Harvey's clinic is the building on the town square's east side"),
+  CommunityCenter: inTown("the community centre is the building north of the square"),
+  JojaMart: inTown("Joja Mart stands on the town map's east side"),
+  JoshHouse: inTown("Alex's house is on the town map, beside its river"),
+  // NOT THE TOWN: the farm and its buildings, the roads out, and the places the roads lead to.
+  Farm: outsideTown("the farm, which is the map the round wakes up on"),
+  FarmHouse: outsideTown("the farmhouse, on the farm"),
+  Greenhouse: outsideTown("the greenhouse, on the farm"),
+  Cellar: outsideTown("the cellar, under the farmhouse"),
+  Barn: outsideTown("a barn, on the farm"),
+  BigBarn: outsideTown("a barn, on the farm"),
+  DeluxeBarn: outsideTown("a barn, on the farm"),
+  Coop: outsideTown("a coop, on the farm"),
+  BigCoop: outsideTown("a coop, on the farm"),
+  DeluxeCoop: outsideTown("a coop, on the farm"),
+  Shed: outsideTown("a shed, on the farm"),
+  Cabins: outsideTown("the cabins, on the farm"),
+  BusStop: outsideTown("the stop at the end of the farm road: a stop on the way to town is not the town"),
+  Backwoods: outsideTown("the backwoods between the farm and the mountain"),
+  Mountain: outsideTown("the mountain, where the carpenter, the guild and the mine entrance are"),
+  Forest: outsideTown("the forest south of the farm, whatever houses and shops open onto it"),
+  Beach: outsideTown("the beach, where the fish shop stands"),
+  Railroad: outsideTown("the railroad north of the mountain"),
+  Desert: outsideTown("the desert, reached by bus"),
+  Mine: outsideTown("the mine"),
+  UndergroundMine: outsideTown("a mine level"),
+  AnimalShop: outsideTown("Marnie's ranch in the forest"),
+  FishShop: outsideTown("Willy's shop on the beach"),
+  IslandWest: outsideTown("the island"),
+  IslandEast: outsideTown("the island"),
+  IslandSouth: outsideTown("the island"),
+  IslandNorth: outsideTown("the island"),
+  IslandFarmHouse: outsideTown("the island's farmhouse"),
+});
+
+/**
+ * What crossing these answers with the map names the product can say finds: both directions, and a reason on every answer.
+ *
+ * Pure over its two inputs so the falsifier can hand it a vocabulary this repository does not have. An answer set that
+ * declares no town at all is a finding too - a table that makes every map outside the town would agree with a criterion
+ * that can never fire, which is the failure this table exists to remove.
+ */
+export function townMapFindings(answers, names) {
+  const findings = [];
+  const answered = answers ?? {};
+  const named = new Set(names ?? []);
+  for (const [map, answer] of Object.entries(answered)) {
+    if (!named.has(map)) findings.push(`town_answer_for_a_map_the_product_does_not_name:${map}`);
+    if (typeof answer?.because !== "string" || answer.because.trim().length === 0)
+      findings.push(`town_answer_without_its_reason:${map}`);
+  }
+  for (const map of named) if (!Object.hasOwn(answered, map)) findings.push(`map_with_no_town_answer:${map}`);
+  if (Object.values(answered).every((answer) => answer?.inTown !== true)) findings.push("town_answers_declare_no_town");
+  return findings;
+}
+
+const TOWN_FINDINGS = townMapFindings(TOWN_MAP_ANSWERS, Object.keys(LOCATION_NAMES_ZH));
+if (TOWN_FINDINGS.length > 0) throw new Error(`stardew_town_map_declaration_invalid:${TOWN_FINDINGS.join("|")}`);
+
+/** The declared town, derived from the answers above: one spelling of the set, so a member cannot drift from its answer. */
+export const TOWN_MAPS = Object.freeze(
+  Object.entries(TOWN_MAP_ANSWERS)
+    .filter(([, answer]) => answer.inTown)
+    .map(([map]) => map),
+);
+
+const TOWN_MAP_SET = new Set(TOWN_MAPS);
+
+/** Whether a receipt's map is one the declaration answers as town - the only membership test the criterion performs. */
+export const inTownMap = (map) => typeof map === "string" && TOWN_MAP_SET.has(map);
+
+/**
  * What each rotation task's purpose requires, keyed by the task ids in `multiday-daily-tasks.mjs`.
  *
  * Each criterion reads only postconditions the Mod already publishes and the Host already validates, and each one
@@ -538,29 +669,38 @@ export const TASK_PURPOSE_CRITERIA = Object.freeze({
   // observation, and no key was added to accommodate the criterion.
   //
   // UNORDERED, because the post is collected whenever she is home and buying has no need to come first: the two receipts
-  // are one purchase and one collection, and either order is a day that did its errand. WHAT THIS ROW STILL CANNOT
-  // DECIDE is town-ness itself: which maps count as Town is declared nowhere in this tree (that absence is `town_visit`'s
-  // gap, and its entry here says so), so this criterion is decided by the two receipts and the map the purchase states is
-  // a fact a reader can check, not a membership test this row performs.
+  // are one purchase and one collection, and either order is a day that did its errand. IT STILL DOES NOT TEST
+  // TOWN-NESS: the declaration below answers which maps are the town, and this row is decided by the two receipts alone -
+  // a purchase at a counter outside the valley floor is a purchase, and tightening this row is a separate decision.
   town_market: criterion(
     "something was bought in town and the post was brought in",
     [step("shop_purchase"), step("claim_mail_attachment")],
     { ordered: false },
   ),
-  town_visit: gap(
-    "a conversation happened in town",
-    "`talk_to_npc` DOES publish the map: `talk_to_npc_talked`'s evidence carries `location=<NameOrUniqueName>` beside the villager's tile (`host/src/stardew-completion-contracts.ts`), so where the conversation happened is a published fact and the actor's position is not what is missing. What is missing is the other half of the sentence - a DECLARATION of which maps count as Town (is the Saloon town? the SeedShop?) - which no module in this tree makes, so a word at the farm and a word in the square are still decided as the same fact.",
-    {
-      reason: "prose",
-      fact: unpublishedFact("a declaration of which maps count as Town"),
-      claims: [
-        presentEvidenceField("talk_to_npc", "location"),
-        proseReason(
-          "a declared Town map set would refute this: nothing in this tree says which maps are Town, and the population such a declaration would join is the task table in `tools/lib/multiday-daily-tasks.mjs`",
-        ),
-      ],
-    },
-  ),
+  // WAS THE LAST GAP IN THE TABLE, AND THE GAP EXPIRED BY DECLARING THE FACT, NOT BY REMOVING THE SENTENCE. `talk_to_npc`
+  // has published the map since it existed (`talk_to_npc_talked`'s evidence carries `location=<NameOrUniqueName>`), and a
+  // door transition has published the map it arrived on (`actual=<NameOrUniqueName>:x,y`), so the receipts were never the
+  // missing half; the missing half was a DECLARATION of which maps count as the town, which is now `TOWN_MAP_ANSWERS`
+  // above. Measured 2026-11-23 (`round98`, day 2): she walked Farm -> BusStop -> Town, the `enter_exit` into `Town` was
+  // published, and the day answered `task_purpose_needs_an_unpublished_fact` for want of a table - a whole day measured
+  // nothing. What the criterion reads now is those two receipts and nothing else: not her own account of the trip, and not
+  // the snapshot's `location`, which is where she stands and not where the words happened.
+  //
+  // TWO RECEIPTS, NOT ONE, because the day's own prompt asks for both halves (「去一趟镇上，找个人说说话」): a day that
+  // stays on the farm and a day that walks to town and speaks to nobody are different days, and both miss the purpose.
+  // ORDERED, and the order is a cause: the arrival is how she got there, so a conversation that precedes every arrival in
+  // town is a conversation somewhere else in a run that happened to visit town afterwards. Each shape is declared with the
+  // field it reads, and the population of shapes is the two below - the door and the walk, which is how every run so far has
+  // got there. FOUR OTHER TRANSITIONS ALSO PUBLISH AN ARRIVAL AND ARE NOT READ: `ride_minecart`, `use_obelisk` and
+  // `use_warp_item` write the same `actual=<map>:x,y` this row parses, and `ride_bus` names its stations
+  // `origin`/`destination`. WHAT THIS ROW CANNOT SAY is that none of them lands in a declared town map - the minecart
+  // stations come from content data (`DiscoverMinecartTargets` reads `Data/Minecarts`), which is not in this tree - so an
+  // arrival by station is the shape to add here, and the receipt that would ask for it is
+  // `ride_minecart ... actual=<a declared town map>:x,y`.
+  town_visit: townVisit("a conversation happened in town, after she went there", {
+    arrival: { actionIds: ["travel", "enter_exit"], field: "actual" },
+    conversation: { actionIds: ["talk_to_npc"], field: "location" },
+  }),
   mine_delve: criterion(
     "a mine level was entered and something was broken after it",
     [step("enter_mine"), anyOf("break_rock", "break_container")],
@@ -1544,6 +1684,147 @@ function judgePlot(entry, admitted, refused) {
 }
 
 /**
+ * The map a door transition's `actual` names, or null.
+ *
+ * The grammar is the Mod's own and the Host's (`parseWarpDestination` in `host/src/stardew-completion-contracts.ts`):
+ * `<NameOrUniqueName>:x,y`, the name greedy up to the final colon so a map whose own name carries one still round-trips,
+ * and the tile bounded the way every coordinate in this file is.
+ */
+function arrivalMapOf(value) {
+  const match = /^(.*):(0|[1-9][0-9]*),(0|[1-9][0-9]*)$/u.exec(typeof value === "string" ? value : "");
+  if (match === null) return null;
+  const map = match[1];
+  const x = Number(match[2]);
+  const y = Number(match[3]);
+  return map.length > 0 && map !== "none" && x <= 1000 && y <= 1000 ? map : null;
+}
+
+/**
+ * The admitted receipts that state a map, in the two shapes the entry declares, each with the map it named.
+ *
+ * An arrival is read from the field its own receipt writes (`actual`), a conversation from the field its own receipt
+ * writes (`location`), and both are the Mod's words: nothing here infers a map from a tile, and a receipt that names no
+ * map contributes nothing rather than a guess.
+ */
+function townMapFacts(entry, admitted) {
+  const arrivals = [];
+  const conversations = [];
+  for (const [index, admittedReceipt] of admitted.entries()) {
+    const detail = admittedReceipt.receipt?.evidence?.detail;
+    if (typeof detail !== "string") continue;
+    const fields = evidenceFields(detail);
+    const { arrival, conversation } = entry.town;
+    if (arrival.actionIds.includes(admittedReceipt.actionId)) {
+      const map = arrivalMapOf(fields.get(arrival.field));
+      if (map !== null) arrivals.push(Object.freeze({ index, map, actionId: admittedReceipt.actionId }));
+      continue;
+    }
+    if (!conversation.actionIds.includes(admittedReceipt.actionId)) continue;
+    const map = mapOf(fields.get(conversation.field));
+    if (map === null) continue;
+    const npc = fields.get("npc") ?? fields.get("target") ?? null;
+    conversations.push(Object.freeze({ index, map, actionId: admittedReceipt.actionId, npc }));
+  }
+  return { arrivals, conversations };
+}
+
+/** The maps a reading saw, and the ones no answer covers - the sentence every town verdict ends with. */
+function describeTownMaps(maps, undeclared) {
+  return (
+    `maps=${maps.length === 0 ? "none" : maps.join(",")}` +
+    (undeclared.length === 0 ? "" : ` · undeclared_maps=${undeclared.join(",")}`)
+  );
+}
+
+/**
+ * The verdict for a town purpose: did she go there, and did she speak to somebody after she arrived?
+ *
+ * <p>
+ * BOTH HALVES ARE REQUIRED, because the day's own prompt asks for both and the two failures are different days: a run that
+ * never left the farm and a run that walked to town and spoke to nobody. Each answer is a receipt - `travel`/`enter_exit`
+ * for the arrival and `talk_to_npc` for the words - so the verdict never rests on what she said she did.
+ * </p>
+ * <p>
+ * A REFUSED MAP RECEIPT IS A FLOOR, NOT A FAILURE, and only for the actions this criterion reads: `round77`'s rule. A
+ * conversation in a map no answer covers is `not_achieved` AND NAMED (`undeclared_maps=`), so the one direction this
+ * declaration can be incomplete in is visible instead of quiet.
+ * </p>
+ */
+function judgeTownVisit(entry, admitted, refused) {
+  const { arrivals, conversations } = townMapFacts(entry, admitted);
+  const maps = [...new Set([...arrivals, ...conversations].map((candidate) => candidate.map))].sort();
+  const undeclared = maps.filter((map) => !Object.hasOwn(TOWN_MAP_ANSWERS, map));
+  const reading = Object.freeze({
+    townMaps: Object.freeze(maps),
+    townMapsUndeclared: Object.freeze(undeclared),
+    purpose: entry.purpose,
+    missingFact: null,
+  });
+  const arrival = arrivals.find((candidate) => inTownMap(candidate.map)) ?? null;
+  const conversation =
+    conversations.find(
+      (candidate) => inTownMap(candidate.map) && arrival !== null && candidate.index > arrival.index,
+    ) ?? null;
+  if (arrival !== null && conversation !== null) {
+    return Object.freeze({
+      ...reading,
+      state: "achieved",
+      reasonCode: "task_purpose_achieved",
+      townArrival: arrival,
+      townConversation: conversation,
+      detail:
+        `a conversation in town: arrived in ${arrival.map} (${arrival.actionId}), then talked to ` +
+        `${conversation.npc ?? "someone"} in ${conversation.map}`,
+    });
+  }
+  const readActionIds = new Set([...entry.town.arrival.actionIds, ...entry.town.conversation.actionIds]);
+  const refusedMapReceipts = refused.filter((receipt) => readActionIds.has(receipt.actionId)).length;
+  if (refusedMapReceipts > 0) {
+    return Object.freeze({
+      ...reading,
+      state: "unproven",
+      reasonCode: "task_purpose_evidence_without_postcondition",
+      townArrival: arrival,
+      townConversation: conversation,
+      detail:
+        `${String(refusedMapReceipts)} receipt(s) that name a map were refused, so this reading is a floor rather than the ` +
+        `day's total · ${describeTownMaps(maps, undeclared)}`,
+    });
+  }
+  const seen = describeTownMaps(maps, undeclared);
+  const townConversations = conversations.filter((candidate) => inTownMap(candidate.map));
+  const finding = townVisitFinding({ arrival, conversations, townConversations, seen });
+  return Object.freeze({
+    ...reading,
+    state: "not_achieved",
+    reasonCode: "task_purpose_not_achieved",
+    townArrival: arrival,
+    townConversation: conversation,
+    detail: finding,
+  });
+}
+
+/**
+ * Which half of a town purpose the day missed, in one sentence.
+ *
+ * Four days answer differently and a reader acts on each of them separately: never went, went and spoke to nobody, spoke
+ * in town BEFORE going, and spoke somewhere that is not the town. One sentence per case, never one sentence for all four.
+ */
+function townVisitFinding({ arrival, conversations, townConversations, seen }) {
+  if (arrival === null) return `she never entered a declared town map · ${seen}`;
+  if (conversations.length === 0) return `she arrived in ${arrival.map} (${arrival.actionId}) and spoke to nobody · ${seen}`;
+  if (townConversations.length > 0)
+    return (
+      `she arrived in ${arrival.map} (${arrival.actionId}) after the conversation: the words in ` +
+      `${townConversations.map((candidate) => candidate.map).join(",")} came first · ${seen}`
+    );
+  return (
+    `she arrived in ${arrival.map} and every conversation was outside a declared town map ` +
+    `(${conversations.map((candidate) => candidate.map).join(",")}) · ${seen}`
+  );
+}
+
+/**
  * Did the task's own purpose hold?
  *
  * `achieved` is reachable only through the criterion above. Everything else is named: `not_achieved` when the
@@ -1594,6 +1875,11 @@ export function judgeTaskPurpose(taskId, receipts, observations = null) {
   // what keeps "twenty tiles" from becoming "twenty receipts" (see the entry's own note).
   if (entry.plot !== undefined) {
     return Object.freeze({ ...common, ...judgePlot(entry, admitted, refused) });
+  }
+  // A town purpose is decided by WHERE the receipts happened rather than by which actions returned: it reads a map field
+  // out of two receipt shapes, so it is neither a step list nor a shape on a map (see the entry's own note).
+  if (entry.town !== undefined) {
+    return Object.freeze({ ...common, ...judgeTownVisit(entry, admitted, refused) });
   }
   if (criterionSatisfied(entry, admitted)) {
     return Object.freeze({

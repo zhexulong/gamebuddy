@@ -16,7 +16,7 @@
  * </p>
  */
 
-import type { Snapshot, TileAreaResult, TileAreaRow } from "./protocol.js";
+import { type Snapshot, type TileAreaResult, type TileAreaRow } from "./protocol.js";
 
 const SEASON_NAMES_ZH = ["春季", "夏季", "秋季", "冬季"] as const;
 const SEASON_NAMES_EN = ["Spring", "Summer", "Fall", "Winter"] as const;
@@ -287,8 +287,13 @@ const MAX_NEARBY_VILLAGER_NAMES = 3;
 /**
  * "Nearby" is the Mod's own discovery envelope (6 tiles, Chebyshev). A villager
  * across the farm is not next to her, however few others are in the map.
+ *
+ * THE NUMBER IS THE MOD'S (`ExecutionManager.TargetDiscoveryRadius`, `farmhandexecutioncontroller.cs:27`), and it is
+ * spelled once here because two lines ask the same question: the villager fact splits at it, and the families the Mod
+ * publishes for a whole location are cut to it (`FAMILY_LOCAL_RADIUS`).
  */
-const MAX_NEARBY_VILLAGER_TILES = 6;
+export const TARGET_DISCOVERY_RADIUS_TILES = 6;
+const MAX_NEARBY_VILLAGER_TILES = TARGET_DISCOVERY_RADIUS_TILES;
 /**
  * The villager fact's own share of the line, so it can never crowd another fact out of it.
  *
@@ -1110,6 +1115,47 @@ export const NON_ROW_FAMILIES: Readonly<Record<string, string>> = Object.freeze(
     "a supply row is (a seed she HOLDS x a shop that stocks it), so an empty array means she holds no plantable seed - not that no shop is here. Reading it as a place produced `这一带没有：卖种子的地方` on a farm with sixty-two tiles under the Hoe, which is a reason to walk away rather than a fact. The seed half prints as `种子: …` on this same line (`formatHeldSeeds` in `fact-brief.ts`), and a row names a counter only for a seed she already holds, so a zero-seed actor has no place to be pointed at",
 });
 
+/**
+ * The families whose rows the Mod publishes for the WHOLE location, and the envelope this line cuts them to.
+ *
+ * Every other row family is already radius-bounded on the Mod side (`TargetDiscoveryRadius`, six tiles), so the line
+ * prints what it is given. `farmBuildingTargets` is not: `DiscoverBuildFarmBuildingTargets` walks
+ * `location.buildings` with no radius test (`farmhandtargetdiscovery.cs:175-207`), because the family is also the
+ * commission's site list. Measured `round98`: the greenhouse's footprint began three tiles from her and its ORIGIN
+ * corner - the only tile the row publishes - was eight away, so a rule that measured the origin would have called the
+ * building she was standing against "far" while printing a coop forty tiles across the farm as "near".
+ *
+ * So the cut happens HERE, on the footprint (see `footprintDistance`), and the count it costs is stated on the line:
+ * a family truncated by its own envelope says so rather than reading as the whole farm's buildings.
+ *
+ * `unpublished` is the rows the MOD's own cap left out of the family altogether (`farmBuildingTargetsOmitted`), which a
+ * bounded list has to state beside it or a farm at the cap reads as a farm with exactly sixteen buildings.
+ */
+type LocalBounds = Readonly<{ radius: number; unpublished: (snapshot: Snapshot) => number }>;
+
+const FAMILY_LOCAL_BOUNDS: Readonly<Record<string, LocalBounds>> = Object.freeze({
+  farmBuildingTargets: Object.freeze({
+    radius: TARGET_DISCOVERY_RADIUS_TILES,
+    unpublished: (snapshot: Snapshot): number => {
+      const count = snapshot.farmBuildingTargetsOmitted;
+      return typeof count === "number" && Number.isSafeInteger(count) && count > 0 ? count : 0;
+    },
+  }),
+});
+
+/**
+ * The word one family's row prints for its `kind`, when the family's rows are not all the same thing.
+ *
+ * `TARGET_FAMILY_LABELS` names the family (`农场建筑`), and `farmBuildingTargets` publishes two things under that one
+ * word: `built` is a structure standing on the map, `build_site` is a free footprint the named type COULD go on
+ * (`protocol.ts:1333`). A line that printed both as `农场建筑 谷仓 (…)` says a barn is there when the barn is a plan,
+ * which is the same defect as reading a building as its own porch one layer down. An empty word prints nothing, so the
+ * standing building - the ordinary row - keeps the shape it had.
+ */
+const ROW_KIND_WORDS: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.freeze({
+  farmBuildingTargets: Object.freeze({ built: "", build_site: "空地" }),
+});
+
 /** Tiles one family names before it counts the rest. Six fits a plan; a 64-row patch does not fit a prompt. */
 export const MAX_TARGET_TILES_SHOWN = 6;
 
@@ -1151,6 +1197,33 @@ export const ROW_TILE_FIELD_PAIRS: readonly (readonly [string, string])[] = Obje
   Object.freeze(["sourceX", "sourceY"] as const),
   Object.freeze(["ownerTileX", "ownerTileY"] as const),
 ]);
+
+/**
+ * The words for what a tile's GROUND is, printed before the state it is in because the ground is what decides.
+ *
+ * <p>
+ * THE VALUES ARE THE MOD'S, THE WORDS ARE OURS, and the mapping is one-way on purpose: the Mod publishes the engine's
+ * own ground words (`stone`, `wood`, `grass`, `dirt`, a laid `path`, and `soil` for a tile whose map declares no surface
+ * word), and this table is the only place they become Chinese. Measured `round98` (2026-11-23): the greenhouse's stone
+ * doorstep at `29,17` published `hoeDirt: true` exactly as a field tile does, so the line said 「地块 (29,17) 已锄 true」
+ * over a doorway - the one fact that decided whether to sow was in no sentence she read.
+ * </p>
+ *
+ * <p>
+ * A WORD THIS TABLE HAS NOT MET PRINTS VERBATIM rather than nothing: the Mod owns the vocabulary, and a surface we cannot
+ * name is a fact worth reading in the engine's own spelling - the rule `hoursUnknown` and `displayName` already follow.
+ * `not_measured:<x>,<y>:<why>` prints verbatim for the same reason: the tile was not measured, and saying so is the
+ * whole point of publishing it.
+ * </p>
+ */
+export const SURFACE_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  soil: "土地",
+  dirt: "泥地",
+  grass: "草地",
+  stone: "石地",
+  wood: "木地",
+  path: "铺地",
+});
 
 /**
  * The one value each family prints beside its row, for a family whose rows are told apart by a state rather than a name.
@@ -1262,9 +1335,11 @@ export type NearbyTargetFamily = Readonly<{
   /** How many rows the family published. */
   total: number;
   /**
-   * How many rows this line did not name: the cap, plus any row that carried no coordinate. A row a receipt in THIS
-   * delivery proved out of the world is NOT counted here - it is counted by the line's own proof sentence, so the cap's
-   * omission and the world's change cannot be read as one number.
+   * How many rows this line did not name: the cap, plus any row that carried no coordinate, plus - for a family the Mod
+   * publishes for a whole location - the rows past the envelope this line applies (`FAMILY_LOCAL_BOUNDS`). Those last
+   * ones are counted separately on the sentence itself, because "too far" and "past the cap" are two different reasons
+   * for the same silence. A row a receipt in THIS delivery proved out of the world is NOT counted here - it is counted by
+   * the line's own proof sentence, so the cap's omission and the world's change cannot be read as one number.
    */
   omitted: number;
   /**
@@ -1328,14 +1403,28 @@ export function nearbyTargetFamilies(
     const value = (snapshot as unknown as Record<string, unknown>)[family];
     if (!Array.isArray(value)) continue;
     const { standing, removed, inFlight } = splitFreshRows(value, freshness);
-    const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family]);
-    const distance = (tile: { x: number; y: number }): number =>
-      readable ? Math.max(Math.abs(tile.x - actor.x), Math.abs(tile.y - actor.y)) : 0;
+    const tiles = placedTargetTiles(standing, ROW_STATE_FIELDS[family], ROW_KIND_WORDS[family]);
+    const distance = (tile: PlacedRow): number => (readable ? footprintDistance(actor, tile) : 0);
     tiles.sort((left, right) => distance(left) - distance(right) || left.x - right.x || left.y - right.y);
-    const shown = tiles.slice(0, MAX_TARGET_TILES_SHOWN);
-    const omitted = standing.length - shown.length;
+    // THE MOD'S OWN ENVELOPE, where the family does not have one of its own: a row past it is a place she cannot see
+    // from here, counted on the line rather than printed as if it were beside her.
+    const bounds = FAMILY_LOCAL_BOUNDS[family];
+    const radius = bounds?.radius;
+    const local = radius === undefined ? tiles : tiles.filter((tile) => distance(tile) <= radius);
+    const distant = tiles.length - local.length;
+    const shown = local.slice(0, MAX_TARGET_TILES_SHOWN);
+    const omitted = standing.length - shown.length - distant;
     const nearest = shown[0] === undefined ? undefined : { x: shown[0].x, y: shown[0].y, distance: distance(shown[0]) };
     const proved: TargetLineProof = Object.freeze({ removed, inFlight, ageTurns: freshness.ageTurns });
+    const envelope: LocalEnvelope | undefined =
+      bounds === undefined
+        ? undefined
+        : Object.freeze({
+            radius: bounds.radius,
+            distant,
+            standing: standing.length,
+            unpublished: bounds.unpublished(snapshot),
+          });
     families.push(
       Object.freeze({
         family,
@@ -1343,11 +1432,149 @@ export function nearbyTargetFamilies(
         nearest,
         total: value.length,
         omitted,
-        rendered: renderTargetFamily(label, value.length, shown, omitted, proved),
+        rendered: renderTargetFamily(
+          label,
+          value.length,
+          shown,
+          omitted,
+          proved,
+          envelope,
+        ),
       }),
     );
   }
   return Object.freeze(families);
+}
+
+/** One row this line can place, in the shape `renderTargetFamily` prints. */
+type PlacedRow = RenderableRow &
+  Readonly<{
+    block: TargetBlock | undefined;
+    /** The wire's own `kind`, which is what tells one family's subjects apart (`farmBuildingTargets`). */
+    kind: string;
+    /** The word this family prints for the row's `kind` (`ROW_KIND_WORDS`), or `""` for the ordinary row. */
+    kindWord: string;
+  }>;
+
+/**
+ * The fields `renderTargetFamily` reads from one row, whatever composed it: a family row of the observation, or a tile a
+ * selection read (`SelectedRow`).
+ *
+ * The two come from different readings and are printed by one sentence, so the sentence names only what it reads.
+ */
+type RenderableRow = Readonly<{
+  x: number;
+  y: number;
+  name: string | undefined;
+  surface: string;
+  state: string;
+  /** Where a structure's door is and which rows in front of it are its own (`buildingSceneSuffix`), or `""`. */
+  scene: string;
+  window: string;
+  w: number;
+  h: number;
+  block?: TargetBlock | undefined;
+  kindWord?: string;
+}>;
+
+/**
+ * How far a row is from her, measured on its FOOTPRINT - the extent it occupies, not its left-top corner.
+ *
+ * A `7×6` greenhouse whose origin corner is eight tiles away reaches to three tiles away, and a `2×3` bed's nearest tile
+ * is what a plan has to walk to. The origin is a storage detail of the wire (`x`/`y` "is its LEFT-TOP origin",
+ * `protocol.ts:1351`); the distance a reader cares about is to the space the thing stands on. A one-tile row measures as
+ * it always did.
+ *
+ * Chebyshev, like every other distance in this file: the game's own reach is a square, not a circle.
+ */
+function footprintDistance(
+  actor: Readonly<{ x: number; y: number }>,
+  row: Readonly<{ x: number; y: number; w: number; h: number }>,
+): number {
+  const lowX = Math.min(row.x, row.x + row.w - 1);
+  const highX = Math.max(row.x, row.x + row.w - 1);
+  const lowY = Math.min(row.y, row.y + row.h - 1);
+  const highY = Math.max(row.y, row.y + row.h - 1);
+  return Math.max(lowX - actor.x, actor.x - highX, lowY - actor.y, actor.y - highY);
+}
+
+/**
+ * WHERE A STRUCTURE'S DOOR IS, AND WHICH OF THE ROWS IN FRONT OF IT ARE ITS OWN - printed after the row's tile and state,
+ * as ` 门 (28,15) 脚前石阶 27,16 到 29,17`, ` 没有门`, or `""` for every row that is not a standing structure.
+ *
+ * <p>
+ * THE ROW ANSWERS IT NOW, and it used to be guessed. A building's door was joined out of `doorTargets` - a door row
+ * standing inside the footprint was read as that building's entrance - because the family published no door of its own.
+ * Measured `round98`: the ruined greenhouse's door at `28,15` is a tile the engine answers
+ * (`Building.getPointForHumanDoor()`), the door list was whole, and the line printed `温室 (25,10 到 31,15) 没有门` about
+ * a building whose doorway she was standing beside. The wire carries `humanDoor` now, so the join is gone: one fact, one
+ * spelling, and no list-completeness heuristic standing in for the engine's own answer.
+ * </p>
+ *
+ * <p>
+ * ABSENT IS "THE MOD'S OWN `BuildingContactOf` ANSWERED NO DOOR" - a `build_site`, whose structure does not exist yet,
+ * and a standing building whose `Data/Buildings` entry the Mod could not read (`GetData()` null) or that declares a
+ * negative offset. The family is published by the same Mod as this line (the pair ships together, exactly as `w`/`h`
+ * assume) and the Mod omits null members, so a second spelling would only ask a reader to tell two identical things
+ * apart. A building type that declares NO human door at all is not this case: the engine answers its own origin corner
+ * (`humanDoor` is a `NetPoint` that starts at `0,0`) and `Building.isActionableTile` acts on exactly that tile
+ * (Building.cs:1088), which is why the answer is published verbatim rather than second-guessed here.
+ * </p>
+ *
+ * <p>
+ * THE PORCH IS PRINTED AS AN EXTENT, NOT AS A FAMILY. `ownTiles` is the list of rows OUTSIDE the footprint that the
+ * structure's own tile data answers for - the stone doorstep that read as `Diggable` farm soil to every producer that
+ * asked the map, which is how a cauliflower came to grow in a doorway. A reader needs the REGION ("is the ground I am
+ * standing on the building's, or the field's"), so a set that fills its own rectangle prints as `27,16 到 29,17`, the
+ * same `到` idiom `footprintSuffix` uses one layer up. A set that does not fill it prints its tile count beside the
+ * corners rather than implying the rectangle, and the Mod's own cap prints as `另有 N 格没列` for the same reason every
+ * bounded list on this line does.
+ * </p>
+ */
+function buildingSceneSuffix(candidate: Record<string, unknown>): string {
+  if (candidate.kind !== "built") return "";
+  const door = tilePair(candidate.humanDoor);
+  const entrance = door === undefined ? " 没有门" : ` 门 (${String(door.x)},${String(door.y)})`;
+  return `${entrance}${ownTileExtentSuffix(candidate.ownTiles, candidate.ownTilesOmitted)}`;
+}
+
+/** One `{x, y}` a row carries, or `undefined` when either half is missing - a half-pair places nothing. */
+function tilePair(value: unknown): { x: number; y: number } | undefined {
+  if (value === null || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const x = candidate.x;
+  const y = candidate.y;
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x, y };
+}
+
+/**
+ * The region the structure's own rows cover: `脚前石阶 27,16 到 29,17`, with the tile count when the set does not fill
+ * that rectangle and the Mod's omitted count when its cap left rows out.
+ */
+function ownTileExtentSuffix(value: unknown, omittedValue: unknown): string {
+  if (!Array.isArray(value)) return "";
+  let lowX = Number.POSITIVE_INFINITY;
+  let lowY = Number.POSITIVE_INFINITY;
+  let highX = Number.NEGATIVE_INFINITY;
+  let highY = Number.NEGATIVE_INFINITY;
+  let count = 0;
+  for (const entry of value) {
+    const tile = tilePair(entry);
+    if (tile === undefined) continue;
+    count += 1;
+    lowX = Math.min(lowX, tile.x);
+    lowY = Math.min(lowY, tile.y);
+    highX = Math.max(highX, tile.x);
+    highY = Math.max(highY, tile.y);
+  }
+  if (count === 0) return "";
+  const extent = lowX === highX && lowY === highY ? `${String(lowX)},${String(lowY)}` : `${String(lowX)},${String(lowY)} 到 ${String(highX)},${String(highY)}`;
+  const whole = count === (highX - lowX + 1) * (highY - lowY + 1);
+  const counted = whole ? "" : `（${String(count)} 格）`;
+  const omitted =
+    typeof omittedValue === "number" && Number.isSafeInteger(omittedValue) && omittedValue > 0 ? omittedValue : 0;
+  return ` 脚前石阶 ${extent}${counted}${omitted > 0 ? `（另有 ${String(omitted)} 格没列）` : ""}`;
 }
 
 /**
@@ -1423,26 +1650,9 @@ function rowTileId(candidate: Record<string, unknown>): string | undefined {
 function placedTargetTiles(
   value: readonly unknown[],
   state: Readonly<{ field: string; label: string }> | undefined,
-): {
-  x: number;
-  y: number;
-  name: string | undefined;
-  state: string;
-  window: string;
-  w: number;
-  h: number;
-  block: TargetBlock | undefined;
-}[] {
-  const tiles: {
-    x: number;
-    y: number;
-    name: string | undefined;
-    state: string;
-    window: string;
-    w: number;
-    h: number;
-    block: TargetBlock | undefined;
-  }[] = [];
+  kindWords: Readonly<Record<string, string>> | undefined = undefined,
+): PlacedRow[] {
+  const tiles: PlacedRow[] = [];
   for (const row of value) {
     if (row === null || typeof row !== "object") continue;
     const candidate = row as Record<string, unknown>;
@@ -1452,14 +1662,24 @@ function placedTargetTiles(
       x: tile.x,
       y: tile.y,
       name: rowDisplayName(candidate),
+      surface: surfaceSuffix(candidate),
       state: state === undefined ? "" : stateSuffix(state, candidate[state.field]),
+      scene: buildingSceneSuffix(candidate),
       window: declaredWindowSuffix(candidate),
       w: extentSide(candidate.w),
       h: extentSide(candidate.h),
       block: rowBlock(candidate),
+      kind: typeof candidate.kind === "string" ? candidate.kind : "",
+      kindWord: kindWordOf(kindWords, candidate.kind),
     });
   }
   return tiles;
+}
+
+/** The word one family prints for a row's `kind`, or `""` for the ordinary row of a family whose rows are one thing. */
+function kindWordOf(kindWords: Readonly<Record<string, string>> | undefined, kind: unknown): string {
+  if (kindWords === undefined || typeof kind !== "string") return "";
+  return kindWords[kind] ?? "";
 }
 
 /** The connected strip one row belongs to, when the row publishes one and it is more than the row's own tile. */
@@ -1552,31 +1772,49 @@ const NOTHING_PROVED: TargetLineProof = Object.freeze({ removed: 0, inFlight: 0,
 function renderTargetFamily(
   label: string,
   total: number,
-  shown: readonly {
-    x: number;
-    y: number;
-    name: string | undefined;
-    state: string;
-    window: string;
-    w: number;
-    h: number;
-    block?: TargetBlock | undefined;
-  }[],
+  shown: readonly RenderableRow[],
   omitted: number,
   proved: TargetLineProof = NOTHING_PROVED,
+  local?: LocalEnvelope,
 ): string | undefined {
   if (total === 0) return undefined;
   const standing = total - proved.removed - proved.inFlight;
   if (proved.removed >= total) return `${label} 全部 ${String(proved.removed)} 格已不在（${COUNTED_AFTER_THE_STEP}）`;
+  if (shown.length === 0 && local !== undefined && local.distant > 0 && local.distant >= standing)
+    return `${label} 都不在 ${String(local.radius)} 格内（${String(local.distant)} 处没列）${withheldTail(local)}`;
   if (shown.length === 0)
     return `${label} 其余 ${String(standing)} 格未列出（这些行没有坐标）${targetLineFreshness(proved)}`;
   const tiles = shown
     .map(
       (tile) =>
-        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.x},${tile.y}${footprintSuffix(tile)})${tile.state}${tile.window}`,
+        `${tile.name === undefined ? "" : `${tile.name} `}(${tile.kindWord === undefined || tile.kindWord === "" ? "" : `${tile.kindWord} `}${tile.x},${tile.y}${footprintSuffix(tile)})${tile.surface}${tile.state}${tile.scene}${tile.window}`,
     )
     .join(" ");
-  return `${label} ${tiles}${blockSuffix(shown)}${omitted > 0 ? ` 其余 ${omitted} 格未列出` : ""}${targetLineFreshness(proved)}`;
+  return `${label} ${tiles}${blockSuffix(shown)}${omitted > 0 ? ` 其余 ${String(omitted)} 格未列出` : ""}${localTail(local)}${targetLineFreshness(proved)}`;
+}
+
+/**
+ * What the local envelope cost the line: the rows it cut, and the radius that cut them.
+ *
+ * A family the Mod publishes for a whole location is printed here, so the rows past the envelope leave the line the way
+ * the cap's rows do - counted, by name, and never silently.
+ */
+type LocalEnvelope = Readonly<{ radius: number; distant: number; standing: number; unpublished: number }>;
+
+function localTail(local: LocalEnvelope | undefined): string {
+  return `${cutTail(local)}${withheldTail(local)}`;
+}
+
+/** The rows the family's own envelope left out: the ones that stand on this map, past the radius. */
+function cutTail(local: LocalEnvelope | undefined): string {
+  if (local === undefined || local.distant < 1) return "";
+  return `（另有 ${String(local.distant)} 处在 ${String(local.radius)} 格外没列）`;
+}
+
+/** The rows the MOD never sent: a family at its cap is a bounded list, and a bounded list says so. */
+function withheldTail(local: LocalEnvelope | undefined): string {
+  if (local === undefined || local.unpublished < 1) return "";
+  return `（Mod 那边还有 ${String(local.unpublished)} 处没发出来）`;
 }
 
 /**
@@ -1656,6 +1894,36 @@ function stateSuffix(state: Readonly<{ field: string; label: string }>, value: u
 }
 
 /**
+ * The ground a row stands on, printed between its tile and its state: ` 石地(温室)`, ` 土地`, ` not_measured:29,17:off_map`.
+ *
+ * <p>
+ * THE SURFACE COMES FIRST because it is the fact that decides. A `soilTiles` row on the greenhouse's stone doorstep and
+ * one in the field were the same row to a reader who only saw `已锄 true`, which is how a cauliflower grew in a doorway
+ * (measured `round98`): the tile was `HoeDirt` because a fixture had put it there, and the ground under it was a
+ * doorstep. The building that owns the tile prints in parentheses, because "which building's porch" is the next question
+ * the answer raises - and it is the building's own tile data that answered, not a rectangle this file guessed.
+ * </p>
+ *
+ * <p>
+ * A ROW THAT CARRIES NO SURFACE PRINTS NOTHING, and an unknown word prints VERBATIM: the field is younger than the wire,
+ * so a Mod older than it has no answer to give, and inventing `土地` for that absence is the same lie a defaulted tile
+ * was. The words are Chinese through `SURFACE_LABELS`; anything it has not met is the Mod's own spelling of
+ * a fact, which is worth more than silence.
+ * </p>
+ */
+function surfaceSuffix(candidate: Record<string, unknown>): string {
+  const surface = candidate.surface;
+  if (typeof surface !== "string" || surface.trim().length === 0) return "";
+  const word = surface.trim();
+  const owner = candidate.surfaceOwner;
+  const named =
+    typeof owner === "string" && owner.trim().length > 0
+      ? `(${LOCATION_NAMES_ZH[owner.trim()] ?? owner.trim()})`
+      : "";
+  return ` ${SURFACE_LABELS[word] ?? word}${named}`;
+}
+
+/**
  * The trading window one row declares, in the game's own clock - or the row's own not-measured reason, or nothing.
  *
  * <p>
@@ -1717,7 +1985,7 @@ function extentSide(value: unknown): number {
 }
 
 /**
- * The footprint one row occupies, appended INSIDE its own parentheses: `(9,8 [2×3])`.
+ * The footprint one row occupies, appended INSIDE its own parentheses: `(9,8 到 10,10)`.
  *
  * <p>
  * WHERE IT SITS IS THE WHOLE DESIGN. The tile stays first and the extent follows it, because every reader of this line
@@ -1732,9 +2000,21 @@ function extentSide(value: unknown): number {
  * tile is the same defect one layer down - the extent is what makes "there is something at (9,8)" into "the bed covers
  * (9,8) to (10,10)".
  * </p>
+ * <p>
+ * IT IS THE FAR CORNER, NOT `[w×h]`. Both spell the same two numbers, and the corner is the one a reader can compare
+ * against the tile she stands on: `温室 (25,10 到 31,15)` says where the space the wall occupies ends, which is the
+ * question "am I inside it, or on its porch" - measured `round98`, where a cauliflower was sown on the greenhouse's own
+ * doorstep because nothing the companion read said a building was there. A count cannot answer that without arithmetic,
+ * and arithmetic across two numbers is what she got wrong.
+ * </p>
  */
-function footprintSuffix(tile: { readonly w: number; readonly h: number }): string {
-  return tile.w > 1 || tile.h > 1 ? ` [${String(tile.w)}×${String(tile.h)}]` : "";
+function footprintSuffix(tile: {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}): string {
+  return tile.w > 1 || tile.h > 1 ? ` 到 ${String(tile.x + tile.w - 1)},${String(tile.y + tile.h - 1)}` : "";
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1821,7 +2101,11 @@ export type SelectedRow = Readonly<{
   x: number;
   y: number;
   name: string | undefined;
+  /** What the ground under the row is, as `surfaceSuffix` prints it: ` 石地(温室)`, ` 土地`, or `""`. */
+  surface: string;
   state: string;
+  /** Where a structure's door is and which rows in front of it are its own, as `buildingSceneSuffix` prints it. */
+  scene: string;
   /** The row's declared trading window (or its not-measured reason), as `declaredWindowSuffix` prints it. */
   window: string;
   w: number;

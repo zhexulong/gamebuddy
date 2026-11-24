@@ -11,6 +11,43 @@ export function isBoundedNonEmptyString(value: unknown, maxLength: number): valu
 }
 
 /**
+ * A ground surface word: `stone`, `wood`, `grass`, `dirt`, `path`, `soil`.
+ *
+ * <p>
+ * SHAPE, NOT AN ENUM, and the reason is the point. These are the engine's own ground words (`Type` in
+ * `GameLocation.playTerrainSound`, plus a laid `Flooring` as `path` and `soil` for a tile the map declares no word on),
+ * and the Mod owns that vocabulary. An enum here would make a new engine word a Host release; a shape check lets the word
+ * arrive and the renderer print it verbatim, while anything that is not a lower-case word is still refused.
+ * </p>
+ */
+const SURFACE_WORD = /^[a-z][a-z_]{0,31}$/u;
+
+/**
+ * A tile the Mod could not measure: `not_measured:<x>,<y>:<why>`, the reason being the Mod's own word for what it could
+ * not read (`off_map`, `buildings_layer_without_surface_word`).
+ */
+const SURFACE_NOT_MEASURED = /^not_measured:-?\d+,-?\d+:[a-z][a-z_]{0,63}$/u;
+
+/**
+ * Whether a row's `surface` is a ground word or a `not_measured:<x>,<y>:<why>` refusal to guess.
+ *
+ * Absent is allowed because the field is younger than the wire (a Mod older than it publishes nothing); a PRESENT value
+ * that is neither is a malformed row. There is no default to `soil` in this validator or in its reader: `soil` is a word
+ * the Mod had to measure the absence of, and a missing field read as soil is the lie this field exists to end.
+ */
+export function isSurfaceWord(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (typeof value !== "string") return false;
+  if (value.startsWith("not_measured")) return SURFACE_NOT_MEASURED.test(value);
+  return SURFACE_WORD.test(value);
+}
+
+/** The building whose own tile data answered a row's `surface` (`Greenhouse`), or null/absent when the map answered. */
+export function isSurfaceOwner(value: unknown): boolean {
+  return value === undefined || value === null || isBoundedNonEmptyString(value, 128);
+}
+
+/**
  * One engine clock reading: 24h minutes, `0` to `2600`, with a real minute component.
  *
  * This is the unit the engine's own timetable is written in (`LockedDoorWarp ... 900 2100`, `TIME 900 1600`, and
@@ -264,6 +301,8 @@ export function isCropTargetFact(value: unknown): boolean {
       "fullyGrown",
       "tileBlockedNow",
       "cropFactsUnknown",
+      "surface",
+      "surfaceOwner",
     ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
@@ -294,7 +333,11 @@ export function isCropTargetFact(value: unknown): boolean {
     (value.fullyGrown === undefined || typeof value.fullyGrown === "boolean") &&
     (value.tileBlockedNow === undefined || typeof value.tileBlockedNow === "boolean") &&
     (value.cropFactsUnknown === undefined || isBoundedNonEmptyString(value.cropFactsUnknown, 64)) &&
-    !(value.cropFactsUnknown !== undefined && value.daysToHarvest !== undefined)
+    !(value.cropFactsUnknown !== undefined && value.daysToHarvest !== undefined) &&
+    // The ground this crop stands on, on the same terms as a `soilTiles` row: a ground word or a
+    // `not_measured:<x>,<y>:<why>` refusal, never a default.
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
@@ -321,6 +364,8 @@ export function isHarvestTargetFact(value: unknown): boolean {
       "readyForHarvest",
       "forageCrop",
       "harvestMethod",
+      "surface",
+      "surfaceOwner",
     ]) &&
     isOpaqueId(value.targetId) &&
     isTileCoordinate(value.x) &&
@@ -337,7 +382,9 @@ export function isHarvestTargetFact(value: unknown): boolean {
     typeof value.regrowsAfterHarvest === "boolean" &&
     (value.readyForHarvest === undefined || typeof value.readyForHarvest === "boolean") &&
     (value.forageCrop === undefined || typeof value.forageCrop === "boolean") &&
-    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod))
+    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod)) &&
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
@@ -540,6 +587,8 @@ export function isSeedTargetFact(value: unknown): boolean {
       "displayName",
       "canPlantThisSeedHere",
       "crop",
+      "surface",
+      "surfaceOwner",
     ]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
@@ -554,14 +603,18 @@ export function isSeedTargetFact(value: unknown): boolean {
     // Optional at the wire: a Mod older than these fields publishes neither, and a row that carries one publishes the
     // engine's own `HoeDirt.canPlantThisSeedHere` / `HoeDirt.crop is not null` answer.
     (value.canPlantThisSeedHere === undefined || typeof value.canPlantThisSeedHere === "boolean") &&
-    (value.crop === undefined || typeof value.crop === "boolean")
+    (value.crop === undefined || typeof value.crop === "boolean") &&
+    // The ground this seed would go into, on the same terms as a `soilTiles` row: a ground word or a
+    // `not_measured:<x>,<y>:<why>` refusal, never a default.
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
 export function isFertilizerTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName", "canApplyFertilizer"]) &&
+    hasOnlyKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName", "canApplyFertilizer", "surface", "surfaceOwner"]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -574,7 +627,9 @@ export function isFertilizerTargetFact(value: unknown): boolean {
     value.displayName.length <= 128 &&
     // Optional at the wire for the same reason as the seed row's own two facts; the value is
     // `HoeDirt.CanApplyFertilizer`, the predicate `fertilize_tile` refuses on.
-    (value.canApplyFertilizer === undefined || typeof value.canApplyFertilizer === "boolean")
+    (value.canApplyFertilizer === undefined || typeof value.canApplyFertilizer === "boolean") &&
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
@@ -648,7 +703,7 @@ export function isArtifactSpotTargetFact(value: unknown): boolean {
 export function isClearHoeDirtTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "location", "x", "y", "crop", "ground"]) &&
+    hasOnlyKeys(value, ["targetId", "location", "x", "y", "crop", "ground", "surface", "surfaceOwner"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -656,14 +711,16 @@ export function isClearHoeDirtTargetFact(value: unknown): boolean {
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     value.crop === false &&
-    value.ground === true
+    value.ground === true &&
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
 export function isArtifactSpotResultTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "location", "x", "y", "crop", "ground"]) &&
+    hasOnlyKeys(value, ["targetId", "location", "x", "y", "crop", "ground", "surface", "surfaceOwner"]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
     value.location.length > 0 &&
@@ -671,7 +728,9 @@ export function isArtifactSpotResultTargetFact(value: unknown): boolean {
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     value.crop === false &&
-    value.ground === true
+    value.ground === true &&
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
@@ -1098,6 +1157,8 @@ export function isScytheCropTargetFact(value: unknown): boolean {
       "dead",
       "forageCrop",
       "harvestMethod",
+      "surface",
+      "surfaceOwner",
     ]) &&
     isOpaqueId(value.targetId) &&
     typeof value.location === "string" &&
@@ -1119,7 +1180,9 @@ export function isScytheCropTargetFact(value: unknown): boolean {
     (value.readyForHarvest === undefined || typeof value.readyForHarvest === "boolean") &&
     (value.dead === undefined || typeof value.dead === "boolean") &&
     (value.forageCrop === undefined || typeof value.forageCrop === "boolean") &&
-    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod))
+    (value.harvestMethod === undefined || isHarvestMethodWord(value.harvestMethod)) &&
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner)
   );
 }
 
@@ -2008,7 +2071,11 @@ export function isFarmBuildingTargetFact(value: unknown): boolean {
       // The footprint the structure occupies, `x`/`y` being its left-top origin: a `built` row's own
       // `Building.tilesWide`/`tilesHigh`, a `build_site` row's declared `Data/Buildings` size. Optional, and one tile when
       // absent - the reading every row carried before the field existed.
-      ["w", "h"],
+      //
+      // The last three are the scene facts a `built` row carries about the structure itself: where its human door opens
+      // and which of the rows in front of it its own tile data claims. Every one of them is absent when the engine names
+      // nothing, because the Mod's serializer omits null members.
+      ["w", "h", "humanDoor", "ownTiles", "ownTilesOmitted"],
     ) &&
     typeof value.targetId === "string" &&
     isOpaqueId(value.targetId) &&
@@ -2032,8 +2099,47 @@ export function isFarmBuildingTargetFact(value: unknown): boolean {
     Number.isSafeInteger(value.daysOfConstructionLeft) &&
     value.daysOfConstructionLeft >= -1 &&
     optionalExtent(value.w) &&
-    optionalExtent(value.h)
+    optionalExtent(value.h) &&
+    optionalTilePair(value.humanDoor) &&
+    optionalTileList(value.ownTiles) &&
+    optionalCount(value.ownTilesOmitted)
   );
+}
+
+/**
+ * A `{x, y}` tile a row carries when the engine names one, or absent.
+ *
+ * Both members are required together: a pair with one end is a coordinate no reader can place, which is the same
+ * refusal `isWarp` applies to a source tile spelled in halves.
+ */
+function optionalTilePair(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) && hasExactKeys(value, ["x", "y"]) && isTileCoordinate(value.x) && isTileCoordinate(value.y))
+  );
+}
+
+/**
+ * A bounded list of `{x, y}` tiles, or absent.
+ *
+ * The bound is the Mod's own `OwnTileLimit` (8): a longer list means the two sides disagree about that cap, and a row
+ * whose porch is silently longer than the bound prints as a structure with exactly those rows.
+ */
+function optionalTileList(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.length >= 1 &&
+      value.length <= 8 &&
+      value.every(
+        (tile) => isRecord(tile) && hasExactKeys(tile, ["x", "y"]) && isTileCoordinate(tile.x) && isTileCoordinate(tile.y),
+      ))
+  );
+}
+
+/** A count a bounded list states beside itself: present only when something was left out, so never zero. */
+function optionalCount(value: unknown): boolean {
+  return value === undefined || (isNonNegativeSafeInteger(value) && value >= 1);
 }
 
 /** One building-declared chest. The counts are the live chest's own (`stackCount` slots, `itemCount`

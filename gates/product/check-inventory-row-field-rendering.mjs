@@ -418,6 +418,10 @@ export const WITHHELD_TILE_SPELLINGS = Object.freeze({
 export const READER_ROW_FIELDS = Object.freeze([
   "kind",
   "displayName",
+  // The ground under a row, and the building that owns it: printed between the tile and the state, so a doorstep and a
+  // field tile are not the same sentence.
+  "surface",
+  "surfaceOwner",
   "w",
   "h",
   "blockX",

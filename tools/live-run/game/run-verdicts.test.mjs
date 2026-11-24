@@ -21,7 +21,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { assessInteractionValue } from "../interaction-value-gate.mjs";
-import { assessmentRungClauses, deriveRungVerdict } from "./run-verdicts.mjs";
+import { assessmentRungClauses, deriveRungVerdict, lastDispatchedReceipt } from "./run-verdicts.mjs";
 
 const RUN_START = Date.parse("2026-11-04T10:00:00.000Z");
 const at = (minutes) => RUN_START + Math.round(minutes * 60_000);
@@ -313,4 +313,37 @@ test("the runner's clause list names no interaction finding by hand", () => {
     "the interaction clauses come from the assessment, not from here",
   );
   assert.match(list, /\.\.\.assessmentRungClauses\("interaction_value", interactionValue\),/u);
+});
+
+// THE LAST THING SHE ACTUALLY DID, across the two dispatch channels - the fact a bedtime promise is read against when no
+// receipt contradicts it. `round98` routed every action of that day through programs, so a reading of `actionTrace` alone
+// answered with a flat receipt from hours earlier.
+test("the last thing she did is the newest dispatch record, from whichever channel it went out on", () => {
+  const flat = (action, settledAtMs) => ({ via: "flat", action, state: "succeeded", reasonCode: "ok", settledAtMs });
+  const program = (actionId, submittedAtMs) => ({
+    programId: `plan_${actionId}`,
+    accepted: true,
+    submittedAtMs,
+    nodes: [{ nodeId: "n01", actionId, arguments: {} }],
+  });
+  // NEITHER CHANNEL RECORDED ANYTHING: there is no receipt, which is not a receipt of doing nothing.
+  assert.equal(lastDispatchedReceipt([], []), null);
+  assert.equal(lastDispatchedReceipt(undefined, undefined), null);
+  // Only one channel has a row: that row is the answer, whatever it is.
+  assert.equal(lastDispatchedReceipt([flat("cut_weeds", 1000)], []).actionId, "cut_weeds");
+  assert.deepEqual(lastDispatchedReceipt([], [program("sleep", 2000)]), {
+    via: "program",
+    actionId: "sleep",
+    programId: "plan_sleep",
+    atMs: 2000,
+  });
+  // BOTH HAVE ROWS AND THE CLOCKS DECIDE, in both directions on the same pair of records.
+  assert.equal(lastDispatchedReceipt([flat("enter_exit", 3000)], [program("chest_store", 2000)]).actionId, "enter_exit");
+  assert.equal(lastDispatchedReceipt([flat("enter_exit", 1000)], [program("chest_store", 2000)]).actionId, "chest_store");
+  // AN UNCLOCKED FLAT ROW CANNOT OUTRANK A CLOCKED PROGRAM: an absent clock is not an old one, and reading it as `-Infinity`
+  // silently would make the program win on a comparison nobody made.
+  assert.equal(lastDispatchedReceipt([{ via: "flat", action: "harvest_crop" }], [program("cut_weeds", 2000)]).via, "program");
+  // A program the Mod never accepted is still what she dispatched: the record names what she did, not what worked.
+  const rejected = { programId: "plan_rejected", accepted: false, submittedAtMs: 4000, nodes: [{ nodeId: "n01", actionId: "sleep" }] };
+  assert.equal(lastDispatchedReceipt([flat("enter_exit", 3000)], [rejected]).actionId, "sleep");
 });

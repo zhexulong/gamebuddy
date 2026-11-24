@@ -54,6 +54,7 @@ import {
   nightCause,
   nightCauseSupportLine,
   nightReceiptPairingLine,
+  nightsTheEngineTook,
   parseReceiptEvidence,
   reconcileDaysWithTheWorld,
   sleepPromisesNotTaken,
@@ -245,6 +246,7 @@ import {
   describeTaskPurposeReading,
   describeUnjudgedDay,
   dispatchMarkers,
+  lastDispatchedReceipt,
   medianPromptTurnIntervalMs,
   NON_ACCOMPLISHMENT_ACTIONS,
   sleepSubmittedSince,
@@ -984,11 +986,22 @@ const SCENARIO_PROMPTS = Object.freeze({
     // `tools/live-run/game/multiday-day-note.test.mjs` holds it: for every task in both tables the composed turn must
     // contain the task text, contain the player's words byte-identical exactly once, outside every block, with no label
     // and no stage direction.
+    //
+    // THE SENTENCE BETWEEN THE TASK AND THE GOODBYE IS THE DAY'S SCOPE, AND IT IS THERE BECAUSE THE TASK IS OFTEN SMALLER
+    // THAN THE DAY. Measured 2026-11-23 (`round98`, day 1, `tasks_scheduled: day1=store_and_sort`): the day put nine
+    // stacks in the chest inside the first hour and two more at 20:50, and then worked the farm for eleven hours - 11 of
+    // its 244 dispatches on the task and 188 on other targets, 6 of the 653 tiles it walked - and NOTHING IN HER WORLD
+    // SAID THE REST OF THE DAY HAD A JOB. That is not disobedience and no clause here forbids anything: what was missing is
+    // the half a partner says out loud, that the day's work does not end with the errand. Naming a PLACE and no action is
+    // the same shape the sweep tasks' own prompts use, and it is the one clause here that could not be derived from a layer
+    // that already states it - the date, that sleep ends the day, and whose words these are were all removed for that reason
+    // (see above).
     zh: (_day, task) =>
       `我今天去镇上办事，你把这活儿干一下：${DAILY_TASK_PROMPT_ZH[task].trim()}` +
-      `怎么安排你自己定，天黑累了就回屋睡，不用等我。`,
+      `这一天剩下的工夫，屋里和院子里该收拾的也归你照看，怎么安排你自己定，天黑累了就回屋睡，不用等我。`,
     en: (_day, task) =>
       `I'm heading into town today - take care of this for me while I'm gone: ${DAILY_TASK_PROMPT_EN[task].trim()} ` +
+      `The rest of the day is yours: whatever the house and the yard want doing is in your keeping too. ` +
       `However you want to go about it is up to you. If it gets dark and you're tired, go inside and get some sleep. ` +
       `No need to wait up.`,
   }),
@@ -3836,11 +3849,15 @@ client.programSubmit = async (program) => {
   const programId = program?.programId ?? null;
   // Stamped BEFORE the await: the wait the ledger measures is the Mod's, not the transport's.
   ledger.record("world.dispatch", { via: "program", programId });
+  const submittedAtMs = Date.now();
   const submit = await originalProgramSubmit(program);
   programSubmissions.push(
     Object.freeze({
       programId,
       code: submit?.code ?? null,
+      // WHEN IT WENT OUT, the send that precedes the answer: the only clock a program has, and the one that lets "the
+      // last thing she did" be answered across both dispatch channels (`lastDispatchedReceipt`).
+      submittedAtMs,
       // `accepted` means the Mod took it; nothing here claims a node ran.
       accepted: submit?.code === "accepted",
       // The nodes as they were SUBMITTED, with the action and the arguments each one names. This is the only record of
@@ -4610,6 +4627,11 @@ try {
               trace: actionTrace,
               submissions: programSubmissions,
             });
+            // WHAT SHE ACTUALLY DID BY THE END OF THIS TURN, from either dispatch channel. A promise to go to bed is
+            // charged only when a receipt contradicts it, and when one does the account must be able to show the gap:
+            // the hour she promised and the last thing she was doing instead (`round98`: the promise was made, and the
+            // sleep she did submit was dispatched in a turn this harness had already closed).
+            const lastReceipt = lastDispatchedReceipt(actionTrace, programSubmissions);
             // What THIS turn said is read from the pieces THAT TURN COMMITTED, closed at the next turn's start
             // (`./turn-speech.mjs`): the window's start is recorded here and the lines are attributed once the turns are
             // complete, because a slice taken when this await returned was a slice of array position at a moment, and the
@@ -4621,6 +4643,7 @@ try {
                 turn: walked.turn,
                 day,
                 sleepSubmitted,
+                lastReceipt,
                 spokenFromIndex: spokenBefore,
               }),
             );
@@ -4849,6 +4872,9 @@ try {
     // that turn's: `round87b` had 24 bubbles on day 3 and an empty `spokenLines`, so a promise made that day was invisible.
     const sleepPromises = sleepPromisesNotTaken({
       turns: attributeTurnSpeech(sessionTurns, presentationPieces),
+      // WHICH NIGHTS THE RECEIPTS SAY THE ENGINE TOOK. The only nights a bedtime promise can be charged for: a night her
+      // own `sleep` settled is the promise kept, and a night with no ending has nothing that contradicts her.
+      engineTakenDays: nightsTheEngineTook({ dayRecords: reconciliation.records, worldNightEndings: worldEndings }),
     });
     console.error(
       "MULTIDAY_SLEEP_PROMISES",
@@ -4857,7 +4883,11 @@ try {
         promiseTurns: sleepPromises.promiseTurns,
         turnsWithoutSleepRecord: sleepPromises.turnsWithoutSleepRecord,
         windowsNotMeasured: sleepPromises.windowsNotMeasured,
-        readings: sleepPromises.readings.map((entry) => entry.code),
+        engineTakenNights: sleepPromises.engineTakenNights,
+        promisesWithoutAContradictingReceipt: sleepPromises.promisesWithoutAContradictingReceipt,
+        // EACH READING WHOLE, because its two facts are the gap: the hour she promised (`promisedAtMs`) and the last
+        // thing she actually did (`lastReceipt`).
+        readings: sleepPromises.readings,
       }),
     );
     // Judged by the ONE baseline module, so the gate and the runner cannot disagree about what a crossing is.

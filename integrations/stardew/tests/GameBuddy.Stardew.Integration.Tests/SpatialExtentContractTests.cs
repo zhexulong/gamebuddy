@@ -147,7 +147,12 @@ public sealed class SpatialExtentContractTests
         furniture.Should().Contain("piece.getTilesHigh()");
         assertNoLiteral(furniture, "the furniture row");
 
-        string building = Source("farmhandexecutioncontroller.buildfarmbuildingactions.cs");
+        // THE PARTIAL THAT DECLARES THE ROW, not a named file: the discovery moved out of
+        // `farmhandexecutioncontroller.buildfarmbuildingactions.cs` and into `farmhandtargetdiscovery.cs`, and a pin on
+        // the old path read a file that no longer writes the row - green over the very thing it was written for, while
+        // the `w`/`h` derivation lived one file away. `Declaring` answers where the member is, and throws when it is
+        // nowhere or in two places.
+        string building = ControllerPartials.Declaring("DiscoverBuildFarmBuildingTargets");
         Regex.Matches(building, @"data\.Size\.X,\s*\r?\n\s*data\.Size\.Y", RegexOptions.CultureInvariant)
             .Should()
             .ContainSingle(

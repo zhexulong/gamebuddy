@@ -191,6 +191,13 @@ test("every action addressed by a copied id has a family that publishes it", () 
    * Two families share a subject when they share one of these: `npcRelationshipTargets` and `villagerWhereabouts` both
    * carry `npcName`, which is the villager - so both must be able to name her. `displayName` and `location` are
    * excluded because they describe rather than identify: every family with a readable name has a `displayName`.
+   *
+   * `surface` is the third such description, and it became one for eight families at once: it is what the GROUND under a
+   * tile is (`stone`, `wood`, `soil`, `not_measured:...`), from the Mod's one ground reading, so every family about a
+   * tilled tile publishes it - a crop, a pick, a scythe crop, a fertilizer, a clear, a dug spot, a seed, and the soil
+   * itself. Reading it as the subject made each of those families demand the others' `targetId`, which is the wrong
+   * question: two rows about one tile are not two names for one entity. (`surfaceOwner` never reaches this filter - its
+   * declared type is the array `["string", "null"]`, not `string`.)
    */
   const subjectProperties = (family: string, addressing: ReadonlySet<string>) =>
     [...(families.get(family) ?? new Map())]
@@ -199,6 +206,7 @@ test("every action addressed by a copied id has a family that publishes it", () 
           !addressing.has(property) &&
           property !== "displayName" &&
           property !== "location" &&
+          property !== "surface" &&
           property !== "x" &&
           property !== "y" &&
           !/Id$/u.test(property) &&

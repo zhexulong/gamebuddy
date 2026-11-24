@@ -129,6 +129,53 @@ internal sealed class FarmhandTargetDiscovery
         return result;
     }
 
+    /// <summary>
+    /// The tiles of a STANDING structure's own tile data that lie OUTSIDE its footprint: the porch, walkway and deck
+    /// rows it draws.
+    ///
+    /// <para>
+    /// THE QUESTION IS THE ENGINE'S, AND IT IS ASKED OF THE STRUCTURE. <c>Building.doesTileHaveProperty</c>
+    /// (Building.cs:2419-2432) maps the tile into the type's declared tile properties by subtracting the origin, and
+    /// <c>GreenhouseBuilding.doesTileHaveProperty</c> (GreenhouseBuilding.cs:60-97) widens that answer to a one-tile halo
+    /// and to the two rows in front of the door - <c>humanDoor.X - 1 .. +1</c> by <c>humanDoor.Y + 1 .. +2</c>, which on
+    /// the standard Farm's `25,10` 7x6 greenhouse with `humanDoor 3,5` is <c>27..29 x 16..17</c>. Measured `round98`: the
+    /// map under those rows is ordinary <c>Diggable</c> farm soil, so every producer that asked the map read a doorstep as
+    /// field, and a cauliflower was sown in the doorway.
+    /// </para>
+    ///
+    /// <para>
+    /// <c>Type</c>/<c>Back</c> IS THE FILTER, and it is the word <c>GroundSurface</c> reads for one tile: the greenhouse
+    /// answers <c>Buildable</c> and <c>NoSpawn</c> on its halo as well, and those say what may be put there rather than
+    /// what the ground is. The footprint itself is skipped because a row already publishes it as <c>W</c>/<c>H</c>: the
+    /// porch is the part of the structure that is not the structure.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyList<TilePoint> DescribeOwnTiles(Building building, out int omitted)
+    {
+        omitted = 0;
+        int left = building.tileX.Value - 1;
+        int right = building.tileX.Value + Math.Max(1, building.tilesWide.Value);
+        int top = building.tileY.Value;
+        int bottom = building.tileY.Value + Math.Max(1, building.tilesHigh.Value) + 1;
+        var tiles = new List<TilePoint>();
+        for (int y = top; y <= bottom; y += 1)
+        for (int x = left; x <= right; x += 1)
+        {
+            if (x >= building.tileX.Value && x < building.tileX.Value + Math.Max(1, building.tilesWide.Value)
+                && y >= building.tileY.Value && y < building.tileY.Value + Math.Max(1, building.tilesHigh.Value))
+                continue;
+            string value = "";
+            if (!building.doesTileHaveProperty(x, y, "Type", "Back", ref value) || value.Length == 0) continue;
+            if (tiles.Count >= ExecutionManager.OwnTileLimit)
+            {
+                omitted += 1;
+                continue;
+            }
+            tiles.Add(new TilePoint(x, y));
+        }
+        return tiles;
+    }
+
     internal static IReadOnlyList<BridgeFarmBuildingTarget> DiscoverBuildFarmBuildingTargets(Farmer player, out int omitted)
     {
         omitted = 0;
@@ -188,6 +235,18 @@ internal sealed class FarmhandTargetDiscovery
             // building standing on the farm, and `Building.dayUpdate` only ever decrements this while it is above zero
             // (Building.cs:1582-1590), so a negative value names no state the engine can produce.
             BuildingData? data = building.GetData();
+            // The porch is a fact about a structure that STANDS STILL: a building being moved (`isMoving`, the placement
+            // preview) is not on the map it is drawn over, and `GreenhouseBuilding.doesTileHaveProperty` refuses every
+            // tile while it is (GreenhouseBuilding.cs:62-65) - so a moving building has no porch to publish rather than a
+            // porch wherever the preview is. The DOOR is unaffected: `getPointForHumanDoor()` is the row's own origin plus
+            // the offset its data declares, which is true whether or not the sprite is being dragged.
+            IReadOnlyList<TilePoint>? ownTiles = null;
+            int ownTilesOmitted = 0;
+            if (!building.isMoving)
+            {
+                ownTiles = FarmhandTargetDiscovery.DescribeOwnTiles(building, out ownTilesOmitted);
+                if (ownTiles.Count == 0) ownTiles = null;
+            }
             result.Add(new BridgeFarmBuildingTarget(
                 $"built_{building.id.Value:N}",
                 "built",
@@ -202,7 +261,13 @@ internal sealed class FarmhandTargetDiscovery
                 building.daysOfConstructionLeft.Value,
                 // The standing building's own footprint (Building.cs:64-68), which is what `occupiesTile` reads.
                 Math.Max(1, building.tilesWide.Value),
-                Math.Max(1, building.tilesHigh.Value)));
+                Math.Max(1, building.tilesHigh.Value),
+                // The door through the ONE authority that decides whether a building has one at all: `BuildingContactOf`
+                // reads the type's declared `Data/Buildings.HumanDoor` and answers a POINT only when it is declared,
+                // which is why a silo carries no `humanDoor` instead of the origin corner a raw NetPoint holds.
+                ExecutionManager.BuildingContactOf(building).HumanDoor,
+                ownTiles,
+                ownTilesOmitted > 0 ? ownTilesOmitted : null));
             builtCount++;
         }
 
@@ -1490,10 +1555,13 @@ internal sealed class FarmhandTargetDiscovery
         return result;
     }
 
-    internal static IReadOnlyList<BridgeScytheCropTarget> DiscoverScytheCropTargets(Farmer player)
+    internal static IReadOnlyList<BridgeScytheCropTarget> DiscoverScytheCropTargets(Farmer player, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeScytheCropTarget>();
+        // The same observation-scoped reading `soilTiles` and `seedTargets` use: a row about a crop tile is a row about
+        // the ground under it, and a second spelling of "is this paved" is the defect `GroundSurface` exists to remove.
+        surfaces ??= GroundSurface.Of(location);
         List<BridgeScytheCropTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
         {
@@ -1521,6 +1589,7 @@ internal sealed class FarmhandTargetDiscovery
             string qualifiedHarvestItemId = deadCrop || harvestId is null
                 ? ExecutionManager.DeadCropHarvestItemId
                 : StardewValley.ItemRegistry.Create(harvestId, 1).QualifiedItemId;
+            GroundSurface.Reading ground = surfaces.At((int)pair.Key.X, (int)pair.Key.Y);
             result.Add(new BridgeScytheCropTarget(
                 ExecutionManager.BuildScytheCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, dirt.crop),
                 location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y,
@@ -1530,20 +1599,27 @@ internal sealed class FarmhandTargetDiscovery
                 readyForHarvest,
                 dead,
                 forageCrop,
-                ExecutionManager.HarvestMethodName(harvestMethod)));
+                ExecutionManager.HarvestMethodName(harvestMethod),
+                ground.Surface,
+                ground.Owner));
             if (result.Count >= 16) break;
         }
         return result;
     }
 
-    internal static IReadOnlyList<BridgeClearHoeDirtTarget> DiscoverClearHoeDirtTargets(Farmer player)
+    internal static IReadOnlyList<BridgeClearHoeDirtTarget> DiscoverClearHoeDirtTargets(Farmer player, GroundSurface? surfaces = null)
     {
         GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeClearHoeDirtTarget>();
+        surfaces ??= GroundSurface.Of(location);
         return ExecutionManager.NearestFirst(location.terrainFeatures.Pairs.Where(pair => IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, ExecutionManager.TargetDiscoveryRadius)
             && pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && dirt.crop is null
             && !(location.objects.TryGetValue(pair.Key, out StardewValley.Object? placed) && placed is StardewValley.Objects.IndoorPot)), player)
-            .Take(8).Select(pair => new BridgeClearHoeDirtTarget(ExecutionManager.BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true)).ToArray();
+            .Take(8).Select(pair =>
+            {
+                GroundSurface.Reading ground = surfaces.At((int)pair.Key.X, (int)pair.Key.Y);
+                return new BridgeClearHoeDirtTarget(ExecutionManager.BuildClearHoeDirtTargetId(location, (int)pair.Key.X, (int)pair.Key.Y), location.NameOrUniqueName, (int)pair.Key.X, (int)pair.Key.Y, Crop: false, Ground: true, ground.Surface, ground.Owner);
+            }).ToArray();
     }
 
     internal static IReadOnlyList<BridgeArtifactSpotTarget> DiscoverArtifactSpotTargets(Farmer player)
@@ -1903,10 +1979,13 @@ internal sealed class FarmhandTargetDiscovery
         return result;
     }
 
-    internal static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(Farmer player)
+    internal static IReadOnlyList<BridgeSeedTarget> DiscoverSeedTargets(Farmer player, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSeedTarget>();
+        // One reading per OBSERVATION: the same instance walks this family and `till_soil`'s, and a caller that passes none
+        // is an observation of its own (a test driving one family, a fixture asking about one tile).
+        surfaces ??= GroundSurface.Of(location);
         int heldStacks = player.Items
             .OfType<StardewValley.Object>()
             .Count(item => item.Category == StardewValley.Object.SeedsCategory);
@@ -1933,7 +2012,8 @@ internal sealed class FarmhandTargetDiscovery
                     bool canPlantThisSeedHere = dirt.canPlantThisSeedHere(seed.ItemId, isFertilizer: false);
                     if (dirt.crop is not null || !canPlantThisSeedHere)
                         continue;
-                    rowsForThisStack.Add(new BridgeSeedTarget(ExecutionManager.BuildSeedTargetId(location, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, ExecutionManager.RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null));
+                    GroundSurface.Reading ground = surfaces.At(x, y);
+                    rowsForThisStack.Add(new BridgeSeedTarget(ExecutionManager.BuildSeedTargetId(location, x, y, seed.QualifiedItemId), slot, x, y, seed.QualifiedItemId, ExecutionManager.RequireDisplayName(seed.QualifiedItemId), canPlantThisSeedHere, dirt.crop is not null, ground.Surface, ground.Owner));
                 }
             }
             result.AddRange(TargetOrdering.NearestFirstByChebyshev(
@@ -2028,10 +2108,11 @@ internal sealed class FarmhandTargetDiscovery
             row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
-    internal static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player)
+    internal static IReadOnlyList<BridgeFertilizerTarget> DiscoverFertilizerTargets(Farmer player, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeFertilizerTarget>();
+        surfaces ??= GroundSurface.Of(location);
         return NearestFirstRadiusWindowRows<BridgeFertilizerTarget>(
             player,
             source => source.Category == StardewValley.Object.fertilizerCategory,
@@ -2046,15 +2127,17 @@ internal sealed class FarmhandTargetDiscovery
                 bool canApplyFertilizer = dirt.CanApplyFertilizer(source.QualifiedItemId);
                 if (!canApplyFertilizer)
                     return null;
-                return new BridgeFertilizerTarget(ExecutionManager.BuildFertilizerTargetId(location, slot, x, y, source.QualifiedItemId), slot, x, y, source.QualifiedItemId, ExecutionManager.RequireDisplayName(source.QualifiedItemId), canApplyFertilizer);
+                GroundSurface.Reading ground = surfaces.At(x, y);
+                return new BridgeFertilizerTarget(ExecutionManager.BuildFertilizerTargetId(location, slot, x, y, source.QualifiedItemId), slot, x, y, source.QualifiedItemId, ExecutionManager.RequireDisplayName(source.QualifiedItemId), canApplyFertilizer, ground.Surface, ground.Owner);
             },
             row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
-    internal static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
+    internal static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeHarvestTarget>();
+        surfaces ??= GroundSurface.Of(location);
         List<BridgeHarvestTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in ExecutionManager.NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
@@ -2082,6 +2165,7 @@ internal sealed class FarmhandTargetDiscovery
             }
             string harvestId = crop.indexOfHarvest.Value;
             StardewValley.Item? harvestItem = StardewValley.ItemRegistry.Create(harvestId, 1);
+            GroundSurface.Reading ground = surfaces.At((int)pair.Key.X, (int)pair.Key.Y);
             result.Add(new BridgeHarvestTarget(
                 ExecutionManager.BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, harvestId),
                 (int)pair.Key.X,
@@ -2092,15 +2176,18 @@ internal sealed class FarmhandTargetDiscovery
                 crop.RegrowsAfterHarvest(),
                 dirt.readyForHarvest(),
                 crop.forageCrop.Value,
-                ExecutionManager.HarvestMethodName(crop.GetHarvestMethod())));
+                ExecutionManager.HarvestMethodName(crop.GetHarvestMethod()),
+                ground.Surface,
+                ground.Owner));
         }
         return result;
     }
 
-    internal static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player, DiscoveryExclusionRecorder exclusions)
+    internal static IReadOnlyList<BridgeCropTarget> DiscoverCropTargets(Farmer player, DiscoveryExclusionRecorder exclusions, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeCropTarget>();
+        surfaces ??= GroundSurface.Of(location);
         List<BridgeCropTarget> result = new();
         foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in ExecutionManager.NearestFirst(location.terrainFeatures.Pairs
             .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt { crop: not null }
@@ -2124,6 +2211,7 @@ internal sealed class FarmhandTargetDiscovery
             // same row `look_up({table:"Crops"})` answers with. Null is a fact - a content pack can add a seed whose
             // data row the engine cannot resolve - so the five data fields stay null and `CropFactsUnknown` says why.
             StardewValley.GameData.Crops.CropData? data = crop.GetData();
+            GroundSurface.Reading ground = surfaces.At((int)pair.Key.X, (int)pair.Key.Y);
             result.Add(new BridgeCropTarget(
                 TargetId: ExecutionManager.BuildCropTargetId(location, (int)pair.Key.X, (int)pair.Key.Y, crop.netSeedIndex.Value, crop.indexOfHarvest.Value),
                 X: (int)pair.Key.X,
@@ -2141,16 +2229,21 @@ internal sealed class FarmhandTargetDiscovery
                     : data.Seasons.Select(static season => Utility.getSeasonKey(season)).Distinct().ToArray(),
                 FullyGrown: crop.fullyGrown.Value,
                 TileBlockedNow: ExecutionManager.IsTileBlockedForFarmer(location, player, (int)pair.Key.X, (int)pair.Key.Y),
-                CropFactsUnknown: data is null ? ExecutionManager.CropFactsUnknownToken : null));
+                CropFactsUnknown: data is null ? ExecutionManager.CropFactsUnknownToken : null,
+                Surface: ground.Surface,
+                SurfaceOwner: ground.Owner));
         }
         return result;
     }
 
-    internal static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player, out int omitted)
+    internal static IReadOnlyList<BridgeSoilTile> DiscoverSoilTiles(Farmer player, out int omitted, GroundSurface? surfaces = null)
     {
         omitted = 0;
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeSoilTile>();
+        // The same observation-scoped reading `seedTargets` uses, so the two families cannot price the same tile twice or
+        // disagree about it; see `GroundSurface.CostLine` for what one observation pays.
+        surfaces ??= GroundSurface.Of(location);
         FarmableBlocks blocks = new(location);
         List<(int Distance, BridgeSoilTile Tile)> candidates = new();
         int originX = player.TilePoint.X;
@@ -2169,7 +2262,8 @@ internal sealed class FarmhandTargetDiscovery
                 if (!hoeDirt && !ExecutionManager.IsTillableTile(location, x, y))
                     continue;
                 (int BlockX, int BlockY, int BlockW, int BlockH) block = blocks.Of(x, y);
-                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt, block.BlockX, block.BlockY, block.BlockW, block.BlockH)));
+                GroundSurface.Reading ground = surfaces.At(x, y);
+                candidates.Add((Math.Max(Math.Abs(x - originX), Math.Abs(y - originY)), new BridgeSoilTile(x, y, hoeDirt, block.BlockX, block.BlockY, block.BlockW, block.BlockH, ground.Surface, ground.Owner)));
             }
         }
         BridgeSoilTile[] ordered = candidates

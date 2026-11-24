@@ -191,13 +191,7 @@ internal sealed class VoiceGatewaySupervisor : IAsyncDisposable
     /// on this process's death, when it closes every handle this launcher holds. The quit path closes
     /// it first, and a driven test closes it to read what a dead Desktop produces.
     /// </summary>
-    internal void CloseOwnerChannel()
-    {
-        var channel = Interlocked.Exchange(ref ownerChannel, null);
-        if (channel is null) return;
-        try { channel.Close(); }
-        catch (InvalidOperationException) { }
-    }
+    internal void CloseOwnerChannel() => Interlocked.Exchange(ref ownerChannel, null)?.Close();
 
     internal Task WaitForExitAsync(CancellationToken cancellationToken = default)
     {

@@ -1192,13 +1192,18 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             return CreateWorldNotReadyBridgeSnapshot(capabilityPublication);
         BridgeActiveExecution? activeExecution = this.DescribeActiveExecution();
         DiscoveryExclusionRecorder discoveryExclusions = new();
+        // WHAT THIS OBSERVATION COSTS TO ASK THE GROUND, answered once and shared: every row about a tilled tile decides
+        // from the surface under it - `soilTiles`, `seedTargets`, `cropTargets`, `harvestTargets`, `scytheCropTargets`,
+        // `fertilizerTargets`, `clearHoeDirtTargets` - the answer is cached for this snapshot's lifetime only, and the
+        // line below states the millisecond price on the game thread.
+        GroundSurface groundSurface = GroundSurface.Of(player.currentLocation);
         bool containerActionsAdvertised = advertisedCapabilities.Contains("chest_store", StringComparer.Ordinal)
             || advertisedCapabilities.Contains("chest_retrieve", StringComparer.Ordinal);
         IReadOnlyList<BridgeChestState>? chests = containerActionsAdvertised ? FarmhandTargetDiscovery.DiscoverChestStates(player) : null;
         BridgeChestsSummary? chestsSummary = containerActionsAdvertised ? SummarizeChests(player) : null;
         int soilTilesOmitted = 0;
         IReadOnlyList<BridgeSoilTile>? soilTiles = advertisedCapabilities.Contains("till_soil", StringComparer.Ordinal)
-            ? FarmhandTargetDiscovery.DiscoverSoilTiles(player, out soilTilesOmitted)
+            ? FarmhandTargetDiscovery.DiscoverSoilTiles(player, out soilTilesOmitted, groundSurface)
             : null;
         int farmBuildingTargetsOmitted = 0;
         IReadOnlyList<BridgeFarmBuildingTarget>? farmBuildingTargets =
@@ -1273,12 +1278,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("refill_watering_can", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverRefillWateringCanTargets(player) : null,
             advertisedCapabilities.Contains("pickup_forage", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverForageTargets(player) : null,
             advertisedCapabilities.Contains("pickup_item", StringComparer.Ordinal) ? this.TargetDiscovery.DiscoverItemTargets(player) : null,
-            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCropTargets(player, discoveryExclusions) : null,
+            advertisedCapabilities.Contains("water_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCropTargets(player, discoveryExclusions, groundSurface) : null,
             advertisedCapabilities.Contains("water_pet_bowl", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverPetBowlTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("water_slime_hutch_trough", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSlimeHutchTroughTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverHarvestTargets(player, discoveryExclusions) : null,
-            advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSeedTargets(player) : null,
-            advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFertilizerTargets(player) : null,
+            advertisedCapabilities.Contains("harvest_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverHarvestTargets(player, discoveryExclusions, groundSurface) : null,
+            advertisedCapabilities.Contains("plant_seed", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSeedTargets(player, groundSurface) : null,
+            advertisedCapabilities.Contains("fertilize_tile", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverFertilizerTargets(player, groundSurface) : null,
             advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverWoodFenceTargets(player) : null,
             advertisedCapabilities.Contains("place_wood_fence", StringComparer.Ordinal) ? this.DiscoverWoodFenceResultTargets(player) : null,
             advertisedCapabilities.Contains("place_crab_pot", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverCrabPotTargets(player) : null,
@@ -1288,7 +1293,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("bait_crab_pot", StringComparer.Ordinal) ? this.DiscoverBaitCrabPotResultTargets(player) : null,
             (advertisedCapabilities.Contains("clear_debris", StringComparer.Ordinal) || advertisedCapabilities.Contains("break_resource_clump", StringComparer.Ordinal)) ? FarmhandTargetDiscovery.DiscoverDebrisTargets(player, discoveryExclusions) : null,
             advertisedCapabilities.Contains("break_rock", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverRockSourceTargets(player) : null,
-            advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverClearHoeDirtTargets(player) : null,
+            advertisedCapabilities.Contains("clear_hoedirt", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverClearHoeDirtTargets(player, groundSurface) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverArtifactSpotTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? this.DiscoverArtifactSpotResultTargets(player) : null,
             advertisedCapabilities.Contains("dig_artifact_spot", StringComparer.Ordinal) ? CountArtifactSpotFarmSources() : null,
@@ -1304,7 +1309,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             advertisedCapabilities.Contains("set_sign_display", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSignTargets(player) : null,
             advertisedCapabilities.Contains("deposit_silo_hay", StringComparer.Ordinal) || advertisedCapabilities.Contains("withdraw_silo_hay", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverSiloTargets(player) : null,
             advertisedCapabilities.Contains("toggle_tool_light", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverLanternSlots(player) : null,
-            advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverScytheCropTargets(player) : null,
+            advertisedCapabilities.Contains("scythe_crop", StringComparer.Ordinal) ? FarmhandTargetDiscovery.DiscoverScytheCropTargets(player, groundSurface) : null,
             (advertisedCapabilities.Contains("npc_relationship", StringComparer.Ordinal) || advertisedCapabilities.Contains("interact_npc_with_item", StringComparer.Ordinal) || advertisedCapabilities.Contains("talk_to_npc", StringComparer.Ordinal)) ? FarmhandTargetDiscovery.DiscoverNpcRelationshipTargets(player) : null,
             FarmhandTargetDiscovery.DiscoverVillagerWhereabouts(),
             FarmhandTargetDiscovery.DiscoverHarvestWhereabouts(discoveryExclusions),
@@ -1385,6 +1390,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             // read. One field, one reader: nothing derives a balance from receipts or from the pack.
             Money: player.Money
         );
+        // ONE LINE PER OBSERVATION, and only when the ground was actually asked: the price of a lookup nobody used is a
+        // number about nothing. `TilesMeasured` counts every tile any family asked about, cache hits included.
+        if (groundSurface.TilesMeasured > 0)
+            this.monitor.Log(groundSurface.CostLine(), LogLevel.Trace);
         if (!exclusionFamilyAdvertised) return snapshot;
         return snapshot with
         {

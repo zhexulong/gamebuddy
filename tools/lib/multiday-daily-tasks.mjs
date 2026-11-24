@@ -581,10 +581,13 @@ export const TASK_PILLAR_ORDER = Object.freeze(["farm", "water", "mine"]);
  * the slots a pillar group can no longer take, and a day drawn from them prints `any` beside its id.
  * </p>
  * <p>
- * ALTERNATING DECIDABLE AND GAP, because the other rule the rotation keeps is that no two days the evidence cannot judge
- * sit adjacent: `tend_the_animals` (decidable), `home_and_hearth` (gap), `dress_and_display` (decidable),
- * `furnish_and_arrange` (gap), and so on to the end. `dayTaskSchedule`'s substitution is the rail that catches a pool
- * holding nothing judgeable; this order is what keeps that rail from having to fire on the shipped pool.
+ * THE ORDER KEEPS THE SCHEDULE'S RAIL REACHABLE, and it used to alternate decidable and gap: `tend_the_animals`
+ * (decidable), `home_and_hearth` (gap), `dress_and_display` (decidable), `furnish_and_arrange` (gap). That alternation is
+ * no longer exact, and the reason is the good one - `town_visit` gained its criterion (2026-11-23, `round98`: the day
+ * walked into `Town` and answered `task_purpose_needs_an_unpublished_fact` for want of a declaration of which maps are the
+ * town), so the tail now ends with three decidable days in a row. What the rotation has to keep is the property, not the
+ * pattern: no two days the evidence cannot judge sit adjacent, and `dayTaskSchedule`'s substitution is the rail that
+ * catches a pool holding nothing judgeable at all.
  * </p>
  * <p>
  * `home_upgrade` IS NOT HERE, AND NOT ANYWHERE. It needs ten thousand gold and the carpenter, and nothing publishes whether the

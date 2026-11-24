@@ -1933,6 +1933,9 @@ public sealed class TargetFamilyCompletenessTests
                 .Select(parameter => parameter.ParameterType == typeof(Farmer)
                     ? (object?)this.Actor
                     : parameter.ParameterType == typeof(IList<Item?>) ? this.Actor.Items
+                    // The ground reading a family shares with its siblings: one per call here, which is the same lifetime
+                    // one observation gives it.
+                    : parameter.ParameterType == typeof(GroundSurface) ? GroundSurface.Of(this.Farm)
                     : recorder)
                 .ToArray();
             object targets = method.Invoke(DiscoveryMembers.Target(method, executions), arguments)!;

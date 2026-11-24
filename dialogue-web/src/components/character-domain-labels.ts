@@ -827,7 +827,8 @@ const en: CharacterLabels = Object.freeze({
   exportSaved: "Saved {{file}}.",
   exportNothing: "There is no companion to export yet.",
   exportUnreadable: "Her records could not be read, so no card was made.",
-  exportTooLarge: "Her records are too large to fit in a character card, so nothing was saved. Remove a few entries and export again.",
+  exportTooLarge:
+    "Her records are too large to fit in a character card, so nothing was saved. Remove a few entries and export again.",
   exportImageAbsent:
     "She has no picture yet, so a PNG card has no image to carry. Open her row, use Give her a picture, then export again — or save the JSON card, which carries her records without a picture.",
   exportFailed: "The character card could not be exported. Try it again.",

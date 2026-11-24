@@ -815,15 +815,16 @@ export const SLEEP_PROMISE_NEGATIONS = Object.freeze(["不", "没", "别", "not 
  */
 export const SLEEP_PROMISE_TURNS = 3;
 
-/** The reading a promise leaves behind when nothing was submitted inside the window. */
+/** The reading a promise leaves behind when the engine had to end the night it promised. */
 const SLEEP_PROMISED_NOT_TAKEN = "sleep_promised_not_taken";
 
 /**
  * The commitment a delivered turn's lines carry, or `null`. First match wins, scanning the lines in the order she spoke
- * them, so the phrase reported is the one that actually opened the promise.
+ * them, so the phrase reported is the one that actually opened the promise. `index` is the line's position in the turn's
+ * `spokenLines`, which is what joins it to `spokenAtMs` - the moment the player was shown it.
  */
 export function sleepPromiseIn(lines) {
-  for (const line of Array.isArray(lines) ? lines : []) {
+  for (const [index, line] of (Array.isArray(lines) ? lines : []).entries()) {
     if (typeof line !== "string") continue;
     const text = line.trim();
     if (text.length === 0) continue;
@@ -833,37 +834,110 @@ export function sleepPromiseIn(lines) {
       if (at < 0) continue;
       const before = lowered.slice(Math.max(0, at - 6), at);
       if (SLEEP_PROMISE_NEGATIONS.some((negation) => before.endsWith(negation))) continue;
-      return Object.freeze({ phrase, line: text });
+      return Object.freeze({ phrase, line: text, index });
     }
   }
   return null;
 }
 
 /**
- * Every promise to go to bed in a run's turn stream that no `sleep` submission followed, each as a NAMED reading.
+ * WHICH OF A RUN'S NIGHTS THE ENGINE TOOK, by the loop's own day number - the only nights a bedtime promise can be
+ * charged for.
  *
  * <p>
- * The turn stream is the runner's own `sessionTurns`: the lines it PRESENTED for that turn and whether a `sleep`
- * submission happened during it, from either dispatch channel. This is the only record of a decision that was announced
- * and never carried out - the receipts cannot show an action nobody submitted, and the night's cause can only say the
- * engine ended it.
+ * The receipt that contradicts a promise to go to bed is the engine taking the night: `Game1.PassOutNewDay()` forces
+ * `NewDay`, and `Sensory/StardewSalientEventHooks.cs:64-75` publishes it as `night_ended_pass_out_day_<TotalDays>`. A
+ * night her own `sleep` ended is the opposite - the receipt CONFIRMS what she said - and a night with no ending at all
+ * has no receipt to contradict anything.
+ * </p>
+ * <p>
+ * The join is by the day the night ENDED on, which is the one base the rest of this module compares in
+ * (`nightEndedDayOfMonth` against `worldEndingDayOfMonth`): a record's `day` is the loop's day number, a world ending's
+ * `day` is an engine count, and neither may be compared to the other directly. `null` when nobody supplied the world's
+ * endings - NOT MEASURED, which is not the same as a run the engine never passed her out of.
+ * </p>
+ * <p>
+ * A reconciled night (`worldWitnessedNightRecord`) carries no day number of its own, so it contributes none here: a
+ * promise spoken on a day no watcher covered is not charged, which is the fail-safe direction - the ledger does not
+ * accuse without a receipt.
+ * </p>
+ */
+export function nightsTheEngineTook({ dayRecords = [], worldNightEndings = null } = {}) {
+  const records = Array.isArray(dayRecords) ? dayRecords : [];
+  const endings = Array.isArray(worldNightEndings) ? worldNightEndings : null;
+  if (endings === null) return null;
+  const passOutDays = new Set(
+    endings
+      .filter((ending) => isPlainObject(ending) && ending.cause === NIGHT_CAUSE_PASS_OUT)
+      .map(worldEndingDayOfMonth)
+      .filter(isFiniteNumber),
+  );
+  const days = [];
+  for (const record of records) {
+    if (!isPlainObject(record) || !Number.isInteger(record.day)) continue;
+    if (passOutDays.has(nightEndedDayOfMonth(record))) days.push(record.day);
+  }
+  return Object.freeze(days);
+}
+
+/** The newest receipt any turn in a window carried, or `null` when none of them recorded one. */
+function lastReceiptWithin(turns) {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const receipt = turns[index]?.lastReceipt;
+    if (isPlainObject(receipt)) return Object.freeze({ ...receipt });
+  }
+  return null;
+}
+
+/**
+ * Every promise to go to bed in a run's turn stream that a receipt CONTRADICTS, each as a NAMED reading.
+ *
+ * <p>
+ * THE LEDGER MAY ONLY CHARGE HER FOR A CLAIM A RECEIPT CONTRADICTS. A promise to go to bed is dialogue; the only receipt
+ * that contradicts it is the engine taking the night (`engineTakenDays`, from `nightsTheEngineTook`). A promise on a
+ * night her own `sleep` ended is a promise KEPT - the receipt says she went to bed - and nothing about it belongs in the
+ * account. Measured 2026-11-23 (`round98`): 「进屋了，天都黑透了。我把纤维和石头塞进箱子，这就睡」 was published as
+ * `sleep_promised_not_taken:1` while her `sleep` settled `day_advanced` on that same night, folded to the target
+ * `own_bed`. The window is why a reading fired at all: her sleep was submitted in an assistant turn the harness had
+ * already closed (`runAgentTurn` returned on the idle event, the pump then delivered a time milestone and she went on
+ * working in the same session), so no turn record carried `sleepSubmitted: true` and the reader believed the window
+ * instead of the receipt.
  * </p>
  *
  * <p>
- * FOUR ANSWERS, never three. `examined` is the population the reading ran over; `promiseTurns` says how many of those
+ * The turn stream is the runner's own `sessionTurns`: the lines it PRESENTED for that turn, whether a `sleep` submission
+ * happened during it from either dispatch channel, the clock she spoke them at, and the last receipt the run had when the
+ * turn ended. `sleepSubmitted` is the DISPATCH half - it proves she acted even when the receipt has not arrived yet -
+ * and it is the thing that went blind on `round98`, which is why it is no longer the only witness.
+ * </p>
+ *
+ * <p>
+ * FIVE ANSWERS, never three. `examined` is the population the reading ran over; `promiseTurns` says how many of those
  * turns delivered a commitment (kept or not, so a `0` here is a statement about the run, not about the list);
  * `turnsWithoutSleepRecord` counts turns whose submission record is absent, which is NOT MEASURED rather than "nothing
  * was submitted" - and a window holding one of those is not judged (`windowsNotMeasured`), so an unrecorded turn cannot
- * silently become the evidence that she never went to bed.
+ * silently become the evidence that she never went to bed. `engineTakenNights` is `null` when nobody supplied the world's
+ * endings (`not measured`) and a count otherwise, and `promisesWithoutAContradictingReceipt` says how many promises a
+ * receipt left standing: a promise the account does not charge is a reading about her dialogue, and that number keeps it
+ * visible instead of dropping it.
+ * </p>
+ *
+ * <p>
+ * A READING NAMES THE GAP, NOT JUST THE WORD: `promisedAtMs` is the moment the player was shown the promise, from the
+ * presentation piece's own clock, and `lastReceipt` is the last thing she actually did by the end of the window (the
+ * newest dispatch record the run had - flat or program), so a reader can see what happened between the two instead of
+ * taking "she did not" on the strength of a sentence.
  * </p>
  */
-export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS } = {}) {
+export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS, engineTakenDays = null } = {}) {
   const stream = Array.isArray(turns) ? turns : [];
   const window = Number.isInteger(withinTurns) && withinTurns > 0 ? withinTurns : SLEEP_PROMISE_TURNS;
+  const engineTaken = Array.isArray(engineTakenDays) ? new Set(engineTakenDays.filter(Number.isInteger)) : null;
   const readings = [];
   let promiseTurns = 0;
   let turnsWithoutSleepRecord = 0;
   let windowsNotMeasured = 0;
+  let promisesWithoutAContradictingReceipt = 0;
   for (const [index, turn] of stream.entries()) {
     if (typeof turn?.sleepSubmitted !== "boolean") {
       turnsWithoutSleepRecord += 1;
@@ -878,13 +952,24 @@ export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS
       continue;
     }
     if (ahead.some((entry) => entry.sleepSubmitted === true)) continue;
+    // THE RECEIPT DECIDES, and a promise no receipt contradicts is dialogue: nothing was supplied to contradict it
+    // (`not measured`), or the night it promised was not one the engine took.
+    if (engineTaken === null || !Number.isInteger(turn?.day) || !engineTaken.has(turn.day)) {
+      promisesWithoutAContradictingReceipt += 1;
+      continue;
+    }
     const number = index + 1;
+    const spokenAt = Array.isArray(turn?.spokenAtMs) ? turn.spokenAtMs[promise.index] : undefined;
     readings.push(
       Object.freeze({
-        day: Number.isInteger(turn?.day) ? turn.day : null,
+        day: turn.day,
         turn: number,
         phrase: promise.phrase,
         utterance: promise.line,
+        // WHEN SHE SAID IT, on the run's own clock, from the presentation piece the player was shown.
+        promisedAtMs: isFiniteNumber(spokenAt) ? spokenAt : null,
+        // AND WHAT SHE WAS DOING INSTEAD, up to the end of the window: the newest dispatch record the turn stream holds.
+        lastReceipt: lastReceiptWithin(ahead),
         // The spelling a reader greps for and a verdict quotes: `<reading>:<turn>:<utterance>`.
         code: `${SLEEP_PROMISED_NOT_TAKEN}:${String(number)}:${promise.line}`,
       }),
@@ -895,6 +980,8 @@ export function sleepPromisesNotTaken({ turns, withinTurns = SLEEP_PROMISE_TURNS
     promiseTurns,
     turnsWithoutSleepRecord,
     windowsNotMeasured,
+    engineTakenNights: engineTaken === null ? null : engineTaken.size,
+    promisesWithoutAContradictingReceipt,
     readings: Object.freeze(readings),
   });
 }

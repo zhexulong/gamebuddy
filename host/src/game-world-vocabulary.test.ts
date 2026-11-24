@@ -486,7 +486,13 @@ test("region_summary_disagrees_with_the_rows: the gate refuses a summary that do
     ...answer,
     kinds: answer.kinds.map((kind) =>
       kind.kind === "weedTargets"
-        ? { ...kind, shown: [...kind.shown, { x: 900, y: 900, name: undefined, state: "", window: "", w: 1, h: 1 }] }
+        ? {
+            ...kind,
+            shown: [
+              ...kind.shown,
+              { x: 900, y: 900, name: undefined, surface: "", state: "", scene: "", window: "", w: 1, h: 1 },
+            ],
+          }
         : kind,
     ),
   };
@@ -779,8 +785,8 @@ test("a_row_states_the_state_its_producer_carries: the soil family is the place-
   assert.ok(fields !== undefined, "blocked: the wire publishes no soilTile row record");
   assert.deepEqual(
     statableFieldsOf(fields),
-    ["hoeDirt"],
-    "a row's state is `hoeDirt`; the strip's box is a frame and a frame is not a state",
+    ["hoeDirt", "surface"],
+    "a row's states are `hoeDirt` and the ground it stands on; the strip's box is a frame and a frame is not a state",
   );
   const derived = placeAndStateFamilies(wireRowFields());
   assert.ok(
@@ -837,6 +843,123 @@ test("a soil row's connected strip prints once, and a one-tile strip stays silen
     single?.rendered,
     "地块 (62,18) 已锄 false",
     "a one-tile box is the row's own tile, and repeating it beside the coordinate would spend the line on the common case",
+  );
+});
+
+/**
+ * THE ROUND98 ROW, and the reason the surface prints BEFORE the state: the greenhouse's stone doorstep and a field tile
+ * are the same `soilTiles` row to a reader who only sees `已锄 true`.
+ *
+ * Measured `round98` (2026-11-23): the doorstep at `29,17` answered `hoeDirt: true, crop: null` exactly as a plot does,
+ * a cauliflower grew there, and the companion then sowed on the bare dirt it left (`plan_507`). The ground was a doorway
+ * for the whole of that day and no sentence she read said so. The owner prints in parentheses because "which building's
+ * porch" is the next question, and a `not_measured:<x>,<y>:<why>` answer prints verbatim: the tile was not measured, and
+ * saying so is the point of publishing it. A row that carries no surface (a Mod older than the field) stays silent rather
+ * than reading as `土地`.
+ */
+test("a soil row prints the ground it stands on before its state, and the building that owns it", () => {
+  const line = nearbyTargetFamilies({
+    tile: { x: 29, y: 17 },
+    soilTiles: [
+      { x: 29, y: 17, hoeDirt: true, surface: "stone", surfaceOwner: "Greenhouse" },
+      { x: 29, y: 20, hoeDirt: true, surface: "dirt" },
+      { x: 29, y: 21, hoeDirt: false, surface: "not_measured:29,21:off_map" },
+      { x: 29, y: 22, hoeDirt: false },
+    ],
+  } as unknown as Snapshot).find((entry) => entry.family === "soilTiles");
+  assert.equal(
+    line?.rendered,
+    "地块 (29,17) 石地(温室) 已锄 true (29,20) 泥地 已锄 true (29,21) not_measured:29,21:off_map 已锄 false (29,22) 已锄 false",
+    `the surface decides, so it prints before the state it explains: ${String(line?.rendered)}`,
+  );
+  // THE PLANTING FAMILY CARRIES THE SAME WORD OFF THE SAME FIELD, family-neutrally: a suffix that needed a per-family
+  // entry would be the second spelling this unit is about.
+  const seed = nearbyTargetFamilies({
+    tile: { x: 29, y: 17 },
+    seedTargets: [
+      {
+        targetId: "seed_1",
+        slot: 2,
+        x: 29,
+        y: 17,
+        qualifiedItemId: "(O)474",
+        displayName: "花椰菜种子",
+        canPlantThisSeedHere: true,
+        crop: false,
+        surface: "stone",
+        surfaceOwner: "Greenhouse",
+      },
+    ],
+  } as unknown as Snapshot).find((entry) => entry.family === "seedTargets");
+  assert.equal(
+    seed?.rendered,
+    "可播种的地 (29,17) 石地(温室)",
+    `a seed row says what its ground is with the same words a soil row does: ${String(seed?.rendered)}`,
+  );
+});
+
+test("every tilled-tile family prints its ground, not only the two that carried it first", () => {
+  // THE CLASS, not the two instances. `soilTiles` and `seedTargets` printed their `surface` first, and the other six
+  // families that publish a HoeDirt fact - a crop, a pick, a scythe crop, a fertilizer, a clear, a dug spot - read exactly
+  // as a field tile did. They reach this sentence through ONE family-neutral suffix, so this test drives the renderer the
+  // way the wire does: six families, one doorstep each. It reds if any of them stops reaching the line, and it is the
+  // text half of `check-stardew-observation-gap`'s row half (which can only see the wire).
+  const doorstep = { x: 29, y: 17, surface: "stone", surfaceOwner: "Greenhouse" };
+  const families = nearbyTargetFamilies({
+    tile: { x: 29, y: 17 },
+    cropTargets: [{ targetId: "crop_1", cropId: "24", displayName: "花椰菜", watered: false, ...doorstep }],
+    harvestTargets: [
+      {
+        targetId: "harvest_1",
+        cropId: "24",
+        qualifiedHarvestItemId: "(O)190",
+        displayName: "花椰菜",
+        regrowsAfterHarvest: false,
+        readyForHarvest: true,
+        ...doorstep,
+      },
+    ],
+    scytheCropTargets: [
+      {
+        targetId: "scythe_1",
+        location: "Farm",
+        cropId: "24",
+        qualifiedHarvestItemId: "(O)190",
+        displayName: "花椰菜",
+        readyForHarvest: true,
+        dead: false,
+        ...doorstep,
+      },
+    ],
+    fertilizerTargets: [
+      {
+        targetId: "fertilizer_1",
+        slot: 1,
+        qualifiedItemId: "(O)368",
+        displayName: "基础肥料",
+        canApplyFertilizer: true,
+        ...doorstep,
+      },
+    ],
+    clearHoeDirtTargets: [
+      { targetId: "clear_1", location: "Farm", crop: false, ground: true, ...doorstep },
+    ],
+    artifactSpotResultTargets: [
+      { targetId: "dug_1", location: "Farm", crop: false, ground: true, ...doorstep },
+    ],
+  } as unknown as Snapshot);
+  const rendered = new Map(families.map((entry) => [entry.family, entry.rendered]));
+  assert.deepEqual(
+    [...rendered].map(([family, line]) => [family, line]),
+    [
+      ["cropTargets", "待浇水的作物 (29,17) 石地(温室)"],
+      ["harvestTargets", "可收的作物 (29,17) 石地(温室)"],
+      ["fertilizerTargets", "可施肥的地 (29,17) 石地(温室)"],
+      ["clearHoeDirtTargets", "可清的地块 (29,17) 石地(温室)"],
+      ["artifactSpotResultTargets", "挖开过的土堆 (29,17) 石地(温室)"],
+      ["scytheCropTargets", "可割的作物 (29,17) 石地(温室)"],
+    ],
+    `every family that publishes a HoeDirt fact says which ground it is about: ${JSON.stringify(Object.fromEntries(rendered))}`,
   );
 });
 
@@ -929,5 +1052,189 @@ test("a_door_that_opens_later_states_the_hour_before_the_walk", () => {
     shop?.rendered,
     "商店 (4,17) 营业 09:00–16:00",
     "a counter is placed at the tile its keeper stands on - the tile the actor must reach - so its window can be read on the line at all",
+  );
+});
+
+/**
+ * THE BUILDING SHE IS STANDING AGAINST, ON THE LINE, WITH THE SPACE IT TAKES.
+ *
+ * Measured `round98` (2026-11-23), owner's own reading: 「Agent 在 13x13 的视野里，对眼前的这座建筑物是"全盲"的！她根本不知道
+ * 自己正站在一座建筑物跟前」. Her reading at `(30,18)` named a ripe cauliflower, a bush and a tilled tile, and no
+ * greenhouse - so the porch tile at `(29,17)` was, as far as any sentence she read went, field.
+ *
+ * The family was not missing from the wire: `farmBuildingTargets` carries a `built` row for every standing building, and
+ * `farmBuildingTargetsOmitted` says how many the Mod's cap left out. What the line did with that row was print its
+ * LEFT-TOP CORNER - `温室 (25,10)` - eight tiles from her, which is why a radius on the origin would have dropped the
+ * building she was standing against while keeping a coop across the farm.
+ *
+ * So the assertions below are the two halves the owner asked for: the footprint she is near prints with its bounds and
+ * its door, and the same farm seen from a field corner prints no building at all. The refusal on the last case is the
+ * property this test exists for - a building row that prints as a bare tile hides the only fact that answers "is this
+ * tile a porch" - and it names the row it refused.
+ *
+ * THE DOOR AND THE PORCH ARE THE ROW'S OWN FACTS NOW (`humanDoor`, `ownTiles`). They used to be a JOIN - a `doorTargets`
+ * row standing inside a footprint was read as that building's entrance - and the join printed `没有门` for the grammar of
+ * the ruined greenhouse whose doorway she was standing beside, because no `doorTargets` row fell inside it. The wire
+ * answers both questions now, and this test holds the line to printing them.
+ */
+test("a_building_she_stands_against_prints_its_footprint_and_one_across_the_farm_does_not", () => {
+  const greenhouse = {
+    targetId: "built_greenhouse",
+    kind: "built",
+    location: "Farm",
+    x: 25,
+    y: 10,
+    buildingType: "Greenhouse",
+    displayName: "温室",
+    buildCost: 0,
+    buildDays: 0,
+    buildingId: "1",
+    daysOfConstructionLeft: 0,
+    w: 7,
+    h: 6,
+    // The engine's own answers for the standard Farm's greenhouse: `Data/Buildings` declares `HumanDoor 3,5`, and its
+    // own tile data calls `27..29 x 16..17` stone - the rows that read as `Diggable` farm soil to a producer asking the map.
+    humanDoor: { x: 28, y: 15 },
+    ownTiles: [
+      { x: 27, y: 16 },
+      { x: 28, y: 16 },
+      { x: 29, y: 16 },
+      { x: 27, y: 17 },
+      { x: 28, y: 17 },
+      { x: 29, y: 17 },
+    ],
+  };
+  const barn = {
+    targetId: "built_barn",
+    kind: "built",
+    location: "Farm",
+    x: 67,
+    y: 18,
+    buildingType: "Barn",
+    displayName: "谷仓",
+    buildCost: 0,
+    buildDays: 0,
+    buildingId: "2",
+    daysOfConstructionLeft: 0,
+    w: 7,
+    h: 4,
+    humanDoor: { x: 70, y: 21 },
+  };
+  const site = {
+    targetId: "site_coop_0123456789abcdef",
+    kind: "build_site",
+    location: "Farm",
+    x: 33,
+    y: 14,
+    buildingType: "Coop",
+    displayName: "鸡舍",
+    buildCost: 4000,
+    buildDays: 3,
+    buildingId: "none",
+    daysOfConstructionLeft: -1,
+    w: 6,
+    h: 3,
+  };
+  /** A building whose own `Data/Buildings` entry declares no human door: a silo is touched from the ring around it. */
+  const silo = {
+    targetId: "built_silo",
+    kind: "built",
+    location: "Farm",
+    x: 28,
+    y: 22,
+    buildingType: "Silo",
+    displayName: "筒仓",
+    buildCost: 100,
+    buildDays: 0,
+    buildingId: "3",
+    daysOfConstructionLeft: 0,
+    w: 3,
+    h: 3,
+  };
+  const lineOf = (snapshot: Record<string, unknown>): string =>
+    nearbyTargetFamilies(snapshot as unknown as Snapshot).find((entry) => entry.family === "farmBuildingTargets")
+      ?.rendered ?? "";
+
+  // (30,18): the footprint reaches to y=15, so the greenhouse is three tiles from her and the barn twenty-nine.
+  const here = lineOf({
+    tile: { x: 30, y: 18 },
+    farmBuildingTargets: [greenhouse, barn, site],
+  });
+  assert.ok(
+    here.includes("温室 (25,10 到 31,15)"),
+    `the building she is standing against must print the space it takes, not its corner: ${JSON.stringify(here)}`,
+  );
+  assert.equal(
+    here.includes("谷仓"),
+    false,
+    `a building past the Mod's own six-tile envelope is a place she cannot see from here: ${JSON.stringify(here)}`,
+  );
+  assert.match(here, /（另有 1 处在 6 格外没列）/u, `the line says how many it cut: ${JSON.stringify(here)}`);
+  // THE SITE IS NOT A BARN: `build_site` is a free footprint the named type could go on (`protocol.ts:1333`), so it
+  // prints the word for what it is instead of reading as a structure that is already standing there.
+  assert.ok(
+    here.includes("鸡舍 (空地 33,14 到 38,16)"),
+    `a commission site must not read as a building that exists: ${JSON.stringify(here)}`,
+  );
+  // THE DOOR AND THE PORCH, ON THE ROW, WITHOUT SPENDING AN OBSERVE. `round98`: she stood beside the greenhouse's
+  // doorway and the line said `没有门`, and nothing on it said the rows under her feet were the building's own - so a
+  // cauliflower went into the stone step. The extent prints as the `到` region `footprintSuffix` already uses, which is
+  // the shape a reader can compare against the tile she stands on.
+  assert.ok(
+    here.includes("温室 (25,10 到 31,15) 门 (28,15) 脚前石阶 27,16 到 29,17"),
+    `a building's own door and its own rows must be printed beside its footprint: ${JSON.stringify(here)}`,
+  );
+  // THE DOOR IS THE ROW'S OWN FACT, NOT A JOIN: the barn carries `humanDoor` and prints it, whatever `doorTargets` says.
+  const withBarn = lineOf({ tile: { x: 68, y: 20 }, farmBuildingTargets: [barn] });
+  assert.ok(
+    withBarn.includes("谷仓 (67,18 到 73,21) 门 (70,21)"),
+    `a building's own door must be printed beside its footprint: ${JSON.stringify(withBarn)}`,
+  );
+  // ABSENT IS "THE MOD ANSWERED NO DOOR", and a structure whose door could not be read says so rather than staying
+  // silent - the zero-means-three-things rule, kept at the row. The engine answers its own origin corner for a type that
+  // declares no door (`humanDoor` is a `NetPoint` starting at `0,0`), and `Building.isActionableTile` acts on exactly that
+  // tile (Building.cs:1088), so this branch is for the member the Mod did not send - not for a building type the engine
+  // has no door for.
+  const noDoor = lineOf({ tile: { x: 29, y: 24 }, farmBuildingTargets: [silo] });
+  assert.ok(
+    noDoor.includes("筒仓 (28,22 到 30,24) 没有门"),
+    `a building with no door must say so on its own row: ${JSON.stringify(noDoor)}`,
+  );
+  // THE MOD'S OWN CAP ON THE PORCH, SAID BESIDE IT: a list bounded at eight that drops rows without counting them would
+  // read as a structure whose porch is exactly those tiles.
+  const longPorch = lineOf({
+    tile: { x: 29, y: 24 },
+    farmBuildingTargets: [{ ...silo, ownTiles: [{ x: 27, y: 25 }, { x: 28, y: 25 }], ownTilesOmitted: 2 }],
+  });
+  assert.ok(
+    longPorch.includes("脚前石阶 27,25 到 28,25（另有 2 格没列）"),
+    `the porch's own cap must be stated on the line: ${JSON.stringify(longPorch)}`,
+  );
+
+  // (45,34): the field corner. Nothing of this farm is within the envelope, so no building prints - and the line still
+  // says which absence this is rather than staying silent about a family that published three rows.
+  const far = lineOf({
+    tile: { x: 45, y: 34 },
+    farmBuildingTargets: [greenhouse, barn, site],
+  });
+  for (const name of ["温室", "谷仓", "鸡舍"])
+    assert.equal(
+      far.includes(name),
+      false,
+      `a field tile twenty tiles from any building must print no building: ${JSON.stringify(far)}`,
+    );
+  assert.match(far, /都不在 6 格内/u, `the far line names the envelope that emptied it: ${JSON.stringify(far)}`);
+
+  // THE MOD'S OWN CAP, SAID BESIDE THE ROWS IT COUNTS: sixteen is the family's whole budget, so a farm at the cap would
+  // otherwise read as a farm with exactly sixteen buildings.
+  const capped = lineOf({
+    tile: { x: 30, y: 18 },
+    farmBuildingTargets: [greenhouse],
+    farmBuildingTargetsOmitted: 4,
+  });
+  assert.match(
+    capped,
+    /（Mod 那边还有 4 处没发出来）/u,
+    `a bounded building list states the rows that never arrived: ${JSON.stringify(capped)}`,
   );
 });

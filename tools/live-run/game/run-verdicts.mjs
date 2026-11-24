@@ -83,6 +83,52 @@ export function dispatchMarkers(trace, submissions) {
 }
 
 /**
+ * THE LAST THING SHE ACTUALLY DID, from whichever channel dispatched it - the fact a promise to go to bed is measured
+ * against when no receipt contradicts it.
+ *
+ * <p>
+ * The two channels keep their own record and their own clock: a flat request lands in `actionTrace` with
+ * `settledAtMs`, and a Body Program lands in `programSubmissions` with `submittedAtMs` and no execution rows at all. The
+ * newest of the two is the answer, and it is one RECORD rather than a count because the reading it feeds
+ * (`sleepPromisesNotTaken`) has to be able to say what happened between the promise and the night instead of only that
+ * nothing did. `null` when neither record holds a row - a turn that dispatched nothing is not a receipt.
+ * </p>
+ *
+ * <p>
+ * `round98` is why the program channel is here at all: every action of that day went through programs, so a reading of
+ * `actionTrace` alone answered "the last thing she did" with a flat receipt from hours earlier.
+ * </p>
+ */
+export function lastDispatchedReceipt(trace, submissions) {
+  const flat = Array.isArray(trace) && trace.length > 0 ? trace[trace.length - 1] : null;
+  const program = Array.isArray(submissions) && submissions.length > 0 ? submissions[submissions.length - 1] : null;
+  const node = Array.isArray(program?.nodes) && program.nodes.length > 0 ? program.nodes[program.nodes.length - 1] : null;
+  if (node === null && flat === null) return null;
+  const flatAt = Number.isFinite(flat?.settledAtMs) ? flat.settledAtMs : null;
+  const programAt = Number.isFinite(program?.submittedAtMs) ? program.submittedAtMs : null;
+  // An unclocked row cannot outrank a clocked one, and an unclocked FLAT row does not outrank a dated program either: an
+  // absent clock is not an old one, and `null >= null` is true in JavaScript, so the comparison is stated rather than
+  // left to the operators.
+  const preferProgram =
+    node !== null && (flat === null || flatAt === null || (programAt !== null && programAt >= flatAt));
+  if (preferProgram) {
+    return Object.freeze({
+      via: "program",
+      actionId: node.actionId ?? null,
+      programId: program.programId ?? null,
+      atMs: programAt,
+    });
+  }
+  return Object.freeze({
+    via: "flat",
+    actionId: flat?.action ?? null,
+    state: flat?.state ?? null,
+    reasonCode: flat?.reasonCode ?? null,
+    atMs: flatAt,
+  });
+}
+
+/**
  * The run's OWN prompt-turn cadence, from the moments the harness began its prompt turns.
  *
  * `readObjectiveState` needs one span to answer "the objective's reading has not moved for a whole turn", and a turn

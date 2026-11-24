@@ -34,7 +34,8 @@
  *     --catalog <catalog.json> [--out <file>] [--pretty] [--fail-on-ungranted]
  *
  * 本产物同时是**观测缺口报告**：collections / tileChannels / addressability /
- * postconditionMutations / publicationGating / consumption / quadrant / fieldLevel 八个 section 在
+ * postconditionMutations / publicationGating / consumption / quadrant / fieldLevel 八个 section，加上 scene 层的
+ * tileVocabulary / buildings / paving / legality 四个（从引擎出发，而不是从已发布的事实出发），共十二个，在
  * `observationGaps` 键下追加，
  * 人读部分写 stderr，stdout 的 JSON 不变。`--fail-on-ungranted` 只在新 section 有未登记缺口时置 exit 1；
  * 默认仍然是「写产物即成功」，因为既有消费方依赖这个语义。
@@ -1250,6 +1251,16 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
     result.counts.observationFieldRed = observation.fieldLevel.counts.red;
     result.counts.observationFieldBaselined = observation.fieldLevel.counts.baselined;
     result.counts.observationFieldUnparsed = observation.fieldLevel.unparsed.length;
+    result.counts.observationSceneTileTriples = observation.scene.tileVocabulary.population?.length ?? 0;
+    result.counts.observationSceneTileUndecided = observation.scene.tileVocabulary.undecided.length;
+    result.counts.observationSceneTileWithheld = observation.scene.tileVocabulary.withheld.length;
+    result.counts.observationSceneBuildingFacts = observation.scene.buildings.counts.facts;
+    result.counts.observationSceneBuildingUnread = observation.scene.buildings.counts.unread;
+    result.counts.observationScenePavingRows = observation.scene.paving.counts.soilRows;
+    result.counts.observationScenePavingIndistinguishable = observation.scene.paving.counts.indistinguishable;
+    result.counts.observationSceneLegalitySites = observation.scene.legality.counts.sites;
+    result.counts.observationSceneLegalityViolations = observation.scene.legality.counts.violations;
+    result.counts.observationSceneBlocked = observation.scene.blocked.length;
     result.counts.observationGapFindings = observation.findings.length;
     result.counts.observationGapUngranted = observation.ungranted.length;
     result.counts.observationBaselineEntries = observation.baseline.entries;
@@ -1265,6 +1276,11 @@ export function reconcile({ selectorArtifact, remainingReport, register, catalog
       "field_level_reads_are_extracted_from_if_while_switch_and_return_expressions_through_a_fixed_engine_type_vocabulary_and_are_a_ratchet_not_a_hard_red",
       "field_level_presence_reads_are_named_by_the_call_that_is_null_tested_not_by_a_resolved_return_type",
       "field_level_row_fields_come_from_the_wire_schema_and_are_cross_checked_against_the_Mod_record",
+      "scene_tile_publication_means_a_Mod_producer_asks_the_engine_that_question_not_that_the_answer_reaches_a_row_field (section H asks the second half)",
+      "scene_building_readability_means_the_per_turn_text_or_a_projection_reads_the_family_a_tool_description_and_the_Host_withheld_list_do_not_count",
+      "scene_paving_calls_a_row_a_soil_row_when_it_states_a_HoeDirt_member_and_its_engine_member_vocabulary_is_read_from_the_decompiled_HoeDirt",
+      "scene_legality_reads_the_sites_that_manufacture_ground_and_the_engine_admission_for_the_same_write_it_does_not_observe_a_running_game",
+      "the_scene_layer_needs_the_decompiled_tree_and_reports_blocked_rather_than_green_without_it",
     ]);
   }
   return result;
@@ -2975,6 +2991,824 @@ export function fieldLevelCoverage({
   };
 }
 
+// ---------------------------------------------------------------------------
+// 观测缺口 I–L 段：scene
+// ---------------------------------------------------------------------------
+
+/**
+ * THE SCENE LAYER: every section above asks a question about a fact WE ALREADY PUBLISH.
+ *
+ * A, B, C, E and F take their population from the wire (`record BridgeSnapshot(...)`, the surface, the Host's consumer
+ * inventory). D and H take it from the Mod's own handlers. None of them can report "a whole KIND of fact was never
+ * published", because a population of published facts cannot see what publishing missed - and that is the defect the
+ * scene layer exists for, measured `round98` (2026-11-23):
+ *
+ *   - the companion stood two tiles from a greenhouse and her `<world-state>` named a cauliflower, a bush and a hole;
+ *   - `farmBuildingTargets` exists, carries x/y/w/h, has a vocabulary label (农场建筑) and no renderer prints it;
+ *   - map tiles, building footprints, porches and paved decks are in no family at all;
+ *   - a tilled tile was broadcast on the greenhouse's stone doorstep, because a FIXTURE had made it so and every layer
+ *     reported the fixture's state faithfully.
+ *
+ * So these four sections take their POPULATION FROM THE ENGINE and ask whether our surface answers it:
+ *
+ *   I tile vocabulary  every `(layer, property[, value])` question the engine itself asks of a map tile - read from
+ *                      the decompiled `GameLocation.cs`, never listed here - must be asked by a producer or declared
+ *                      withheld with a reason. A triple in neither is a finding: nobody decided whether a whole tile
+ *                      fact exists for her.
+ *   J buildings        the engine facts a BUILDING can answer (footprint origin, footprint extent, human door, its own
+ *                      tile answer for the porch/deck rows). Each must be carried by a building row AND reachable
+ *                      without spending an observe. This is where `farmBuildingTargets` being published and unrendered
+ *                      is reported - as this finding's FIRST INSTANCE, not as a new problem.
+ *   K paving           a published row that states a tilled-tile fact (HoeDirt's own members) must also state what the
+ *                      GROUND is, or the row cannot tell a paved doorstep from a field tile. The engine's ground routes
+ *                      are read from the engine, and every one of them must be asked by a Mod reader.
+ *   L legality         a Mod source that hand-makes tilled ground must go through the engine's own admission for it
+ *                      (`GameLocation.makeHoeDirt`): a site that does not is a world state the engine could not have
+ *                      produced - the check that turns "we faithfully broadcast an anomalous fixture state" from a
+ *                      virtue into a red.
+ *
+ * NOT MEASURED IS NOT A PASS. Each section needs a decompiled file; when one is absent the section reports
+ * `measured: false`, contributes no findings, and `observeActionGaps` counts it in `scene.blocked`, which fails the
+ * report. A section that silently measured nothing would agree with itself.
+ */
+
+/** The decompiled file that answers a MAP tile question: every tile predicate the engine asks of a map lives there. */
+const SCENE_MAP_FILE = "GameLocation.cs";
+/** The decompiled files a BUILDING answers its own tile questions from (`GreenhouseBuilding` overrides the answer). */
+const SCENE_BUILDING_FILES = Object.freeze(["Building.cs", "GreenhouseBuilding.cs"]);
+/** The decompiled file that owns a tilled tile. */
+const SCENE_SOIL_FILE = "HoeDirt.cs";
+
+/** A tile question the engine asks: the property form names a property then a layer, the layer form names a layer. */
+const TILE_QUESTION_CALL =
+  /(doesTileHavePropertyNoNull|doesTileHaveProperty|getTileProperty|getTileIndexAt|hasTileAt)\s*\(/gu;
+const PROPERTY_QUESTION_CALLEES = new Set(["doesTileHavePropertyNoNull", "doesTileHaveProperty", "getTileProperty"]);
+
+/** One regular expression, with its metacharacters escaped (`Back.Type` is not a pattern). */
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+/** The top-level arguments of the call whose `(` is at `open`, trimmed, or null when the brackets do not close. */
+function callArguments(code, open) {
+  const close = matchingBracket(code, open);
+  return close < 0 ? null : splitTopLevel(code.slice(open + 1, close)).map((argument) => argument.trim());
+}
+
+/** The literal text of one argument, or null when it is an expression the engine computed. */
+function literalOf(argument) {
+  const match = /^"([^"]*)"$/u.exec(argument);
+  return match === null ? null : match[1];
+}
+
+/** `Back.Type=Stone`, `Back.Diggable`, `Buildings` - the id a decision, a finding and a baseline entry share. */
+export function tileTripleId(triple) {
+  const head = triple.property === null ? triple.layer : `${triple.layer}.${triple.property}`;
+  return (triple.value === null ? head : `${head}=${triple.value}`).toLowerCase();
+}
+
+/**
+ * Every tile question the engine asks of a map, with the VALUES it distinguishes for one of them.
+ *
+ * The population is read from the decompiled `GameLocation.cs`:
+ *   - `doesTileHaveProperty(x, y, "Property", "Layer")` -> (layer, property, null)
+ *   - `hasTileAt(x, y, "Layer")` / `getTileIndexAt(x, y, "Layer", ...)` -> (layer, null, null)
+ *   - a `switch` whose SUBJECT is one of those questions contributes every `case "Value":` label in its block, as
+ *     (layer, property, value). That is where `Back.Type=Stone` comes from: `playTerrainSound` switches on
+ *     `doesTileHaveProperty(x, y, "Type", "Back")` over Dirt, Stone, Grass and Wood. A property with value labels is
+ *     published as its VALUES, because those are the facts two tiles differ by; a property without them stays one
+ *     question.
+ *
+ * A call with no literal layer (the engine asking about a computed layer) is counted in `unparsed` and named, because a
+ * question this reader cannot see is not a question the engine does not ask.
+ */
+export function tileQuestionVocabulary({ decompiled = {} } = {}) {
+  const source = decompiled[SCENE_MAP_FILE];
+  if (typeof source !== "string" || source.length === 0)
+    return { measured: false, missing: [SCENE_MAP_FILE], triples: [], unparsed: [] };
+  const code = withoutComments(source);
+  const questions = new Map();
+  const unparsed = [];
+  for (const match of code.matchAll(TILE_QUESTION_CALL)) {
+    const line = code.slice(0, match.index).split("\n").length;
+    const open = code.indexOf("(", match.index + match[0].length - 1);
+    const args = callArguments(code, open);
+    const literals = args === null ? [] : args.map(literalOf).filter((literal) => literal !== null);
+    const triple = PROPERTY_QUESTION_CALLEES.has(match[1])
+      ? literals.length >= 2
+        ? { layer: literals[1], property: literals[0], value: null }
+        : null
+      : literals.length >= 1
+        ? { layer: literals[0], property: null, value: null }
+        : null;
+    if (triple === null) {
+      unparsed.push(`${SCENE_MAP_FILE}:${line}`);
+      continue;
+    }
+    questions.set(tileTripleId(triple), triple);
+  }
+
+  // The value vocabulary: a switch whose subject IS a tile question, and the case labels of its block.
+  const valued = new Map();
+  for (const match of code.matchAll(/switch\s*\(/gu)) {
+    const open = code.indexOf("(", match.index + match[0].length - 1);
+    const close = matchingBracket(code, open);
+    if (close < 0) continue;
+    const subject = code.slice(open + 1, close);
+    const question = [...subject.matchAll(TILE_QUESTION_CALL)][0];
+    if (question === undefined || !PROPERTY_QUESTION_CALLEES.has(question[1])) continue;
+    const questionOpen = subject.indexOf("(", question.index + question[0].length - 1);
+    const args = callArguments(subject, questionOpen);
+    const literals = args === null ? [] : args.map(literalOf).filter((literal) => literal !== null);
+    if (literals.length < 2) continue;
+    const blockStart = code.indexOf("{", close);
+    if (blockStart < 0) continue;
+    const blockEnd = matchingBracket(code, blockStart);
+    if (blockEnd < 0) continue;
+    const key = `${literals[1]}\u0000${literals[0]}`;
+    const entry = valued.get(key) ?? { layer: literals[1], property: literals[0], values: new Set() };
+    for (const label of code.slice(blockStart, blockEnd).matchAll(/case\s+"([^"]+)"\s*:/gu)) entry.values.add(label[1]);
+    valued.set(key, entry);
+  }
+
+  const triples = [];
+  const expanded = new Set();
+  for (const [key, entry] of valued) {
+    expanded.add(key);
+    for (const value of [...entry.values].sort()) triples.push({ layer: entry.layer, property: entry.property, value });
+  }
+  for (const [key, triple] of questions) {
+    if (expanded.has(`${triple.layer}\u0000${triple.property ?? ""}`)) continue;
+    triples.push(triple);
+  }
+  triples.sort((left, right) => tileTripleId(left).localeCompare(tileTripleId(right)));
+  const bodies = engineMemberBodies(code);
+  const helpers = new Map();
+  for (const triple of triples) {
+    const ask = tileAskPatterns(triple);
+    const names = [];
+    for (const [name, body] of bodies) {
+      const asks = ask.required.every((pattern) => pattern.test(body));
+      if (!asks) continue;
+      if (ask.alternatives.length > 0 && !ask.alternatives.some((pattern) => pattern.test(body))) continue;
+      names.push(name);
+    }
+    helpers.set(tileTripleId(triple), names.sort());
+  }
+  return { measured: true, missing: [], triples, unparsed, helpers };
+}
+
+/**
+ * Tile facts a producer deliberately does NOT publish, each with the fact that makes it not a scene fact.
+ *
+ * Every entry EXPIRES: a triple the Mod starts asking is `stale_scene_withheld_tile`, and so is one the engine stopped
+ * asking - an exemption that outlives its subject hides the next undecided one.
+ *
+ * An entry with no reason is NOT a decision and does not count as one: it leaves the question undecided, because the
+ * shape silence takes once writing it down is legal is `back.diggable: ""`.
+ */
+export const SCENE_WITHHELD_TILES = Object.freeze({
+  alwaysfront:
+    'draw order: hasTileAt("AlwaysFront") asks whether the overlay layer holds anything so the engine can order sprites, and no action, target or legality rule reads it - the layer is presentation, not a fact she acts on',
+  alwaysfront2: 'the same draw-order question on the second overlay layer (hasTileAt("AlwaysFront2"))',
+  alwaysfront3: 'the same draw-order question on the third overlay layer (hasTileAt("AlwaysFront3"))',
+  front: 'draw order: hasTileAt("Front") asks whether anything is drawn in front of the actor on this tile',
+  "paths.order":
+    'draw order for the Paths layer (doesTileHaveProperty(..., "Order", "Paths")): the value is a sort key the renderer consumes, so publishing it would publish the painter\'s index rather than a world fact',
+  "back.lockeddoormessage":
+    'the wording of a refusal, not the refusal: performTouchAction reads it at GameLocation.cs:3928 only to print a custom sentence when a ConditionalDoor touch action turns the player back, and falls back to the default string (:3935) when the property is absent - so the tile reads the same whether the door will open or not. The door itself already reaches her: back.touchaction is read and published as a fixed interaction point whose action word is ConditionalDoor',
+  "back.nofurniture":
+    'a relation between a tile and an ITEM, not a tile fact: isTilePlaceable (GameLocation.cs:7540) refuses "total" outright and otherwise refuses only an item that is not passable or any tile indoors, so one tile admits a chair and refuses a fence. The placing action already asks the engine for the answer - place_owned_object calls Item.canBePlacedHere, whose Furniture branch calls GameLocation.isTilePlaceable (Furniture.cs:1356), and names the refusal place_owned_object_tile_not_placeable - so a published flag would be a second, item-blind copy of that admission',
+  "back.spawnable":
+    'a permission for a spawn nobody chooses: its only reader in the engine is spawnObjects (GameLocation.cs:15163), the daily random forage and debris pass, and a companion neither picks the tile nor can stop the roll - the object it produces is what she then sees, and it is in front of her. The half that does gate an action, tiles that refuse spawning, is NoSpawn, already asked through IsNoSpawnTile (farmhandexecutioncontroller.cs:1858 plants a tree through it)',
+  "back.treasure":
+    'a hidden reward, not a state she can read off the tile: HandleTreasureTileProperty (GameLocation.cs:14429) is reached only from checkForBuriedItem, which the hoe and explosions call (Hoe.cs:98 and :117), and it clears the property the moment it pays out (:14526). Tilling a treasure tile and an ordinary one are the same act, nothing standing on the tile shows it, and the dig is what reveals it - publishing it would hand her the map author\'s buried item before the dig that exists to reveal it',
+  "buildings.passable":
+    'the walkability question it carries is already asked of the engine in the form that owns it: GameLocation.isTilePassable reads the Buildings tile before it answers (GameLocation.cs:2906), isCollidingPosition reads the map-authored one (:2827), and Building.isTilePassable answers for a footprint - all three are asked throughout the body and navigation code (StardewBodyController.cs:1539, :1630, :1765). The four raw reads are engine decorations: damage line of sight (:4630), a frog\'s tile choice (:5960), shadow sorting (:8123), and whether dropped debris sinks (:13081). Publishing the flag would be a third authority for "may she stand here"',
+});
+
+/**
+ * The bodies of the engine's own members in one file, keyed by member name.
+ *
+ * A producer often asks a engine QUESTION THROUGH A HELPER - `location.isWaterTile(x, y)` asks `Water`/`Back`,
+ * `IsNoSpawnTile(tile)` asks `NoSpawn`/`Back` - and the literal layer never crosses into the Mod. Reading the helper
+ * bodies from the decompiled file is what keeps "no producer asks it" a statement about the ENGINE's answer rather than
+ * about which spellings the Mod happens to use. An expression-bodied member is not collected; a question only it asks
+ * stays undecided, which is the failing direction.
+ */
+function engineMemberBodies(code) {
+  const bodies = new Map();
+  const DECLARATION =
+    /(?:^|\n)[ \t]*(?:public|private|protected|internal)[^\n;{]{0,240}?\b(\w+)\s*\([^;\n]{0,400}?\)\s*\{/gu;
+  for (const match of code.matchAll(DECLARATION)) {
+    const open = code.indexOf("{", match.index + match[0].length - 1);
+    const close = matchingBracket(code, open);
+    if (close < 0) continue;
+    const body = code.slice(open, close + 1);
+    bodies.set(match[1], (bodies.get(match[1]) ?? "") + body);
+  }
+  return bodies;
+}
+
+/**
+ * How one triple is asked by a producer.
+ *
+ * A LAYER question has three read shapes and any one of them is a read (`hasTileAt`, `getTileIndexAt`, `GetLayer`).
+ * A PROPERTY question is one shape - the engine's own argument order, property then layer - and it is also the whole
+ * test for the property's VALUES: the engine answers with the word itself, so a producer that asks `Type`/`Back`
+ * receives Dirt, Stone, Grass and Wood alike. Requiring the value literal instead measured the SPELLING a reader
+ * happens to use for the words it passes through (`PavedTypeWords` holds "Stone"/"Wood" and the lower-cased constants
+ * hold "dirt"/"grass"), and reported two of the engine's four ground words undecided while the reader answered all four.
+ */
+function tileAskPatterns(triple) {
+  if (triple.property === null) {
+    const layer = escapeRegExp(triple.layer);
+    return {
+      required: [],
+      alternatives: [
+        new RegExp(`(?:hasTileAt|getTileIndexAt)\\([^;\\n]{0,160}?"${layer}"`, "u"),
+        new RegExp(`GetLayer\\(\\s*"${layer}"\\s*\\)`, "u"),
+        new RegExp(`doesTileHaveProperty(?:NoNull)?\\([^;\\n]{0,200}?"${layer}"`, "u"),
+      ],
+    };
+  }
+  const property = escapeRegExp(triple.property);
+  const layer = escapeRegExp(triple.layer);
+  return {
+    required: [
+      new RegExp(
+        `(?:doesTileHavePropertyNoNull|doesTileHaveProperty|getTileProperty)\\([^;\\n]{0,160}?"${property}"[^;\\n]{0,80}?"${layer}"`,
+        "u",
+      ),
+    ],
+    alternatives: [],
+  };
+}
+
+/**
+ * I - every tile question the engine can answer: asked by a Mod producer, declared withheld, or a finding.
+ *
+ * `askedBy` means A MOD PRODUCER ASKS THE ENGINE THIS QUESTION - the head of the pipeline. Whether the answer reaches a
+ * row field is section H's question, and whether a row can contradict the engine is section L's; claiming the whole
+ * chain from a name match would be the false green this layer exists to remove (see nonGuarantees).
+ */
+export function sceneTileVocabulary({ decompiled = {}, sources = [], withheld = SCENE_WITHHELD_TILES } = {}) {
+  const vocabulary = tileQuestionVocabulary({ decompiled });
+  if (!vocabulary.measured)
+    return {
+      measured: false,
+      missing: vocabulary.missing,
+      rows: [],
+      unparsed: [],
+      population: [],
+      asked: [],
+      withheld: [],
+      undecided: [],
+      findings: [],
+    };
+  const askedIn = new Map();
+  const helperAsked = new Map();
+  for (const { path: sourcePath, source } of sources) {
+    const code = withoutComments(source);
+    for (const triple of vocabulary.triples) {
+      const id = tileTripleId(triple);
+      const ask = tileAskPatterns(triple);
+      const direct =
+        ask.required.every((pattern) => pattern.test(code)) &&
+        (ask.alternatives.length === 0 || ask.alternatives.some((pattern) => pattern.test(code)));
+      const helper = (vocabulary.helpers.get(id) ?? []).find((name) =>
+        new RegExp(`\\b${escapeRegExp(name)}\\s*\\(`, "u").test(code),
+      );
+      if (!direct && helper === undefined) continue;
+      const readers = askedIn.get(id) ?? [];
+      if (!readers.includes(sourcePath)) readers.push(sourcePath);
+      askedIn.set(id, readers);
+      if (helper !== undefined && !direct) helperAsked.set(id, helper);
+    }
+  }
+  const findings = [];
+  const rows = vocabulary.triples.map((triple) => {
+    const id = tileTripleId(triple);
+    const readers = askedIn.get(id) ?? [];
+    const reason = Object.hasOwn(withheld, id) ? withheld[id] : null;
+    const declared = typeof reason === "string" && reason.trim() !== "" ? reason : null;
+    return {
+      id,
+      layer: triple.layer,
+      property: triple.property,
+      value: triple.value,
+      askedBy: readers.length,
+      readers,
+      viaHelper: helperAsked.get(id) ?? null,
+      withheld: declared,
+    };
+  });
+  for (const row of rows) {
+    if (row.askedBy > 0) {
+      if (row.withheld !== null)
+        findings.push({
+          code: `stale_scene_withheld_tile:${row.id}`,
+          kind: "scene_tile",
+          id: null,
+          detail: `${row.id} is asked by ${row.readers.slice(0, 3).join(", ")} now, so its withheld declaration has expired and must be deleted`,
+        });
+      continue;
+    }
+    if (row.withheld !== null) continue;
+    findings.push({
+      code: `scene_tile_undecided:${row.id}`,
+      kind: "scene_tile",
+      id: null,
+      detail: `the engine answers ${row.id} on a map tile (${SCENE_MAP_FILE}) and no producer asks it: either publish the fact as a scene row field, or declare it withheld in SCENE_WITHHELD_TILES with the reason it is not a fact she acts on`,
+    });
+  }
+  for (const id of Object.keys(withheld))
+    if (!rows.some((row) => row.id === id))
+      findings.push({
+        code: `stale_scene_withheld_tile:${id}`,
+        kind: "scene_tile",
+        id: null,
+        detail: `${id} is declared withheld and the engine no longer asks that question of a map tile; delete the declaration`,
+      });
+  return {
+    measured: true,
+    missing: [],
+    rows,
+    unparsed: vocabulary.unparsed,
+    population: rows.map((row) => row.id),
+    asked: rows.filter((row) => row.askedBy > 0).map((row) => row.id),
+    withheld: rows.filter((row) => row.withheld !== null).map((row) => row.id),
+    undecided: rows.filter((row) => row.askedBy === 0 && row.withheld === null).map((row) => row.id),
+    findings,
+  };
+}
+
+/**
+ * The building facts the ENGINE can answer about one structure, in the engine's own members.
+ *
+ * `fields` are the wire fields that would carry the fact on a BUILDING row. They are declared here because the mapping
+ * engine-member -> wire-field is a naming decision, and `carriers` is what makes the claim honest: a row must declare
+ * EVERY declared field, or the fact is not on the row.
+ */
+export const SCENE_BUILDING_FACTS = Object.freeze([
+  Object.freeze({
+    id: "footprint_origin",
+    member: "tileX",
+    fact: "which tiles a structure stands on, as its left-top origin",
+    fields: Object.freeze(["x", "y"]),
+  }),
+  Object.freeze({
+    id: "footprint_extent",
+    member: "tilesWide",
+    fact: "how many tiles the structure spans",
+    fields: Object.freeze(["w", "h"]),
+  }),
+  Object.freeze({
+    id: "human_door",
+    member: "getPointForHumanDoor",
+    fact: "the tile its human door opens on, which is what enter_exit and every walk-to-the-door plan addresses",
+    fields: Object.freeze(["humanDoor"]),
+  }),
+  Object.freeze({
+    id: "own_tile_answer",
+    member: "doesTileHaveProperty",
+    fact: "what the structure's OWN tile data says about its porch, walkway and deck rows",
+    // ONE FIELD, because the fact is a SET of tiles rather than a per-tile pair: `ownTiles` carries the `{x,y}` rows
+    // outside the footprint that the structure's own `Type`/`Back` answer covers, and the Mod's cap states its cost
+    // beside the list (`ownTilesOmitted`). A row declaring `surface`+`surfaceOwner` - the per-tile spelling `soilTiles`
+    // uses - would publish the same fact one tile at a time, which is the shape the building line does not print.
+    fields: Object.freeze(["ownTiles"]),
+  }),
+]);
+
+/** The member that makes a published row a BUILDING row: `Building.cs` declares it, and only a structure has one. */
+const BUILDING_ROW_MEMBER = "buildingType";
+
+/**
+ * J - the engine's building facts, carried by a building row and readable without spending an observe.
+ *
+ * READABLE IS THE CLAIM, and that is the whole point of this section. `farmBuildingTargets` publishes the footprint,
+ * carries a vocabulary label and is named in a tool description, so section F counts it as consumed - and no renderer
+ * prints it, which is how she stood two tiles from a greenhouse and read a cauliflower, a bush and a hole instead. A
+ * tool description is not a rendering: it says the family exists, not what is in it this turn.
+ *
+ * The Host's withheld list is not a rendering either. `UNPROJECTED_OBSERVED_FAMILIES` says the family is delivered by a
+ * solicited observation, which is exactly the observe this section counts as "not readable without one".
+ */
+export function sceneBuildings({
+  decompiled = {},
+  schema = {},
+  perTurnFields = new Set(),
+  projectionSources = new Map(),
+  facts = SCENE_BUILDING_FACTS,
+} = {}) {
+  const sources = SCENE_BUILDING_FILES.map((name) => decompiled[name]).filter((source) => typeof source === "string");
+  if (sources.length === 0)
+    return {
+      measured: false,
+      missing: [...SCENE_BUILDING_FILES],
+      families: [],
+      rows: [],
+      counts: { facts: 0, carried: 0, readable: 0, unpublished: 0, unread: 0 },
+      findings: [],
+    };
+  const engine = sources.map(withoutComments).join("\n");
+  const findings = [];
+  if (!new RegExp(`\\b${BUILDING_ROW_MEMBER}\\b`, "u").test(engine))
+    findings.push({
+      code: `scene_building_row_vocabulary_not_in_engine:${BUILDING_ROW_MEMBER}`,
+      kind: "scene_building",
+      id: null,
+      detail: `${OBSERVATION_SCHEMA_PATH} rows are treated as building rows by their ${BUILDING_ROW_MEMBER} field, and ${SCENE_BUILDING_FILES.join("/")} no longer declares that member`,
+    });
+  const fieldsByFamily = publishedRowFields(schema);
+  const buildingFamilies = [...fieldsByFamily]
+    .filter(([, row]) => row.fields.includes(BUILDING_ROW_MEMBER))
+    .map(([family, row]) => ({ family, row: row.definition, fields: row.fields }))
+    .sort((left, right) => left.family.localeCompare(right.family));
+  const readable = (family) =>
+    perTurnFields.has(family) || [...projectionSources.values()].some((text) => projectionReads(text, family));
+  const rows = facts.map((fact) => {
+    const inEngine = new RegExp(`\\b${escapeRegExp(fact.member)}\\b`, "u").test(engine);
+    if (!inEngine)
+      findings.push({
+        code: `scene_building_fact_not_in_engine:${fact.id}`,
+        kind: "scene_building",
+        id: null,
+        detail: `${fact.id} declares ${fact.member} as the engine's answer for "${fact.fact}", and ${SCENE_BUILDING_FILES.join("/")} no longer declares it`,
+      });
+    const carriers = buildingFamilies
+      .filter((family) => fact.fields.every((field) => family.fields.includes(field)))
+      .map((family) => family.family);
+    return {
+      id: fact.id,
+      member: fact.member,
+      fact: fact.fact,
+      fields: [...fact.fields],
+      inEngine,
+      carriers,
+      readable: carriers.filter(readable),
+    };
+  });
+  for (const row of rows) {
+    if (row.carriers.length === 0) {
+      findings.push({
+        code: `scene_building_fact_unpublished:${row.id}`,
+        kind: "scene_building",
+        id: null,
+        detail: `the engine answers ${row.member} (${row.id}: ${row.fact}) and no published building row declares ${row.fields.join("+")} together, so a structure's own scene fact has no field to reach her through`,
+      });
+      continue;
+    }
+    if (row.readable.length > 0) continue;
+    for (const family of row.carriers)
+      findings.push({
+        code: `scene_building_fact_unread:${family}:${row.id}`,
+        kind: "scene_building",
+        id: null,
+        detail: `${family} carries the engine's ${row.id} (${row.fields.join("+")}) and neither the per-turn text nor a projection reads the family: the fact is on the wire and reaches her only if she spends an observe - the finding farmBuildingTargets is the first instance of, since 农场建筑 is a vocabulary label while a greenhouse two tiles away read as a cauliflower, a bush and a hole`,
+      });
+  }
+  return {
+    measured: true,
+    missing: [],
+    families: buildingFamilies.map((family) => family.family),
+    rows,
+    counts: {
+      facts: rows.length,
+      carried: rows.filter((row) => row.carriers.length > 0).length,
+      readable: rows.filter((row) => row.readable.length > 0).length,
+      unpublished: rows.filter((row) => row.carriers.length === 0).length,
+      unread: rows.filter((row) => row.carriers.length > 0 && row.readable.length === 0).length,
+    },
+    findings,
+  };
+}
+
+/**
+ * The engine's ground answers: where a map or a building says what a tile's surface is, and how this repo asks it.
+ *
+ * `engine` is the decompiled site that answers, re-checked on every run so the table cannot outlive the engine. `asked`
+ * is the shape a Mod read takes.
+ */
+export const SCENE_PAVING_ROUTES = Object.freeze([
+  Object.freeze({
+    id: "back_type",
+    engine: Object.freeze({
+      file: SCENE_MAP_FILE,
+      evidence: /doesTileHaveProperty\([^;\n]{0,120}?"Type"\s*,\s*"Back"/u,
+    }),
+    asked: /(?:doesTileHaveProperty|doesTileHavePropertyNoNull)\([^;\n]{0,160}?"Type"[^;\n]{0,80}?"Back"/u,
+    answer: "the map's own Type word, the engine's ground vocabulary (Dirt, Stone, Grass, Wood in playTerrainSound)",
+  }),
+  Object.freeze({
+    id: "building_type",
+    engine: Object.freeze({ file: "Building.cs", evidence: /bool\s+doesTileHaveProperty\s*\(/u }),
+    asked: /\.\s*doesTileHaveProperty\([^;\n]{0,160}?"Type"[^;\n]{0,80}?"Back"/u,
+    answer: "the BUILDING's own answer, which is where the greenhouse's stone doorstep and a farmhouse's wooden deck come from",
+  }),
+  Object.freeze({
+    id: "buildings_layer",
+    engine: Object.freeze({ file: SCENE_MAP_FILE, evidence: /hasTileAt\([^;\n]{0,80}?"Buildings"/u }),
+    asked: /(?:hasTileAt|getTileIndexAt)\([^;\n]{0,120}?"Buildings"|GetLayer\(\s*"Buildings"\s*\)/u,
+    answer: "the Buildings layer - the engine's own 'something built stands here', which isTilePlaceable asks before anything may be placed",
+  }),
+  Object.freeze({
+    id: "flooring",
+    engine: Object.freeze({ file: SCENE_MAP_FILE, evidence: /value\s+is\s+Flooring/u }),
+    asked: /\bis\s+(?:StardewValley\.TerrainFeatures\.)?Flooring\b|\bFlooring\s+\w+\b/u,
+    answer: "a Flooring terrain feature: ground the player laid themselves, which the engine reads for its footstep sound",
+  }),
+]);
+
+/** The ground field a tilled-tile row must carry, beside the owner field that names which structure answered. */
+const SCENE_GROUND_FIELDS = Object.freeze(["surface", "surfaceOwner"]);
+
+/**
+ * K - ground the engine calls paved must be distinguishable from soil in what she reads.
+ *
+ * Two halves, and they answer different questions:
+ *   - the ROUTES: every place the engine says what a tile's surface is must be asked by a producer, or one of the
+ *     engine's ground answers is invisible to the whole surface - and the building's own answer is the one that was
+ *     missing longest;
+ *   - the ROWS: a published row that states a HoeDirt fact IS a row about the ground, so the row has to say what the
+ *     ground is. A row that says hoeDirt true and crop null and nothing about the surface is exactly what the
+ *     greenhouse's doorstep gave, and it is indistinguishable from an ordinary field tile - which is how a cauliflower
+ *     came to grow in a doorway.
+ *
+ * The soil vocabulary is the engine's own HoeDirt members, so a row this section calls a soil row is one the engine
+ * itself would call a tilled tile, and a member added to HoeDirt joins the population without an edit here.
+ */
+export function scenePaving({
+  decompiled = {},
+  schema = {},
+  sources = [],
+  discoveries = parseDiscoveries(sources),
+  routes = SCENE_PAVING_ROUTES,
+} = {}) {
+  const missing = [...new Set(routes.map((route) => route.engine.file))].filter(
+    (file) => typeof decompiled[file] !== "string",
+  );
+  if (missing.length > 0)
+    return {
+      measured: false,
+      missing,
+      routes: [],
+      rows: [],
+      notFromTheGround: [],
+      counts: { routes: 0, routesAnswered: 0, soilRows: 0, distinguishable: 0, indistinguishable: 0, notFromTheGround: 0 },
+      findings: [],
+    };
+  const findings = [];
+  const routeRows = routes.map((route) => {
+    if (!route.engine.evidence.test(withoutComments(decompiled[route.engine.file])))
+      findings.push({
+        code: `scene_paving_route_not_in_engine:${route.id}`,
+        kind: "scene_paving",
+        id: null,
+        detail: `${route.id} declares ${route.answer} as its engine site, and ${route.engine.file} no longer answers it`,
+      });
+    const readers = sources
+      .filter((entry) => route.asked.test(withoutComments(entry.source)))
+      .map((entry) => entry.path);
+    if (readers.length === 0)
+      findings.push({
+        code: `scene_paving_route_unread:${route.id}`,
+        kind: "scene_paving",
+        id: null,
+        detail: `no Mod source asks the engine for ${route.answer}, so every tile the engine paves through it reads as ground nobody measured`,
+      });
+    return { id: route.id, answer: route.answer, askedBy: readers.length, readers };
+  });
+
+  const soil = decompiled[SCENE_SOIL_FILE];
+  if (typeof soil !== "string") return { measured: false, missing: [SCENE_SOIL_FILE], routes: routeRows, rows: [], findings };
+  const members = new Set();
+  for (const match of withoutComments(soil).matchAll(
+    /\bpublic\s+(?:override\s+|readonly\s+|static\s+|virtual\s+|sealed\s+)*[\w<>?[\],.]+\s+(\w+)\s*(?:\(|;|\{|=>)/gu,
+  ))
+    members.add(match[1]);
+  // A HOEDIRT MEMBER THAT IS ABOUT THE TILLED TILE, not about its plumbing: a predicate the engine asks of the soil
+  // (`isWatered`, `canApplyFertilizer`, `readyForHarvest`, `canPlantThisSeedHere`) or the thing growing in it (`crop`,
+  // `fertilizer`). The rest of the members are the feature's own machinery - `Location`, `Tile`, `Offset`, `state` - and
+  // matching those called forty published rows "soil rows" because they carry an `x`/`y` and a `location`.
+  const SOIL_STATE_MEMBER = /^(?:(?:[Ii]s|[Cc]an|[Hh]as|[Nn]eeds|[Rr]eadyFor)[A-Z]|crop$|fertilizer$)/u;
+  const soilSpellings = new Set(["hoeDirt"]);
+  for (const member of members)
+    if (SOIL_STATE_MEMBER.test(member)) for (const spelling of memberSpellings(member)) soilSpellings.add(spelling);
+
+  const rows = [];
+  const notFromTheGround = [];
+  for (const [family, row] of [...publishedRowFields(schema)].sort(([left], [right]) => left.localeCompare(right))) {
+    if (!row.fields.includes("x") || !row.fields.includes("y")) continue;
+    const states = row.fields.filter((field) => soilSpellings.has(field));
+    if (states.length === 0) continue;
+    // THE ROW HAS TO BE PUBLISHED FROM THE GROUND. `readyForHarvest` is a HoeDirt member AND an Object member, so a
+    // name match alone called `machineTargets` a soil row; what decides it is the discovery that produces the family -
+    // it reads `terrainFeatures` or names `HoeDirt`, or the family is about something else that happens to share the
+    // member's spelling. The ones that do not are COUNTED rather than dropped, so the population cannot shrink silently.
+    const namesTheSoilType = states.some((field) => field.toLowerCase() === "hoedirt");
+    const producedFromTheGround =
+      namesTheSoilType ||
+      discoveries
+        .filter((discovery) => discovery.row === `Bridge${row.definition[0].toUpperCase()}${row.definition.slice(1)}`)
+        .some((discovery) => /\bHoeDirt\b|\bterrainFeatures\b/u.test(discovery.body));
+    if (!producedFromTheGround) {
+      notFromTheGround.push({ family, states });
+      continue;
+    }
+    const ground = SCENE_GROUND_FIELDS.filter((field) => row.fields.includes(field));
+    rows.push({
+      family,
+      row: row.definition,
+      states,
+      ground,
+      distinguishable: ground.length === SCENE_GROUND_FIELDS.length,
+    });
+  }
+  for (const row of rows) {
+    if (row.distinguishable) continue;
+    findings.push({
+      code: `scene_row_cannot_tell_paved_from_soil:${row.family}`,
+      kind: "scene_paving",
+      id: null,
+      detail: `${row.family} rows state ${row.states.join("+")} - a HoeDirt fact, so the row is about the ground - and carry ${row.ground.length === 0 ? "neither surface nor surfaceOwner" : row.ground.join("+")}: a stone doorstep and an ordinary field tile give the same row, so nothing she reads can tell them apart`,
+    });
+  }
+  return {
+    measured: true,
+    missing: [],
+    routes: routeRows,
+    rows,
+    notFromTheGround,
+    counts: {
+      routes: routeRows.length,
+      routesAnswered: routeRows.filter((row) => row.askedBy > 0).length,
+      soilRows: rows.length,
+      distinguishable: rows.filter((row) => row.distinguishable).length,
+      indistinguishable: rows.filter((row) => !row.distinguishable).length,
+      notFromTheGround: notFromTheGround.length,
+    },
+    findings,
+  };
+}
+
+/**
+ * The engine's own admission for hand-made ground, and the sites that must go through it.
+ *
+ * One rule today, and it is the engine's, not a policy invented here: `GameLocation.makeHoeDirt` is the ONLY path a
+ * tilled tile is created by, and it admits the tile with
+ * `doesTileHaveProperty(x, y, "Diggable", "Back") != null && !IsTileBlockedBy(...)`. A fixture that constructs a HoeDirt
+ * itself bypasses that admission, and the state it publishes is one the engine could not have produced - a tilled
+ * greenhouse doorstep, with a cauliflower on it, reported faithfully by every layer.
+ */
+export const SCENE_LEGALITY_RULES = Object.freeze([
+  Object.freeze({
+    id: "hoeDirt_requires_makeHoeDirt_admission",
+    engine: Object.freeze({
+      file: SCENE_MAP_FILE,
+      evidence: /public\s+bool\s+makeHoeDirt\s*\(/u,
+      admission: /"Diggable"\s*,\s*"Back"/u,
+    }),
+    write: /new\s+(?:StardewValley\.TerrainFeatures\.)?HoeDirt\s*\(/gu,
+    guards: Object.freeze([
+      /\bmakeHoeDirt\s*\(/u,
+      /\bisTileDiggable\s*\(/u,
+      /(?:GroundSurface|FixtureGround)\s*\./u,
+      /doesTileHaveProperty(?:NoNull)?\([^;\n]{0,200}?"Diggable"/u,
+    ]),
+    detail:
+      'the engine creates a tilled tile only through GameLocation.makeHoeDirt, admitted by doesTileHaveProperty(x, y, "Diggable", "Back") != null && !IsTileBlockedBy(...)',
+  }),
+]);
+
+/** The index of the block whose `{` encloses `index`, or -1. */
+function enclosingBlock(code, index) {
+  let depth = 0;
+  for (let cursor = index; cursor >= 0; cursor--) {
+    if (code[cursor] === "}") depth += 1;
+    else if (code[cursor] === "{") {
+      if (depth === 0) return cursor;
+      depth -= 1;
+    }
+  }
+  return -1;
+}
+
+/**
+ * L - a published world state the engine's own rules could not have produced.
+ *
+ * The population is every site in the Mod's sources that MANUFACTURES a world state, and the rule is the engine's
+ * admission for the same write. The scene she reads is built from these sites, so "we broadcast the fixture state
+ * faithfully" is not a defence: the fixture is where an impossible state enters the world, and this is the check that
+ * would have refused the porch dirt before she ever saw it.
+ *
+ * A site is guarded when the block enclosing it - or the block enclosing THAT, up to three levels - mentions the
+ * engine's admission or the one reader this Mod answers ground with. Deeper than three is the class body, where a
+ * mention anywhere in the file would excuse every site in it.
+ *
+ * The population is the Mod's own source tree as `readModSources` defines it, which EXCLUDES `tests/`: the headless
+ * integration world manufactures ground too, and it is outside this section's population rather than silently inside it.
+ *
+ * red-proof: run this section over the pre-fix tree (`git show HEAD:integrations/stardew/ModEntry.Fixtures.cs` and the
+ *   crops initializer, before `FixtureGround` existed) and it reports 2 violations, guarded 0 -
+ *   `observed_state_the_engine_could_not_have_made:integrations/stardew/ModEntry.Fixtures.cs:1147:
+ *   hoeDirt_requires_makeHoeDirt_admission` and the same code at Crops.cs:739. Both sites go through
+ *   `FixtureGround.RequireSoil` today, which is why the current tree reports 2 guarded and 0 violations.
+ */
+export function sceneLegality({ sources = [], decompiled = {}, rules = SCENE_LEGALITY_RULES } = {}) {
+  const missing = [...new Set(rules.map((rule) => rule.engine.file))].filter(
+    (file) => typeof decompiled[file] !== "string",
+  );
+  if (missing.length > 0)
+    return {
+      measured: false,
+      missing,
+      rules: [],
+      sites: [],
+      counts: { rules: 0, sites: 0, guarded: 0, violations: 0 },
+      findings: [],
+    };
+  const findings = [];
+  const measured = rules.map((rule) => {
+    const engine = withoutComments(decompiled[rule.engine.file]);
+    const declared = rule.engine.evidence.test(engine);
+    const admission = rule.engine.admission.test(engine);
+    if (!declared || !admission)
+      findings.push({
+        code: `scene_legality_rule_not_in_engine:${rule.id}`,
+        kind: "scene_legality",
+        id: null,
+        detail: `${rule.id} declares ${rule.detail}, and ${rule.engine.file} no longer contains that ${declared ? "admission" : "site"}`,
+      });
+    return { id: rule.id, detail: rule.detail, inEngine: declared && admission };
+  });
+  const sites = [];
+  for (const rule of rules) {
+    for (const { path: sourcePath, source } of sources) {
+      const code = withoutComments(source);
+      for (const match of code.matchAll(rule.write)) {
+        const line = code.slice(0, match.index).split("\n").length;
+        const blocks = [];
+        let block = enclosingBlock(code, match.index);
+        for (let level = 0; level < 3 && block >= 0; level++) {
+          blocks.push(code.slice(block, match.index));
+          block = enclosingBlock(code, block);
+        }
+        const guardedBy = rule.guards.find((guard) => blocks.some((text) => guard.test(text))) ?? null;
+        sites.push({ rule: rule.id, site: `${sourcePath}:${line}`, write: match[0].trim(), guardedBy: guardedBy?.source ?? null });
+        if (guardedBy !== null) continue;
+        findings.push({
+          code: `observed_state_the_engine_could_not_have_made:${sourcePath}:${line}:${rule.id}`,
+          kind: "scene_legality",
+          id: null,
+          detail: `${sourcePath}:${line} constructs ${match[0].trim()} without asking the engine's admission: ${rule.detail}. The world this site publishes is one no engine path produces, so every layer reporting it faithfully is reporting the fixture's own lie`,
+        });
+      }
+    }
+  }
+  return {
+    measured: true,
+    missing: [],
+    rules: measured,
+    sites,
+    counts: {
+      rules: measured.length,
+      sites: sites.length,
+      guarded: sites.filter((site) => site.guardedBy !== null).length,
+      violations: sites.filter((site) => site.guardedBy === null).length,
+    },
+    findings,
+  };
+}
+
+/** The four scene sections as one payload: one key in the report, one blocked list, one finding list. */
+export function sceneCoverage({ sources, decompiled, schema, perTurnFields, projectionSources, withheldTiles } = {}) {
+  const tileVocabulary = sceneTileVocabulary({ decompiled, sources, withheld: withheldTiles });
+  const buildings = sceneBuildings({ decompiled, schema, perTurnFields, projectionSources });
+  const paving = scenePaving({ decompiled, schema, sources });
+  const legality = sceneLegality({ sources, decompiled });
+  const blocked = [
+    ...(tileVocabulary.measured ? [] : tileVocabulary.missing.map((file) => `tileVocabulary:${file}`)),
+    ...(buildings.measured ? [] : buildings.missing.map((file) => `buildings:${file}`)),
+    ...(paving.measured ? [] : paving.missing.map((file) => `paving:${file}`)),
+    ...(legality.measured ? [] : legality.missing.map((file) => `legality:${file}`)),
+  ];
+  return {
+    tileVocabulary,
+    buildings,
+    paving,
+    legality,
+    blocked,
+    findings: [
+      ...tileVocabulary.findings,
+      ...buildings.findings,
+      ...paving.findings,
+      ...legality.findings,
+    ],
+  };
+}
+
 /** The baseline as six lookup tables, plus the findings that make it self-maintaining. */
 export function readObservationBaseline(baseline) {
   const findings = [];
@@ -3033,7 +3867,8 @@ function readObservationModels({ root = REPOSITORY_ROOT, directory = OBSERVATION
 export function loadDecompiledSources({ sourceRoot } = {}) {
   const root = resolveStardewDecompileRoot({ repositoryRoot: REPOSITORY_ROOT, root: sourceRoot });
   const decompiled = {};
-  for (const name of new Set(TILE_CHANNELS.map((channel) => channel.engine.file).concat(["GameLocation.cs", "Farmer.cs", "Game1.cs"]))) {
+  const sceneFiles = [SCENE_MAP_FILE, SCENE_SOIL_FILE, ...SCENE_BUILDING_FILES];
+  for (const name of new Set(TILE_CHANNELS.map((channel) => channel.engine.file).concat(sceneFiles, ["Farmer.cs", "Game1.cs"]))) {
     const file = findDecompiledSource(root, name);
     if (file === null) throw new Error(`stardew_observation_decompiled_source_missing:${name}:${root}`);
     decompiled[name] = readFileSync(file, "utf8");
@@ -3057,6 +3892,7 @@ export function observeActionGaps({
   baseline = JSON.parse(readFileSync(path.join(REPOSITORY_ROOT, OBSERVATION_BASELINE_PATH), "utf8")),
   targetField = TARGET_FIELD,
   channels = TILE_CHANNELS,
+  sceneWithheld = SCENE_WITHHELD_TILES,
   consumption = loadConsumptionSources(),
 } = {}) {
   const ratified = readObservationBaseline(baseline);
@@ -3259,6 +4095,16 @@ export function observeActionGaps({
           : `the ${gap.split(":")[2]} row carries \`${gap.split(":")[1]}\` now; delete its baseline entry`,
     });
   }
+  // I-L - the scene layer: the population is the ENGINE's, so "a whole kind of fact was never published" is a finding.
+  const scene = sceneCoverage({
+    sources,
+    decompiled,
+    schema,
+    perTurnFields: consumption.perTurnFields,
+    projectionSources: consumption.projectionSources,
+    withheldTiles: sceneWithheld,
+  });
+  findings.push(...scene.findings);
   for (const id of ratified.entries.keys()) {
     const kind = id.slice(0, id.indexOf(":"));
     const subject = id.slice(id.indexOf(":") + 1);
@@ -3346,10 +4192,11 @@ export function observeActionGaps({
         baselined: fieldBaselined,
       },
     },
+    scene,
     baseline: { entries: ratified.entries.size, path: OBSERVATION_BASELINE_PATH },
     findings,
     ungranted,
-    ok: ungranted.length === 0,
+    ok: ungranted.length === 0 && scene.blocked.length === 0,
   };
 }
 
@@ -3480,6 +4327,56 @@ export function writeObservationSummary(observation, write = (text) => process.s
   write(
     "    a member a handler decides from must be a field of the row its target family publishes; member extraction is heuristic, which is why the unparsed count is printed beside the verdicts\n",
   );
+  const scene = observation.scene;
+  const vocabulary = scene.tileVocabulary;
+  write(
+    `  I tile vocabulary   ${
+      vocabulary.measured
+        ? `${vocabulary.rows.length} engine (layer, property[, value]) questions: ${vocabulary.asked.length} asked by a Mod producer, ${vocabulary.withheld.length} declared withheld, ${vocabulary.undecided.length} undecided${
+            vocabulary.undecided.length > 0 ? ` (${vocabulary.undecided.join(", ")})` : ""
+          }`
+        : `not measured (${vocabulary.missing.join(", ")})`
+    }; ${vocabulary.unparsed?.length ?? 0} call(s) with a computed layer named\n`,
+  );
+  const buildings = scene.buildings;
+  write(
+    `  J buildings         ${
+      buildings.measured
+        ? `${buildings.counts.facts} engine building facts: ${buildings.counts.carried} carried by a building row, ${buildings.counts.readable} readable without an observe, ${buildings.counts.unpublished} unpublished${
+            buildings.counts.unread > 0
+              ? ` (${buildings.rows.filter((row) => row.carriers.length > 0 && row.readable.length === 0).map((row) => row.id).join(", ")} carried and unread)`
+              : ""
+          }`
+        : `not measured (${buildings.missing.join(", ")})`
+    }\n`,
+  );
+  const paving = scene.paving;
+  write(
+    `  K paving            ${
+      paving.measured
+        ? `${paving.counts.routes} engine ground route(s), ${paving.counts.routesAnswered} asked by a Mod reader; ${paving.counts.soilRows} tilled-tile row(s): ${paving.counts.distinguishable} distinguishable from soil, ${paving.counts.indistinguishable} not${
+            paving.counts.indistinguishable > 0
+              ? ` (${paving.rows.filter((row) => !row.distinguishable).map((row) => row.family).join(", ")})`
+              : ""
+          }`
+        : `not measured (${paving.missing.join(", ")})`
+    }\n`,
+  );
+  const legality = scene.legality;
+  write(
+    `  L legality          ${
+      legality.measured
+        ? `${legality.counts.rules} engine rule(s) over ${legality.counts.sites} ground-manufacturing site(s): ${legality.counts.guarded} guarded, ${legality.counts.violations} world state(s) the engine could not have made`
+        : `not measured (${legality.missing.join(", ")})`
+    }\n`,
+  );
+  write(
+    "    the scene population is the ENGINE's, not ours: a tile question, a building fact, a ground route or a manufactured state nobody published is a whole kind of fact missing, which a population of published facts cannot see\n",
+  );
+  if (scene.blocked.length > 0)
+    write(
+      `  not measured        ${scene.blocked.join(", ")}: a scene section without its engine source measures nothing, and the report fails rather than passing on an empty population\n`,
+    );
   for (const finding of observation.findings) write(`  ${finding.code}: ${finding.detail}\n`);
   write(
     observation.ok

@@ -59,6 +59,13 @@ export const REQUIRED_PROJECTED_KEYS = Object.freeze([
   // `farmhandexecutioncontroller.fishingactions.cs:123`), so an id this family does not publish cannot be derived from
   // the tile - which is why this cannot be withheld with "ask the observation instead" as its reason. Measured 2026-11-10.
   "waterTargets",
+  // The standing buildings on this map, read by the nearby-target line in `game-world-vocabulary.ts`:
+  // `nearbyTargetFamilies` iterates `TARGET_FAMILY_LABELS` (which names `farmBuildingTargets` 农场建筑) and prints a row
+  // per building through `FAMILY_LOCAL_BOUNDS`/`ROW_KIND_WORDS`, which key the same family by name. It was listed here as
+  // neither projected nor withheld while the line printed it, so the consumer inventory reported a decision gap for a
+  // decision that had been made - measured `round98`, where the line printed the greenhouse's footprint and door while
+  // the gate said nobody had decided whether she sees the family at all.
+  "farmBuildingTargets",
 ]);
 
 /**
@@ -144,7 +151,6 @@ const UNPROJECTED_OBSERVED_FAMILIES = Object.freeze([
   "mailboxTargets",
   "shopTargets",
   "fishPondTargets",
-  "farmBuildingTargets",
   "dailyQuestTargets",
   "specialOrderTargets",
   "activeSpecialOrderKeys",
@@ -179,8 +185,6 @@ const WITHHELD_SCALAR_KEYS: Readonly<Record<string, string>> = Object.freeze({
     "A count used only while planning artifact-spot digs, paired with the family it counts. Delivered by `stardew_observe`.",
   fixedInteractionPointsOmitted:
     "A count used only while reading the map's fixed interaction points, paired with the family it counts: it says the list was truncated, and it would be a second spelling of `fixedInteractionPoints.length` in a per-turn fact block that already has to stay under 4 KB. Delivered by `stardew_observe`.",
-  farmBuildingTargetsOmitted:
-    "The number of `farmBuildingTargets` rows the Mod's cap (16) left out, paired with the family it counts. Nothing renders it: no projection reads the building family either (`farmBuildingTargets` is withheld above) and the cap is enforced Mod-side, so there is no building line in the fact block for a count to qualify. Delivered by `stardew_observe` beside the rows it counts; if a renderer ever prints a building list - `host/src/snapshot-projection.ts` has no building line today - it has to print this count with it, or a farm at the cap reads as a farm with exactly sixteen buildings.",
   soilTilesOmitted:
     "The number of soil tiles the Mod's bound left out of `soilTiles`, paired with the family it counts. The per-turn fact block reports the published count (`soilTilesCount`), and without the omission beside it a 64-row neighbourhood would read as a complete patch that happens to be 64 tiles - which is how a truncated list became a defect once already. Delivered by `stardew_observe`.",
   worldObjectTargetsOmitted:

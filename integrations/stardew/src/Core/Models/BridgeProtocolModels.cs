@@ -209,7 +209,14 @@ public sealed record FarmhandActionRegistrationWire(
 /// <summary>Exact Mod-owned capability publication identity projected on authenticated bridge availability messages.</summary>
 public sealed record FarmhandPolicyIdentityWire(string Value, long CapabilityRevision);
 
-/// row's existence. Measured round80: twenty-seven <c>soil_already_tilled</c> receipts in one runner log, twenty-one
+/// <summary>
+/// One tile a soil action addresses NOW, in both states this family publishes: ground the Hoe still admits, and ground
+/// already carrying <c>HoeDirt</c> (work done, and the `plant_seed`/`fertilize_tile`/`water_crop` target).
+///
+/// <para>
+/// THE ROW STATES WHICH OF THE TWO THE TILE IS, because `till_soil` refuses the one already under the Hoe and a family of
+/// bare coordinates made the companion till what she had tilled: measured round80: twenty-seven <c>soil_already_tilled</c>
+/// receipts in one runner log, twenty-one
 /// of them one programme walking a block it had already hoed, while every row of that block answered `hoeDirt: true`.
 /// </para>
 ///
@@ -224,8 +231,87 @@ public sealed record FarmhandPolicyIdentityWire(string Value, long CapabilityRev
 /// family's rows: a tile with a weed on it is inside the strip and is not a row, because a row is a tile a soil action
 /// addresses now. The box is a measurement of the world, never a request: `till_soil` still admits one tile at a time.
 /// </para>
+///
+/// <para>
+/// <see cref="Surface"/> IS WHAT THE TILE'S GROUND IS, and it is the fact this family could not state. Measured
+/// `round98` (2026-11-23): the greenhouse's stone doorstep at `29,17` answered `hoeDirt: true, crop: null` - the same row
+/// an ordinary field tile gives - and a cauliflower grew in the doorway. The word is <c>GroundSurface</c>'s reading,
+/// which is also the predicate a fixture may not hand-make dirt over, so the world the companion reads and the world a
+/// fixture builds cannot disagree about a tile. <see cref="SurfaceOwner"/> names the building whose own tile data
+/// answered (`Greenhouse`) and is null when the map did; a tile the engine cannot answer says
+/// `not_measured:&lt;x&gt;,&lt;y&gt;:&lt;why&gt;`, because defaulting to soil is the same lie a hand-made doorstep was.
+/// </para>
 /// </summary>
-public sealed record BridgeSoilTile(int X, int Y, bool HoeDirt, int BlockX, int BlockY, int BlockW, int BlockH);
+public sealed record BridgeSoilTile(
+    int X,
+    int Y,
+    bool HoeDirt,
+    int BlockX,
+    int BlockY,
+    int BlockW,
+    int BlockH,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
+
+/// <summary>
+/// One reason the tiles of a <see cref="BridgeFieldCandidate"/> do not take the Hoe, and how many tiles it accounts for.
+///
+/// <para>
+/// <see cref="Kind"/> is a word from ONE OF THREE DECLARATIONS, and the shape is one row per (word, count) because the
+/// three cannot answer for each other: a tile outside the field the layout keeps (<see cref="Core.FieldLayout"/>:
+/// `building`, `walkway`), a tile the GROUND itself refuses (<c>ExecutionManager.DescribeSoilGroundRefusal</c>: `water`,
+/// `not_map_diggable`, `impassable`), or a tile something stands on (<see cref="Core.TileOccupantKind"/>: `tree`,
+/// `stone`, `weed`, ... - the same words a `for_each` filter and a `Clears` declaration are written in). Translating any of
+/// them into a fourth vocabulary here is how one fact acquires two spellings.
+/// </para>
+/// </summary>
+public sealed record BridgeFieldBlocker(string Kind, int Count);
+
+/// <summary>
+/// One patch of ground the location's LAYOUT offers as a field: a rectangle, how much of it the Hoe takes now, and what
+/// stands in the way of the rest.
+///
+/// <para>
+/// WHY THE LAYOUT AND NOT MORE TILES. A field is a shape a farmer keeps; `soilTiles` is a list of tiles a soil action
+/// addresses now, and the companion's "field" was therefore the sum of wherever targets happened to be. Measured
+/// `round92`: 34 seedings scattered across x 62..79 / y 17..26, tilled 7 - she planted into ground that was already tilled
+/// rather than making a field. Measured `round95`: told to fill one rectangle, `(44,21)..(63,23)`, the same companion got
+/// 58 of 60 - a field appeared the moment a task named a shape. So the observation names the shapes, and the tiles stay
+/// what they always were. Measured `round98`: a cauliflower in the ruined greenhouse's stone doorstep, because that one
+/// tile read `HoeDirt: true, crop: null`.
+/// </para>
+///
+/// <para>
+/// THE BOX IS THE MOD'S OWN MEASUREMENT, NOT A SECOND ONE. It is the connected strip the soil family already publishes as
+/// `blockX`/`blockY`/`blockW`/`blockH` (<c>FarmhandTargetDiscovery.FarmableBlocks</c>), measured over the whole map, so a
+/// patch longer than the observation window still states its shape. What is added is the ARITHMETIC over that box - what
+/// the Hoe takes now, what is already soil, and what is in the way by kind - which is the work the companion was doing
+/// from a 13x13 window.
+/// </para>
+///
+/// <para>
+/// EVERY TILE OF THE BOX LANDS IN EXACTLY ONE BUCKET: <c>w * h == Tillable + Opened + Sum(Blocked.Count)</c>. That is the
+/// invariant a reader reconciles against, and it is what makes a rectangle that is mostly obstacles read as one instead of
+/// reading as a field. <see cref="Opened"/> is the tiles already carrying soil: work done, which is neither free ground
+/// nor blocked ground, and leaving it out of the sum would make a finished field read as an empty one.
+/// </para>
+///
+/// <para>
+/// <see cref="DoorDistance"/> is the Chebyshev distance from the farmhouse's own entry tile
+/// (<c>GameLocation.GetMainFarmHouseEntry</c>) to the nearest tile of the box: how far she has to walk before the field
+/// starts. It is published because "which of these is my field" is a decision about the farm, and a patch by the porch is
+/// nearer than one across the yard.
+/// </para>
+/// </summary>
+public sealed record BridgeFieldCandidate(
+    int X,
+    int Y,
+    int W,
+    int H,
+    int Tillable,
+    int Opened,
+    IReadOnlyList<BridgeFieldBlocker> Blocked,
+    int DoorDistance);
 
 /// <summary>
 /// Inbound rectangle question: every tile of <c>x..x+w-1</c> by <c>y..y+h-1</c> in the actor's current location.
@@ -421,14 +507,28 @@ public sealed record BridgeCropTarget(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Seasons,
     bool FullyGrown,
     bool TileBlockedNow,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CropFactsUnknown);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? CropFactsUnknown,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
 /// <summary>
 /// One crop tile <c>harvest_crop</c> accepts, with the four facts its admission branches on: whether the crop is ready
 /// (<c>HoeDirt.readyForHarvest()</c>), whether it is a forage crop (<c>Crop.forageCrop</c>), which tool the engine's
 /// harvest path requires (<c>Crop.GetHarvestMethod()</c>: <c>grab</c> or <c>scythe</c>) and whether it regrows.
 /// </summary>
-public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool RegrowsAfterHarvest, bool ReadyForHarvest, bool ForageCrop, string HarvestMethod);
+public sealed record BridgeHarvestTarget(
+    string TargetId,
+    int X,
+    int Y,
+    string CropId,
+    string QualifiedHarvestItemId,
+    string DisplayName,
+    bool RegrowsAfterHarvest,
+    bool ReadyForHarvest,
+    bool ForageCrop,
+    string HarvestMethod,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
 /// <summary>
 /// One empty HoeDirt tile paired with a carried seed.
@@ -438,14 +538,40 @@ public sealed record BridgeHarvestTarget(string TargetId, int X, int Y, string C
 /// engine's season/raised-crop admission, which is what <c>plant_seed</c> refuses on. <see cref="Crop"/> is the handler's
 /// other test (<c>HoeDirt.crop is not null</c>): a tile that already carries a crop is not a seed target.
 /// </para>
+///
+/// <para>
+/// <see cref="Surface"/> is the SAME reading <see cref="BridgeSoilTile"/> publishes (<c>GroundSurface</c>): what the
+/// ground under this HoeDirt is, and the building that owns it when one does. It is here because a planting decision is
+/// a decision about ground - measured `round98`, a seed went into the greenhouse's stone doorstep because the row said
+/// only that the tile was empty tilled soil.
+/// </para>
 /// </summary>
-public sealed record BridgeSeedTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, bool CanPlantThisSeedHere, bool Crop);
+public sealed record BridgeSeedTarget(
+    string TargetId,
+    int Slot,
+    int X,
+    int Y,
+    string QualifiedItemId,
+    string DisplayName,
+    bool CanPlantThisSeedHere,
+    bool Crop,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
 /// <summary>
 /// One HoeDirt tile paired with a carried fertilizer. <see cref="CanApplyFertilizer"/> is the engine's own
 /// <c>HoeDirt.CanApplyFertilizer(fertilizerId)</c>, the predicate <c>fertilize_tile</c> refuses on.
 /// </summary>
-public sealed record BridgeFertilizerTarget(string TargetId, int Slot, int X, int Y, string QualifiedItemId, string DisplayName, bool CanApplyFertilizer);
+public sealed record BridgeFertilizerTarget(
+    string TargetId,
+    int Slot,
+    int X,
+    int Y,
+    string QualifiedItemId,
+    string DisplayName,
+    bool CanApplyFertilizer,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
 public sealed record BridgeWoodFenceTarget(string TargetId, string Location, int Slot, int X, int Y, string QualifiedItemId, string DisplayName);
 
@@ -485,9 +611,25 @@ public sealed record BridgeRockSourceTarget(string TargetId, string Location, in
 
 public sealed record BridgeArtifactSpotTarget(string TargetId, string Location, int X, int Y, string QualifiedItemId, string DisplayName);
 
-public sealed record BridgeArtifactSpotResultTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
+public sealed record BridgeArtifactSpotResultTarget(
+    string TargetId,
+    string Location,
+    int X,
+    int Y,
+    bool Crop,
+    bool Ground,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
-public sealed record BridgeClearHoeDirtTarget(string TargetId, string Location, int X, int Y, bool Crop, bool Ground);
+public sealed record BridgeClearHoeDirtTarget(
+    string TargetId,
+    string Location,
+    int X,
+    int Y,
+    bool Crop,
+    bool Ground,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 
 /// <summary>
 /// One native machine.
@@ -780,7 +922,20 @@ public sealed record BridgeLanternSlot(int Slot, bool IsOn, int FuelLeft);
 /// from a re-read.
 /// </para>
 /// </summary>
-public sealed record BridgeScytheCropTarget(string TargetId, string Location, int X, int Y, string CropId, string QualifiedHarvestItemId, string DisplayName, bool ReadyForHarvest, bool Dead, bool ForageCrop, string HarvestMethod);
+public sealed record BridgeScytheCropTarget(
+    string TargetId,
+    string Location,
+    int X,
+    int Y,
+    string CropId,
+    string QualifiedHarvestItemId,
+    string DisplayName,
+    bool ReadyForHarvest,
+    bool Dead,
+    bool ForageCrop,
+    string HarvestMethod,
+    string Surface,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SurfaceOwner = null);
 public sealed record BridgeInventoryItemFact(int Slot, string QualifiedItemId, string DisplayName, int Stack);
 
 public sealed record BridgeFoodTarget(int Slot, string QualifiedItemId, string DisplayName, int Stack, int Edibility, bool IsDrink);
@@ -1371,7 +1526,13 @@ public sealed record BridgeBuildingChestTarget(
 /// <c>built</c> is a building already standing in the current location, carrying its own durable
 /// <c>Building.id</c> and its `daysOfConstructionLeft`. <c>BuildCost</c> and <c>BuildDays</c> are
 /// the type's own `Data/Buildings` facts, published because they are what the commission charges
-/// and how long it takes - the two halves of the world change a receipt must be able to show.</summary>
+/// and how long it takes - the two halves of the world change a receipt must be able to show.
+///
+/// A `built` row also carries the two scene facts the engine answers about the structure none of the
+/// footprint could: where its door is (<c>HumanDoor</c>) and which rows in front of it its own tile data
+/// calls its own (<c>OwnTiles</c>). Measured `round98`: she stood three tiles from a greenhouse, read the
+/// footprint on the line, and still could not walk in or tell that the stone under the tile she was
+/// standing on belonged to the building rather than to the field.</summary>
 public sealed record BridgeFarmBuildingTarget(
     string TargetId,
     string Kind,
@@ -1389,7 +1550,27 @@ public sealed record BridgeFarmBuildingTarget(
     // structure does not exist yet and the numbers still decide which tiles the commission will take. Without them a
     // coop and a cabin read as the same one-tile square.
     int W,
-    int H);
+    int H,
+    // WHERE THE DOOR IS: `Building.getPointForHumanDoor()`, which is `tileX + humanDoor.X, tileY + humanDoor.Y`
+    // (Building.cs:1925-1928) over the offset the type's own `Data/Buildings` entry declares (Building.cs:502-503). It
+    // is the tile an `enter_exit` addresses and the tile a walk-to-the-door plan has to reach, and without it a row said
+    // a greenhouse was standing three tiles away and nothing about how to get in.
+    //
+    // ONE SPELLING, AND IT IS ABSENCE: a building whose data declares no door (a silo, a fish pond, an obelisk - what
+    // `BuildingContact.WithoutHumanDoor` names) and a `build_site` row, where no structure exists, carry no member at
+    // all - this Mod's serializer omits nulls, so a null would read as an absent member anyway and a second spelling
+    // would only invite a reader to tell two identical things apart.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TilePoint? HumanDoor = null,
+    // WHAT THE STRUCTURE'S OWN TILE DATA SAYS ABOUT THE ROWS IN FRONT OF IT: the tiles OUTSIDE its footprint that
+    // `Building.doesTileHaveProperty` answers a `Type` word for (Building.cs:2419-2432 against the type's declared tile
+    // properties, widened by `GreenhouseBuilding.doesTileHaveProperty`, GreenhouseBuilding.cs:60-97). The map under them
+    // says nothing - measured `round98`, the ruined greenhouse's stone doorstep at `27..29 x 16..17` read as `Diggable`
+    // farm soil, which is how a cauliflower was sown in the doorway. The footprint is NOT repeated here: the porch is
+    // the part of the structure that is not the structure.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<TilePoint>? OwnTiles = null,
+    // The tiles the lane's own cap (8) left out of `OwnTiles`, so a porch longer than the bound says so beside the
+    // tiles it bounded rather than reading as the whole of it.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? OwnTilesOmitted = null);
 
 /// <summary>One owned warp totem the actor can activate right now. `Slot` and
 /// `QualifiedItemId` are exactly the action's arguments, and `Destination` is derived by the

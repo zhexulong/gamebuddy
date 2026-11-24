@@ -11,6 +11,7 @@ import {
 } from "../../gates/stardew/audit-stardew-clearing-vocabulary.mjs";
 import { readHostCompletionContracts } from "../../gates/stardew/check-stardew-postcondition-delta.mjs";
 import { modConstants } from "../../gates/stardew/check-stardew-snapshot-family-bounds.mjs";
+import { LOCATION_NAMES_ZH } from "../../host/dist-test/game-world-vocabulary.js";
 import { taskPurposeVerdict } from "../live-run/game/run-verdicts.mjs";
 import { MAXIMUM_BASELINE_DAYS, MINIMUM_BASELINE_DAYS } from "./multiday-baseline.mjs";
 import { DAILY_TASK_ACTION_HINTS, DAILY_TASK_ROTATION, dayTaskSchedule } from "./multiday-daily-tasks.mjs";
@@ -21,12 +22,16 @@ import {
 import {
   CARRIED_ITEM_ACTIONS,
   CARRIED_ITEM_SPEND_ACTIONS,
+  inTownMap,
   judgesAPublishedFact,
   judgeTaskPurpose,
   MOVEMENT_ACTIONS_WITHOUT_ARRIVAL,
   purposeReceipts,
   readScheduledJudgement,
   TASK_PURPOSE_CRITERIA,
+  TOWN_MAP_ANSWERS,
+  TOWN_MAPS,
+  townMapFindings,
 } from "./task-purpose.mjs";
 
 /**
@@ -638,6 +643,50 @@ test("a purpose is either a criterion of more than one fact, a declared shape, o
         assert.equal(typeof actionId, "string", `${task}: \`boughtBy\` names action ids, not tile proofs`);
       continue;
     }
+    // A TOWN purpose is the fifth kind: it reads a map out of two receipt shapes, so it declares the field each shape
+    // writes and the actions that write it. A shape with no action, or an action set with no field, proves nothing about
+    // where the day happened.
+    if (entry.town !== undefined) {
+      assert.equal(entry.steps, undefined, `${task}: a map shape is not a step list`);
+      assert.ok(
+        typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
+        `${task}: a town criterion states its purpose`,
+      );
+      for (const kind of ["arrival", "conversation"]) {
+        const shape = entry.town[kind];
+        assert.ok(
+          Array.isArray(shape?.actionIds) && shape.actionIds.length > 0,
+          `${task}: a town criterion must say which actions' receipts name the ${kind}'s map`,
+        );
+        assert.ok(
+          typeof shape?.field === "string" && shape.field.length > 0,
+          `${task}: the ${kind} half has to name the evidence field that carries its map`,
+        );
+        for (const actionId of shape.actionIds) {
+          assert.equal(typeof actionId, "string", `${task}: \`${kind}.actionIds\` names action ids`);
+          // AND THE FIELD HAS TO BE ONE THE RECEIPT CARRIES. The field name is a second spelling of the Host's contract,
+          // so it is compared to the row the adapter folds over rather than trusted: `actual` renamed on `enter_exit`
+          // would leave this criterion reading nothing while every sentence about it stayed true, and the day would
+          // answer `not_achieved` for the rest of its life. `declaredEvidenceKeys` refuses by name a row whose keys this
+          // repository cannot read, so an unreadable contract is blocked and not counted as agreement.
+          const carried = declaredEvidenceKeys(actionId);
+          assert.ok(
+            carried.includes(shape.field),
+            `${task}: \`${actionId}\`'s own contract carries ${carried.join(", ")} and no \`${shape.field}\`, so the ${kind} half would read no map at all`,
+          );
+        }
+      }
+      // THE TWO SHAPES READ DIFFERENT ACTIONS, and the declared sets have to say so: `townMapFacts` tests the arrival
+      // set first and moves on, so an action listed in both halves would have every one of its receipts read as an
+      // arrival and none as a conversation - a day that walked to town and talked would be filed "spoke to nobody".
+      for (const actionId of entry.town.conversation.actionIds)
+        assert.equal(
+          entry.town.arrival.actionIds.includes(actionId),
+          false,
+          `${task}: ${actionId} cannot be an arrival and a conversation at once - a receipt is read as one or the other`,
+        );
+      continue;
+    }
     assert.ok(
       typeof entry.purpose === "string" && entry.purpose.trim().length > 0,
       `${task}: a criterion states its purpose`,
@@ -797,6 +846,16 @@ function receiptFactsOf(entry) {
       producer: missing.length === 0 ? { path: HOST_CONTRACT_PATH, anchor: `${proof.actionId}: (claim) =>` } : null,
     });
   }
+  // A city-shaped fact needs its own producer too: a town criterion reads a map field out of two receipt shapes, so each
+  // action and the field it writes are facts this criterion requires.
+  for (const shape of [entry.town?.arrival, entry.town?.conversation]) {
+    if (shape === undefined) continue;
+    for (const actionId of shape.actionIds)
+      facts.push({
+        name: `\`${actionId}\`'s \`${shape.field}\`, which names the map`,
+        producer: { path: HOST_CONTRACT_PATH, anchor: `${actionId}: (claim) =>` },
+      });
+  }
   return facts;
 }
 
@@ -919,6 +978,17 @@ test("every action a criterion reads is published by the Mod", async () => {
       if (published.has(actionId)) continue;
       drifting.push(`${task} reads ${actionId}, which the Mod does not publish`);
     }
+    // A town criterion reads one action per receipt shape, and those are dispatches like any other.
+    for (const shape of [entry.town?.arrival, entry.town?.conversation]) {
+      for (const actionId of shape?.actionIds ?? []) {
+        if (published.has(actionId)) continue;
+        drifting.push(
+          experimental.has(actionId)
+            ? `${task} reads ${actionId}, which the Mod registers Experimental - no run can dispatch it`
+            : `${task} reads ${actionId}, which the Mod does not publish`,
+        );
+      }
+    }
   }
   assert.deepEqual(drifting, [], drifting.join("; "));
 });
@@ -960,7 +1030,12 @@ test("a succeeded receipt that carries no postcondition of its own is refused, a
   // left out of this population would be the one criterion nobody checked the admission rule against.
   const readActionIdsOf = (entry) => {
     if (Array.isArray(entry?.steps))
-      return entry.steps.map((candidate) => (candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId));
+      return entry.steps.map((candidate) =>
+        candidate.actionId === undefined ? candidate.anyOf[0] : candidate.actionId,
+      );
+    // A town criterion reads one action per receipt shape; both halves have to survive the same admission rule.
+    if (entry?.town !== undefined)
+      return [...new Set([...entry.town.arrival.actionIds, ...entry.town.conversation.actionIds])];
     if (entry?.plot === undefined) return null;
     return [
       ...new Set([
@@ -2753,10 +2828,14 @@ test("a strip sown into ground an earlier day tilled is a strip this day laid", 
   // THE CONTRADICTION WINS. The same sixty sowings against an observation that says the Hoe can turn those tiles now is
   // not a strip laid: one receipt says the seed went in and the other says the ground is open, and a criterion that
   // picked the convenient one would report untilled ground as a finished plot.
-  const contradicted = judgeTaskPurpose("clear_and_plant_long_patch", strip.map(([x, y]) => PLANTED(x, y)), {
-    location: "Farm",
-    soilTiles: strip.map(([x, y]) => ({ x, y, hoeDirt: false })),
-  });
+  const contradicted = judgeTaskPurpose(
+    "clear_and_plant_long_patch",
+    strip.map(([x, y]) => PLANTED(x, y)),
+    {
+      location: "Farm",
+      soilTiles: strip.map(([x, y]) => ({ x, y, hoeDirt: false })),
+    },
+  );
   assert.equal(contradicted.state, "not_achieved");
   assert.match(contradicted.detail ?? "", /0\/60/u);
 });
@@ -2783,4 +2862,262 @@ test("round96's strip day left twenty tilled tiles and no plot, and the count sa
     judged.limitingFactors.includes("nothing_sown"),
     `the limit is the missing seed, and it has to be named: ${String(judged.limitingFactors)}`,
   );
+});
+
+/**
+ * NAMED `round98, day 2`: she went to town, and the criterion still could not judge the day.
+ *
+ * <p>
+ * The day's own line was `MULTIDAY_UNJUDGED day 2 town_visit: unjudged · task_purpose_needs_an_unpublished_fact · ...
+ * What is missing is ... a DECLARATION of which maps count as Town`. The receipts below are the day's own, verbatim from
+ * `tools/_multiday_routine-round98-live-runner.log`: the three door transitions that carried her off the farmhouse, off
+ * the farm and into `Town`, and one `express_emote` - every one of that day's receipts this criterion reads, in the order
+ * the log published them. THE RUN PUBLISHED NO CONVERSATION AT ALL: `talk_to_npc` appears in that whole log once, inside
+ * the `MULTIDAY_UNJUDGED` sentence itself and in no receipt.
+ * </p>
+ *
+ * <p>
+ * SO THE DECLARATION IS THE FIX AND THE RECEIPTS ARE THE PROOF - in both directions. With the town declared, the same
+ * receipts name `Town` and the day is DECIDED (a day that walked to town and spoke to nobody did not have a conversation
+ * in town); with one `talk_to_npc` receipt in a declared map added, the same day is `achieved`; and a word anywhere else -
+ * the farm, the bus stop, a map no answer covers - is not. Two tests, because the two halves fail separately. The day
+ * also arrived on `FarmHouse` and `Farm` before it arrived in `Town`, and neither is the town, so the fixture carries the
+ * negative half of the arrival too.
+ * </p>
+ *
+ * red-proof: inject  restoring `town_visit` to its `gap(...)` entry -> `round98's second day is decided ...` reads
+ *                   `unjudged` instead of `not_achieved`, and `a word with somebody in town ...` cannot reach `achieved`;
+ *                   reading `location` for both shapes -> the arrival never names a map, so the achieved test reds;
+ *                   dropping the membership test (using the raw map) -> a word at the farm satisfies the purpose;
+ *                   listing `travel` in both shapes -> `travel cannot be an arrival and a conversation at once`;
+ *                   declaring `field: "arrival"` -> `travel`'s own contract carries `actual, expected` and no `arrival`
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+
+/** The three door transitions `round98` published before it ends, in the Mod's own detail - `actual` is the arrival. */
+const ROUND98_TO_FARM = receipt("enter_exit", {
+  reasonCode: "enter_exit_completed",
+  evidence: {
+    detail:
+      "expected=Farm:64,15;actual=Farm:64,15;steps=1;folded=accepted@source=FarmHouse:3,12,target=Farm:64,15,entry=resolved_warp_fallback",
+  },
+});
+const ROUND98_TO_BUS_STOP = receipt("enter_exit", {
+  reasonCode: "enter_exit_completed",
+  evidence: {
+    detail:
+      "expected=BusStop:11,23;actual=BusStop:11,23;steps=1;folded=accepted@source=Farm:80,16,target=BusStop:11,23,entry=none",
+  },
+});
+const ROUND98_TO_TOWN = receipt("enter_exit", {
+  reasonCode: "enter_exit_completed",
+  evidence: {
+    detail:
+      "expected=Town:0,54;actual=Town:0,54;steps=1;folded=accepted@source=BusStop:44,23,target=Town:0,54,entry=none",
+  },
+});
+/** The one committed act of the day, which is neither going anywhere nor talking to anyone. */
+const ROUND98_EMOTE = receipt("express_emote", {
+  reasonCode: "emote_started",
+  evidence: { detail: "emote=pause;native_dispatched=true" },
+});
+const ROUND98_DAY_2 = Object.freeze([ROUND98_TO_FARM, ROUND98_TO_BUS_STOP, ROUND98_TO_TOWN, ROUND98_EMOTE]);
+
+/** A conversation in `map`, in the keys and values the Host's `talk_to_npc` row requires - read from that row. */
+const TALKED_IN = (map, npc = "Gus") =>
+  receipt("talk_to_npc", {
+    reasonCode: "talk_to_npc_talked",
+    evidence: {
+      detail: contractEvidence("talk_to_npc", {
+        location: map,
+        target: "npc_gus",
+        npc,
+        tile: "12,18",
+        native_handled: "true",
+        dialogue_up_before: "false",
+        dialogue_up_after: "true",
+        dialogue_box_after: "true",
+        menu_open_after: "false",
+        talked_to_today_before: "false",
+        talked_to_today_after: "true",
+        points_before: "0",
+        points_after: "20",
+        player_can_move_after: "false",
+      }),
+    },
+  });
+
+test("round98's second day is decided from the receipts it published, and town_visit is no longer unjudged", () => {
+  // The fixture is the run only if the wire admits every receipt: a refused one answers `unproven` and the test would be
+  // measuring admission instead of the criterion.
+  const admissions = purposeReceipts(ROUND98_DAY_2);
+  assert.deepEqual(admissions.refused, [], "every receipt of round98 day 2 is its own postcondition");
+
+  const judged = judgeTaskPurpose("town_visit", ROUND98_DAY_2);
+  assert.equal(
+    judged.state,
+    "not_achieved",
+    "the day walked into Town and spoke to nobody, which is a decided day rather than an unjudgeable one",
+  );
+  assert.equal(judged.reasonCode, "task_purpose_not_achieved");
+  assert.equal(
+    judged.detail,
+    "she arrived in Town (enter_exit) and spoke to nobody · maps=BusStop,Farm,Town",
+    "the verdict names the arrival, the half that is missing, and every map the receipts did",
+  );
+  assert.deepEqual(
+    judged.townMaps,
+    ["BusStop", "Farm", "Town"],
+    "the reading keeps the maps it saw, so 'she never left the farm' and 'she got as far as the bus stop' differ",
+  );
+  assert.deepEqual(judged.townMapsUndeclared, [], "both maps are answered by the declaration");
+
+  // AND THE DAY COUNTS. This is what the whole declaration was for: the run scheduled two days and can now judge two.
+  assert.equal(
+    readScheduledJudgement([
+      { day: 1, task: "store_and_sort" },
+      { day: 2, task: "town_visit" },
+    ]).reading,
+    "days 2 · judgedable 2 · gap 0 (none)",
+    "round98's own schedule was `days 2 · judgedable 1 · gap 1 (day2=town_visit)`",
+  );
+});
+
+test("a word with somebody in town after she went there is the town purpose", () => {
+  const inTown = judgeTaskPurpose("town_visit", [...ROUND98_DAY_2, TALKED_IN("Town")]);
+  assert.equal(inTown.state, "achieved", "she walked into Town and then talked to somebody there");
+  assert.equal(inTown.detail, "a conversation in town: arrived in Town (enter_exit), then talked to Gus in Town");
+  assert.deepEqual(
+    { map: inTown.townArrival?.map, actionId: inTown.townArrival?.actionId },
+    { map: "Town", actionId: "enter_exit" },
+    "the arrival half names the map and the transition that landed her there",
+  );
+  assert.equal(inTown.townConversation?.map, "Town");
+
+  // A DOOR'S OWN ARRIVAL COUNTS TOO, and the Saloon is town: an interior she walked into from the square is the same
+  // afternoon as one she had in the square.
+  const arrivedAtSaloon = receipt("enter_exit", {
+    reasonCode: "enter_exit_completed",
+    evidence: { detail: "expected=Saloon:8,13;actual=Saloon:8,13" },
+  });
+  const inSaloon = judgeTaskPurpose("town_visit", [ROUND98_TO_TOWN, arrivedAtSaloon, TALKED_IN("Saloon")]);
+  assert.equal(inSaloon.state, "achieved", "the Saloon stands on the town square, and the declaration says so");
+  assert.equal(inSaloon.townConversation?.npc, "Gus");
+});
+
+test("a word outside the declared maps satisfies nothing, wherever it happens", () => {
+  // A CONVERSATION AT HOME, on a day that did go to town: the words are the purpose's other half, and the farm is not town.
+  const atHome = judgeTaskPurpose("town_visit", [...ROUND98_DAY_2, TALKED_IN("Farm")]);
+  assert.equal(atHome.state, "not_achieved");
+  assert.equal(
+    atHome.detail,
+    "she arrived in Town and every conversation was outside a declared town map (Farm) · maps=BusStop,Farm,Town",
+  );
+
+  // A CONVERSATION AT THE BUS STOP, which is the map on the way to town and not the town: the stop is where an errand
+  // starts, and a criterion that accepted it would grade the walk instead of the visit.
+  const atTheStop = judgeTaskPurpose("town_visit", [ROUND98_TO_BUS_STOP, TALKED_IN("BusStop")]);
+  assert.equal(atTheStop.state, "not_achieved");
+  assert.equal(atTheStop.detail, "she never entered a declared town map · maps=BusStop");
+
+  // A MAP NO ANSWER COVERS IS NAMED, not quietly filed as outside the town: the one direction this declaration can be
+  // incomplete in has to be readable.
+  const atUndeclared = judgeTaskPurpose("town_visit", [...ROUND98_DAY_2, TALKED_IN("HaleyHouse")]);
+  assert.equal(atUndeclared.state, "not_achieved");
+  assert.deepEqual(atUndeclared.townMapsUndeclared, ["HaleyHouse"]);
+  assert.match(atUndeclared.detail, /undeclared_maps=HaleyHouse/u);
+
+  // THE ORDER IS A CAUSE: the arrival is how she got there, so words that came first happened before the trip.
+  const before = judgeTaskPurpose("town_visit", [TALKED_IN("Town"), ROUND98_TO_TOWN]);
+  assert.equal(before.state, "not_achieved");
+  assert.equal(
+    before.detail,
+    "she arrived in Town (enter_exit) after the conversation: the words in Town came first · maps=Town",
+  );
+
+  // AND AN EMOTE IS NOT A CONVERSATION: waving at nobody is the day round98 actually had.
+  assert.equal(judgeTaskPurpose("town_visit", [ROUND98_TO_TOWN, ROUND98_EMOTE]).state, "not_achieved");
+});
+
+/**
+ * THE GATE: `every_map_the_product_can_say_is_answered_as_town_or_not`.
+ *
+ * <p>
+ * THE DEFECT CLASS. A criterion that needs a membership nobody declared answered `unjudged` for a whole day
+ * (`round98`), and the opposite shape is worse: a declaration that covers the maps its author remembered, silently
+ * reading every unlisted map as "not the town". So the POPULATION is the maps this product can say out loud - the table
+ * `位置:` renders from, which is the one place this tree writes map names down - and the property is that every one of
+ * them carries an answer with its reason, that no answer names a map the product cannot say, and that the answers name
+ * at least one town.
+ * </p>
+ *
+ * <p>
+ * THE TABLE IS OURS AND THIS IS THE ONLY PLACE IT IS WRITTEN. The engine has no grouping to read (see the declaration's
+ * own note: one class per map, and the only "town" word in it is a music flag in content data), so what a gate can hold
+ * is the crossing - the membership itself is the declaration, and a map added to the spoken table tomorrow fails here by
+ * NAME until it is answered.
+ * </p>
+ *
+ * red-proof: inject  deleting one answer -> `map_with_no_town_answer:<map>` naming it; answering a map the product cannot
+ *                   say -> `town_answer_for_a_map_the_product_does_not_name:<map>`; blanking a reason ->
+ *                   `town_answer_without_its_reason:<map>`; answering nothing as town -> `town_answers_declare_no_town`
+ *                   (tools/lib/task-purpose.test.mjs)
+ */
+test("every_map_the_product_can_say_is_answered_as_town_or_not", (t) => {
+  const names = Object.keys(LOCATION_NAMES_ZH);
+  const answered = Object.entries(TOWN_MAP_ANSWERS);
+  const town = answered.filter(([, answer]) => answer.inTown).map(([map]) => map);
+  const outside = answered.filter(([, answer]) => !answer.inTown).map(([map]) => map);
+  const reading =
+    `maps the product can say ${String(names.length)} · town ${String(town.length)} (${town.join(",")}) · ` +
+    `outside ${String(outside.length)}`;
+  t.diagnostic(reading);
+  assert.ok(names.length > 0, `${reading} - the product names no map at all, so this gate examined nothing`);
+  assert.deepEqual(townMapFindings(TOWN_MAP_ANSWERS, names), [], reading);
+
+  // ONE SPELLING OF THE SET: the declared town is derived from the answers, and the membership test reads the same set.
+  assert.deepEqual([...TOWN_MAPS], town, "TOWN_MAPS is the answers' own town half, in declaration order");
+  for (const map of town) assert.equal(inTownMap(map), true, `${map} is declared town and must read as town`);
+  for (const map of outside) assert.equal(inTownMap(map), false, `${map} is declared outside the town`);
+
+  // THE FALSIFIERS, over a vocabulary this repository does not have: each finding names the map that caused it.
+  const withoutOne = { ...TOWN_MAP_ANSWERS };
+  delete withoutOne.Town;
+  assert.deepEqual(townMapFindings(withoutOne, names), ["map_with_no_town_answer:Town"]);
+  assert.deepEqual(townMapFindings({ ...TOWN_MAP_ANSWERS, SomewhereElse: TOWN_MAP_ANSWERS.Town }, names), [
+    "town_answer_for_a_map_the_product_does_not_name:SomewhereElse",
+  ]);
+  assert.deepEqual(townMapFindings({ ...TOWN_MAP_ANSWERS, Town: { inTown: true, because: " " } }, names), [
+    "town_answer_without_its_reason:Town",
+  ]);
+  const nowhere = Object.fromEntries(answered.map(([map]) => [map, { inTown: false, because: "not here" }]));
+  assert.deepEqual(townMapFindings(nowhere, names), ["town_answers_declare_no_town"]);
+});
+
+test("the maps a villager would call the town are the town, and the stop on the way is not", () => {
+  // The declaration is ours, so what it SAYS is the reviewable thing: this is the answer, in one reading, for the maps
+  // `round98`'s own question named (the square, the Saloon, Pierre's counter) and for the ones it could have confused it
+  // with (the farm road, the bus stop, the beach, the mountain).
+  assert.deepEqual(
+    [...TOWN_MAPS].sort(),
+    [
+      "ArchaeologyHouse",
+      "Blacksmith",
+      "CommunityCenter",
+      "Hospital",
+      "JojaMart",
+      "JoshHouse",
+      "ManorHouse",
+      "Saloon",
+      "SeedShop",
+      "Town",
+    ],
+    "these are the town: the square and the ten buildings that open off it",
+  );
+  for (const map of ["Farm", "FarmHouse", "BusStop", "Backwoods", "Forest", "Beach", "Mountain", "Mine", "Desert"])
+    assert.equal(
+      inTownMap(map),
+      false,
+      `${map} is not the town, and a criterion that accepted it would grade the trip instead of the visit`,
+    );
 });

@@ -115,6 +115,12 @@ public sealed partial class ModEntry
             Vector2 target = new(candidate.X, candidate.Y);
             if (!farm.isTileOnMap(target) || farm.objects.ContainsKey(target) || farm.terrainFeatures.ContainsKey(target))
                 continue;
+            // NOT ON A BUILDING'S PORCH, WALKWAY OR DECK. A prop is a thing that stands on farm ground; the greenhouse's
+            // stone doorstep and the farmhouse's wooden deck are what `FixtureGround.DescribePaving` names, and measured
+            // `round98` (2026-11-23) this search put four props on the greenhouse's doorstep (`weed=26,17;grass=27,17;
+            // stone=28,17;crop=29,17`) because walkable-and-empty was the whole question it asked.
+            if (FixtureGround.DescribePaving(farm, candidate.X, candidate.Y) is not null)
+                continue;
             // The target must be reachable too, not only the tile the actor stands on to work it. A prop whose
             // standable neighbour is inside the actor's component can still be walled off from it, and the
             // fail-closed check after placement then refuses the world for a prop this search should never

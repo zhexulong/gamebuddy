@@ -1,6 +1,6 @@
 {
   "note": "已在上限之上的文件及其当前行数，记录自提交树。棘轮以它作为比较基准：只有比记录更大才失败；文件回到上限之内或消失时必须删掉对应条目。扩展名上限见 check-file-complexity-gate.mjs 的 CEILINGS_BY_EXTENSION。请在单独提交里重新记录。",
-  "revision": "f2a021a0",
+  "revision": "b7c8de04",
   "sizes": {
     "dialogue-web/src/components/management-panels.tsx": 2265,
     "dialogue-web/src/components/management-surface-panels.tsx": 2587,
@@ -19,7 +19,7 @@
     "host/src/protocol.ts": 6545,
     "host/src/stardew-completion-contracts.ts": 5619,
     "host/src/tavern/chat-thread-store.ts": 6414,
-    "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 3522,
+    "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs": 4415,
     "integrations/stardew/farmhandexecutioncontroller.cs": 4845,
     "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs": 2157,
     "integrations/stardew/ModEntry.cs": 3345,
@@ -32,7 +32,8 @@
     "tools/lib/harness-conformance.mjs": 1871,
     "tools/lib/multiday-baseline.test.mjs": 2002,
     "tools/lib/stardew-native-local-player-fixture.mjs": 1753,
-    "tools/lib/task-purpose.test.mjs": 2265,
+    "tools/lib/task-purpose.mjs": 1920,
+    "tools/lib/task-purpose.test.mjs": 3124,
     "tools/live-action.mjs": 1709,
     "tools/live-run/frontend/capture/v-injection-claims.cjs": 999,
     "tools/live-run/frontend/capture/w-game-launch.cjs": 1939,

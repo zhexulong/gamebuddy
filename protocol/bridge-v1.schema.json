@@ -1615,6 +1615,21 @@
           "type": "boolean",
           "description": "`GameLocation.GetHoeDirtAtTile(tile) is not null` read when the row was published: whether a HoeDirt already occupies this tile, which is the state the row reports. `true` is a tile the actor has already hoed - the `plant_seed`/`fertilize_tile`/`water_crop` target and the record of work already done - and `till_soil` refuses it with `soil_already_tilled`; `false` is ground the Hoe still admits. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
         },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "What the ground under this tile IS, from the Mod's single ground reading (`GroundSurface`): one of the engine's own ground words lower-cased - `stone`, `wood`, `grass`, `dirt` - plus `path` for a player-laid `Flooring` and `soil` for a tile whose map declares no surface word. Measured round98: the greenhouse's stone doorstep at `29,17` answered `hoeDirt: true, crop: null` exactly as a field tile does, so a sowing on the porch read as a sowing in the field. A tile the Mod could not measure says `not_measured:<x>,<y>:<why>` - never `soil`, because defaulting here is the same lie a hand-made doorstep was. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "surfaceOwner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), when a building rather than the map did - a porch drawn at runtime is not a map tile. Null (or absent) when the map answered."
+        },
         "blockX": {
           "$ref": "#/$defs/tile",
           "description": "The north-west tile of the CONNECTED strip this tile belongs to: every tile reachable from it by a cardinal step over the family's own population (HoeDirt present or `ExecutionManager.IsTillableTile`), measured over the whole map rather than over the six-tile discovery window. The box is a measurement of the ground, not a request: `till_soil` still admits one tile at a time."
@@ -1835,6 +1850,18 @@
           "minLength": 1,
           "maxLength": 64,
           "description": "Why the `Data/Crops` fields above are absent, as one token (`crop_facts_unknown:crop_data_missing`). The only value today is `crop_data_missing`: the engine resolved no data row for this crop, so there is no such fact rather than a default one. A silence here would let a reader plan on an invented `isRaised: false`."
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. A `watered` row is a row about a tilled tile, so the ground belongs in it: measured `round98` the greenhouse's stone doorstep answered `hoeDirt: true, crop: null` exactly as a field tile did, and a sprinkle of the porch read as a sprinkle of the field. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -1888,6 +1915,18 @@
         },
         "harvestMethod": {
           "$ref": "#/$defs/harvestMethod"
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. A `readyForHarvest` row promises a pick, and `stone`, `wood` or `path` under it says the tile is a doorstep or a deck rather than a plot - the crop on the porch and the crop in the field are not the same harvest. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -1941,6 +1980,21 @@
         "crop": {
           "type": "boolean",
           "description": "`HoeDirt.crop is not null` for this tile, read when the row was published: whether a crop already occupies it, which is the other fact `plant_seed` refuses on. False on every row discovery publishes. Optional at the wire for the same reason as `canPlantThisSeedHere`."
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "The same `surface` a `soilTiles` row carries for this tile: what the ground under the HoeDirt is (`stone`, `wood`, `grass`, `dirt`, `path`, `soil`) or `not_measured:<x>,<y>:<why>`. A planting decision is a decision about ground, and measured round98 a seed went into the greenhouse's stone doorstep because the row said only that the tile was empty tilled soil."
+        },
+        "surfaceOwner": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member as the soil row's."
         }
       }
     },
@@ -1983,6 +2037,18 @@
         "canApplyFertilizer": {
           "type": "boolean",
           "description": "`HoeDirt.CanApplyFertilizer(fertilizer.QualifiedItemId)` for this tile and this fertilizer, read when the row was published: the engine's own admission (a tile that already carries fertilizer, a potted tile, or a mismatched fertilizer refuse here). `fertilize_tile` refuses a tile whose answer has since turned false. Optional at the wire so a Mod older than this field still validates; current Mods always publish it."
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. `canApplyFertilizer` is a HoeDirt fact, so the row is about the ground, and a fertilizer spent on a paved tile is spent on ground the map never made tillable. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -3906,6 +3972,18 @@
         },
         "ground": {
           "const": true
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. The row's own `ground: true` says it is about the ground, so it has to say WHICH ground: a HoeDirt standing on a stone doorstep and one standing in the field published the same row until this field existed. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -3978,6 +4056,18 @@
         },
         "ground": {
           "const": true
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. The dug tile this family publishes states `ground: true`; `surface` says which ground the Hoe turned over - a spot dug on a paved walkway is not a spot dug in the field. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -4888,6 +4978,18 @@
         },
         "harvestMethod": {
           "$ref": "#/$defs/harvestMethod"
+        },
+        "surface": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "description": "\"The same `surface` a `soilTiles` row carries for this tile, from the Mod's single ground reading (`GroundSurface`): the engine's own ground word lower-cased (`stone`, `wood`, `grass`, `dirt`), `path` for a player-laid `Flooring`, `soil` for a tile whose map declares no surface word, or `not_measured:<x>,<y>:<why>` when the engine cannot answer. A `readyForHarvest` row promises a swing, and `stone`, `wood` or `path` under it says the tile is a doorstep or a deck rather than a plot - the crop on the porch and the crop in the field are not the same harvest. Optional at the wire so a Mod older than this field still validates; current Mods always publish it.\""
+        },
+        "surfaceOwner": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "The building whose own tile data answered `surface` (`Greenhouse`), or null/absent when the map did - the same member a `soilTiles` row carries."
         }
       }
     },
@@ -9283,6 +9385,50 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 64
+        },
+        "humanDoor": {
+          "description": "The tile the structure's human door opens on (`Building.getPointForHumanDoor()`, `tileX + humanDoor.X`/`tileY + humanDoor.Y` over the offset its `Data/Buildings` entry declares), which is what an `enter_exit` addresses. Absent when the type declares no door - a silo, a fish pond, an obelisk - and on every `build_site` row, where no structure exists yet.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "integer"
+            },
+            "y": {
+              "type": "integer"
+            }
+          }
+        },
+        "ownTiles": {
+          "description": "The tiles OUTSIDE the footprint that the structure's OWN tile data answers for (`Building.doesTileHaveProperty` with `Type`/`Back`): the porch, walkway and deck rows it draws, which the map underneath reports as ordinary ground. Bounded at 8 tiles, with `ownTilesOmitted` counting the rest.",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "x",
+              "y"
+            ],
+            "properties": {
+              "x": {
+                "type": "integer"
+              },
+              "y": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "ownTilesOmitted": {
+          "description": "The tiles `ownTiles` left out, present only when the structure's own rows were longer than the bound.",
+          "type": "integer",
+          "minimum": 1
         }
       }
     },

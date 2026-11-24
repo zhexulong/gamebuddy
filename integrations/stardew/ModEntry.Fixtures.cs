@@ -478,6 +478,12 @@ public sealed partial class ModEntry : Mod
                 || !Game1.game1.parseDebugInput("SpreadSeeds 474", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 12", null))
                 throw new InvalidOperationException("fixture_native_local_jodi_harvest_setup_unavailable");
+            // THE PORCH IS NOT FARMLAND AND THE DEBUG SPREAD DOES NOT KNOW THAT. `SpreadDirt` tills every tile whose map
+            // data says `Diggable`, and `SpreadSeeds`/`GrowCrops` then put a ripe crop on each one - measured `round98`
+            // (2026-11-23), a ripe cauliflower on `29,17`, the bottom-right tile of the greenhouse's 3x2 stone doorstep.
+            // The spread stays (it is the target-version setup the whole ladder is built on) and the paving is taken back
+            // out of the world it produced, one line naming the predicate and the count.
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
         finally { Game1.currentLocation = previousLocation; }
 
@@ -559,6 +565,9 @@ public sealed partial class ModEntry : Mod
                 || !Game1.game1.parseDebugInput("SpreadSeeds 745", null)
                 || !Game1.game1.parseDebugInput("GrowCrops 8", null))
                 throw new InvalidOperationException("fixture_native_local_strawberry_covenant_setup_unavailable");
+            // Same defect, same repair as the jodi-harvest ladder: the spread tills the greenhouse's stone doorstep as an
+            // ordinary diggable tile, and a strawberry on a doorstep is a world the engine never builds.
+            this.Monitor.Log(FixtureGround.ClearPavedDirt(farm), LogLevel.Info);
         }
         finally { Game1.currentLocation = previousLocation; }
 
@@ -1141,7 +1150,10 @@ public sealed partial class ModEntry : Mod
             case PlaySessionPropFamilies.Crop:
             {
                 // The scythe-crop fixture's recipe, placed explicitly rather than seeded across the field, so harvesting
-                // is one of several things to do instead of the only thing in sight.
+                // is one of several things to do instead of the only thing in sight. The tile must be SOIL first: this
+                // branch used to hand-make a `HoeDirt` wherever the search pointed, and the search pointed at the
+                // greenhouse's stone doorstep (`crop=29,17` in the `round98` arm log, harvested by `plan_506`).
+                FixtureGround.RequireSoil(farm, (int)tile.X, (int)tile.Y);
                 StardewValley.TerrainFeatures.HoeDirt dirt = farm.terrainFeatures.TryGetValue(tile, out StardewValley.TerrainFeatures.TerrainFeature? maybeDirt)
                     ? (StardewValley.TerrainFeatures.HoeDirt)maybeDirt!
                     : new StardewValley.TerrainFeatures.HoeDirt();

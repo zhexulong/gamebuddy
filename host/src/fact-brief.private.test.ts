@@ -762,9 +762,13 @@ test("named_rows: a tile row that carries a kind prints its own displayName besi
   // Refuse to pass on nothing: an empty population agrees with every assertion below.
   assert.ok(families.length >= 2, `examined ${String(families.length)} named row families, too few to be the wire`);
   for (const family of families) {
-    // The bed from `round57`, as the row itself stood: a piece with its own name, on one tile.
+    // THE ROW STANDS WHERE SHE IS, and that is a property of this fixture rather than of the line: `farmBuildingTargets`
+    // is bounded to the Mod's own six-tile envelope (`FAMILY_LOCAL_BOUNDS`), so the round57 bed at `(6,6)` fed to a
+    // reading taken at `(64,15)` prints no building at all - correctly, and this test is about the NAME a placed row
+    // carries, not about how far one can be seen from. The bed's own tile is the actor's tile here.
     const named = block({
       ...world,
+      tile: { x: 6, y: 6 },
       [family]: [{ targetId: "t", kind: "placed_furniture", displayName: "床", location: "FarmHouse", x: 6, y: 6 }],
     } as unknown as Snapshot);
     assert.match(named, /床 \(6,6\)/u, `${family} names the row it printed: ${named}`);
@@ -776,7 +780,7 @@ test("named_rows: a tile row that carries a kind prints its own displayName besi
       { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6 },
       { targetId: "t", kind: "placed_furniture", location: "FarmHouse", x: 7, y: 6, displayName: "  " },
     ]) {
-      const anonymous = block({ ...world, [family]: [row] } as unknown as Snapshot);
+      const anonymous = block({ ...world, tile: { x: 6, y: 6 }, [family]: [row] } as unknown as Snapshot);
       assert.match(anonymous, /\(7,6\)/u, `${family} still names the tile of an anonymous row: ${anonymous}`);
       assert.equal(/undefined/u.test(anonymous), false, `${family} prints no absent-field word: ${anonymous}`);
     }

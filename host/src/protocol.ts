@@ -81,6 +81,8 @@ import {
   isSlimeHutchTroughTargetFact,
   isSpecialOrderTargetFact,
   isStringArray,
+  isSurfaceOwner,
+  isSurfaceWord,
   isTailoringTargetFact,
   isTileCoordinate,
   isToolSlot,
@@ -479,11 +481,18 @@ export type Snapshot = Readonly<{
    * `blockX`/`blockY`/`blockW`/`blockH` are the connected strip the tile belongs to - every tile reachable by a
    * cardinal step over the same population, measured over the whole map. They are what makes "3 wide and 20 long" a
    * thing the caller can read instead of arithmetic it has to invent from a 13x13 window.
+   *
+   * `surface` is what the ground under the tile IS, and it is the fact this family could not state: the greenhouse's
+   * stone doorstep read `hoeDirt: true` exactly as a field tile does. `surfaceOwner` names the building whose own tile
+   * data answered (`Greenhouse`) when a building rather than the map did.
    */
   soilTiles?: readonly Readonly<{
     x: number;
     y: number;
     hoeDirt?: boolean;
+    /** `stone`, `wood`, `grass`, `dirt`, `path` (a laid Flooring), `soil` (no surface word on the map), or `not_measured:<x>,<y>:<why>`. */
+    surface?: string;
+    surfaceOwner?: string | null;
     blockX: number;
     blockY: number;
     blockW: number;
@@ -606,6 +615,9 @@ export type Snapshot = Readonly<{
     tileBlockedNow?: boolean;
     /** `crop_data_missing` when the engine has no `Data/Crops` row for this crop, which is why the five data facts above are absent. */
     cropFactsUnknown?: string;
+    /** The same `surface` a `soilTiles` row carries: what the ground under this HoeDirt is, on the same terms (a ground word, or `not_measured:<x>,<y>:<why>`). */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /** The current location's completed, unwatered native Pet Bowl (water_pet_bowl). */
   petBowlTargets?: readonly Readonly<{ targetId: string; x: number; y: number }>[];
@@ -636,6 +648,9 @@ export type Snapshot = Readonly<{
     readyForHarvest?: boolean;
     forageCrop?: boolean;
     harvestMethod?: string;
+    /** What the ground under a pickable crop is - a porch and a field plot are not the same harvest. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /** Nearby empty HoeDirt targets paired with a live inventory seed slot. */
   seedTargets?: readonly Readonly<{
@@ -647,6 +662,9 @@ export type Snapshot = Readonly<{
     displayName: string;
     canPlantThisSeedHere?: boolean;
     crop?: boolean;
+    /** The same `surface` a `soilTiles` row carries for this tile: what a planting decision is a decision about. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /** Nearby ground HoeDirt targets paired with a live fertilizer slot. */
   fertilizerTargets?: readonly Readonly<{
@@ -657,6 +675,9 @@ export type Snapshot = Readonly<{
     qualifiedItemId: string;
     displayName: string;
     canApplyFertilizer?: boolean;
+    /** What the ground this fertilizer would go into is: a paved tile is not ground the map made tillable. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /** Fresh empty Farm tiles paired with one qualified (O)322 inventory slot. */
   woodFenceTargets?: readonly Readonly<{
@@ -783,6 +804,9 @@ export type Snapshot = Readonly<{
     y: number;
     crop: false;
     ground: true;
+    /** Which ground the row's own `ground: true` is about, on the same terms as a `soilTiles` row. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /**
    * Adjacent intact diggable artifact spots for one native Basic Hoe use. The id
@@ -807,6 +831,9 @@ export type Snapshot = Readonly<{
     y: number;
     crop: false;
     ground: true;
+    /** Which ground the Hoe turned over, on the same terms as a `soilTiles` row. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /** Global Farm source count, published only while dig_artifact_spot is capable. */
   artifactSpotFarmSourceCount?: number | null;
@@ -905,6 +932,9 @@ export type Snapshot = Readonly<{
     dead?: boolean;
     forageCrop?: boolean;
     harvestMethod?: string;
+    /** What the ground under a scythe crop is - a porch and a field plot are not the same swing. */
+    surface?: string;
+    surfaceOwner?: string | null;
   }>[];
   /**
    * Nearby native machines. An idle machine whose own `Data/Machines` rows accept a carried stack publishes that stack
@@ -1341,6 +1371,17 @@ export type Snapshot = Readonly<{
      * tile, which is the reading every row carried before the field existed. */
     w?: number;
     h?: number;
+    /** The tile the structure's human door opens on (`Building.getPointForHumanDoor()`), which is what an
+     * `enter_exit` addresses. Absent when the type's `Data/Buildings` entry declares no door - a silo, a fish pond,
+     * an obelisk - and on every `build_site` row, where no structure exists yet. Absent is the one spelling for
+     * both: this wire omits nulls, so a `null` member would read as an absent one anyway. */
+    humanDoor?: Readonly<{ x: number; y: number }>;
+    /** The tiles OUTSIDE the footprint that the structure's OWN tile data answers for (`Building.doesTileHaveProperty`
+     * with `Type`/`Back`): the porch, walkway and deck rows it draws, which the map underneath reports as ordinary
+     * ground. Bounded at 8 tiles per row, and `ownTilesOmitted` counts the rest. */
+    ownTiles?: readonly Readonly<{ x: number; y: number }>[];
+    /** The tiles `ownTiles` left out, so a porch past the bound says so rather than reading as the whole of it. */
+    ownTilesOmitted?: number | null;
   }>[];
   /** The day's posted help-wanted quests the actor can name, and whether today's has already been
    * accepted. `acceptedDailyQuest` is the world flag the accept turns true, so a quest is never
@@ -6144,12 +6185,17 @@ function validateBodyTrace(value: Record<string, unknown>): string | null {
 function isSoilTile(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["x", "y", "hoeDirt", "blockX", "blockY", "blockW", "blockH"]) &&
+    hasOnlyKeys(value, ["x", "y", "hoeDirt", "surface", "surfaceOwner", "blockX", "blockY", "blockW", "blockH"]) &&
     isTileCoordinate(value.x) &&
     isTileCoordinate(value.y) &&
     // Optional at the wire: a Mod older than this field publishes no answer, and one that carries it publishes
     // `GameLocation.GetHoeDirtAtTile`, so a non-boolean is a malformed row rather than a missing measurement.
     (value.hoeDirt === undefined || typeof value.hoeDirt === "boolean") &&
+    // What the ground IS. A tile the Mod could not measure says `not_measured:<x>,<y>:<why>`, which is a word in this
+    // same field - a row that omitted it instead would read as soil, and soil is the answer this field exists to stop
+    // being assumed.
+    isSurfaceWord(value.surface) &&
+    isSurfaceOwner(value.surfaceOwner) &&
     // The connected strip the tile belongs to. Every side is required: a row without a box would be a row a reader
     // cannot plan a rectangle from, which is the defect the box exists for.
     isTileCoordinate(value.blockX) &&

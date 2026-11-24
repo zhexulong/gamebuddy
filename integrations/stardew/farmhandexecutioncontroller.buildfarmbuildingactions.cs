@@ -111,6 +111,16 @@ internal sealed partial class ExecutionManager
     internal const int BuildFarmBuildingTargetLimit = 8;
 
     /// <summary>
+    /// The tiles one `built` row publishes for the structure's own porch/walkway rows before it counts the rest.
+    ///
+    /// Eight, because that is the widest porch the engine's own tile data describes in play - the ruined greenhouse's
+    /// doorstep is 3x2 and a door's approach strip is three wide by two deep - and a cap that never bites is a cap nobody
+    /// has to think about. A building whose declared tile properties answer for more says so through `ownTilesOmitted`
+    /// rather than reading as a structure with exactly eight.
+    /// </summary>
+    internal const int OwnTileLimit = 8;
+
+    /// <summary>
     /// Commission one farm building through the game's own construction path. Refusals are
     /// named per the frozen card (`design/tasks/active/cards/card-build-farm-building-boundary.md` §8).
     /// </summary>

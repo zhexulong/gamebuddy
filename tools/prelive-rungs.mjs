@@ -34,6 +34,7 @@ export const L0_GATES = Object.freeze([
   // `wateringCanFacts` was published with `water 36/40` in every observation of a run whose companion shook the can and
   // said `壶空了正好`, because no prose rendered the field and nothing asked whether one did. Milliseconds, five reads.
   "gates/product/check-snapshot-field-rendering.mjs",
+  "gates/product/check-state-sentences.mjs",
   // The crop row's own gate: every field the engine's `Data/Crops` answer projects must be reachable from a snapshot
   // crop row or carry a stated reason, and the four copies of the row contract (Mod record, Host type, Host validator,
   // schema) must name the same keys. Milliseconds, source-only.

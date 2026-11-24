@@ -524,7 +524,10 @@ internal sealed partial class ExecutionManager
             string? resultTargetId = succeeded ? BuildArtifactSpotResultTargetId(location, targetX, targetY) : null;
             if (succeeded)
             {
-                this.artifactSpotResultTarget = new BridgeArtifactSpotResultTarget(resultTargetId!, location.NameOrUniqueName, targetX, targetY, Crop: false, Ground: true);
+                // The ground the dug tile became: the same reading `soilTiles` publishes, so a spot dug on a porch and
+                // one dug in the field do not arrive as the same row.
+                GroundSurface.Reading ground = GroundSurface.Of(location).At(targetX, targetY);
+                this.artifactSpotResultTarget = new BridgeArtifactSpotResultTarget(resultTargetId!, location.NameOrUniqueName, targetX, targetY, Crop: false, Ground: true, ground.Surface, ground.Owner);
                 this.artifactSpotResultExecutionId = executionId;
                 this.artifactSpotResultRequestId = requestId;
                 this.artifactSpotResultRevision = this.revision;

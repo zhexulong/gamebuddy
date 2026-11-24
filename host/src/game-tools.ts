@@ -2070,7 +2070,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.till_soil,
         label: "Till Stardew Soil",
         description:
-          "Use a live native Hoe on a soil tile. charge is the tool charge ONE native use covers: 0 tills the named tile alone, and a wider charge tills the box the held hoe's own level reaches - a charge the held tool cannot reach is refused by name, never clamped. Only a Mod receipt with soil_tilled evidence reports completion.",
+          "Use a live native Hoe on a soil tile. charge is the tool charge ONE native use covers: 0 tills the named tile alone, and a wider charge tills the box the held hoe's own level reaches - a charge the held tool cannot reach is refused by name, never clamped. The row's surface is part of the choice: a soilTiles row whose surface is stone, wood or path, or whose surfaceOwner names a building, is a porch or a deck and not field ground - the map's own Diggable property is the Hoe's admission, not a statement that the tile is a plot - and a row whose surface reads not_measured is a tile nobody measured rather than ordinary soil. Only a Mod receipt with soil_tilled evidence reports completion.",
         parameters: Type.Object({
           x: TILE_COORDINATE_SCHEMA,
           y: TILE_COORDINATE_SCHEMA,
@@ -2194,7 +2194,7 @@ export function createStardewActionTools(
         name: STARDEW_ACTION_TOOL_NAMES.plant_seed,
         label: "Plant Stardew Seed",
         description:
-          "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Native crop creation and the authoritative receipt determine completion.",
+          "Plant a live ordinary seed into a live empty ground HoeDirt target. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the seedTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The row's surface and surfaceOwner say what the ground under it is: stone, wood or path ground, or a tile whose surfaceOwner names a building, is a porch or a deck rather than a plot, and not_measured means nobody measured it. Native crop creation and the authoritative receipt determine completion.",
         parameters: Type.Object({
           slot: TOOL_SLOT_SCHEMA,
           x: TILE_COORDINATE_SCHEMA,

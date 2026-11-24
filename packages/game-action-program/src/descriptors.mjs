@@ -68,15 +68,21 @@ const EFFECTS_KEYS = new Set(["declared"]);
 const EFFECTS_OPTIONAL_KEYS = new Set(["none"]);
 const EFFECT_KEYS = new Set(["class", "subject", "observedBy"]);
 const EFFECT_CLASSES = new Set(["moves_actor", "requires_place", "produces", "consumes"]);
-// The reasons a row may give for having no effect, from `FarmhandActionEffects.NoneReasons`. `resource_unproven_by_the_receipt`
-// is the one that names a GAP rather than an absence: the action does move a resource and no receipt fact names which.
+// The reasons a row may give for having no effect, from `FarmhandActionEffects.IsAdmitted`. `resource_unproven_by_the_receipt:<resource>`
+// is the one that names a GAP rather than an absence: the action does move a resource and no receipt fact names which, so the
+// marker carries the resource and a bare marker is refused here as well as in the Mod's declaration.
 const EFFECT_NONE_REASONS = new Set([
   "observation_only",
   "actor_body_only",
   "addressed_row_only",
   "game_owned_ledger",
-  "resource_unproven_by_the_receipt",
 ]);
+const UNPROVEN_BY_THE_RECEIPT = "resource_unproven_by_the_receipt:";
+const RESOURCE_WORD = /^[a-z][a-z0-9_]{1,63}$/;
+function isAdmittedNoneReason(value) {
+  if (EFFECT_NONE_REASONS.has(value)) return true;
+  return value.startsWith(UNPROVEN_BY_THE_RECEIPT) && RESOURCE_WORD.test(value.slice(UNPROVEN_BY_THE_RECEIPT.length));
+}
 const MAX_EFFECTS = 8;
 // A subject is an engine/pack word in snake case (`actor_position`, `watering_can_water`), and a seam is either that or a
 // dotted symbol the handler contains (`SleepAndAdvanceDayLifecycle.HomeOf`), or a reason-code literal (`seed_not_owned_in_pack`).
@@ -310,7 +316,7 @@ function validEffects(value) {
   const declared = ownValue(value, "declared");
   if (!isDenseArray(declared, MAX_EFFECTS)) return false;
   const none = ownValue(value, "none");
-  if (none !== INVALID && !EFFECT_NONE_REASONS.has(none)) return false;
+  if (none !== INVALID && !isAdmittedNoneReason(none)) return false;
   if (declared.length === 0) return none !== INVALID;
   if (none !== INVALID) return false;
   return declared.every((effect) => validEffect(effect));

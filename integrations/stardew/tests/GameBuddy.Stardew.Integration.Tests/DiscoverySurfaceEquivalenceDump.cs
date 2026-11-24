@@ -117,6 +117,7 @@ public sealed class DiscoverySurfaceEquivalenceDump
         parameter.IsOut ? Zero(parameter.ParameterType.GetElementType()!)
         : parameter.ParameterType == typeof(Farmer) ? world.Actor
         : parameter.ParameterType == typeof(StardewValley.GameLocation) ? world.Farm
+        : parameter.ParameterType == typeof(GroundSurface) ? GroundSurface.Of(world.Farm)
         : parameter.ParameterType == typeof(DiscoveryExclusionRecorder) ? new DiscoveryExclusionRecorder()
         : parameter.ParameterType.IsGenericType && parameter.ParameterType.GetGenericTypeDefinition() == typeof(IReadOnlyList<>) ? null
         : parameter.ParameterType == typeof(IList<Item?>) ? world.Actor.Items

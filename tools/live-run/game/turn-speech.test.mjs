@@ -47,6 +47,24 @@ test("a piece committed before the first turn's start is the first turn's, not n
   assert.deepEqual(attributed[0].spokenLines, ["arrived during launch"]);
 });
 
+// THE CLOCK TRAVELS WITH THE LINE, so a reading that quotes a commitment can date it without holding the presentation
+// population: `round98`'s promise was charged with no hour at all, and `null` (nobody recorded when) must stay distinct
+// from an index that simply did not line up.
+test("each line carries the moment the player was shown it, and an unclocked piece says so", () => {
+  const timed = [{ index: 0, text: "这就睡", atMs: 1795000000000 }, { index: 1, text: "都十二点了", atMs: 1795000600000 }];
+  const attributed = attributeTurnSpeech([{ spokenFromIndex: 0 }], timed);
+  assert.deepEqual(attributed[0].spokenAtMs, [1795000000000, 1795000600000]);
+  // A REFUSED BUBBLE IS NOT A LINE, SO ITS CLOCK IS NOT ONE EITHER: the two arrays stay index-aligned with each other.
+  const withFragment = [
+    { index: 0, text: "b 十五包种子到手", locale: "zh-CN", atMs: 1795000000000 },
+    { index: 1, text: "这就睡", locale: "zh-CN", atMs: 1795000600000 },
+  ];
+  const filtered = attributeTurnSpeech([{ spokenFromIndex: 0 }], withFragment);
+  assert.deepEqual(filtered[0].spokenLines, ["这就睡"]);
+  assert.deepEqual(filtered[0].spokenAtMs, [1795000600000]);
+  assert.deepEqual(attributeTurnSpeech([{ spokenFromIndex: 0 }], [piece("没有钟")])[0].spokenAtMs, [null]);
+});
+
 test("a turn carries the window it was read over, and a run with no pieces reads as no lines", () => {
   const empty = attributeTurnSpeech([{ spokenFromIndex: 0 }], []);
   assert.deepEqual(empty[0].spokenLines, []);
