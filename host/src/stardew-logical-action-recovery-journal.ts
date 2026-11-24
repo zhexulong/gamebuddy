@@ -821,6 +821,10 @@ function parseLog(source: string, options: NormalizedOpenOptions, maxRecords: nu
       admissions.set(admissionKey(record.challenge), encodeRecord(record));
       continue;
     }
+    // Every surviving line is validated exactly as strictly as a document record was, here in the
+    // reader: a line this journal would refuse is refused before the open handle that follows is
+    // acquired, so a refusal costs a rejection and nothing else.
+    assertRecord(entry.value as StardewLogicalActionRecoveryRecord);
     const record = freezeRecord(entry.value as StardewLogicalActionRecoveryRecord);
     if (!sameOptional(record.scope, options.scope)) throw new Error("invalid_recovery_journal_scope");
     const owner = record.logicalActionId;
@@ -1042,6 +1046,7 @@ function validateDocument(value: unknown, options: NormalizedOpenOptions, maxRec
 
 function assertRecord(record: StardewLogicalActionRecoveryRecord): void {
   if (
+    !isRecord(record) ||
     !exactRecordKeys(record) ||
     !validText(record.logicalActionId) ||
     !Number.isSafeInteger(record.dispatchOrdinal) ||
