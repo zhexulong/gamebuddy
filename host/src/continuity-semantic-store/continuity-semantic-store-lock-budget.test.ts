@@ -145,6 +145,7 @@ function argumentsFor(member: string, fixture: Fixture): readonly unknown[] {
     recoverChatRuntimeTeardown: [{}],
     failChatRuntime: [{}],
     recoverChatRuntime: [{}],
+    readPendingChatRuntimeRecoveryTarget: [],
     resume: [holderBindingDigest],
     quarantineAfterAbandonedMutex: [],
     readQuarantine: [],

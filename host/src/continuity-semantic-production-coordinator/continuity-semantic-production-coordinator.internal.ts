@@ -27,15 +27,23 @@ import {
   type ProductionAuthorityMountMode,
   provisionFreshProductionContinuityFromCanonicalAdmission,
 } from "../continuity-semantic-provisioning/continuity-semantic-provisioning.internal.js";
+import { productionChatOwnerProvenDead } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type {
   ProductionChatCatalog,
   ProductionChatCommandReadback,
   ProductionChatRuntimeOwner,
   ProductionChatRuntimeReadback,
   ProductionChatRuntimeReceipt,
+  ProductionChatRuntimeRecoveryInput,
+  ProductionChatRuntimeRecoveryProof,
+  ProductionChatRuntimeRecoveryReceipt,
+  ProductionChatRuntimeRecoveryTarget,
   ProductionChatRuntimeRequest,
   ProductionChatRuntimeTeardownPermit,
+  ProductionChatRuntimeTeardownReadback,
   ProductionChatRuntimeTeardownReceipt,
+  ProductionChatRuntimeTeardownRecoveryInput,
+  ProductionChatRuntimeTeardownRecoveryReceipt,
   ProductionChatRuntimeTeardownRequest,
   ProductionGameOwner,
   ProductionGamePermit,
@@ -51,6 +59,7 @@ import type {
   ProductionGameSessionWorldBindingTerminalInput,
   ProductionGameTerminalReceipt,
   ProductionGameWorld,
+  ProductionPrincipal,
   ProductionSagaReadback,
 } from "../continuity-semantic-store/continuity-semantic-production-store.js";
 import type { HostDeploymentManifest } from "../deployment-manifest.js";
@@ -2132,6 +2141,17 @@ export type SemanticProductionAuthority = Readonly<{
   resettleChatSuccessorFromDurableAuthority(
     durable: readonly DurableChatLiveness[],
   ): Promise<ChatSuccessorResettlement>;
+  /**
+   * The durable Chat runtime obligation a dead Host left, if any: the intent that still holds the runtime
+   * transition. Both the Chat runtime mount and every Chat command are refused while it exists, so a start
+   * that does not settle it cannot mount or register a Chat at all.
+   */
+  readPendingChatRuntimeRecoveryTarget(): Promise<ProductionChatRuntimeRecoveryTarget | null>;
+  /** Settles that obligation from its own durable permit, once the caller has proven its owner dead. */
+  recoverChatRuntimeObligation(
+    target: ProductionChatRuntimeRecoveryTarget,
+    proof: ProductionChatRuntimeRecoveryProof,
+  ): Promise<ProductionChatRuntimeReadback | ProductionChatRuntimeTeardownReadback>;
   startInitialChat(): Promise<ProductionSagaReadback>;
   registerInitialChat(): Promise<ProductionSagaReadback>;
   verifyInitialChat(receipt: TavernExactContentReceipt): Promise<ProductionSagaReadback>;
@@ -2415,6 +2435,15 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
     // Binding construction is non-durable; complete it before minting the
     // durable successor bridge so a failed owner-proof check cannot orphan one.
     binding = await createChatRuntimeBinding(manifest);
+    // A Host that died inside a Chat runtime transition left an intent that refuses every Chat command,
+    // and the successor bridge below IS a Chat command: the obligation is settled first, before that
+    // bridge or the mount asks for it.
+    const ownerDeathVerifier = createWindowsOwnerDeathVerifier();
+    await settleDurableChatRuntimeRecoveryOnStartup(
+      () => semantic!.readPendingChatRuntimeRecoveryTarget(),
+      (target, proof) => semantic!.recoverChatRuntimeObligation(target, proof),
+      ownerDeathVerifier,
+    );
     // The durable transcript authority owns "is this Chat live": reconcile the catalog
     // with it before the successor bridge is derived from the selection it mirrors.
     const resettled = await semantic.resettleChatSuccessorFromDurableAuthority(await readDurableChatLiveness(manifest));
@@ -2432,7 +2461,7 @@ export async function createKnownSemanticChatRuntimeProductionAuthorityFromDeplo
       options,
       false,
       manifest,
-      createWindowsOwnerDeathVerifier(),
+      ownerDeathVerifier,
     );
   } catch (error) {
     try {
@@ -2563,6 +2592,14 @@ export async function createSharedSemanticProductionAuthorityFromDeploymentManif
     await settleDurableGameRecoveryOnStartup(
       async () => sharedProvision.store.readPendingGameRecoveryTarget(),
       (operationId) => game!.recoverDeadOwner(Object.freeze({ request: "recover_dead_owner" as const, operationId })),
+      ownerDeathVerifier,
+    );
+    // The Chat half of the same obligation, settled at the same point and for the same reason: the Chat
+    // runtime mount and every Chat command are refused by name while a dead Host's runtime intent is live,
+    // and the successor bridge the open path writes below is itself a Chat command.
+    await settleDurableChatRuntimeRecoveryOnStartup(
+      () => semantic!.readPendingChatRuntimeRecoveryTarget(),
+      (target, proof) => semantic!.recoverChatRuntimeObligation(target, proof),
       ownerDeathVerifier,
     );
     if (mode === "provision") {
@@ -4267,6 +4304,10 @@ function create(
           return { catalog: provision.store.readChatCatalog(), movedSelection: true, settlementRecorded: false };
         }),
       ),
+    readPendingChatRuntimeRecoveryTarget: () =>
+      begin(() => locked(() => provision.store.readPendingChatRuntimeRecoveryTarget())),
+    recoverChatRuntimeObligation: (target, proof) =>
+      begin(() => locked(() => recoverChatRuntimeObligation(provision.store, provision.principal, target, proof))),
     startInitialChat: () => step(0),
     registerInitialChat: () => step(1),
     verifyInitialChat: (receipt) =>
@@ -4840,6 +4881,164 @@ function recordStartupGameRecovery(settlement: StartupGameRecoverySettlement): v
           : "refused: the previous Game owner's death could not be proven, so nothing was recovered";
   process.stderr.write(
     `[game-recovery] startup ${what} operation=${settlement.operationId} session=${settlement.gameSessionId} owner_pid=${String(settlement.ownerPid)} reason=${settlement.recoveryReason ?? "none"} owner=${settlement.ownerOutcome} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
+  );
+}
+/** The two halves of the Chat runtime cycle a dead owner can leave an obligation in. */
+type BootstrapChatRuntimeRecoveryTarget = Extract<ProductionChatRuntimeRecoveryTarget, { kind: "bootstrap" }>;
+type TeardownChatRuntimeRecoveryTarget = Extract<ProductionChatRuntimeRecoveryTarget, { kind: "teardown" }>;
+/** The store surface one Chat runtime obligation is settled through: the real projection, or the store itself. */
+type ChatRuntimeRecoveryStore = Readonly<{
+  recoverChatRuntime(input: ProductionChatRuntimeRecoveryInput): ProductionChatRuntimeReadback;
+  recoverChatRuntimeTeardown(input: ProductionChatRuntimeTeardownRecoveryInput): ProductionChatRuntimeTeardownReadback;
+}>;
+/** The bootstrap recovery receipt: the durable permit's own facts, and no fact this process invented. */
+export function chatRuntimeRecoveryReceipt(
+  target: BootstrapChatRuntimeRecoveryTarget,
+): ProductionChatRuntimeRecoveryReceipt {
+  const permit = target.permit;
+  return Object.freeze({
+    kind: "chat_runtime_recovery_completed" as const,
+    operationId: permit.operationId,
+    requestId: permit.requestId,
+    chatThreadId: permit.chatThreadId,
+    chatSurfaceSessionId: permit.chatSurfaceSessionId,
+    runtimeBindingDigest: permit.runtimeBindingDigest,
+    owner: Object.freeze({ ...permit.owner }),
+    fenceToken: permit.fenceToken,
+    occurredAtMs: Date.now(),
+  });
+}
+/** The teardown half of the same receipt, naming the bootstrap operation it succeeds. */
+export function chatRuntimeTeardownRecoveryReceipt(
+  target: TeardownChatRuntimeRecoveryTarget,
+): ProductionChatRuntimeTeardownRecoveryReceipt {
+  const permit = target.permit;
+  return Object.freeze({
+    kind: "chat_runtime_teardown_recovery_completed" as const,
+    operationId: permit.operationId,
+    requestId: permit.requestId,
+    bootstrapOperationId: permit.bootstrapOperationId,
+    chatThreadId: permit.chatThreadId,
+    chatSurfaceSessionId: permit.chatSurfaceSessionId,
+    runtimeBindingDigest: permit.runtimeBindingDigest,
+    owner: Object.freeze({ ...permit.owner }),
+    fenceToken: permit.fenceToken,
+    occurredAtMs: Date.now(),
+  });
+}
+/**
+ * Settles one Chat runtime obligation from its own durable permit. The store's recovery admits both live
+ * shapes - `pending`, which is the process dying before its commit, and `recovery_required`, which is the
+ * protocol's own failure exit over the same prepared effect - and never retries the effect: the receipt it
+ * records says a recovery happened, not that a runtime was bootstrapped.
+ */
+export function recoverChatRuntimeObligation(
+  store: ChatRuntimeRecoveryStore,
+  principal: ProductionPrincipal,
+  target: ProductionChatRuntimeRecoveryTarget,
+  proof: ProductionChatRuntimeRecoveryProof,
+): ProductionChatRuntimeReadback | ProductionChatRuntimeTeardownReadback {
+  if (target.kind === "bootstrap")
+    return store.recoverChatRuntime(
+      Object.freeze({ principal, permit: target.permit, proof, receipt: chatRuntimeRecoveryReceipt(target) }),
+    );
+  return store.recoverChatRuntimeTeardown(
+    Object.freeze({ principal, permit: target.permit, proof, receipt: chatRuntimeTeardownRecoveryReceipt(target) }),
+  );
+}
+/**
+ * One startup Chat runtime settlement, carrying the facts an operator needs to attribute a recovery nobody
+ * watched: which durable operation owed it, which half of the runtime cycle it was, who owned it, why it
+ * owed it, what the OS said about that owner, and whether the recovery ran.
+ */
+export type StartupChatRuntimeRecoverySettlement = Readonly<{
+  settlement: "recovered" | "refused" | "deferred";
+  code:
+    | "chat_runtime_recovery_recovered"
+    | "chat_runtime_recovery_blocked_owner_alive"
+    | "chat_runtime_recovery_blocked_owner_unknown"
+    | "chat_runtime_recovery_deferred_probe_unavailable";
+  operationId: string;
+  kind: ProductionChatRuntimeRecoveryTarget["kind"];
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  ownerPid: number;
+  recoveryReason: ProductionChatRuntimeReadback["recoveryReason"];
+  ownerOutcome: WindowsOwnerDeathOutcome;
+  settledAtUnixMs: number;
+}>;
+/**
+ * Settles the one durable Chat runtime obligation a previous Host may have left behind, before this Host
+ * mounts a Chat runtime or writes a Chat command - both of which the store refuses by name
+ * (`chat_runtime_transition_pending`) while any intent is live.
+ *
+ * Nothing here retries the dead process's effect. `pending` means that process died between the prepare and
+ * the commit, so the runtime it was bootstrapping either never existed or belongs to a process that exited;
+ * `recovery_required` means its own commit refused the effect. Both are settled from the durable row it left
+ * (the permit is re-derived from that row, never minted here) and recorded terminal with a recovery receipt.
+ *
+ * The owner verdict decides everything, exactly as it does for the Game half: only `proven_dead` permits a
+ * settlement; `alive` is a real single-instance conflict and stops the launch; `mismatch` and `ambiguous`
+ * are unknown, and unknown is not dead. `unavailable` is not a verdict at all - the OS query never ran - so
+ * it is reported by its own name, nothing is recovered, and the launch continues, because the obligation is
+ * durable and the next start asks again.
+ */
+export async function settleDurableChatRuntimeRecoveryOnStartup(
+  readTarget: () => Promise<ProductionChatRuntimeRecoveryTarget | null>,
+  recoverDeadOwner: (
+    target: ProductionChatRuntimeRecoveryTarget,
+    proof: ProductionChatRuntimeRecoveryProof,
+  ) => Promise<ProductionChatRuntimeReadback | ProductionChatRuntimeTeardownReadback>,
+  ownerDeathVerifier: WindowsOwnerDeathVerifier,
+): Promise<ProductionChatRuntimeReadback | ProductionChatRuntimeTeardownReadback | null> {
+  const target = await readTarget();
+  if (target === null) return null;
+  const ownerOutcome = await verifyOwnerDeathOrUnknown(ownerDeathVerifier, target.owner);
+  const settled = {
+    operationId: target.readback.operationId,
+    kind: target.kind,
+    chatThreadId: target.readback.chatThreadId,
+    chatSurfaceSessionId: target.readback.chatSurfaceSessionId,
+    ownerPid: target.owner.ownerPid,
+    recoveryReason: target.readback.recoveryReason,
+    ownerOutcome,
+    settledAtUnixMs: Date.now(),
+  };
+  if (ownerOutcome === "unavailable") {
+    recordStartupChatRuntimeRecovery(
+      Object.freeze({ ...settled, settlement: "deferred", code: "chat_runtime_recovery_deferred_probe_unavailable" }),
+    );
+    return null;
+  }
+  if (ownerOutcome !== "proven_dead") {
+    const code =
+      ownerOutcome === "alive"
+        ? ("chat_runtime_recovery_blocked_owner_alive" as const)
+        : ("chat_runtime_recovery_blocked_owner_unknown" as const);
+    recordStartupChatRuntimeRecovery(Object.freeze({ ...settled, settlement: "refused", code }));
+    throw new SemanticProductionCoordinatorError(code);
+  }
+  const readback = await recoverDeadOwner(target, productionChatOwnerProvenDead(target.owner));
+  recordStartupChatRuntimeRecovery(
+    Object.freeze({ ...settled, settlement: "recovered", code: "chat_runtime_recovery_recovered" }),
+  );
+  return readback;
+}
+/**
+ * The one line a silent Chat runtime settlement leaves. A recovery nobody watched has to be attributable
+ * when the Chat later behaves unexpectedly, and so does the refusal that stops this Host from mounting.
+ */
+function recordStartupChatRuntimeRecovery(settlement: StartupChatRuntimeRecoverySettlement): void {
+  const what =
+    settlement.settlement === "deferred"
+      ? "deferred: the previous Chat runtime owner's death could not be probed - the OS query did not run - so nothing was recovered; the Chat stays blocked and the next start asks again"
+      : settlement.settlement === "recovered"
+        ? "recovered the Chat runtime obligation its dead owner left behind"
+        : settlement.code === "chat_runtime_recovery_blocked_owner_alive"
+          ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
+          : "refused: the previous Chat runtime owner's death could not be proven, so nothing was recovered";
+  process.stderr.write(
+    `[chat-runtime-recovery] startup ${what} operation=${settlement.operationId} half=${settlement.kind} chat=${settlement.chatThreadId} surface=${settlement.chatSurfaceSessionId} owner_pid=${String(settlement.ownerPid)} reason=${settlement.recoveryReason ?? "none"} owner=${settlement.ownerOutcome} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
   );
 }
 /**

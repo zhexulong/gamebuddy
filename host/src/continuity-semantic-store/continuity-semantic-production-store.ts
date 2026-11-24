@@ -132,7 +132,7 @@ export type ProductionChatRuntimeReceipt = Readonly<{
   fenceToken: string;
   occurredAtMs: number;
 }>;
-type ProductionChatRuntimeRecoveryReceipt = Readonly<{
+export type ProductionChatRuntimeRecoveryReceipt = Readonly<{
   kind: "chat_runtime_recovery_completed";
   operationId: string;
   requestId: string;
@@ -198,7 +198,7 @@ export type ProductionChatRuntimeTeardownReceipt = Readonly<{
   fenceToken: string;
   occurredAtMs: number;
 }>;
-type ProductionChatRuntimeTeardownRecoveryReceipt = Readonly<{
+export type ProductionChatRuntimeTeardownRecoveryReceipt = Readonly<{
   kind: "chat_runtime_teardown_recovery_completed";
   operationId: string;
   requestId: string;
@@ -237,7 +237,7 @@ type ProductionChatRuntimeTeardownFailureInput = Readonly<{
   permit: ProductionChatRuntimeTeardownPermit;
   reason: "effect_failed";
 }>;
-type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
+export type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimeTeardownPermit;
   proof: ProductionChatRuntimeRecoveryProof;
@@ -245,12 +245,32 @@ type ProductionChatRuntimeTeardownRecoveryInput = Readonly<{
 }>;
 /** Branded internal operation for the sole authority that may cancel an expired permit. */
 export type ProductionChatRuntimeRecoveryProof = Readonly<{ owner: ProductionChatRuntimeOwner; proof: "proven_dead" }>;
-type ProductionChatRuntimeRecoveryInput = Readonly<{
+export type ProductionChatRuntimeRecoveryInput = Readonly<{
   principal: ProductionPrincipal;
   permit: ProductionChatRuntimePermit;
   proof: ProductionChatRuntimeRecoveryProof;
   receipt: ProductionChatRuntimeRecoveryReceipt;
 }>;
+/**
+ * The one durable Chat runtime obligation a dead owner can leave behind, with the permit re-derived from
+ * its own row: a caller cannot know an operation id it never minted in this process, and the row is the
+ * only place the fence token and prepared vector still exist. Both halves of the runtime cycle carry the
+ * same three statuses, so the target names which table it came from instead of guessing from the permit.
+ */
+export type ProductionChatRuntimeRecoveryTarget = Readonly<
+  | {
+      kind: "bootstrap";
+      owner: ProductionChatRuntimeOwner;
+      permit: ProductionChatRuntimePermit;
+      readback: ProductionChatRuntimeReadback;
+    }
+  | {
+      kind: "teardown";
+      owner: ProductionChatRuntimeOwner;
+      permit: ProductionChatRuntimeTeardownPermit;
+      readback: ProductionChatRuntimeTeardownReadback;
+    }
+>;
 const productionChatRuntimeRecoveryProofs = new WeakSet<object>();
 export function productionChatOwnerProvenDead(owner: ProductionChatRuntimeOwner): ProductionChatRuntimeRecoveryProof {
   const proof = Object.freeze({ owner: Object.freeze({ ...owner }), proof: "proven_dead" as const });
@@ -591,6 +611,12 @@ export type ProductionSagaStore = Readonly<{
     input: ProductionChatRuntimeFailureInput | ProductionChatRuntimeDeadlineCancellationInput,
   ): ProductionChatRuntimeReadback;
   recoverChatRuntime(input: ProductionChatRuntimeRecoveryInput): ProductionChatRuntimeReadback;
+  /**
+   * Reads the one durable Chat runtime obligation this continuity root carries right now - the intent a
+   * dead owner left `pending` or `recovery_required` - across both halves of the runtime cycle. The
+   * operation id is the intent row's own identity, so only the store can name what owes the recovery.
+   */
+  readPendingChatRuntimeRecoveryTarget(): ProductionChatRuntimeRecoveryTarget | null;
   resume(holderBindingDigest: string): ProductionSagaReadback | null;
   /** Durable fail-closed state for an abandoned Windows root mutex. */
   quarantineAfterAbandonedMutex(): void;
@@ -1002,6 +1028,10 @@ export function openProductionContinuityStore(
         recoverChatRuntime(input) {
           requireOpen();
           return recoverChatRuntime(db, immutable, input);
+        },
+        readPendingChatRuntimeRecoveryTarget() {
+          requireOpen();
+          return readPendingChatRuntimeRecoveryTarget(db, immutable);
         },
         resume(holderBindingDigest) {
           requireOpen();
@@ -3206,6 +3236,22 @@ function transitionChatRuntimeToRecovery(
     .prepare("SELECT * FROM production_chat_runtime_intent WHERE continuity_id=? AND operation_id=?")
     .get(row.continuity_id, row.operation_id);
 }
+/**
+ * Settles a Chat runtime bootstrapping cycle its owner died inside, from the durable row that owner left:
+ * the permit - fence token, prepared vector, request - comes from the row, so this cannot settle an
+ * operation the caller never prepared.
+ *
+ * `pending` and `recovery_required` are one obligation seen twice: the first is the process dying between
+ * the prepare and the commit, the second is this protocol's own failure exits (`deadline_expired`,
+ * `receipt_invalid`, `revision_conflict`, `effect_failed`) over the same prepared effect. Neither is
+ * retried - the effect ran in a process that is gone - so both are recorded terminal with a recovery
+ * receipt, the way the Game half admits a close that is still `pending` (`owesDeadOwnerRecovery`).
+ *
+ * Restoring the Chat's surface to `active` is read from the durable truth rather than assumed: every Chat
+ * command is refused while an intent is live (`rejectChatRuntimeTransition`), so the selection cannot have
+ * moved off this Chat, and the materialization validator requires the selected session to be exactly
+ * `active` once no live intent remains.
+ */
 function recoverChatRuntime(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
@@ -3225,7 +3271,8 @@ function recoverChatRuntime(
         throw new Error("chat_runtime_permit_conflict");
       return chatRuntimeReadback(db, row);
     }
-    if (row.status !== "recovery_required") throw new Error("chat_runtime_recovery_proof_invalid");
+    if (row.status !== "pending" && row.status !== "recovery_required")
+      throw new Error("chat_runtime_recovery_proof_invalid");
     if (!chatRuntimeReceiptMatches(row, input.receipt, "chat_runtime_recovery_completed"))
       throw new Error("chat_runtime_receipt_invalid");
     db.prepare("UPDATE production_surface_session SET state='active' WHERE session_id=? AND surface='chat'").run(
@@ -3619,6 +3666,12 @@ function teardownRecoveryReceiptMatches(
     value.occurredAtMs >= row.prepared_at_ms
   );
 }
+/**
+ * The teardown half of the same settlement: `pending` and `recovery_required` are one obligation, settled
+ * from the permit the dead owner's own row still holds. The vector and the surface the teardown left are
+ * re-derived from that row's status instead of assumed, so a `pending` teardown is not read as if its
+ * failure exit had already advanced the partition.
+ */
 function recoverChatRuntimeTeardown(
   db: DatabaseSync,
   bootstrap: ProductionBootstrapContext,
@@ -3643,21 +3696,27 @@ function recoverChatRuntimeTeardown(
         throw new Error("chat_runtime_teardown_permit_conflict");
       return chatRuntimeTeardownReadback(db, row);
     }
-    if (row.status !== "recovery_required") throw new Error("chat_runtime_teardown_recovery_proof_invalid");
+    if (row.status !== "pending" && row.status !== "recovery_required")
+      throw new Error("chat_runtime_teardown_recovery_proof_invalid");
     if (!teardownRecoveryReceiptMatches(row, input.receipt)) throw new Error("chat_runtime_teardown_receipt_invalid");
+    // `recovery_required` was written on top of the prepared vector by this protocol's own failure exits;
+    // `pending` is the process dying before its commit wrote anything. The expected vector and the surface
+    // the teardown left behind therefore differ by exactly those one-time advances.
+    const pending = row.status === "pending",
+      prepared = parse(row.prepared_vector_json);
     if (
       canonical(sagaVector(db)) !==
       canonical({
-        partitionRevision: parse(row.prepared_vector_json).partitionRevision + 1,
-        fenceEpoch: parse(row.prepared_vector_json).fenceEpoch + 1,
-        selectionRevision: parse(row.prepared_vector_json).selectionRevision,
+        partitionRevision: prepared.partitionRevision + (pending ? 0 : 1),
+        fenceEpoch: prepared.fenceEpoch + (pending ? 0 : 1),
+        selectionRevision: prepared.selectionRevision,
       })
     )
       throw new Error("chat_runtime_teardown_revision_conflict");
     const session = db
       .prepare("SELECT state FROM production_surface_session WHERE session_id=? AND surface='chat'")
       .get(row.chat_surface_session_id) as any;
-    if (!session || session.state !== "recovery_required")
+    if (!session || session.state !== (pending ? "suspended" : "recovery_required"))
       throw new Error("chat_runtime_teardown_recovery_state_invalid");
     db.prepare(
       "UPDATE production_surface_session SET state='ended',updated_at_ms=? WHERE session_id=? AND surface='chat'",
@@ -3675,6 +3734,61 @@ function recoverChatRuntimeTeardown(
         .prepare("SELECT * FROM production_chat_runtime_teardown_intent WHERE continuity_id=? AND operation_id=?")
         .get(row.continuity_id, row.operation_id),
     );
+  });
+}
+/**
+ * The non-terminal statuses that owe a dead-owner settlement. Both are live intents the store refuses every
+ * Chat operation for (`rejectChatRuntimeTransition`), and neither can be closed by a caller that was not the
+ * process which prepared it: a commit needs the live effect's receipt, and a retry would replay a side effect
+ * whose outcome nobody recorded.
+ */
+function owesChatRuntimeRecovery(row: any): boolean {
+  return row.status === "pending" || row.status === "recovery_required";
+}
+function chatRuntimeRecoveryTarget(db: DatabaseSync, row: any): ProductionChatRuntimeRecoveryTarget {
+  const permit = chatRuntimePermitFrom(row);
+  return Object.freeze({
+    kind: "bootstrap" as const,
+    owner: Object.freeze({ ...permit.owner }),
+    permit,
+    readback: chatRuntimeReadback(db, row),
+  });
+}
+function chatRuntimeTeardownRecoveryTarget(db: DatabaseSync, row: any): ProductionChatRuntimeRecoveryTarget {
+  const permit = chatRuntimeTeardownPermitFrom(row);
+  return Object.freeze({
+    kind: "teardown" as const,
+    owner: Object.freeze({ ...permit.owner }),
+    permit,
+    readback: chatRuntimeTeardownReadback(db, row),
+  });
+}
+/**
+ * Reads the one durable Chat runtime obligation this root carries right now, across both halves of the
+ * runtime cycle: the intent a dead owner left `pending` or `recovery_required`, with the permit re-derived
+ * from its own row so the recovery can name the exact fence token and prepared vector it settles. The
+ * materialization validator admits at most one such row in total, so more than one is a corrupt root rather
+ * than an order for this read to invent.
+ */
+function readPendingChatRuntimeRecoveryTarget(
+  db: DatabaseSync,
+  bootstrap: ProductionBootstrapContext,
+): ProductionChatRuntimeRecoveryTarget | null {
+  return readTransaction(db, () => {
+    validateExpectedBootstrap(db, bootstrap);
+    rejectQuarantined(db);
+    const continuityId = bootstrap.bootstrap.principal.continuityId;
+    const intents = (
+      db.prepare("SELECT * FROM production_chat_runtime_intent WHERE continuity_id=?").all(continuityId) as any[]
+    ).filter(owesChatRuntimeRecovery);
+    const teardowns = (
+      db
+        .prepare("SELECT * FROM production_chat_runtime_teardown_intent WHERE continuity_id=?")
+        .all(continuityId) as any[]
+    ).filter(owesChatRuntimeRecovery);
+    if (intents.length + teardowns.length > 1) throw new Error("chat_runtime_recovery_ambiguous");
+    if (intents[0] !== undefined) return chatRuntimeRecoveryTarget(db, intents[0]);
+    return teardowns[0] === undefined ? null : chatRuntimeTeardownRecoveryTarget(db, teardowns[0]);
   });
 }
 function failChatRuntime(

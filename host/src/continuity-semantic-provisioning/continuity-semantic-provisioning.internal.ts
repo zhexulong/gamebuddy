@@ -414,6 +414,10 @@ function provision(
       requireOpen();
       return rawStore.recoverChatRuntime(input);
     },
+    readPendingChatRuntimeRecoveryTarget() {
+      requireOpen();
+      return rawStore.readPendingChatRuntimeRecoveryTarget();
+    },
     resume(holderBindingDigest) {
       requireOpen();
       return rawStore.resume(holderBindingDigest);
