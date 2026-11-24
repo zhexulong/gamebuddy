@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
-import test from "node:test";
+import { rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import test, { before } from "node:test";
 import { fileURLToPath } from "node:url";
+import { canonicalTestRootSync } from "../test-support/canonical-test-root.test-support.js";
 import { readSourceShape } from "../test-support/source-shape.test-support.js";
+import { bindVerifiedWindowsLockReclaimerForTest } from "../test-support/windows-lock-reclaimer.test-support.js";
 
 import {
   createDesktopPrivateHostComposition,
@@ -13,6 +17,12 @@ import {
 } from "./desktop-host-composition.js";
 
 const rootLayoutCapability = Object.freeze({}) as DesktopRootLayoutCapability;
+
+// The one reading in this file that mounts a real durable authority releases locks through the Windows
+// reclaimer, and binds that reclaimer itself rather than leaning on the suite's `--import` preload.
+before(async () => {
+  await bindVerifiedWindowsLockReclaimerForTest("desktop-host-composition.test");
+});
 
 type Assert<T extends true> = T;
 type HasExactKeys<T, TKeys extends PropertyKey> = Exclude<keyof T, TKeys> extends never
@@ -490,3 +500,380 @@ test("the Chat runtime's close ends the turn it is generating before it releases
     /try \{\s*await abortMountedTurnThroughCancelSeam\([\s\S]*?\} finally \{\s*await mountedLease\.close\(\);/,
   );
 });
+
+/**
+ * The second game attempt is the Game lane's own business, and the Chat lane is no part of it.
+ *
+ * ADR-0015 §9.4 condition 3: after the per-attempt Guardian, attempt 2 runs in the SAME Host process
+ * (settle hands the attempt back, the durable registration issues generation 2, the next launch
+ * reaches the platform), and §7 argues structurally that the two surfaces hold nothing of each other.
+ * This is that argument as an active reading, over the real production Chat authority and the real
+ * Stardew lifecycle coordinator: a turn is durably GENERATING when attempt 2 lands, and what is read
+ * afterwards is
+ *
+ *   1. the generating turn settled with its OWN outcome - `completed`, carrying the reply it had
+ *      already committed - and was never cancelled by anything the game lane did;
+ *   2. the selection is the same conversation at the same generation: the exact lease that was
+ *      mounted before is still the current one, the same thread/surface pair is still readable, and
+ *      the turn's own durable attempt still carries the generation it was accepted under;
+ *   3. attempt 2 really ran: the durable registration issued generation 2, the readiness view says
+ *      `ready` at 2, and the Guardian was asked for a second Player Host launch.
+ *
+ * The semantic authority owns a real Windows root mutex, so it cannot share this process with another
+ * construction: the whole scenario runs in its own child, exactly as the other real-mount readings do.
+ * What this does NOT prove, stated so a green run is not read as more than it is: that a real Stardew
+ * world hands a cabin over (that needs the game), and that the browser's own snapshot agrees - the
+ * surface reads through `state.read`, which this file's composition children are asserted against
+ * elsewhere.
+ */
+const secondGameAttemptScript = `
+  const [coordinatorUrl, internalUrl, manifestUrl, pathLockUrl, reclaimerUrl, storeUrl, runtimeUrl,
+    acceptanceUrl, claimUrl, guardianPlatformUrl, lifecycleSupportUrl, registrationUrl, manifestPath] =
+    process.argv.slice(1);
+  const { bindWindowsStaleLockReclaimer } = await import(pathLockUrl);
+  const { createBuildWindowsStaleLockReclaimer } = await import(reclaimerUrl);
+  bindWindowsStaleLockReclaimer(await createBuildWindowsStaleLockReclaimer());
+  const { createSharedSemanticProductionAuthorityFromDeploymentManifest, isCurrentMountedChatRuntimeLease } =
+    await import(coordinatorUrl);
+  const internal = await import(internalUrl);
+  const { loadHostDeploymentManifest } = await import(manifestUrl);
+  const { createChatThreadStore } = await import(storeUrl);
+  const { identityKey } = await import(runtimeUrl);
+  const { createPlayerTurnAcceptor } = await import(acceptanceUrl);
+  const { createProviderAttemptClaimer } = await import(claimUrl);
+  const { createDesktopGuardianGameRuntimePlatform, createStardewPlayerHostRuntimeLaunchCollaboratorFactory } =
+    await import(guardianPlatformUrl);
+  const { createFixture } = await import(lifecycleSupportUrl);
+  const { readStardewInstallationRegistration } = await import(registrationUrl);
+
+  const manifest = await loadHostDeploymentManifest(manifestPath);
+  const out = {};
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Monotonic observation times: the ledger CAS rejects a step that steps back.
+  let observedAtMs = Date.now();
+  const nextTime = async () => {
+    await sleep(2);
+    observedAtMs = Math.max(observedAtMs + 1, Date.now());
+    return observedAtMs;
+  };
+
+  // ---- The Chat lane: one real mounted runtime, with a turn that is generating ----
+  const shared = await createSharedSemanticProductionAuthorityFromDeploymentManifest(manifest);
+  const lease = await shared.chat.startMountedChatRuntime();
+  const thread = lease.chatThreadId;
+  const surface = lease.chatSurfaceSessionId;
+  const store = createChatThreadStore(manifest.runtimeRoot, identityKey(manifest.principal));
+  out.selectionBefore = {
+    chatThreadId: thread,
+    chatSurfaceSessionId: surface,
+    selectionGeneration: lease.browserProjection.selectionGeneration,
+    chatHandle: lease.browserProjection.chatHandle,
+  };
+
+  const playerText = "Synthetic player request";
+  const companionText = "A reply the second game attempt must not touch.";
+  await createPlayerTurnAcceptor(manifest, lease).accept({
+    text: playerText,
+    locale: "en-US",
+    idempotencyKey: "abcdefghijklmnopqrstuv",
+    expectedDraftRevision: 0,
+  });
+  await createProviderAttemptClaimer(manifest, lease).claim();
+  let releaseTurn;
+  const turnMayFinish = new Promise((resolve) => {
+    releaseTurn = resolve;
+  });
+  let generating = false;
+  const theTurn = internal
+    .startMountedAttempt(manifest, lease, (invocation) =>
+      internal.consumeMountedAttemptInvocationAdmission(invocation, async (scope) => {
+      await scope.transitionStore({ operation: "arm", observedAtMs: await nextTime() });
+      await scope.transitionStore({ operation: "running", statusClass: "success", observedAtMs: await nextTime() });
+      const committed = await scope.transitionPresentation({
+        operation: "commit_presentation",
+        cancelEpoch: 0,
+        message: { messageId: "response_01", text: companionText, occurredAtMs: await nextTime() },
+        committedAtMs: await nextTime(),
+      });
+      if (committed.status !== "presentation_committed") throw new Error("expected_presentation_committed");
+      const releasePrompt = scope.beginActivePrompt();
+      generating = true;
+      // The generation is in flight while the Game lane runs its second attempt.
+      await turnMayFinish;
+      await scope.transitionPresentation({ operation: "claim_completion", claimedAtMs: await nextTime() });
+      const completed = await scope.transitionPresentation({
+        operation: "complete",
+        completedAtMs: await nextTime(),
+      });
+      releasePrompt();
+      return completed;
+      }),
+    )
+    // The Game lane runs while this promise is pending, so its rejection is captured here rather
+    // than left to surface as an unhandled rejection in the middle of that work.
+    .then(
+      (settled) => ({ settled }),
+      (error) => ({ error }),
+    );
+  for (let attempt = 0; attempt < 1200 && !generating; attempt += 1) await sleep(5);
+  if (!generating) throw new Error("the turn never reached a generating state");
+
+  // ---- The Game lane: attempt 1 to its end, then attempt 2, in this same process ----
+  const roleExits = [];
+  const launches = [];
+  const ack = (operation, role) =>
+    Object.freeze({
+      operation,
+      status: "ok",
+      bootstrapId: "bootstrap-coordinator-1",
+      generation: "generation-1",
+      inventoryDigest: "inventory-1",
+      runtimeAdmissionSha256: "admission-1",
+      guardianInstanceId: "guardian-instance-coordinator-1",
+      guardianEpoch: 1,
+      attemptId: "bootstrap-coordinator-1",
+      ...(role === undefined ? {} : { role }),
+    });
+  const guardianSession = Object.freeze({
+    onRoleExit(handler) {
+      roleExits.push(handler);
+    },
+    arm: async () => ack("arm_attempt"),
+    launch: async (input) => {
+      launches.push(input.role);
+      return ack("launch_role", input.role);
+    },
+    contain: async (input) => ack("contain_role", input.role),
+    recover: async () => Object.freeze({ outcome: "contained" }),
+    close: async () => undefined,
+  });
+  const collaborator = createStardewPlayerHostRuntimeLaunchCollaboratorFactory(
+    createDesktopGuardianGameRuntimePlatform(guardianSession),
+  );
+  const fixture = await createFixture({
+    runtimeRoot: manifest.runtimeRoot,
+    seedRegistration: true,
+    overrides: { runtimeLaunchContained: collaborator },
+  });
+  const stage = async () => {
+    await fixture.coordinator.activationOwner.activate(fixture.broker.issue("lifecycle_activation"));
+    await fixture.coordinator.activationOwner.setupPlayerHost(fixture.broker.issue("game_setup"), {
+      apiVersion: 1,
+      idempotencyKey: "ABEiM0RVZneImaq7zN3u_w",
+    });
+  };
+  await stage();
+  await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+    apiVersion: 1,
+    idempotencyKey: "BCEiM0RVZneImaq7zN3u_w",
+    expectedInstanceGeneration: 1,
+  });
+  // Attempt 1's game ends by the player's own hand, and the Guardian reports the code the OS gave it.
+  if (roleExits.length !== 1) throw new Error("expected_one_role_exit_watcher");
+  for (const watcher of roleExits) watcher(Object.freeze({ role: "player_host", exitCode: 0 }));
+  out.attemptOneReadiness = fixture.coordinator.launchReadinessReader.readLaunchReadinessView();
+
+  // Attempt 2 begins where a first attempt begins; the settle inside it is what hands attempt 1 back.
+  await stage();
+  const registration = await readStardewInstallationRegistration(fixture.runtimeRoot);
+  out.registrationGeneration = registration === null ? null : registration.instanceGeneration;
+  out.attemptTwoReadiness = fixture.coordinator.launchReadinessReader.readLaunchReadinessView();
+  await fixture.coordinator.activationOwner.launchPlayerHost(fixture.broker.issue("game_launch"), {
+    apiVersion: 1,
+    idempotencyKey: "DEiM0RVZneImaq7zN3u_w",
+    expectedInstanceGeneration: 2,
+  });
+  out.playerHostLaunches = launches.slice();
+
+  // ---- The turn the game lane must not have touched finishes on its own ----
+  releaseTurn();
+  const outcome = await theTurn;
+  if (outcome.error !== undefined) throw outcome.error;
+  const settled = outcome.settled;
+  out.turnStatus = settled === undefined || settled === null ? null : settled.status;
+  out.selectionAfter = {
+    chatThreadId: lease.chatThreadId,
+    chatSurfaceSessionId: lease.chatSurfaceSessionId,
+    selectionGeneration: lease.browserProjection.selectionGeneration,
+    chatHandle: lease.browserProjection.chatHandle,
+    stillTheMountedLease: isCurrentMountedChatRuntimeLease(lease),
+  };
+  const state = await store.resumeThread(thread, surface);
+  const ledger = state.turnLedger;
+  out.transcript = {
+    messages: state.messages.map((message) => [message.kind, message.text]),
+    turnStatus: ledger === null ? null : ledger.status,
+    turnSelectionGeneration:
+      ledger === null || ledger.attempt === undefined || ledger.attempt === null
+        ? null
+        : ledger.attempt.selectionGeneration,
+  };
+
+  store.close?.();
+  await fixture.coordinator.close();
+  await fixture.broker.close();
+  await lease.close();
+  await shared.close();
+  process.stdout.write(JSON.stringify(out), () => process.exit(0));
+`;
+
+function runSecondGameAttemptScenario(manifestPath: string): Promise<Record<string, unknown>> {
+  const child = spawn(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      secondGameAttemptScript,
+      new URL(
+        "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.js",
+        import.meta.url,
+      ).href,
+      new URL(
+        "../continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.js",
+        import.meta.url,
+      ).href,
+      new URL("../deployment-manifest.js", import.meta.url).href,
+      new URL("../path-lock.js", import.meta.url).href,
+      new URL("../windows-stale-lock-reclaimer/index.js", import.meta.url).href,
+      new URL("../tavern/chat-thread-store.js", import.meta.url).href,
+      new URL("../runtime.js", import.meta.url).href,
+      new URL("../tavern/player-turn-acceptance.js", import.meta.url).href,
+      new URL("../tavern/provider-attempt-claim.js", import.meta.url).href,
+      new URL("./stardew/stardew-guardian-platform.js", import.meta.url).href,
+      new URL("../stardew-production-lifecycle-coordinator.test-support.js", import.meta.url).href,
+      new URL("../stardew-installation-registration.internal.js", import.meta.url).href,
+      manifestPath,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  return new Promise<Record<string, unknown>>((resolveResult, rejectResult) => {
+    let output = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      rejectResult(new Error(`second_game_attempt_scenario_timeout:${stderr || "<no stderr>"}`));
+    }, 120_000);
+    timeout.unref();
+    child.stdout.on("data", (chunk: Buffer) => {
+      output += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      rejectResult(error);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      let reading: Record<string, unknown>;
+      try {
+        reading = JSON.parse(output) as Record<string, unknown>;
+      } catch {
+        rejectResult(
+          new Error(
+            `second_game_attempt_scenario_no_reading:exit=${String(code)}:stderr=${stderr || "<none>"}:stdout=${output || "<none>"}`,
+          ),
+        );
+        return;
+      }
+      resolveResult(reading);
+    });
+  });
+}
+
+type ChatSelectionReading = Readonly<{
+  chatThreadId: string;
+  chatSurfaceSessionId: string;
+  selectionGeneration: number;
+  chatHandle: string;
+}>;
+
+test(
+  "a second game attempt leaves the generating Chat turn and the selected Chat exactly where they were",
+  { skip: process.platform !== "win32" ? "requires real Windows production mount construction" : false },
+  async (t) => {
+    const root = canonicalTestRootSync("gamebuddy-second-game-attempt-");
+    try {
+      const manifestPath = join(root, "manifest.json");
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          schemaVersion: 2,
+          topology: "independent_chat_and_game_surfaces",
+          runtimeRoot: root,
+          principal: Object.freeze({
+            playerId: "player_01",
+            companionId: "companion_01",
+            continuityId: "continuity_01",
+          }),
+          bootstrapOperationId: "bootstrap_01",
+          authorityGeneration: 1,
+        }),
+      );
+      const observed = await runSecondGameAttemptScenario(manifestPath);
+      const before = observed.selectionBefore as ChatSelectionReading;
+      const after = observed.selectionAfter as ChatSelectionReading & Readonly<{ stillTheMountedLease: boolean }>;
+      const transcript = observed.transcript as Readonly<{
+        messages: readonly (readonly [string, string])[];
+        turnStatus: string | null;
+        turnSelectionGeneration: number | null;
+      }>;
+      t.diagnostic(
+        `second attempt: launches ${JSON.stringify(observed.playerHostLaunches)} · registration ${String(observed.registrationGeneration)} · ` +
+          `readiness ${JSON.stringify(observed.attemptOneReadiness)} -> ${JSON.stringify(observed.attemptTwoReadiness)} · ` +
+          `turn ${String(observed.turnStatus)}/${String(transcript.turnStatus)} · selection ${before.selectionGeneration} -> ${after.selectionGeneration} (current ${String(after.stillTheMountedLease)})`,
+      );
+
+      // 1. The turn that was generating when attempt 2 landed settled with its own outcome: it
+      //    completed, it kept the reply it had already committed, and nothing cancelled it.
+      assert.equal(observed.turnStatus, "completed", "the in-flight turn did not settle by its own completion");
+      assert.equal(
+        transcript.turnStatus,
+        "completed",
+        "the durable ledger is not the completed turn the runner returned",
+      );
+      assert.deepEqual(
+        transcript.messages.filter(([kind]) => kind !== "opening"),
+        [
+          ["player", "Synthetic player request"],
+          ["response", "A reply the second game attempt must not touch."],
+        ],
+        "the durable transcript is not the pair the Chat lane wrote",
+      );
+
+      // 2. The selection is the same conversation at the same generation: the same mounted lease is
+      //    still current, the same pair is readable, and the turn's own durable attempt still carries
+      //    the generation it was accepted under.
+      assert.equal(after.stillTheMountedLease, true, "the mounted Chat lease was replaced while the game lane ran");
+      assert.deepEqual(
+        {
+          chatThreadId: after.chatThreadId,
+          chatSurfaceSessionId: after.chatSurfaceSessionId,
+          selectionGeneration: after.selectionGeneration,
+          chatHandle: after.chatHandle,
+        },
+        before,
+        "the selected Chat or its generation moved while the game lane ran",
+      );
+      assert.equal(
+        transcript.turnSelectionGeneration,
+        before.selectionGeneration,
+        "the settled turn is no longer recorded under the selection generation it was accepted at",
+      );
+
+      // 3. And attempt 2 really ran: the durable registration issued generation 2, the readiness view
+      //    is `ready` at 2 after attempt 1's ending, and the Guardian was asked to launch again.
+      assert.deepEqual(observed.attemptOneReadiness, { generation: 0, status: "failed", playerHostExitCode: 0 });
+      assert.deepEqual(observed.attemptTwoReadiness, { generation: 2, status: "ready", playerHostExitCode: null });
+      assert.equal(observed.registrationGeneration, 2, "the second attempt is not instance generation 2");
+      assert.deepEqual(
+        observed.playerHostLaunches,
+        ["player_host", "player_host"],
+        "the second attempt never reached the platform, so this reading measured nothing about a second attempt",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    }
+  },
+);
