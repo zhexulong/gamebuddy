@@ -4,6 +4,7 @@ using StardewValley.Characters;
 using StardewValley.Pathfinding;
 using GameBuddy.Stardew.Core;
 using GameBuddy.Stardew.Core.BodyPrograms;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Policy;
 
 namespace GameBuddy.Stardew;
@@ -597,8 +598,9 @@ internal sealed partial class StardewBodyController
                 Point next = new(tile.X + offset.X, tile.Y + offset.Y);
                 if (next.X < 0 || next.Y < 0 || next.X >= layer.LayerWidth || next.Y >= layer.LayerHeight)
                     continue;
-                if (!IsWalkableTile(location, localPlayer, new Vector2(next.X, next.Y)) || !visited.Add(next))
+                if (visited.Contains(next) || !IsWalkableTile(location, localPlayer, new Vector2(next.X, next.Y)))
                     continue;
+                visited.Add(next);
                 if (visited.Count > ReachabilityProbeLimit)
                     return new PublishTile(null, false);
                 pending.Enqueue((next, steps + 1));
@@ -746,7 +748,7 @@ internal sealed partial class StardewBodyController
         if (location?.map is null || location.map.Layers.Count == 0)
             return null;
         var layer = location.map.Layers[0];
-        HashSet<Point>? component = ReachableTiles(
+        WalkableComponent? component = ReachableTiles(
             new Point((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y),
             ReachabilityProbeLimit,
             tile => tile.X >= 0
@@ -759,7 +761,7 @@ internal sealed partial class StardewBodyController
 
         FrontierObstruction? best = null;
         int bestDistance = int.MaxValue;
-        foreach (Point tile in component)
+        foreach ((Point tile, _) in component.Discovered)
         {
             foreach (Point offset in CardinalOffsets)
             {
@@ -2235,41 +2237,40 @@ internal sealed partial class StardewBodyController
     /// </summary>
     internal sealed record Occupancy(string Kind, int? ClearCost, string Occupant, int? StaminaCharge);
 
-    private static ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
+    /// <summary>
+    /// The walkability probe every reachability claim about a WALK is asked with, and the ONE spelling of it: the
+    /// planner's own admission (<see cref="IsWalkableTile"/>), which both the approach leg and this probe now read, so
+    /// the component the leg chose a standing tile from is the component the walk is judged against.
+    /// </summary>
+    private static Func<Point, bool> Walkability(GameLocation location, Farmer localPlayer) =>
+        tile => IsWalkableTile(location, localPlayer, new Vector2(tile.X, tile.Y));
+
+    private ReachabilityVerdict? AssessNativeReachability(Farmer localPlayer, LocalMoveSpec specification, bool findClosestReachable = false)
     {
         GameLocation? location = localPlayer.currentLocation;
-        if (location is null)
+        if (location?.map is null || location.map.Layers.Count == 0)
             return null;
 
         try
         {
-            var layer = location.map.Layers[0];
             Point actorTile = new((int)localPlayer.Tile.X, (int)localPlayer.Tile.Y);
             Point targetTile = new((int)specification.TargetTile.X, (int)specification.TargetTile.Y);
 
             return AssessReachability(
                 actorTile,
                 targetTile,
-                tile => tile.X >= 0
-                    && tile.Y >= 0
-                    && tile.X < layer.LayerWidth
-                    && tile.Y < layer.LayerHeight
-                    && !location.isCollidingPosition(
-                        new Microsoft.Xna.Framework.Rectangle(tile.X * 64 + 1, tile.Y * 64 + 1, 62, 62),
-                        Game1.viewport,
-                        localPlayer is Farmer,
-                        0,
-                        glider: false,
-                        localPlayer,
-                        pathfinding: true,
-                        skipCollisionEffects: true),
+                Walkability(location, localPlayer),
                 ReachabilityProbeLimit,
                 findClosestReachable,
                 // THE WALK'S OWN ARRIVAL RULE. The probe exists to answer "can this walk arrive", so it has to be asked
                 // with the same geometry the engine's goal predicate uses - otherwise it vetoes a walk the engine would
                 // have completed on a diagonal neighbour the request allows (`native=not_attempted` before the engine is
                 // ever asked), and it does so silently, because a veto looks exactly like an unreachable world.
-                specification.AllowAdjacentArrival);
+                specification.AllowAdjacentArrival,
+                // THE ONE FLOOD THIS NODE ALREADY PAID FOR. An approach leg computes this same component to choose a
+                // standing tile and then asks this probe whether the walk is possible at all, microseconds later on the
+                // same frame; the memo answers the second question from the first walk of the map.
+                () => this.ApproachComponent(location, localPlayer));
         }
         catch
         {
@@ -2278,6 +2279,77 @@ internal sealed partial class StardewBodyController
             return null;
         }
     }
+
+    /// <summary>Where the approach leg's flood memo lives, and the tile and location it was flooded for.</summary>
+    private WalkableComponent? approachComponent;
+    private GameLocation? approachComponentLocation;
+
+    /// <summary>
+    /// THE MEMO, and the invalidation rule in one sentence: a component is reused only while the actor stands on the
+    /// very tile it was flooded from, on the very <see cref="GameLocation"/> object it was flooded on, and no node has
+    /// SETTLED since - because a settlement that is not a refusal either changed the world or may have
+    /// (<see cref="NoteNodeSettled"/>) - so the key is the content the flood read and never a tick or a dirty flag.
+    ///
+    /// <para>
+    /// WHY IT IS THE ORIGIN AND NOT JUST THE MAP. A component is a connected set, so a different origin inside it
+    /// reaches the same tiles - but not in the same ORDER, and the order is what decides <c>closest</c> and
+    /// <c>detour_steps</c>. A component reused from where she used to stand would report the distance from a place she
+    /// has left, so the origin is part of the key and her own walk invalidates it by moving her.
+    /// </para>
+    ///
+    /// <para>
+    /// WHY IT IS THIS CONTROLLER, which is one program's owner: a flood is 13-20 ms of game thread on an ordinary
+    /// farm, and one approach leg used to ask for that map twice - once to choose a standing tile and once to decide
+    /// whether the walk could be planned at all. Nothing here survives a node that changed the world, so no answer is
+    /// ever carried across executions.
+    /// </para>
+    ///
+    /// <para>
+    /// WHY A MISS RECOMPUTES RATHER THAN GUESSES. The memo decides MEMBERSHIP only: the tile it recommends is still
+    /// asked live for standability (<see cref="IsStandableTile"/>) at the moment of decision, and a walk it wrongly
+    /// believes possible is refused by the native planner instead of being walked. There is therefore no state in
+    /// which this answers from a component it is not sure of.
+    /// </para>
+    /// </summary>
+    internal WalkableComponent? ApproachComponent(GameLocation? location, Farmer? actor)
+    {
+        if (actor is null || location?.map is null || location.map.Layers.Count == 0)
+            return null;
+        Point origin = new((int)actor.Tile.X, (int)actor.Tile.Y);
+        if (this.approachComponent is { } cached
+            && ReferenceEquals(this.approachComponentLocation, location)
+            && cached.Origin == origin)
+            return cached;
+        long started = GameThreadCost.BeginSeam();
+        WalkableComponent? flooded = Flood(origin, ReachabilityProbeLimit, Walkability(location, actor));
+        GameThreadCost.NoteFlood(started, flooded?.Count ?? ReachabilityProbeLimit);
+        this.approachComponent = flooded;
+        this.approachComponentLocation = flooded is null ? null : location;
+        return flooded;
+    }
+
+    /// <summary>
+    /// Drops the memo when a node SETTLED and was not refused: a refused node did nothing to the world, while every
+    /// other terminal either changed it (a chop, a break, a placement, a clear) or may have (a swing whose result is
+    /// uncertain) - so the RECEIPT's own state is what invalidates the flood, rather than a comparison of the world
+    /// before and after it.
+    /// </summary>
+    internal void NoteNodeSettled(ExecutionState state)
+    {
+        if (!state.IsTerminal() || state == ExecutionState.Rejected)
+            return;
+        this.approachComponent = null;
+        this.approachComponentLocation = null;
+    }
+
+    /// <summary>
+    /// The actor's walkable component as a membership predicate for the approach leg, answered from the memo when it
+    /// still holds - or <c>null</c> when the flood exceeded its budget and therefore makes no claim.
+    /// </summary>
+    internal Func<Vector2, bool>? BuildApproachWalkableComponent(GameLocation? location, Farmer? actor) =>
+        this.ApproachComponent(location, actor) is { } component
+            ? tile => component.Contains(new Point((int)tile.X, (int)tile.Y))
+            : null;
 
     /// <summary>
     /// The actor's walkable component as a membership predicate for one tile, or <c>null</c> when the probe
@@ -2295,7 +2367,7 @@ internal sealed partial class StardewBodyController
         if (actor is null || location?.map is null || location.map.Layers.Count == 0)
             return null;
         var layer = location.map.Layers[0];
-        HashSet<Point>? reachable = ReachableTiles(
+        WalkableComponent? reachable = ReachableTiles(
             new Point((int)actor.Tile.X, (int)actor.Tile.Y),
             budget,
             tile => tile.X >= 0
@@ -2329,7 +2401,7 @@ internal sealed partial class StardewBodyController
         if (location.map is null || location.map.Layers.Count == 0)
             return null;
         var layer = location.map.Layers[0];
-        HashSet<Point>? reachable = ReachableTiles(
+        WalkableComponent? reachable = ReachableTiles(
             new Point((int)actor.Tile.X, (int)actor.Tile.Y),
             budget,
             tile => tile.X >= 0

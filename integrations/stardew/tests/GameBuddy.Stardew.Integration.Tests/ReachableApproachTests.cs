@@ -234,7 +234,7 @@ public sealed class ReachableApproachTests
         string body = MethodBody(source, "private LocalExecutionReceipt TryBeginToolApproach(");
 
         body.Should().Contain("SelectToolApproachTile(", "the choice must be made before the walk is dispatched");
-        body.Should().Contain("BuildWalkableComponent(", "reachability is the actor's own component, not geometry");
+        body.Should().Contain("BuildApproachWalkableComponent(", "reachability is the actor's own component, not geometry, and it is the leg's memo the walk is judged against");
         body.Should().Contain("DescribeNoReachableApproach(", "a placement with no approach must name itself");
         // The refusal must be emitted and must return before `TryStart`, or a walk is committed
         // for a placement that has no approach and the engine spends its search budget finding out.

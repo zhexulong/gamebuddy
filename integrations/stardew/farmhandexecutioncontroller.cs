@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 using GameBuddy.Stardew.Core;
@@ -656,6 +657,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
 
     private BridgeLocalObservation? TryCreateLocalObservation(Farmer actor)
     {
+        using GameThreadCost.SeamScope observation = new(GameThreadCost.ObservationSeam);
         try
         {
             return this.CreateLocalObservation(actor);
@@ -4054,6 +4056,10 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
     private LocalExecutionReceipt RememberTerminal(string requestId, string executionId, ExecutionState state, string reasonCode, string? evidence, BridgeLocalObservation? observation = null, string? hint = null, bool publish = true)
     {
         string? boundActionId = this.ledger.TryGetActionId(requestId, out string action) ? action : null;
+        // THE FLOOD MEMO LEARNS WHAT THE WORLD DID FROM THE RECEIPT. A refused node changed nothing, so the component
+        // the next approach would compute is the one it already has; any other terminal either changed the map's
+        // blocking set (a chop, a break, a placement, a clear) or may have, so the next approach refloods.
+        this.controller.NoteNodeSettled(state);
         string? detail = evidence;
         if (state.IsTerminal() && FarmhandActionCatalog.ChoreEntry(boundActionId) is { } chore)
             detail = string.IsNullOrEmpty(detail) ? chore : $"{detail};{chore}";

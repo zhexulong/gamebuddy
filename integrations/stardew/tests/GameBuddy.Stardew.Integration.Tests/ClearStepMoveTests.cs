@@ -194,7 +194,7 @@ public sealed class ClearStepMoveTests
         // The predicate that must NOT start a walk.
         string controllerSource = File.ReadAllText(RepositorySourcePath(Path.Combine("integrations", "stardew", "StardewBodyController.cs")));
         string describe = MethodBody(controllerSource, "private static string DescribeClearToReach(");
-        string probe = MethodBody(controllerSource, "private static ReachabilityVerdict? AssessNativeReachability(");
+        string probe = MethodBody(controllerSource, "private ReachabilityVerdict? AssessNativeReachability(");
         describe.Should().NotContain("TryStart");
         describe.Should().NotContain("InstallStagedStep");
         probe.Should().NotContain("TryStart");
@@ -323,7 +323,7 @@ public sealed class ClearStepMoveTests
         /// A corridor of <paramref name="width"/> tiles, because the length is what a route refusal has to report:
         /// the live shape this file's siblings reproduce is an 18-tile corridor closed at its far end.
         /// </summary>
-        public static CorridorHarness Create(int width = 16)
+        public static CorridorHarness Create(int width = 16, Func<GameLocation>? newLocation = null)
         {
             var harness = new CorridorHarness();
 
@@ -362,7 +362,7 @@ public sealed class ClearStepMoveTests
             Game1.floorPathData = new System.Collections.Generic.Dictionary<string, StardewValley.GameData.FloorsAndPaths.FloorPathData>();
             FloorPathItemLookupField().SetValue(null, null);
 
-            GameLocation location = new();
+            GameLocation location = newLocation?.Invoke() ?? new();
             var map = new xTile.Map();
             xTile.Dimensions.Size size = new(width, 16);
             map.AddLayer(new xTile.Layers.Layer("Back", map, size, new xTile.Dimensions.Size(64, 64)));

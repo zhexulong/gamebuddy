@@ -63,7 +63,7 @@ public sealed partial class ModEntry
     /// <see cref="PlaySessionFixturePlacement.FreeTilesForProps"/>) - and the two answers must come from one flood, or
     /// the number the budget divides and the number the arm log prints could describe two different pieces.
     /// </summary>
-    private static HashSet<Point>? WalkableComponentTiles(GameLocation farm, Vector2 from)
+    private static IReadOnlySet<Point>? WalkableComponentTiles(GameLocation farm, Vector2 from)
     {
         var layer = farm.map.Layers[0];
         return StardewBodyController.ReachableTiles(
@@ -74,7 +74,8 @@ public sealed partial class ModEntry
                 && tile.Y >= 0
                 && tile.X < layer.LayerWidth
                 && tile.Y < layer.LayerHeight
-                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)));
+                && StardewBodyController.IsWalkableTile(farm, Game1.player, new Vector2(tile.X, tile.Y)))
+            ?.Tiles;
     }
 
     /// <summary>

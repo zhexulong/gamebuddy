@@ -872,7 +872,7 @@ public sealed partial class ModEntry : Mod
         // the world stood before any prop existed: the budget divides it, the reserved members' clearance is measured
         // across it, and the arm log's `free_after_reservations` is the same tiles - so the ground the budget counted
         // and the ground the props were placed on cannot describe two different farms.
-        HashSet<Point>? walkablePiece = WalkableComponentTiles(farm, startTile);
+        IReadOnlySet<Point>? walkablePiece = WalkableComponentTiles(farm, startTile);
         int freeAfterReservations = PlaySessionFixturePlacement.FreeTilesForProps(
             walkablePiece,
             new Point((int)startTile.X, (int)startTile.Y),
