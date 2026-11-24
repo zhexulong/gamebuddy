@@ -104,6 +104,17 @@ public sealed class FarmhandExecutionJournalTests
         lookup.Record.Should().BeNull();
     }
 
+    /// <summary>
+    /// A JOURNAL AT ITS CEILING REFUSES A NEW ADMISSION, and the recovery evidence in it is untouched.
+    ///
+    /// <para>
+    /// WHAT FILLS IT IS WHAT CANNOT BE DROPPED. The drain removes a settled `succeeded` receipt and a gesture's record
+    /// (`FarmhandExecutionJournal.IsReplayNoOp`), so a document made of those compacts instead of refusing. The ceiling is
+    /// therefore reached by the population a retry or a recovery could still need: an `uncertain` settlement, which is the
+    /// only statement that something may have happened, and admissions whose native effect landed with no terminal write.
+    /// That is the population this test seeds, and the evidence it asserts survives is the `uncertain` one.
+    /// </para>
+    /// </summary>
     [Fact]
     public void CapacityExhaustionRejectsNewAdmissionWithoutEvictingRecoveryEvidence()
     {
@@ -112,7 +123,7 @@ public sealed class FarmhandExecutionJournalTests
         FarmhandExecutionJournalRecord terminal = PendingRecord(first) with
         {
             State = FarmhandExecutionJournalRecordState.TerminalSettled,
-            Receipt = CreateReceipt(first),
+            Receipt = CreateReceipt(first) with { State = ExecutionState.Uncertain },
         };
         FarmhandExecutionJournalRecord[] retained = Enumerable.Range(0, FarmhandExecutionJournal.MaximumRecords)
             .Select(index => index == 0
@@ -129,7 +140,7 @@ public sealed class FarmhandExecutionJournalTests
         result.Record.Should().BeNull();
         persistence.State!.Records.Should().HaveCount(FarmhandExecutionJournal.MaximumRecords);
         journal.TryLookup(first.Scope, first.RequestId, first.IdempotencyKey).Record!.Receipt
-            .Should().Be(CreateReceipt(first));
+            .Should().BeEquivalentTo(terminal.Receipt);
     }
 
     [Fact]

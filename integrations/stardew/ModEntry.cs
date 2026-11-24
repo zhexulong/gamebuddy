@@ -933,7 +933,9 @@ public sealed partial class ModEntry : Mod
             ? this.farmhandProvisioner!.Manifest.CompanionId
             : this.config.CompanionId;
         BridgeScope executionScope = new("stardew", saveId, worldId, playerId, companionId);
-        FarmhandExecutionJournal executionJournal = new(new SmapiGlobalDataPersistence(this.Helper.Data));
+        FarmhandExecutionJournal executionJournal = new(
+            new SmapiGlobalDataPersistence(this.Helper.Data),
+            line => this.Monitor.Log(line, LogLevel.Info));
         state.Executions = new ExecutionManager(this.Monitor, () => state.CapabilityPublication ?? throw new InvalidOperationException("Farmhand capability publication is unavailable."),
             receipt => this.PublishReceipt(state, receipt),
             executionJournal,

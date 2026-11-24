@@ -261,7 +261,7 @@ string? bodyProgramUnavailableReason = null,
                  registration.Kind.ToWireValue(),
                  registration.Descriptor is { } descriptor
                      ? new FarmhandActionDescriptorWire(
-                         descriptor.Arguments.Select(argument => new FarmhandActionArgumentWire(argument.Name, argument.Type, argument.Enum, argument.Description)).ToArray(),
+                         descriptor.Arguments.Select(argument => FarmhandActionArgumentPublication.ToWire(descriptor, argument)).ToArray(),
                          new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal),
                          new FarmhandActionResourceTemplateWire(descriptor.ResourceTemplate.Select(claim =>
                              new FarmhandActionResourceTemplateClaimWire(claim.Key, claim.Value.ToString())).ToArray()),
@@ -577,12 +577,28 @@ string? bodyProgramUnavailableReason = null,
             if (!TryToBridgeReceipt(latest, out BridgeReceipt replayReceipt)) { reasonCode = "receipt_lineage_unavailable"; return false; }
             response = Reply("execution_receipt", envelope.CorrelationId, replayReceipt); reasonCode = "idempotent_replay"; return true;
         }
-        // ONE PREDICATE FOR THREE DECISIONS. Whether a replay can be answered from the journal, whether a journal answer
-        // other than `receipt_not_found` is this request's refusal, and whether the request is durably admitted before
-        // dispatch all used to spell the same three action ids out here. The population is the request's own declared
-        // argument shape (`FarmhandCanonicalRequest.TryCreate`), so a catalogue row that declares a destination, an
-        // emote or a direction is admitted and recoverable without an id being named in this file.
-        bool durablyAdmitted = FarmhandCanonicalRequest.TryCreate(request, out _);
+        // ONE PREDICATE FOR THREE DECISIONS, AND A GESTURE IS NOT ONE OF THEM. Whether a replay can be answered from the
+        // journal, whether a journal answer other than `receipt_not_found` is this request's refusal, and whether the
+        // request is durably admitted before dispatch all read this one answer. Its population is the request's own
+        // declared argument shape (`FarmhandCanonicalRequest.TryCreate`) INTERSECTED with
+        // `FarmhandActionCatalog.ChangesTheWorld`, which is where the exemption carries its reason:
+        // `ActionsThatChangeNothing` names the actions whose native call cannot change the world
+        // (`express_emote`, `face_direction`), and the receipt funnel already answers a row it could not write for those
+        // with `ignored=expression_changes_nothing` - the row buys replay convenience and nothing else.
+        //
+        // SO A GESTURE KEEPS NO DURABLE ROW, AND THAT IS SAFE FOR EXACTLY THE ACTIONS IN THAT LIST: re-executing such a
+        // gesture after a crash IS replaying it - the balloon is the whole effect, and a second balloon is the same
+        // visible outcome - while for every action that changes the world the journalled tuple is the only record that
+        // the change happened, so it is still written, still read before dispatch, and still required. What a gesture
+        // keeps: its receipt is minted, stored in the process ledger, published, and answers an idempotent retry with
+        // `idempotent_replay`; the single-body admission is unchanged, because that is a live invariant (one body at a
+        // time) and not a durable one.
+        //
+        // WHAT IT COSTS TO KEEP THE ROW: the journal is one app-global payload holding every record of the session, so
+        // one gesture paid two whole-payload rewrites (admission, then terminal) on the game thread - measured
+        // `round99`, 18.58 ms of an instant gesture's 18.58 ms at a 1.14 MB payload.
+        bool durablyAdmitted = FarmhandCanonicalRequest.TryCreate(request, out _)
+            && FarmhandActionCatalog.ChangesTheWorld(request.Action);
         string durableReason = "receipt_not_found";
         if (durablyAdmitted
             && this.executions.TryGetDurableAdmission(request.RequestId, request.IdempotencyKey, out FarmhandExecutionJournalRecord durableAdmission, out durableReason))

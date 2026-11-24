@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using GameBuddy.Stardew.Core.Abstractions;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using StardewValley;
 
@@ -98,7 +99,10 @@ internal sealed partial class ExecutionManager
         // receipt - measured `round80`, 119 real emotes landed as `succeeded_receipt_without_its_own_postcondition`.
         // The reason code below IS the arm's reading (this `if` is what chooses it) and `native_dispatched` says the
         // native call was reached, so the field carried the same fact a third time, in a spelling nobody read.
-        actor.doEmote(emoteIndex);
+        // The arm's own call, measured on its own so the gesture's line can say how much of it was the engine and how
+        // much was the Mod around it.
+        using (GameThreadCost.SeamScope native = new(GameThreadCost.NativeSeam))
+            actor.doEmote(emoteIndex);
 
         BridgeLocalObservation? observation = this.TryCreateLocalObservation(actor);
         bool armed = actor.IsEmoting && actor.CurrentEmote == emoteIndex;

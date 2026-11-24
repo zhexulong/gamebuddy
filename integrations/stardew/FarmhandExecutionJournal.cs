@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text;
+using GameBuddy.Stardew.Core.Diagnostics;
 using GameBuddy.Stardew.Core.Models;
 using GameBuddy.Stardew.Core.Policy;
 
@@ -16,6 +17,33 @@ internal interface IModGlobalDataPersistence
     FarmhandExecutionJournalState? Read(string key);
 
     bool TryWrite(string key, FarmhandExecutionJournalState state);
+}
+
+/// <summary>
+/// The write lease one global-data key may have, claimed by the adapter that owns the file rather than by the journal.
+///
+/// <para>
+/// WHY IT EXISTS. <see cref="FarmhandExecutionJournal.KeyFor"/> names the document a save's journal lives in, and two
+/// live game processes on the same machine can name the same document. Last-writer-wins is not an acceptable answer for
+/// a durable execution record: whatever the second process wrote would be silently overwritten by the first, and neither
+/// would ever know. The claim is the operating system's own cross-process handle - the same guarantee
+/// <c>WindowsBodyProgramJournalStore.TryHoldScopeLease</c> takes for the Body Program journal - held for the adapter's
+/// lifetime and released when the process ends, so a crashed owner never becomes a permanent refusal.
+/// </para>
+///
+/// <para>
+/// IT IS A SEPARATE INTERFACE so a test double that never claims anything is not forced to fake an OS handle, while
+/// production must implement it: <c>SmapiGlobalDataPersistence</c> does, and a persistence that does not is treated as
+/// the only writer of its key (which a single-process fixture is).
+/// </para>
+/// </summary>
+internal interface IModGlobalDataKeyLease
+{
+    /// <summary>
+    /// Claims <paramref name="key"/> for the lifetime of this adapter. Answers false with
+    /// <paramref name="ownedByAnotherProcess"/> set when another live process holds it.
+    /// </summary>
+    bool TryClaim(string key, out bool ownedByAnotherProcess);
 }
 
 /// <summary>
@@ -194,6 +222,12 @@ internal enum FarmhandExecutionJournalResultCode
     ImmutableTupleMismatch,
     ReceiptMismatch,
     IllegalStateTransition,
+
+    /// <summary>
+    /// Another live process holds this save's journal document (<see cref="IModGlobalDataKeyLease"/>), so no reading of
+    /// it here would be authority and no write of it could avoid overwriting that process's records.
+    /// </summary>
+    JournalKeyOwnedByAnotherProcess,
 }
 
 /// <summary>
@@ -245,23 +279,64 @@ internal readonly record struct FarmhandExecutionJournalResult<T>(
 /// <summary>
 /// Private Mod-owned durable execution journal. Mod composition supplies the
 /// global-data adapter; only Navigation ingress and receipt publication consume
-/// it in the current vertical slice. Every operation reloads and validates the
-/// complete payload so an invalid, stale-version, or duplicate payload never
-/// becomes execution authority.
+/// it in the current vertical slice. The complete payload is reloaded and
+/// validated before it becomes execution authority - once per document per
+/// journal instance, since this journal is the only writer of that document - and
+/// a write that does not land drops that reading rather than serving it.
 /// </summary>
 internal sealed class FarmhandExecutionJournal
 {
     internal const int SchemaVersion = 1;
     internal const int MaximumRecords = 1024;
-    internal const string GlobalDataKey = "GameBuddy.farmhand-execution-journal-v1";
+
+    /// <summary>
+    /// The document name's fixed prefix. The name carries the SAVE IDENTITY (<see cref="KeyFor"/>), because the records
+    /// in it are one world's executions: the app-global name this replaces (`…-journal-v1`) held every record of every
+    /// save the Mod had ever been played in, so it could not say which world an admitted request belonged to, it grew
+    /// with actions that were not this save's, and two game processes shared one document. The old key is NOT read and
+    /// there is no migration: a payload that cannot name its world is not authority.
+    /// </summary>
+    internal const string KeyPrefix = "GameBuddy.farmhand-execution-journal-v2";
+
+    /// <summary>The one spelling of "which document does this world's journal live in".</summary>
+    internal static string KeyFor(BridgeScope scope) => $"{KeyPrefix}.{scope.SaveId}";
+
+    /// <summary>
+    /// The record ceiling one save's journal keeps before it drops the records a replay could not need.
+    ///
+    /// <para>
+    /// THE MEASUREMENTS IT IS CHOSEN FROM. One whole-payload write cost 8.27 ms at the 1,182,257 B / 738-record payload
+    /// `round99` left behind, and two writes (admission + terminal, the pair every world-changing action performs) cost
+    /// 17.22 ms at a 332,429 B / 256-record one - so at these sizes the file flush dominates the write and the ceiling
+    /// does NOT buy a cheaper flush. What it buys, measured, is everything that scales with the bytes: the read was
+    /// 32.77 ms at 1.14 MB (deserialize + validate), it is what a restart pays before its first action, and the document
+    /// can no longer grow into <see cref="MaximumRecords"/>, where capacity FAILS CLOSED and no drain exists to rescue it
+    /// - a session that filled it was one that could not admit another action for the rest of its life.
+    /// </para>
+    /// </summary>
+    internal const int RetainedRecords = 256;
 
     private readonly IModGlobalDataPersistence persistence;
     private readonly object gate = new();
 
-    internal FarmhandExecutionJournal(IModGlobalDataPersistence persistence)
+    /// <summary>
+    /// The payload of each document this instance has read or written successfully, by
+    /// <see cref="KeyFor"/> - <c>null</c> for a document it has not touched yet, and dropped whenever a write to it does
+    /// not land.
+    /// </summary>
+    private readonly Dictionary<string, FarmhandExecutionJournalState> validated = new(StringComparer.Ordinal);
+
+    internal FarmhandExecutionJournal(IModGlobalDataPersistence persistence, Action<string>? report = null)
     {
         this.persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
+        this.report = report;
     }
+
+    /// <summary>Where a drain's own line goes. Null in every test that does not ask for one, which keeps the suite quiet.</summary>
+    private readonly Action<string>? report;
+
+    /// <summary>Records the most recent drain removed, so a caller can observe the compaction rather than infer it.</summary>
+    internal int LastDrainedRecords { get; private set; }
 
     /// <summary>Loads one exact record, whether it is pending or terminal.</summary>
     internal FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> TryLoadAdmission(
@@ -285,7 +360,7 @@ internal sealed class FarmhandExecutionJournal
             if (invalid is not null)
                 return invalid.Value;
 
-            StateLoadResult loaded = this.ReadValidatedState();
+            StateLoadResult loaded = this.ReadValidatedState(admission.Scope);
             if (loaded.Code != FarmhandExecutionJournalResultCode.Succeeded)
                 return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(loaded.Code);
 
@@ -303,11 +378,24 @@ internal sealed class FarmhandExecutionJournal
             {
                 return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(FarmhandExecutionJournalResultCode.IdempotencyMismatch);
             }
+            // A BOUNDED COLLECTION NEEDS A DRAIN, and this one is rewritten whole on every admission and every terminal,
+            // so the drain is what keeps ONE action's cost from scaling with the session's history. It runs here - the
+            // only place the payload grows - and it drops only records a replay could not need (`IsReplayNoOp`); what it
+            // keeps is what a recovery has to read.
+            IReadOnlyList<FarmhandExecutionJournalRecord> retained = Drained(records, out int dropped);
+            if (dropped > 0)
+            {
+                this.LastDrainedRecords = dropped;
+                this.report?.Invoke(
+                    $"[journal-drain] key={KeyFor(admission.Scope)};dropped={dropped};retained={retained.Count}"
+                    + $";ceiling={RetainedRecords};reason=replay_is_a_no_op");
+            }
+
             // Never evict a terminal receipt or pending admission: doing so could
             // turn a later response-loss retry into a second native execution.
             // Capacity exhaustion therefore fails closed until an owning product
             // lifecycle introduces an explicit, recovery-safe archival boundary.
-            if (records.Count >= MaximumRecords)
+            if (retained.Count >= MaximumRecords)
             {
                 return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(
                     FarmhandExecutionJournalResultCode.CapacityExceeded);
@@ -324,8 +412,8 @@ internal sealed class FarmhandExecutionJournal
                 admission.ExecutionId,
                 FarmhandExecutionJournalRecordState.AcceptedOrPending,
                 null);
-            FarmhandExecutionJournalState next = NewState(records.Append(record));
-            return this.TryPersist(next, record);
+            FarmhandExecutionJournalState next = NewState(retained.Append(record));
+            return this.TryPersist(KeyFor(admission.Scope), next, record);
         }
     }
 
@@ -349,7 +437,7 @@ internal sealed class FarmhandExecutionJournal
                     FarmhandExecutionJournalResultCode.ReceiptMismatch);
             }
 
-            StateLoadResult loaded = this.ReadValidatedState();
+            StateLoadResult loaded = this.ReadValidatedState(admission.Scope);
             if (loaded.Code != FarmhandExecutionJournalResultCode.Succeeded)
                 return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(loaded.Code);
 
@@ -388,7 +476,7 @@ internal sealed class FarmhandExecutionJournal
             };
             FarmhandExecutionJournalState next = NewState(records.Select(record =>
                 ReferenceEquals(record, current) ? updated : record));
-            return this.TryPersist(next, updated);
+            return this.TryPersist(KeyFor(admission.Scope), next, updated);
         }
     }
 
@@ -406,7 +494,7 @@ internal sealed class FarmhandExecutionJournal
                     FarmhandExecutionJournalResultCode.InvalidAdmission);
             }
 
-            StateLoadResult loaded = this.ReadValidatedState();
+            StateLoadResult loaded = this.ReadValidatedState(scope);
             if (loaded.Code != FarmhandExecutionJournalResultCode.Succeeded)
                 return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(loaded.Code);
 
@@ -420,32 +508,72 @@ internal sealed class FarmhandExecutionJournal
     }
 
     private FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord> TryPersist(
+        string key,
         FarmhandExecutionJournalState state,
         FarmhandExecutionJournalRecord record)
     {
+        using GameThreadCost.SeamScope write = new(GameThreadCost.JournalWriteSeam);
         bool written;
         try
         {
-            written = this.persistence.TryWrite(GlobalDataKey, state);
+            written = this.persistence.TryWrite(key, state);
         }
         catch (Exception)
         {
+            this.validated.Remove(key);
             return FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(
                 FarmhandExecutionJournalResultCode.PersistenceWriteFailed);
         }
 
+        // THE CACHE IS WHAT IS ON DISK, OR NOTHING. A payload that did not land never becomes the authority a later
+        // operation reads, so a failed write drops the cached document and the next operation loads it again.
+        if (written)
+            this.validated[key] = state;
+        else
+            this.validated.Remove(key);
         return written
             ? FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Success(record)
             : FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>.Failure(
                 FarmhandExecutionJournalResultCode.PersistenceWriteFailed);
     }
 
-    private StateLoadResult ReadValidatedState()
+    /// <summary>
+    /// The validated payload of <paramref name="scope"/>'s document: read and validated ONCE per document, then served
+    /// from <see cref="validated"/>, which is only ever what this journal's own last successful write put there.
+    ///
+    /// <para>
+    /// WHY IT IS CACHED. Reloading and revalidating the complete payload on every operation made the cost of an action
+    /// proportional to the session's accumulated history: measured `round99`, a `navigate_to_destination` read the whole
+    /// 1.14 MB / 738-record payload and then rewrote it on the game thread, 32.77 ms of it in the read alone. The payload
+    /// cannot change without this journal writing it - the document is this save's own key, written nowhere else and
+    /// gated by <see cref="gate"/>, and a second process holding the key is refused by
+    /// <see cref="IModGlobalDataKeyLease"/> before this point - so re-reading it mid-dispatch answered a question the
+    /// previous write had already answered.
+    /// </para>
+    /// </summary>
+    private StateLoadResult ReadValidatedState(BridgeScope scope)
     {
+        string key = KeyFor(scope);
+        if (this.validated.TryGetValue(key, out FarmhandExecutionJournalState? cached))
+            return new StateLoadResult(cached, FarmhandExecutionJournalResultCode.Succeeded);
+
+        // ONE WRITER PER KEY, OR NONE. The adapter owns the document; if another live process holds it, no read of this
+        // one is authority and no write may race it - the request is refused by name instead of losing the other
+        // process's records on the next whole-payload rewrite.
+        if (this.persistence is IModGlobalDataKeyLease lease && !lease.TryClaim(key, out bool ownedByAnotherProcess))
+        {
+            return new StateLoadResult(
+                null,
+                ownedByAnotherProcess
+                    ? FarmhandExecutionJournalResultCode.JournalKeyOwnedByAnotherProcess
+                    : FarmhandExecutionJournalResultCode.PersistenceReadFailed);
+        }
+
+        using GameThreadCost.SeamScope read = new(GameThreadCost.JournalReadSeam);
         FarmhandExecutionJournalState? persisted;
         try
         {
-            persisted = this.persistence.Read(GlobalDataKey);
+            persisted = this.persistence.Read(key);
         }
         catch (Exception)
         {
@@ -476,20 +604,23 @@ internal sealed class FarmhandExecutionJournal
             if (!ValidateRecord(record))
                 return new StateLoadResult(null, FarmhandExecutionJournalResultCode.MalformedState);
         }
-        for (int index = 0; index < records.Length; index++)
+
+        // TWO RECORDS ARE THE SAME EXECUTION when they share the scope and either identity, so the population is keyed
+        // by those two identities as it is walked - once. The pairwise form this replaces compared every record with
+        // every other one (1024 records = 523,776 comparisons), which is a cost per read rather than a check per record.
+        HashSet<(BridgeScope Scope, string Id)> requestIds = new();
+        HashSet<(BridgeScope Scope, string Id)> idempotencyKeys = new();
+        foreach (FarmhandExecutionJournalRecord record in records)
         {
-            for (int other = index + 1; other < records.Length; other++)
+            if (!requestIds.Add((record.Scope, record.RequestId))
+                || !idempotencyKeys.Add((record.Scope, record.IdempotencyKey)))
             {
-                if (SameScope(records[index].Scope, records[other].Scope)
-                    && (string.Equals(records[index].RequestId, records[other].RequestId, StringComparison.Ordinal)
-                        || string.Equals(records[index].IdempotencyKey, records[other].IdempotencyKey, StringComparison.Ordinal)))
-                {
-                    return new StateLoadResult(null, FarmhandExecutionJournalResultCode.DuplicateRecord);
-                }
+                return new StateLoadResult(null, FarmhandExecutionJournalResultCode.DuplicateRecord);
             }
         }
 
-        return new StateLoadResult(NewState(records), FarmhandExecutionJournalResultCode.Succeeded);
+        this.validated[key] = NewState(records);
+        return new StateLoadResult(this.validated[key], FarmhandExecutionJournalResultCode.Succeeded);
     }
 
     private static FarmhandExecutionJournalResult<FarmhandExecutionJournalRecord>? ValidateAdmissionResult(
@@ -729,6 +860,57 @@ internal sealed class FarmhandExecutionJournal
 
     private static FarmhandExecutionJournalState NewState(IEnumerable<FarmhandExecutionJournalRecord> records) =>
         new(SchemaVersion, new ReadOnlyCollection<FarmhandExecutionJournalRecord>(records.ToArray()));
+
+    /// <summary>
+    /// The records left after dropping the OLDEST ones a replay could not need, down to <see cref="RetainedRecords"/>.
+    /// Order is the payload's, so a drain never reorders what it keeps.
+    /// </summary>
+    private static IReadOnlyList<FarmhandExecutionJournalRecord> Drained(
+        IReadOnlyList<FarmhandExecutionJournalRecord> records,
+        out int dropped)
+    {
+        dropped = 0;
+        int surplus = records.Count - RetainedRecords;
+        if (surplus <= 0)
+            return records;
+
+        var retained = new List<FarmhandExecutionJournalRecord>(records.Count);
+        foreach (FarmhandExecutionJournalRecord record in records)
+        {
+            if (surplus > 0 && IsReplayNoOp(record))
+            {
+                surplus--;
+                dropped++;
+                continue;
+            }
+
+            retained.Add(record);
+        }
+
+        return retained;
+    }
+
+    /// <summary>
+    /// Whether dropping this record could cost a retry anything.
+    ///
+    /// <para>
+    /// TWO THINGS MAY GO. A gesture's record, because its action cannot change the world and re-executing it is the same
+    /// visible outcome (`ActionsThatChangeNothing` is the authority and states the native reason for each); and a settled
+    /// `succeeded` record, because the receipt says the change happened and the world it named is the world a retry would
+    /// observe anyway. NOTHING ELSE: a record whose native effect landed without its terminal write has no receipt, and
+    /// that is exactly what a recovery reads; an `Uncertain`, `Blocked` or `Failed` settlement is the only statement that
+    /// something may have happened and nobody can say what; a rejection is kept, because a retry of it must be answered the
+    /// same way rather than dispatched again.
+    /// </para>
+    /// </summary>
+    private static bool IsReplayNoOp(FarmhandExecutionJournalRecord record)
+    {
+        if (record.Receipt is not { } receipt || !receipt.State.IsTerminal())
+            return false;
+        if (!FarmhandActionCatalog.ChangesTheWorld(record.ActionId))
+            return true;
+        return receipt.State == ExecutionState.Succeeded;
+    }
 
     private static bool SameScope(BridgeScope left, BridgeScope right) => left.Equals(right);
 

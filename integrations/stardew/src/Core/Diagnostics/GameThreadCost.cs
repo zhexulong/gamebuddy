@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 
 namespace GameBuddy.Stardew.Core.Diagnostics;
 
@@ -18,10 +19,10 @@ namespace GameBuddy.Stardew.Core.Diagnostics;
 /// <para>
 /// WHAT EACH NUMBER CONTAINS. <c>total_ms</c> is the node from its dispatch to its return, so it includes the
 /// ledger bookkeeping the handler is called through. <c>dispatch_ms</c> is the handler's own call. The named
-/// seams are INCLUSIVE and nest inside the handler: admission runs first, the approach leg runs after it, so
-/// <c>handler_rest_ms</c> (= dispatch − admission − approach) is what remains - the native mutation, the world
-/// read after it, and the receipt's evidence. There is no number for the postcondition read alone because it
-/// has no shared member to time: each handler reads its own world field inline.
+/// seams are INCLUSIVE and nest inside the handler - admission runs first, the approach leg runs after it, a
+/// receipt's journal read and write after that - and each one is printed under its own name, so
+/// <c>handler_rest_ms</c> (= dispatch − every named seam) is what no seam accounts for. A seam that is
+/// <c>0.00</c> was not run by this node at all, which is how a gesture shows that it planned no walk.
 /// </para>
 ///
 /// <para>
@@ -44,6 +45,24 @@ internal static class GameThreadCost
 
     /// <summary>The shared tool-approach leg, which owns the reachability flood a walk is planned with.</summary>
     internal const string ApproachSeam = "approach";
+
+    /// <summary>
+    /// Reading the durable execution journal, which every operation reloads and validates in full
+    /// (<c>FarmhandExecutionJournal.ReadValidatedState</c>): the payload read, its deserialization and the duplicate scan.
+    /// </summary>
+    internal const string JournalReadSeam = "journal_read";
+
+    /// <summary>
+    /// Writing the durable execution journal, which every operation rewrites in full through
+    /// <c>IDataHelper.WriteGlobalData</c>: one serialize plus one whole-payload file write, on the calling thread.
+    /// </summary>
+    internal const string JournalWriteSeam = "journal_write";
+
+    /// <summary>The native call itself (<c>Farmer.doEmote</c>), which is the gesture and nothing else.</summary>
+    internal const string NativeSeam = "native";
+
+    /// <summary>The world reading a receipt is published with (<c>ExecutionManager.CreateLocalObservation</c>).</summary>
+    internal const string ObservationSeam = "observation";
 
     /// <summary>
     /// Half a frame at 60 fps. A node cheaper than this cannot be the hitch a player feels, so it is not a line;
@@ -183,8 +202,7 @@ internal static class GameThreadCost
         private readonly string actionId;
         private readonly string requestId;
         private readonly string node;
-        private double admissionMs;
-        private double approachMs;
+        private readonly List<(string Seam, double Ms)> seams = new();
         private double dispatchMs;
         private double floodMs;
         private long floodTiles;
@@ -201,13 +219,32 @@ internal static class GameThreadCost
 
         internal string ReasonCode { get; set; } = "unknown";
 
+        /// <summary>
+        /// Adds <paramref name="elapsedMs"/> to the named seam, keeping the order the seams were first measured in so the
+        /// line reads the way the dispatch ran. A seam measured twice in one node (two journal reads, an attempt and a
+        /// retry) is SUMMED: the line answers "what did this seam cost", never "what did one call of it cost".
+        /// </summary>
         internal void AddSeam(string seam, double elapsedMs)
         {
-            if (string.Equals(seam, AdmissionSeam, StringComparison.Ordinal))
-                this.admissionMs += elapsedMs;
-            else if (string.Equals(seam, ApproachSeam, StringComparison.Ordinal))
-                this.approachMs += elapsedMs;
+            for (int index = 0; index < this.seams.Count; index++)
+            {
+                if (string.Equals(this.seams[index].Seam, seam, StringComparison.Ordinal))
+                {
+                    this.seams[index] = (seam, this.seams[index].Ms + elapsedMs);
+                    return;
+                }
+            }
+
+            this.seams.Add((seam, elapsedMs));
         }
+
+        private double SeamMs(string seam) =>
+            this.seams.Where(row => string.Equals(row.Seam, seam, StringComparison.Ordinal)).Sum(row => row.Ms);
+
+        /// <summary>The named seams that are not one of the two the line keeps in fixed positions.</summary>
+        private IEnumerable<(string Seam, double Ms)> OtherSeams() =>
+            this.seams.Where(row => !string.Equals(row.Seam, AdmissionSeam, StringComparison.Ordinal)
+                && !string.Equals(row.Seam, ApproachSeam, StringComparison.Ordinal));
 
         internal void AddDispatch(double elapsedMs) => this.dispatchMs += elapsedMs;
 
@@ -225,21 +262,26 @@ internal static class GameThreadCost
         /// </summary>
         internal string Describe(double totalMs)
         {
-            double rest = Math.Max(0d, this.dispatchMs - this.admissionMs - this.approachMs);
-            return "[game-thread-cost]"
-                + $" action={this.actionId}"
-                + $";node={this.node}"
-                + $";request={this.requestId}"
-                + $";total_ms={Ms(totalMs)}"
-                + $";dispatch_ms={Ms(this.dispatchMs)}"
-                + $";admission_ms={Ms(this.admissionMs)}"
-                + $";approach_ms={Ms(this.approachMs)}"
-                + $";handler_rest_ms={Ms(rest)}"
-                + $";floods={this.floods.ToString(CultureInfo.InvariantCulture)}"
-                + $";flood_ms={Ms(this.floodMs)}"
-                + $";flood_tiles={this.floodTiles.ToString(CultureInfo.InvariantCulture)}"
-                + $";state={this.State}"
-                + $";reason={this.ReasonCode}";
+            double rest = Math.Max(0d, this.dispatchMs - this.seams.Sum(row => row.Ms));
+            StringBuilder line = new StringBuilder()
+                .Append("[game-thread-cost]")
+                .Append($" action={this.actionId}")
+                .Append($";node={this.node}")
+                .Append($";request={this.requestId}")
+                .Append($";total_ms={Ms(totalMs)}")
+                .Append($";dispatch_ms={Ms(this.dispatchMs)}")
+                .Append($";admission_ms={Ms(this.SeamMs(AdmissionSeam))}")
+                .Append($";approach_ms={Ms(this.SeamMs(ApproachSeam))}")
+                .Append($";handler_rest_ms={Ms(rest)}");
+            foreach ((string seam, double elapsedMs) in this.OtherSeams())
+                line.Append($";{seam}_ms={Ms(elapsedMs)}");
+            return line
+                .Append($";floods={this.floods.ToString(CultureInfo.InvariantCulture)}")
+                .Append($";flood_ms={Ms(this.floodMs)}")
+                .Append($";flood_tiles={this.floodTiles.ToString(CultureInfo.InvariantCulture)}")
+                .Append($";state={this.State}")
+                .Append($";reason={this.ReasonCode}")
+                .ToString();
         }
 
         private static string Ms(double value) => value.ToString("0.00", CultureInfo.InvariantCulture);
