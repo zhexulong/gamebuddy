@@ -88,8 +88,19 @@ public sealed class DurabilityFailureCauseNamingGateTests
 
     /// <summary>
     /// Drives one failure code to the refusal the Host receives, or returns null when this gate has no seam that produces
-    /// it. Every arm below is a real dispatch: the request is authenticated, admitted durably, routed to a probe handler,
-    /// and the handler arranges the one state the journal refuses - so the refusal is observed rather than described.
+    /// it.
+    ///
+    /// <para>
+    /// THREE SEAMS, BECAUSE A JOURNAL IS ONE WRITER PER DOCUMENT NOW (`IModGlobalDataKeyLease`). (1) A payload this
+    /// process FINDS at start-up - unreadable, another schema, a duplicated identity, at capacity, or a row that is not
+    /// this tuple - is refused when the admission reads it; those arms seed the persistence before anything runs.
+    /// (2) A refusal the receipt's own write produces - the write does not land, or the receipt names an execution the
+    /// document does not have - arrives during the dispatch. (3) Two codes are the journal's answer to a CALLER whose
+    /// tuple disagrees with the document's row after the native effect landed (`not_found`, `immutable_tuple_mismatch`):
+    /// with one writer per document between two operations of one dispatch they can no longer be produced by mutating
+    /// the payload behind the dispatch, so they are driven through the journal's own seam - which is where they are
+    /// decided - and the reason is stated here rather than left as a missing arm.
+    /// </para>
     /// </summary>
     private static string? DriveToRefusal(FarmhandExecutionJournalResultCode code)
     {
@@ -98,6 +109,12 @@ public sealed class DurabilityFailureCauseNamingGateTests
         // validation refuses (`SaveId` empty). Everything else about the dispatch is the production path.
         if (code == FarmhandExecutionJournalResultCode.InvalidAdmission)
             return DriveRefusedAdmission();
+
+        if (code == FarmhandExecutionJournalResultCode.JournalKeyOwnedByAnotherProcess)
+            return DriveContendedDocument();
+
+        if (code is FarmhandExecutionJournalResultCode.NotFound or FarmhandExecutionJournalResultCode.ImmutableTupleMismatch)
+            return DriveAtJournalSeam(code);
 
         string suffix = Wire(code);
         var persistence = new FakeModGlobalDataPersistence();
@@ -109,6 +126,8 @@ public sealed class DurabilityFailureCauseNamingGateTests
             executionJournal: new FarmhandExecutionJournal(persistence),
             executionScope: scope);
         BridgeExecutionRequest request = Request(suffix);
+        // The payload this process finds BEFORE it starts: the admission is the first operation that reads it.
+        SeedBeforeStartup(code, persistence, scope, request);
         var router = new FarmhandActionRouter();
         router.Register(
             FarmhandActionCatalog.Registrations.Single(row => row.ActionId == JournalledAction),
@@ -118,6 +137,144 @@ public sealed class DurabilityFailureCauseNamingGateTests
         session.TryExecute(1, Execution(scope, request), out _, out string reasonCode);
         return reasonCode;
     }
+
+    /// <summary>
+    /// The two codes a CALLER's tuple produces against a document it does not match, driven where they are decided: the
+    /// journal's own transition seam. The reason they cannot be produced mid-dispatch any more is the fix this gate is
+    /// attached to - one writer per document - and that is the whole point of the arm existing by name.
+    /// </summary>
+    private static string DriveAtJournalSeam(FarmhandExecutionJournalResultCode code)
+    {
+        string suffix = Wire(code);
+        var persistence = new FakeModGlobalDataPersistence();
+        var journal = new FarmhandExecutionJournal(persistence);
+        BridgeScope scope = CreateScope($"cause-{suffix}");
+        FarmhandExecutionAdmission admission = SeamAdmission(scope, suffix);
+        if (code == FarmhandExecutionJournalResultCode.ImmutableTupleMismatch)
+        {
+            // The row exists for this exact triple, and the admission handed to the transition says something else about
+            // the world - the immutable tuple the journal refuses to rewrite.
+            journal.TryRecordAdmission(admission).Code.Should().Be(FarmhandExecutionJournalResultCode.Succeeded);
+            FarmhandExecutionAdmission drifted = admission with { DeadlineMs = admission.DeadlineMs + 1_000 };
+            return ExecutionReceiptStore.DurabilityFailureReason(
+                journal.TryPersistReceiptTransition(drifted, SeamReceipt(admission)).Code);
+        }
+
+        // `not_found`: the native effect landed and the document has no row for it.
+        return ExecutionReceiptStore.DurabilityFailureReason(
+            journal.TryPersistReceiptTransition(admission, SeamReceipt(admission)).Code);
+    }
+
+    /// <summary>
+    /// The code a second live process on the same save produces: the document's owner refuses before this process reads
+    /// it, rather than racing it. Driven through the real dispatch, with a persistence whose lease reports the other
+    /// process - which is what SMAPI's adapter does with a system mutex once another game instance holds it.
+    /// </summary>
+    private static string DriveContendedDocument()
+    {
+        var persistence = new FakeModGlobalDataPersistence { Contended = true };
+        BridgeScope scope = CreateScope("cause-journal_key_owned_by_another_process");
+        FarmhandCapabilityPublication publication = Publication();
+        var executions = new ExecutionManager(
+            new DummyMonitor(),
+            () => publication,
+            executionJournal: new FarmhandExecutionJournal(persistence),
+            executionScope: scope);
+        var router = new FarmhandActionRouter();
+        router.Register(FarmhandActionCatalog.Registrations.Single(row => row.ActionId == JournalledAction), new PoisoningProbeHandler(
+            FarmhandExecutionJournalResultCode.JournalKeyOwnedByAnotherProcess,
+            (_, _) => { }));
+        var session = new BridgeSession(executions, router, scope, ProbeToken, () => publication);
+        session.TryAuthenticate(1, Hello(scope), out _, out string authenticationReason).Should().BeTrue(authenticationReason);
+        session.TryExecute(1, Execution(scope, Request("journal_key_owned_by_another_process")), out _, out string reasonCode);
+        return reasonCode;
+    }
+
+    /// <summary>
+    /// The payload a process finds when it starts: each code is the journal's first reading of a document, which is the
+    /// moment it can occur now that one process is the only writer of its own document.
+    /// </summary>
+    private static void SeedBeforeStartup(
+        FarmhandExecutionJournalResultCode code,
+        FakeModGlobalDataPersistence persistence,
+        BridgeScope scope,
+        BridgeExecutionRequest request)
+    {
+        switch (code)
+        {
+            case FarmhandExecutionJournalResultCode.PersistenceReadFailed:
+                persistence.FailReads = true;
+                return;
+            case FarmhandExecutionJournalResultCode.PersistenceWriteFailed:
+                persistence.FailWrites = true;
+                return;
+            case FarmhandExecutionJournalResultCode.MalformedState:
+                persistence.Seed(new FarmhandExecutionJournalState(FarmhandExecutionJournal.SchemaVersion, null));
+                return;
+            case FarmhandExecutionJournalResultCode.VersionMismatch:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion + 1,
+                    Array.Empty<FarmhandExecutionJournalRecord>()));
+                return;
+            case FarmhandExecutionJournalResultCode.DuplicateRecord:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion,
+                    new[]
+                    {
+                        Record(request, scope, "exec_duplicate_a"),
+                        Record(request, scope, "exec_duplicate_b", idempotencyKey: "idem_duplicate_copy"),
+                    }));
+                return;
+            case FarmhandExecutionJournalResultCode.CapacityExceeded:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion,
+                    Enumerable.Range(0, FarmhandExecutionJournal.MaximumRecords + 1)
+                        .Select(index => Record(
+                            request,
+                            scope,
+                            $"exec_capacity_{index}",
+                            requestId: $"req_capacity_{index}",
+                            idempotencyKey: $"idem_capacity_{index}"))
+                        .ToArray()));
+                return;
+            case FarmhandExecutionJournalResultCode.ScopeMismatch:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion,
+                    new[] { Record(request, CreateScope("cause-foreign"), "exec_foreign") }));
+                return;
+            case FarmhandExecutionJournalResultCode.RequestMismatch:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion,
+                    new[] { Record(request, scope, "exec_other", requestId: "req_other_identity") }));
+                return;
+            case FarmhandExecutionJournalResultCode.IdempotencyMismatch:
+                persistence.Seed(new FarmhandExecutionJournalState(
+                    FarmhandExecutionJournal.SchemaVersion,
+                    new[] { Record(request, scope, "exec_other", idempotencyKey: "idem_other_identity") }));
+                return;
+            default:
+                return;
+        }
+    }
+
+    private static FarmhandExecutionAdmission SeamAdmission(BridgeScope scope, string suffix) => new(
+        scope,
+        $"req_{suffix}",
+        $"idem_{suffix}",
+        JournalledAction,
+        FarmhandCanonicalRequest.NavigationDestination(JournalledAction, "label", "Mine", null),
+        ExpectedRevision: 0,
+        DeadlineMs: 1767225600000,
+        ExecutionId: $"exec_{suffix}");
+
+    private static FarmhandExecutionReceipt SeamReceipt(FarmhandExecutionAdmission admission) => new(
+        admission.ExecutionId,
+        admission.RequestId,
+        admission.ActionId,
+        ExecutionState.Succeeded,
+        "navigation_completed",
+        admission.ExpectedRevision + 1,
+        "destination=label:Mine;arrived=true");
 
     private static string DriveRefusedAdmission()
     {
@@ -142,9 +299,11 @@ public sealed class DurabilityFailureCauseNamingGateTests
     }
 
     /// <summary>
-    /// The state each code is refused for. The seed is what the journal reads AFTER the admission landed, which is exactly
-    /// the divergence the code names: a payload that cannot be read, a version from another schema, a duplicated identity,
-    /// a row that is no longer the one admitted, or a row that vanished.
+    /// The state each code is refused for DURING the dispatch. Only three remain that a dispatch can arrange now that
+    /// one process is the sole writer of its own document: a write that does not land, a receipt for an execution the
+    /// document never bound, and a second settlement of an execution that already settled. Every other code is the
+    /// journal's reading of a payload it FOUND (<see cref="SeedBeforeStartup"/>), or a caller's tuple disagreeing with
+    /// the row (<see cref="DriveAtJournalSeam"/>).
     /// </summary>
     private static void Poison(
         FarmhandExecutionJournalResultCode code,
@@ -153,75 +312,8 @@ public sealed class DurabilityFailureCauseNamingGateTests
         BridgeExecutionRequest request,
         string executionId)
     {
-        switch (code)
-        {
-            case FarmhandExecutionJournalResultCode.PersistenceWriteFailed:
-                persistence.FailWrites = true;
-                return;
-            case FarmhandExecutionJournalResultCode.PersistenceReadFailed:
-                persistence.FailReads = true;
-                return;
-            case FarmhandExecutionJournalResultCode.MalformedState:
-                persistence.Seed(new FarmhandExecutionJournalState(FarmhandExecutionJournal.SchemaVersion, null));
-                return;
-            case FarmhandExecutionJournalResultCode.VersionMismatch:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion + 1,
-                    Array.Empty<FarmhandExecutionJournalRecord>()));
-                return;
-            case FarmhandExecutionJournalResultCode.DuplicateRecord:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    new[]
-                    {
-                        Record(request, scope, executionId),
-                        Record(request, scope, executionId, idempotencyKey: "idem_duplicate_copy"),
-                    }));
-                return;
-            case FarmhandExecutionJournalResultCode.CapacityExceeded:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    Enumerable.Range(0, FarmhandExecutionJournal.MaximumRecords + 1)
-                        .Select(index => Record(
-                            request,
-                            scope,
-                            $"exec_capacity_{index}",
-                            requestId: $"req_capacity_{index}",
-                            idempotencyKey: $"idem_capacity_{index}"))
-                        .ToArray()));
-                return;
-            case FarmhandExecutionJournalResultCode.NotFound:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    Array.Empty<FarmhandExecutionJournalRecord>()));
-                return;
-            case FarmhandExecutionJournalResultCode.ScopeMismatch:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    new[] { Record(request, CreateScope("cause-foreign"), executionId) }));
-                return;
-            case FarmhandExecutionJournalResultCode.RequestMismatch:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    new[] { Record(request, scope, executionId, requestId: "req_other_identity") }));
-                return;
-            case FarmhandExecutionJournalResultCode.IdempotencyMismatch:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    new[] { Record(request, scope, executionId, idempotencyKey: "idem_other_identity") }));
-                return;
-            case FarmhandExecutionJournalResultCode.ImmutableTupleMismatch:
-                persistence.Seed(new FarmhandExecutionJournalState(
-                    FarmhandExecutionJournal.SchemaVersion,
-                    new[] { Record(request, scope, executionId, deadlineMs: request.DeadlineMs - 1000) }));
-                return;
-            case FarmhandExecutionJournalResultCode.ReceiptMismatch:
-            case FarmhandExecutionJournalResultCode.IllegalStateTransition:
-                // Both are produced by the RECEIPT the handler mints, not by the state it finds.
-                return;
-            default:
-                return;
-        }
+        if (code == FarmhandExecutionJournalResultCode.PersistenceWriteFailed)
+            persistence.FailWrites = true;
     }
 
     private static FarmhandExecutionJournalRecord Record(
@@ -353,9 +445,9 @@ public sealed class DurabilityFailureCauseNamingGateTests
 
     /// <summary>
     /// The journal's two file operations, with the failures a live run hit: a read that throws, a write that does not land,
-    /// and a payload replaced behind the admission.
+    /// and a document another live process owns.
     /// </summary>
-    private sealed class FakeModGlobalDataPersistence : IModGlobalDataPersistence
+    private sealed class FakeModGlobalDataPersistence : IModGlobalDataPersistence, IModGlobalDataKeyLease
     {
         private FarmhandExecutionJournalState? state;
 
@@ -363,7 +455,16 @@ public sealed class DurabilityFailureCauseNamingGateTests
 
         internal bool FailReads { get; set; }
 
+        /// <summary>Another live process holds this document, the way a second game instance holds the system mutex.</summary>
+        internal bool Contended { get; set; }
+
         internal void Seed(FarmhandExecutionJournalState value) => this.state = value;
+
+        public bool TryClaim(string key, out bool ownedByAnotherProcess)
+        {
+            ownedByAnotherProcess = this.Contended;
+            return !this.Contended;
+        }
 
         public FarmhandExecutionJournalState? Read(string key)
         {

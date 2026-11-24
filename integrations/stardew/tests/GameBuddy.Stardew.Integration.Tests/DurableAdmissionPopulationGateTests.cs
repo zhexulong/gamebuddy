@@ -69,39 +69,69 @@ public sealed class DurableAdmissionPopulationGateTests
                 && !admitted.Contains(row.ActionId, StringComparer.Ordinal))
             .Select(row => row.ActionId)
             .ToList();
+        // THE DECLARED POPULATION IS THE SHAPE MINUS THE ACTIONS THAT CANNOT CHANGE THE WORLD. The journal row is what
+        // protects a change, so `BridgeSession.TryExecute` admits durably exactly `canonical shape AND ChangesTheWorld`
+        // and a gesture is answered from the process ledger instead - the reason lives on each entry of
+        // `ActionsThatChangeNothing`, and the exclusion is derived from it here rather than listed a second time.
+        List<string> expectedAdmitted = declared
+            .Where(FarmhandActionCatalog.ChangesTheWorld)
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+        List<string> worldless = declared
+            .Where(id => !FarmhandActionCatalog.ChangesTheWorld(id))
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
         IEnumerable<string> ordered = admitted.OrderBy(id => id, StringComparer.Ordinal);
         string line = $"registrations {catalogue.Count} · executable {executable.Count} · examined {answered.Count} · "
             + $"declared {declared.Count} · durably admitted {admitted.Count} · world-changing without durable admission {mutatingWithoutAdmission.Count}";
         this.output.WriteLine(line);
         this.output.WriteLine($"  admitted:   {string.Join(", ", ordered)}");
+        this.output.WriteLine($"  worldless:  {string.Join(", ", worldless)}");
         this.output.WriteLine($"  refused:    {string.Join(", ", refused.OrderBy(entry => entry, StringComparer.Ordinal))}");
         this.output.WriteLine($"  not executable here: {string.Join(", ", notExecutable.Select(row => row.ActionId).OrderBy(id => id, StringComparer.Ordinal))}");
 
         refused.Should().BeEmpty(
             because: $"every registration must reach the admission gate, so its population is measured and not merely listed · {line}");
         declared.Should().NotBeEmpty("the declaration must express something, or this gate agrees with itself");
+        expectedAdmitted.Should().NotBeEmpty("the world-changing half must express something, or the exclusion swallowed the population");
         admitted.Should().BeEquivalentTo(
-            declared,
-            because: $"the bridge admits exactly the requests the journal declares it can express, and names any row that drifted · {line}");
+            expectedAdmitted,
+            because: $"a request the journal can express is durably admitted exactly when its action can change the world; "
+                + $"the worldless ones are answered from the process ledger instead · {line}");
     }
 
     /// <summary>
-    /// THE FLOOR THIS CHANGE FOUND. These three are what the bridge durably admitted when the list was hand-written,
-    /// not what decides admission now - the declaration does, and the arms above keep the bridge from listing them
-    /// again. What is asserted here is the one loss the declaration cannot notice by itself: a journal that stops being
-    /// able to express a shape it used to express takes that shape's actions back to an in-memory receipt without
-    /// anything failing, and the population arm would follow it down because both sides read the same declaration.
+    /// THE ONE LOSS THE DECLARATION CANNOT NOTICE BY ITSELF, replayed on the list this seam used to hold by hand.
+    ///
+    /// <para>
+    /// The three ids below were the hand-written list, and the arms above keep the bridge from listing them again. What
+    /// they cannot notice is a journal that stops being able to express a shape it used to express: the population arm
+    /// would follow it down, because both sides read the same declaration. So the old list is replayed by name once more,
+    /// with the two DIFFERENT answers it now has: `navigate_to_destination` changes the world and must still be durably
+    /// admitted, while the two gestures are excluded - and their exclusion is `ActionsThatChangeNothing`'s own membership,
+    /// not a silent loss. Removing either gesture from that table therefore reds this file rather than passing quietly.
+    /// </para>
     /// </summary>
     [Fact]
-    public void TheActionsThatWereDurablyAdmittedWhenTheListWasWrittenStillAre()
+    public void TheOldHandWrittenListKeepsItsWorldChangingMemberAndItsGesturesByDeclaration()
     {
         foreach (string actionId in new[] { "navigate_to_destination", "express_emote", "face_direction" })
         {
             FarmhandActionRegistration row = FarmhandActionCatalog.Registrations
                 .Single(candidate => string.Equals(candidate.ActionId, actionId, StringComparison.Ordinal));
-            Drive(row, ProbeRequest(row), out string reason).Should().BeTrue(
-                $"`{actionId}` is durably admitted by the declaration this change introduced, and losing it returns the "
-                + $"action to a receipt a restart cannot recover (the dispatch was answered `{reason}`)");
+            bool admitted = Drive(row, ProbeRequest(row), out string reason);
+            if (FarmhandActionCatalog.ChangesTheWorld(actionId))
+            {
+                admitted.Should().BeTrue(
+                    $"`{actionId}` changes the world, so its receipt is what a restart recovers it by (the dispatch was answered `{reason}`)");
+                continue;
+            }
+
+            FarmhandActionCatalog.ActionsThatChangeNothing.Should().ContainKey(
+                actionId,
+                $"`{actionId}` keeps no durable row, so its exemption must be the catalogue's stated fact and not an omission");
+            admitted.Should().BeFalse(
+                $"`{actionId}` changes nothing, so it is answered from the process ledger and rewrites no journal (the dispatch was answered `{reason}`)");
         }
     }
 

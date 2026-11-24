@@ -8,8 +8,10 @@ import {
 } from "../action-execution-coordinator.internal.js";
 import {
   type BodyProgramNodeCatalogue,
+  type BodyProgramRefusal,
   bodyProgramNodeAdmissionRefusal,
   bodyProgramPreflightRefusal,
+  bodyProgramRefusalText,
 } from "../body-program-preflight.js";
 import {
   type CompiledPlan,
@@ -283,7 +285,8 @@ function createBodyProgramTools(
   // so a routine can never reach the Mod by a route a model-authored program cannot.
   const submitProgram = async (request: BodyProgramCandidateRequest) => {
     if (!isBodyProgramCandidateRequest(request)) throw new Error("invalid_body_program_tool_arguments");
-    assertFreshBodyProgramPreflight(connection, mountedPolicy, retainedPolicyIdentity, request);
+    const preflight = bodyProgramSubmissionRefusal(connection, mountedPolicy, retainedPolicyIdentity, request.nodes);
+    if (preflight !== null) throw new Error(preflight);
     // ONE ASK, AND ONE READ OF THE PUMP'S OWN SOURCE (`readInFlightProgrammes`, inside it): the plan this Host is about
     // to submit would be QUEUED behind the programme that still has nodes, so it runs at least one node later than the
     // snapshot it was written from. `lookaheadIneligibility` is the rule that says which actions cannot survive that gap;
@@ -1445,12 +1448,27 @@ function mountProgramReadersAfterSubmission(session: RuntimeSession["session"]):
   };
 }
 
-function assertFreshBodyProgramPreflight(
+/**
+ * The refusal this submission must be answered with, or `null` when it may be sent: the identity this runtime mounted
+ * against the one the connection publishes now, then every node against this connection's own catalogue.
+ *
+ * <p>
+ * Exported so the whole ask can be driven against a real connection state, the way `planLookaheadRefusalForSubmission`
+ * is: a refusal that names its clause, its node and the values it compared is only worth anything if the production path
+ * is what answers it.
+ * </p>
+ * <p>
+ * AN UNREADABLE CONNECTION IS THROWN, NOT ANSWERED. `integration_not_ready` is not a refusal the caller can act on - it
+ * says the runtime has no attachment to judge against - and folding it into the refusal envelope would make "waited too
+ * long for a world" look like "your plan is wrong".
+ * </p>
+ */
+export function bodyProgramSubmissionRefusal(
   connection: GameConnection,
   mountedPolicy: IntegrationActionPolicy,
   retainedPolicyIdentity: FarmhandPolicyIdentity,
-  request: Record<string, unknown>,
-): void {
+  nodes: unknown,
+): string | null {
   if (connection.executionGate?.executable !== true) throw new Error("integration_not_ready");
   let state: IntegrationStateView;
   try {
@@ -1460,19 +1478,16 @@ function assertFreshBodyProgramPreflight(
   }
   if (!(isStateView(state) && state.connected) || state.registrations === undefined)
     throw new Error("integration_not_ready");
-  assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
+  const identityRefusal = bodyProgramPolicyIdentityRefusal(state, retainedPolicyIdentity);
+  if (identityRefusal !== null) return bodyProgramRefusalText(identityRefusal);
   // Asked in ONE place (`body-program-preflight.ts`), because what may appear in a node is answered by four layers - the
   // preflight, the plan compiler's builder vocabulary, node admission and the Mod's own verifier - and a decision that
   // lives inline in the layer that also reads the connection cannot be tested, so it drifts. Admission asks the same
   // decision on the same catalogue and is measured to do so (`body-node-admission.test.ts`).
-  const catalogue = readBodyProgramCatalogue(
-    connection,
-    mountedPolicy,
-    state.registrations,
-    state.enabledActionIds ?? [],
+  return bodyProgramPreflightRefusal(
+    nodes,
+    readBodyProgramCatalogue(connection, mountedPolicy, state.registrations, state.enabledActionIds ?? []),
   );
-  const refusal = bodyProgramPreflightRefusal(request.nodes, catalogue);
-  if (refusal !== null) throw new Error(refusal);
 }
 
 /**
@@ -1693,7 +1708,12 @@ export function createStardewBodyNodeAdmissionValidator(
     if (!state.connected) return { result: "unavailable", code: "admission_unavailable:not_connected" };
     if (state.registrations === undefined)
       return { result: "unavailable", code: "admission_unavailable:no_registrations" };
-    assertCurrentBodyProgramPolicyIdentity(state, retainedPolicyIdentity);
+    // A MOVED IDENTITY IS THE ATTACHMENT'S FACT, NOT THE NODE'S, so it is answered `unavailable` - the answer that keeps
+    // the node attempt alive for a new attachment (ADR-006 `:33`) - and it carries the clause's own name instead of
+    // degrading into the bare `admission_unavailable` a throw used to become here.
+    const identityRefusal = bodyProgramPolicyIdentityRefusal(state, retainedPolicyIdentity);
+    if (identityRefusal !== null)
+      return { result: "unavailable", code: `admission_unavailable:${identityRefusal.rejectionCode}` };
     const refusal = bodyProgramNodeAdmissionRefusal(
       challenge,
       readBodyProgramCatalogue(connection, mountedPolicy, state.registrations, state.enabledActionIds ?? []),
@@ -1732,21 +1752,61 @@ function readBodyProgramPolicyIdentity(connection: GameConnection): FarmhandPoli
   });
 }
 
-function assertCurrentBodyProgramPolicyIdentity(
+/**
+ * The identity this connection publishes now against the one this runtime mounted: the refusal, or `null` when they agree.
+ *
+ * <p>
+ * WHY IT IS NOT A BARE CODE. This clause refused every submission for the rest of a runtime's life and said only
+ * `body_program_preflight_rejected`, so the model could not tell a stale catalogue from a policy that had moved and
+ * reasonably concluded that batching does not work (2026-10-22: seven of those codes in one session file beside two
+ * hundred single steps). The refusing layer holds BOTH halves here - the identity it mounted and the one the Mod
+ * published - so it states them: `field=policy_identity`, `expected=<mounted>`, `actual=<published>`.
+ * </p>
+ * <p>
+ * NO NODE IS NAMED, because no node is what this clause judged: it refuses the whole connection, and a node id invented
+ * here would send the companion to edit a plan that was never the problem. `node=none` is the renderer's word for it.
+ * </p>
+ */
+function bodyProgramPolicyIdentityRefusal(
   state: IntegrationStateView,
   retainedPolicyIdentity: FarmhandPolicyIdentity,
-): void {
+): BodyProgramRefusal | null {
+  const published = state.policyIdentity;
+  if (!isFarmhandPolicyIdentity(published) || state.capabilityRevision !== published.capabilityRevision)
+    return identityRefusal("policy_identity_unreadable", retainedPolicyIdentity, "unreadable");
   if (
-    !isFarmhandPolicyIdentity(state.policyIdentity) ||
-    state.capabilityRevision !== state.policyIdentity.capabilityRevision
-  ) {
-    throw new Error("integration_not_ready");
-  }
-  if (
-    state.policyIdentity.value !== retainedPolicyIdentity.value ||
-    state.policyIdentity.capabilityRevision !== retainedPolicyIdentity.capabilityRevision
+    published.value === retainedPolicyIdentity.value &&
+    published.capabilityRevision === retainedPolicyIdentity.capabilityRevision
   )
-    throw new Error("body_program_preflight_rejected");
+    return null;
+  return identityRefusal("policy_identity_mismatch", retainedPolicyIdentity, identityReading(published));
+}
+
+/** The remedy both identity clauses state: the fix is an attachment, and no plan edit can make this clause pass. */
+const RETAINED_IDENTITY_REMEDY =
+  "the attached Mod published a policy identity this runtime did not mount: the runtime must be re-attached before anything can be submitted";
+
+function identityRefusal(
+  rejectionCode: string,
+  retainedPolicyIdentity: FarmhandPolicyIdentity,
+  actual: string,
+): BodyProgramRefusal {
+  return Object.freeze({
+    rejectionCode,
+    failedNodeId: null,
+    failedAction: null,
+    delta: Object.freeze({
+      field: "policy_identity",
+      expected: identityReading(retainedPolicyIdentity),
+      actual,
+      remedy: RETAINED_IDENTITY_REMEDY,
+    }),
+  });
+}
+
+/** One policy identity as one readable value: both halves, because either moving is a different policy. */
+function identityReading(identity: FarmhandPolicyIdentity): string {
+  return `${identity.value}@${String(identity.capabilityRevision)}`;
 }
 
 function isFarmhandPolicyIdentity(value: unknown): value is FarmhandPolicyIdentity {

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { type BodyProgramNodeCatalogue, bodyProgramPreflightRefusal } from "./body-program-preflight.js";
+import { type BodyProgramNodeCatalogue, bodyProgramPreflightRefusal, NODE_REFUSAL_DELTAS } from "./body-program-preflight.js";
 import { planActionsFromRegistrations } from "./body-program-script.js";
 import type { ActionRegistration } from "./protocol.js";
 
@@ -87,7 +87,8 @@ test("a plan-form document under a published action id cannot borrow that action
   const disguised = [node("till_soil", "n01", { loop: loopDocument({ action: "till_soil", charge: 0 }) })];
   assert.equal(
     bodyProgramPreflightRefusal(disguised, CATALOGUE),
-    "body_program_preflight_rejected:n01:till_soil:plan_form_not_declared",
+    "rejectionCode=plan_form_not_declared;node=n01;action=till_soil;field=arguments.loop;expected=none;actual=present;" +
+      "remedy=write the node as published actions - a script `for` loop over a snapshot family - not as a plan form",
   );
 });
 
@@ -100,7 +101,11 @@ test("a plan-form document under a published action id cannot borrow that action
  */
 test("an unknown action is refused by node and action, with no catalogue in the message", () => {
   const message = bodyProgramPreflightRefusal([node("brew_potion", "n03")], CATALOGUE);
-  assert.equal(message, "body_program_preflight_rejected:n03:brew_potion:unknown_action");
+  assert.equal(
+    message,
+    "rejectionCode=unknown_action;node=n03;action=brew_potion;field=actionId;expected=published;actual=brew_potion;" +
+      "remedy=use an actionId the attached Mod publishes as an action, then resubmit",
+  );
   assert.equal(
     message?.includes("allowed="),
     false,
@@ -115,8 +120,8 @@ test("a plan with more refusals than the answer carries says how many it left ou
   );
   const message = bodyProgramPreflightRefusal(nodes, CATALOGUE);
   assert.ok(message !== null);
-  assert.equal(message.split(",").length, 9, "eight refusals are listed beside the one count of the rest");
-  assert.ok(message.endsWith(",+4_more"), `the answer must say how many it left out, received ${message}`);
+  assert.equal(message.split(" | ").length, 9, "eight refusals are listed beside the one count of the rest");
+  assert.ok(message.endsWith(" | +4_more"), `the answer must say how many it left out, received ${message}`);
 });
 
 /** The same id, published by the Mod and not offered here, is a different correction and is named apart. */
@@ -127,7 +132,8 @@ test("an action the Mod publishes but this connection does not offer is named ap
   });
   assert.equal(
     bodyProgramPreflightRefusal([node("till_soil", "n02")], restricted),
-    "body_program_preflight_rejected:n02:till_soil:action_not_enabled",
+    "rejectionCode=action_not_enabled;node=n02;action=till_soil;field=actionId;expected=enabled;actual=till_soil;" +
+      "remedy=this connection does not offer that action now: re-observe and plan from what it offers",
   );
 });
 
@@ -135,13 +141,65 @@ test("an action the Mod publishes but this connection does not offer is named ap
 test("a node with no action id is refused by name instead of throwing", () => {
   assert.equal(
     bodyProgramPreflightRefusal([{ nodeId: "n01" }], CATALOGUE),
-    "body_program_preflight_rejected:n01:no_action_id:no_action_id",
+    "rejectionCode=no_action_id;node=n01;action=no_action_id;field=actionId;expected=present;actual=absent;" +
+      "remedy=name the actionId the node runs, then resubmit",
     "the node it named is still the caller's own, so only the missing action is a placeholder",
   );
   assert.equal(
     bodyProgramPreflightRefusal(["not a node"], CATALOGUE),
-    "body_program_preflight_rejected:no_node_id:no_action_id:no_action_id",
+    "rejectionCode=no_action_id;node=no_node_id;action=no_action_id;field=actionId;expected=present;actual=absent;" +
+      "remedy=name the actionId the node runs, then resubmit",
   );
+});
+
+/**
+ * THE GATE. Every refusal reason this Host can answer with names its clause, its node, its action and a remedy - and the
+ * population is the table the reasons are DECLARED in, not a list written here.
+ *
+ * <p>
+ * The compiler already forces each new reason into `NODE_REFUSAL_DELTAS`; this asks each entry the question a reader asks:
+ * does the sentence say what refused, what it refused, and what to do? A reason whose remedy is empty prose answers
+ * "refused" one more time, which is the defect the whole envelope exists for. Each clause needs its own world to fire, so
+ * the worlds are declared per reason beside it - and a reason added without one fails here by name instead of quietly
+ * leaving the population.
+ * </p>
+ */
+test("every declared node refusal names its clause, its node, its action and a remedy", () => {
+  const worlds: Readonly<Record<string, Readonly<{ nodes: readonly unknown[]; catalogue: BodyProgramNodeCatalogue }>>> =
+    Object.freeze({
+      no_action_id: Object.freeze({ nodes: [Object.freeze({ nodeId: "n07" })], catalogue: CATALOGUE }),
+      unknown_action: Object.freeze({ nodes: [node("bewildering_action", "n07")], catalogue: CATALOGUE }),
+      action_not_enabled: Object.freeze({
+        nodes: [node("till_soil", "n07")],
+        catalogue: Object.freeze({
+          visibleActionIds: Object.freeze(VISIBLE.filter((actionId) => actionId !== "till_soil")),
+          registeredActionIds: VISIBLE,
+        }),
+      }),
+      plan_form_not_declared: Object.freeze({
+        nodes: [node("till_soil", "n07", { loop: loopDocument(null) })],
+        catalogue: CATALOGUE,
+      }),
+    });
+  assert.deepEqual(
+    Object.keys(NODE_REFUSAL_DELTAS).sort(),
+    Object.keys(worlds).sort(),
+    "every clause this Host can answer with needs a world that fires it: a new reason must not arrive untested",
+  );
+  for (const reason of Object.keys(NODE_REFUSAL_DELTAS)) {
+    const world = worlds[reason];
+    assert.ok(world !== undefined, `${reason}: declared clause with no world`);
+    const message = bodyProgramPreflightRefusal(world.nodes, world.catalogue);
+    assert.ok(message !== null, `${reason}: the fixture must be refused`);
+    const fields = new Map(
+      message.split(";").map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]),
+    );
+    assert.equal(fields.get("rejectionCode"), reason, `${reason}: the clause that refused must be the code the answer carries`);
+    assert.equal(fields.get("node"), "n07", `${reason}: the answer must name the node it judged`);
+    assert.ok((fields.get("action") ?? "").length > 0, `${reason}: the answer must name the action it judged`);
+    assert.ok((fields.get("field") ?? "").length > 0, `${reason}: the answer must name the field, or say unknown`);
+    assert.ok((fields.get("remedy") ?? "").length > 0, `${reason}: a refusal the caller can act on carries a remedy`);
+  }
 });
 
 /**
@@ -149,12 +207,12 @@ test("a node with no action id is refused by name instead of throwing", () => {
  */
 test("the submission path asks this decision instead of testing a node against the catalogue inline", () => {
   const source = readFileSync(MATERIALIZER_PATH, "utf8");
-  const asked = source.indexOf("bodyProgramPreflightRefusal(request.nodes");
-  const preflight = source.indexOf("if (refusal !== null) throw new Error(refusal);");
+  const asked = source.indexOf("bodyProgramSubmissionRefusal(connection, mountedPolicy, retainedPolicyIdentity");
+  const preflight = source.indexOf("if (preflight !== null) throw new Error(preflight);");
   assert.ok(asked > 0, "the preflight must ask the declared decision");
   assert.ok(preflight > 0, "the preflight must refuse on that answer");
   const submit = source.slice(source.indexOf("const submitProgram = async"));
-  const askedBeforeSending = submit.indexOf("assertFreshBodyProgramPreflight(");
+  const askedBeforeSending = submit.indexOf("bodyProgramSubmissionRefusal(");
   const sent = submit.indexOf("port.submit(request)");
   assert.ok(askedBeforeSending > 0 && sent > 0, "the one submission path must run the preflight before it sends");
   assert.ok(askedBeforeSending < sent, "the answer must come BEFORE anything is sent to the Mod");

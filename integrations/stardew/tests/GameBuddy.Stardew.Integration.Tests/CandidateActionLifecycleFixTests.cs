@@ -65,12 +65,18 @@ public sealed class CandidateActionLifecycleFixTests
         retryResponse.Should().NotBeNull();
         retryResponse!.Payload.State.Should().Be("rejected");
         retryResponse.Payload.ReasonCode.Should().Be("world_not_ready");
-        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out FarmhandExecutionJournalRecord? record, out _).Should().BeTrue();
-        record!.Receipt.Should().NotBeNull();
+
+        // AND THE GESTURE NEVER GETS ONE: the bridge admits durably exactly a request whose action can change the world,
+        // and `FarmhandActionCatalog.ActionsThatChangeNothing` states why an emote cannot. What the retry is answered
+        // with is the in-process receipt, which is what a mismatch can neither leave behind nor hide.
+        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out _, out string completedReason).Should().BeFalse();
+        completedReason.Should().Be("receipt_not_found");
+        executions.TryGetReceipt(request.Payload.RequestId, out LocalExecutionReceipt completed).Should().BeTrue();
+        completed.State.Should().Be(ExecutionState.Rejected);
     }
 
     [Fact]
-    public void BridgeSession_FaceDirection_NativeException_ReturnsDurableTerminalUncertain()
+    public void BridgeSession_FaceDirection_NativeException_ReturnsATerminalUncertainWithoutADurableRow()
     {
         var persistence = new FakeModGlobalDataPersistence();
         var scope = CreateActorScope("face_native_exception");
@@ -106,29 +112,32 @@ public sealed class CandidateActionLifecycleFixTests
         localReceipt.State.Should().Be(ExecutionState.Uncertain);
         localReceipt.ReasonCode.Should().Be("face_direction_native_exception");
 
-        // A reopened session over the same journal replays the exact tuple as a
-        // durable Uncertain terminal with the same admission execution id; it is
-        // never a pending recovery and never a second native execution.
-        var reopened = ReopenSession(persistence, scope, "face_direction", "reopen_face_token_0123456789a");
-        reopened.Session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? replay, out string replayReason).Should().BeTrue(replayReason);
-        replayReason.Should().Be("durable_replay");
-        replay!.Payload.State.Should().Be("uncertain");
-        replay.Payload.ReasonCode.Should().Be("face_direction_native_exception");
-        replay.Payload.ExecutionId.Should().Be(response.Payload.ExecutionId);
-
-        // The durable record is a single terminal record, never duplicated.
-        reopened.Executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out FarmhandExecutionJournalRecord? record, out _).Should().BeTrue();
-        record!.Receipt.Should().NotBeNull();
-        record.Receipt!.State.Should().Be(ExecutionState.Uncertain);
-        record.Receipt.ReasonCode.Should().Be("face_direction_native_exception");
+        // A GESTURE KEEPS NO DURABLE ROW, so there is no reopened-session replay to make: what answers the caller here is
+        // the terminal receipt itself, minted with the execution id the dispatch ran under. Re-issuing the request after
+        // a crash re-faces the actor - `Character.faceDirection` writes her own facing and nothing else - which is the
+        // same visible outcome as replaying it, and that is the whole reason `ActionsThatChangeNothing` may skip the row.
+        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out _, out string durableReason).Should().BeFalse();
+        durableReason.Should().Be("receipt_not_found");
     }
 
+    /// <summary>
+    /// A HANDLER THAT THROWS AFTER A DURABLE ADMISSION still becomes one durable terminal, and a reopened session replays
+    /// it rather than calling the handler again.
+    ///
+    /// <para>
+    /// THE VEHICLE IS AN ACTION THAT CHANGES THE WORLD (`navigate_to_destination`, the one catalogue row whose declared
+    /// argument is a destination), because that is the population the bridge admits durably -
+    /// `FarmhandActionCatalog.ActionsThatChangeNothing` names the gestures it exempts and states why. The claim this file
+    /// has always made - a thrown exception is a terminal, not a pending tuple - therefore runs on a request whose
+    /// durability it is about.
+    /// </para>
+    /// </summary>
     [Fact]
     public void BridgeSession_HandlerExceptionAfterDurableAdmission_ReturnsDurableTerminalUncertain()
     {
         var persistence = new FakeModGlobalDataPersistence();
         var scope = CreateActorScope("handler_exception");
-        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "face_direction" });
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "navigate_to_destination" });
         var executions = new ExecutionManager(
             new DummyMonitor(),
             () => publication,
@@ -136,21 +145,20 @@ public sealed class CandidateActionLifecycleFixTests
             executionScope: scope);
 
         var router = new FarmhandActionRouter();
-        router.Register(
-            FarmhandActionCatalog.Registrations.Single(r => r.ActionId == "face_direction"),
-            new ThrowingActionHandler());
+        router.Register(FarmhandActionCatalog.Registrations.Single(r => r.ActionId == "navigate_to_destination"), new ThrowingActionHandler());
 
         const string token = "handler_exception_token_0123456";
         var session = new BridgeSession(executions, router, scope, token, () => publication);
         session.TryAuthenticate(1, CreateHelloEnvelope(scope, token), out _, out string authReason).Should().BeTrue(authReason);
 
-        long deadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30_000;
+        long deadlineMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            + Math.Max(1_000, FarmhandActionDeadlineAdmission.WindowMs("navigate_to_destination") / 2);
         var request = CreateExecEnvelope(
             scope,
             "req_handler_exception",
             "idemp_handler_exception",
-            "face_direction",
-            new BridgeExecutionArgs { Direction = "up" },
+            "navigate_to_destination",
+            new BridgeExecutionArgs { Destination = new BridgeNavigationDestinationSelector("label", "Farm", null) },
             deadlineMs);
 
         session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? response, out string reason).Should().BeTrue(reason);
@@ -164,10 +172,10 @@ public sealed class CandidateActionLifecycleFixTests
         localReceipt.ReasonCode.Should().Be("handler_exception");
         localReceipt.ExecutionId.Should().Be(response.Payload.ExecutionId);
 
-        // The exception happened after candidate admission. A reopened session
-        // must therefore replay one durable terminal, not expose a pending tuple
-        // or invoke the handler a second time.
-        var reopened = ReopenSession(persistence, scope, "face_direction", "reopen_handler_exception_token");
+        // The exception happened after a durable admission. A reopened session must
+        // therefore replay one durable terminal, not expose a pending tuple or invoke
+        // the handler a second time.
+        var reopened = ReopenSession(persistence, scope, "navigate_to_destination", "reopen_handler_exception_token");
         reopened.Session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? replay, out string replayReason).Should().BeTrue(replayReason);
         replayReason.Should().Be("durable_replay");
         replay!.Payload.State.Should().Be("uncertain");
@@ -180,8 +188,25 @@ public sealed class CandidateActionLifecycleFixTests
         record.Receipt.ReasonCode.Should().Be("handler_exception");
     }
 
+    /// <summary>
+    /// ONE TERMINAL FOR ONE GESTURE, AND ITS REPLAY IS IN-PROCESS.
+    ///
+    /// <para>
+    /// The native half is unchanged and still proven rather than guessed: `Farmer.doEmote` is a field write behind
+    /// `!Game1.eventUp &amp;&amp; !isEmoting`, both guards are read before the call, and the receipt says exactly what
+    /// happened.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT CHANGED IS WHERE THE RETRY IS ANSWERED FROM. An emote is in `ActionsThatChangeNothing`, so it keeps no
+    /// durable execution row (that is the fix `round99`'s 70 ms gesture paid for): the receipt lives in the process
+    /// ledger, and a retry of the same request is the same execution because of it. The assertion therefore moved from
+    /// `durable_replay` on a reopened session to `idempotent_replay` on the live one - re-executing this gesture after a
+    /// crash re-arms the same balloon, which is the same visible outcome as replaying it.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void BridgeSession_ExpressEmote_NativeDispatchAlwaysTerminal_AndReplayIsDurable()
+    public void BridgeSession_ExpressEmote_NativeDispatchAlwaysTerminal_AndTheRetryIsAnsweredInProcess()
     {
         var persistence = new FakeModGlobalDataPersistence();
         var scope = CreateActorScope("emote_unproven");
@@ -216,14 +241,18 @@ public sealed class CandidateActionLifecycleFixTests
         response.Payload.ReasonCode.Should().Be("emote_started");
         response.Payload.ExecutionId.Should().NotBeNullOrEmpty();
 
-        // A reopened session over the same journal replays the exact tuple as the
-        // same durable terminal with the same admission execution id.
-        var reopened = ReopenSession(persistence, scope, "express_emote", "reopen_emote_token_012345678");
-        reopened.Session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? replay, out string replayReason).Should().BeTrue(replayReason);
-        replayReason.Should().Be("durable_replay");
+        // A retry of the same request on the live session is answered from the ledger: one execution, one terminal, and
+        // no second balloon.
+        session.TryExecute(1, request, out BridgeEnvelope<BridgeReceipt>? replay, out string replayReason).Should().BeTrue(replayReason);
+        replayReason.Should().Be("idempotent_replay");
         replay!.Payload.State.Should().Be(response.Payload.State);
         replay.Payload.ReasonCode.Should().Be(response.Payload.ReasonCode);
         replay.Payload.ExecutionId.Should().Be(response.Payload.ExecutionId);
+
+        // AND NOTHING DURABLE WAS EVER WRITTEN FOR IT, which is what makes the gesture cheap: the journal is untouched by
+        // this action (`InstantGestureGameThreadCostTests` proves it on the persistence boundary).
+        executions.TryGetDurableAdmission(request.Payload.RequestId, request.Payload.IdempotencyKey, out _, out string durableReason).Should().BeFalse();
+        durableReason.Should().Be("receipt_not_found");
     }
 
     [Fact]

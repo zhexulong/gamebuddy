@@ -143,7 +143,6 @@ public sealed class TileTargetRefusalNamesItsClauseTests
     [InlineData("no_crop", "crop_target_unavailable")]
     [InlineData("crop_needs_no_water", "crop_target_unavailable")]
     [InlineData("crop_already_watered", "crop_target_unavailable")]
-    [InlineData("target_id_changed", "crop_target_changed")]
     public void AWaterCropRefusalNamesItsClause(string clause, string code)
     {
         using var world = TargetFamilyWorld.Create();
@@ -160,9 +159,6 @@ public sealed class TileTargetRefusalNamesItsClauseTests
             case "crop_already_watered":
                 world.PlaceWaterableCrop(TileX, TileY).state.Value = 1;
                 break;
-            case "target_id_changed":
-                world.PlaceWaterableCrop(TileX, TileY);
-                break;
         }
 
         LocalExecutionReceipt receipt = world.NewExecutionManager("water_crop")
@@ -173,6 +169,30 @@ public sealed class TileTargetRefusalNamesItsClauseTests
         NamesItsClause(receipt, clause);
     }
 
+    /// <summary>
+    /// A STATED ID THAT NO LONGER MATCHES IS STILL REFUSED, AND ITS CODE CARRIES BOTH IDS. The two are apart on purpose:
+    /// `crop_target_unavailable` above says the tile cannot be watered, while this says the crop standing there is not the
+    /// one the request named - and the caller's repair is to look again rather than to retry the address. The identity is
+    /// asked LAST, after the tile's own clauses, so this row needs a tile that passes all of them.
+    /// </summary>
+    [Fact]
+    public void AWaterCropRefusalOnAChangedIdentityNamesBothIds()
+    {
+        const string Stated = "crop_not_the_one_the_tile_holds";
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PlaceWaterableCrop(TileX, TileY);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("water_crop")
+            .RequestLocalWaterCrop("req_water_target_id_changed", TileX, TileY, Stated, 0, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected, $"the gate refuses before the walk (evidence: {receipt.Evidence})");
+        receipt.ReasonCode.Should().StartWith(
+            $"water_crop_target_changed:{Stated}:",
+            "the code names the identity that was asked for and the one the tile holds");
+        NamesItsClause(receipt, "target_id_changed");
+    }
+
     // ---- harvest_crop -------------------------------------------------------------------------------------------
 
     [Theory]
@@ -181,7 +201,6 @@ public sealed class TileTargetRefusalNamesItsClauseTests
     [InlineData("crop_is_forage", "harvest_target_unavailable")]
     [InlineData("crop_not_ready", "harvest_target_unavailable")]
     [InlineData("harvest_method_not_grab", "harvest_target_unavailable")]
-    [InlineData("target_id_changed", "harvest_target_unavailable")]
     public void AHarvestCropRefusalNamesItsClause(string clause, string code)
     {
         using var world = TargetFamilyWorld.Create();
@@ -202,9 +221,6 @@ public sealed class TileTargetRefusalNamesItsClauseTests
                 world.PlaceCropWithData(TileX, TileY, ScytheCropSeed, raised: false, fullyGrown: true);
                 Game1.cropData![ScytheCropSeed].HarvestMethod = StardewValley.GameData.Crops.HarvestMethod.Scythe;
                 break;
-            case "target_id_changed":
-                world.PlaceHarvestableCrop(TileX, TileY);
-                break;
         }
 
         LocalExecutionReceipt receipt = world.NewExecutionManager("harvest_crop")
@@ -213,6 +229,29 @@ public sealed class TileTargetRefusalNamesItsClauseTests
         receipt.State.Should().Be(ExecutionState.Rejected, $"the gate refuses before the walk (evidence: {receipt.Evidence})");
         receipt.ReasonCode.Should().Be(code);
         NamesItsClause(receipt, clause);
+    }
+
+    /// <summary>
+    /// THE SAME TWO SIDES AS `water_crop`: a stated id names a particular crop, and a tile holding another one answers
+    /// `<action>_target_changed:<expected>:<found>` rather than the unavailable code, because the tile IS harvestable and
+    /// the crop in it is simply not the one the request meant.
+    /// </summary>
+    [Fact]
+    public void AHarvestCropRefusalOnAChangedIdentityNamesBothIds()
+    {
+        const string Stated = "crop_not_the_one_the_tile_holds";
+        using var world = TargetFamilyWorld.Create();
+        world.StandAt(TileX - 1, TileY);
+        world.PlaceHarvestableCrop(TileX, TileY);
+
+        LocalExecutionReceipt receipt = world.NewExecutionManager("harvest_crop")
+            .RequestLocalHarvestCrop("req_harvest_target_id_changed", TileX, TileY, "(O)24", Stated, Deadline());
+
+        receipt.State.Should().Be(ExecutionState.Rejected, $"the gate refuses before the walk (evidence: {receipt.Evidence})");
+        receipt.ReasonCode.Should().StartWith(
+            $"harvest_crop_target_changed:{Stated}:",
+            "the code names the identity that was asked for and the one the tile holds");
+        NamesItsClause(receipt, "target_id_changed");
     }
 
     // ---- fertilize_tile -----------------------------------------------------------------------------------------

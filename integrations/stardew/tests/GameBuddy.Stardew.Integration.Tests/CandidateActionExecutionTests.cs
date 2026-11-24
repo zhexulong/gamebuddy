@@ -173,8 +173,15 @@ public sealed class CandidateActionExecutionTests
         reason4.Should().Be("invalid_execution_request");
     }
 
+    /// <summary>
+    /// A RESPONSE LOSS ON AN ACTION THAT CHANGES THE WORLD IS RECOVERED FROM THE JOURNAL, AND THE OBSERVATION SURVIVES IT.
+    /// Both recovery paths are asserted - the exact-tuple query and the re-dispatch - because a Host that lost the first
+    /// response may use either. The vehicle is `cut_weeds` (via the navigation ingress' admission) because a gesture
+    /// keeps no durable row: that exemption and its cost are pinned in
+    /// <see cref="AReplayedGestureIsAnsweredFromTheProcessLedgerNotTheJournal"/>.
+    /// </summary>
     [Fact]
-    public void BridgeSession_ExpressEmote_DurableResponseLossRecovery_RestoresObservation()
+    public void BridgeSession_WorldChange_DurableResponseLossRecovery_RestoresObservation()
     {
         var persistence = new FakeModGlobalDataPersistence();
         var scope = CreateScope("recovery_emote");
@@ -184,8 +191,8 @@ public sealed class CandidateActionExecutionTests
             scope,
             "req_loss_emote",
             "idemp_loss_emote",
-            "express_emote",
-            FarmhandCanonicalRequest.EmoteRequest("express_emote", "happy"),
+            "navigate_to_destination",
+            FarmhandCanonicalRequest.NavigationDestination("navigate_to_destination", "label", "Farm", null),
             ExpectedRevision: 0,
             DeadlineMs: deadlineMs,
             ExecutionId: "exec_loss_emote");
@@ -199,21 +206,20 @@ public sealed class CandidateActionExecutionTests
             admission.RequestId,
             admission.ActionId,
             ExecutionState.Succeeded,
-            "emote_started",
+            "arrived_at_destination",
             Revision: 1,
-            Evidence: "emote=happy",
+            Evidence: "destination=label:Farm;arrived=true",
             Observation: observation)).Code.Should().Be(FarmhandExecutionJournalResultCode.Succeeded);
 
         // Reopened fresh session after crash / response-loss
-        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "express_emote" });
+        var publication = FarmhandCapabilityPublication.Initial(new HashSet<string>(StringComparer.Ordinal) { "navigate_to_destination" });
         var executions = new ExecutionManager(
             new DummyMonitor(),
             () => publication,
             executionJournal: new FarmhandExecutionJournal(persistence),
             executionScope: scope);
 
-        var router = new FarmhandActionRouter();
-        router.Register(FarmhandActionCatalog.Registrations.Single(r => r.ActionId == "express_emote"), new ExpressionActionHandler(executions));
+        var router = ModEntry.CreateFarmhandActionRouter(executions);
 
         const string token = "recovery_emote_token_0123456789a";
         var session = new BridgeSession(executions, router, scope, token, () => publication);
@@ -234,14 +240,21 @@ public sealed class CandidateActionExecutionTests
         queryResponse!.Payload.Should().NotBeNull();
         queryResponse.Payload.RequestId.Should().Be(admission.RequestId);
         queryResponse.Payload.ExecutionId.Should().Be(admission.ExecutionId);
-        queryResponse.Payload.ActionId.Should().Be("express_emote");
+        queryResponse.Payload.ActionId.Should().Be("navigate_to_destination");
         queryResponse.Payload.State.Should().Be("succeeded");
-        queryResponse.Payload.ReasonCode.Should().Be("emote_started");
+        queryResponse.Payload.ReasonCode.Should().Be("arrived_at_destination");
         queryResponse.Payload.Observation.Should().NotBeNull();
         queryResponse.Payload.Observation.Should().BeEquivalentTo(observation);
 
         // 2. Recover via TryExecute replay
-        var replayRequest = CreateExecEnvelope(scope, admission.RequestId, admission.IdempotencyKey, "express_emote", new BridgeExecutionArgs { Emote = "happy" }, deadlineMs, 0);
+        var replayRequest = CreateExecEnvelope(
+            scope,
+            admission.RequestId,
+            admission.IdempotencyKey,
+            "navigate_to_destination",
+            new BridgeExecutionArgs { Destination = new BridgeNavigationDestinationSelector("label", "Farm", null) },
+            deadlineMs,
+            0);
         session.TryExecute(1, replayRequest, out BridgeEnvelope<BridgeReceipt>? replayResponse, out string replayReason).Should().BeTrue(replayReason);
         replayReason.Should().Be("durable_replay");
         replayResponse.Should().NotBeNull();
@@ -249,8 +262,20 @@ public sealed class CandidateActionExecutionTests
         replayResponse.Payload.Observation.Should().BeEquivalentTo(observation);
     }
 
+    /// <summary>
+    /// A GESTURE'S RESPONSE LOSS HAS NOTHING DURABLE TO RECOVER FROM, AND THAT IS THE DECLARED COST OF ITS EXEMPTION.
+    ///
+    /// <para>
+    /// `FarmhandActionCatalog.ActionsThatChangeNothing` names `face_direction` and states why it cannot change the world,
+    /// so the bridge neither writes nor reads a durable row for it: re-issuing the request re-faces the actor, which is
+    /// the same visible outcome as replaying it. Two facts pin the boundary. A row that DOES exist for this tuple - from
+    /// an older build, or written by another action's ingress - is still answered by the exact-tuple query, because that
+    /// read is action-agnostic. And the re-dispatch no longer consults such a row: it answers `accepted` (a new dispatch),
+    /// never `durable_replay`.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void BridgeSession_FaceDirection_DurableResponseLossRecovery_RestoresObservation()
+    public void AReplayedGestureIsAnsweredFromTheProcessLedgerNotTheJournal()
     {
         var persistence = new FakeModGlobalDataPersistence();
         var scope = CreateScope("recovery_face");
@@ -311,12 +336,13 @@ public sealed class CandidateActionExecutionTests
         queryResponse.Payload.Observation!.Facing.Should().Be(2);
         queryResponse.Payload.ReasonCode.Should().Be("actor_facing_matches");
 
-        // Replay execution
+        // Replay execution: a GESTURE is dispatched, not replayed from the journal, because it keeps no durable row.
         var replay = CreateExecEnvelope(scope, admission.RequestId, admission.IdempotencyKey, "face_direction", new BridgeExecutionArgs { Direction = "down" }, deadlineMs, 0);
         session.TryExecute(1, replay, out BridgeEnvelope<BridgeReceipt>? replayResponse, out string replayReason).Should().BeTrue(replayReason);
-        replayReason.Should().Be("durable_replay");
-        replayResponse!.Payload.Observation.Should().NotBeNull();
-        replayResponse.Payload.Observation!.Facing.Should().Be(2);
+        replayReason.Should().NotBe(
+            "durable_replay",
+            "`face_direction` is in ActionsThatChangeNothing, so the journal row above is not what answers a dispatch");
+        replayResponse.Should().NotBeNull();
     }
 
     private static BridgeScope CreateScope(string suffix) => new(

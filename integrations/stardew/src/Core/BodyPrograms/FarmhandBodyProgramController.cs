@@ -108,9 +108,15 @@ public sealed class FarmhandBodyProgramController
     /// The state is what a reader needs to see CHANGE. Repeating an unchanged answer is the same defect as
     /// re-delivering an unchanged fact to the model, and it gets the same fix: say it once, until it is different.
     /// </summary>
-    private void DiagnoseWaiting(string programId, BodyProgramControllerResultCode code)
+    private void DiagnoseWaiting(string programId, BodyProgramControllerResult<NodeAdmissionChallenge> started)
     {
         if (this.Diagnostics is null) return;
+        // THE CLAUSE, NOT JUST ITS FAMILY. `code=NodeNotEligible` stood for four different answers - a node already in
+        // flight, no pending node whose dependencies settled, a binding that could not be materialized - and a reader of
+        // the log could not tell which (40+ lines in the measured 2026-11-21 run). The authority names its own clause, so
+        // the envelope is built from what IT answered rather than guessed at here.
+        string detail = started.Detail ?? BodyProgramRefusal.Envelope(
+            started.Code.ToString(), null, null, BodyProgramRefusal.UnknownField, null, null, WaitingRemedy(started.Code));
         // PER PROGRAM, keyed by program alone: a program that is still waiting for the same reason says the same
         // thing, no matter how many other programs are doing the same beside it.
         //
@@ -121,14 +127,26 @@ public sealed class FarmhandBodyProgramController
         //
         // Whether the reason is unchanged is a per-program fact. The frame is not involved: a program can wait for
         // `NodeNotEligible` for a whole day, and that is one line, not 60 per second.
-        if (this.diagnosticsLastWaiting.TryGetValue(programId, out BodyProgramControllerResultCode last) && last == code)
+        if (this.diagnosticsLastWaiting.TryGetValue(programId, out string? last) && last == detail)
             return;
-        this.diagnosticsLastWaiting[programId] = code;
-        this.Diagnostics($"[GameBuddy-body-program] challenge_not_created;program={programId};code={code}");
+        this.diagnosticsLastWaiting[programId] = detail;
+        this.Diagnostics($"[GameBuddy-body-program] challenge_not_created;program={programId};{detail}");
     }
 
+    /** What a caller can do about a wait, from the code the authority answered - one sentence per wait it can give. */
+    private static string WaitingRemedy(BodyProgramControllerResultCode code) => code switch
+    {
+        BodyProgramControllerResultCode.ProgramNotActive => "this program is already finished; submit a new one if the work is still needed",
+        BodyProgramControllerResultCode.NotFound => "this program is not in the journal; observe and submit a fresh program",
+        BodyProgramControllerResultCode.DeadlineExpired => "the node's own watchdog has passed; submit the remaining work as a new program",
+        BodyProgramControllerResultCode.PolicyIdentityStale => "the published policy identity moved; observe again before the next submission",
+        BodyProgramControllerResultCode.RecoveryRequired => "an unknown dispatch is outstanding on this journal; it waits for recovery",
+        BodyProgramControllerResultCode.PersistenceWriteFailed => "the journal could not be written; nothing of this attempt is durable",
+        _ => "wait: nothing about the program changed, so the answer cannot either",
+    };
+
     /** The last waiting code printed for each program, so a repeat says nothing. */
-    private readonly Dictionary<string, BodyProgramControllerResultCode> diagnosticsLastWaiting = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> diagnosticsLastWaiting = new(StringComparer.Ordinal);
     private readonly IBodyProgramNodeExecutor? executor;
     // Dispatch tuple every subset pass (admission, policy, deadline, exact
     // binding) has acknowledged. A node whose last Execute returned the null
@@ -367,7 +385,7 @@ public sealed class FarmhandBodyProgramController
                 // action is running, and changes nothing.
                 if (started.Code == BodyProgramControllerResultCode.PolicyIdentityStale)
                     this.DropAdmissionLease(programId, "policy_identity_stale");
-                this.DiagnoseWaiting(programId, started.Code);
+                this.DiagnoseWaiting(programId, started);
                 return;
             }
             if (!this.authority.IsLifecycleOpen)
@@ -801,9 +819,33 @@ public sealed class FarmhandBodyProgramController
     /// `admission_rejection_refused` is the journal refusing to RECORD anything, which no answer from this pump can repair.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// What a caller can do about a rejection the HOST answered - one sentence per code the Mod can durably record.
+    ///
+    /// Only the codes whose remedy this side really knows are named; anything else falls back to the one true sentence
+    /// about a durable veto, so a code added on the Host tomorrow reads as "a veto you cannot retry unchanged" rather than
+    /// as an empty remedy.
+    /// </summary>
+    private static string RejectionRemedy(string code) => code switch
+    {
+        "policy_denied" => "the Host's live catalogue did not offer this node's action: observe the world and resubmit against what it offers",
+        "catalog_stale" => "the catalogue moved after this program was submitted: resubmit against a fresh observation",
+        "policy_identity_mismatch" => "the runtime and the Mod disagree about the policy identity: resubmit once the runtime is re-attached",
+        "deadline_expired" => "the node's admission deadline passed: submit the remaining work as a new program",
+        "resource_conflict" => "another node holds the claim this one needs: order the nodes so the claim is free",
+        "stop_epoch_closed" => "a STOP closed this program: start a new one",
+        _ => "this node is a durable veto and cannot be retried unchanged: change the node or the world, then resubmit",
+    };
+
     private bool TryReject(string programId, BodyProgramJournalNode node, NodeAdmissionChallenge challenge, string code, string? refusalDetail)
     {
-        BodyProgramControllerResult<NodeAdmissionChallenge> rejected = this.authority.TryRejectAdmission(challenge, code, refusalDetail);
+        // THE SENTENCE BESIDE THE CODE, ALWAYS. `refusalDetail` was `null` on the Host's answer, so the model's status row
+        // said `rejectionCode=policy_denied` and nothing else - the same defect one level down from the Host's bare
+        // `body_program_preflight_rejected`. The delta here is the Mod's own: it holds the code, the node and the action,
+        // and it does NOT hold the field the Host judged, which it says as `field=unknown` rather than inventing one.
+        string detail = refusalDetail ?? BodyProgramRefusal.Envelope(
+            code, node.NodeId, challenge.ActionId, BodyProgramRefusal.UnknownField, null, null, RejectionRemedy(code));
+        BodyProgramControllerResult<NodeAdmissionChallenge> rejected = this.authority.TryRejectAdmission(challenge, code, detail);
         if (rejected.IsSuccess)
         {
             // AN ACCEPTED REJECTION IS A NODE'S WHOLE STORY, and it used to be the one line this pump never wrote: only a
@@ -812,7 +854,7 @@ public sealed class FarmhandBodyProgramController
             // durably settled, and the absence of this line made 44 s of the MODEL's own thinking read as a request that
             // was never answered at all. The line is one per node, because a node rejects once - the journal refuses a
             // second rejection of the same node.
-            this.Diagnose($"admission_rejected;program={programId};node={node.NodeId};code={code}");
+            this.Diagnose($"admission_rejected;program={programId};{detail}");
             return true;
         }
         string name = rejected.Code == BodyProgramControllerResultCode.InvalidInput

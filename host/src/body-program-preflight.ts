@@ -15,8 +15,13 @@ import { isRecord } from "./protocol-target-facts.js";
  * <p>
  * THE REFUSAL NAMES THE NODE, NEVER THE CATALOGUE. The message this replaced appended every allowed id - 100+ of them,
  * 1.5 KB - to a refusal that named no node and no reason, so the caller paid tokens for a list it could not act on and
- * retried the same shape. Three classes are named apart because each needs a different correction: an id the Mod
- * publishes nowhere, an id this connection does not offer, and a node carrying a form this Host does not declare.
+ * retried the same shape. Four classes are named apart because each needs a different correction: an id the Mod
+ * publishes nowhere, an id this connection does not offer, a node carrying a form this Host does not declare, and a node
+ * carrying no action at all.
+ * </p>
+ * <p>
+ * EVERY REFUSAL IS ONE ENVELOPE (`BodyProgramRefusal`): the clause, the node and action it was about, and the delta the
+ * clause compared. A bare code is what this product paid a live run to learn not to answer with.
  * </p>
  * <p>
  * THE SAME DECISION ANSWERS ADMISSION. `refusalsForNode` is the only implementation of "may this node be a member of a
@@ -50,6 +55,65 @@ type NodeRefusal = Readonly<{
 }>;
 
 /**
+ * One refusal, in the shape every layer of this product answers with.
+ *
+ * <p>
+ * A CODE ALONE IS WHAT COST THE RUN. `body_program_preflight_rejected` with nothing after it, and `policy_denied`
+ * settling a node for a reason the refusing layer had in hand: in both, the answer carried the word "refused" and the
+ * companion could only conclude that batching does not work - which is what it did, falling back to single steps.
+ * </p>
+ * <p>
+ * EVERY FIELD IS THE REFUSING LAYER'S OWN. `field`, `expected` and `actual` state the comparison that was made; a layer
+ * that refused without comparing one says `field=unknown` and lets `rejectionCode` name the clause - it never invents a
+ * value it does not hold. `failedNodeId`/`failedAction` are `null` only where the clause refused the connection rather
+ * than a node, which the renderer states as `node=none` instead of leaving a reader to guess.
+ * </p>
+ */
+export type BodyProgramRefusal = Readonly<{
+  /** The clause that refused: one closed name, never prose. */
+  rejectionCode: string;
+  /** The node this clause refused, or `null` when it refused the connection rather than one node. */
+  failedNodeId: string | null;
+  /** That node's action, or `null` for the same reason. */
+  failedAction: string | null;
+  delta: Readonly<{
+    /** The field the clause compared, or `unknown` when it compared none it can name. */
+    field: string;
+    /** This layer's own reading of it, or `null` when it holds none. */
+    expected: string | null;
+    /** What it read instead, or `null` when it holds none. */
+    actual: string | null;
+    /** What the caller can change to make the clause pass. */
+    remedy: string;
+  }>;
+}>;
+
+/** The one word for "this clause compared no field it can name". */
+export const UNKNOWN_REFUSAL_FIELD = "unknown";
+
+/** The one word for a side of the delta this layer holds no value for. */
+const NO_VALUE = "none";
+
+/**
+ * One refusal as one sentence, in ONE spelling, so a reader never has to work out which layer answered.
+ *
+ * This is what the Host's own `Error` messages carry, and it is the sentence the Mod writes beside a settled node's
+ * `rejectionCode`: one list of `key=value` pairs on both surfaces, because "which of the four refusals am I looking at"
+ * is a question the companion should never have to ask.
+ */
+export function bodyProgramRefusalText(refusal: BodyProgramRefusal): string {
+  return [
+    `rejectionCode=${refusal.rejectionCode}`,
+    `node=${refusal.failedNodeId ?? NO_VALUE}`,
+    `action=${refusal.failedAction ?? NO_VALUE}`,
+    `field=${refusal.delta.field}`,
+    `expected=${refusal.delta.expected ?? NO_VALUE}`,
+    `actual=${refusal.delta.actual ?? NO_VALUE}`,
+    `remedy=${refusal.delta.remedy}`,
+  ].join(";");
+}
+
+/**
  * How many refusals one answer carries back.
  *
  * A plan may name 256 nodes, so the list is a bounded diagnostic and the count is not: the same rule the plan compiler's
@@ -72,7 +136,66 @@ const NO_ACTION_ID = "no_action_id";
  */
 const LOOP_ARGUMENT = "loop";
 
-const REFUSAL_PREFIX = "body_program_preflight_rejected";
+/**
+ * What each clause's delta states, from the node this Host judged and from nothing else.
+ *
+ * `field` is what the refusal was ABOUT, `actual` the reading that made it fire, `expected` the side the node would have
+ * had to be on. None of the three is a value this layer does not hold: the node's action id and the presence of a form
+ * document are the whole evidence for these four clauses.
+ *
+ * <p>
+ * THE KEYS ARE THE POPULATION. The type forces every refusal reason into this table, and `body-program-preflight.test.ts`
+ * asks the table - not a hand-written list - whether each one answers with a clause, a node, an action and a remedy, so a
+ * reason added tomorrow cannot arrive with prose missing.
+ * </p>
+ */
+export const NODE_REFUSAL_DELTAS: Readonly<
+  Record<
+    NodeRefusalReason,
+    Readonly<{ field: string; expected: string | null; actual: (actionId: string) => string; remedy: string }>
+  >
+> = Object.freeze({
+  no_action_id: Object.freeze({
+    field: "actionId",
+    expected: "present",
+    actual: () => "absent",
+    remedy: "name the actionId the node runs, then resubmit",
+  }),
+  unknown_action: Object.freeze({
+    field: "actionId",
+    expected: "published",
+    actual: (actionId: string) => actionId,
+    remedy: "use an actionId the attached Mod publishes as an action, then resubmit",
+  }),
+  action_not_enabled: Object.freeze({
+    field: "actionId",
+    expected: "enabled",
+    actual: (actionId: string) => actionId,
+    remedy: "this connection does not offer that action now: re-observe and plan from what it offers",
+  }),
+  plan_form_not_declared: Object.freeze({
+    field: `arguments.${LOOP_ARGUMENT}`,
+    expected: NO_VALUE,
+    actual: () => "present",
+    remedy: "write the node as published actions - a script `for` loop over a snapshot family - not as a plan form",
+  }),
+});
+
+/** One node's refusal in the envelope's shape, built from the decision and nothing else. */
+function bodyProgramNodeRefusal(node: NodeRefusal): BodyProgramRefusal {
+  const rule = NODE_REFUSAL_DELTAS[node.reason];
+  return Object.freeze({
+    rejectionCode: node.reason,
+    failedNodeId: node.nodeId,
+    failedAction: node.actionId,
+    delta: Object.freeze({
+      field: rule.field,
+      expected: rule.expected,
+      actual: rule.actual(node.actionId),
+      remedy: rule.remedy,
+    }),
+  });
+}
 
 /**
  * The refusal for the nodes that may not be submitted, or `null` when every node may.
@@ -87,14 +210,11 @@ export function bodyProgramPreflightRefusal(nodes: unknown, catalogue: BodyProgr
   const refusals: NodeRefusal[] = [];
   for (const node of nodes) refusals.push(...nodeRefusals(node, visible, registered));
   if (refusals.length === 0) return null;
-  const shown = refusals.slice(0, MAX_REPORTED_NODE_REFUSALS).map(refusalText);
+  const shown = refusals
+    .slice(0, MAX_REPORTED_NODE_REFUSALS)
+    .map((refusal) => bodyProgramRefusalText(bodyProgramNodeRefusal(refusal)));
   const omitted = refusals.length - shown.length;
-  return `${REFUSAL_PREFIX}:${shown.join(",")}${omitted === 0 ? "" : `,+${String(omitted)}_more`}`;
-}
-
-/** One refusal as `node:action:reason`. */
-function refusalText(refusal: NodeRefusal): string {
-  return [refusal.nodeId, refusal.actionId, refusal.reason].join(":");
+  return `${shown.join(" | ")}${omitted === 0 ? "" : ` | +${String(omitted)}_more`}`;
 }
 
 /**

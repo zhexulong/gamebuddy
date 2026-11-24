@@ -470,8 +470,44 @@ public interface IBodyProgramJournalStore
 }
 public enum BodyProgramJournalOpenStatus { Empty, Opened, RecoveryRequired, Corrupt, PersistenceReadFailed, PersistenceWriteFailed }
 public enum BodyProgramControllerResultCode { Succeeded, NotFound, InvalidInput, ProgramNotActive, NodeNotEligible, PolicyIdentityStale, GrantMismatch, ExecutionBindingMismatch, FactProvenanceMismatch, InvalidFact, TerminalProofMissing, RecoveryRequired, PersistenceWriteFailed, DeadlineExpired }
-public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }
-public static class BodyProgramControllerResult { public static BodyProgramControllerResult<T> Success<T>(T value) where T : class => new(BodyProgramControllerResultCode.Succeeded, value); public static BodyProgramControllerResult<T> Failure<T>(BodyProgramControllerResultCode code) where T : class => new(code, null); }
+public readonly record struct BodyProgramControllerResult<T>(BodyProgramControllerResultCode Code, T? Value, string? Detail = null) where T : class { public bool IsSuccess => this.Code == BodyProgramControllerResultCode.Succeeded && this.Value is not null; }
+public static class BodyProgramControllerResult { public static BodyProgramControllerResult<T> Success<T>(T value) where T : class => new(BodyProgramControllerResultCode.Succeeded, value); public static BodyProgramControllerResult<T> Failure<T>(BodyProgramControllerResultCode code, string? detail = null) where T : class => new(code, null, detail); }
+
+/// <summary>
+/// ONE REFUSAL, ONE SPELLING: the clause, the node it refused, that node's action, and the delta the clause compared.
+///
+/// <para>
+/// WHY IT IS A SHAPE AND NOT A CODE. This pump answered `challenge_not_created;program=…;code=NodeNotEligible` 40+ times in
+/// one measured run (2026-11-21) and the code stood for four different clauses - a node already in flight, no pending node
+/// whose dependencies settled, a binding that could not be materialized, and a program that is not active. A reader could
+/// not tell which, and the companion was never told anything at all: it saw a program that simply did not start.
+/// </para>
+/// <para>
+/// EVERY FIELD IS THE REFUSING LAYER'S OWN. `field`/`expected`/`actual` state the comparison that was made, and a layer
+/// that refused without comparing a field it can name passes `UnknownField` and lets the code carry the clause - it never
+/// invents a value. The spelling is the Host's (`bodyProgramRefusalText`), deliberately: the companion reads a refusal from
+/// either end of the bridge, and one spelling means it never has to work out which end answered.
+/// </para>
+/// </summary>
+internal static class BodyProgramRefusal
+{
+    /// <summary>The word for "this clause compared no field it can name".</summary>
+    internal const string UnknownField = "unknown";
+
+    /// <summary>The word for a side of the delta this layer holds no value for.</summary>
+    private const string NoValue = "none";
+
+    internal static string Envelope(string rejectionCode, string? nodeId, string? actionId, string field, string? expected, string? actual, string remedy) => string.Join(";", new[]
+    {
+        $"rejectionCode={rejectionCode}",
+        $"node={nodeId ?? NoValue}",
+        $"action={actionId ?? NoValue}",
+        $"field={field}",
+        $"expected={expected ?? NoValue}",
+        $"actual={actual ?? NoValue}",
+        $"remedy={remedy}",
+    });
+}
 
 /// <summary>
 /// The node a program would start next: the journal's node id, and the CATALOG action it runs.

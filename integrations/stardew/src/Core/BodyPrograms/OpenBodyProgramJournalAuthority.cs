@@ -397,7 +397,7 @@ public sealed class OpenBodyProgramJournalAuthority
     public BodyProgramControllerResult<NodeAdmissionChallenge> TryCreateAdmissionChallenge(string programId)
     {
         BodyProgramControllerResult<BodyProgramStartCandidate> selected = this.SelectStartCandidate(programId);
-        if (!selected.IsSuccess) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(selected.Code);
+        if (!selected.IsSuccess) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(selected.Code, selected.Detail);
         BodyProgramStartCandidate start = selected.Value!;
         BodyProgramJournalProgram program = start.Program;
         BodyProgramJournalNode node = start.Node;
@@ -413,7 +413,10 @@ public sealed class OpenBodyProgramJournalAuthority
         // durable journal and the bound canonical arguments are materialized from
         // them. A declared binding that cannot be resolved fails closed here.
         IReadOnlyDictionary<string, BodyProgramCanonicalValue>? materialized = MaterializedArguments(program, descriptor);
-        if (materialized is null) return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible);
+        if (materialized is null)
+            return BodyProgramControllerResult.Failure<NodeAdmissionChallenge>(BodyProgramControllerResultCode.NodeNotEligible,
+                BodyProgramRefusal.Envelope("binding_unresolved", node.NodeId, descriptor.ActionId, "binding", "materialized", "unresolved",
+                    "an argument bound to an earlier node's fact could not be materialized from the journal: re-observe and resubmit"));
         int nodeAttempt = node.NodeAttempt + 1;
         int admissionAttempt = node.AdmissionAttempt + 1;
         BodyProgramJournalNode changed = node with
@@ -457,7 +460,7 @@ public sealed class OpenBodyProgramJournalAuthority
         BodyProgramControllerResult<BodyProgramStartCandidate> selected = this.SelectStartCandidate(programId);
         return selected.IsSuccess
             ? BodyProgramControllerResult.Success(new BodyProgramNextNode(selected.Value!.Node.NodeId, selected.Value!.Descriptor.ActionId))
-            : BodyProgramControllerResult.Failure<BodyProgramNextNode>(selected.Code);
+            : BodyProgramControllerResult.Failure<BodyProgramNextNode>(selected.Code, selected.Detail);
     }
 
     /// <summary>
@@ -506,13 +509,46 @@ public sealed class OpenBodyProgramJournalAuthority
         // (no edge between them, no shared claim) minted a challenge for each in one tick. The two edges this program now
         // has are about ORDERING; the serialization of one embodied actor's native mutations is a separate invariant, and a
         // guard that lives in the caller is a guard a second caller does not have.
-        if (program.Nodes.Any(node => node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running))
-            return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible);
+        BodyProgramJournalNode? inFlight = program.Nodes.FirstOrDefault(node =>
+            node.State is BodyProgramNodeState.AwaitingHostAdmission or BodyProgramNodeState.HostAdmitted or BodyProgramNodeState.Running);
+        if (inFlight is not null)
+            return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible,
+                BodyProgramRefusal.Envelope("node_in_flight", inFlight.NodeId,
+                    program.Program.Nodes.Single(item => item.NodeId == inFlight.NodeId).ActionId, "state", "idle", "in_flight",
+                    "wait for that node to settle before another may start"));
         IReadOnlyList<BodyProgramGraphNode> graph = BodyProgramGraphRules.FromJournalNodes(program);
         IReadOnlyDictionary<string, BodyProgramNodeState> states = BodyProgramGraphRules.StatesOf(program);
         BodyProgramJournalNode? node = program.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal).FirstOrDefault(item => item.State == BodyProgramNodeState.Pending && BodyProgramGraphRules.EligibleToStart(graph, states, item.NodeId));
-        if (node is null) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible);
+        if (node is null) return BodyProgramControllerResult.Failure<BodyProgramStartCandidate>(BodyProgramControllerResultCode.NodeNotEligible, NoStartableNodeClause(program, states));
         return BodyProgramControllerResult.Success(new BodyProgramStartCandidate(program, node, program.Program.Nodes.Single(item => item.NodeId == node.NodeId), policy));
+    }
+
+    /// <summary>
+    /// Why no node of this program may start now, in the envelope's shape, from what the journal holds.
+    ///
+    /// <para>
+    /// THE DECISION IS NOT RE-DERIVED HERE. `EligibleToStart` has already refused every pending node; this reads the FIRST
+    /// pending node and the dependencies of it that have not settled, which is the evidence a reader needs and not a second
+    /// opinion about eligibility. When no pending node is left the clause says so instead of leaving a reader to guess
+    /// whether the program is finished or stuck.
+    /// </para>
+    /// </summary>
+    private static string NoStartableNodeClause(BodyProgramJournalProgram program, IReadOnlyDictionary<string, BodyProgramNodeState> states)
+    {
+        BodyProgramJournalNode? blocked = program.Nodes.OrderBy(item => item.NodeId, StringComparer.Ordinal)
+            .FirstOrDefault(item => item.State == BodyProgramNodeState.Pending);
+        if (blocked is null)
+            return BodyProgramRefusal.Envelope("no_pending_node", null, null, "state", "pending_node", "none",
+                "every node of this program is already terminal");
+        VerifiedBodyProgramNode descriptor = program.Program.Nodes.Single(item => item.NodeId == blocked.NodeId);
+        string[] unsettled = descriptor.DependsOn
+            .Where(dependency => !states.TryGetValue(dependency, out BodyProgramNodeState state) || !BodyProgramGraphRules.IsTerminal(state))
+            .ToArray();
+        return unsettled.Length > 0
+            ? BodyProgramRefusal.Envelope("dependency_unsettled", blocked.NodeId, descriptor.ActionId, "dependency", "settled",
+                string.Join(",", unsettled), "wait for the node(s) this one depends on to settle")
+            : BodyProgramRefusal.Envelope("no_startable_node", blocked.NodeId, descriptor.ActionId, "state", "eligible", "pending",
+                "the graph offers no startable node now; observe the world and resubmit if the work is still needed");
     }
 
     /// <summary>One program's next node, with the descriptor whose action id the world is asked about.</summary>

@@ -347,9 +347,45 @@ public sealed class BodyProgramControllerPumpTests
             "the wait ends when the body frees");
     }
 
+    /// <summary>
+    /// WHY A PROGRAM IS NOT STARTING, NAMED - not just the family of the reason.
+    ///
+    /// <para>
+    /// Measured 2026-11-21: 40+ `challenge_not_created;code=NodeNotEligible` lines in one run, and `NodeNotEligible` is
+    /// what `SelectStartCandidate` answers for four different clauses - a node already in flight, no pending node whose
+    /// dependencies settled, a binding that could not be materialized, and a program that is not active. A reader could not
+    /// tell them apart, and neither could the companion, which saw only a program that never started. The authority names
+    /// its own clause now, and this pins the sentence the log carries.
+    /// </para>
+    /// </summary>
     [Fact]
-    public void PumpConsumesRejectedAdmissionWithoutTreatingUnavailableAsRejected()
+    public void AProgramThatCannotStartSaysWhichClauseIsHoldingIt()
     {
+        OpenBodyProgramJournalAuthority authority = Open();
+        var admission = new NoGrantAdmissionTransport();
+        var reported = new List<string>();
+        var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"))
+        {
+            Diagnostics = reported.Add,
+        };
+        authority.Submit(MachineProgram()).Code.Should().Be(BodyProgramSubmitCode.Accepted);
+
+        // The first pass mints the challenge and sends it; the node is then `awaiting_host_admission`, and the second pass
+        // is the one that cannot start anything - which is exactly the state 40+ lines of the measured run described.
+        controller.Update();
+        controller.Update();
+
+        admission.Sent.Should().ContainSingle();
+        reported.Should().ContainSingle(line => line.Contains("challenge_not_created", StringComparison.Ordinal))
+            .Which.Should().Be(
+                "[GameBuddy-body-program] challenge_not_created;program=program;rejectionCode=node_in_flight;node=inspect;" +
+                "action=machine_inspect;field=state;expected=idle;actual=in_flight;" +
+                "remedy=wait for that node to settle before another may start",
+                "the clause, the node holding it and the field that refused are the whole answer");
+    }
+
+    [Fact]
+    public void PumpConsumesRejectedAdmissionWithoutTreatingUnavailableAsRejected()    {
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new RejectedAdmissionTransport("policy_denied");
         var controller = new FarmhandBodyProgramController(authority, admission, new MachineNodeExecutor("opaque-machine-7"));
@@ -363,7 +399,7 @@ public sealed class BodyProgramControllerPumpTests
     }
 
     /// <summary>
-    /// AN ACCEPTED REJECTION IS A NODE'S WHOLE STORY, SO THE LOG MUST STATE IT.
+    /// AN ACCEPTED REJECTION IS A NODE'S WHOLE STORY, SO THE LOG MUST STATE IT - and so must the journal.
     ///
     /// <para>
     /// Only a REFUSED rejection used to be reported, so a program the Host answered inside a millisecond left `sent` and
@@ -373,11 +409,20 @@ public sealed class BodyProgramControllerPumpTests
     /// the Host's durable-record conflict sentence, so this test also pins that the Mod can hold a rejection naming the
     /// fields that differed instead of dropping it as `InvalidInput`.
     /// </para>
+    /// <para>
+    /// THE SENTENCE BESIDE THE CODE IS THE WHOLE POINT. The Host answers one node's admission with a code, so the model's
+    /// status row said `rejectionCode=…` and nothing else: no node, no action, no reason it could act on. The Mod holds the
+    /// first two, so it states them and says `field=unknown` for the one it does NOT hold rather than inventing one - and
+    /// `remedy` carries the correction.
+    /// </para>
     /// </summary>
     [Fact]
-    public void AnAcceptedRejectionIsReportedWithItsProgramNodeAndCode()
+    public void AnAcceptedRejectionIsReportedWithItsProgramNodeAndCodeAndTheDeltaItKnows()
     {
         const string code = "admission_record_conflict:deadline:policy_identity";
+        const string detail =
+            "rejectionCode=" + code + ";node=inspect;action=machine_inspect;field=unknown;expected=none;actual=none;" +
+            "remedy=this node is a durable veto and cannot be retried unchanged: change the node or the world, then resubmit";
         OpenBodyProgramJournalAuthority authority = Open();
         var admission = new RejectedAdmissionTransport(code);
         var reported = new List<string>();
@@ -389,13 +434,17 @@ public sealed class BodyProgramControllerPumpTests
 
         controller.Update();
 
-        authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect").RejectionCode.Should().Be(
+        BodyProgramJournalNode rejected = authority.Status("program").Snapshot!.Nodes.Single(node => node.NodeId == "inspect");
+        rejected.RejectionCode.Should().Be(
             code,
             "the journal holds the Host's own sentence, so nothing about the fields had to be re-worded here");
+        rejected.RefusalDetail.Should().Be(
+            detail,
+            "the durable record carries the delta too: a model reading the status row reads it from there");
         reported.Should().ContainSingle(line => line.Contains("admission_rejected", StringComparison.Ordinal))
             .Which.Should().Be(
-                $"[GameBuddy-body-program] admission_rejected;program=program;node=inspect;code={code}",
-                "the line names the program, the node and the code - the three facts a reader needs to tell an answer from silence");
+                $"[GameBuddy-body-program] admission_rejected;program=program;{detail}",
+                "the line names the program plus every fact of the envelope - which is how a reader tells an answer from silence");
     }
 
     [Fact]
