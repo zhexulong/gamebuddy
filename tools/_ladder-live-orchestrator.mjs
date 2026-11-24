@@ -69,7 +69,12 @@ try {
     modsPath: MODS_PATH,
     windowMode: WINDOW_MODE,
     pipeName: bridgePipeNameFor(MODS_PATH),
-    timeoutMs: 150_000,
+    // The fixture's own `SaveGame.Load` runs INSIDE the game's update loop, so a save that takes longer to
+    // deserialize than this window expires before the Mod can even reach its own named load deadline. Measured
+    // (round99): a 2.9 MB save kept one core busy for 150 s+ with no pipe, and the 150 s window reported
+    // `stardew_pipe_not_listening` - a transport verdict for a world that was still loading. The window is the
+    // harness's patience, never the product's deadline, so it is generous on purpose.
+    timeoutMs: 450_000,
     logPath: laneLogPath,
   });
   childRoster.started({ role: "game", pid: game.pid, startedAtMs: gameStartedAtMs });

@@ -69,7 +69,7 @@ async function projectWorld(store: StoreView, activeGameSessionId: () => string 
     }),
     Object.freeze({
       readAttachmentView: () =>
-        Object.freeze({ status: "attached" as const, generation: 1, connectionStatus: "connected_idle" as const }),
+        Object.freeze({ status: "attached" as const, generation: 1, cabin: null, connectionStatus: "connected_idle" as const }),
     }),
     Object.freeze({
       readLaunchReadinessView: () =>
