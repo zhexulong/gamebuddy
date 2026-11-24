@@ -94,6 +94,52 @@ public sealed class FieldLayout
     ///
     /// A footprint is asked first because a building covers its own doorstep: the same tile can answer both words, and the
     /// structure is the reason it was never ground.
+    ///
+    /// <para>
+    /// THE WALKWAY IS THE ROWS THE DOOR OPENS ONTO, AND THIS RULE ASSUMES THEY ARE THE ROWS SOUTH OF IT. The engine cannot
+    /// answer which way a door faces: <c>Building.humanDoor</c> (from <c>BuildingData.HumanDoor</c>) is an OFFSET inside
+    /// the footprint, and neither the instance nor the row carries a side, a direction or a rotation. What the engine does
+    /// answer is where it enters the building, and every entry path it owns names the row one tile south of the door:
+    /// <c>Building.updateInteriorWarps</c> targets <c>humanDoor.Y + tileY + 1</c>, <c>Farm</c>'s <c>mainFarmhouseEntry</c>
+    /// is <c>humanDoor.Y + tileY + 1</c>, <c>GameLocation</c>'s door warps build the same tile, and
+    /// <c>GreenhouseBuilding</c> draws its entrance from <c>humanDoor.Y + 1</c>. So "south" is the engine's own rule for
+    /// a door that can be walked through, and that is the fact this rule is built on.
+    /// </para>
+    ///
+    /// <para>
+    /// THE BOTTOM ROW IS NOT THE SAME FACT AS THE SOUTH FACE, and the installed table proves it: of its 12 declared doors,
+    /// 10 sit on the footprint's bottom row and 2 do not - <c>Cabin</c> (<c>door=2,1</c> in a <c>5x3</c>) and
+    /// <c>Farmhouse</c> (<c>door=5,2</c> in a <c>9x5</c>) - because a house's front porch is part of its footprint, and the
+    /// rows below such a door are the building's own ground, which the footprint answers first. This rule is still right
+    /// for them: the rows south of the door are either inside the footprint or the approach.
+    /// </para>
+    ///
+    /// <para>
+    /// THE GATE THAT HOLDS IT is <c>FixtureWalkwaySouthDoorGateTests</c>, over every row of the installed
+    /// <c>Data/Buildings</c>: one test drives THIS rule over each row's footprint and door and requires that the tile the
+    /// engine enters from is never field ground, the other requires every declared door to lie inside its footprint and
+    /// clear of the footprint's top edge (a door there is entered from a row that is the building itself). Both fail with
+    /// <c>fixture_walkway_assumes_a_south_door:&lt;building&gt;:door=&lt;x&gt;,&lt;y&gt;:footprint=&lt;x0&gt;,&lt;y0&gt;..&lt;x1&gt;,&lt;y1&gt;</c>
+    /// and print the population they examined; the two porch rows above are printed by name rather than failed.
+    /// </para>
+    ///
+    /// <para>
+    /// WHAT THAT GATE CANNOT SEE, stated here rather than discovered later: a modded building's <c>Data/Buildings</c> row
+    /// is added to the engine's table at runtime, so it is not in the installed table the gate reads; and a door that opens
+    /// onto the north, east or west face while still lying inside the footprint is indistinguishable from a south door in
+    /// every fact the row carries. For such a building this rule clears rows nobody walks on and leaves the real approach
+    /// as field - silently, which is why the assumption is written down beside the rule instead of living in a reader's
+    /// head.
+    /// </para>
+    ///
+    /// <para>
+    /// THE LIVE LIST WOULD ANSWER IT, AND HAS NOBODY TO ASK IT YET. A location's own buildings (<c>GameLocation.buildings</c>)
+    /// joined to their rows (<c>Building.GetData()</c>, which reads <c>Game1.buildingData</c> and so includes a modded
+    /// type the moment it is registered) carry both facts this rule depends on, so a caller that built a layout from a
+    /// live location could refuse a building whose door it cannot serve at that moment. Measured on this tree, there is no
+    /// such caller: <see cref="Of"/> is constructed by this type and by the gate above, and by nothing in the Mod or the
+    /// bridge - so the gate over the installed table is what holds the assumption today.
+    /// </para>
     /// </summary>
     public string? NonFieldKind(int x, int y)
     {
@@ -101,6 +147,9 @@ public sealed class FieldLayout
         foreach (FootprintRect footprint in this.footprints)
             if (footprint.Contains(tile))
                 return BuildingGround;
+        // THE ROWS BELOW THE DOOR: the row the engine enters the building from, and the one after it. See the doc comment
+        // above for what the engine can and cannot answer about a door's side, the gate that holds this over the installed
+        // Data/Buildings, and the modded row that gate cannot see.
         foreach (TilePoint door in this.doors)
             if (x >= door.X - WalkwayHalfWidth && x <= door.X + WalkwayHalfWidth && y >= door.Y + 1 && y <= door.Y + WalkwayDepth)
                 return WalkwayGround;
