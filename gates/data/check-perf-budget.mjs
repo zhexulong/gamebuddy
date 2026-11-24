@@ -82,19 +82,47 @@
  * engine itself forces a player to spend on the same work. It reads run artifacts, not this box,
  * so it runs on a machine the microbenchmark baseline belongs to somebody else.
  *
- * The floor is ONE SWING OF THE ACTION'S ANIMATION PLUS THE WALK THE ARTIFACT RECORDED for it:
- * `harvest_crop` walked ten tiles inside its 2257 ms p50, so its floor is 5067 ms and its ratio
- * 0.44, where a floor that forgot the walk read 135x. The distance comes from the receipt chain
- * in `timeline.jsonl` (one `tile_advanced` receipt per tile), never from the geometry.
+ * The floor is ONE SWING OF THE ACTION'S ANIMATION PLUS THE WALK THE CHANNEL RECORDED for it.
+ * MEASURED 2026-11-24 (`round99`): the Mod has minted no `tile_advanced` receipt since 2026-11-11
+ * (the per-tile progress fact was removed - `design/fact-authority.md`), and a modern execution's
+ * receipt chain holds ONE receipt. So on a run from today the `receipts` channel has neither a walk
+ * nor a duration, and the row falls through to `program`, which charges the LATTICE between the
+ * tiles its own nodes report (`walk=lattice`, a lower bound, so the ratio is a ceiling). Every row
+ * prints which walk it charged, and a channel that records no position says `walk unrecorded` rather
+ * than charging a zero that reads like "nothing walked".
  *
  *   node tools/check-perf-budget.mjs --action-pace-only       # just the pace verdict
- *   node tools/check-perf-budget.mjs --bundles <dir>           # pace population (default <root>/.live-runs)
+ *   node tools/check-perf-budget.mjs --bundles <dir>           # the population (default <root>/.live-runs)
  *   node tools/check-perf-budget.mjs --record-action-pace      # re-record the pace ratchet
+ *
+ * PROGRAM PACE. The unit that can see where `round99` lost its day: not inside an action but across a
+ * program's schedule (`tools/lib/program-pace.mjs`). It divides a program's own wall clock - the Mod's
+ * `programTrace.jsonl`, first node's dispatch to last node's settle - by the native floor of the same
+ * nodes (one swing each plus the lattice between the tiles they worked). A run's aggregate is the line
+ * that is gated, at 1.0: above it the run spent more time inside programs than the engine forces. Its
+ * population is printed, and a run with too few priceable programs says so instead of averaging what
+ * is left.
+ *
+ *   node tools/check-perf-budget.mjs --program-pace-only      # just the program-schedule verdict
+ *
+ * TURN WASTE. The other half of the day, and the one no action or program can see: how many of her
+ * turns bought nothing (`tools/lib/turn-waste.mjs`). Three numbers, printed apart because they have
+ * three causes - the share of submission-bearing turns whose submissions all produced no state change
+ * (no receipt, refused, or a receipt the Mod's own words call "already done"), the refused work she
+ * re-sent, and identical reads repeated with no action between. A turn the artifacts cannot decide is
+ * `not_measured` and is never counted as waste.
+ *
+ *   node tools/check-perf-budget.mjs --turn-waste-only        # just the turn account
  *
  * red-proof: fixture  a saved suite reading with `admission.action/large` at 215.72 µs/op against the recorded 107.86
  *                     -> `perf_budget_failed slow=1 ... +100.0%`, exit 1 (tools/perf/budget.test.mjs)
  * red-proof: fixture  a bundle whose `harvest_crop` duration is doubled -> `action_pace_above_native_floor:harvest_crop:`
  *                     naming the action, its ratio, ours and the floor, exit 1 (tools/perf/action-pace.test.mjs)
+ * red-proof: fixture  a bundle whose three programs each take 4x their native floor ->
+ *                     `program_pace_above_native_floor:4:1 examined=3` with the population, exit 1
+ *                     (tools/perf/program-pace.test.mjs)
+ * red-proof: fixture  a run with 10 empty turns of 19 -> `turn_waste_above_ceiling:0.526:0.5`, exit 1
+ *                     (tools/perf/turn-waste.test.mjs)
  * red-proof: fixture  a baseline carrying another machine's `machine` -> `perf_budget_not_measured:machine_identity_changed:`
  *                     with both identities and `compared=0`, exit 1, where it used to exit 0; the same fixture with
  *                     `--accept-machine-skip` -> `perf_budget_skipped: ... compared=0`, exit 0 (tools/perf/budget.test.mjs)
@@ -120,6 +148,16 @@ import {
   measureActionPace,
   renderActionPace,
 } from "../../tools/lib/action-pace.mjs";
+import {
+  compareProgramPace,
+  measureProgramPace,
+  renderProgramPace,
+} from "../../tools/lib/program-pace.mjs";
+import {
+  compareTurnWaste,
+  measureTurnWaste,
+  renderTurnWaste,
+} from "../../tools/lib/turn-waste.mjs";
 import { assessBenchmarkArtifact } from "../../tools/perf/artifact-readiness.mjs";
 import { benchFiles, caseResults, runSuite } from "../../tools/perf/run-benchmarks.mjs";
 import { runWhenEntry } from "../../tools/scripts/cli-entry.mjs";
@@ -429,18 +467,67 @@ function actionPaceSection({ root, argv }) {
   return rendered.failed;
 }
 
+/**
+ * The PROGRAM pace section: how many times the native floor a run's programs took, where the waste
+ * `round99` measured sat between actions rather than inside one.
+ *
+ * WHY IT IS A SECTION OF THIS SCRIPT AND NOT ITS OWN ENTRY POINT: the same reason as the action
+ * pace above. One perf entry, or the gate nobody runs is the gate nobody sees. It reads run
+ * artifacts (`programTrace.jsonl` + `result.json`), never this box's benchmark baseline.
+ */
+function programPaceSection({ root, argv }) {
+  const bundles = resolve(valueOf(argv, "--bundles") ?? join(root, ".live-runs"));
+  const measurement = measureProgramPace({ bundleRoot: bundles });
+  const rendered = renderProgramPace({
+    measurement,
+    verdict: compareProgramPace({ measurement }),
+    bundleRoot: bundles,
+  });
+  for (const line of rendered.lines) process.stdout.write(`${line}\n`);
+  return rendered.failed;
+}
+
+/**
+ * The TURN WASTE section: the share of her working turns that bought nothing, plus the two numbers
+ * beside it (refused resubmissions, repeated identical reads) that have their own causes.
+ *
+ * It reads the session record the bundle publishes by name, so it needs no game and no box: the
+ * same artifact the run itself wrote. `round99` is why it exists - a day whose account read
+ * `worked: 24, worked_silently: 76` while four read rounds and a refused plan ate its afternoon.
+ */
+function turnWasteSection({ root, argv }) {
+  const bundles = resolve(valueOf(argv, "--bundles") ?? join(root, ".live-runs"));
+  const measurement = measureTurnWaste({ bundleRoot: bundles });
+  const rendered = renderTurnWaste({
+    measurement,
+    verdict: compareTurnWaste({ measurement }),
+    bundleRoot: bundles,
+  });
+  for (const line of rendered.lines) process.stdout.write(`${line}\n`);
+  return rendered.failed;
+}
+
 async function main(argv) {
   const root = resolve(valueOf(argv, "--root") ?? repositoryRoot);
-  // A recording is not a check: it writes what this checkout's bundles measured and stops, so it
-  // never depends on a microbenchmark suite run or on this box's baseline.
-  const recording = argv.includes("--record-action-pace");
-  // The action-pace section is NOT behind the machine skip inside `checkMicrobenchmarks`: it reads
-  // game-side durations out of run artifacts, not ops/sec out of this box, so another machine's
-  // microbenchmark baseline has nothing to say about it.
-  const paceFailed = actionPaceSection({ root, argv });
-  // The section also stands alone, for a lane that wants the pace verdict without paying for a
-  // microbenchmark suite: the same script, one mode, never a second perf entry point.
-  if (recording || argv.includes("--action-pace-only")) return paceFailed ? 1 : 0;
+  if (argv.includes("--record-action-pace")) return actionPaceSection({ root, argv }) ? 1 : 0;
+  // Each section stands alone for a lane that wants one verdict without paying for the others: the
+  // same script, one mode, never a second perf entry point.
+  const only = (name) => argv.includes(name);
+  const actionOnly = only("--action-pace-only");
+  const programOnly = only("--program-pace-only");
+  const wasteOnly = only("--turn-waste-only");
+  if (actionOnly || programOnly || wasteOnly) {
+    const failed = [
+      actionOnly ? actionPaceSection({ root, argv }) : false,
+      programOnly ? programPaceSection({ root, argv }) : false,
+      wasteOnly ? turnWasteSection({ root, argv }) : false,
+    ];
+    return failed.some(Boolean) ? 1 : 0;
+  }
+  // The three artifact sections run before the microbenchmark comparison and OUTSIDE the machine
+  // skip inside `checkMicrobenchmarks`: they read run artifacts, not ops/sec out of this box, so
+  // another machine's microbenchmark baseline has nothing to say about them.
+  const paceFailed = actionPaceSection({ root, argv }) || programPaceSection({ root, argv }) || turnWasteSection({ root, argv });
   return await checkMicrobenchmarks({ root, argv, paceFailed });
 }
 

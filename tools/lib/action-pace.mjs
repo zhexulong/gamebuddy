@@ -52,30 +52,44 @@ import { readStardewActionFamilies } from "./stardew-published-action-registry.m
  *   Contains the Mod's work only. The action id is not on the row: it is joined from
  *   `programOutcomes[].nodeOutcomes[].actionId` by `nodeId`.
  *
- * `receipts`: `timeline.jsonl`, the Mod's own receipt chain for one execution - the
- *   first event it wrote for it, and the terminal receipt that closed it. It is the
- *   ONLY channel that records the route: one `tile_advanced` receipt per tile the
- *   actor walked, inside the same chain as the duration. It is therefore the only
- *   channel on which `nativeFloorMs` can be given the distance, and the one the
- *   verdict reads.
+ * `receipts`: `timeline.jsonl`, the Mod's own receipt chain for one execution - the first event it wrote for it, and the terminal receipt that closed it. On a run that carries per-tile receipts it is the ONLY channel that records the route, because it is the only one that holds the intermediate events. On a run that does not, a chain is ONE receipt and this channel holds neither a duration nor a distance (see WALK, below).
  *
  * THE CHANNELS ARE DIFFERENT CLOCKS and are never mixed in one statistic. `program`
  * brackets the Mod's durable journal writes; `receipts` brackets the action itself;
  * `flat` brackets the pipe round trip. Each row prints every channel it has, and
  * reads one of them: `CHANNEL_PREFERENCE`, deepest decomposition first.
  *
- * WHY THE WALK HAD TO BECOME A CHANNEL. An action that walks to its target first
- * (`Approach = self_walked` in the Mod's catalogue) performs that walk INSIDE the
- * interval every channel measures, so a floor of one swing accused `harvest_crop` of
- * 135x the engine at a p50 of 2257 ms - which is 10 tiles of walking at the rate the
- * route receipts record. `program` and `flat` cannot see the distance and charge zero;
- * `receipts` counts the tiles, so the floor can charge them.
+ * WALK, AND WHAT CHANGED UNDER THIS MODULE. An action that walks to its target first
+ * (`Approach = self_walked` in the Mod's catalogue) performs that walk INSIDE the interval
+ * every channel measures, so a floor of one swing accused `harvest_crop` of 135x the engine
+ * at a p50 of 2257 ms - which is 10 tiles of walking at the rate the route receipts record.
+ * The fix was `tile_advanced`: one receipt per tile walked, inside the same chain, counted
+ * by the `receipts` channel. MEASURED 2026-11-24: the Mod has minted no `tile_advanced`
+ * receipt since 2026-11-11 in any of the 402 `game-ladder` bundles, because the per-tile
+ * progress fact was REMOVED as a fact (`design/fact-authority.md`, enforced by
+ * `gates/product/check-fact-authority.mjs`). So since that removal the walk term has been
+ * SILENTLY ZERO on every modern run, and the `receipts` channel's duration has been silently
+ * zero too, because a modern chain holds one receipt and a chain with no interior has no
+ * interval. Both halves are fixed here (2026-11-24, `round99`):
+ *
+ *   - a chain with nothing before its terminal is COUNTED `unattributed`, never read as a
+ *     zero-length duration - the row then falls through to the channel that measured it;
+ *   - the walk is charged from EACH CHANNEL'S OWN RECORDED TILES: `tile_advanced` receipts
+ *     where a run carries them (`walk=tile_advanced`), the tiles a program's own nodes report
+ *     for the `program` channel (`walk=lattice`, the distance between consecutive node tiles
+ *     - a LOWER bound on the route, so its ratio is a ceiling), and `walk=unrecorded` for the
+ *     `flat` channel, which records no position at all.
+ *
+ * EVERY LINE CARRIES ITS WALK SOURCE, because a floor that dropped one of its two terms
+ * printed exactly like a floor that never had it.
  */
 export const GAME_SIDE_INTERVAL = Object.freeze({
   receipts: Object.freeze({
     start: "timeline[].atMs of the execution's first receipt",
     end: "timeline[].atMs of the execution's terminal receipt",
-    distance: "timeline[].reasonCode === 'tile_advanced' receipts: one per tile walked",
+    distance:
+      "timeline[].reasonCode === 'tile_advanced' receipts: one per tile walked, on the runs that carry them (none minted since 2026-11-11, when the per-tile progress fact was removed)",
+    duration: "only when the chain has an entry before its terminal; a one-receipt chain is unattributed, never a zero",
   }),
   flat: Object.freeze({ start: "actionTrace[].dispatchedAtMs", end: "actionTrace[].settledAtMs" }),
   program: Object.freeze({
@@ -423,11 +437,13 @@ export function animationClassOf(actionId, classes = defaultClasses()) {
  *           is how the engine's own tool cycle is built (`Tool.endUsing` animates one
  *           tile's worth of swing).
  * `distance` the tiles walked, which the CALLER supplies and which defaults to 0 — the
- *           strict LOWER bound. `distance` is charged only when the artifact RECORDED
- *           it: `receipts` counts the `tile_advanced` receipts of the same execution
- *           that produced the duration, and the other two channels sit outside the walk
- *           and so charge nothing. Zero here is "this channel cannot see a walk", never
- *           a guess about one.
+ *           strict LOWER bound. `distance` is charged only when a channel RECORDED it:
+ *           `receipts` counts the `tile_advanced` receipts of the same execution that
+ *           produced the duration (only runs written before 2026-11-11 carry them), and
+ *           `program` counts the lattice between the tiles its own nodes report. `flat`
+ *           records no position at all and charges nothing, which its line says as
+ *           `walk unrecorded`. Zero here is "this channel cannot see a walk", never a
+ *           guess about one.
  *
  * Returns `null` when the engine declares no constant for the action's work. `null` is
  * "not measured", never zero, and the caller must report it as such.
@@ -497,9 +513,26 @@ function flatRows(path) {
       unattributed += 1;
       continue;
     }
-    rows.push({ action: entry.action, ms: entry.settledAtMs - entry.dispatchedAtMs });
+    rows.push({ action: entry.action, ms: entry.settledAtMs - entry.dispatchedAtMs, tiles: null, walkSource: "unrecorded" });
   }
   return { rows, rejected, unattributed };
+}
+
+/**
+ * The lattice distance between two recorded tiles, or `null` when either is missing.
+ *
+ * A LOWER BOUND ON A ROUTE: the engine walks cardinally and a real path may detour, so the
+ * distance between two tiles is the least it can have walked between them. Every floor that
+ * charges it therefore UNDER-states the engine's demand, which is why the ratio is printed as
+ * a ceiling (`walk=lattice`).
+ */
+function latticeTiles(left, right) {
+  const tileOf = (node) =>
+    typeof node?.tile?.x === "number" && typeof node?.tile?.y === "number" ? node.tile : null;
+  const from = tileOf(left);
+  const to = tileOf(right);
+  if (from === null || to === null) return null;
+  return Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
 }
 
 /** The rows one `result.json` contributes: the PROGRAM channel, on the Mod's clock. */
@@ -515,6 +548,10 @@ function programRows(path) {
   let unattributed = 0;
   for (const program of Array.isArray(result?.programOutcomes) ? result.programOutcomes : []) {
     const byNode = new Map((program?.nodeOutcomes ?? []).map((node) => [node?.nodeId, node]));
+    // THE WALK THIS CHANNEL CAN SEE: the tiles its own nodes report, in the order the Mod ran
+    // them. A node with no tile (an `equip_tool` names no target) holds the position where it was,
+    // because it does not move the actor - so it neither charges nor breaks the chain.
+    let previous = null;
     for (const execution of program?.executions ?? []) {
       if (typeof execution?.atMs !== "number" || typeof execution?.settledAtMs !== "number") continue;
       const node = byNode.get(execution.nodeId);
@@ -526,7 +563,9 @@ function programRows(path) {
         unattributed += 1;
         continue;
       }
-      rows.push({ action: node.actionId, ms: execution.settledAtMs - execution.atMs });
+      const tiles = previous === null ? null : latticeTiles({ tile: previous }, node);
+      if (typeof node.tile?.x === "number" && typeof node.tile?.y === "number") previous = node.tile;
+      rows.push({ action: node.actionId, ms: execution.settledAtMs - execution.atMs, tiles, walkSource: "lattice" });
     }
   }
   return { rows, rejected, unattributed };
@@ -539,17 +578,19 @@ const TERMINAL_RECEIPT_STATES = Object.freeze(new Set(["succeeded", "failed", "r
 const REFUSED_RECEIPT_STATES = Object.freeze(new Set(["failed", "rejected"]));
 
 /**
- * The rows one `timeline.jsonl` contributes: the RECEIPTS channel, the only one that
- * records the walk beside the duration.
+ * The rows one `timeline.jsonl` contributes: the RECEIPTS channel, which records the route on the
+ * runs that carried a per-tile receipt.
  *
- * One row per execution the timeline closed. The duration is the same execution's first
- * stamp to its terminal receipt, and `tiles` is how many `tile_advanced` receipts that
- * same execution filed in between - the Mod emits one per tile the actor crossed, so the
- * distance is counted from the record rather than inferred from the geometry.
+ * A CHAIN WITH NO INTERIOR IS NOT A DURATION. The Mod writes one terminal receipt per execution
+ * today, so `chain[0]` IS the terminal and `terminal.atMs - chain[0].atMs` is zero for every
+ * execution of every modern run - a zero that reads like an impossibly good pace and, before this
+ * rule, made `cut_weeds` print `ours p50 0ms` over 67 real executions (measured 2026-11-24 on
+ * `round99`). Such a chain is COUNTED `unattributed` and the row falls through to the channel that
+ * measured it.
  *
- * An execution with no terminal receipt is not a duration, so it is `unattributed`
- * rather than zero - the same distinction the other channels draw for a row they cannot
- * attribute.
+ * The distance is the `tile_advanced` receipts the same execution filed, which only a run written
+ * before 2026-11-11 carries; a modern chain answers `null` rather than zero, so the row says its
+ * walk is unrecorded instead of claiming there was no walking.
  */
 function receiptRows(path) {
   const byExecution = new Map();
@@ -602,8 +643,14 @@ function receiptRows(path) {
       unattributed += 1;
       continue;
     }
-    const tiles = chain.filter((entry) => entry?.reasonCode === "tile_advanced" && entry.atMs <= terminal.atMs).length;
-    rows.push({ action, ms: terminal.atMs - chain[0].atMs, tiles });
+    if (terminal.atMs <= chain[0].atMs) {
+      unattributed += 1;
+      continue;
+    }
+    const walked = chain.filter((entry) => entry?.reasonCode === "tile_advanced" && entry.atMs <= terminal.atMs).length;
+    // The chain HAS an interior, so this run was minting per-tile receipts: a count of zero is the run
+    // saying it walked no tiles for this execution, which is a reading rather than a gap.
+    rows.push({ action, ms: terminal.atMs - chain[0].atMs, tiles: walked, walkSource: "tile_advanced" });
   }
   return { rows, rejected, unattributed };
 }
@@ -638,7 +685,7 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     for (const row of rows) {
       const key = `${channel}:${row.action}`;
       if (!byChannel.has(key)) byChannel.set(key, { channel, action: row.action, instances: [] });
-      byChannel.get(key).instances.push({ ms: row.ms, tiles: row.tiles ?? 0 });
+      byChannel.get(key).instances.push({ ms: row.ms, tiles: row.tiles ?? null, walkSource: row.walkSource ?? "unrecorded" });
     }
   };
   for (const path of files.timelines) {
@@ -678,13 +725,15 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     // pays for it. A channel that cannot see the walk contributes zero, which is a stated
     // lower bound rather than a guess about one.
     const durations = chosen.instances.map((instance) => instance.ms);
-    const walkTiles = round(
-      percentile(
-        chosen.instances.map((instance) => instance.tiles),
-        0.5,
-      ),
-    );
-    const floorMs = className === null ? null : nativeFloorMs({ action, tiles: 1, distance: walkTiles, classes });
+    // THE WALK THIS CHANNEL RECORDED, or `null` when it recorded none. `null` is a stated gap, not
+    // a zero: a floor that charges nothing because the channel cannot see a walk reads exactly like
+    // a floor that charged "no walking happened", and that is how this term went missing for two
+    // weeks (see the header).
+    const walked = chosen.instances.map((instance) => instance.tiles).filter((tiles) => typeof tiles === "number");
+    const walkTiles = walked.length === 0 ? null : round(percentile(walked, 0.5));
+    const walkSource = chosen.instances.find((instance) => instance.walkSource !== "unrecorded")?.walkSource ?? "unrecorded";
+    const floorMs =
+      className === null ? null : nativeFloorMs({ action, tiles: 1, distance: walkTiles ?? 0, classes });
     rows.push(
       Object.freeze({
         action,
@@ -694,6 +743,7 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
         oursMs: round(percentile(durations, 0.5)),
         oursP95Ms: round(percentile(durations, 0.95)),
         walkTiles,
+        walkSource,
         floorMs: round(floorMs),
         ratio: floorMs === null || floorMs === 0 ? null : round(percentile(durations, 0.5) / floorMs),
         channels: Object.freeze(
@@ -742,19 +792,28 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
 
 /**
  * The line a reader compares across actions: what we spent, what the engine demands, and
- * the ratio.
+ * the ratio - beside the walk term the floor was built from and where that walk came from.
  *
- * The walk is named on the line whenever the row's channel recorded one, because it is
- * the whole difference between the two shapes of the same number: `harvest_crop` read
- * 2257 ms against a one-swing floor of 16.67 ms (135x) until the ten tiles it walked
- * were on the floor, and the same reading then says 0.44.
+ * THE WALK'S PROVENANCE IS ON EVERY LINE, because the failure this module measured (a floor
+ * that silently dropped its walk term for two weeks and printed a flawless `ratio 0`) is a
+ * failure of a term that used to be invisible. `+ walk N tiles (lattice)` is the distance
+ * between the tiles the run's own nodes report - a lower bound, so the ratio is a ceiling -
+ * `+ walk N tiles (tile_advanced)` is a run that still carried the per-tile receipt, and
+ * `walk unrecorded` is a channel that records no position at all, whose floor is the animation
+ * alone.
  */
 export function paceLine(row) {
+  const source = row.walkSource ?? "unrecorded";
+  const walked =
+    row.walkTiles === null || row.walkTiles === undefined
+      ? "walk unrecorded"
+      : row.walkTiles > 0
+        ? `+ walk ${String(row.walkTiles)} tiles (${source})`
+        : `walk 0 tiles (${source})`;
   if (row.floorMs === null)
-    return `action_pace_unpriced: ${row.action} (${row.animationClass}) tiles 1 · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · no engine constant exists for this work`;
-  const walked = row.walkTiles > 0 ? ` + walk ${row.walkTiles} tiles` : "";
+    return `action_pace_unpriced: ${row.action} (${row.animationClass}) tiles 1 · ${walked} · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · no engine constant exists for this work`;
   return (
-    `action_pace: ${row.action} · tiles 1${walked} · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · ` +
+    `action_pace: ${row.action} · tiles 1 · ${walked} · ours p50 ${row.oursMs}ms p95 ${row.oursP95Ms}ms · ` +
     `floor ${row.floorMs}ms (${row.animationClass}, n=${row.instances} on ${row.channel}) · ratio ${row.ratio}`
   );
 }
@@ -840,6 +899,7 @@ export function actionPaceRecord({ measurement, tolerance = ACTION_PACE_TOLERANC
       oursMs: row.oursMs,
       floorMs: row.floorMs,
       walkTiles: row.walkTiles,
+      walkSource: row.walkSource,
       instances: row.instances,
     };
   }
@@ -847,15 +907,17 @@ export function actionPaceRecord({ measurement, tolerance = ACTION_PACE_TOLERANC
     note:
       "Per-action pace ratios recorded from the game-side durations in this checkout's own .live-runs bundles. " +
       "The ratio is the action's measured p50 game-side milliseconds over the engine floor tools/lib/action-pace.mjs " +
-      "derives from the decompiled tree: ONE SWING OF THE ACTION'S OWN ANIMATION, PLUS THE WALK THE ARTIFACT RECORDED " +
-      "FOR THAT ACTION (walkTiles x WALK_MS_PER_TILE, the route receipts of the same execution that produced the " +
-      "duration). Walk-dominated actions therefore read as engine-dominated rather than as slowness: harvest_crop " +
-      "recorded 10 tiles of walking inside its 2257 ms p50, so its floor is 16.67 + 10 x 505.05 = 5067 ms and its " +
-      "ratio is 0.44, not the 135x a one-swing floor reported. tools/check-perf-budget.mjs re-measures from whatever " +
-      "bundles exist and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record " +
-      "deliberately, in its own commit, when a change makes an action faster. Actions whose work has no engine " +
-      "constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared " +
-      "across revisions, not across machines: it is a property of the game-side path, not of the box.",
+      "derives from the decompiled tree: ONE SWING OF THE ACTION'S OWN ANIMATION PLUS THE WALK THAT ACTION'S CHANNEL " +
+      "RECORDED, at the engine's own walk rate. EACH ENTRY NAMES ITS WALK SOURCE, because the term is only as good as " +
+      "the artifact behind it: 'lattice' is the distance between the tiles the program's own nodes report (a LOWER " +
+      "bound on the route, so the ratio is a CEILING), 'tile_advanced' is a run that still carried the per-tile " +
+      "receipt (the Mod stopped minting it on 2026-11-11), and 'unrecorded' is a channel that records no position at " +
+      "all, whose floor is the animation alone. tools/check-perf-budget.mjs re-measures from whatever bundles exist " +
+      "and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record deliberately, in its " +
+      "own commit, when a change makes an action faster OR WHEN THE ARTIFACT A CHANNEL READS CHANGES, because a " +
+      "re-record is also how a floor that lost a term gets its numbers back. Actions whose work has no engine constant " +
+      "are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared across " +
+      "revisions, not across machines: it is a property of the game-side path, not of the box.",
     recordedFrom: {
       actionTraceFiles: measurement.actionTraceFiles,
       timelineFiles: measurement.timelineFiles,
@@ -879,13 +941,22 @@ export function actionPaceRecord({ measurement, tolerance = ACTION_PACE_TOLERANC
  */
 export function renderActionPace({ measurement, verdict, bundleRoot }) {
   const lines = [];
+  const walkSources = new Map();
+  for (const row of measurement.rows) {
+    if (row.floorMs === null) continue;
+    walkSources.set(row.walkSource, (walkSources.get(row.walkSource) ?? 0) + 1);
+  }
   lines.push(
     `action_pace_population: bundleRoot=${bundleRoot} actionTraceFiles=${measurement.actionTraceFiles} ` +
       `timelineFiles=${measurement.timelineFiles} resultFiles=${measurement.resultFiles} ` +
       `timedInstances=${measurement.timedInstances} ` +
       `examinedInstances=${measurement.examinedInstances} ` +
       `excludedRejected=${measurement.rejectedInstances} unattributed=${measurement.unattributedInstances} ` +
-      `actions=${measurement.rows.length}`,
+      `actions=${measurement.rows.length} ` +
+      `walk=${[...walkSources.entries()]
+        .sort(([left], [right]) => (left < right ? -1 : 1))
+        .map(([source, count]) => `${source}:${String(count)}`)
+        .join(",")}`,
   );
   if (measurement.status === "no_bundle_root") {
     lines.push(

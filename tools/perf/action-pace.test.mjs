@@ -41,7 +41,7 @@ import {
   WALK_MS_PER_TILE,
 } from "../lib/action-pace.mjs";
 
-const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "check-perf-budget.mjs");
+const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "gates", "data", "check-perf-budget.mjs");
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 test("every declared constant names the line it came from, and an unsourced one is refused", () => {
@@ -143,7 +143,8 @@ test("a trace id that is not a catalogue action is declared, never dropped", () 
   }
   assert.equal(animationClassOf("break_rock_source", classes), "toolSwing");
   assert.equal(animationClassOf("chop_tree_source", classes), "toolSwing");
-  // One line a reader can compare across actions, pinned so the format cannot drift unnoticed.
+  // One line a reader can compare across actions, pinned so the format cannot drift unnoticed. Every row
+  // names the walk term its floor was built from, and the source of that term.
   assert.equal(
     paceLine({
       action: "harvest_crop",
@@ -153,13 +154,15 @@ test("a trace id that is not a catalogue action is declared, never dropped", () 
       oursMs: 2232,
       oursP95Ms: 4360,
       walkTiles: 10,
+      walkSource: "tile_advanced",
       floorMs: 5067.17,
       ratio: 0.44,
     }),
-    "action_pace: harvest_crop · tiles 1 + walk 10 tiles · ours p50 2232ms p95 4360ms · floor 5067.17ms (hand, n=98 on receipts) · ratio 0.44",
+    "action_pace: harvest_crop · tiles 1 · + walk 10 tiles (tile_advanced) · ours p50 2232ms p95 4360ms · floor 5067.17ms (hand, n=98 on receipts) · ratio 0.44",
   );
-  // A row whose channel recorded no walk says nothing about one.
-  assert.doesNotMatch(
+  // A row whose channel recorded no walk says so in the term's own place, rather than leaving it out: a
+  // floor that dropped this term printed exactly like a floor that never had it (`round99`'s two weeks).
+  assert.match(
     paceLine({
       action: "till_soil",
       animationClass: "toolSwing",
@@ -168,10 +171,26 @@ test("a trace id that is not a catalogue action is declared, never dropped", () 
       oursMs: 103,
       oursP95Ms: 1404,
       walkTiles: 0,
+      walkSource: "tile_advanced",
       floorMs: 480,
       ratio: 0.21,
     }),
-    /walk/u,
+    /· walk 0 tiles \(tile_advanced\) ·/u,
+  );
+  assert.match(
+    paceLine({
+      action: "till_soil",
+      animationClass: "toolSwing",
+      channel: "flat",
+      instances: 128,
+      oursMs: 103,
+      oursP95Ms: 1404,
+      walkTiles: null,
+      walkSource: "unrecorded",
+      floorMs: 480,
+      ratio: 0.21,
+    }),
+    /· walk unrecorded ·/u,
   );
 });
 
@@ -270,7 +289,8 @@ test("the measurement reads every channel and reads the receipt chain where it c
     assert.equal(till.channel, "program", "with no receipt chain, the Mod's journal span is the verdict");
     assert.equal(till.oursMs, 240);
     assert.equal(till.channels.length, 2, "every channel stays visible beside the one the verdict reads");
-    assert.equal(till.walkTiles, 0, "a channel that cannot see the walk records none");
+    assert.equal(till.walkTiles, null, "this fixture's nodes name no tile, so the lattice walk is unrecorded");
+    assert.equal(till.walkSource, "lattice", "and the line says which artifact a walk would have come from");
     assert.equal(till.floorMs, 480, "so its floor stays one swing");
     assert.equal(till.ratio, 0.5);
 
@@ -342,7 +362,10 @@ test("a doubled duration names the action, and the bound is the recorded ratio p
     const bundles = join(root, ".live-runs");
     const recorded = actionPaceRecord({ measurement: measureActionPace({ bundleRoot: bundles }) });
     assert.equal(recorded.actions.harvest_crop.ratio, 120);
-    assert.equal(recorded.actions.harvest_crop.walkTiles, 0);
+    // A single node has no predecessor tile, so this program records NO walk at all: `null`, not a zero that
+    // would read as "the action never walks".
+    assert.equal(recorded.actions.harvest_crop.walkTiles, null);
+    assert.equal(recorded.actions.harvest_crop.walkSource, "lattice", "the program channel is the one that would record it");
     // The bound carries one quantum of the floor's own resolution: a 1 ms stamp cannot bound
     // itself to zero, or the next reading of an instant action is a false regression.
     assert.equal(paceBound(recorded.actions.harvest_crop), (120 + 1 / 16.67) * (1 + ACTION_PACE_TOLERANCE));
@@ -543,25 +566,31 @@ test(
     assert.match(stdout, /^action_pace_ok examined=[1-9]\d* priced=[1-9]\d* /mu);
     // The tool families sit at the engine's own swing; a hand pick does not, and the line says so.
     const till =
-      /^action_pace: till_soil · tiles 1 · ours p50 ([\d.]+)ms p95 [\d.]+ms · floor 480ms \(toolSwing, n=\d+ on \w+\) · ratio ([\d.]+)$/mu.exec(
+      /^action_pace: till_soil · tiles 1 · (\+ walk [\d.]+ tiles \(\w+\)|walk [\d.]+ tiles \(\w+\)|walk unrecorded) · ours p50 ([\d.]+)ms p95 [\d.]+ms · floor ([\d.]+)ms \(toolSwing, n=\d+ on \w+\) · ratio ([\d.]+)$/mu.exec(
         stdout,
       );
-    assert.ok(till, "till_soil records no walk at the median, so it is still priced against the 480 ms hoe swing");
-    assert.equal(Number(till[2]), Math.round((Number(till[1]) / 480) * 100) / 100);
+    assert.ok(till, "till_soil's line names its walk term and its source beside the swing it is priced against");
+    assert.equal(Number(till[4]), Math.round((Number(till[2]) / Number(till[3])) * 100) / 100);
     // The hand pick was accused of 135x while the floor forgot the walk it performs; the tiles hit
-    // walked are named on the same line, and the floor is the sum of the two components.
+    // walked are named on the same line WITH THE CHANNEL THAT RECORDED THEM, and the floor is the sum of
+    // the two components. `harvest_crop` is only executed by the 2026-10/11 runs, which still carry the
+    // per-tile receipt, so its walk reads `tile_advanced`; the actions today's runs execute read
+    // `lattice`, the distance between the tiles their own nodes report.
     const harvest =
-      /^action_pace: harvest_crop · tiles 1 \+ walk (\d+) tiles · ours p50 ([\d.]+)ms p95 [\d.]+ms · floor ([\d.]+)ms \(hand, n=\d+ on receipts\) · ratio ([\d.]+)$/mu.exec(
+      /^action_pace: harvest_crop · tiles 1 · \+ walk (\d+) tiles \((tile_advanced|lattice)\) · ours p50 ([\d.]+)ms p95 [\d.]+ms · floor ([\d.]+)ms \(hand, n=\d+ on receipts\) · ratio ([\d.]+)$/mu.exec(
         stdout,
       );
-    assert.ok(harvest, "harvest_crop's line must name the walk it charges to its floor");
+    assert.ok(harvest, "harvest_crop's line must name the walk it charges to its floor, and its source");
     assert.ok(Number(harvest[1]) > 1, "a self-walked action records the tiles it walked");
     assert.equal(
-      Number(harvest[3]),
+      Number(harvest[4]),
       Math.round(nativeFloorMs({ action: "harvest_crop", distance: Number(harvest[1]) }) * 100) / 100,
       "the floor is one hand tick plus the tiles on the same line, at the engine's own walk",
     );
-    assert.ok(Number(harvest[4]) < 1, "an action that mostly walks is engine-dominated, not 135x the engine");
+    assert.ok(Number(harvest[5]) < 1, "an action that mostly walks is engine-dominated, not 135x the engine");
+    // Every line says which walk term its floor was built from, because a floor that silently lost that
+    // term printed exactly like a floor that never had it (measured 2026-11-24: two weeks of `ratio 0`).
+    assert.match(stdout, /walk=(lattice:\d+|tile_advanced:\d+|unrecorded:\d+)/u);
     // Actions the engine declares no constant for are a named gap on every run, never a silent drop.
     assert.match(stdout, /^action_pace_unpriced: sleep \(unpriced\) /mu);
   },

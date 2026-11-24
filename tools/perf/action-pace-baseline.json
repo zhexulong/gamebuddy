@@ -1,181 +1,301 @@
 {
-  "note": "Per-action pace ratios recorded from the game-side durations in this checkout's own .live-runs bundles. The ratio is the action's measured p50 game-side milliseconds over the engine floor tools/lib/action-pace.mjs derives from the decompiled tree: ONE SWING OF THE ACTION'S OWN ANIMATION, PLUS THE WALK THE ARTIFACT RECORDED FOR THAT ACTION (walkTiles x WALK_MS_PER_TILE, the route receipts of the same execution that produced the duration). Walk-dominated actions therefore read as engine-dominated rather than as slowness: harvest_crop recorded 10 tiles of walking inside its 2257 ms p50, so its floor is 16.67 + 10 x 505.05 = 5067 ms and its ratio is 0.44, not the 135x a one-swing floor reported. tools/check-perf-budget.mjs re-measures from whatever bundles exist and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record deliberately, in its own commit, when a change makes an action faster. Actions whose work has no engine constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared across revisions, not across machines: it is a property of the game-side path, not of the box.",
+  "note": "Per-action pace ratios recorded from the game-side durations in this checkout's own .live-runs bundles. The ratio is the action's measured p50 game-side milliseconds over the engine floor tools/lib/action-pace.mjs derives from the decompiled tree: ONE SWING OF THE ACTION'S OWN ANIMATION PLUS THE WALK THAT ACTION'S CHANNEL RECORDED, at the engine's own walk rate. EACH ENTRY NAMES ITS WALK SOURCE, because the term is only as good as the artifact behind it: 'lattice' is the distance between the tiles the program's own nodes report (a LOWER bound on the route, so the ratio is a CEILING), 'tile_advanced' is a run that still carried the per-tile receipt (the Mod stopped minting it on 2026-11-11), and 'unrecorded' is a channel that records no position at all, whose floor is the animation alone. tools/check-perf-budget.mjs re-measures from whatever bundles exist and fails when an action's ratio grows past its recorded ratio plus tolerance; re-record deliberately, in its own commit, when a change makes an action faster OR WHEN THE ARTIFACT A CHANNEL READS CHANGES, because a re-record is also how a floor that lost a term gets its numbers back. Actions whose work has no engine constant are absent here on purpose and are printed as `action_pace_unpriced` instead. The ratio is compared across revisions, not across machines: it is a property of the game-side path, not of the box.",
   "recordedFrom": {
-    "actionTraceFiles": 151,
-    "timelineFiles": 151,
-    "resultFiles": 275,
-    "timedInstances": 7254,
-    "examinedInstances": 4993
+    "actionTraceFiles": 173,
+    "timelineFiles": 173,
+    "resultFiles": 297,
+    "timedInstances": 11484,
+    "examinedInstances": 4305
   },
   "tolerance": 0.5,
   "actions": {
-    "break_rock": {
-      "ratio": 0.38,
-      "oursMs": 379,
-      "floorMs": 985.05,
-      "walkTiles": 1,
-      "instances": 291
-    },
-    "break_rock_source": {
-      "ratio": 0.31,
-      "oursMs": 617,
-      "floorMs": 1995.15,
-      "walkTiles": 3,
-      "instances": 368
-    },
-    "chest_store": {
-      "ratio": 0,
-      "oursMs": 0,
+    "accept_daily_quest": {
+      "ratio": 2.76,
+      "oursMs": 46,
       "floorMs": 16.67,
-      "walkTiles": 0,
-      "instances": 5
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 1
     },
-    "chop_stump": {
-      "ratio": 0.33,
-      "oursMs": 493,
+    "break_rock": {
+      "ratio": 0.36,
+      "oursMs": 536,
       "floorMs": 1490.1,
       "walkTiles": 2,
-      "instances": 17
+      "walkSource": "tile_advanced",
+      "instances": 255
+    },
+    "break_rock_source": {
+      "ratio": 0.36,
+      "oursMs": 1070,
+      "floorMs": 3005.25,
+      "walkTiles": 5,
+      "walkSource": "tile_advanced",
+      "instances": 291
+    },
+    "chest_retrieve": {
+      "ratio": 23.82,
+      "oursMs": 397,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 2
+    },
+    "chest_store": {
+      "ratio": 1.74,
+      "oursMs": 29,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 24
+    },
+    "chop_stump": {
+      "ratio": 0.34,
+      "oursMs": 511,
+      "floorMs": 1490.1,
+      "walkTiles": 2,
+      "walkSource": "tile_advanced",
+      "instances": 14
     },
     "chop_tree": {
-      "ratio": 0,
-      "oursMs": 1,
-      "floorMs": 480,
-      "walkTiles": 0,
-      "instances": 32
+      "ratio": 0.38,
+      "oursMs": 572,
+      "floorMs": 1490.1,
+      "walkTiles": 2,
+      "walkSource": "tile_advanced",
+      "instances": 20
     },
     "chop_tree_source": {
-      "ratio": 0,
-      "oursMs": 1,
-      "floorMs": 480,
-      "walkTiles": 0,
-      "instances": 188
+      "ratio": 0.24,
+      "oursMs": 483,
+      "floorMs": 1995.15,
+      "walkTiles": 3,
+      "walkSource": "tile_advanced",
+      "instances": 113
     },
     "claim_mail_attachment": {
-      "ratio": 0,
-      "oursMs": 0,
+      "ratio": 5.04,
+      "oursMs": 84,
       "floorMs": 16.67,
       "walkTiles": 0,
-      "instances": 34
+      "walkSource": "tile_advanced",
+      "instances": 14
+    },
+    "clear_debris": {
+      "ratio": 0.11,
+      "oursMs": 268,
+      "floorMs": 2500.2,
+      "walkTiles": 4,
+      "walkSource": "lattice",
+      "instances": 1
+    },
+    "clear_hoedirt": {
+      "ratio": 0.06,
+      "oursMs": 92,
+      "floorMs": 1490.1,
+      "walkTiles": 2,
+      "walkSource": "lattice",
+      "instances": 16
+    },
+    "collect_animal_product": {
+      "ratio": 3.05,
+      "oursMs": 1465,
+      "floorMs": 480,
+      "walkTiles": 0,
+      "walkSource": "lattice",
+      "instances": 1
     },
     "color_placed_object": {
       "ratio": 0.06,
       "oursMs": 1,
       "floorMs": 16.67,
       "walkTiles": 0,
-      "instances": 22
+      "walkSource": "tile_advanced",
+      "instances": 14
     },
     "cut_grass": {
-      "ratio": 0.13,
-      "oursMs": 61,
+      "ratio": 0.32,
+      "oursMs": 154,
       "floorMs": 480,
       "walkTiles": 0,
-      "instances": 534
+      "walkSource": "tile_advanced",
+      "instances": 382
     },
     "cut_weeds": {
-      "ratio": 0.36,
-      "oursMs": 538,
-      "floorMs": 1490.1,
-      "walkTiles": 2,
-      "instances": 1084
+      "ratio": 0.34,
+      "oursMs": 673,
+      "floorMs": 1995.15,
+      "walkTiles": 3,
+      "walkSource": "tile_advanced",
+      "instances": 948
     },
     "equip_tool": {
-      "ratio": 0,
-      "oursMs": 0,
+      "ratio": 0.06,
+      "oursMs": 1,
       "floorMs": 16.67,
       "walkTiles": 0,
-      "instances": 411
+      "walkSource": "tile_advanced",
+      "instances": 84
+    },
+    "equip_wearable": {
+      "ratio": 0.84,
+      "oursMs": 14,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 5
     },
     "express_emote": {
-      "ratio": 4.2,
-      "oursMs": 70,
+      "ratio": 4.32,
+      "oursMs": 72,
       "floorMs": 16.67,
-      "walkTiles": 0,
+      "walkTiles": null,
+      "walkSource": "unrecorded",
+      "instances": 499
+    },
+    "face_direction": {
+      "ratio": 5.94,
+      "oursMs": 99,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "unrecorded",
+      "instances": 8
+    },
+    "feed_animal": {
+      "ratio": 0.39,
+      "oursMs": 788,
+      "floorMs": 2036.87,
+      "walkTiles": 4,
+      "walkSource": "lattice",
       "instances": 1
     },
     "harvest_crop": {
       "ratio": 0.44,
-      "oursMs": 2232,
+      "oursMs": 2234,
       "floorMs": 5067.17,
       "walkTiles": 10,
-      "instances": 98
+      "walkSource": "tile_advanced",
+      "instances": 92
     },
     "move_placed_furniture": {
-      "ratio": 0,
-      "oursMs": 0,
-      "floorMs": 16.67,
-      "walkTiles": 0,
-      "instances": 4
+      "ratio": 0.12,
+      "oursMs": 63,
+      "floorMs": 521.72,
+      "walkTiles": 1,
+      "walkSource": "lattice",
+      "instances": 8
     },
     "move_to_tile": {
-      "ratio": 0.4,
-      "oursMs": 1406,
+      "ratio": 0.45,
+      "oursMs": 1578,
       "floorMs": 3535.35,
       "walkTiles": 7,
-      "instances": 789
+      "walkSource": "tile_advanced",
+      "instances": 695
+    },
+    "pet_farm_animal": {
+      "ratio": 33.48,
+      "oursMs": 558,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 4
+    },
+    "pickup_forage": {
+      "ratio": 0.26,
+      "oursMs": 802,
+      "floorMs": 3046.97,
+      "walkTiles": 6,
+      "walkSource": "lattice",
+      "instances": 8
     },
     "pickup_item": {
-      "ratio": 0,
-      "oursMs": 0,
+      "ratio": 31.98,
+      "oursMs": 533,
       "floorMs": 16.67,
       "walkTiles": 0,
-      "instances": 241
+      "walkSource": "tile_advanced",
+      "instances": 83
     },
     "place_owned_object": {
-      "ratio": 0.06,
-      "oursMs": 1,
-      "floorMs": 16.67,
-      "walkTiles": 0,
-      "instances": 6
+      "ratio": 0.41,
+      "oursMs": 424,
+      "floorMs": 1026.77,
+      "walkTiles": 2,
+      "walkSource": "tile_advanced",
+      "instances": 4
     },
     "plant_seed": {
-      "ratio": 0.06,
-      "oursMs": 1,
+      "ratio": 10.26,
+      "oursMs": 171,
       "floorMs": 16.67,
       "walkTiles": 0,
-      "instances": 104
+      "walkSource": "tile_advanced",
+      "instances": 58
     },
     "refill_watering_can": {
       "ratio": 0.37,
       "oursMs": 1812,
       "floorMs": 4920.45,
       "walkTiles": 9,
+      "walkSource": "tile_advanced",
       "instances": 1
     },
     "remove_placed_item": {
       "ratio": 0.3,
-      "oursMs": 748,
+      "oursMs": 752,
       "floorMs": 2500.2,
       "walkTiles": 4,
-      "instances": 37
+      "walkSource": "tile_advanced",
+      "instances": 35
+    },
+    "rotate_furniture": {
+      "ratio": 0.69,
+      "oursMs": 362,
+      "floorMs": 521.72,
+      "walkTiles": 1,
+      "walkSource": "lattice",
+      "instances": 4
+    },
+    "shake_tree": {
+      "ratio": 16.62,
+      "oursMs": 277,
+      "floorMs": 16.67,
+      "walkTiles": null,
+      "walkSource": "lattice",
+      "instances": 2
+    },
+    "sweep_scythe": {
+      "ratio": 0.89,
+      "oursMs": 464,
+      "floorMs": 521.72,
+      "walkTiles": 1,
+      "walkSource": "lattice",
+      "instances": 8
     },
     "talk_to_npc": {
-      "ratio": 0,
-      "oursMs": 0,
-      "floorMs": 16.67,
-      "walkTiles": 0,
-      "instances": 1
+      "ratio": 0.13,
+      "oursMs": 2169,
+      "floorMs": 16178.28,
+      "walkTiles": 32,
+      "walkSource": "lattice",
+      "instances": 7
     },
     "till_soil": {
-      "ratio": 0.21,
-      "oursMs": 103,
+      "ratio": 0.41,
+      "oursMs": 196,
       "floorMs": 480,
       "walkTiles": 0,
-      "instances": 128
+      "walkSource": "tile_advanced",
+      "instances": 84
     },
     "water_crop": {
-      "ratio": 0,
-      "oursMs": 0,
+      "ratio": 0.14,
+      "oursMs": 52,
       "floorMs": 375,
       "walkTiles": 0,
-      "instances": 163
-    },
-    "water_pet_bowl": {
-      "ratio": 0,
-      "oursMs": 0,
-      "floorMs": 375,
-      "walkTiles": 0,
-      "instances": 1
+      "walkSource": "tile_advanced",
+      "instances": 72
     }
   }
 }
