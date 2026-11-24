@@ -44,15 +44,6 @@ const STOP_TIMEOUT_MS = 5_000;
 const GRACEFUL_CLOSE_TIMEOUT_MS = 30_000;
 const STDERR_LIMIT = 65_536;
 const USAGE = "usage: node tools/run-tavern-narrative-gate.mjs [--report <path>] [--kind main|failure|recovery]";
-/**
- * Cooperative close request the composed child already accepts on the gate's own
- * IPC channel (`desktop-runtime-bootstrap` `waitForTermination`). A SIGTERM on
- * Windows is TerminateProcess, so it is the ONLY way to make the child run its
- * own `composition.close()` and commit the durable Chat runtime teardown - which
- * is exactly what a `known` re-mount requires. Same schema string the memory
- * live loop uses; it is a request, not a capability.
- */
-const COMPOSED_SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
 
 /**
  * The bounded attempt kinds this runner can be asked to run. Each kind drives a
@@ -727,23 +718,19 @@ async function closeComposedAttempt(attempt, { graceful }) {
 /**
  * Ask a composed child to close itself and wait for it to actually exit.
  *
- * On Windows `child.kill("SIGTERM")` is TerminateProcess, so the child's own
- * close path never runs and the durable chat runtime teardown is never
- * committed - which the product then reports as a refused `known` re-mount. The
- * request is a request, not a capability: the parent could always terminate the
- * process. It always escalates to `stop()` so an unresponsive child cannot hang
- * the gate.
+ * The ask is the product's own quit: the bootstrap's controller channel IS the child's standard
+ * input, and its EOF is the one trigger the Host accepts (ADR-0012 §9.2). A polite message over
+ * the readiness IPC channel used to stand here; the product never produced one and it was
+ * deleted. `child.kill()` is not a substitute - on Windows it is TerminateProcess, so the child
+ * never runs its own `composition.close()` and the durable Chat runtime teardown - what a `known`
+ * re-mount requires - is never committed. It always escalates to `stop()` so an unresponsive
+ * child cannot hang the gate.
  */
 export async function requestComposedShutdown(child, timeoutMs = GRACEFUL_CLOSE_TIMEOUT_MS) {
   if (child === undefined || child === null || child.exitCode !== null) return "not_running";
   const exited = new Promise((resolveExit) => child.once("exit", () => resolveExit(true)));
-  if (typeof child.send === "function" && child.connected === true) {
-    try {
-      child.send(Object.freeze({ schema: COMPOSED_SHUTDOWN_REQUEST_SCHEMA, protocolVersion: 1 }));
-    } catch {
-      // The escalation below still guarantees an exit.
-    }
-  }
+  // The controller channel's write handle is this launcher's; closing it is the quit.
+  if (child.stdin !== null && child.stdin !== undefined && !child.stdin.destroyed) child.stdin.end();
   const closed = await Promise.race([
     exited,
     new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), timeoutMs)),

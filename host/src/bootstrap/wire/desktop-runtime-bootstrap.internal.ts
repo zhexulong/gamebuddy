@@ -46,22 +46,6 @@ import {
 const MAX_WIRE_BYTES = 32_768;
 
 /**
- * The parent's cooperative request for this composition to close cleanly.
- *
- * The gate launcher spawns this bootstrap with an IPC channel and already
- * publishes readiness over it (`gamebuddy-desktop-composition-ready/v1`). This is
- * the symmetric inbound half: a request, not a capability. It grants the sender
- * nothing it did not already have - the parent can terminate this process at any
- * moment with TerminateProcess - it merely lets the process run its own
- * `composition.close()` instead of being killed mid-flight, so the durable chat
- * runtime teardown commits.
- *
- * Required because `child.kill("SIGTERM")` on Windows is TerminateProcess: the
- * signal handlers below never run, and the teardown never happens. Measured, not
- * assumed (probe: exit reported `signal SIGTERM` with the handler never invoked).
- */
-const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
-/**
  * The most one Guardian session frame may weigh, in either direction.
  *
  * It is exported because it is not this wire's private number: the Desktop broker that serves the
@@ -220,7 +204,8 @@ async function runAdmittedHostBootstrap(artifactRoot: string, controller: Deskto
     termination = waitForTermination();
     // ONE channel proves the Desktop which started this process still exists: the controller
     // channel, which the launcher holds open for the whole run and closes on a quit. Its EOF is
-    // what a quit closes, so losing it is the same request as a SIGTERM and both are idempotent.
+    // what a quit closes, and ADR-0012 §6.3/§9.3 makes it the only trigger this process has - no
+    // signal, no IPC message.
     //
     // The authenticated Guardian session is deliberately not a second proof. Under ADR-0015 §3 a
     // session IS one attempt: the composition closes it when the attempt ends and the next
@@ -263,8 +248,9 @@ async function runAdmittedHostBootstrap(artifactRoot: string, controller: Deskto
  * The composition owns the steps its children and the authenticated Guardian
  * session are; this entry owns the two resources it created itself - the optional
  * Voice client and the termination watchers. The composition runs first because
- * `release_termination_watchers` is what finally lets the process exit, and it
- * may only run once nothing is left that could still want to react to a signal.
+ * `release_termination_watchers` is what finally lets the process exit, and it may
+ * only run once nothing is left that could still want to react to the owner
+ * channel's end.
  */
 async function reclaimDesktopHostExit(
   composition: DesktopPrivateHostComposition,
@@ -1605,13 +1591,20 @@ async function writeAcknowledgement(frame: DesktopHostBootstrapFrame): Promise<v
   });
 }
 
+/**
+ * The one wait a launched Host parks on, and the liveness handle that makes parking possible.
+ *
+ * ADR-0012 §6.3/§9.3: the controller channel's end is the SUFFICIENT AND ONLY trigger - no signal,
+ * no IPC message, no second source. The launcher gives this child no console and no Node IPC
+ * channel (the readiness publication over one is a no-op in production), so both of those were
+ * paths nothing in the product could ever drive. `request()` is therefore one caller: `onLost`.
+ */
 function waitForTermination(): Readonly<{
   promise: Promise<void>;
   /**
-   * Requests the same clean shutdown a signal does, without a signal. The
-   * authenticated parent session's loss is the one caller: it is evidence the
-   * owner is gone, not a capability, so it grants nothing a parent could not
-   * already do by terminating this process.
+   * Requests the clean shutdown the controller channel's end means. Its caller is
+   * evidence the owner is gone, not a capability: it grants nothing a launcher could
+   * not already do by terminating this process.
    */
   request: () => void;
   dispose: () => void;
@@ -1621,55 +1614,23 @@ function waitForTermination(): Readonly<{
   const promise = new Promise<void>((resolveTermination) => {
     const livenessHandle = setInterval(() => {}, 2_147_483_647);
     let settled = false;
-    const cleanup = () => {
-      clearInterval(livenessHandle);
-      process.off("SIGTERM", onTerminate);
-      process.off("SIGINT", onTerminate);
-      // Windows console control events (Ctrl+Break, and GenerateConsoleCtrlEvent
-      // from a supervising native process) arrive as SIGBREAK, not SIGTERM. They
-      // are the only signal path that actually reaches a handler here.
-      process.off("SIGBREAK", onTerminate);
-      process.off("message", onMessage);
-    };
-    const onTerminate = () => {
-      // Idempotent: several sources can request termination, and `dispose` runs
-      // unconditionally in the caller's finally.
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolveTermination();
-    };
-    // The IPC channel is the private parent-child pipe created at spawn; only the
-    // parent holds the other end. The shape is validated strictly so a malformed or
-    // unrelated message can never drop the composition.
-    const onMessage = (value: unknown) => {
-      if (isShutdownRequest(value)) onTerminate();
-    };
     // Cleanup only - it does not itself terminate, so a caller that abandons the
     // wait (a failed acknowledgement, say) does not race the close path.
-    dispose = cleanup;
-    request = onTerminate;
-    process.once("SIGTERM", onTerminate);
-    process.once("SIGINT", onTerminate);
-    process.once("SIGBREAK", onTerminate);
-    process.on("message", onMessage);
+    dispose = () => {
+      clearInterval(livenessHandle);
+    };
+    request = () => {
+      if (settled) return;
+      settled = true;
+      clearInterval(livenessHandle);
+      resolveTermination();
+    };
   });
   return {
     promise,
     request,
     dispose,
   };
-}
-
-function isShutdownRequest(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
-  const keys = Reflect.ownKeys(value);
-  return (
-    keys.length === 2 &&
-    keys.every((key) => key === "schema" || key === "protocolVersion") &&
-    (value as { schema?: unknown }).schema === SHUTDOWN_REQUEST_SCHEMA &&
-    (value as { protocolVersion?: unknown }).protocolVersion === 1
-  );
 }
 
 function validHex(value: unknown): value is string {

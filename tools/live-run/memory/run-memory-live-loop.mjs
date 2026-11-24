@@ -1301,11 +1301,10 @@ export async function runMemoryLiveLoop({
     // shared, and the vendor's m[0] source marker names what was compiled in, so
     // the two surfaces remain comparable without this loop pretending to be both.
     //
-    // The child accepts a cooperative shutdown request over the IPC channel
-    // (desktop-runtime-bootstrap `waitForTermination`), which is what lets that
-    // teardown commit and this phase mount as a successor. Without it the product
-    // rejects the mount with `chat_runtime_reentry_selection_invalid`; see the
-    // blocked branch below for that case.
+    // The predecessor's own close is what lets that teardown commit: closing the child's
+    // controller channel (its stdin) is the product's quit, and `stopChildGracefully` waits for
+    // the exit that close produces (ADR-0012 §9.2). Without it the product rejects the mount with
+    // `chat_runtime_reentry_selection_invalid`; see the blocked branch below for that case.
     // (A lever for the historian's fold trigger deliberately does NOT live here. It is 65% of the
     // model's usable range, so a fold needs ~487k tokens of context on the product's million-token
     // model - unreachable in a test, and the declared window in `pi-agent/models.json` is rewritten at

@@ -4,31 +4,21 @@
  * This is the whole reason the memory loop can have a second phase. The product
  * admits a `known` mount as a terminal SUCCESSOR, which requires the predecessor
  * chat-runtime teardown to have COMMITTED, and that commit happens only inside the
- * child's own close path (desktop-runtime-bootstrap finally -> composition.close()).
+ * child's own close path (desktop-runtime-bootstrap -> composition.close()).
  *
- * On Windows there is no way to make that path run from outside: `child.kill("SIGTERM")`
- * is TerminateProcess and the handler never executes (probe: exit reported
- * `signal SIGTERM`, handler not invoked), and disposing the guardian peer leaves the
- * child running. So the child now accepts a cooperative request on the IPC channel the
- * gate already opens for readiness, and this asks politely before ever escalating.
+ * The ask IS the product's own quit, not a second channel: the bootstrap's
+ * controller channel is the child's standard input, and its EOF is the one trigger
+ * the Host accepts (ADR-0012 §9.2). A polite message over the readiness IPC channel
+ * used to stand here; it had no producer in the product and was deleted, so this
+ * closes the channel the launcher itself closes on a tray quit. `child.kill()` is
+ * not a substitute: on Windows it is TerminateProcess, so the child runs no step.
  */
-export const SHUTDOWN_REQUEST_SCHEMA = "gamebuddy-desktop-shutdown-request/v1";
-
 export async function stopChildGracefully(child, timeoutMs = 30_000) {
   if (child === undefined || child === null || child.exitCode !== null) return;
   const exited = new Promise((resolveExit) => child.once("exit", () => resolveExit(true)));
-  // The request only reaches a child that was spawned with an IPC channel and has
-  // not disconnected. `connected` is the product's own gate: a child without the
-  // channel (production Desktop) simply never gets asked, which is correct - it is
-  // stopped by its supervisor.
-  const canRequest = typeof child.send === "function" && child.connected === true;
-  if (canRequest) {
-    try {
-      child.send(Object.freeze({ schema: SHUTDOWN_REQUEST_SCHEMA, protocolVersion: 1 }));
-    } catch {
-      // A send failure is not fatal: the escalation below still guarantees exit.
-    }
-  }
+  // A launch handle that already closed the channel (its own `dispose`) left nothing
+  // to ask with; a child without one was never launched by this product's launcher.
+  if (child.stdin !== null && child.stdin !== undefined && !child.stdin.destroyed) child.stdin.end();
   const closed = await Promise.race([
     exited,
     new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(false), timeoutMs)),

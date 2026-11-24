@@ -13,8 +13,8 @@ import {
   deriveAuthenticatedReferenceChatApi,
   evaluateNarrativeGateMarker,
   evaluateNarrativeGateRuntime,
-  NARRATIVE_RUN_KINDS,
   NARRATIVE_RUN_FAILURE_CODES,
+  NARRATIVE_RUN_KINDS,
   NARRATIVE_RUN_POSITIONS,
   narrativeTurnDurableState,
   observedTurnFailure,
@@ -23,6 +23,7 @@ import {
   projectGuardSafeFailureCode,
   projectTranscriptShape,
   reportBase,
+  requestComposedShutdown,
   writeReport,
 } from "./run-tavern-narrative-gate.mjs";
 
@@ -447,4 +448,46 @@ test("Reference live runner stays on the composition bootstrap and authenticated
   assert.match(source, /NARRATIVE_RUN_FAILURE_CODES\.includes\(evidence\?\.problemCode\)/);
   assert.match(source, /const turnTerminalState = narrativeTurnDurableState\(turn\.outcome\)/);
   assert.doesNotMatch(source, /providerRejectionPosition/);
+});
+
+/**
+ * The graceful close is the product's own quit, not a private message.
+ *
+ * A polite frame over the readiness IPC channel used to stand here; the product never produced one
+ * and it was deleted, so what must be left is the channel the launcher itself closes: the child's
+ * standard input. The child in this test is real, and its marker is its own testimony that it ran a
+ * shutdown path - a child this helper had to kill would leave no marker at all.
+ */
+test("the composed close request ends the child on the channel the launcher closes", async () => {
+  const { spawn } = await import("node:child_process");
+  const root = await mkdtemp(join(tmpdir(), "gamebuddy-tavern-gate-close-"));
+  const marker = join(root, "completed.txt");
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `
+const { appendFileSync } = require("node:fs");
+process.stdin.on("end", () => {
+  appendFileSync(process.env.CLOSE_MARKER, "completed\\n");
+  process.exitCode = 0;
+});
+process.stdin.resume();
+`,
+    ],
+    { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, CLOSE_MARKER: marker } },
+  );
+  try {
+    const exited = new Promise((resolveExit) => child.once("exit", (code, signal) => resolveExit({ code, signal })));
+    assert.equal(await requestComposedShutdown(child, 10_000), "closed");
+    const outcome = await Promise.race([
+      exited,
+      new Promise((resolveTimeout) => setTimeout(() => resolveTimeout(undefined), 5_000)),
+    ]);
+    assert.deepEqual(outcome, { code: 0, signal: null });
+    assert.equal(await readFile(marker, "utf8"), "completed\n");
+  } finally {
+    if (child.exitCode === null) child.kill();
+    await rm(root, { recursive: true, force: true });
+  }
 });

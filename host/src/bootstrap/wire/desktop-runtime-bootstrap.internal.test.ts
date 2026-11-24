@@ -130,9 +130,9 @@ test("desktop bootstrap helper announces its bounded status stages before exactl
 
 test("desktop bootstrap helper publishes the ready frame the declaration beside it states", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
-  // `shutdown-request` is the scenario that gives the child the readiness IPC channel the production launcher
+  // `readiness-publication` is the scenario that gives the child the readiness IPC channel the gate launcher
   // opens, so this is the frame the child really publishes - not a copy of the shape it publishes.
-  const result = await runWireFixture("shutdown-request");
+  const result = await runWireFixture("readiness-publication");
 
   assert.equal(result.messages.length, 1, "one ready frame, and nothing else, rides the readiness channel");
   assert.equal(result.messages[0]!.schema, "gamebuddy-desktop-composition-ready/v1");
@@ -1095,37 +1095,31 @@ test("desktop bootstrap helper closes its composition when acknowledgement writi
   assert.match(result.stderr, /ack_write_failed/);
 });
 
-test("desktop bootstrap helper closes its composition when termination fails", async (t) => {
+test("desktop bootstrap helper closes its composition and leaves by itself when its owner's channel ends", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
-  const result = await runWireFixture("termination-failure");
-  assert.deepEqual(
-    result.requests.map((request) => request.operation),
-    ["hello"],
-  );
-  assert.equal(result.guardianClosed, true);
-  assert.match(result.stderr, /termination_failed/);
-});
-
-test("desktop bootstrap helper closes its composition cleanly on a shutdown request", async (t) => {
-  if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
-  const result = await runWireFixture("shutdown-request");
+  const result = await runWireFixture("readiness-publication");
   assert.deepEqual(
     result.requests.map((request) => request.operation),
     ["hello", "arm_attempt", "launch_role", "contain_role"],
   );
   assert.equal(result.guardianClosed, true);
+  // The quit here is the product's own - the controller channel ends - and the child closes its
+  // composition and leaves by itself: exit 0, not killed. That is the whole trigger the Host has
+  // (ADR-0012 §6.3/§9.3); the `message` channel it used to answer on had no producer in the product.
   assert.equal(result.workerExitCode, 0, "the child must close its own composition and exit 0, not be killed");
   assert.equal(result.workerExitedNaturally, true);
 });
 
-test("desktop bootstrap helper ignores a malformed IPC message and stays up", async (t) => {
+test("desktop bootstrap helper ignores an inbound IPC message and stays up", async (t) => {
   if (process.platform !== "win32") return t.skip("Windows-only root admission and named-pipe protocol");
-  const result = await runWireFixture("shutdown-malformed");
+  const result = await runWireFixture("readiness-publication", { inboundMessage: true });
+  // The readiness channel carries one frame OUT and no order IN. Nothing inbound is a quit request:
+  // the child has no `message` listener at all, so an unrelated payload cannot drop the composition.
   assert.deepEqual(
     result.requests.map((request) => request.operation),
     ["hello", "arm_attempt", "launch_role", "contain_role"],
   );
-  assert.equal(result.workerExitCode, null, "a malformed message must not drop the composition");
+  assert.equal(result.exitCodeWhileServing, null, "an inbound message must not drop the composition");
 });
 
 // The recovery conversation is the only operation whose read path waits for more
@@ -1188,8 +1182,7 @@ async function runWireFixture(
     | "success"
     | "recovery-success"
     | "recovery-role-rejected"
-    | "shutdown-request"
-    | "shutdown-malformed"
+    | "readiness-publication"
     | "missing-arm-executable"
     | "malformed-arm"
     | "withheld-arm-ack"
@@ -1209,7 +1202,6 @@ async function runWireFixture(
     | "settle-leaves-nothing"
     | "composition-failure"
     | "ack-write-failure"
-    | "termination-failure"
     | "invalid-surface"
     | "invalid-nonce",
   options: Readonly<{
@@ -1218,6 +1210,8 @@ async function runWireFixture(
     modOutcome?: string;
     /** The role environment the product built; the long-PATH scenario passes the real one. */
     launchEnvironment?: Readonly<Record<string, string>>;
+    /** Writes an unrelated payload down the readiness channel before the quit, to read whether it was taken as an order. */
+    inboundMessage?: boolean;
   }> = {},
 ): Promise<{
   requests: Record<string, unknown>[];
@@ -1274,7 +1268,7 @@ async function runWireFixture(
   /** The frames this peer refused under the broker's own transition rules, named by what broke. */
   peerRefusals: readonly string[];
 }> {
-  const fixturesWithIpc = scenario === "shutdown-request" || scenario === "shutdown-malformed";
+  const fixturesWithIpc = scenario === "readiness-publication";
   // The two quit scenarios put a LIVE attempt in front of a quit: her client was launched and never
   // contained, which is the state the production drain's third step exists for.
   const liveDrainQuit = scenario === "drain-owner-quit" || scenario === "drain-owner-quit-broker-first";
@@ -1769,9 +1763,8 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
       },
     };
     await writeFile(workerPath, wireFixtureWorkerSource);
-    // The shutdown-request scenarios exercise the IPC channel: the parent asks
-    // the child via `process.send` to close its own composition. That channel is
-    // the gate launcher's readiness IPC, opened by the spawn's fourth stdio slot.
+    // `readiness-publication` is the scenario that opens the launcher's readiness IPC channel, so the
+    // ready frame the child publishes there is read rather than reconstructed.
     const stdio: "pipe"[] | ["pipe", "pipe", "pipe", "ipc"] = fixturesWithIpc
       ? ["pipe", "pipe", "pipe", "ipc"]
       : ["pipe", "pipe", "pipe"];
@@ -1790,7 +1783,7 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     });
     const workerClose = waitForClose(worker);
     // The readiness IPC channel the launcher opens (`fixturesWithIpc`). Nothing else in this fixture reads it,
-    // except the shutdown cases that send TO the child - so an entry here is a frame the child published.
+    // so an entry here is a frame the child published - never a frame it answered.
     const messages: Record<string, unknown>[] = [];
     worker.on("message", (message: unknown) => {
       messages.push(message as Record<string, unknown>);
@@ -1798,7 +1791,6 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
     const failureScenario =
       scenario === "composition-failure" ||
       scenario === "ack-write-failure" ||
-      scenario === "termination-failure" ||
       scenario === "invalid-surface" ||
       scenario === "invalid-nonce";
     const output = failureScenario ? undefined : collectFrames(worker.stdout!, worker);
@@ -1859,20 +1851,18 @@ export async function inspectWindowsPathSecurity(capability, absolutePath) {
         );
     } else if (fixturesWithIpc) {
       await withTimeout(operationsComplete, 10_000, "guardian operations");
-      if (scenario === "shutdown-request") {
-        // The parent requests a clean close over the SAME IPC channel the child
-        // uses for readiness. The child must exit 0 by its own close path - the
-        // graceful path the memory loop depends on for its phase-2 successor.
-        worker.send({ schema: "gamebuddy-desktop-shutdown-request/v1", protocolVersion: 1 });
-        await withTimeout(workerClose, 10_000, "shutdown request close");
-      } else {
-        // A malformed message must be ignored: the composition stays up, exactly
-        // as it does for any unrelated IPC payload.
-        worker.send({ not: "a-shutdown-request" });
+      if (options.inboundMessage === true) {
+        // Nothing inbound on this channel is an order: the child has no `message` listener, so an
+        // unrelated payload must leave it serving. Read the process state, not a duration.
+        worker.send({ not: "an-order" });
         await new Promise((resolveKeepalive) => setTimeout(resolveKeepalive, 500));
-        worker.kill("SIGTERM");
-        await withTimeout(workerClose, 10_000, "shutdown-malformed cleanup");
+        exitCodeWhileServing = worker.exitCode;
       }
+      // The quit is the product's own: the controller channel (this child's stdin) ends, exactly as
+      // the launcher's `CloseAsync` ends it, and the child closes its composition and leaves by
+      // itself. That is the graceful path the memory loop's phase-2 successor depends on.
+      if (!worker.stdin!.destroyed) worker.stdin!.end();
+      await withTimeout(workerClose, 10_000, "the owner channel's close");
     } else if (scenario === "lost-session-rearm") {
       // The refusal has to be READ from the child, not inferred from its exit: the peer destroyed
       // the socket, so the only place the attempt's own code exists is the child's own report.
@@ -2079,13 +2069,6 @@ if (scenario === "ack-write-failure") {
     return process.stdout;
   });
 }
-if (scenario === "termination-failure") {
-  const originalProcessOnce = process.once.bind(process);
-  process.once = ((event, listener) => {
-    if (event === "SIGTERM") throw new Error("termination_failed");
-    return originalProcessOnce(event, listener);
-  });
-}
 
 function reportAndStop(error) {
   process.stderr.write(String(error?.message ?? error) + "\\n");
@@ -2145,7 +2128,7 @@ async function drive(session) {
     }
     return;
   }
-  if (scenario === "success" || scenario === "shutdown-request" || scenario === "shutdown-malformed") {
+  if (scenario === "success" || scenario === "readiness-publication") {
     const { createDesktopGuardianGameRuntimePlatform } = await import(fixture.platformUrl);
     const platform = createDesktopGuardianGameRuntimePlatform(session);
     await platform.arm({
@@ -2582,7 +2565,7 @@ function mockComposition(_rootLayoutCapability, session, assemblyInput) {
   // order it can reach is the clean one; the bootstrap still consumes the exact
   // report shape the production composition returns.
   const cleanExitReason = Object.freeze({ schema: "gamebuddy-desktop-host-exit/v1", outcome: "clean", reason: "clean_exit", steps: [] });
-  if (scenario === "ack-write-failure" || scenario === "termination-failure") {
+  if (scenario === "ack-write-failure") {
     return { async close() { await session.close(); return cleanExitReason; } };
   }
   process.stderr.write("wire_assembly_surface:" + (assemblyInput?.surface === undefined ? "default" : assemblyInput.surface) + "\\n");
