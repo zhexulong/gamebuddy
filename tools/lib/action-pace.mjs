@@ -78,7 +78,10 @@ import { readStardewActionFamilies } from "./stardew-published-action-registry.m
  *     where a run carries them (`walk=tile_advanced`), the tiles a program's own nodes report
  *     for the `program` channel (`walk=lattice`, the distance between consecutive node tiles
  *     - a LOWER bound on the route, so its ratio is a ceiling), and `walk=unrecorded` for the
- *     `flat` channel, which records no position at all.
+ *     `flat` channel, which records no position at all;
+ *   - a program's FIRST node is NOT a row there: its span contains the walk into the program and no
+ *     channel records that walk, so it is counted `firstNodeWalkIn` and left out - the same rule
+ *     `tools/lib/program-pace.mjs` already applies to the program unit (see `programRows`).
  *
  * EVERY LINE CARRIES ITS WALK SOURCE, because a floor that dropped one of its two terms
  * printed exactly like a floor that never had it.
@@ -567,19 +570,25 @@ function programRows(path) {
   try {
     result = JSON.parse(readFileSync(path, "utf8"));
   } catch {
-    return { rows: [], rejected: 0, unattributed: 0 };
+    return { rows: [], rejected: 0, unattributed: 0, firstNodeWalkIn: 0 };
   }
   const rows = [];
   let rejected = 0;
   let unattributed = 0;
+  let firstNodeWalkIn = 0;
   for (const program of Array.isArray(result?.programOutcomes) ? result.programOutcomes : []) {
     const byNode = new Map((program?.nodeOutcomes ?? []).map((node) => [node?.nodeId, node]));
+    // IN THE ORDER THE MOD RAN THEM, because "the program's first node" is a fact about that order and not
+    // about the array's.
+    const executions = (program?.executions ?? [])
+      .filter((execution) => typeof execution?.atMs === "number" && typeof execution?.settledAtMs === "number")
+      .sort((left, right) => left.atMs - right.atMs);
     // THE WALK THIS CHANNEL CAN SEE: the tiles its own nodes report, in the order the Mod ran
     // them. A node with no tile (an `equip_tool` names no target) holds the position where it was,
     // because it does not move the actor - so it neither charges nor breaks the chain.
     let previous = null;
-    for (const execution of program?.executions ?? []) {
-      if (typeof execution?.atMs !== "number" || typeof execution?.settledAtMs !== "number") continue;
+    for (let index = 0; index < executions.length; index += 1) {
+      const execution = executions[index];
       const node = byNode.get(execution.nodeId);
       if (node?.state === "rejected" || node?.state === "failed") {
         rejected += 1;
@@ -589,12 +598,29 @@ function programRows(path) {
         unattributed += 1;
         continue;
       }
+      // The distance from the tile the actor was on to the one this node works, computed BEFORE the position
+      // moves: the lattice is between two nodes, and reading it after the move would charge every node 0.
       const tiles = previous === null ? null : latticeTiles({ tile: previous }, node);
       if (typeof node.tile?.x === "number" && typeof node.tile?.y === "number") previous = node.tile;
+      // THE FIRST NODE'S SPAN IS NOT A MEASUREMENT OF ITS ACTION. It contains the walk INTO the program,
+      // from wherever the actor was when the program started - a walk NO channel records, because the
+      // channel prices the lattice between the tiles its own nodes report and there is no node before
+      // this one. `program-pace` already applies exactly this rule on the program unit (`priceProgram`
+      // starts charging tiles at the second node, and `dominantSpanOf` marks such a span `first`); this
+      // channel applies it on the action unit, so a hand action that walks to its subject is not priced
+      // as if the walk were part of a swing. MEASURED 2026-11-24: `pet_farm_animal` read
+      // `ours p50 558ms · floor 16.67ms (hand) · ratio 33.48` over four instances that were ALL their
+      // program's first node (indices 0/0, 0/3, 0/0, 0/2 across the corpus), while `FarmAnimal.pet`
+      // writes no animation and no `[game-thread-cost]` line existed for any of them - the 558 ms was our
+      // own approach walk.
+      if (index === 0) {
+        firstNodeWalkIn += 1;
+        continue;
+      }
       rows.push({ action: node.actionId, ms: execution.settledAtMs - execution.atMs, tiles, walkSource: "lattice" });
     }
   }
-  return { rows, rejected, unattributed };
+  return { rows, rejected, unattributed, firstNodeWalkIn };
 }
 
 /** The states a receipt can close on: a terminal is a closed execution, and an unfinished one is not a duration. */
@@ -700,6 +726,7 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
       resultFiles: 0,
       timedInstances: 0,
       examinedInstances: 0,
+      firstNodeWalkInInstances: 0,
       rows: [],
     });
   }
@@ -707,6 +734,7 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
   const byChannel = new Map();
   let rejectedInstances = 0;
   let unattributedInstances = 0;
+  let firstNodeWalkInInstances = 0;
   const record = (channel, rows) => {
     for (const row of rows) {
       const key = `${channel}:${row.action}`;
@@ -729,9 +757,10 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     record("flat", rows);
   }
   for (const path of files.results) {
-    const { rows, rejected, unattributed } = programRows(path);
+    const { rows, rejected, unattributed, firstNodeWalkIn } = programRows(path);
     rejectedInstances += rejected;
     unattributedInstances += unattributed;
+    firstNodeWalkInInstances += firstNodeWalkIn;
     record("program", rows);
   }
 
@@ -814,6 +843,9 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     examinedInstances,
     rejectedInstances,
     unattributedInstances,
+    // The program channel's own exclusion, named and counted so a row that left the population is visible
+    // rather than absent: the FIRST node of every program, whose span contains the walk into it.
+    firstNodeWalkInInstances,
     rows: Object.freeze(rows),
   });
 }
@@ -980,6 +1012,7 @@ export function renderActionPace({ measurement, verdict, bundleRoot }) {
       `timedInstances=${measurement.timedInstances} ` +
       `examinedInstances=${measurement.examinedInstances} ` +
       `excludedRejected=${measurement.rejectedInstances} unattributed=${measurement.unattributedInstances} ` +
+      `firstNodeWalkIn=${measurement.firstNodeWalkInInstances} ` +
       `actions=${measurement.rows.length} ` +
       `walk=${[...walkSources.entries()]
         .sort(([left], [right]) => (left < right ? -1 : 1))

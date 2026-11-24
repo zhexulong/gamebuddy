@@ -117,6 +117,52 @@ test("the livestock tools' cycle is priced at its own frame table, not the gener
   assert.equal(nativeFloorMs({ action: "chop_tree" }), ANIMATION_CLASS.toolSwing);
 });
 
+test("a program's first node is its walk-in, counted and never priced as its action's", async () => {
+  // THE GATE FOR THE CLASS `pet_farm_animal` NAMED. `program-pace` already says the walk into a program is
+  // charged nowhere (`priceProgram` starts at the second node, `dominantSpanOf` marks the span `first`); the
+  // action unit has to say the same thing, or a hand action that reaches its subject is priced as if the whole
+  // approach were a swing. MEASURED 2026-11-24: `pet_farm_animal` read `ours p50 558ms · floor 16.67ms ·
+  // ratio 33.48` over FOUR instances that were all their program's first node, while `FarmAnimal.pet` writes
+  // no animation and no cost line existed for any dispatch of it.
+  //
+  // The fixture is the shape that lied: one long first node, then two of the same action inside the program.
+  // The row must be built from the two, and the population line must print the one it left out.
+  const root = await fixtureBundle({
+    program: [
+      { action: "pet_farm_animal", ms: 558 },
+      { action: "pet_farm_animal", ms: 40 },
+      { action: "pet_farm_animal", ms: 60 },
+    ],
+  });
+  try {
+    const bundles = join(root, ".live-runs");
+    const measurement = measureActionPace({ bundleRoot: bundles });
+    assert.equal(measurement.firstNodeWalkInInstances, 1);
+    const pet = measurement.rows.find((row) => row.action === "pet_farm_animal");
+    assert.ok(pet, "the action still has rows, from the nodes that are measurements of it");
+    assert.equal(pet.instances, 2, "the first node is not one of them");
+    assert.equal(pet.oursMs, 40, "nearest-rank p50 of the two nodes inside the program, not the 558 ms walk-in");
+    const rendered = renderActionPace({
+      measurement,
+      verdict: compareActionPace({ measurement, baseline: { actions: {} } }),
+      bundleRoot: bundles,
+    });
+    assert.match(rendered.lines[0], /firstNodeWalkIn=1/u, "an excluded row is counted on the population line");
+    // An action that ONLY ever appears as a program's first node leaves the population entirely - and the
+    // re-record drops its entry rather than leaving a recorded ratio nothing measures.
+    const onlyFirst = await fixtureBundle({ program: [{ action: "pet_farm_animal", ms: 558 }] });
+    try {
+      const oneNode = measureActionPace({ bundleRoot: join(onlyFirst, ".live-runs") });
+      assert.deepEqual(oneNode.rows, [], "a single-node program contributes no action row at all");
+      assert.equal(oneNode.firstNodeWalkInInstances, 1);
+    } finally {
+      await rm(onlyFirst, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the class table's population is the Mod's action catalogue, not a list of five actions", () => {
   const classes = actionAnimationClasses();
   // The catalogue is read from the Mod's registrations; every action in it resolves to a class.
@@ -296,7 +342,10 @@ async function fixtureBundle({ flat = [], program = [], timeline = [], flatRejec
 test("the measurement reads every channel and reads the receipt chain where it can", async () => {
   const root = await fixtureBundle({
     flat: [{ action: "till_soil", ms: 900 }],
+    // The program's FIRST node is its walk-in and is not a row (see `programRows`), so the fixture
+    // repeats it: the same action at n1 keeps the channel the assertions below are about.
     program: [
+      { action: "till_soil", ms: 240 },
       { action: "till_soil", ms: 240 },
       { action: "harvest_crop", ms: 2000 },
     ],
@@ -315,6 +364,11 @@ test("the measurement reads every channel and reads the receipt chain where it c
     assert.equal(measurement.timedInstances, 3, "one flat row and two program rows");
     assert.equal(measurement.examinedInstances, 2, "the verdict reads one channel per action");
     assert.equal(measurement.rejectedInstances, 3, "a refusal closes a wait, it is counted and excluded");
+    assert.equal(
+      measurement.firstNodeWalkInInstances,
+      1,
+      "the program's first node is counted as excluded, so its walk-in cannot be priced as its action's",
+    );
 
     const till = measurement.rows.find((row) => row.action === "till_soil");
     assert.equal(till.channel, "program", "with no receipt chain, the Mod's journal span is the verdict");
@@ -388,7 +442,13 @@ test("an accepted dispatch is a wait, not a duration, and an unsettled execution
 });
 
 test("a doubled duration names the action, and the bound is the recorded ratio plus tolerance", async () => {
-  const root = await fixtureBundle({ program: [{ action: "harvest_crop", ms: 2000 }] });
+  // Two nodes, because a program's first node is its walk-in and is not priced as its action's (see below).
+  const root = await fixtureBundle({
+    program: [
+      { action: "harvest_crop", ms: 2000 },
+      { action: "harvest_crop", ms: 2000 },
+    ],
+  });
   try {
     const bundles = join(root, ".live-runs");
     const recorded = actionPaceRecord({ measurement: measureActionPace({ bundleRoot: bundles }) });
@@ -414,7 +474,12 @@ test("a doubled duration names the action, and the bound is the recorded ratio p
     assert.match(inBudget.lines.at(-1), /^action_pace_ok examined=1 priced=1 unpriced=0/u);
 
     // The injected violation: the same action, twice as slow.
-    const doubled = await fixtureBundle({ program: [{ action: "harvest_crop", ms: 4000 }] });
+    const doubled = await fixtureBundle({
+      program: [
+        { action: "harvest_crop", ms: 4000 },
+        { action: "harvest_crop", ms: 4000 },
+      ],
+    });
     try {
       const measurement = measureActionPace({ bundleRoot: join(doubled, ".live-runs") });
       const verdict = compareActionPace({ measurement, baseline: recorded });
@@ -465,7 +530,11 @@ test("nothing to measure today is blocked, and bundles with no durations are a d
 test("an unrecorded action, a vanished recording and an unclassified trace id all fail", async () => {
   const root = await fixtureBundle({
     flat: [{ action: "an_unclassified_thing", ms: 50 }],
-    program: [{ action: "till_soil", ms: 240 }],
+    // Two nodes for the reason above: only the second one is a measurement of its action.
+    program: [
+      { action: "till_soil", ms: 240 },
+      { action: "till_soil", ms: 240 },
+    ],
   });
   try {
     const measurement = measureActionPace({ bundleRoot: join(root, ".live-runs") });
@@ -495,6 +564,7 @@ test("the CLI names the action and exits 1 on a bundle that doubled", async () =
   const root = await fixtureBundle({
     program: [
       { action: "till_soil", ms: 240 },
+      { action: "till_soil", ms: 240 },
       { action: "harvest_crop", ms: 2000 },
     ],
   });
@@ -519,6 +589,7 @@ test("the CLI names the action and exits 1 on a bundle that doubled", async () =
     // The injected violation: `harvest_crop` alone is twice as slow.
     const doubled = await fixtureBundle({
       program: [
+        { action: "till_soil", ms: 240 },
         { action: "till_soil", ms: 240 },
         { action: "harvest_crop", ms: 4000 },
       ],
