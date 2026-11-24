@@ -635,7 +635,7 @@ public sealed record FarmhandActionEffects(IReadOnlyList<FarmhandActionEffect> D
 /// What this action's SUCCESS takes out of the work its <see cref="TargetFamily"/> publishes, or null on an action whose
 /// family nobody has had to answer for yet. <see cref="FarmhandChoreDeclaration"/> states why `Clears` is the wrong field
 /// to ask and why `TargetFamily` alone cannot answer; here, one row says what the answer buys: the settlement mints
-/// <c>chore=&lt;family&gt;</c> into its own evidence (<see cref="FarmhandActionCatalog.ChoreEntry"/>), and the Host counts
+/// <c>chore=&lt;family&gt;</c> into its own evidence (<see cref="FarmhandActionCatalog.ChoreClause"/>), and the Host counts
 /// what is left of that family from the reading it already holds (`host/src/fact-brief.ts#remainderSentence`). A step
 /// that consumes no family says so with a token from <see cref="FarmhandChoreDeclaration.LeavesRowsReasons"/> instead of
 /// staying silent, because silence is what the remainder clause has to report as `未测`.
@@ -857,20 +857,24 @@ public static class FarmhandActionCatalog
     }
 
     /// <summary>
-    /// The clause a SETTLEMENT of this action owes the reader - <c>chore=&lt;family&gt;</c> - or null on an action that
-    /// finishes no chore.
+    /// The clause a reader is owed for a finished chore - <c>chore=&lt;family&gt;</c> - or null for a family nobody named.
     ///
     /// <para>
-    /// ONE SPELLING, READ AT ONE SEAM. The clause is a field of the receipt's own `evidence.detail`, which is the string
-    /// the reader receives (`BridgeSession.TryProjectReceipt`), and it is minted where that string is composed for every
-    /// terminal - `ExecutionManager.RememberTerminal`. Measured `round71`: the clause was minted into the Body Program
-    /// executor's `route_reentrant_terminal:` postcondition instead, and three harvested crops produced a receipt that
-    /// said `crop_harvested` with no `chore=` anywhere in the log, because that postcondition is not the string the
-    /// reader reads.
+    /// ONE SPELLING, TWO SEAMS. The clause is a field of the receipt's own `evidence.detail`, which is the string the
+    /// reader receives (`BridgeSession.TryProjectReceipt`), so it is written where that string is composed for every
+    /// terminal - `ExecutionManager.RememberTerminal` - and after a `:` on a `for_each` pass's own verdict line
+    /// (`RouteReenteringBodyProgramExecutor.ChoreSuffix`). Measured `round71`: the clause was minted into the
+    /// Body Program executor's `route_reentrant_terminal:` postcondition instead, and three harvested crops produced a
+    /// receipt that said `crop_harvested` with no clause anywhere in the log, because that postcondition is not the
+    /// string the reader reads.
+    /// </para>
+    /// <para>
+    /// IT SPELLS A FAMILY AND NOT AN ACTION ID, because the family is the one value the TYPED field carries as well
+    /// (`LocalExecutionReceipt.Chore` -> the journal node's `Chore` -> the wire node's `chore`): one value, two forms,
+    /// never two answers.
     /// </para>
     /// </summary>
-    public static string? ChoreEntry(string? actionId) =>
-        ChoreFamilyOf(actionId) is { } family ? $"{ChoreField}={family}" : null;
+    public static string? ChoreClause(string? family) => family is null ? null : $"{ChoreField}={family}";
 
 
     /// <summary>One descriptor's effects: the classes it has, each with its own seam.</summary>

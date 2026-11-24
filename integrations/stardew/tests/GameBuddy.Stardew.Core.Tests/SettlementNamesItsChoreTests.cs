@@ -93,10 +93,11 @@ public sealed class SettlementNamesItsChoreTests
         FarmhandActionCatalog.ChoreFamilyOf("no_such_action").Should().BeNull();
         FarmhandActionCatalog.ChoreFamilyOf(null).Should().BeNull();
 
-        // AND THE CLAUSE IS THE FIELD A SETTLEMENT'S `evidence.detail` CARRIES, in the wire's own spelling.
-        FarmhandActionCatalog.ChoreEntry("harvest_crop").Should().Be("chore=harvestTargets");
-        FarmhandActionCatalog.ChoreEntry("machine_load").Should().BeNull();
-        FarmhandActionCatalog.ChoreEntry(null).Should().BeNull();
+        // AND THE CLAUSE IS THE FIELD A SETTLEMENT'S `evidence.detail` CARRIES, in the wire's own spelling - spelled from
+        // the FAMILY and not from the id, because the family is the one value the typed field carries too.
+        FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf("harvest_crop")).Should().Be("chore=harvestTargets");
+        FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf("machine_load")).Should().BeNull();
+        FarmhandActionCatalog.ChoreClause(null).Should().BeNull();
     }
 
     /// <summary>
@@ -154,7 +155,7 @@ public sealed class SettlementNamesItsChoreTests
         harvest.Should().NotBeNull();
         harvest!.Outcome.Should().Be(BodyProgramNodeOutcome.Succeeded);
         harvest.PostconditionVerification.Should().NotContain("chore=");
-        FarmhandActionCatalog.ChoreEntry("harvest_crop").Should().Be("chore=harvestTargets");
+        FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf("harvest_crop")).Should().Be("chore=harvestTargets");
     }
 
     private static FarmhandForEachPassResult Pass(params FarmhandForEachTargetResult[] rows) =>

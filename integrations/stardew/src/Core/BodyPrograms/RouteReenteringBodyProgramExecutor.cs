@@ -119,7 +119,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// A PASS IS NOT A SETTLEMENT OF ONE ACTION: its rows may name different actions, so the family it finished is the
     /// aggregation <see cref="PassChoreFamily"/> derives and not any one row's declaration. The clause a single settled
     /// action owes the reader is minted elsewhere and only once - where the receipt's `evidence.detail` is composed
-    /// (<see cref="FarmhandActionCatalog.ChoreEntry"/>).
+    /// (<see cref="FarmhandActionCatalog.ChoreClause"/>).
     /// </para>
     /// </summary>
     internal static string ChoreSuffix(string? family) =>
@@ -423,7 +423,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
         IReadOnlyList<RuntimeFact>? facts = BuildDeclaredFacts(grant, execution);
         // THE CLAUSE IS NOT RESTATED HERE. `receipt.Evidence` below already carries `chore=<family>` for an
         // action whose work consumes a family, minted where that string is composed for every terminal
-        // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreEntry`), and this postcondition is
+        // (`ExecutionManager.RememberTerminal` -> `FarmhandActionCatalog.ChoreClause`), and this postcondition is
         // a journal field rather than the settlement a reader receives. Minted here as well it was a second
         // spelling on a seam nobody's `evidence.detail` reaches - measured `round71`, three harvested crops and
         // no `chore=` in the log.

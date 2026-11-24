@@ -122,7 +122,7 @@ public sealed class SettlementChoreSeamTests
             seam.Settle(requestId, executionId, ExecutionState.Succeeded, "settled", "observed=1");
 
             string? evidence = seam.Stored(requestId).Evidence;
-            string? expected = FarmhandActionCatalog.ChoreEntry(registration.ActionId);
+            string? expected = FarmhandActionCatalog.ChoreClause(FarmhandActionCatalog.ChoreFamilyOf(registration.ActionId));
             if (expected is null)
             {
                 silent++;
@@ -145,11 +145,11 @@ public sealed class SettlementChoreSeamTests
     }
 
     /// <summary>
-    /// The clause is produced at ONE call site in the Mod, and that site is inside the funnel every terminal's evidence
-    /// is composed at. A second site is a copy; a site anywhere else is a mint on a seam no settlement reaches.
+    /// The clause is SPELLED in exactly one function, and that function is called from the two seams that write it and
+    /// nowhere else - the settlement funnel and a pass's own verdict line. A third call site is a copy.
     /// </summary>
     [Fact]
-    public void TheClauseIsMintedOnceAndOnlyWhereTheDetailIsComposed()
+    public void TheClauseIsSpelledOnceAndOnlyWhereItIsWritten()
     {
         (string File, string Source)[] production = Production();
         production.Should().NotBeEmpty("the scan must find the Mod's sources, or it agrees with itself");
@@ -160,10 +160,10 @@ public sealed class SettlementChoreSeamTests
         foreach ((string file, string source) in production)
         {
             examined++;
-            foreach (Match match in Regex.Matches(source, @"ChoreEntry\s*\("))
+            foreach (Match match in Regex.Matches(source, @"ChoreClause\s*\("))
             {
                 (int Line, string Text) site = Locate(source, match.Index);
-                if (Regex.IsMatch(site.Text, @"\bstatic\s+string\?\s+ChoreEntry\s*\("))
+                if (Regex.IsMatch(site.Text, @"\bstatic\s+string\?\s+ChoreClause\s*\("))
                     declarations.Add($"{file}:{site.Line}");
                 else
                     callSites.Add($"{file}:{site.Line}");
@@ -173,15 +173,19 @@ public sealed class SettlementChoreSeamTests
         string report = $"files examined {examined} · declarations {declarations.Count} · call sites {callSites.Count}";
         declarations.Should().HaveCount(1, $"{report} - the clause must have exactly one declaration (the catalogue's)");
         callSites.Should().HaveCount(
-            1,
-            $"{report} - one mint: a second call site is a copy beside the first, which is what `round71` was");
+            2,
+            $"{report} - two seams write the clause: the settlement funnel and a pass's verdict line. A third is a copy");
 
         string funnelFile = ControllerPartials.DeclaringFile("RememberTerminal");
-        callSites[0].Should().StartWith(
-            $"{funnelFile}:", $"the one mint must sit in the funnel every terminal's evidence is composed at (`{funnelFile}`)");
+        callSites.Should().Contain(
+            site => site.StartsWith($"{funnelFile}:", StringComparison.Ordinal),
+            $"the settlement's clause is written at the funnel every terminal's evidence is composed at (`{funnelFile}`)");
+        callSites.Should().Contain(
+            site => site.StartsWith("RouteReenteringBodyProgramExecutor.cs:", StringComparison.Ordinal),
+            "and the other seam is a pass's verdict line, which states the same family after a `:`");
 
         string funnel = Body(ControllerPartials.Read(funnelFile), FunnelDeclaration);
-        funnel.Should().Contain("ChoreEntry(", "the mint must be inside the funnel's own body, not merely in its file");
+        funnel.Should().Contain("ChoreClause(choreFamily)", "the funnel spells the clause from its one family value");
         funnel.Should().Contain("state.IsTerminal()", "a settlement names the family; a step that has not settled does not");
 
         // AND NOBODY SPELLS THE FIELD BY HAND. The token is derived from `FarmhandActionCatalog.ChoreField` at exactly

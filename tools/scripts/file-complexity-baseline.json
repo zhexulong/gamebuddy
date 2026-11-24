@@ -25,7 +25,7 @@
     "integrations/stardew/ModEntry.cs": 3356,
     "integrations/stardew/ModEntry.Fixtures.cs": 2228,
     "integrations/stardew/SleepAndAdvanceDayLifecycle.cs": 2105,
-    "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs": 2254,
+    "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs": 2333,
     "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs": 2487,
     "integrations/stardew/StardewBodyController.cs": 3069,
     "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs": 2160,
