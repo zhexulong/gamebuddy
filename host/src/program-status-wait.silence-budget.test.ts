@@ -90,16 +90,18 @@ test("a plan that settles a node a second keeps its turn for forty seconds; the 
     NODES,
     "every node that settled while the call held the turn is counted, and each one bought a window",
   );
-  // WHAT MAKES THE HOLD FINITE, stated as the arithmetic it is rather than as a second constant: one window per
-  // settlement, so no hold can outlast the steps its plan really completed.
+  // WHAT MAKES THE HOLD FINITE IS THE TOTAL, not the count of settlements: a hold lasts at most `holdMs` however many
+  // steps finish. One window per settlement would be a node allowance - `nodeCount x a constant` under another name - and
+  // the total is deliberately not that.
   assert.ok(
-    clock.now() <= PLAN_SELF_WAIT_BUDGET_MS * (held.waited.settledWhileHeld + 1),
-    `held ${String(clock.now())} ms on ${String(held.waited.settledWhileHeld)} settlements, which is more than one ` +
-      `window each`,
+    clock.now() <= PLAN_SELF_WAIT_HOLD_MS,
+    `held ${String(clock.now())} ms on ${String(held.waited.settledWhileHeld)} settlements, past the ` +
+      `${String(PLAN_SELF_WAIT_HOLD_MS)} ms total`,
   );
+  assert.equal(held.waited.cutByHoldCeiling, false, "the plan settled inside the total, so nothing was cut");
 
-  // THE RED READING, on the same reads and the same clock: the duration the tool uses today has no way to notice that
-  // the plan is working, so it comes back six seconds in with a plan that had thirty-four nodes still to run.
+  // THE RED READING, on the same reads and the same clock: a DURATION has no way to notice that the plan is working, so
+  // it comes back six seconds in with a plan that had thirty-four nodes still to run.
   const expiredClock = fakeClock();
   const expired = await waitForTerminalProgramStatus(
     async () => fortyNodePlan(expiredClock.now()),

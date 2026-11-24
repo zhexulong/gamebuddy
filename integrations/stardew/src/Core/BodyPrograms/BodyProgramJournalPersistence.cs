@@ -31,13 +31,19 @@ public static class BodyProgramJournalPersistence
     /// a reason", and only the version number can tell them apart.
     /// </para>
     /// <para>
+    /// RAISED to 6 for the node `chore` key. A v5 payload has no node `chore`, and a journal from another process is
+    /// superseded rather than resumed (the quarantine rule: an unfinished programme is never replayed, because the world
+    /// may have moved while the process was gone), so this is a version of the record's SHAPE and not a migration of live
+    /// state.
+    /// </para>
+    /// <para>
     /// There is no migration/dual-read path here by design, and the two directions are NOT the same fact. An OLDER journal
     /// is superseded: counted, set aside intact, and replaced by a fresh writable one (<see cref="TryReadSchemaVersion"/>).
     /// A NEWER one stays fail-closed (`Corrupt`), because a downgrade must never destroy records it cannot read - that is
     /// the difference between "this build cannot use this data" and "this build may throw it away".
     /// </para>
     /// </summary>
-    public const int SchemaVersion = 5;
+    public const int SchemaVersion = 6;
     private static readonly JsonSerializerOptions WriteOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public static string Encode(BodyProgramJournalState state, BodyProgramActionCatalog? catalog = null, BridgeScope? expectedScope = null)
@@ -183,7 +189,7 @@ public static class BodyProgramJournalPersistence
             // EVERY persist: the journal held it, the projection to the wire read it, and the frozen state this authority
             // keeps answering from did not. Measured while a failed `for_each` pass tried to state its per-reason counts -
             // the counts never arrived.
-            node.Hint, node.RefusalDetail)).ToArray()),
+            node.Hint, node.RefusalDetail, node.Chore)).ToArray()),
         Array.AsReadOnly(program.Facts.Select(fact => new RuntimeFact(fact.ProgramId, fact.NodeId, fact.NodeAttempt, fact.FactName, BodyProgramValidation.FreezeMap(fact.Values))).ToArray()));
 
     internal static VerifiedBodyProgram FreezeVerified(VerifiedBodyProgram program) => new(program.ProgramId, program.CatalogRevision,
@@ -287,6 +293,10 @@ public static class BodyProgramJournalPersistence
             { refusal = "refusal_detail"; return false; }
         if (node.RecoveryDiagnostic is not null && !BodyProgramValidation.MayCarryRecoveryDiagnostic(node.State))
             { refusal = "recovery_diagnostic"; return false; }
+        // The typed chore answers WHICH family this node's work consumed, so it is legal exactly where the node proved it
+        // worked - the same states the proof rides - and its grammar is the identifier rule a wire family key is made of.
+        if (node.Chore is not null && (!BodyProgramValidation.IsIdentifier(node.Chore) || !BodyProgramValidation.MayCarryProof(node.State)))
+            { refusal = "chore"; return false; }
         bool hasProof = node.ReceiptId is not null || node.Evidence is not null || node.PostconditionVerification is not null;
         bool hasCompleteProof = BodyProgramValidation.IsOpaqueTerminalProof(node.ReceiptId) && BodyProgramValidation.IsOpaqueTerminalProof(node.Evidence)
             && BodyProgramValidation.IsOpaqueTerminalProof(node.PostconditionVerification);
@@ -587,7 +597,7 @@ public static class BodyProgramJournalPersistence
     private static bool ReadNode(JsonElement value, out BodyProgramJournalNode? node)
     {
         node = null;
-        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint", "refusalDetail")
+        if (!Exact(value, "nodeId", "state", "nodeAttempt", "admissionAttempt", "grantId", "executionBinding", "canonicalBoundArguments", "attemptPolicyIdentity", "claimOwnership", "derivedDeadlineMs", "receiptId", "evidence", "postconditionVerification", "recoveryDiagnostic", "rejectionCode", "failureCode", "hint", "refusalDetail", "chore")
             || !ReadString(value.GetProperty("nodeId"), out string? id) || !ReadEnum<BodyProgramNodeState>(value.GetProperty("state"), out BodyProgramNodeState state)
             || !value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) || !value.GetProperty("admissionAttempt").TryGetInt32(out int admission)
             || !ReadNullableString(value.GetProperty("grantId"), out string? grant) || !ReadNullableExecutionBinding(value.GetProperty("executionBinding"), out NodeExecutionBinding? binding)
@@ -600,8 +610,20 @@ public static class BodyProgramJournalPersistence
              || !ReadNullableString(value.GetProperty("rejectionCode"), out string? rejectionCode)
              || !ReadNullableReasonCode(value.GetProperty("failureCode"), out string? failureCode)
              || !ReadNullableHint(value.GetProperty("hint"), out string? hint)
-             || !ReadNullableRefusalDetail(value.GetProperty("refusalDetail"), out string? refusalDetail)) return false;
-         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint, refusalDetail); return true;
+             || !ReadNullableRefusalDetail(value.GetProperty("refusalDetail"), out string? refusalDetail)
+             || !ReadNullableChore(value.GetProperty("chore"), out string? chore)) return false;
+         node = new(id!, state, attempt, admission, grant, binding, canonical, policy, ownership, derivedDeadline, receipt, evidence, postcondition, diagnostic, rejectionCode, failureCode, hint, refusalDetail, chore); return true;
+    }
+
+    /// <summary>
+    /// A null-or-family field. Anything that is neither null nor an identifier fails the whole document closed: a malformed
+    /// family must never be read as "no chore", which is the difference between a settlement that named what it finished
+    /// and one that named nothing.
+    /// </summary>
+    private static bool ReadNullableChore(JsonElement value, out string? result)
+    {
+        result = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        return value.ValueKind == JsonValueKind.Null || (value.ValueKind == JsonValueKind.String && BodyProgramValidation.IsIdentifier(result));
     }
 
     /// <summary>

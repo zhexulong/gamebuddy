@@ -2094,8 +2094,8 @@ function dropNotice(rendered: string): { named: readonly string[]; unnamed: numb
  * node rows prove were worked (`tile` on a single node, the pass's own row table for a `for_each`). No world query is
  * made to answer it - a second read would disagree with the settlement it sits beside, and the number would be a
  * different number than the answer it explains. What the Mod must supply is the one thing the Host cannot derive:
- * WHICH family the step's work consumes, minted into the node's proof as `chore=<family>` (its descriptor's own
- * `TargetFamily`, a declaration and not a read).
+ * WHICH family the step's work consumes, published as the node's `chore` field (its descriptor's own `TargetFamily`, a
+ * declaration and not a read).
  * </p>
  *
  * <p>
@@ -2138,10 +2138,10 @@ test("a_settlement_does_not_say_what_is_left: every settlement states its own re
   /**
    * One settled plan whose steps all worked tiles of `family`, on the first `worked` of them.
    *
-   * THE MINT IS WHERE THE MOD MINTS IT (`ExecutionManager.RememberTerminal`: `;chore=<family>` appended to the receipt's
-   * evidence, which is `evidence.detail` on the wire), so this population is fed the producer's own shape. This fixture
-   * used to carry `route_reentrant_terminal:…:chore=<family>` instead - a journal postcondition no reader receives -
-   * and passed while `round73` said `未测` for 9 of 9 clauses beside 205 mints.
+   * THE FAMILY IS FED IN BOTH FORMS THE MOD WRITES IT IN, because both reach her: the typed field
+   * (`BodyProgramJournalNode.Chore`, which the reader reads) and the clause on the receipt's own detail (which a run's log
+   * shows and every other reader still reads). A fixture carrying only the string would pass against a reader that had
+   * quietly gone back to scanning it.
    */
   const settlement = (
     family: string,
@@ -2163,6 +2163,7 @@ test("a_settlement_does_not_say_what_is_left: every settlement states its own re
           state: "succeeded",
           tile: { x: origin.x + index, y: origin.y },
           evidence: `weeds_cut;tile=${String(origin.x + index)},${String(origin.y)};count=1;chore=${family};steps=2;folded=accepted@tile=80,40`,
+          chore: family,
         })),
       },
     });
@@ -2284,38 +2285,33 @@ function remainderClause(text: string): string | undefined {
 }
 
 /**
- * A SETTLEMENT MINTS THE CHORE, AND THE READER SAYS THE MOD SAID NOTHING.
+ * A SETTLEMENT NAMES ITS CHORE AS A FIELD, AND THIS READER NEVER SCANS A STRING FOR IT.
  *
  * <p>
- * Measured `round73`: the Mod minted `chore=<family>` 205 times in one session's log, and all nine remainders the run
- * delivered said `未测（这一份结算没说是哪一类活）`. The clause was there and the reader looked elsewhere - `choreFamilyOf`
- * split a node's fields on `:` and required a segment to START with `chore=`, while the funnel appends the clause with a
- * `;` (`ExecutionManager.RememberTerminal`: `$"{detail};{chore}"`). A real `crop_harvested` detail carries no `:` at
- * all, so its evidence was ONE segment that did not start with the token, and every settlement read as silent.
+ * `round73` measured what scanning costs: the Mod minted `chore=<family>` 205 times in one session and all nine remainders
+ * the run delivered said `未测（这一份结算没说是哪一类活）`, because the reader looked for the clause with a separator the
+ * funnel did not use. The clause is still minted - a run's log shows it, and every other reader still reads it - but the
+ * settlement's own family now arrives TYPED (`BodyProgramJournalNode.Chore`), and this file reads only that.
  * </p>
  *
  * <p>
- * THE STRING IS THE MOD'S, READ FROM THE MOD. The token's field name and both separators the producer appends it with
- * are extracted from the C# that mints them (`theModsMint` below) rather than typed here, so the day the mint moves or
- * changes its separator this gate reddens BY NAME and the reader is pointed at the new seam - instead of a run
- * answering `未测` beside a log full of mints, which is what the previous move cost.
+ * THE PROPERTY IS TWO-SIDED, AND BOTH SIDES ARE THE POINT. A node carrying the field is counted whatever its strings say
+ * - a detail with a space in it, a reordered pair, or a clause naming a DIFFERENT family cannot move the answer. A node
+ * whose strings name a family but which carries no field is `未测`, because a fallback to the string would keep the second
+ * spelling alive for ever, and a second spelling is a disagreement scheduled for later rather than a safety net.
  * </p>
  *
  * <p>
- * THE PROPERTY IS ONE-SIDED ON PURPOSE. A clause composed from a settlement whose evidence or verdict line carries the
- * field may not say `未测`; that word is right only when the Mod said nothing, so the falsifier below feeds a settlement
- * with no mint and requires `未测` to survive. Population: every family the wire publishes (`TARGET_FAMILY_LABELS`),
- * through both seams a settlement can name it at, plus the separator matrix a reader keyed on one spelling would fail
- * on - so a reader that hard-codes a prefix or a delimiter is red before any run is spent.
+ * Population, from the authority: every family the wire publishes (`TARGET_FAMILY_LABELS`), so a family added tomorrow is
+ * examined here without an edit.
  * </p>
  */
-test("a_minted_chore_is_not_read_by_the_reader: a settlement carrying the mint never says 未测", () => {
-  const mint = theModsMint();
-  // `SettlementChoreSeamTests.RoundSeventyOneHead`: the `crop_harvested` detail `round71` printed, transcribed. It has
-  // no `:` in it at all, which is the whole of why a `:`-split reader found nothing in a settlement that carried a mint.
+test("a_chore_is_read_from_its_field: a settlement names its chore without any string being scanned", () => {
+  const ROWS = 3;
+  // `SettlementChoreSeamTests.RoundSeventyOneHead`: the `crop_harvested` detail `round71` printed, transcribed. It carries
+  // no chore clause at all, which is what a settlement whose family is stated in the field alone looks like.
   const HARVEST_DETAIL =
     "location=Farm;target=crop_2a7e1fd59d0206a0;tile=60,9;crop=474;item=(O)190;native_path_return=true";
-  const ROWS = 3;
 
   /** A reading carrying `ROWS` tiles of ONE family, the first of them worked by every settlement below. */
   const readingOf = (family: string) => ({
@@ -2344,199 +2340,113 @@ test("a_minted_chore_is_not_read_by_the_reader: a settlement carrying the mint n
       payload: { total: 1, counts: { succeeded: 1 }, nodes: [node] },
     });
 
-  /** One settlement's own evidence: the funnel's `detail` + its separator + `chore=<family>`, then the folded walk. */
-  const evidenceNaming = (family: string, separator: string): string =>
-    `${HARVEST_DETAIL}${separator}${mint.field}=${family};steps=1;folded=accepted@tile=60,9`;
+  /** The remainder clause of one settlement of `node`, against a reading that carries one family's rows. */
+  const clauseFor = (programId: string, node: Readonly<Record<string, unknown>>, family: string): string =>
+    remainderClause(
+      composeFactBrief({ inputs: [], snapshot: readingOf(family), locale: "zh-CN", events: [settled(programId, node)] }),
+    ) ?? "";
 
-  const composed: Array<{ site: string; family: string; clause: string; minted: boolean }> = [];
-  const scene = [
-    "the-settlement-evidence",
-    "the-pass-verdict-line",
-    "a-separator-this-reader-has-never-seen",
-    "the-token-at-the-start-of-the-field",
-  ] as const;
+  const families = Object.keys(TARGET_FAMILY_LABELS);
+  const findings: string[] = [];
+  let read = 0;
+  let honest = 0;
 
-  for (const family of Object.keys(TARGET_FAMILY_LABELS)) {
-    const reading = readingOf(family);
-    const node = { nodeId: "n0", actionId: "harvest_crop", state: "succeeded", tile: { x: 80, y: 40 } };
-    // (a) THE SETTLEMENT'S OWN EVIDENCE, spelled with the separator the funnel uses today.
-    composed.push({
-      site: "the-settlement-evidence",
+  for (const family of families) {
+    const label = TARGET_FAMILY_LABELS[family] ?? family;
+    const named = { nodeId: "n0", actionId: "harvest_crop", state: "succeeded", tile: { x: 80, y: 40 } };
+
+    // (a) THE FIELD ALONE: the detail says nothing about a chore, and the settlement's remainder still names the family.
+    const fieldOnly = clauseFor(`plan_field_${family}`, { ...named, evidence: HARVEST_DETAIL, chore: family }, family);
+    if (!fieldOnly.includes("2 处") || !fieldOnly.includes(label))
+      findings.push(`${family}:field-only ${JSON.stringify(fieldOnly)}`);
+    else read += 1;
+
+    // (b) AND THE STRINGS CANNOT MOVE IT. This detail has a space in the clause (`chore =`), its pairs are reordered, and
+    // the family it names is a DIFFERENT one - the three shapes a scanning reader answered differently on.
+    const otherFamily = family === "harvestTargets" ? "weedTargets" : "harvestTargets";
+    const hostile = `tile = 60,9 ; chore = ${otherFamily} ; crop=474 ; chore=${otherFamily}`;
+    const unscannable = clauseFor(`plan_hostile_${family}`, { ...named, evidence: hostile, chore: family }, family);
+    if (!unscannable.includes("2 处") || !unscannable.includes(label) || unscannable.includes(TARGET_FAMILY_LABELS[otherFamily] ?? otherFamily))
+      findings.push(`${family}:unscannable ${JSON.stringify(unscannable)}`);
+    else read += 1;
+
+    // (c) A `partially_succeeded` step proved part of its work, so it names its chore exactly as a success does.
+    const partial = clauseFor(
+      `plan_partial_${family}`,
+      { ...named, state: "partially_succeeded", evidence: HARVEST_DETAIL, chore: family },
       family,
-      minted: true,
-      clause:
-        remainderClause(
-          composeFactBrief({
-            inputs: [],
-            snapshot: reading,
-            locale: "zh-CN",
-            events: [
-              settled(`plan_evidence_${family}`, {
-                ...node,
-                evidence: evidenceNaming(family, mint.settlementSeparator),
-              }),
-            ],
-          }),
-        ) ?? "",
-    });
-    // (b) A PASS'S OWN VERDICT LINE, which states the same field after its own separator.
-    composed.push({
-      site: "the-pass-verdict-line",
+    );
+    if (!partial.includes("2 处") || !partial.includes(label)) findings.push(`${family}:partial ${JSON.stringify(partial)}`);
+    else read += 1;
+
+    // (d) NO FALLBACK: this node's strings name the family the old way, in both of the shapes a settlement can state it,
+    // and carry no field. A reader that fell back to the string would count a family the Mod never typed.
+    const stringsOnly = clauseFor(
+      `plan_strings_${family}`,
+      {
+        ...named,
+        evidence: `${HARVEST_DETAIL};chore=${family};steps=1`,
+        postconditionVerification: `for_each_pass:decided=1:succeeded=1:left_alone=0:omitted=0:chore=${family}`,
+      },
       family,
-      minted: true,
-      clause:
-        remainderClause(
-          composeFactBrief({
-            inputs: [],
-            snapshot: reading,
-            locale: "zh-CN",
-            events: [
-              settled(`plan_pass_${family}`, {
-                nodeId: "n0",
-                actionId: "for_each",
-                state: "succeeded",
-                evidence: JSON.stringify({ state: "succeeded", rows: [{ x: 80, y: 40, state: "succeeded" }] }),
-                postconditionVerification: `for_each_pass:decided=1:succeeded=1:left_alone=0:omitted=0${mint.passSeparator}${mint.field}=${family}`,
-              }),
-            ],
-          }),
-        ) ?? "",
-    });
-    // (c) AND THE FIELD IS A NAME RATHER THAN A POSITION: a separator nobody mints today is still the same field.
-    composed.push({
-      site: "a-separator-this-reader-has-never-seen",
+    );
+    if (!stringsOnly.includes("未测（这一份结算没说是哪一类活）"))
+      findings.push(`${family}:strings-only ${JSON.stringify(stringsOnly)}`);
+    else honest += 1;
+
+    // (e) THE STATE RULE SURVIVES THE FIELD: a step that proved no effect finished no chore, whatever the frame says.
+    const unproved = clauseFor(
+      `plan_unproved_${family}`,
+      { ...named, state: "failed", evidence: HARVEST_DETAIL, chore: family },
       family,
-      minted: true,
-      clause:
-        remainderClause(
-          composeFactBrief({
-            inputs: [],
-            snapshot: reading,
-            locale: "zh-CN",
-            events: [settled(`plan_odd_${family}`, { ...node, evidence: evidenceNaming(family, "|") })],
-          }),
-        ) ?? "",
-    });
-    // (d) The token opening its field, which the reader must not require either.
-    composed.push({
-      site: "the-token-at-the-start-of-the-field",
-      family,
-      minted: true,
-      clause:
-        remainderClause(
-          composeFactBrief({
-            inputs: [],
-            snapshot: reading,
-            locale: "zh-CN",
-            events: [
-              settled(`plan_head_${family}`, {
-                ...node,
-                evidence: `${mint.field}=${family};steps=1;folded=accepted@tile=80,40`,
-              }),
-            ],
-          }),
-        ) ?? "",
-    });
-    // (e) THE HONEST `未测`: this node's evidence carries the detail and no mint, so the Mod really did say nothing.
-    composed.push({
-      site: "no-mint-at-all",
-      family,
-      minted: false,
-      clause:
-        remainderClause(
-          composeFactBrief({
-            inputs: [],
-            snapshot: reading,
-            locale: "zh-CN",
-            events: [settled(`plan_silent_${family}`, { ...node, evidence: `${HARVEST_DETAIL};steps=1` })],
-          }),
-        ) ?? "",
-    });
+    );
+    if (!unproved.includes("未测（这一份结算没说是哪一类活）")) findings.push(`${family}:unproved ${JSON.stringify(unproved)}`);
+    else honest += 1;
   }
 
-  const minted = composed.filter((entry) => entry.minted);
-  const read = minted.filter((entry) => !entry.clause.includes("未测"));
-  const unread = minted.filter((entry) => entry.clause.includes("未测"));
-  const noMint = composed.filter((entry) => !entry.minted);
+  // (f) A REAL HARVEST IS COUNTED, not merely un-refused: one crop off a three-crop reading says TWO left.
+  const round73 = clauseFor(
+    "plan_round73",
+    { nodeId: "n0", actionId: "harvest_crop", state: "succeeded", tile: { x: 80, y: 40 }, evidence: HARVEST_DETAIL, chore: "harvestTargets" },
+    "harvestTargets",
+  );
   const report =
-    `clauses ${String(composed.length)} · read ${String(read.length)} · ` +
-    `said-未测-despite-a-mint ${String(unread.length)} · no-mint ${String(noMint.length)} · sites ${String(scene.length)}`;
+    `families ${String(families.length)} · clauses read ${String(read)} · honest-未测 ${String(honest)} · ` +
+    `findings ${String(findings.length)}`;
   process.stdout.write(`${report}\n`);
 
-  assert.ok(composed.length > 0, `${report} - an empty population agrees with itself`);
-  assert.deepEqual(
-    unread.map((entry) => `${entry.site}:${entry.family}: ${JSON.stringify(entry.clause)}`),
-    [],
-    `${report}\nthese clauses said the Mod never named the chore while their settlement carried ${mint.field}<family>`,
-  );
-  assert.equal(read.length, minted.length, `${report} - every minted clause must be read, not merely most of them`);
-
-  // THE FALSIFIER'S OTHER HALF: with no mint the same composition still answers `未测`, and names why. A reader that
-  // answered a family here would be inventing one, and a remainder that guessed is worse than one that says 未测.
-  assert.ok(noMint.length > 0, `${report} - the no-mint population must exist, or nothing tests the honest case`);
-  const honest = noMint.filter((entry) => entry.clause.includes("未测（这一份结算没说是哪一类活）"));
-  assert.equal(
-    honest.length,
-    noMint.length,
-    `${report}\na settlement that minted nothing must say 未测 and say why: ${noMint
-      .filter((entry) => !entry.clause.includes("未测（这一份结算没说是哪一类活）"))
-      .map((entry) => `${entry.site}:${entry.family}: ${JSON.stringify(entry.clause)}`)
-      .join("; ")}`,
-  );
-
-  // (f) AND A REAL HARVEST IS COUNTED, not merely un-refused: one crop off a three-crop reading says TWO left.
-  const round73 = composeFactBrief({
-    inputs: [],
-    snapshot: readingOf("harvestTargets"),
-    locale: "zh-CN",
-    events: [
-      settled("plan_round73", {
-        nodeId: "n0",
-        actionId: "harvest_crop",
-        state: "succeeded",
-        tile: { x: 80, y: 40 },
-        evidence: evidenceNaming("harvestTargets", mint.settlementSeparator),
-      }),
-    ],
-  });
-  const round73Clause = remainderClause(round73) ?? "";
+  assert.deepEqual(findings, [], `${report}\nthese clauses read the settlement wrongly: ${findings.join("; ")}`);
+  assert.ok(families.length > 0 && read > 0 && honest > 0, `${report} - both sides of the property must be produced`);
   assert.ok(
-    round73Clause.includes("2 处") && round73Clause.includes(TARGET_FAMILY_LABELS.harvestTargets ?? "harvestTargets"),
-    `round73's own harvest settlement must say how much of its chore is left; the clause is ${JSON.stringify(round73Clause)}`,
+    round73.includes("2 处") && round73.includes(TARGET_FAMILY_LABELS.harvestTargets ?? "harvestTargets"),
+    `round73's own harvest settlement must say how much of its chore is left; the clause is ${JSON.stringify(round73)}`,
   );
 });
 
 /**
- * The clause the Mod mints, read from the C# that mints it: its field's name and the separator each seam appends it with.
+ * THE STRING FORM STAYS, AND IT CANNOT DRIFT FROM THE TYPED FIELD.
  *
- * A SEPARATOR IS NOT A PROPERTY OF THIS READER, so it is not typed here. `ExecutionManager.RememberTerminal` appends
- * `;chore=<family>` to a terminal's evidence and a pass states `:chore=<family>` on its own verdict line; both are read
- * out of production source so a producer that moves or re-spells the clause fails this gate by name instead of costing a
- * run in which every remainder read `未测`.
+ * <p>
+ * The clause `chore=<family>` still ships on a receipt's `evidence.detail` and on a pass's `for_each_pass:` verdict line,
+ * and other readers still read it - so it must keep naming the SAME family the typed field carries. That can only be
+ * guaranteed at the producer: the family is one value (`ChoreFamilyOf` for an action, `PassChoreFamily` for a pass), and
+ * both strings spell it through one function. A second place that spelled `chore=<family>` would be two authors of the
+ * same fact, one edit apart - which is exactly how the scan this unit deleted came to be confident about the wrong string.
+ * </p>
  */
-function theModsMint(): Readonly<{ field: string; settlementSeparator: string; passSeparator: string }> {
-  const field = /public const string ChoreField = "([a-z_]+)";/u.exec(
-    modSource("src/Core/Policy/FarmhandActionDefinitions.cs"),
-  )?.[1];
-  assert.ok(
-    field !== undefined,
-    "FarmhandActionCatalog.ChoreField is the clause's own name; this gate reads it so the reader and the mint stay one spelling",
+test("the_chore_clause_is_spelled_once_for_both_forms: both strings come from the function the field's family comes from", () => {
+  const definitions = modSource("src/Core/Policy/FarmhandActionDefinitions.cs");
+  assert.match(
+    definitions,
+    /public static string\? ChoreClause\(string\? family\) =>\s*family is null \? null : \$"\{ChoreField\}=\{family\}";/u,
+    "FarmhandActionCatalog.ChoreClause is the ONE spelling of `chore=<family>`, from the family it is given",
   );
-  const settlementSeparator = /\{detail\}([^{}]*)\{chore\}/u.exec(modSource("farmhandexecutioncontroller.cs"))?.[1];
-  assert.ok(
-    settlementSeparator !== undefined,
-    "ExecutionManager.RememberTerminal no longer composes the clause as `detail<sep>chore`: the mint moved, so point this gate and fact-brief.ts#choreFamilyOf at its new seam",
-  );
-  const passSeparator =
-    /ChoreSuffix\(string\? family\) =>\s*family is null \? string\.Empty : \$"([^{}]*)\{[A-Za-z.]*ChoreField\}/u.exec(
-      modSource("src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs"),
-    )?.[1];
-  assert.ok(
-    passSeparator !== undefined,
-    "RouteReenteringBodyProgramExecutor.ChoreSuffix no longer composes `<sep>chore` on a pass's verdict line: the pass seam moved, so point this gate at it",
-  );
-  return Object.freeze({ field, settlementSeparator, passSeparator });
-}
+  for (const file of ["farmhandexecutioncontroller.cs", "src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs"])
+    assert.ok(
+      modSource(file).includes("FarmhandActionCatalog.ChoreClause("),
+      `${file} spells the clause itself instead of calling FarmhandActionCatalog.ChoreClause, so its string can name a family the typed field does not`,
+    );
+});
 
 /** One file of the Mod's production source, read from the repository - the suite itself runs emitted JavaScript. */
 function modSource(relative: string): string {

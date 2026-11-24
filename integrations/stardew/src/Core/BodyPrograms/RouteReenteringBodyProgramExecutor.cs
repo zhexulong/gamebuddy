@@ -123,7 +123,7 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
     /// </para>
     /// </summary>
     internal static string ChoreSuffix(string? family) =>
-        family is null ? string.Empty : $":{FarmhandActionCatalog.ChoreField}={family}";
+        family is null ? string.Empty : $":{FarmhandActionCatalog.ChoreClause(family)}";
 
     /// <summary>
     /// The ONE chore a pass finished, or null when its rows do not agree on one.
@@ -433,7 +433,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             facts,
             receipt.ExecutionId,
             receipt.Evidence,
-            $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}");
+            $"route_reentrant_terminal:state={receipt.State}:request={receipt.RequestId}:revision={receipt.Revision}")
+        {
+            Chore = receipt.Chore,
+        };
     }
 
     /// <summary>
@@ -581,6 +584,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
 
         int rowsOmitted = 0;
         string aggregate = Aggregate(pass, table, StateToken(verdict), ref rowsOmitted);
+        // THE ONE FAMILY VALUE THIS PASS NAMES. Read once, then written twice: as the clause on the verdict line below and
+        // as the typed field beside it. A second read of `PassChoreFamily` is how a clause and a field came to name
+        // different families.
+        string? choreFamily = PassChoreFamily(pass);
         // A PARTIAL PASS IS NOT A POLITE SUCCESS. It carries the proof of the rows that did happen (the same aggregate a
         // full pass carries, whose `state` says which verdict this is) AND the dominant reason plus the counts for the
         // rows that did not, in the same two fields a failed pass uses. That is the whole answer the caller needs: what
@@ -594,11 +601,12 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
                 // identity is the lineage a reader needs to find this attempt.
                 LastReceiptId(pass) ?? execution.ExecutionId,
                 aggregate,
-                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(PassChoreFamily(pass))}")
+                $"for_each_pass:partially_succeeded:decided={pass.Decided}:succeeded={pass.Succeeded}:failed={pass.Failed}:refused={pass.Refused}{ChoreSuffix(choreFamily)}")
             {
                 FailureCode = DominantReason(pass),
                 Hint = FailureHint(pass),
                 RefusalDetail = BodyProgramValidation.BoundRefusalDetail(FailureDetail(pass)),
+                Chore = choreFamily,
             };
         return new BodyProgramTerminalResult(
             execution,
@@ -608,7 +616,10 @@ public sealed class RouteReenteringBodyProgramExecutor : IBodyProgramNodeExecuto
             // identity is the lineage a reader needs to find this attempt.
             LastReceiptId(pass) ?? execution.ExecutionId,
             aggregate,
-            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}{ChoreSuffix(PassChoreFamily(pass))}");
+            $"for_each_pass:decided={pass.Decided}:succeeded={pass.Succeeded}:left_alone={pass.LeftAlone}:omitted={pass.Omitted}{ChoreSuffix(choreFamily)}")
+        {
+            Chore = choreFamily,
+        };
     }
 
     /// <summary>

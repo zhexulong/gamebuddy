@@ -901,6 +901,22 @@ interface PlanNodeAnswer {
    * </p>
    */
   readonly postconditionVerification?: string;
+  /**
+   * The family this step's work CONSUMED, typed - the Mod's `BodyProgramJournalNode.Chore`.
+   *
+   * <p>
+   * The settlement renders what is LEFT of a chore, and the one thing it cannot derive is which family a step worked:
+   * that is the Mod's declaration (the action's own `Chore` claim). It used to arrive only inside `evidence`'s
+   * `chore=<family>` clause, so the reader found it with `indexOf` - a space, a reordered pair or a renamed key turned a
+   * finished chore into `未测`. This field is the same family in a shape no separator can break.
+   * </p>
+   *
+   * <p>
+   * Present only where the node PROVED an effect (`succeeded`/`partially_succeeded`), the same states `evidence` rides:
+   * a step that proved nothing finished no chore. A `for_each` pass names the ONE family its rows agree on, or nothing.
+   * </p>
+   */
+  readonly chore?: string;
 }
 
 /** A plan's per-node answer, and the batch statement that goes with it. */
@@ -987,6 +1003,7 @@ export function planBatchAnswer(
       ...(skippedBecause.length === 0 ? {} : { skippedBecause }),
       ...(row?.evidence == null ? {} : { evidence: row.evidence }),
       ...(row?.postconditionVerification == null ? {} : { postconditionVerification: row.postconditionVerification }),
+      ...(row?.chore == null ? {} : { chore: row.chore }),
     });
   });
   const remaining = nodes.filter((node) => !NODE_STATES_SETTLED.has(node.state)).length;
@@ -1079,6 +1096,7 @@ type PlanJournalNode = Readonly<{
   recoveryDiagnostic?: string | null;
   evidence?: string | null;
   postconditionVerification?: string | null;
+  chore?: string | null;
 }>;
 
 /**
@@ -1108,6 +1126,9 @@ function readPlanJournalNodes(snapshot: unknown): readonly PlanJournalNode[] {
         evidence: typeof entry.evidence === "string" ? entry.evidence : null,
         postconditionVerification:
           typeof entry.postconditionVerification === "string" ? entry.postconditionVerification : null,
+        // The family the step worked, typed. Read here for the same reason as the two proof fields above: this is the ONE
+        // reader of a status frame, and a field it does not read is a field no plan answer can ever carry.
+        chore: typeof entry.chore === "string" ? entry.chore : null,
       }),
     );
   }

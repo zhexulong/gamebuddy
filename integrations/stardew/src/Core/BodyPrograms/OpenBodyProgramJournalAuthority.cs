@@ -766,6 +766,11 @@ public sealed class OpenBodyProgramJournalAuthority
         };
         bool provesEffect = BodyProgramValidation.MayCarryProof(nodeState);
         bool namesShortfall = result.Outcome is BodyProgramNodeOutcome.Failed or BodyProgramNodeOutcome.Cancelled or BodyProgramNodeOutcome.PartiallySucceeded;
+        // THE TYPED CHORE RIDES THE STATES THE PROOF IT ACCOMPANIES RIDES. A node that proved no effect finished no chore,
+        // so a terminal naming one there is refused rather than stored and later projected as work nobody watched happen.
+        // Its grammar is the journal's own identifier rule, which is exactly the alphabet a wire family key is made of.
+        if (result.Chore is not null && (!provesEffect || !BodyProgramValidation.IsIdentifier(result.Chore)))
+            return BodyProgramControllerResult.Failure<BodyProgramTerminalResult>(BodyProgramControllerResultCode.InvalidInput);
         // Terminal settle releases every claim this attempt acquired at the
         // HostAdmitted boundary (ADR-006 durable acquire/release transition).
         IReadOnlyDictionary<string, BodyProgramClaimOwnershipState>? released = node.ClaimOwnership is { } claims ? BodyProgramValidation.FreezeMap(claims.ToDictionary(pair => pair.Key, _ => BodyProgramClaimOwnershipState.Released, StringComparer.Ordinal)) : null;
@@ -777,6 +782,8 @@ public sealed class OpenBodyProgramJournalAuthority
             ReceiptId = provesEffect ? result.ReceiptId : null,
             Evidence = provesEffect ? result.Evidence : null,
             PostconditionVerification = provesEffect ? result.PostconditionVerification : null,
+            // The typed chore of the work this node settled, from the ONE value its clause was minted from as well.
+            Chore = provesEffect ? result.Chore : null,
             RecoveryDiagnostic = result.Outcome == BodyProgramNodeOutcome.Uncertain ? "execution_uncertain" : null,
             FailureCode = namesShortfall ? result.FailureCode : null,
             Hint = namesShortfall ? result.Hint : null,

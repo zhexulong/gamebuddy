@@ -4071,7 +4071,12 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
         // blocking set (a chop, a break, a placement, a clear) or may have, so the next approach refloods.
         this.controller.NoteNodeSettled(state);
         string? detail = evidence;
-        if (state.IsTerminal() && FarmhandActionCatalog.ChoreEntry(boundActionId) is { } chore)
+        // THE ONE VALUE, TWO FORMS. `choreFamily` is the single expression both forms read: the clause appended to the
+        // detail below, and the typed field the receipt carries to the journal and to the wire (`LocalExecutionReceipt.Chore`).
+        // A terminal of any outcome names the family - "which family is this step's work" is a declaration about the
+        // ACTION - while a family named on `accepted`/`running` would claim work not yet done.
+        string? choreFamily = state.IsTerminal() ? FarmhandActionCatalog.ChoreFamilyOf(boundActionId) : null;
+        if (FarmhandActionCatalog.ChoreClause(choreFamily) is { } chore)
             detail = string.IsNullOrEmpty(detail) ? chore : $"{detail};{chore}";
         // A REJECTION THAT REPEATS ITSELF SAYS SO, in the last field of the detail. This is the funnel every action's
         // terminal passes through, so the rule is one call here rather than a line in each family's refusal;
@@ -4081,7 +4086,7 @@ this.navigationApproachNative is null && this.navigationLifecycleTestAuthorizati
             LocalExecutionReceipt? settled = this.ledger.MostRecentReceipt;
             detail = NoteRepeatedRefusal(settled?.ReasonCode, settled?.Evidence, reasonCode, detail);
         }
-        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint);
+        LocalExecutionReceipt receipt = new(executionId, requestId, state, reasonCode, this.revision, detail, ActionId: boundActionId, Observation: observation, Hint: hint, Chore: choreFamily);
         this.ledger.Remember(receipt);
         LocalExecutionReceipt published = this.AddTrace(receipt, publish);
         if (state.IsTerminal())

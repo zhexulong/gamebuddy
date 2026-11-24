@@ -260,33 +260,7 @@ string? bodyProgramUnavailableReason = null,
                  registration.Lifecycle.ToWireValue(),
                  registration.Kind.ToWireValue(),
                  registration.Descriptor is { } descriptor
-                     ? new FarmhandActionDescriptorWire(
-                         descriptor.Arguments.Select(argument => FarmhandActionArgumentPublication.ToWire(descriptor, argument)).ToArray(),
-                         new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal),
-                         new FarmhandActionResourceTemplateWire(descriptor.ResourceTemplate.Select(claim =>
-                             new FarmhandActionResourceTemplateClaimWire(claim.Key, claim.Value.ToString())).ToArray()),
-                         descriptor.Effect,
-                         new FarmhandActionPostconditionWire(descriptor.Postcondition),
-                         descriptor.NativeBinding,
-                         // The observation binding the action declares, or null when it addresses nothing a scene read
-                         // names. Passed positionally here would have shifted every later argument when the field was
-                         // added, so the call site names what it means.
-                         descriptor.SceneTarget is { } sceneTarget
-                             ? new FarmhandActionObservationBindingDescriptorWire(
-                                 sceneTarget.Type,
-                                 sceneTarget.Version,
-                                 sceneTarget.Required,
-                                 sceneTarget.RequiredProperties.ToArray())
-                             : null,
-                         // The Mod's own watchdog for this action, so the Host can wait as long as the action
-                         // was designed to be waited on (see the wire record).
-                         descriptor.WatchdogMs,
-                         // The declared spatial precondition, or null when this action declares none.
-                         descriptor.Approach is { } approach
-                             ? new FarmhandActionApproachRequirementWire(approach.Relation, approach.WithinTiles)
-                             : null,
-                         // The snapshot family this action's targets come from, or null when it addresses none.
-                         descriptor.TargetFamily)
+                     ? WireDescriptor(descriptor, FarmhandActionPresentationCatalog.For(registration.ActionId))
                      : null)).ToArray(),
             this.runtimeAttestation.RuntimeRole,
             this.runtimeAttestation.LaunchGeneration,
@@ -294,6 +268,51 @@ string? bodyProgramUnavailableReason = null,
         reasonCode = "accepted";
         return true;
     }
+
+    /// <summary>
+    /// One registration's descriptor on the hello_ack wire, in the Mod's own declaration.
+    ///
+    /// <para>
+    /// A method rather than a `new` inside the projection above because the presentation is a second lookup by action id
+    /// (`FarmhandActionPresentationCatalog`), and a call site that repeated that lookup three times per field would read
+    /// as three facts. The presentation is optional on both sides: an action that publishes none says so by omitting it.
+    /// </para>
+    /// </summary>
+    private static FarmhandActionDescriptorWire WireDescriptor(
+        FarmhandActionDescriptor descriptor,
+        FarmhandActionPresentation? presentation) =>
+        new(
+            descriptor.Arguments.Select(argument => FarmhandActionArgumentPublication.ToWire(descriptor, argument)).ToArray(),
+            new Dictionary<string, string>(descriptor.OutputFacts, StringComparer.Ordinal),
+            new FarmhandActionResourceTemplateWire(descriptor.ResourceTemplate.Select(claim =>
+                new FarmhandActionResourceTemplateClaimWire(claim.Key, claim.Value.ToString())).ToArray()),
+            descriptor.Effect,
+            new FarmhandActionPostconditionWire(descriptor.Postcondition),
+            descriptor.NativeBinding,
+            // The observation binding the action declares, or null when it addresses nothing a scene read names. Passed
+            // positionally here would have shifted every later argument when the field was added, so the call site names
+            // what it means.
+            descriptor.SceneTarget is { } sceneTarget
+                ? new FarmhandActionObservationBindingDescriptorWire(
+                    sceneTarget.Type,
+                    sceneTarget.Version,
+                    sceneTarget.Required,
+                    sceneTarget.RequiredProperties.ToArray())
+                : null,
+            // The Mod's own watchdog for this action, so the Host can wait as long as the action was designed to be
+            // waited on (see the wire record).
+            descriptor.WatchdogMs,
+            // The declared spatial precondition, or null when this action declares none.
+            descriptor.Approach is { } approach
+                ? new FarmhandActionApproachRequirementWire(approach.Relation, approach.WithinTiles)
+                : null,
+            // The snapshot family this action's targets come from, or null when it addresses none.
+            descriptor.TargetFamily,
+            // What the action is called, the sentence a model reads about it, and the kinds it acts on - the three facts
+            // a mounted tool states for itself and no longer has to copy.
+            presentation?.Label,
+            presentation?.Description,
+            presentation?.TargetKinds);
 
     internal bool TryObserve(long generation, BridgeEnvelope<BridgeObserveRequest>? envelope, out BridgeEnvelope<BridgeSnapshot>? response, out string reasonCode)
     {
@@ -1657,12 +1676,30 @@ string? bodyProgramUnavailableReason = null,
             receipt.State.ToWireValue(),
             receipt.ReasonCode,
             receipt.Revision,
-            receipt.Evidence is null ? null : new Dictionary<string, string> { ["detail"] = receipt.Evidence },
+            ReceiptEvidence(receipt),
             origin,
             receipt.Observation,
             receipt.PiggybackedScene,
             receipt.NativeNotices);
         return true;
+    }
+
+    /// <summary>
+    /// A receipt's evidence on the wire: its detail, and the family its work consumed as a field of its own.
+    ///
+    /// <para>
+    /// `chore` is the TYPED statement of the same fact the detail's `chore=` clause spells, projected from
+    /// <see cref="LocalExecutionReceipt.Chore"/> rather than parsed back out of the detail. A reader that needs the family
+    /// reads this field; a human reading a run's log reads the clause. One value fills both, where the receipt is minted.
+    /// </para>
+    /// </summary>
+    private static IReadOnlyDictionary<string, string>? ReceiptEvidence(LocalExecutionReceipt receipt)
+    {
+        if (receipt.Evidence is null)
+            return receipt.Chore is null ? null : new Dictionary<string, string>(StringComparer.Ordinal) { ["chore"] = receipt.Chore };
+        Dictionary<string, string> evidence = new(StringComparer.Ordinal) { ["detail"] = receipt.Evidence };
+        if (receipt.Chore is not null) evidence["chore"] = receipt.Chore;
+        return evidence;
     }
 
     internal bool IsAuthenticatedGeneration(long generation) => IsAuthenticated(generation, out _);
@@ -1803,7 +1840,7 @@ string? bodyProgramUnavailableReason = null,
     private static BridgeBodyProgramNodeStatus NodeStatus(BodyProgramStatusSnapshot snapshot, BodyProgramJournalNode node)
     {
         BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification);
+        return new BridgeBodyProgramNodeStatus(node.NodeId, ToWire(node.State), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification, node.Chore);
     }
     private static BridgeBodyProgramEvent ToBridgeEvent(BodyProgramJournalEvent @event) => new(
         @event.Cursor, @event.ProgramId, @event.Kind, @event.CatalogRevision, @event.NodeId, @event.NodeAttempt, @event.AtMs);

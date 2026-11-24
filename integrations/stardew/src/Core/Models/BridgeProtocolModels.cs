@@ -100,7 +100,27 @@ public sealed record LocalExecutionReceipt(
     /// separately so the Body Program journal can publish it without publishing evidence for a node that proved nothing.
     /// </para>
     /// </summary>
-    string? Hint = null
+    string? Hint = null,
+    /// <summary>
+    /// The family this terminal's work CONSUMED - the Mod's declaration, typed - or null on a step that finished nobody's
+    /// chore. Carried beside <see cref="Evidence"/> rather than inside it.
+    ///
+    /// <para>
+    /// <see cref="Evidence"/> is `location=Farm;tile=60,9;chore=harvestTargets`, and a READER PARSE cannot be deleted
+    /// while the fact exists only there: `host/src/fact-brief.ts` found the clause with `indexOf` in that string, so a
+    /// space, a reordered pair or a renamed key silently turned a finished chore into `未测`. The string stays (every
+    /// existing reader still reads it, and it is what a run's log shows), and this field is the same family stated in a
+    /// shape no separator can break. One expression fills both: `ExecutionManager.RememberTerminal` takes the family from
+    /// <see cref="Core.Policy.FarmhandActionCatalog.ChoreFamilyOf"/> once, puts it here and spells the clause with
+    /// <see cref="Core.Policy.FarmhandActionCatalog.ChoreClause"/>.
+    /// </para>
+    /// <para>
+    /// A terminal of ANY outcome names it - `rejected`, `uncertain` and `blocked` included - because "which family is this
+    /// step's work" is a declaration about the ACTION, while how much of it is left is the reader's own world reading. A
+    /// step that has not settled (`accepted`, `running`) names none: it has consumed nothing yet.
+    /// </para>
+    /// </summary>
+    string? Chore = null
 );
 
 public sealed record BridgeScope(string IntegrationId, string SaveId, string WorldId, string PlayerId, string CompanionId)
@@ -207,7 +227,15 @@ public sealed record FarmhandActionDescriptorWire(
     // The snapshot family that supplies this action's targets (`cropTargets`), or null when it addresses nothing a
     // snapshot publishes. Published so a refusal can name the family to re-read instead of leaving the caller to
     // guess at a vocabulary it cannot see.
-    string? TargetFamily = null
+    string? TargetFamily = null,
+    // What the action is CALLED and the sentence a model reads about it, from the Mod's one declaration
+    // (`FarmhandActionPresentation`). Absent on the actions that publish none, because their tool text is still written
+    // in the Host's own mount block - and an absent member is that statement, where an empty string would be a label
+    // nobody wrote. `TargetKinds` is the same declaration's third member: the words `stardew_search_interactions` matches
+    // a caller's own query against.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? TargetKinds = null
 );
 
 public sealed record FarmhandActionRegistrationWire(
@@ -2083,7 +2111,19 @@ string? Evidence = null,
 /// `partially_succeeded` batch says so on its own row. Same state rule and same bound as <see cref="Evidence"/>; omitted
 /// when null.
 /// </para>
-string? PostconditionVerification = null
+string? PostconditionVerification = null,
+/// <summary>
+/// The family this node's work consumed, typed - the journal's `BodyProgramJournalNode.Chore`, verbatim.
+///
+/// <para>
+/// A settlement can name what is LEFT of the chore it just finished only if a reader can tell WHICH family it worked,
+/// and the only other place that fact existed was inside the `evidence` string the Host scanned with `indexOf`. Unlike
+/// <see cref="Evidence"/> this is ONE family name and not a document: it is the same value the node's own
+/// `postconditionVerification` clause was minted from, so the two can never name different families. Same state rule
+/// and same legality as <see cref="Evidence"/> (a node that proved no effect may not name a chore it did not finish),
+/// and bounded by the journal's own identifier grammar. Omitted when null.
+/// </para>
+string? Chore = null
 );
 
 public sealed record BridgeBodyProgramStatusSnapshot(

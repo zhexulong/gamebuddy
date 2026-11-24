@@ -285,6 +285,21 @@ public sealed record BodyProgramTerminalResult(NodeExecutionBinding Execution, B
     /// is settled as RecoveryRequired instead of settling as the refusal it is.
     /// </summary>
     public string? RefusalDetail { get; init; }
+
+    /// <summary>
+    /// The family this node's work consumed, typed - the value its own clause was minted from, carried beside the strings
+    /// instead of only inside them.
+    ///
+    /// <para>
+    /// The clause (`;chore=&lt;family&gt;`) already rides <see cref="Evidence"/>, and a READER had to find it by scanning
+    /// that string: `host/src/fact-brief.ts` did exactly that with `indexOf`, so a space or a reordered pair turned a
+    /// finished chore into `未测`. This field is the same family in a shape no separator can break, and it is what lets
+    /// that parser be deleted rather than mended. Both forms come from ONE value at the settlement
+    /// (<see cref="Core.Policy.FarmhandActionCatalog.ChoreFamilyOf"/> or `PassChoreFamily`), and the string form keeps
+    /// working for every reader that still reads it.
+    /// </para>
+    /// </summary>
+    public string? Chore { get; init; }
 }
 
 public sealed record VerifiedBodyProgramNode(string NodeId, string ActionId, IReadOnlyDictionary<string, BodyProgramCanonicalValue> CanonicalArguments,
@@ -366,7 +381,18 @@ public sealed record BodyProgramJournalNode(string NodeId, BodyProgramNodeState 
     /// Bounded by <see cref="BodyProgramValidation.MaximumNodeRefusalDetailLength"/> on both the write and the read path, so
     /// a detail long enough to become a payload fails closed instead of reaching a model.
     /// </para>
-    string? RefusalDetail = null);
+    string? RefusalDetail = null,
+    /// <summary>
+    /// The family this node's work consumed, or null - the ONE value its `Evidence`'s `chore=` clause and
+    /// <see cref="PostconditionVerification"/>'s pass clause were both minted from.
+    ///
+    /// <para>
+    /// Legal exactly where the node PROVED an effect (`BodyProgramValidation.MayCarryProof`), the same states
+    /// <see cref="Evidence"/> rides: a node that proved nothing finished no chore. Bounded by the journal's own identifier
+    /// grammar (<see cref="BodyProgramValidation.IsIdentifier"/>), which is the alphabet a wire family key is made of.
+    /// </para>
+    /// </summary>
+    string? Chore = null);
 public sealed record RuntimeFact(string ProgramId, string NodeId, int NodeAttempt, string FactName, IReadOnlyDictionary<string, BodyProgramCanonicalValue> Values);
 public sealed record BodyProgramJournalProgram(VerifiedBodyProgram Program, BodyProgramState State, long StopEpoch, IReadOnlyList<BodyProgramJournalNode> Nodes, IReadOnlyList<RuntimeFact> Facts);
 

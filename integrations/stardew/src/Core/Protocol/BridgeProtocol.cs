@@ -1081,7 +1081,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
         && (value.GetProperty("nodeId").ValueKind == JsonValueKind.Null || ReadOpaqueString(value.GetProperty("nodeId"), out _))
         && value.GetProperty("path").ValueKind == JsonValueKind.String && value.GetProperty("message").ValueKind == JsonValueKind.String;
 
-    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "evidence", "postconditionVerification", "actionId", "x", "y" })
+    private static bool IsValidBodyProgramNodeStatus(JsonElement value) => HasExactPropertiesOrOptional(value, new[] { "nodeId", "state", "nodeAttempt", "admissionAttempt" }, new[] { "rejectionCode", "failureCode", "hint", "refusalDetail", "recoveryDiagnostic", "evidence", "postconditionVerification", "actionId", "x", "y", "chore" })
          && ReadOpaqueString(value.GetProperty("nodeId"), out _) && IsBodyProgramNodeState(value.GetProperty("state"))
          && value.GetProperty("nodeAttempt").TryGetInt32(out int attempt) && attempt >= 0 && value.GetProperty("admissionAttempt").TryGetInt32(out int admission) && admission >= 0
          && IsAbsentNullOrIdentifier(value, "actionId")
@@ -1089,7 +1089,8 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
          && IsAbsentNullOrReasonCode(value, "rejectionCode") && IsAbsentNullOrReasonCode(value, "failureCode")
          && IsAbsentNullOrBoundedHint(value, "hint")
          && IsLocatedReasonShape(value)
-         && IsProofShape(value);
+         && IsProofShape(value)
+         && IsChoreShape(value);
 
     /// <summary>
     /// An optional action id: absent, JSON null, or a program identifier in the journal's own grammar.
@@ -1199,6 +1200,27 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
     }
 
     /// <summary>
+    /// The optional `chore`: absent, JSON null, or a family identifier on a node that PROVED an effect.
+    ///
+    /// <para>
+    /// Not a proof field and not a reason: it names WHICH family the work consumed, and the reader counts what is left of
+    /// that family from the reading it already holds. It rides the same states <see cref="IsProofShape"/> admits, for the
+    /// same reason - a node that proved no effect finished no chore - and its grammar is the journal's own identifier
+    /// rule, which is exactly the alphabet a wire family key is made of (`harvestTargets`, `weedTargets`). The state is
+    /// recovered through the same `ToWireValue` projection that produced the token, so a frame this accepts cannot be one
+    /// the journal would have refused.
+    /// </para>
+    /// </summary>
+    private static bool IsChoreShape(JsonElement value)
+    {
+        if (!TryReadOptionalString(value, "chore", out string? chore) || chore is null) return true;
+        if (!BodyProgramValidation.IsIdentifier(chore)) return false;
+        if (!value.TryGetProperty("state", out JsonElement stateValue) || stateValue.ValueKind != JsonValueKind.String) return false;
+        BodyProgramNodeState[] named = Enum.GetValues<BodyProgramNodeState>().Where(state => ToWireValue(state) == stateValue.GetString()).ToArray();
+        return named.Length == 1 && BodyProgramValidation.MayCarryProof(named[0]);
+    }
+
+    /// <summary>
     /// An optional string: absent or JSON null answer true with a null, a non-string answers false rather than reading as
     /// "no reason" - the shape this field exists to make unreadable-by-accident impossible.
     /// </summary>
@@ -1301,7 +1323,7 @@ private static bool IsValidBodyProgramEvent(BridgeBodyProgramEvent? @event) => @
             snapshot.Nodes.Select(node =>
             {
                 BodyProgramNodeWork work = snapshot.Work.Single(candidate => candidate.NodeId == node.NodeId);
-                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification);
+                return new BridgeBodyProgramNodeStatus(node.NodeId, node.State.ToWireValue(), node.NodeAttempt, node.AdmissionAttempt, node.RejectionCode, node.FailureCode, node.Hint, node.RefusalDetail, node.RecoveryDiagnostic, work.ActionId, work.X, work.Y, node.Evidence, node.PostconditionVerification, node.Chore);
             }).ToArray());
 
     private static bool TryReadBodyProgramCandidate(JsonElement value, out ActionProgramCandidate? candidate)
