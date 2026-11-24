@@ -130,13 +130,14 @@ test("a complete descriptor is a shape, not a proof: the action is visible on it
     },
   ];
 
-  // `experimental` carries no proof of its own, and `UNPROVEN_VISIBILITY_DECLARATIONS` names neither action, so the
-  // catalog gate refuses them: a complete descriptor says the Host can build a typed tool, never that a live run ever
-  // succeeded. The visibility this pair does have is the row the two declared actions carry, not a descriptor.
+  // `experimental` carries no proof of its own, and neither adapter declares it experimental-by-its-own-declaration
+  // (`declaredExperimental`), so the catalog gate refuses them: a complete descriptor says the Host can build a typed
+  // tool, never that a live run ever succeeded. The visibility this pair does have would come from the action's own
+  // declaration, not from its descriptor.
   assert.deepEqual(
     visibleActionsFromModCatalog(catalog, capabilities),
     [],
-    "an experimental action with a complete descriptor and no declared row must not be handed to the Agent",
+    "an experimental action with a complete descriptor and no declaration of its own must not be handed to the Agent",
   );
 
   // The same registrations at `published` are admitted, so what the refusal above reads is the lifecycle and not the

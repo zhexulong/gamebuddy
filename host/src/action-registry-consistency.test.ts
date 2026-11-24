@@ -10,16 +10,14 @@ import {
   STARDEW_ACTION_ADAPTERS,
   STARDEW_ACTION_TOOL_NAMES,
   STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS,
-  UNPROVEN_VISIBILITY_DECLARATIONS,
   isDescriptorDerivedActionId,
   isModDescriptorComplete,
   unprovenVisibilityActionIds,
   visibleActionsFromModCatalog,
 } from "./action-registry.js";
-import { planActionsFromRegistrations } from "./body-program-script.js";
-import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import { buildGameCompanionSystemPrompt } from "./game-surface-prompt-floor.js";
 import { MOUNTED_GAME_SURFACE_TOOL_NAMES } from "./game-surface-prompt-floor.test-support.js";
+import { createStardewActionTools, type MoveCapableIntegration } from "./game-tools.js";
 import { DEFAULT_IDENTITY_PROFILE } from "./identity-profile.js";
 import type { ActionRegistration, ActionRegistrationDescriptor, Scope } from "./protocol.js";
 import { STARDEW_GAME_INTEGRATION_ADAPTER } from "./stardew-game-integration-adapter.js";
@@ -56,6 +54,14 @@ type SurfaceAction = Readonly<{
    * on the only descriptor a consumer without a running game can read.
    */
   nativeBinding?: string;
+  /**
+   * The three presentation members the Mod publishes for an action whose text is its own declaration. They travel
+   * together or not at all (`isValidActionDescriptor`), and the mount loop reads the first two: an action that has them
+   * is mounted with the Mod's own words, one that has none is mounted by its own block.
+   */
+  label?: string;
+  description?: string;
+  targetKinds?: readonly string[];
 }>;
 
 function loadActionSurface(): readonly SurfaceAction[] {
@@ -168,7 +174,18 @@ function mountedActionIds(): readonly string[] {
   return [...new Set([...literals, ...projected])].sort();
 }
 
-/** The descriptor hello_ack publishes for one artifact action: an `arguments` array plus the postcondition record. */
+/**
+ * The descriptor hello_ack publishes for one artifact action: the `arguments` array, the postcondition record and the
+ * three presentation members.
+ *
+ * <p>
+ * THE PRESENTATION IS PART OF THE WIRE DESCRIPTOR AND THE MOUNT READS IT. `createStardewActionTools` skips an action whose
+ * descriptor carries no `label`/`description` pair, because the Host stopped hand-writing the label and the sentence
+ * (`2026-11-24`: the Mod publishes them now). This projection kept four fields for a day after that change, so every
+ * descriptor-derived action was examined as one the Mount could not build: the mount read 55 tools where the product
+ * mounts 103, and the two gates below reported forty-eight actions "withheld" that no session had stopped mounting.
+ * </p>
+ */
 function publishedDescriptor(action: SurfaceAction): ActionRegistrationDescriptor {
   return {
     arguments: Object.entries(action.argumentSchema ?? {}).map(([name, schema]) => ({
@@ -179,6 +196,9 @@ function publishedDescriptor(action: SurfaceAction): ActionRegistrationDescripto
     ...(action.effect === undefined ? {} : { effect: action.effect }),
     ...(action.postcondition?.name === undefined ? {} : { postcondition: { name: action.postcondition.name } }),
     ...(action.nativeBinding === undefined ? {} : { nativeBinding: action.nativeBinding }),
+    ...(action.label === undefined ? {} : { label: action.label }),
+    ...(action.description === undefined ? {} : { description: action.description }),
+    ...(action.targetKinds === undefined ? {} : { targetKinds: action.targetKinds }),
   };
 }
 
@@ -370,36 +390,35 @@ function toolNameFor(actionId: string): string | undefined {
 }
 
 /**
- * EVERYTHING THE MOD REGISTERS CARRIES ITS OWN PROOF OR A DECLARED REASON, AND NOTHING CARRIES BOTH.
+ * EVERY ACTION THE AGENT CAN SEE WITHOUT ITS OWN PROOF CARRIES THAT REASON ON ITS OWN DECLARATION.
  *
- * `design/architecture/game-action-model.md:44` gives visibility exactly one door - `live_verified`, earned by a real live
- * run on the target version - and `visibleActionsFromModCatalog` has two. The second is the descriptor-derived carve-out:
- * an enrolled action whose Mod-owned descriptor is complete is admitted while its lifecycle still says `experimental`.
+ * `design/architecture/game-action-model.md:54` keeps `experimental` off the Agent surface by default. The Host's second
+ * door is `adapter.declaredExperimental`: the action's own declaration states what its complete descriptor promises, what
+ * the live record does not, and the fact that retires the offer. It replaced a table of action ids
+ * (`UNPROVEN_VISIBILITY_DECLARATIONS`, retired 2026-11-24) that admitted an action by NAME - a hand-list beside the
+ * derived unproven set, and one an edit could grow without touching the action it excused.
  *
- * WHICH actions walk through that door is not listed anywhere else: `lifecycle` is a field the Mod's registration
- * publishes, so "carries no proof of its own" is `unprovenVisibilityActionIds(registrations)`, derived from the artifact
- * here, and `UNPROVEN_VISIBILITY_DECLARATIONS` is the DOOR itself - `visibleActionsFromModCatalog` admits an action its
- * lifecycle does not admit by finding its row, and by nothing else. This gate is the bijection between the two, failing
- * in both directions, each with its own name rather than a count:
+ * Both sides of the comparison are derived, and neither is written here:
  *
- *   `an_action_without_its_own_proof_is_undeclared:<action>`
- *       registered, lifecycle neither `live_verified` nor `published`, and no row: it is refused, and nobody wrote down
- *       whether that is intended. One direction alone would be a table that can only grow.
- *   `declared_row_names_a_proven_action:<action>`
- *       a row whose action has since earned its own proof. An exemption must expire, and a row left sitting there reads as
- *       authority for a fact the Mod already states.
- *   `declared_row_names_no_registered_action:<action>`
- *       a row whose action has left the surface altogether: it excuses nothing.
- *   `declared_row_admits_nothing:<action>`
- *       a row whose action the catalog gate still refuses: the row is the door, so a row that admits nothing has drifted
- *       away from the reason it states.
+ *   visible   `visibleActionsFromModCatalog` over the Mod's published surface; "unproved" is
+ *             `unprovenVisibilityActionIds` - the lifecycle byte the Mod publishes.
+ *   declared  `STARDEW_ACTION_ADAPTERS` entries whose own declaration carries `declaredExperimental`.
  *
- * The population is the Mod's own published surface, and "carries its own proof" is the lifecycle byte - which is not
- * taken on faith here either: `tools/check-stardew-action-promotion.mjs` re-derives `live_verified` from the recorded live
- * runs in `host/src/test-fixtures/stardew-live-receipts.json` and the target-version evidence directory, so the fact this
- * gate reads is the fact that gate checks.
+ * The failures each name their action:
+ *
+ *   `visible_without_proof_and_without_a_declaration:<action>`
+ *       the Agent can reach an action nothing proved and nothing declared. THE BYPASS this gate exists for: it is what
+ *       the id table used to do silently, and it is red on the tree before the declaration moved onto the action.
+ *   `declaration_states_no_reason_or_no_expiry:<action>`
+ *       a declaration that offers no reason or names nothing that retires it is an exemption that never expires.
+ *   `declared_action_is_not_registered:<action>`
+ *       a declaration for an action the Mod's surface does not publish: it buys nothing.
+ *   `declared_action_holds_its_own_proof:<action>`
+ *       a declaration on an action whose lifecycle already admits it: the declaration has outlived its reason.
+ *   `declared_action_is_not_visible:<action>`
+ *       a declaration the catalog still refuses, so the declaration and the door have drifted apart.
  */
-test("every action without its own proof has a declared reason, and no row outlives its reason", (t) => {
+test("an action visible without its own proof carries its reason on its own declaration", (t) => {
   const registrations = registrationsFor(loadActionSurface());
   const capabilities = registrations
     .filter((registration) => registration.kind === "execution")
@@ -409,61 +428,54 @@ test("every action without its own proof has a declared reason, and no row outli
   const registered = [...new Set(registrations.map((registration) => registration.actionId))].sort();
   const lifecycleOf = new Map(registrations.map((registration) => [registration.actionId, registration.lifecycle]));
   const visibleIds = new Set(visible.map((action) => action.actionId));
-  // "Proven" is the registered set MINUS the derived one: the two lifecycle values this gate is made of are read by
-  // `unprovenVisibilityActionIds`, and reading them again here would be the same second spelling the row list was.
-  const unproven = unprovenVisibilityActionIds(registrations);
-  const unprovenIds = new Set(unproven);
-  const proven = registered.filter((actionId) => !unprovenIds.has(actionId));
-  const declared: readonly string[] = UNPROVEN_VISIBILITY_DECLARATIONS.map(
-    (declaration) => declaration.actionId,
-  ).sort();
-  const declaredIds = new Set(declared);
-  const refused = registered.filter((actionId) => !visibleIds.has(actionId));
+  const unprovenIds = new Set(unprovenVisibilityActionIds(registrations));
+  const declared = STARDEW_ACTION_ADAPTERS.filter((adapter) => adapter.declaredExperimental !== undefined);
+  const declaredIds = new Set<string>(declared.map((adapter) => adapter.actionId));
 
   const failures: string[] = [];
-  for (const actionId of unproven) {
-    if (declaredIds.has(actionId)) continue;
+  for (const actionId of visibleIds) {
+    if (!unprovenIds.has(actionId) || declaredIds.has(actionId)) continue;
     failures.push(
-      `an_action_without_its_own_proof_is_undeclared:${actionId}:its registration lifecycle is ` +
-        `\`${String(lifecycleOf.get(actionId))}\`, so the only door that could admit it is a row in that table, and ` +
-        "there is none: it is refused, and nothing states whether that is intended",
+      `visible_without_proof_and_without_a_declaration:${actionId}:its registration lifecycle is ` +
+        `\`${String(lifecycleOf.get(actionId))}\`, so the only door that could admit it is a declaration on its own ` +
+        "adapter, and there is none",
     );
   }
-  for (const declaration of UNPROVEN_VISIBILITY_DECLARATIONS) {
-    const { actionId } = declaration;
+  for (const adapter of declared) {
+    const { actionId } = adapter;
+    const declaration = adapter.declaredExperimental!;
     if (declaration.reason.trim().length === 0 || declaration.deleteWhen.trim().length === 0) {
-      failures.push(`declared_row_states_no_reason_or_no_expiry:${actionId}`);
+      failures.push(`declaration_states_no_reason_or_no_expiry:${actionId}`);
     }
-    if (!lifecycleOf.has(actionId)) {
+    if (!registered.includes(actionId)) {
       failures.push(
-        `declared_row_names_no_registered_action:${actionId}:the Mod's surface publishes no such action, so the row excuses nothing`,
+        `declared_action_is_not_registered:${actionId}:the Mod's surface publishes no such action, so the ` +
+          "declaration buys nothing",
       );
-    } else if (!unprovenIds.has(actionId)) {
+      continue;
+    }
+    if (!unprovenIds.has(actionId)) {
       failures.push(
-        `declared_row_names_a_proven_action:${actionId}:its own lifecycle is ` +
-          `\`${String(lifecycleOf.get(actionId))}\`, so delete the row and let its own proof admit it`,
+        `declared_action_holds_its_own_proof:${actionId}:its own lifecycle is ` +
+          `\`${String(lifecycleOf.get(actionId))}\`, so delete the declaration and let its own proof admit it`,
+      );
+    }
+    if (!visibleIds.has(actionId)) {
+      failures.push(
+        `declared_action_is_not_visible:${actionId}:the declaration states why it may be offered and the catalog gate ` +
+          "refuses it anyway, so the declaration and the door have drifted apart",
       );
     }
   }
 
-  // The population, printed so a green run states what it examined instead of agreeing with itself: a derivation that
-  // stopped seeing the lifecycle would empty `unproven` and leave `declared` the only side still naming an action.
+  // The population, printed so a green run states what it examined instead of agreeing with itself on two empty sets.
   t.diagnostic(
-    `visible ${String(visible.length)} · proven ${String(proven.length)} · unproven ${String(unproven.length)}` +
-      ` · declared ${String(declared.length)} · refused ${String(refused.length)} · of ${String(
+    `visible ${String(visible.length)} · unproven ${String(unprovenIds.size)} · declared ${String(declaredIds.size)}` +
+      ` · refused ${String(registered.filter((actionId) => !visibleIds.has(actionId)).length)} · of ${String(
         registered.length,
-      )} registered · unproven [${unproven.join(", ")}] · declared [${declared.join(", ")}]`,
+      )} registered · unproven [${[...unprovenIds].sort().join(", ")}] · declared [${[...declaredIds].sort().join(", ")}]`,
   );
-  // The table IS the second door, so the third direction is a row that admits nothing: a row whose action is refused is
-  // an exemption nobody can walk through, and it reads as authority for a visibility the Agent does not have.
-  for (const actionId of declared) {
-    if (visibleIds.has(actionId)) continue;
-    failures.push(
-      `declared_row_admits_nothing:${actionId}:the row states why it may be visible and the catalog gate refuses it ` +
-        "anyway, so the reason and the door have drifted apart",
-    );
-  }
-  // Zero population is BLOCKED, never green: a surface that registers nothing makes every count above agree on nothing.
+  // Zero population is BLOCKED, never green: a surface that registers nothing makes every set above agree on nothing.
   assert.ok(
     registered.length > 0,
     "blocked: the published surface registers no action at all, so this gate examines nothing",
@@ -472,7 +484,71 @@ test("every action without its own proof has a declared reason, and no row outli
     visible.length > 0,
     "blocked: the published surface admits no action at all, so this gate examines nothing",
   );
-  assert.deepEqual(failures, [], "the declared reasons do not account for the actions without a proof of their own");
+  assert.deepEqual(
+    failures,
+    [],
+    "the declarations do not account for the actions offered without a proof of their own",
+  );
+});
+
+/**
+ * THE DECLARED DOOR STILL OPENS - for the action that declares it, and for nothing else.
+ *
+ * The gate above is the negative: an action offered without its own proof must carry the declaration. This is the
+ * positive, and it reads the same two populations from the artifact and from `STARDEW_ACTION_ADAPTERS`: every action that
+ * declares itself experimental is (a) offered to the Agent, (b) still without a proof of its own, so the declaration is
+ * doing the work rather than sitting beside an earned lifecycle, and (c) stating both what it buys and what retires it.
+ */
+test("an action that declares itself experimental is offered before its proof, with its reason on the declaration", (t) => {
+  const registrations = registrationsFor(loadActionSurface());
+  const capabilities = registrations
+    .filter((registration) => registration.kind === "execution")
+    .map((registration) => registration.actionId);
+  const visibleIds = new Set(
+    visibleActionsFromModCatalog(registrations, capabilities, DEFAULT_ACTION_POLICY).map((action) => action.actionId),
+  );
+  const lifecycleOf = new Map(registrations.map((registration) => [registration.actionId, registration.lifecycle]));
+  const declared = STARDEW_ACTION_ADAPTERS.filter((adapter) => adapter.declaredExperimental !== undefined);
+
+  const failures: string[] = [];
+  for (const adapter of declared) {
+    const declaration = adapter.declaredExperimental!;
+    if (!visibleIds.has(adapter.actionId)) {
+      failures.push(
+        `declared_action_is_refused:${adapter.actionId}:its own declaration offers it and the catalog gate does not ` +
+          "hand it to the Agent",
+      );
+    }
+    const lifecycle = lifecycleOf.get(adapter.actionId);
+    if (lifecycle === undefined) {
+      failures.push(`declared_action_is_not_published:${adapter.actionId}`);
+      continue;
+    }
+    if (lifecycle !== "experimental") {
+      failures.push(
+        `declared_action_holds_its_own_proof:${adapter.actionId}:its lifecycle is \`${lifecycle}\`, which admits it ` +
+          "without this declaration",
+      );
+    }
+    if (declaration.reason.trim().length === 0 || declaration.deleteWhen.trim().length === 0) {
+      failures.push(`declaration_states_no_reason_or_no_expiry:${adapter.actionId}`);
+    }
+  }
+
+  t.diagnostic(
+    `declared [${declared
+      .map((adapter) => adapter.actionId)
+      .sort()
+      .join(", ")}] · offered without a proof of their own ` +
+      `${String(declared.filter((adapter) => visibleIds.has(adapter.actionId)).length)} · of ${String(
+        registrations.length,
+      )} registrations · failures ${String(failures.length)}`,
+  );
+  assert.ok(
+    declared.length > 0,
+    "blocked: no action declares itself experimental, so the declared door admits nothing and this gate examines nothing",
+  );
+  assert.deepEqual(failures, [], "the declared-experimental door and the catalog gate disagree");
 });
 
 test("the mounted descriptor-derived set is exactly the published set whose arm opens", () => {
@@ -585,57 +661,53 @@ test("every requirement in the table is one the gate reads, on the Mod's own des
 /**
  * The prompt floor's own tool names.
  *
+ * <p>
  * The Game conduct told the companion "Body language goes through the native actions stardew_express_emote and
- * stardew_face_direction" while neither tool was in the mounted list: measured round44, `stardew_express_emote`
- * appeared zero times as a mounted tool definition and only in that sentence. Nothing compared the two - the
- * floor is prose, the mount ledger is code, and each was checked on its own. This gate reads the rendered floor
- * the model receives and holds every tool name in it against the list a Game session actually mounts.
+ * stardew_face_direction" while neither tool was in the mounted list: measured round44, `stardew_express_emote` appeared
+ * zero times as a mounted tool definition and only in that sentence. Nothing compared the two - the floor is prose, the
+ * mount ledger is code - so this gate read the rendered floor and held every tool name in it against the list a Game
+ * session actually mounts. THE MOUNTED LIST IS THE RECORDED ONE, not `createStardewActionTools`' output: a plan surface
+ * drops every one of those, so that comparison held the floor against a list the request never carried and stayed green
+ * while the floor named `stardew_express_emote` and the Agent was handed `stardew_plan_work` instead (measured 2026-11-11,
+ * `round46b`: 68 tool calls, no emote).
+ * </p>
  *
- * THE LIST A GAME SESSION ACTUALLY MOUNTS IS NOT `mountedToolNames` BELOW. That one is `createStardewActionTools`'
- * output, and a plan surface drops every entry of it (`runtime-core.internal.ts`, asserted structurally by
- * `game-surface-prompt-floor.test.ts`) - so this gate compared the floor against a list the request never carried,
- * and stayed green while the floor named `stardew_express_emote` and the Agent was handed `stardew_plan_work`
- * instead (measured 2026-11-11, `round46b`: 68 tool calls, no emote). The population is the recorded mounted set.
+ * <p>
+ * THE FLOOR NAMES NOTHING NOW, AND THAT IS THE ASSERTION, not a population that went empty by accident. The floor stopped
+ * being a list of conduct rules on `2026-11-24` and became the message's syntax header: the sentence that named the two
+ * tools moved to those tools' own descriptions, which is what the model reads at the call - the Mod's own `express_emote`
+ * text still says it is `NOT a step inside stardew_plan_work`. Measured on the tree, the rendered prompt is 1863
+ * characters and carries no `stardew_*` name at all, and the floor's OWN suite cannot see one put back: its
+ * `a_rule_the_prompt_states_has_an_owner` classified every sentence as syntax with a tool name injected into it. So this is
+ * the one gate that notices a name returning, and the failure names it and asks for the mounted-set comparison to be
+ * re-established rather than dropped.
+ * </p>
  */
 const FLOOR_TOOL_NAME = /\bstardew_[a-z0-9_]+/gu;
 
-test("every tool the Game prompt floor names is a tool a Game session mounts", () => {
+test("the Game prompt floor names no tool, and any name it renders is one a Game session mounts", (t) => {
   const floor = buildGameCompanionSystemPrompt(DEFAULT_IDENTITY_PROFILE);
   const named = [...new Set([...floor.matchAll(FLOOR_TOOL_NAME)].map((match) => match[0]))].sort();
-  assert.ok(named.length > 0, "blocked: the rendered Game prompt names no tool at all, so this gate examines nothing");
   const mounted = new Set(MOUNTED_GAME_SURFACE_TOOL_NAMES);
+  t.diagnostic(
+    `floor tool names ${String(named.length)} · mounted Game tools ${String(mounted.size)} · over ${String(
+      floor.length,
+    )} characters of rendered floor`,
+  );
+  // Zero population is BLOCKED on both sides: an empty prompt says nothing, and an empty mounted set would let every name
+  // through. Neither is the state of a Game session today.
+  assert.ok(floor.trim().length > 0, "blocked: the rendered Game prompt is empty, so this gate examines nothing");
   assert.ok(mounted.size > 0, "blocked: the recorded mounted Game tool set is empty, so every name would pass");
   assert.deepEqual(
     named.filter((name) => !mounted.has(name)).map((name) => `floor_names_unmounted_tool:${name}`),
     [],
     `the prompt tells the companion to use a tool no Game session mounts: ${named.join(", ")}`,
   );
-  // The surface's own rule, DERIVED rather than recorded: a plan surface keeps a per-action tool for exactly the actions
-  // its plan vocabulary does not carry (`action-registry.ts` `keepsOwnToolOnPlanSurface`), and carries the rest as plan
-  // steps - one action, one route (`action-route-gate.test.ts` holds both directions). So the floor may not name the tool
-  // of an action that reaches her as a plan row, and the population is that set of tools, not "every tool but expression".
-  // Measured 2026-11-14: the old population also excused itself for the seven `experimental` actions, whose tools no
-  // surface mounted at all, so the gate was quiet about a route that did not exist while calling it the right one.
-  const planCarried = new Set<string>(
-    planActionsFromRegistrations(registrationsFor(loadActionSurface())).map((action) => action.actionId),
-  );
-  const toolNameOfPlanCarried = new Set<string>(
-    [...planCarried].flatMap((actionId) => {
-      const name = STARDEW_ACTION_TOOL_NAMES[actionId as keyof typeof STARDEW_ACTION_TOOL_NAMES] as string | undefined;
-      return name === undefined ? [] : [name];
-    }),
-  );
-  const perAction = new Set<string>(
-    mountedToolNames(loadActionSurface()).filter((name) => toolNameOfPlanCarried.has(name)),
-  );
-  assert.ok(
-    perAction.size > 0,
-    "blocked: the adapter mounts no per-action tool for a plan-carried action, so the negative below examines nothing",
-  );
   assert.deepEqual(
-    named.filter((name) => perAction.has(name)).map((name) => `floor_names_per_action_tool:${name}`),
+    named.map((name) => `floor_names_a_tool:${name}`),
     [],
-    `the prompt names a per-action tool the plan surface drops: ${named.filter((name) => perAction.has(name)).join(", ")}`,
+    "the prompt header names a tool, so a conduct rule has moved back into the layer that owns none of them: state why a " +
+      `name belongs in the message's syntax and restore the mounted-set comparison for it - ${named.join(", ")}`,
   );
 });
 
@@ -643,20 +715,20 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
  * EVERY SITE THAT DECIDES AN ACTION IS VISIBLE DOES SO THROUGH A DECLARATION THAT CAN EXPIRE - OR IT IS A FINDING.
  *
  * <p>
- * The defect this gate exists for, measured on the tree rather than reported. Visibility had TWO answers: the table
- * `UNPROVEN_VISIBILITY_DECLARATIONS`, where each row carries a `reason` and a `deleteWhen`, and a predicate
- * `isVisibleWithoutLiveProof` = "descriptor-derived and its descriptor is complete", which carried neither. The predicate
- * admitted exactly the two actions the table already named, so nothing downstream could tell the two apart - and the next
- * action to arrive through the predicate would have been visible with nobody having said why or when it stops.
+ * The defect this gate exists for, measured on the tree rather than reported. Visibility had TWO answers, and only one of
+ * them expired with its evidence: the lifecycle byte, and a predicate `isVisibleWithoutLiveProof` = "descriptor-derived and
+ * its descriptor is complete", which carried no reason and no expiry. The next action to arrive through the predicate
+ * would have been visible with nobody having said why or when it stops.
  * </p>
  *
  * <p>
  * THE RULE, one fact per visibility decision: an action is admitted by its own lifecycle proof (`carriesItsOwnProof` -
- * `live_verified` re-derived from recorded live runs by `tools/check-stardew-action-promotion.mjs`, or `published`), or by
- * a row of the table, which states its expiry. So every site that reads a visibility fact gets one verdict:
+ * `live_verified` re-derived from recorded live runs by `gates/stardew/check-stardew-action-promotion.mjs`, or
+ * `published`), or by its own `declaredExperimental`, which states its reason and what retires it. So every site that
+ * reads a visibility fact gets one verdict:
  * </p>
  *
- *   `declaration`  reads `UNPROVEN_VISIBILITY_DECLARATIONS`. The row is the door, and a row has a `deleteWhen`.
+ *   `declaration`  reads `declaredExperimental` - the action's own offer, which names its expiry.
  *   `lifecycle`    reads `carriesItsOwnProof` - the door the architecture names, whose evidence expires on its own.
  *   `restrictor`   `!isModDescriptorComplete(...)`, a guard that only ever CLOSES. A door that cannot open is not a
  *                  second answer.
@@ -673,12 +745,13 @@ test("every tool the Game prompt floor names is a tool a Game session mounts", (
  * <p>
  * WHAT THIS READING DOES NOT SEE, stated rather than hidden: a site that admits an action through a fact outside the
  * vocabulary (a new field on the registration, a second table of ids) is invisible to it. That is why the file's other
- * gates hold the PRODUCT's own answer - `visibleActionsFromModCatalog` against the mount, and the table against the Mod's
- * lifecycle - to each other, rather than trusting this census alone. red-proof: `isVisibleWithoutLiveProof` restored
- * beside `hasAnAdmissionPath` reads `predicate` and fails naming `action-registry.ts:visibleActionsFromModCatalog`.
+ * gates hold the PRODUCT's own answer - `visibleActionsFromModCatalog` against the mount, and the actions it offers
+ * without a proof against their own declarations - to each other, rather than trusting this census alone. red-proof:
+ * `isVisibleWithoutLiveProof` restored beside `hasAnAdmissionPath` reads `predicate` and fails naming
+ * `action-registry.ts:visibleActionsFromModCatalog`.
  * </p>
  */
-const VISIBILITY_FACTS = /\b(UNPROVEN_VISIBILITY_DECLARATIONS|carriesItsOwnProof|isModDescriptorComplete)\b/gu;
+const VISIBILITY_FACTS = /\b(declaredExperimental|carriesItsOwnProof|isModDescriptorComplete)\b/gu;
 
 type VisibilitySiteVerdict = "declaration" | "lifecycle" | "restrictor" | "definition" | "predicate";
 
@@ -761,12 +834,11 @@ function visibilitySites(): readonly VisibilitySite[] {
       const fact = match[1]!;
       const index = match.index;
       const before = text.slice(Math.max(0, index - 24), index);
-      const definition =
-        /function\s+$/u.test(before) || (fact === "UNPROVEN_VISIBILITY_DECLARATIONS" && /const\s+$/u.test(before));
+      const definition = /function\s+$/u.test(before);
       const negated = /!\s*\(?\s*$/u.test(before);
       const verdict: VisibilitySiteVerdict = definition
         ? "definition"
-        : fact === "UNPROVEN_VISIBILITY_DECLARATIONS"
+        : fact === "declaredExperimental"
           ? "declaration"
           : fact === "carriesItsOwnProof"
             ? "lifecycle"
@@ -797,7 +869,7 @@ test("every visibility decision is a declaration with an expiry, never a predica
   );
   assert.ok(
     declared.length > 0,
-    "blocked: no site reads UNPROVEN_VISIBILITY_DECLARATIONS, so the second door is a path this census cannot see",
+    "blocked: no production site reads declaredExperimental, so the second door is a path this census cannot see",
   );
   assert.deepEqual(
     predicates.map((site) => `visibility_decided_by_a_predicate_with_no_expiry:${site.file}:${site.site}`),
@@ -859,8 +931,15 @@ test("the derived mount shows exactly the actions the one visibility decision ad
     );
   }
 
+  // The population, printed so a green run states what it examined: the artifact's own lifecycle counts beside the two
+  // sets this gate compares, read out of the artifact rather than listed here.
+  const lifecycleCount = (lifecycle: string) => published.filter((action) => action.lifecycle === lifecycle).length;
   t.diagnostic(
-    `mounted actions ${String(mounted.size)} · visible ${String(visible.size)} · divergent ${String(failures.length)}`,
+    `actions ${String(published.length)} · published ${String(lifecycleCount("published"))} · live_verified ${String(
+      lifecycleCount("live_verified"),
+    )} · experimental ${String(lifecycleCount("experimental"))} · mounted ${String(mounted.size)} · visible ${String(
+      visible.size,
+    )} · divergent ${String(failures.length)}`,
   );
   assert.ok(mounted.size > 0, "blocked: the artifact mounts no action tool, so this gate examines nothing");
   assert.ok(

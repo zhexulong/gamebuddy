@@ -7,6 +7,23 @@ import {
 
 export type ActionLifecycle = ActionRegistration["lifecycle"];
 
+/**
+ * Why this action may be OFFERED to the Agent while its own lifecycle carries no proof, and what retires the offer.
+ *
+ * <p>
+ * It is a field on the action's own declaration rather than a row in a Host-wide table, so a reader of the declaration
+ * reads the reason there, and no list decides which actions are visible. `visibleActionsFromModCatalog` admits an
+ * action with no proof of its own ONLY when its adapter carries this, and `action-registry-consistency.test.ts` holds
+ * every visible-but-unproved action to carrying it - a name in a file cannot admit anything.
+ * </p>
+ */
+export type ExperimentalVisibilityDeclaration = Readonly<{
+  /** What the descriptor promises and what the live record does not, in the action's own terms. */
+  reason: string;
+  /** The fact that makes this declaration dead. It is a real expiry: `live_verified` is re-derived from recorded runs. */
+  deleteWhen: string;
+}>;
+
 /** A local concrete adapter can restrict, but never publish, a Mod action. */
 export type StardewActionAdapter = Readonly<{
   actionId: string;
@@ -16,6 +33,11 @@ export type StardewActionAdapter = Readonly<{
   requiredCapability: string;
   /** Identity versions understood by this concrete Host adapter. */
   supportedIdentityVersions: readonly number[];
+  /**
+   * The Host's declaration that this action is usable before the Mod has proved it, absent on every action that is
+   * offered on its own `live_verified`/`published` lifecycle. See `ExperimentalVisibilityDeclaration`.
+   */
+  declaredExperimental?: ExperimentalVisibilityDeclaration;
 }>;
 
 /**
@@ -59,12 +81,34 @@ export const STARDEW_ACTION_ADAPTERS = Object.freeze([
     "Put an item in a fish tank",
     "Put one backpack item into a placed fish tank, letting the tank's own `CanBeDeposited` rule decide whether it may hold it. Read the tank's `placed_furniture` target id and tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. The postcondition is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported as `fish_tank_deposit_not_observed`, never as a success.",
     ["world_object"],
+    {
+      reason:
+        "its descriptor is complete - the tile, the backpack slot, the item's wire identity and the tank's own " +
+        "`placed_furniture` target, `effect: write`, postcondition `fish_tank_item_deposited` - so the Host mounts a " +
+        "working tool for a live write, while no run on the target version has ever returned " +
+        "`fish_tank_item_deposited`: nothing stages a `FishTankFurniture` for a live run, and the action has no live " +
+        "gate and no runner",
+      deleteWhen:
+        "a live run returns `fish_tank_item_deposited` and its Mod registration reaches `live_verified`, which admits " +
+        "it on its own proof and makes this declaration dead",
+    },
   ),
   actionAdapter(
     "place_item_on_pedestal",
     "Place an item on a pedestal",
     "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. Read the `empty_pedestal` target id, its tile, the source slot and the item's qualified id from the `worldObjectTargets` entry of the most recent observation. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because the pedestal's own branch knocks the standing item off and answers false; the postcondition is the pedestal's `heldObject` being this item while the pack lost exactly one.",
     ["world_object"],
+    {
+      reason:
+        "its descriptor is complete - the tile, the backpack slot, the item's wire identity and the opaque " +
+        "`empty_pedestal` target, `effect: write`, postcondition `pedestal_item_placed` - so the Host mounts a " +
+        "working tool for a live write, while no run on the target version has ever returned " +
+        "`pedestal_item_placed`: nothing stages an `ItemPedestal` for a live run, and the action has no live gate " +
+        "and no runner",
+      deleteWhen:
+        "a live run returns `pedestal_item_placed` and its Mod registration reaches `live_verified`, which admits it " +
+        "on its own proof and makes this declaration dead",
+    },
   ),
   actionAdapter(
     "break_container",
@@ -969,6 +1013,14 @@ function publishedArguments(descriptor: ActionRegistrationDescriptor): readonly 
     type: argument.type,
     ...(argument.enum === undefined ? {} : { enum: argument.enum }),
     ...(argument.description === undefined ? {} : { description: argument.description }),
+    // The Mod's own declaration of what the argument accepts, carried by BOTH shapes so a reader of either one
+    // describes the same domain. It is what the tool schema the model is handed is built from; deriving it here
+    // instead (`largestAcceptedWholeNumber` probed the wire's predicates) was a second authority for a number the
+    // Mod already decides.
+    ...(argument.minimum === undefined ? {} : { minimum: argument.minimum }),
+    ...(argument.maximum === undefined ? {} : { maximum: argument.maximum }),
+    ...(argument.minLength === undefined ? {} : { minLength: argument.minLength }),
+    ...(argument.maxLength === undefined ? {} : { maxLength: argument.maxLength }),
   }));
 }
 
@@ -1376,34 +1428,6 @@ export function isModDescriptorComplete(actionId: string, descriptor: ActionRegi
   return MOD_DESCRIPTOR_REQUIREMENTS[actionId].every((required) => required.isMet(descriptor));
 }
 
-/**
- * One action the Agent may see WITHOUT the live run that the visibility gate is made of - with the reason it may, and
- * the condition that retires the row.
- *
- * <p>
- * A row is BOTH the reason and the door: `visibleActionsFromModCatalog` admits exactly the actions this table names, so
- * the action is visible for as long as its row exists and no longer. The reason is not a formality, and it is the honest
- * description of what the row buys: a declared action has a COMPLETE Mod-owned descriptor, so the Host builds a real
- * typed tool for it and the model can call it, and it has NO live proof - nothing on the target game version has ever
- * produced its own native result and receipt. `design/architecture/game-action-model.md:44` gives visibility exactly
- * one door, `live_verified`; this table is the second door written down instead of left implicit.
- * </p>
- *
- * <p>
- * `deleteWhen` is the expiry, and it is a real one: `live_verified` is re-derived from recorded live runs by
- * `tools/check-stardew-action-promotion.mjs` rather than taken on faith from the lifecycle byte, so the row retires
- * exactly when the action earns the proof the row exists to stand in for. WHICH actions need a row is not listed here:
- * `unprovenVisibilityActionIds` derives it from the Mod's own registration, and `action-registry-consistency.test.ts`
- * holds that set and this table to each other in BOTH directions and fails by name - an action without its own proof that
- * no row explains, and a row whose action has since earned its live proof (or left the surface).
- * </p>
- */
-export type UnprovenVisibilityDeclaration = Readonly<{
-  actionId: string;
-  reason: string;
-  deleteWhen: string;
-}>;
-
 /** Whether the Mod's lifecycle admits the action on its own: a live run, or the full publication process behind it. */
 function carriesItsOwnProof(lifecycle: ActionLifecycle): boolean {
   return lifecycle === "live_verified" || lifecycle === "published";
@@ -1415,44 +1439,15 @@ function carriesItsOwnProof(lifecycle: ActionLifecycle): boolean {
  * The SET is derived because the Mod owns it: `lifecycle` is a field its registration publishes, and "has no live proof"
  * is exactly the two values it is not. A hand-written list of the same ids was a second spelling of that field, and one
  * that could only ever be right about the registrations its author happened to remember - an action that earns or loses
- * its proof moves between the two sides here with no edit. Every member is the door's business: an action in this set that
- * `UNPROVEN_VISIBILITY_DECLARATIONS` does not name is refused, and `action-registry-consistency.test.ts` holds the two to
- * each other in both directions.
+ * its proof moves between the two sides here with no edit. Every member that its own adapter does not declare is refused
+ * by `visibleActionsFromModCatalog`, and `action-registry-consistency.test.ts` holds this set and those declarations to
+ * each other.
  */
 export function unprovenVisibilityActionIds(registrations: readonly ActionRegistration[]): readonly string[] {
   return Object.freeze(
     [...new Set(registrations.filter((r) => !carriesItsOwnProof(r.lifecycle)).map((r) => r.actionId))].sort(),
   );
 }
-
-/**
- * The reason each action without its own proof may be visible anyway, and the condition that retires the row.
- *
- * This table IS the second door: `visibleActionsFromModCatalog` reads it and admits the action it names, so a deleted row
- * is an action refused and a row outliving its reason is an exemption that never expires. Which actions need one is
- * `unprovenVisibilityActionIds`' answer, derived from the Mod's registration - a row for an action that holds its own
- * proof has outlived its reason. Both are failures of `action-registry-consistency.test.ts`'s bijection, each with its
- * own name.
- */
-export const UNPROVEN_VISIBILITY_DECLARATIONS = Object.freeze([
-  {
-    actionId: "place_item_on_pedestal",
-    reason:
-      "its descriptor is complete - the tile, the backpack slot, the item's wire identity and the opaque " +
-      "`empty_pedestal` target, `effect: write`, postcondition `pedestal_item_placed` - so the Host mounts a working " +
-      "tool for it, while no live run has ever returned `pedestal_item_placed` on the target version",
-    deleteWhen:
-      "its Mod registration reaches `live_verified`, which admits it on its own live proof and makes this row dead",
-  },
-  {
-    actionId: "put_item_in_fish_tank",
-    reason:
-      "its descriptor is complete the same way (postcondition `fish_tank_item_deposited`), so the model can call a " +
-      "live-write action that has never produced a real native result on the target version",
-    deleteWhen:
-      "its Mod registration reaches `live_verified`, which admits it on its own live proof and makes this row dead",
-  },
-] as const satisfies readonly UnprovenVisibilityDeclaration[]);
 
 /**
  * Intersect local typed-adapter availability with the authenticated Mod
@@ -1473,25 +1468,25 @@ export function visibleActionsFromModCatalog(
   const live = new Set(liveCapabilities);
   const deniedActions = new Set(policy.deniedActions);
   const deniedFamilies = new Set(policy.deniedFamilies);
-  const declaredWithoutProof = new Set<string>(
-    UNPROVEN_VISIBILITY_DECLARATIONS.map((declaration) => declaration.actionId),
-  );
   const visible: VisibleStardewAction[] = [];
 
   for (const registration of registrations) {
     const adapter = adapters.get(registration.actionId);
-    // Two doors, and both are written down.
+    // Two doors, and both are declared on the action itself.
     //
     // The ordinary one is lifecycle: `published` or `live_verified` means the action already proved itself, either
     // with a live run (live_verified) or with the full publication process behind it.
     //
-    // The other is a row of `UNPROVEN_VISIBILITY_DECLARATIONS`: an action whose lifecycle carries no proof comes out
-    // while that row exists, and only while it exists - the row states why it may and the condition that retires it. No
-    // predicate opens this door. A complete descriptor does NOT admit an action, which is why the completeness test
-    // below only ever CLOSES the door: measured 2026-11-20, a descriptor predicate beside this table admitted exactly
-    // the two actions the table names, a second answer to a question that already had one.
+    // The other is `adapter.declaredExperimental`: the action's OWN declaration says why it may be offered while its
+    // lifecycle carries no proof, and states what retires that offer. It read a Host-wide table of ids until
+    // 2026-11-24; the table knew two names and nothing about either action, so it was the same hand-list the repo
+    // retired for the unproven set one commit earlier - a name in a file rather than a fact on the declaration.
+    //
+    // No predicate opens this door. A complete descriptor does NOT admit an action, which is why the completeness test
+    // below only ever CLOSES it: measured 2026-11-20, a descriptor predicate beside the door admitted exactly the two
+    // actions that carry a declaration anyway, a second answer to a question that already had one.
     const hasAnAdmissionPath =
-      carriesItsOwnProof(registration.lifecycle) || declaredWithoutProof.has(registration.actionId);
+      carriesItsOwnProof(registration.lifecycle) || adapter?.declaredExperimental !== undefined;
     if (
       adapter === undefined ||
       !adapter.supportedIdentityVersions.includes(registration.identityVersion) ||
@@ -1555,6 +1550,7 @@ function actionAdapter<const TActionId extends string>(
   label: string,
   description: string,
   targetKinds: readonly string[],
+  declaredExperimental?: ExperimentalVisibilityDeclaration,
 ): StardewActionAdapter & Readonly<{ actionId: TActionId }> {
   return Object.freeze({
     actionId,
@@ -1563,5 +1559,6 @@ function actionAdapter<const TActionId extends string>(
     targetKinds: Object.freeze([...targetKinds]),
     requiredCapability: actionId,
     supportedIdentityVersions: Object.freeze([1]),
+    ...(declaredExperimental === undefined ? {} : { declaredExperimental }),
   });
 }
