@@ -84,6 +84,16 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "world_not_ready", null);
         if (this.AdmitExecution(requestId, executionId, requestedDeadlineMs, nowMs, AdmissionActionabilityProfile.General) is LocalExecutionReceipt admissionRejection)
             return admissionRejection;
+        // SHE NAMES THE TILE, THE EXECUTOR NAMES THE FORAGE (`round99`). The identity used to be a value only the
+        // snapshot could carry, so past its six-tile window there was no way to ask at all; the live object is the one that
+        // will be clicked, so it is also the one that can answer.
+        bool resolvedAtExecution = string.IsNullOrWhiteSpace(expectedTargetId);
+        if (resolvedAtExecution)
+        {
+            if (!TryMintTileTargetAtExecution(ForagePickupActionId, Game1.player.currentLocation, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
+            expectedTargetId = minted;
+        }
         if (!Utility.tileWithinRadiusOfPlayer(targetX, targetY, 1, Game1.player))
             return this.TryBeginToolApproach(
                 requestId,
@@ -93,11 +103,11 @@ internal sealed partial class ExecutionManager
                 targetX,
                 targetY,
                 expectedTargetId,
-                (arrivalExecutionId, arrivalRequestId) => this.ExecutePickupForage(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs),
+                (arrivalExecutionId, arrivalRequestId) => this.ExecutePickupForage(arrivalExecutionId, arrivalRequestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs, resolvedAtExecution),
                 nowMs,
                 requestedDeadlineMs);
 
-        return this.ExecutePickupForage(executionId, requestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs);
+        return this.ExecutePickupForage(executionId, requestId, targetX, targetY, expectedQualifiedItemId, expectedTargetId, requestedDeadlineMs, resolvedAtExecution);
     }
 
     /// <summary>
@@ -129,7 +139,7 @@ internal sealed partial class ExecutionManager
     /// race, and <see cref="ForagePickupPostcondition.ReadPoint"/> says so in the sentence.
     /// </para>
     /// </summary>
-    private LocalExecutionReceipt ExecutePickupForage(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs)
+    private LocalExecutionReceipt ExecutePickupForage(string executionId, string requestId, int targetX, int targetY, string expectedQualifiedItemId, string expectedTargetId, long requestedDeadlineMs, bool resolvedAtExecution)
     {
         StardewValley.GameLocation? location = Game1.player.currentLocation;
         if (location is null)
@@ -140,10 +150,16 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "target_not_found",
                 $"target={targetX},{targetY};expected={expectedQualifiedItemId};actual=none");
         if (!forage.isForage()
-            || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal)
-            || !string.Equals(BuildForageTargetId(location, targetX, targetY, forage), expectedTargetId, StringComparison.Ordinal))
+            || !string.Equals(forage.QualifiedItemId, expectedQualifiedItemId, StringComparison.Ordinal))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_unavailable",
                 $"target={targetX},{targetY};expected={expectedQualifiedItemId};actual={forage.QualifiedItemId};is_forage={(forage.isForage() ? "true" : "false")};blocked_by={new RefusalLayerToken(RefusalLayerKind.ObjectOnTile, "different_object").Format()}");
+        // THE IDENTITY IS COMPARED APART FROM THE ITEM, and BOTH SIDES ARE PRINTED: the same forageable item is one object,
+        // and a tile that now holds a different one of the same item is `forage_target_changed:<expected>:<found>` - the
+        // answer that sends the caller to look again, not the item refusal above that tells it the tile is something else.
+        string liveTargetId = BuildForageTargetId(location, targetX, targetY, forage);
+        if (!string.Equals(liveTargetId, expectedTargetId, StringComparison.Ordinal))
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "forage_target_changed",
+                $"target={targetX},{targetY};expected={expectedTargetId};found={liveTargetId};item={forage.QualifiedItemId};blocked_by={new RefusalLayerToken(RefusalLayerKind.ObjectOnTile, "different_identity").Format()}");
         if (!Game1.player.couldInventoryAcceptThisItem(forage))
             return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, "inventory_full", $"target={targetX},{targetY};item={forage.QualifiedItemId}");
 
@@ -166,7 +182,7 @@ internal sealed partial class ExecutionManager
             executionId,
             outcome.State,
             outcome.ReasonCode,
-            outcome.Describe(specification.Location, specification.TargetId, targetX, targetY, expectedQualifiedItemId));
+            $"{outcome.Describe(specification.Location, specification.TargetId, targetX, targetY, expectedQualifiedItemId)};{DescribeTargetIdentity("pickup_forage", resolvedAtExecution)}");
     }
 
     /// <summary>
@@ -203,6 +219,16 @@ internal sealed partial class ExecutionManager
             return admissionRejection;
 
         StardewValley.GameLocation location = Game1.player.currentLocation;
+        // SHE NAMES THE TILE, THE EXECUTOR NAMES THE DROP. A ground chunk's identity embeds the chunk it was minted from,
+        // and a plan that walked twenty tiles to a drop has no reading to copy - the live tile is the only place the
+        // answer can come from, and it is read here, before the walk buys anything.
+        bool resolvedAtExecution = string.IsNullOrWhiteSpace(expectedTargetId);
+        if (resolvedAtExecution)
+        {
+            if (!TryMintTileTargetAtExecution("pickup_item", location, targetX, targetY, out string minted, out TileTargetRefusal unnamed))
+                return this.RememberTerminal(requestId, executionId, ExecutionState.Rejected, unnamed.ReasonCode, unnamed.Evidence);
+            expectedTargetId = minted;
+        }
         (Debris Debris, int DebrisIndex, int ChunkIndex, Chunk Chunk, string TargetId, string QualifiedItemId, int Stack)? target =
             FindItemTarget(location, expectedTargetId, expectedQualifiedItemId);
         if (target is null)
@@ -280,7 +306,7 @@ internal sealed partial class ExecutionManager
         int beforeCount = CountQualifiedItem(Game1.player, expectedQualifiedItemId);
         int deadlineTicks = Math.Max(1, (int)Math.Ceiling((requestedDeadlineMs - nowMs) * 60d / 1000d));
         string magnetFacts = $"within_magnet=true;radius={magnetRadius};{reach.Describe()}";
-        this.slots.ItemPickup.Assign(new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs));
+        this.slots.ItemPickup.Assign(new LocalItemPickupSpec(executionId, requestId, location.NameOrUniqueName, liveTargetTile.X, liveTargetTile.Y, expectedTargetId, expectedQualifiedItemId, target.Value.Stack, beforeCount, this.revision, requestedDeadlineMs, TargetIdSource(resolvedAtExecution)));
         if (standTile != actorTile)
         {
             LocalMoveSpec approach = new(executionId, requestId, new Vector2(standTile.X, standTile.Y), false, this.revision, this.tick + deadlineTicks, requestedDeadlineMs);
@@ -296,7 +322,7 @@ internal sealed partial class ExecutionManager
         }
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Accepted, "accepted",
-            $"location={location.NameOrUniqueName};target={expectedTargetId};tile={liveTargetTile.X},{liveTargetTile.Y};named_tile={targetX},{targetY};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
+            $"location={location.NameOrUniqueName};target={expectedTargetId};{DescribeTargetIdentity("pickup_item", resolvedAtExecution)};tile={liveTargetTile.X},{liveTargetTile.Y};named_tile={targetX},{targetY};item={expectedQualifiedItemId};stack={target.Value.Stack};inventory_before={beforeCount};native_auto_collect=true;{magnetFacts}");
     }
 
     /// <summary>
@@ -360,6 +386,23 @@ internal sealed partial class ExecutionManager
                 actor).Format()
             : "none";
 
+    /// <summary>
+    /// The movement pair a <c>pickup_item</c> success states about the drop it published, spelled once because the Mod
+    /// reaches that success on two routes: the magnet's delivery seen when the request arrives (the chunk is already
+    /// gone from the ground and the publication row proves the pack took it) and the same delivery seen on a later tick
+    /// of the wait.
+    ///
+    /// <para>
+    /// <paramref name="consumed"/> is measured from the PUBLISHED stack, never from the pack delta - the magnet also
+    /// collects chunks of the same item this request never named, so <c>inventory_after - inventory_before</c> is not
+    /// this drop's count. <paramref name="identityGone"/> is what lets the remainder be a number at all: <c>0</c> when
+    /// no chunk of that identity is left in the location, <c>none</c> where a chunk of it is still on the ground and
+    /// therefore the published stack need not be the stack that chunk holds.
+    /// </para>
+    /// </summary>
+    private static string DescribeItemPickupMovement(int consumed, bool identityGone) =>
+        $"object_consumed={consumed.ToString(CultureInfo.InvariantCulture)};object_after={(identityGone ? "0" : "none")}";
+
     private static string DescribeItemPickupReach(Farmer actor, Point chunkTile, Vector2 subject)
     {
         Point standing = actor.StandingPixel;
@@ -368,6 +411,19 @@ internal sealed partial class ExecutionManager
             + $"axis_distance_px={distance.X.ToString("0.#", CultureInfo.InvariantCulture)},{distance.Y.ToString("0.#", CultureInfo.InvariantCulture)};radius={MagneticPickupReach.ReachPixels(actor)}";
     }
 
+    /// <summary>
+    /// The magnet's delivery, settled when the request arrives after the engine already collected the chunk.
+    ///
+    /// <para>
+    /// A receipt that says the item is gone has to prove it, and a receipt that says it was consumed has to name what
+    /// consumed it. Both are answered here from two facts the caller has already established: <c>FindItemTarget</c>
+    /// searched the WHOLE location by identity and found nothing (so no chunk of this drop is left on the ground - the
+    /// <c>chunk_removed=true</c> below), and <see cref="GroundItemPublication.MagnetDeliveredIt"/> holds, so this
+    /// actor's own count rose by at least the stack that was on the tile when the target was last published with the
+    /// chunk still there (<c>native_auto_collect=true</c> names the engine's magnet as the collector). The movement pair
+    /// is published from those same two facts, in the shape the wait's own settle uses - one success, one shape.
+    /// </para>
+    /// </summary>
     private LocalExecutionReceipt? TrySettleMagnetCollectedItem(
         string requestId,
         string executionId,
@@ -394,7 +450,7 @@ internal sealed partial class ExecutionManager
             return null;
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "item_picked_up",
-            $"location={publication.Location};target={expectedTargetId};tile={publication.TileX},{publication.TileY};item={expectedQualifiedItemId};stack={publication.Stack};native_auto_collect=true;chunk_removed=true;inventory_before={publication.InventoryAtPublication};inventory_after={inventoryNow}");
+            $"location={publication.Location};target={expectedTargetId};tile={publication.TileX},{publication.TileY};item={expectedQualifiedItemId};stack={publication.Stack};{DescribeItemPickupMovement(publication.Stack, identityGone: true)};native_auto_collect=true;chunk_removed=true;inventory_before={publication.InventoryAtPublication};inventory_after={inventoryNow}");
     }
 
 }

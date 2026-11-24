@@ -413,6 +413,17 @@ public sealed class MagnetPickupItemTests
     /// Before this change the preflight refused with <c>item_target_changed</c> because it asked only "is the chunk on
     /// the tile" - which is false for a drop the actor has in their bag. The receipt must now be the action's own
     /// success, carrying the evidence the Host parses for that success.
+    ///
+    /// <para>
+    /// AND IT MUST BE THE SAME SUCCESS THE WAIT PUBLISHES. This request arrives after the engine already collected the
+    /// chunk, so it settles on the arrival path instead of on a tick of the magnet window - but the two are one outcome
+    /// read from the same two facts (no chunk of that identity is left in the location, and this actor's count rose by
+    /// at least the stack that was on the tile when the target was published with the chunk still there), so a reader
+    /// comparing two <c>item_picked_up</c> receipts may not find two shapes. The movement pair is therefore here too:
+    /// the whole published stack left the ground (<c>object_consumed</c>) and nothing of that identity remains
+    /// (<c>object_after=0</c>) - which is also the property this case protects, because a receipt that says the chunk
+    /// is gone must prove it and one that says it was consumed must name what consumed it.
+    /// </para>
     /// </summary>
     [Fact]
     public void TheMagnetDeliveredDrop_SettlesAsTheActionsSuccess()
@@ -433,10 +444,12 @@ public sealed class MagnetPickupItemTests
         receipt.ReasonCode.Should().Be("item_picked_up");
         receipt.ReasonCode.Should().NotBe("item_target_changed");
 
-        // ADR-006: a success is proved by action-specific evidence, and for this action the Host decides it by
-        // parsing exactly these eleven keys (host/src/stardew-completion-contracts.ts,
-        // hasPickupItemCompletionEvidence) with stack >= 1, both flags true, after >= before + stack, and the
-        // movement pair `stack - object_consumed = object_after` agreeing with the published stack.
+        // ADR-006: a success is proved by action-specific evidence, and the Host admits this one by requiring the nine
+        // keys below (host/src/stardew-completion-contracts.ts, hasPickupItemCompletionEvidence) with stack >= 1, both
+        // flags true and after >= before + stack; `reason` and the movement pair are the keys it declares and then
+        // checks WHEN PRESENT (`stack - object_consumed = object_after`). So the pair is not what admits this receipt -
+        // it is what lets a reader check the drop's own movement, and the arrival path has to state it because the wait
+        // path does.
         Dictionary<string, string> evidence = ParseEvidence(receipt.Evidence!);
         evidence.Keys.Should().BeEquivalentTo(new[]
         {
@@ -449,9 +462,9 @@ public sealed class MagnetPickupItemTests
         evidence["item"].Should().Be(DroppedItemId);
         evidence["stack"].Should().Be("1");
         evidence["object_consumed"].Should().Be(
-            "1", "the whole published stack left the ground and the pack took it");
+            "1", "the whole published stack left the ground, and the pack that gained it is the actor the magnet delivered to");
         evidence["object_after"].Should().Be(
-            "0", "no chunk of this identity is left, so the identity's own remainder is nothing");
+            "0", "the whole identity is gone from the location, which the missing chunk already proves - so this is a number, not `none`");
         evidence["native_auto_collect"].Should().Be("true", "the magnet, not a click, delivered this chunk");
         evidence["chunk_removed"].Should().Be("true", "no chunk of this identity is left anywhere in the location");
         evidence["inventory_before"].Should().Be(
