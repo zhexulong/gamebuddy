@@ -783,6 +783,7 @@ internal sealed partial class ExecutionManager
     /// deterministically best owned item on the game thread, switches to that
     /// slot, and proves it with a ReferenceEquals postcondition. slot stays
     /// Mod-private and is never accepted from the wire.
+    /// Both success branches are withheld: `design/fact-authority.md` §1 files 「工具被装上了」 under 「属于结算的证据」, not under the world's facts.
     /// </summary>
     public LocalExecutionReceipt RequestLocalEquipTool(string requestId, string? requestedTool, long requestedDeadlineMs)
     {
@@ -803,7 +804,7 @@ internal sealed partial class ExecutionManager
         if (ReferenceEquals(Game1.player.CurrentTool, selectedTool))
         {
             string? heldToolName = DescribeTool(Game1.player.CurrentTool);
-            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "already_equipped", $"tool={requestedTool};before={heldToolName ?? "none"};expected={heldToolName ?? "none"};after={heldToolName ?? "none"}");
+            return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "already_equipped", $"tool={requestedTool};before={heldToolName ?? "none"};expected={heldToolName ?? "none"};after={heldToolName ?? "none"}", publish: false);
         }
 
         string? expectedTool = DescribeTool(selectedTool);
@@ -814,11 +815,6 @@ internal sealed partial class ExecutionManager
             return this.RememberTerminal(requestId, executionId, ExecutionState.Uncertain, "tool_selection_postcondition_unavailable", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool ?? "none"};actual={currentTool ?? "none"}");
 
         return this.RememberTerminal(requestId, executionId, ExecutionState.Succeeded, "tool_equipped", $"tool={requestedTool};before={previousTool ?? "none"};expected={expectedTool};after={currentTool}", publish: false);
-        // `publish: false` above is `design/fact-authority.md` §1: 「工具被装上了」 is a STEP of the plan, not an event
-        // of the world - that document's not-fact column files it under 「属于结算的证据」. The plan's own node names the
-        // action and the tool it asked for, and this receipt's evidence line names the tool the hand actually holds, so
-        // the settlement that ends the step still says WHICH one it was. What is gone is the second spelling: the
-        // receipt answers the dispatch that asked for it and the plan's journal row, and the seam does not publish it.
     }
 
     private static int? SelectToolSlot(Farmer player, string tool)
@@ -1855,7 +1851,7 @@ internal sealed partial class ExecutionManager
             footprint,
             actor,
             isStandable,
-            StardewBodyController.BuildWalkableComponent(location, Game1.player) is { } component
+            this.controller.BuildApproachWalkableComponent(location, Game1.player) is { } component
                 ? tile => component(new Vector2(tile.X, tile.Y))
                 : _ => true,
             stance);
