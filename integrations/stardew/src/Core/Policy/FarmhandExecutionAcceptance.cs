@@ -270,33 +270,30 @@ public static class FarmhandExecutionAcceptance
         BridgeExecutionArgs args,
         Func<BridgeNavigationDestinationSelector?, bool>? destinationValidator) => argument.Name switch
     {
-        "x" => IsBoundedIntegerCoordinate(args.X, facts.MinimumTileCoordinate, facts.MaximumTileCoordinate),
-        "y" => IsBoundedIntegerCoordinate(args.Y, facts.MinimumTileCoordinate, facts.MaximumTileCoordinate),
-        "slot" => args.Slot is { } slot && slot >= 0 && slot <= facts.MaximumInventorySlot,
+        "x" => IsIntegralInRange(args.X, Bound(argument, facts)),
+        "y" => IsIntegralInRange(args.Y, Bound(argument, facts)),
+        "slot" => IsWholeInRange(args.Slot, Bound(argument, facts)),
+        "leftSlot" => IsWholeInRange(args.LeftSlot, Bound(argument, facts)),
+        "rightSlot" => IsWholeInRange(args.RightSlot, Bound(argument, facts)),
+        // The ladder's own range; the per-act ceiling (the held tool's upgrade level) is decided on the game thread,
+        // where the tool exists, and refused by name there rather than clamped here.
+        "charge" => IsWholeInRange(args.Charge, Bound(argument, facts)),
+        "colorSelection" => IsWholeInRange(args.ColorSelection, Bound(argument, facts)),
+        "expectedSkill" => IsWholeInRange(args.ExpectedSkill, Bound(argument, facts)),
+        "expectedLevel" => IsWholeInRange(args.ExpectedLevel, Bound(argument, facts)),
+        "quantity" => IsWholeInRange(args.Quantity, Bound(argument, facts)),
         // A container id is the published opaque identity `BuildContainerTargetId` mints. It is checked
         // with the same grammar as every other opaque id: a caller cannot address a container by naming a
         // tile instead, and the live re-resolution is what decides whether that id still names one.
         "chestId" => BridgeProtocol.IsOpaqueId(args.ChestId),
+        "expectedTargetId" => BridgeProtocol.IsOpaqueId(args.ExpectedTargetId),
         "expectedQualifiedItemId" => facts.ExactExpectedQualifiedItemId is { } exact
             ? string.Equals(args.ExpectedQualifiedItemId, exact, StringComparison.Ordinal)
-            : args.ExpectedQualifiedItemId is { Length: > 0 } qualifiedItem
-                && qualifiedItem.Length <= facts.MaximumQualifiedItemIdLength,
-        "expectedTargetId" => BridgeProtocol.IsOpaqueId(args.ExpectedTargetId),
+            : IsLengthInRange(args.ExpectedQualifiedItemId, Length(argument, facts)),
         // One chat line: non-blank, and no longer than the native ingress can carry. The bound is the Mod's own
         // constant (the one the handler enforces), so the two cannot disagree about what a chat line is.
         "buildingType" => args.BuildingType is { Length: > 0 } buildingTypeId
             && buildingTypeId.Length <= 128, // mirrors the Host wire validator (>128 is rejected the same way)
-        "leftSlot" => args.LeftSlot is int leftSlotValue && leftSlotValue >= 0 && leftSlotValue <= facts.MaximumInventorySlot,
-        "rightSlot" => args.RightSlot is int rightSlotValue && rightSlotValue >= 0 && rightSlotValue <= facts.MaximumInventorySlot,
-        // The palette SIZE is the game's own (`DiscreteColorPicker.totalColors`), which lives in the game
-        // assembly and not in this policy layer, so this arm refuses a negative index only and the handler
-        // names `invalid_color_selection` for anything past the palette.
-        "colorSelection" => args.ColorSelection is int colorSelectionValue && colorSelectionValue >= 0,
-        // The ladder's own range; the per-act ceiling (the held tool's upgrade level) is decided on the game thread,
-        // where the tool exists, and refused by name there rather than clamped here.
-        "charge" => args.Charge is int chargeValue
-            && chargeValue >= facts.MinimumToolCharge
-            && chargeValue <= facts.MaximumToolCharge,
         "text" => !string.IsNullOrWhiteSpace(args.Text) && args.Text.Length <= FarmhandActionCatalog.ChatMessageMaximumLength,
         "destination" => destinationValidator is { } validator && validator(args.Destination),
         "emote" => !string.IsNullOrWhiteSpace(args.Emote) && argument.Enum is { } emoteEnum
@@ -307,25 +304,36 @@ public static class FarmhandExecutionAcceptance
             && toolEnum.Any(value => string.Equals(value, args.Tool, StringComparison.Ordinal)),
         "responseKey" => !string.IsNullOrWhiteSpace(args.ResponseKey) && args.ResponseKey.Length <= 128,
         // The level-up response. `choice` is the game's own closed set (the descriptor carries it as an Enum, the
-        // same shape emote/direction/tool use); the pair is the BINDING, so both halves are bounded to the values
-        // the engine can actually put in `Farmer.newLevels` - skills 0..5 (luck included: its level can be lost and
-        // regained) and levels 1..10. A pair outside those bounds is refused here rather than reaching the handler,
-        // where it could only be rejected after admitting the request.
+        // same shape emote/direction/tool use); the pair is the BINDING whose range `FarmhandArgumentBounds` states.
         "choice" => !string.IsNullOrWhiteSpace(args.Choice) && argument.Enum is { } choiceEnum
             && choiceEnum.Any(value => string.Equals(value, args.Choice, StringComparison.Ordinal)),
-        "expectedSkill" => args.ExpectedSkill is int expectedSkillValue && expectedSkillValue >= 0 && expectedSkillValue <= 5,
-        "expectedLevel" => args.ExpectedLevel is int expectedLevelValue && expectedLevelValue >= 1 && expectedLevelValue <= 10,
-        // A declared quantity is a positive count. The descriptor decides whether an action
-        // takes one; this only bounds it. Mirroring Object.cs: no action may ask for zero or
-        // a negative amount, and the ceiling keeps a single request from being absurd.
-        "quantity" => args.Quantity is { } quantity && quantity >= 1 && quantity <= 9999,
         _ => false,
     };
 
-    private static bool IsBoundedIntegerCoordinate(float? value, int minimum, int maximum) =>
+    /// <summary>This argument's declared whole-number range. An arm above that reads it is one the declaration bounds.</summary>
+    private static FarmhandIntegerArgumentBound Bound(
+        FarmhandActionArgument argument,
+        FarmhandExecutionAcceptanceFacts facts) => FarmhandArgumentBounds.IntegerBound(argument, facts)
+        ?? throw new InvalidOperationException($"farmhand_argument_bound_missing:{argument.Name}");
+
+    /// <summary>This argument's declared length range, on the same terms as <see cref="Bound"/>.</summary>
+    private static FarmhandStringArgumentBound Length(
+        FarmhandActionArgument argument,
+        FarmhandExecutionAcceptanceFacts facts) => FarmhandArgumentBounds.LengthBound(argument, facts)
+        ?? throw new InvalidOperationException($"farmhand_argument_length_bound_missing:{argument.Name}");
+
+    private static bool IsIntegralInRange(float? value, FarmhandIntegerArgumentBound bound) =>
         value is { } coordinate
         && float.IsFinite(coordinate)
         && coordinate == MathF.Floor(coordinate)
-        && coordinate >= minimum
-        && coordinate <= maximum;
+        && coordinate >= bound.Minimum
+        && (bound.Maximum is not { } maximum || coordinate <= maximum);
+
+    private static bool IsWholeInRange(int? value, FarmhandIntegerArgumentBound bound) =>
+        value is { } whole
+        && whole >= bound.Minimum
+        && (bound.Maximum is not { } maximum || whole <= maximum);
+
+    private static bool IsLengthInRange(string? value, FarmhandStringArgumentBound bound) =>
+        value is { } text && text.Length >= bound.Minimum && text.Length <= bound.Maximum;
 }
