@@ -379,6 +379,19 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // the module that spends a boot token and blocked when that mint is taken away, an unresolvable or
   // doubly-declared receiver is a finding, and a tree with no module is blocked.
   "check-chat-reads-the-chat-route.mjs",
+  // Prints `root members examined N …` and `modules examined N under dialogue-web/src/components · shell subject(s) S ·
+  // Chat-half comparison(s) C · condition(s) reading the Chat half K` plus `modules examined P under dialogue-web/src ·
+  // platform debt row(s) D`, then a four-entry `checks[]` verdict (the root's two halves share their optionality, no
+  // shell subject is gated on the Chat half, the platform debt is current, every module parsed), so its default run is
+  // the report this suite reads. Its falsifier is gates/product/check-game-mount-does-not-depend-on-the-chat.test.mjs:
+  // the schema's `chat` required beside an optional `game` is `root_half_optionality_differs` naming both members and
+  // both shapes, `{mountedChat !== null && (<><AppBar /><main className="app-main-content"><GameSurface />` is
+  // `game_mount_is_gated_on_the_chat_half` at the condition's line naming what it withholds, the same guard over a `??`
+  // a Game half also answers is green, a `/api/platform/v1/connection` caller is `platform_debt_expired` naming the
+  // row's owner, a platform route no row names is `platform_route_unjudged`, a row whose reach is gone is
+  // `platform_debt_reach_gone`, and an empty tree, a tree with no shell subject and a tree where nothing reads the Chat
+  // half each BLOCK with the population named.
+  "check-game-mount-does-not-depend-on-the-chat.mjs",
   // Prints `functions examined N · over the bound K · worst <name> @ <file>:<line> = <n>` per producer, the class
   // line and the class-size line, then a `checks[]` verdict enumerating its five rules (each language's function
   // bound, the class complexity bound, the class-size ceiling, and the ratchet over the baseline), so its default
@@ -981,7 +994,14 @@ const GATES_WITHOUT_FALSIFIER = Object.freeze([
     gate: "check-harness-conformance.mjs",
     reason: "this suite's CLI; falsifiers in tools/lib/harness-conformance.test.mjs",
   },
-  { gate: "check-head-typecheck.mjs", reason: "runs tsc over the worktree; no offline rule set" },
+  {
+    gate: "check-head-build.mjs",
+    reason:
+      "builds the commit in both languages inside a throwaway `git worktree` - `tsc` over `host/tsconfig.json` and the " +
+      "Mod build the live-run kit's build phase runs - so its default run is two compiles rather than a rule list; its " +
+      "falsifier is gates/arch/check-head-build.test.mjs, which drives both layers, the not-measured word and the " +
+      "worktree cleanup through the gate's own code on real `git init` repositories",
+  },
   {
     gate: "check-release-live-evidence.mjs",
     reason:

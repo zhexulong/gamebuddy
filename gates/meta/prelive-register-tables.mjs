@@ -368,6 +368,15 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:chat-reads-the-chat-route",
   },
   {
+    path: "gates/product/check-game-mount-does-not-depend-on-the-chat.mjs",
+    reason:
+      "elsewhere: parses every module under `dialogue-web/src/components` and reads the root schema's two halves, so it " +
+      "judges a source tree that exists before any install or build, and it exits 2 (blocked) rather than passing when any " +
+      "of its six populations is empty; the defect it catches needs a mount whose Chat half cannot be read, which no rung " +
+      "reproduces. Runs on every push in the CI gates job through `check:game-mount-does-not-depend-on-the-chat`",
+    runsIn: "pnpm check:game-mount-does-not-depend-on-the-chat",
+  },
+  {
     path: "gates/product/check-companion-observability-parity.mjs",
     reason:
       "elsewhere: static scan of the activity states against both browser contracts' event arms, runs on every push in the CI gates job through `check:companion-observability-parity`",
@@ -594,9 +603,12 @@ export const EXEMPTIONS = Object.freeze([
     runsIn: "pnpm check:gate-premises",
   },
   {
-    path: "gates/arch/check-head-typecheck.mjs",
-    reason: "elsewhere: typechecks HEAD through the installed workspace, runs on every push as its own step",
-    runsIn: "pnpm check:head-typecheck",
+    path: "gates/arch/check-head-build.mjs",
+    reason:
+      "elsewhere: builds HEAD itself in both languages - `tsc` over `host/tsconfig.json` and the Mod build the live-run " +
+      "kit's build phase runs - in a detached worktree at the commit, so a green working tree cannot complete it; runs " +
+      "on every push as its own step",
+    runsIn: "pnpm check:head-build",
   },
   {
     path: "gates/product/check-host-diagnostic-output.mjs",
