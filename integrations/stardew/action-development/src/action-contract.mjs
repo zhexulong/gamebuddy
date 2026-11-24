@@ -88,7 +88,7 @@ export function validateActionContractEquipTool(contract) {
   if (validated.lifecycle !== "published") fail("wrong_lifecycle");
   if (validated.kind !== "execution") fail("wrong_kind");
   if (validated.args.requiredProperties.length !== 1 || validated.args.requiredProperties[0] !== "tool") fail("wrong_required_properties");
-  const allowedTools = ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"];
+  const allowedTools = ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan", "lantern", "raft"];
   if (JSON.stringify(validated.args.toolAllowedValues) !== JSON.stringify(allowedTools)) fail("wrong_tool_allowed_values");
   if (JSON.stringify(validated.terminal.successReasonCodes) !== JSON.stringify(["tool_equipped", "already_equipped"])) fail("wrong_reason_codes");
   if (JSON.stringify(validated.terminal.evidenceFields) !== JSON.stringify(["tool", "before", "expected", "after"])) fail("wrong_evidence_fields");

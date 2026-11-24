@@ -31,7 +31,7 @@ test("validates the checked-in equip_tool contract", () => {
   assert.equal(validated.actionId, "equip_tool");
   assert.equal(validated.familyId, "body_tools");
   assert.deepEqual(validated.args.requiredProperties, ["tool"]);
-  assert.deepEqual(validated.args.toolAllowedValues, ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"]);
+  assert.deepEqual(validated.args.toolAllowedValues, ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan", "lantern", "raft"]);
   assert.deepEqual(validated.terminal.successReasonCodes, ["tool_equipped", "already_equipped"]);
   assert.deepEqual(validated.terminal.evidenceFields, ["tool", "before", "expected", "after"]);
   assert.ok(Object.isFrozen(validated));

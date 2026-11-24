@@ -11,7 +11,7 @@ export function validateEquipToolStaticDescriptor(descriptor) {
   if (descriptor.schema !== "gamebuddy-stardew-static-action-descriptor/v2" || descriptor.developmentOnly !== true) fail("scope");
   if (descriptor.gameId !== "stardew" || descriptor.actionId !== "equip_tool" || descriptor.identityVersion !== 1 || descriptor.familyId !== "body_tools" || descriptor.effect !== "mutation") fail("identity");
   exact(descriptor.target, TARGET_KEYS, "target_shape");
-  const allowedTools = ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"];
+  const allowedTools = ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan", "lantern", "raft"];
   if (descriptor.target.kind !== "semantic_selector" || descriptor.target.property !== "tool" || descriptor.target.type !== "string" || JSON.stringify(descriptor.target.allowedValues) !== JSON.stringify(allowedTools)) fail("target");
   exact(descriptor.terminal, TERMINAL_KEYS, "terminal_shape");
   const fields = descriptor.terminal.evidenceFields;

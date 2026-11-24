@@ -48,20 +48,6 @@ public static class FarmhandActionDevelopmentContract
 
     private static readonly ReadOnlyCollection<string> EquipToolAcceptableStates =
         Array.AsReadOnly(new[] { "succeeded", "uncertain" });
-    private static readonly ReadOnlyCollection<string> EquipToolAllowedValues =
-        Array.AsReadOnly(new[]
-        {
-            "axe",
-            "pickaxe",
-            "hoe",
-            "watering_can",
-            "fishing_rod",
-            "weapon",
-            "scythe",
-            "shears",
-            "milk_pail",
-            "pan",
-        });
     private static readonly ReadOnlyCollection<string> EquipToolSuccessReasonCodes =
         Array.AsReadOnly(new[] { "tool_equipped", "already_equipped" });
     private static readonly ReadOnlyCollection<string> EquipToolEvidenceFields =
@@ -98,9 +84,16 @@ public static class FarmhandActionDevelopmentContract
         );
     }
 
+    /// <summary>
+    /// `equip_tool`'s selector domain is <see cref="FarmhandActionCatalog.ToolEnum"/> - the SAME declaration the
+    /// handler admits a request against (`RequestLocalEquipTool` refuses a word outside it) and the same one
+    /// `equip_tool`'s descriptor publishes. It is read, never restated: this export carried its own ten-word copy, which
+    /// silently lagged the twelve the Mod publishes (`lantern` and `raft` were missing since the Mod gained them), and a
+    /// copy is exactly what makes a frozen development contract answer differently from the product it describes.
+    /// </summary>
     private static ActionDevelopmentContractArgs DeriveArgs(string actionId) => actionId switch
     {
-        "equip_tool" => new ActionDevelopmentContractArgs(new[] { "tool" }, EquipToolAllowedValues),
+        "equip_tool" => new ActionDevelopmentContractArgs(new[] { "tool" }, FarmhandActionCatalog.ToolEnum),
         "pickup_forage" => new ActionDevelopmentContractArgs(
             PickupForageRequiredProperties.ToArray(),
             null),

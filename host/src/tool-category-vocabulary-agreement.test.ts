@@ -12,9 +12,9 @@ import { TOOL_CATEGORY_VALUES } from "./protocol-target-facts.js";
  *
  * <p>
  * THE DEFECT THIS EXISTS FOR. `equip_tool`'s `tool` selector was published with twelve categories
- * (`axe, pickaxe, hoe, watering_can, fishing_rod, weapon, scythe, shears, milk_pail, pan, lantern, raft`) while the
- * Host's validator knew ten - the same list without `lantern` and `raft`. Four separate copies had drifted the same
- * way, and nothing failed, because each copy is only read on a code path a test of a DIFFERENT copy never reaches:
+ * (`axe, pickaxe, hoe, watering_can, fishing_rod, weapon, scythe, shears, milk_pail, pan, lantern, raft`) while seven
+ * other carriers of the same fact knew ten - the same list without `lantern` and `raft`. Nothing failed, because each
+ * carrier is only read on a code path a test of a DIFFERENT carrier never reaches:
  * </p>
  * <ul>
  *   <li>`host/src/protocol-target-facts.ts` (`TOOL_CATEGORY_VALUES`) - the value `isToolSelector` refuses
@@ -26,6 +26,11 @@ import { TOOL_CATEGORY_VALUES } from "./protocol-target-facts.js";
  *       contract.</li>
  *   <li>`integrations/stardew/action-development/src/equip-tool-{scenario,control}-result.mjs` - the two live proof
  *       validators, which refuse the same words out of an `equip_tool` receipt's evidence.</li>
+ *   <li>the Mod's own DEVELOPMENT CONTRACT chain - `FarmhandActionDevelopmentContract` restated the vocabulary instead
+ *       of reading `FarmhandActionCatalog.ToolEnum`, and `contracts/equip_tool.json`,
+ *       `descriptors/equip_tool.static.json`, `src/action-contract.mjs` and `src/static-descriptor.mjs` each copied it
+ *       again. That chain was fixed at the owning layer (the C# now reads `ToolEnum`) and the four copies were brought
+ *       to the same set; they are in this population so they cannot drift apart again.</li>
  * </ul>
  *
  * <p>
@@ -39,10 +44,20 @@ import { TOOL_CATEGORY_VALUES } from "./protocol-target-facts.js";
  * </p>
  *
  * <p>
- * WHY A GATE AND NOT ONLY A FIX. The fix is two words in four files. The DEFECT is that the vocabulary can be spelled
- * again anywhere in this tree and nothing notices, which is how four copies drifted in one direction at once. The
- * population below is every declaration of the fact, found by scanning, so a FIFTH copy fails here the day it is
- * written, and a value added on either side fails by name.
+ * WHY A GATE AND NOT ONLY A FIX. The fix is two words in eight carriers. The DEFECT is that the vocabulary can be
+ * spelled again anywhere in this tree and nothing notices, which is how seven copies drifted in one direction at once.
+ * The population below is every declaration of the fact, found by scanning (source constants) or by its own declared
+ * path (the two data documents), so an EIGHTH copy fails here the day it is written and a value added on either side
+ * fails by name.
+ * </p>
+ *
+ * <p>
+ * WHAT IS NOT IN THE POPULATION, and why that is not a silent gap: `contracts/projection/action-source-projection.v1.json`
+ * and `contracts/projection/action-projection-parity.v1.json` carry a ten-word list because they are projected from the
+ * PINNED input tree (`action-development/inputs/action-projection-source/...`), a frozen copy of another tree's
+ * artefact - `gates/data/check-generated-artifact-reproducibility.mjs` owns them and reproduces them from that input.
+ * They describe the source snapshot they were taken from, not today's vocabulary. Everything else that names tool words
+ * is a per-tool fact (a label table, a fixture, an evidence string), not this closed set.
  * </p>
  */
 
@@ -103,20 +118,54 @@ function schemaToolCategories(): readonly string[] {
 }
 
 /**
- * `TOOL_CATEGORY_VALUES` / `TOOL_SELECTOR_VALUES` assignments whose right-hand side is a literal set.
+ * `TOOL_CATEGORY_VALUES` / `TOOL_SELECTOR_VALUES` assignments whose right-hand side is a literal set, and the
+ * harness's `allowedTools` whose right-hand side is a literal array.
  *
  * <p>
- * // source-invariant: a declaration of this vocabulary is a `const` whose initializer is `new Set([...])` with string
- * literals. An ALIAS (`protocol.ts`' `TOOL_SELECTOR_VALUES = TOOL_CATEGORY_VALUES`) has no literal and is correctly not
- * a second spelling; a copy that spells values out is exactly what this scan must find.
+ * // source-invariant: a source declaration of this vocabulary is a `const` with string literals under one of these
+ * three names. An ALIAS (`protocol.ts`' `TOOL_SELECTOR_VALUES = TOOL_CATEGORY_VALUES`) has no literal and is correctly
+ * not a second spelling; a copy that spells values out is exactly what this scan must find.
  * // source-expiry: retire the source read when a consumer can derive the set from the published declaration instead -
- * the two `action-development` validators are the ones that could, once they have a repository root in hand.
+ * the two `action-development` validators are the ones that could, once they have a repository root in hand, and the
+ * Mod's development contract now derives it from `FarmhandActionCatalog.ToolEnum` at the owning layer.
  * </p>
  */
 const VOCABULARY_DECLARATION =
-  /(?:^|\n)[ \t]*(?:export[ \t]+)?const[ \t]+(TOOL_CATEGORY_VALUES|TOOL_SELECTOR_VALUES)\b[^=]*=[ \t]*new[ \t]+Set(?:<string>)?\([ \t]*\[([\s\S]*?)\][ \t]*\)/gu;
+  /(?:^|\n)[ \t]*(?:export[ \t]+)?const[ \t]+(TOOL_CATEGORY_VALUES|TOOL_SELECTOR_VALUES|allowedTools)\b[^=]*=[ \t]*(?:new[ \t]+Set(?:<string>)?\([ \t]*\[([\s\S]*?)\][ \t]*\)|\[([\s\S]*?)\])/gu;
 
 type VocabularyDeclaration = Readonly<{ file: string; name: string; values: readonly string[] }>;
+
+/**
+ * The vocabulary as a DATA document, at the two paths that state it: the Mod's development contract and the frozen
+ * static descriptor built on it.
+ *
+ * Declared rather than scanned because an arbitrary JSON string array cannot be told from any other list of words. Each
+ * entry names the document and the pointer inside it, and the read FAILS if either stops stating the closed set - so an
+ * exemption here expires instead of quietly matching nothing.
+ */
+const DATA_CARRIERS = Object.freeze([
+  Object.freeze({
+    path: "integrations/stardew/action-development/contracts/equip_tool.json",
+    pointer: "args.toolAllowedValues",
+  }),
+  Object.freeze({
+    path: "integrations/stardew/action-development/descriptors/equip_tool.static.json",
+    pointer: "target.allowedValues",
+  }),
+]);
+
+function dataCarrierValues(carrier: (typeof DATA_CARRIERS)[number]): readonly string[] {
+  const document = JSON.parse(readFileSync(join(ROOT, carrier.path), "utf8")) as Record<string, unknown>;
+  const values = carrier.pointer.split(".").reduce<unknown>((node, key) => {
+    if (node === null || typeof node !== "object") return undefined;
+    return (node as Record<string, unknown>)[key];
+  }, document);
+  assert.ok(
+    Array.isArray(values) && values.every((value) => typeof value === "string"),
+    `${carrier.path} no longer states \`${carrier.pointer}\` as a string array: the carrier this holds has moved`,
+  );
+  return values as readonly string[];
+}
 
 /** The roots a second spelling of this vocabulary can live under: the Host's sources and the Mod's tree. */
 const SCANNED_ROOTS = Object.freeze(["host/src", "integrations/stardew"]);
@@ -141,7 +190,7 @@ function vocabularyDeclarations(): readonly VocabularyDeclaration[] {
     for (const path of sourceFiles(join(ROOT, root))) {
       const source = readFileSync(path, "utf8");
       for (const match of source.matchAll(VOCABULARY_DECLARATION)) {
-        const literals = match[2]!.match(/"[^"\n]*"/gu) ?? [];
+        const literals = (match[2] ?? match[3] ?? "").match(/"[^"\n]*"/gu) ?? [];
         declarations.push({
           file: relative(ROOT, path).split(sep).join("/"),
           name: match[1]!,
@@ -150,6 +199,8 @@ function vocabularyDeclarations(): readonly VocabularyDeclaration[] {
       }
     }
   }
+  for (const carrier of DATA_CARRIERS)
+    declarations.push({ file: carrier.path, name: carrier.pointer, values: dataCarrierValues(carrier) });
   return declarations.sort((left, right) => left.file.localeCompare(right.file));
 }
 
@@ -197,6 +248,21 @@ test("every declaration of the tool vocabulary is the Mod's published set", () =
   assert.ok(
     consumers.some((consumer) => consumer.file.endsWith("host/src/protocol-target-facts.ts")),
     `the Host's own declaration must be in the population, which is what makes agreement mean something:\n${report(authority, consumers)}`,
+  );
+  // The two forms the scan cannot prove it read by counting alone: every data carrier named in `DATA_CARRIERS` (a path
+  // that moved is a carrier nobody is holding any more) and at least one array-literal declaration (the `allowedTools`
+  // branch, which matches nothing if that word is ever spelled differently).
+  const unreached = DATA_CARRIERS.map((carrier) => carrier.path).filter(
+    (path) => !consumers.some((consumer) => consumer.file === path),
+  );
+  assert.deepEqual(
+    unreached,
+    [],
+    `a data carrier this gate declares was not read, so it is not being held to anything:\n${report(authority, consumers)}`,
+  );
+  assert.ok(
+    consumers.some((consumer) => consumer.name === "allowedTools"),
+    `no array-literal declaration of the vocabulary was found, so that half of the scan is measuring nothing:\n${report(authority, consumers)}`,
   );
 
   const findings = consumers.flatMap((consumer) => vocabularyDisagreements(authority, consumer));

@@ -89,7 +89,7 @@ test("rejects Host proof data that is incomplete, mismatched, or attempts to car
 });
 
 test("accepts every canonical equip_tool tool selector", () => {
-  for (const tool of ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan"]) {
+  for (const tool of ["axe", "pickaxe", "hoe", "watering_can", "fishing_rod", "weapon", "scythe", "shears", "milk_pail", "pan", "lantern", "raft"]) {
     const canonicalResult = resultWith({
       proof: { ...result.proof, data: { ...result.proof.data, tool } },
     });

@@ -37,19 +37,9 @@ public sealed class FarmhandActionDevelopmentContractTests
         ActionDevelopmentContract contract = FarmhandActionDevelopmentContract.DeriveContract("equip_tool");
 
         contract.Args.RequiredProperties.Should().Equal(new[] { "tool" });
-        contract.Args.ToolAllowedValues.Should().Equal(new[]
-        {
-            "axe",
-            "pickaxe",
-            "hoe",
-            "watering_can",
-            "fishing_rod",
-            "weapon",
-            "scythe",
-            "shears",
-            "milk_pail",
-            "pan",
-        });
+        // Against the catalog rather than a literal: the export's domain is the vocabulary the handler admits, so a tool
+        // category added to one and not the other must fail here instead of in a consumer's byte comparison.
+        contract.Args.ToolAllowedValues.Should().Equal(FarmhandActionCatalog.ToolEnum);
     }
 
     [Fact]
