@@ -1553,7 +1553,7 @@ export const PLAN_ITERATION_CONDITIONS: Readonly<Record<string, PlanIterationCon
   soilTiles: Object.freeze({ rowField: "hoeDirt" }),
   cropTargets: Object.freeze({
     publishedAsWork:
-      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() (`farmhandexecutioncontroller.targetdiscovery.cs:1578-1625`), so every published row is a tile the Can is still needed on",
+      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() - and records `AlreadyWatered` instead of a row (`farmhandtargetdiscovery.cs:2217-2238`), so every published row is a tile the Can is still needed on",
   }),
 });
 
@@ -1860,7 +1860,12 @@ export function compilePlanScript(
     return refused("plan_snapshot_unavailable", scriptSource, snapshotRevision);
 
   const run = runPlanScriptWindows(
-    `(function (snapshot, builder) { "use strict";\n${scriptSource}\n})(snapshot, builder);`,
+    // THE WRAPPER'S OWN CODE SHARES THE SCRIPT'S FIRST LINE, so the engine's line numbers ARE the script's: the
+    // opening statement costs a column and no line. Reading the wrapper back off a newline above the script and
+    // subtracting it with `lineOffset: -1` was the same fact spelled twice, and the second spelling is a `vm` option
+    // Bun does not apply to a runtime stack frame - where `threw.line` therefore came back null for every throw on a
+    // line of the script, while Node answered it. The offset is gone and no engine has to implement anything.
+    `(function (snapshot, builder) { "use strict"; ${scriptSource}\n})(snapshot, builder);`,
     snapshot,
     dependencies.actions,
     dependencies.tileRead ?? null,
@@ -2088,9 +2093,6 @@ function runPlanScriptAttempt(
       timeout: budgetMs,
       displayErrors: false,
       filename: "plan-script.js",
-      // The wrapper's opening line is dropped from every reported line number, so a SyntaxError names a line the
-      // caller wrote rather than one the wrapper added above it.
-      lineOffset: -1,
     });
     return { outcome: "finished" };
   } catch (error) {
@@ -5067,9 +5069,9 @@ function thrownMessage(error: unknown): string {
 /**
  * The line the engine's stack names first, in the script's own numbering, or `null`.
  *
- * `lineOffset: -1` already dropped the wrapper's opening line, so a number past the script's own length is the
- * wrapper's closing line - an unclosed group is reported there - and naming it would send the caller to a line that
- * does not exist in its script.
+ * The wrapper's own code sits on the script's FIRST line (see `compilePlanScript`), so the engine's count needs no
+ * correction and no `vm` option: a number past the script's own length is the wrapper's closing line - an unclosed
+ * group is reported there - and naming it would send the caller to a line that does not exist in its script.
  */
 function thrownLine(error: unknown, scriptSource: string): number | null {
   const stack = (error as { stack?: unknown } | null | undefined)?.stack;
