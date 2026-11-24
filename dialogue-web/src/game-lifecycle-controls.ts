@@ -734,7 +734,18 @@ export type CabinViewState =
    * whichever offer the list happened to list first.
    */
   | Readonly<{ kind: "moved_in"; cabinLabel: string | null }>
-  | Readonly<{ kind: "uncertain" }>
+  /**
+   * A confirmation was published and its answer never came back, so whether the signed manifest landed in
+   * the save is unknown to this Host.
+   *
+   * `occupancy` is the answer this surface's own probe of the game produced, and `null` is "it has not
+   * asked since the state was reached" - the shape every mount of this state starts in. The three answers
+   * are the product's, not the panel's: `CabinOccupancyAnswer` is the vocabulary and each answer states its
+   * own sentence (`CABIN_HANDOFF_SENTENCE.uncertain`). The step each answer licenses is decided in ONE place
+   * on the Host (`decideStardewCabinQuarantineStep`), so this surface carries the ANSWER and never a fourth
+   * outcome of its own.
+   */
+  | Readonly<{ kind: "uncertain"; occupancy: CabinOccupancyAnswer | null }>
   /** The read could not be made, and the panel offers the control that makes it again. */
   | Readonly<{ kind: "unavailable"; reread: boolean }>
   /**
@@ -751,6 +762,18 @@ export type CabinViewState =
    * already looking at. The shell is the only party that knows, so it carries the fact rather than the panel guessing.
    */
   | Readonly<{ kind: "missing"; reread: boolean }>;
+
+/**
+ * What a probe of the game's own document says about this companion's cabin in the save it has loaded.
+ *
+ * The three answers are the Host's (`StardewCabinOccupancy` in `host/src/stardew-attachment.ts`), and this
+ * surface repeats them because it is the side that has to state one: `not_bound` is the save not holding
+ * her (the publication did not take effect), `already_bound` is it holding her, and `unknown` is every way
+ * the document could not be trusted - stale, unreadable, forged, another world, or a host that was not
+ * ready. `unknown` never stands for `not_bound`: the difference is what a second signed manifest into the
+ * same world would cost.
+ */
+export type CabinOccupancyAnswer = "not_bound" | "already_bound" | "unknown";
 
 /**
  * The presses that act on the handoff itself: choosing a cabin, or asking for the two reads a player
@@ -791,9 +814,15 @@ export type CabinHandoffAction = CabinHandoffPress | CabinHandoffReading | OutOf
  * happen next is a second confirmation: the Host keeps the confirmed choice handle consumed and answers
  * any later confirmation with `stardew_cabin_confirmation_conflict` for the life of the coordinator.
  * Re-reading the cabin choices would therefore re-arm a confirm button the Host can only refuse, so the
- * honest step on this page is the panel's own authoritative read of the game: it sends no handoff command
- * at all, and the attachment the Host publishes once the confirmation landed is what answers the question.
- * What is left when it did not land is off this page, and the state says so in words (`i18n.ts`).
+ * honest step on this page is the PROBE: the read of the game that asks the Mod's own document whether this
+ * save holds her (`read_game_again`, labelled "Check whether she moved in"). It sends no handoff command at
+ * all, and its three answers are each stated by their own sentence - if she landed, the probe's answer (or
+ * the attachment the Host publishes with it) says where; if she did not, the save says so, and the step the
+ * Host owes from there is off this page until the release exists.
+ *
+ * `restart_gamebuddy` stays offered beside it because a fresh GameBuddy is what releases a quarantined
+ * attempt in this build; the probe is what decides whether the attempt may be released at all, and the
+ * Host owns that decision in one place (`decideStardewCabinQuarantineStep`).
  *
  * `moved_in` offers `terminal` because the handoff is over there: she is in the farm, so every press the
  * other states offer has already had its effect.
@@ -918,7 +947,7 @@ export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], Cabin
   confirming: Object.freeze({ kind: "confirming" as const, choices: Object.freeze([]), choiceHandle: "CHOICE" }),
   admitted: Object.freeze({ kind: "admitted" as const, cabinLabel: "Cabin 1" }),
   moved_in: Object.freeze({ kind: "moved_in" as const, cabinLabel: null }),
-  uncertain: Object.freeze({ kind: "uncertain" as const }),
+  uncertain: Object.freeze({ kind: "uncertain" as const, occupancy: null }),
   unavailable: Object.freeze({ kind: "unavailable" as const, reread: false }),
   missing: Object.freeze({ kind: "missing" as const, reread: false }),
 });
@@ -1025,7 +1054,10 @@ export type CabinSentenceKey =
   | "stardewManifestAdmitted"
   | "stardewCabinChoiceStaleRefused"
   | "stardewCabinMovedIn"
-  | "stardewCabinMovedInStep";
+  | "stardewCabinMovedInStep"
+  | "stardewCabinOccupancyNotBound"
+  | "stardewCabinOccupancyAlreadyBound"
+  | "stardewCabinOccupancyUnknown";
 
 /**
  * When a declared sentence is the one this state is showing.
@@ -1034,8 +1066,20 @@ export type CabinSentenceKey =
  * and the answer had not changed", `stale_refusal` is the game's own word about the press before the
  * list - and they ride the state they belong to (`CabinViewState`), so a sentence cannot claim a
  * condition its state does not carry.
+ *
+ * The three `occupancy_*` members are one per answer in `CabinOccupancyAnswer`, and the name is derived
+ * from the answer rather than chosen: `gates/product/check-state-sentences.mjs` reads that union and
+ * fails an answer this state has no sentence for, so a fourth answer cannot arrive unspelled.
  */
-export type CabinSentenceWhen = "always" | "awaits_session" | "not_awaits_session" | "reread" | "stale_refusal";
+export type CabinSentenceWhen =
+  | "always"
+  | "awaits_session"
+  | "not_awaits_session"
+  | "reread"
+  | "stale_refusal"
+  | "occupancy_not_bound"
+  | "occupancy_already_bound"
+  | "occupancy_unknown";
 
 /** One sentence of a cabin-handoff state, with the tone and the drawing the panel gives it. */
 export type CabinSentence = Readonly<{
@@ -1083,6 +1127,27 @@ export const CABIN_HANDOFF_SENTENCE = Object.freeze({
   uncertain: [
     { key: "stardewCabinConfirmationUncertain", as: "status", tone: "warning", when: "always" },
     { key: "stardewCabinCheckGameHint", as: "note", tone: "warning", when: "always" },
+    {
+      key: "stardewCabinOccupancyNotBound",
+      as: "note",
+      tone: "warning",
+      when: "occupancy_not_bound",
+      testId: "cabin-occupancy-not-bound",
+    },
+    {
+      key: "stardewCabinOccupancyAlreadyBound",
+      as: "note",
+      tone: "success",
+      when: "occupancy_already_bound",
+      testId: "cabin-occupancy-already-bound",
+    },
+    {
+      key: "stardewCabinOccupancyUnknown",
+      as: "note",
+      tone: "warning",
+      when: "occupancy_unknown",
+      testId: "cabin-occupancy-unknown",
+    },
   ],
   unavailable: [
     { key: "stardewCabinsAwaitingSession", as: "status", tone: "info", when: "awaits_session" },
@@ -1111,6 +1176,12 @@ export function cabinSentenceShown(
       return (view.state.kind === "missing" || view.state.kind === "unavailable") && view.state.reread;
     case "stale_refusal":
       return view.state.kind === "choices" && view.state.staleRefusal;
+    case "occupancy_not_bound":
+      return view.state.kind === "uncertain" && view.state.occupancy === "not_bound";
+    case "occupancy_already_bound":
+      return view.state.kind === "uncertain" && view.state.occupancy === "already_bound";
+    case "occupancy_unknown":
+      return view.state.kind === "uncertain" && view.state.occupancy === "unknown";
     default:
       return assertNever(sentence.when);
   }

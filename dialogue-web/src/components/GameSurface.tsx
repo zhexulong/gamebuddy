@@ -680,7 +680,9 @@ export function GameSurface({
         }
         // An explicit uncertain outcome or a missing/malformed response may have
         // followed successful publication. Never refetch or replay this command.
-        setCabinView({ kind: "uncertain" });
+        // No probe of the game has answered since: `null` is this state's own word for that, and the
+        // declared sentences say what each answer will mean once one has.
+        setCabinView({ kind: "uncertain", occupancy: null });
       }
     } finally {
       // Released on every path, not only the stale one. This flag is a re-entrancy guard for the

@@ -228,14 +228,26 @@ const en = {
   // The one state whose copy cannot name a step this page offers and be right, and the sentence that
   // shipped it said "reload the page to recover manually" - a reload talks to the same GameBuddy, and the
   // failed attempt it is stuck on is released only when GameBuddy starts again. So the sentences say what
-  // is true (the confirmation is out, and this page cannot send another), what the read above can and
-  // cannot do, and the one step that really can: the tray's own Quit GameBuddy, named by its location the
-  // way `gameLaunchQuarantined` names it.
+  // is true (the confirmation is out, and this page cannot send another), what the PROBE can and cannot do,
+  // and the one step off this page that really can: the tray's own Quit GameBuddy, named by its location
+  // the way `gameLaunchQuarantined` names it. The probe's own three answers are spoken for below
+  // (`stardewCabinOccupancy*`), because "the game has not answered yet" and "this save does not hold her"
+  // leave the player with different next steps and must not read alike.
   stardewCabinConfirmationUncertain:
-    "Your cabin confirmation was sent and its answer never came back. This page cannot confirm her a second time, and checking the game again only reads it. If she is in the farm, that read shows her there; if she is not, quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again - the GameBuddy that opens starts clean and can let her move in.",
-  stardewCabinCheckGame: "Check the game again",
+    "Your cabin confirmation was sent and its answer never came back. This page cannot confirm her a second time, and checking whether she moved in only asks the game. If she is in the farm, that answer says so; if she is not, quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again - the GameBuddy that opens starts clean and can let her move in.",
+  stardewCabinCheckGame: "Check whether she moved in",
   stardewCabinCheckGameHint:
-    "This only reads the game: your confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this line stays exactly as it is, and the way forward is the sentence above - quit GameBuddy from the tray and open it again.",
+    "This asks the game itself whether this save already holds her, and your confirmation is never sent a second time. If it does, this panel says so; if it does not, the sentence above stands, and the way forward is to quit GameBuddy from the tray and open it again.",
+  // The probe's three answers, one sentence each. They are the answers to a question the game answers, so
+  // each says what the game said and what follows from it - never what this page wishes were true. `unknown`
+  // is the answer that keeps the attempt exactly where it is, and it says so, because "the game did not
+  // answer" and "your save does not hold her" lead a player to two different next steps.
+  stardewCabinOccupancyNotBound:
+    "The game answered that this save does not hold her: her cabin request never took effect, so nothing was written twice and there is no half-moved-in companion to clean up. Quitting GameBuddy from the tray icon (Quit GameBuddy) and opening it again is what clears the held attempt, and the cabin choice comes back with the fresh one.",
+  stardewCabinOccupancyAlreadyBound:
+    "The game answered that she is already in this save. Switch to Stardew Valley and look for her in the farmhouse.",
+  stardewCabinOccupancyUnknown:
+    "The game did not answer this time, so this panel cannot say whether she is in the save, and it will not guess in either direction. Load the farm in Stardew Valley if it is not loaded, then press this button again.",
   // The handoff is over: she is in the farm, so the block that offered the cabins says where she is and
   // leaves the one step that remains, which is the game itself.
   stardewCabinHers: "Her cabin",
@@ -1740,10 +1752,16 @@ const zh: Messages = {
     "游戏仍在启动，小屋还没有读取结果。先载入农场，然后按“再读一次小屋”：它会在当前页面上再问一次这个游戏。",
   stardewManifestAdmitted: "已收到小屋入住申请，正在等待游戏世界准备就绪…",
   stardewCabinConfirmationUncertain:
-    "小屋确认已经发出，但结果没有回来。这一页不能再确认一次，而“再查一次游戏状态”也只是重新读取。如果她已经住进农场，那一步会显示她在那儿；如果还没有，请从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开——重新打开的 GameBuddy 是干净的，才能让她搬进来。",
-  stardewCabinCheckGame: "再查一次游戏状态",
+    "小屋确认已经发出，但结果没有回来。这一页不能再确认一次，而“检查是否已入住”也只是去问游戏本身。如果她已经住进农场，那一步会显示她在那儿；如果还没有，请从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开——重新打开的 GameBuddy 是干净的，才能让她搬进来。",
+  stardewCabinCheckGame: "检查是否已入住",
   stardewCabinCheckGameHint:
-    "这一步只重新读取游戏，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这里不会变化，往前的路是上面那句话里的：从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开。",
+    "这一步是直接问游戏本身：这份存档里是不是已经有她了；小屋确认绝不会再发出第二次。如果她已经住进去，这一页会显示出来；如果还没有，上面那句话仍然有效，往前的路是从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开。",
+  stardewCabinOccupancyNotBound:
+    "游戏回答：这份存档里没有她——那次小屋入住申请根本没有生效，所以没有重复写入，也没有一个“搬到一半”的伙伴需要清理。从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开，就会放掉那个被扣住的尝试，小屋选择会跟着新的 GameBuddy 一起回来。",
+  stardewCabinOccupancyAlreadyBound:
+    "游戏回答：她已经在这份存档里了。切换到《星露谷物语》，去农舍找她吧。",
+  stardewCabinOccupancyUnknown:
+    "这次游戏没有回答，所以这一页无法判断她在不在存档里，也不会往任何一边猜。如果《星露谷物语》还没载入农场，先载入农场，再按一次这个按钮。",
   stardewCabinHers: "她的小屋",
   stardewCabinMovedIn: "她已经在这份存档里了，{{record}}就是她住的小屋。",
   stardewCabinMovedInCabinUnknown: "那间小屋",

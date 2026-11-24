@@ -49,6 +49,8 @@ import {
   CABIN_HANDOFF_FINISHED_BY,
   CABIN_HANDOFF_INPUTS,
   CABIN_HANDOFF_KINDS,
+  CABIN_HANDOFF_SENTENCE,
+  cabinSentenceShown,
   setupStagedNothing,
 } from "../src/game-lifecycle-controls.ts";
 import { messages } from "../src/i18n.ts";
@@ -779,13 +781,13 @@ test("cabin-forward-path.3: only an admitted handoff is over, and only an in-fli
 /**
  * The one rule an `uncertain` confirmation has: the cabins are never read again from it.
  *
- * Re-reading would re-offer a confirm button the Host refuses for the life of the attempt - the
- * confirmed choice handle stays consumed and any later confirmation answers
- * `stardew_cabin_confirmation_conflict` (`stardew-production-lifecycle-coordinator.internal.ts`).
- * So the step is the panel's own read of the game, which sends no handoff command at all, and
- * the attachment the Host publishes once that confirmation landed is what answers the question.
+ * Re-reading would re-offer a confirm button the Host refuses for the life of the attempt - the confirmed choice
+ * handle stays consumed and any later confirmation answers `stardew_cabin_confirmation_conflict`
+ * (`stardew-production-lifecycle-coordinator.internal.ts`). So the step is the PROBE: the read of the game that asks
+ * the Mod's own document whether this save holds her. It sends no handoff command at all, and the attachment the Host
+ * publishes once that confirmation landed is what answers the question.
  */
-test("cabin-forward-path.4: an unconfirmed confirmation offers the game read and never the cabin read", (t) => {
+test("cabin-forward-path.4: an unconfirmed confirmation offers the probe and never the cabin read", (t) => {
   const uncertain = deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS.uncertain);
   // Two steps, and the second one is off this page: the attempt the state was born from is released by GameBuddy
   // starting again, and the Host refuses any further confirmation for its own lifetime. A sentence that names the
@@ -800,14 +802,50 @@ test("cabin-forward-path.4: an unconfirmed confirmation offers the game read and
   // changed - the state is otherwise an identical screen after the press. It may not promise a recovery nobody
   // performs: the shipped sentence told the player to reload the page and to wait for recovery, and neither can
   // release a quarantined attempt (measured 2026-11-24).
+  // The control's own label has to say what the press ASKS, because "check the game again" reads as a refresh of this
+  // panel rather than as a question put to the game about her.
+  assert.match(MESSAGES.stardewCabinCheckGame, /whether she moved in/u);
+  // The copy beside that control has to say what it does and does not do, and what is left when the answer has not
+  // changed - the state is otherwise an identical screen after the press. It may not promise a recovery nobody
+  // performs: the shipped sentence told the player to reload the page and to wait for recovery, and neither can
+  // release a quarantined attempt (measured 2026-11-24).
   assert.match(MESSAGES.stardewCabinCheckGameHint, /never sent a second time/u);
   assert.match(MESSAGES.stardewCabinCheckGameHint, /quit GameBuddy from the tray/u);
   assert.match(MESSAGES.stardewCabinConfirmationUncertain, /cannot confirm her a second time/u);
   assert.match(MESSAGES.stardewCabinConfirmationUncertain, /tray icon \(Quit GameBuddy\)/u);
+  // One sentence per answer, three different sentences: `not_bound` and `already_bound` are facts about the save and
+  // must not read alike, because they leave the player with different next steps.
+  const answers = {
+    not_bound: MESSAGES.stardewCabinOccupancyNotBound,
+    already_bound: MESSAGES.stardewCabinOccupancyAlreadyBound,
+    unknown: MESSAGES.stardewCabinOccupancyUnknown,
+  };
+  assert.equal(new Set(Object.values(answers)).size, 3, "the three answers state three different sentences");
+  assert.equal(
+    CABIN_HANDOFF_SENTENCE.uncertain.filter((sentence) => sentence.when.startsWith("occupancy_")).length,
+    3,
+    "the state declares exactly one sentence per answer it carries",
+  );
+  for (const answer of Object.keys(answers)) {
+    const sentence = CABIN_HANDOFF_SENTENCE.uncertain.find((entry) => entry.when === `occupancy_${answer}`);
+    assert.ok(sentence !== undefined, `the ${answer} answer has no sentence`);
+    assert.equal(
+      cabinSentenceShown(sentence, { state: { kind: "uncertain", occupancy: answer }, awaitsSession: false }),
+      true,
+      `the ${answer} answer's sentence is shown exactly when the state carries that answer`,
+    );
+    assert.equal(
+      cabinSentenceShown(sentence, { state: { kind: "uncertain", occupancy: null }, awaitsSession: false }),
+      false,
+      `the ${answer} answer's sentence is hidden while the probe has not answered`,
+    );
+  }
   assert.doesNotMatch(
-    `${MESSAGES.stardewCabinConfirmationUncertain}\n${MESSAGES.stardewCabinCheckGameHint}`,
+    [MESSAGES.stardewCabinConfirmationUncertain, MESSAGES.stardewCabinCheckGameHint, ...Object.values(answers)].join(
+      "\n",
+    ),
     /reload|recovery/iu,
-    "the two steps that shipped in this state cannot release it: a reload talks to the same GameBuddy, and recovery refuses a terminal attempt",
+    "a step this state cannot perform stays out of its copy, including the answers its probe can give: a reload talks to the same GameBuddy, and recovery refuses a terminal attempt",
   );
   t.diagnostic(`cabin-forward-path.4: uncertain -> ${uncertain.join("+")}`);
 });
