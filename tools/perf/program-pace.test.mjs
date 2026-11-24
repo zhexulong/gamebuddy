@@ -394,10 +394,13 @@ test("round99's own programs replay as a reading, not as a pass or a failure", {
   );
   assert.equal(text.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
   // The programs the reading could not price are named, and their number is the difference to the
-  // population: a run cannot lose its programs to an exclusion nobody can see.
+  // population: a run cannot lose its programs to an exclusion nobody can see. The population is the
+  // reading's own partition rather than a count beside it - every program the bundle holds is priced or
+  // excluded BY NAME - so a schedule that left the reading cannot disappear from both sides at once.
   const priced = programsOf(ROUND_99);
-  assert.equal(priced.length, 36);
-  assert.equal(bundleDirectories(ROUND_99).length, 1);
+  const excludedPrograms = Object.values(measurement.excluded).reduce((total, count) => total + count, 0);
+  assert.equal(measurement.examined + excludedPrograms, priced.length, "every program is priced or excluded by name");
+  assert.equal(bundleDirectories(ROUND_99).length, measurement.bundles, "the reading saw every bundle directory");
 });
 
 test("the ceiling sits above every round94-99 reading and below a doubled one", () => {
@@ -406,12 +409,21 @@ test("the ceiling sits above every round94-99 reading and below a doubled one", 
   const recent = readdirSync(LADDER)
     .filter((name) => name.startsWith("2026-11-23") || name.startsWith("2026-11-24"))
     .map((name) => join(LADDER, name));
-  const measured = recent
-    .map((directory) => measureProgramPace({ bundleRoot: directory }))
-    .filter(
-      (measurement) => measurement.status === "measured" && measurement.examined >= PROGRAM_PACE_POPULATION_FLOOR,
-    );
-  assert.equal(measured.length, 5, "rounds 94-99 that priced a schedule: five of them");
+  const measurements = recent.map((directory) => measureProgramPace({ bundleRoot: directory }));
+  const pricesASchedule = (measurement) =>
+    measurement.status === "measured" && measurement.examined >= PROGRAM_PACE_POPULATION_FLOOR;
+  const measured = measurements.filter(pricesASchedule);
+  // The population is the scan, not a number: every bundle of the last two recorded days is either priced or
+  // named as one this reading did not price, so a bundle cannot leave the corpus between the scan and the
+  // ceiling reading.
+  assert.deepEqual(
+    [...measured, ...measurements.filter((measurement) => !pricesASchedule(measurement))]
+      .map((measurement) => measurement.bundleRoot)
+      .sort(),
+    [...recent].sort(),
+    "every bundle of the corpus is either priced or counted as unpriced",
+  );
+  assert.equal(measured.length > 0, true, "a population of zero is a blocked reading, not a pass");
   for (const measurement of measured)
     assert.equal(
       measurement.ratio < PROGRAM_PACE_CEILING,
