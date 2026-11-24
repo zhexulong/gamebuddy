@@ -438,6 +438,13 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   // a `default` asserting a different union (not discharged), an open-vocabulary subject with no stated exemption
   // (`exemption_missing`), one that names nothing (`exemption_expired`), one whose declared count disagrees
   // (`exemption_count_mismatch`), and an empty population (`blocked`, exit 1).
+  // Prints `files examined N under host/src · process-global sites P · module-scope declarations D · sqlite connections C ·
+  // lock helpers L` plus a four-entry `checks[]` verdict, so its default run is the report read here. Its falsifier is
+  // gates/arch/check-concurrency-hygiene.test.mjs, which injects one defect per check into COPIES of the real Host
+  // modules: an unrestored `process.env` write, a mutated module-scope `new Map()`, a bare `new DatabaseSync(path)`
+  // outside every declared container, an `async` body handed to a `() => T` helper, a doubled `releaseLocal()` and a
+  // `tails.delete` with no identity guard - plus two trees whose populations are empty (blocked, exit 2, each named).
+  "check-concurrency-hygiene.mjs",
   "check-switch-exhaustiveness.mjs",
   "check-contrast-tokens.mjs",
   // Prints `examined N files, 0 crash reports · pruned …` plus a two-entry `checks[]` verdict (no report inside the

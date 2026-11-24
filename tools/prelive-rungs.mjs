@@ -170,6 +170,15 @@ export const L0_GATES = Object.freeze([
   // free again. It reuses the scan above (one file), and prints the 910 seam calls standing outside its own population
   // rather than folding them into a pass. Measured here: `sites examined 7 · silent 1`, one exemption in the ratchet, 0.1 s.
   "gates/stardew/check-terminal-idle-publication.mjs",
+  // The four process-wide facts no compiler can hold, and the readings that make each one a population rather than a
+  // habit: production `process.env`/`process.chdir` writes must be save/restore pairs (14 env writes and 2 chdir moves
+  // measured, all restored) with `process.on` paired by a removal; module-scope strong collections need a drain or a
+  // declared row (235 collection initialisers over 3790 declarations, 100 mutated); a writable `new DatabaseSync` must be
+  // opened by one of three named containers that put `busy_timeout` in force before their first `prepare(` (9 production
+  // connections); and a `work: () => T` section helper must refuse a thenable, because the signature cannot (`28`
+  // helpers, 22 awaiting and 6 synchronous, 165 `async` call sites all held). 2.5 s over 854 Host files through one parse
+  // cache - cheap enough for this rung, and it refuses a zero population for each of the four.
+  "gates/arch/check-concurrency-hygiene.mjs",
   // The Host test corpus read as SOURCE rather than run: an assertion that matches two code tokens across literal
   // whitespace measures where the formatter put the line breaks, and a reformat turns it red with the product unchanged
   // (measured 2026-11-12, `contained-game-runtime.internal.test.ts:205`). Measured here: `matches examined 142 · through
