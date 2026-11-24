@@ -14,11 +14,15 @@
  *            `[data-theme="sepia"]` selector written outside the token-root shape -> `theme_selector_unread:sepia`;
  *            a light `--surface-canvas` of #f8f9fa (two code values from the card) -> every text pair still passes
  *            and `elevation_indistinct:light:surface-canvas->surface-card` names the rung at 1.01:1 with the three
- *            means it looked for; the same fog with a declared `--shadow-card` painted as a `box-shadow` ->
- *            `verdict=pass means=shadow`; with a declared `--border-control` painted as a border -> `means=boundary`,
- *            and that token darkened to a hairline -> `elevation_boundary_below_floor`; `rgba(0, 0, 0, 0)` as the
- *            shadow -> `elevation_shadow_invisible`; a `--surface-sheet` layer no rung raises ->
- *            `elevation_layer_without_rung`.
+ *            means it looked for; the same fog with a declared `--shadow-card` that the rule painting the raised layer
+ *            applies as a `box-shadow` -> `verdict=pass means=shadow:shadow-card`; the same declaration NOT applied by
+ *            that rule, while another rule still paints the token -> `elevation_shadow_unpainted`, which is the paper
+ *            claim a means has to refuse; a rung naming a selector the sheet does not carry ->
+ *            `elevation_shadow_rule_absent`, and one whose selector paints a different layer ->
+ *            `elevation_shadow_off_surface`; with a declared `--border-control` painted as a border ->
+ *            `means=boundary:border-control`, and that token darkened to a hairline ->
+ *            `elevation_boundary_below_floor`; `rgba(0, 0, 0, 0)` as the shadow -> `elevation_shadow_invisible`; a
+ *            `--surface-sheet` layer no rung raises -> `elevation_layer_without_rung`.
  */
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -41,6 +45,7 @@ const DECLARATIONS = [
   "--ink-ghost: rgba(245, 240, 232, 0.35);",
   "--ink-blended: color-mix(in srgb, var(--ink-live) 60%, var(--surface-card));",
   "--ink-unused: #ffffff;",
+  "--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);",
 ];
 
 /** Which of those tokens the sheet actually paints, and as what. */
@@ -50,7 +55,17 @@ const RULES = [
   ".quiet { color: var(--ink-quiet); }",
   ".ghost { color: var(--ink-ghost); }",
   ".blend { color: var(--ink-blended); }",
+  // The two rules the shipped rung claims name. A claim is credited only when the rule that paints the raised layer
+  // applies the token, so a fixture without them would report every claim as a rule the sheet does not carry.
+  ".memory-notebook { background-color: var(--surface-card); box-shadow: var(--shadow-card); }",
+  ".message.companion .message-bubble { background-color: var(--surface-card); box-shadow: var(--shadow-card); }",
 ].join("\n");
+
+/**
+ * The shipped rung list with its means claims removed, for the cases whose subject is the luminance floor alone: with
+ * the claims in place a fogged palette would be carried by the fixture's own shadow instead of being named.
+ */
+const BARE_STEPS = ELEVATION_STEPS.map(({ shadow, boundary, ...step }) => step);
 
 /** A stylesheet at the real relative path inside its own temp root, which the caller removes. */
 function stylesheet({ declarations = DECLARATIONS, rules = RULES, roots = [] } = {}) {
@@ -293,10 +308,12 @@ const FOG_ROOT = {
   ],
 };
 
-/** The same rung list with one means declared on the `canvas->card` rung, which is where the fog lives. */
+/** The same rung list with exactly one means declared on the `canvas->card` rung, which is where the fog lives. */
 const rungClaiming = (means) =>
   ELEVATION_STEPS.map((step) =>
-    step.beneath === "surface-canvas" && step.raised === "surface-card" ? { ...step, ...means } : step,
+    step.beneath === "surface-canvas" && step.raised === "surface-card"
+      ? { ...step, shadow: undefined, boundary: undefined, ...means }
+      : step,
   );
 
 /**
@@ -309,6 +326,7 @@ test("a canvas that melts into the card is named as a rung while every text pair
     const result = checkContrastTokens({
       root,
       pairs: [pair("ink-live", "surface-canvas"), pair("ink-live", "surface-card")],
+      steps: BARE_STEPS,
     });
     assert.deepEqual(
       result.rows.map((row) => row.verdict),
@@ -356,9 +374,10 @@ test("a canvas that melts into the card is named as a rung while every text pair
 });
 
 /** Means (b): the raised layer casts a declared shadow, so a rung under the floor is still an edge. */
-test("a rung under the floor is carried by a declared shadow token, and the run prints which means held", () => {
+test("a rung under the floor is carried by a declared shadow token, and the run prints the token that earned it", () => {
   const root = stylesheet({
-    declarations: [...DECLARATIONS, "--shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);"],
+    // The card rule already paints the card (`RULES`); this second `.card` rule is the declaration set the element
+    // reads together, which is how the cascade composes it.
     rules: `${RULES}\n.card { box-shadow: 0 1px 2px var(--shadow-card); }`,
     roots: [FOG_ROOT],
   });
@@ -366,13 +385,17 @@ test("a rung under the floor is carried by a declared shadow token, and the run 
     const result = checkContrastTokens({
       root,
       pairs: [pair("ink-live", "surface-card")],
-      steps: rungClaiming({ shadow: "shadow-card" }),
+      steps: rungClaiming({ shadow: { token: "shadow-card", rule: ".card" } }),
     });
     const rung = result.elevation.rows.find(
       (row) => row.theme === "light" && row.label === "surface-canvas->surface-card",
     );
     assert.equal(rung.verdict, "pass", "the shadow is the means that carries the rung");
-    assert.deepEqual(rung.means, ["shadow"], "luminance did not carry it and no boundary was claimed");
+    assert.deepEqual(
+      rung.means,
+      [{ mean: "shadow", token: "shadow-card", rule: ".card" }],
+      "luminance did not carry it and no boundary was claimed",
+    );
     assert.deepEqual(result.violations, []);
     assert.equal(result.status, "passed");
 
@@ -380,8 +403,79 @@ test("a rung under the floor is carried by a declared shadow token, and the run 
     reportContrastTokens(result, { out: report.stream, err: report.stream });
     assert.match(
       report.lines.join(""),
-      /light surface-canvas->surface-card beneath=#f8f9fa raised=#fafafc ratio=1\.01 floor=1\.05 means=shadow verdict=pass/u,
+      /light surface-canvas->surface-card beneath=#f8f9fa raised=#fafafc ratio=1\.01 floor=1\.05 means=shadow:shadow-card verdict=pass/u,
       "the printed rung says the ratio is under the floor and the shadow is what carried it",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * The declaration a means may not be paid with: a shadow token the theme declares and some rule paints, while the rule
+ * that paints the raised layer applies nothing. The previous reading - "the sheet paints this token somewhere" - called
+ * that a means; it is the paper excuse this gate exists to refuse, and it fails by name in every appearance.
+ */
+test("a shadow token the raised layer does not wear is named, even though another rule paints it", () => {
+  const root = stylesheet({
+    rules: `${RULES}\n.elsewhere { box-shadow: 0 1px 2px var(--shadow-card); }
+.unshadowed { background-color: var(--surface-card); }`,
+    roots: [FOG_ROOT],
+  });
+  try {
+    const result = checkContrastTokens({
+      root,
+      pairs: [pair("ink-live", "surface-card")],
+      steps: rungClaiming({ shadow: { token: "shadow-card", rule: ".unshadowed" } }),
+    });
+    assert.deepEqual(
+      result.violations.map((violation) => violation.code),
+      [
+        "elevation_shadow_unpainted:base:surface-canvas->surface-card",
+        "elevation_shadow_unpainted:light:surface-canvas->surface-card",
+        "elevation_indistinct:light:surface-canvas->surface-card",
+      ],
+      "the token IS painted by `.elsewhere`, and that is exactly what the old reading could not tell apart",
+    );
+    assert.match(result.violations[0].detail, /applies no `box-shadow: var\(--shadow-card\)`/u);
+    const rung = result.elevation.rows.find(
+      (row) => row.theme === "light" && row.label === "surface-canvas->surface-card",
+    );
+    assert.equal(rung.verdict, "fail", "a claim that does not hold rescues nothing, not even a rung it cannot carry");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** A claim naming a rule the sheet no longer has, or one that paints a different layer, is its own violation by name. */
+test("a claim naming an absent rule or the wrong layer is named rather than quietly dropped", () => {
+  const root = stylesheet({ roots: [FOG_ROOT] });
+  try {
+    const absent = checkContrastTokens({
+      root,
+      pairs: [pair("ink-live", "surface-card")],
+      steps: rungClaiming({ shadow: { token: "shadow-card", rule: ".renamed-away" } }),
+    });
+    assert.equal(
+      absent.violations.filter((violation) => violation.code.startsWith("elevation_shadow_rule_absent:")).length,
+      2,
+      "both appearances name the selector the sheet does not carry",
+    );
+    assert.match(absent.violations[0].detail, /no rule in the sheet carries that selector/u);
+
+    const offSurface = checkContrastTokens({
+      root,
+      pairs: [pair("ink-live", "surface-card")],
+      steps: rungClaiming({ shadow: { token: "shadow-card", rule: ".shell" } }),
+    });
+    assert.deepEqual(
+      offSurface.violations.map((violation) => violation.code),
+      [
+        "elevation_shadow_off_surface:base:surface-canvas->surface-card",
+        "elevation_shadow_off_surface:light:surface-canvas->surface-card",
+        "elevation_indistinct:light:surface-canvas->surface-card",
+      ],
+      "`.shell` paints the canvas, so the shadow it casts is not the card's edge",
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -392,7 +486,7 @@ test("a rung under the floor is carried by a declared shadow token, and the run 
  * Means (c): a boundary token at WCAG 1.4.11's 3:1. The same declaration over a token that only reads 1.09:1 on the
  * layer beneath is a claim the sheet does not keep, and it is named whether or not luminance rescued the rung.
  */
-test("a boundary token carries a rung at 3:1, and a hairline claiming the same rung is named", () => {
+test("a boundary token carries a rung at 3:1, and a hairline the rule wears is named", () => {
   const root = stylesheet({
     declarations: [...DECLARATIONS, "--border-control: #787d85;"],
     rules: `${RULES}\n.card { border: 1px solid var(--border-control); }`,
@@ -406,18 +500,22 @@ test("a boundary token carries a rung at 3:1, and a hairline claiming the same r
     const carried = checkContrastTokens({
       root,
       pairs: [pair("ink-live", "surface-card")],
-      steps: rungClaiming({ boundary: "border-control" }),
+      steps: rungClaiming({ boundary: { token: "border-control", rule: ".card" } }),
     });
     const rung = carried.elevation.rows.find(
       (row) => row.theme === "light" && row.label === "surface-canvas->surface-card",
     );
     assert.equal(rung.verdict, "pass");
-    assert.deepEqual(rung.means, ["boundary"], "#787d85 reads 3.93:1 on the injected canvas");
+    assert.deepEqual(
+      rung.means,
+      [{ mean: "boundary", token: "border-control", rule: ".card" }],
+      "#787d85 reads 3.93:1 on the injected canvas",
+    );
 
     const claimed = checkContrastTokens({
       root: hairline,
       pairs: [pair("ink-live", "surface-card")],
-      steps: rungClaiming({ boundary: "border-control" }),
+      steps: rungClaiming({ boundary: { token: "border-control", rule: ".card" } }),
     });
     assert.deepEqual(
       claimed.violations.map((violation) => violation.code),
@@ -441,11 +539,15 @@ test("a shadow token declared fully transparent is named rather than counted as 
     const result = checkContrastTokens({
       root,
       pairs: [pair("ink-live", "surface-card")],
-      steps: rungClaiming({ shadow: "shadow-card" }),
+      steps: rungClaiming({ shadow: { token: "shadow-card", rule: ".card" } }),
     });
     assert.deepEqual(
       result.violations.map((violation) => violation.code),
-      ["elevation_shadow_invisible:base:surface-canvas->surface-card"],
+      [
+        "elevation_shadow_invisible:base:surface-panel->surface-card",
+        "elevation_shadow_invisible:base:surface-canvas->surface-card",
+      ],
+      "the transparent token is named on every rung that claims it, rather than counted as a means",
     );
     assert.match(result.violations[0].detail, /strongest colour is fully transparent/u);
   } finally {
@@ -513,14 +615,32 @@ test("the shipped stylesheet's own ladder is green, and prints every rung with i
       "the ladder is printed rung by rung, per appearance",
     );
     for (const rung of rungs) {
-      assert.ok(rung.ratio >= result.elevation.floor, `${theme} ${rung.label} reads ${rung.ratio.toFixed(2)}:1`);
-      assert.deepEqual(
-        rung.means,
-        ["luminance"],
-        `${theme} ${rung.label} is carried by luminance alone: the sheet declares no shadow token and its boundary ` +
-          "tokens are not the edge of the layer this rung is about",
-      );
+      assert.equal(rung.verdict, "pass", `${theme} ${rung.label} reads ${rung.ratio.toFixed(2)}:1`);
+      assert.ok(rung.means.length > 0, `${theme} ${rung.label} names the means that carried it`);
+      // The floor is not a pass on its own: a rung under it has to be carried by a declared means.
+      if (rung.ratio < result.elevation.floor)
+        assert.ok(
+          rung.means.some((carried) => carried.mean !== "luminance"),
+          `${theme} ${rung.label} reads ${rung.ratio.toFixed(2)}:1 and names what actually carried it`,
+        );
     }
+    const described = (label) =>
+      rungs
+        .find((row) => row.label === label)
+        .means.map((carried) => (carried.token === null ? carried.mean : `${carried.mean}:${carried.token}`));
+    assert.deepEqual(described("surface-canvas->surface-panel"), ["luminance"], `${theme} canvas->panel`);
+    assert.deepEqual(described("surface-card->surface-elevated"), ["luminance"], `${theme} card->elevated`);
+    assert.ok(
+      described("surface-canvas->surface-card").includes("shadow:shadow-card"),
+      `${theme} canvas->card names the card's own shadow beside its step`,
+    );
+    // The ruling this reads: in the light appearance the panel and the card are both #ffffff, so that rung is the one
+    // no floor can carry and the shadow is the only means it has.
+    assert.deepEqual(
+      described("surface-panel->surface-card"),
+      theme === "light" ? ["shadow:shadow-card"] : ["luminance", "shadow:shadow-card"],
+      `${theme} panel->card`,
+    );
     const sibling = result.elevation.rows.find(
       (row) => row.theme === theme && row.label === "surface-canvas->surface-accent",
     );

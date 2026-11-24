@@ -39,9 +39,11 @@
  *
  * The pair list measures ink on a surface, and it is complete for that claim. It is silent about two *surfaces*: a
  * palette can hold every text pair above AA while its layers melt into each other. Measured on this sheet before the
- * ladder existed: a light `--surface-canvas` of `#f8f9fa` reads 1.01:1 against the `#fafafc` card - no visible edge, the
- * whole screen one white sheet - and all 24 pairs still passed. So the ladder is a second population, derived the same
- * way, over the layers and the rungs between them.
+ * ladder existed: a light `--surface-canvas` of `#f8f9fa` read 1.01:1 against the `#fafafc` card - no visible edge, the
+ * whole screen one white sheet - and all 24 pairs still passed. The shipped light palette now holds the same pair one
+ * code value apart (`#f8f9fa` canvas, `#ffffff` card, 1.05:1), which is why the ladder also has to know the difference
+ * between a declared edge and an applied one. So the ladder is a second population, derived the same way, over the
+ * layers and the rungs between them.
  *
  *   * a LAYER is a `--surface-*` declaration in the theme's own table whose value is a colour of its own. An alias of
  *     another layer (`--surface-raised`, `--surface-hover`) is that layer, not a new one. A sixth layer joins by being
@@ -64,25 +66,32 @@
  *       i.e. dL* 1.9 to 2.9 - two to three of the classic one-unit dL* just-noticeable step for a large uniform field.
  *       Under it, two layers differ by less than a display is asked to render reliably, and the edge has to come from
  *       (b) or (c);
- *   (b) SHADOW - the rung declares a shadow token, the theme declares it, the sheet paints it as a `box-shadow`, and
- *       its value carries a colour that is not fully transparent. This proves the raised layer has a declared, painted,
- *       visible shadow; it does NOT measure the shadow's rendered contrast, which depends on the backdrop and the blur
- *       radius, and a token table cannot resolve those;
- *   (c) BOUNDARY - the rung declares a boundary token that the theme declares, that the sheet paints as a border, and
- *       that reads at or above `ELEVATION_BOUNDARY_FLOOR` (3:1, WCAG 1.4.11 - the floor `--border-control` already
- *       follows) against the layer beneath it. A translucent boundary is composited over that layer, as CSS paints it.
+ *   (b) SHADOW - the rung names a shadow token AND the rule that casts it. That rule must paint the raised layer as its
+ *       background and must apply the token as a `box-shadow`, the theme must declare the token, and its value must
+ *       carry a colour that is not fully transparent. The rule is part of the claim because a declaration nothing
+ *       reads is the paper excuse a gate like this has to refuse: a shadow token declared in the theme's table, or
+ *       painted by some other component, is NOT an edge for this layer. What (b) does not do is measure the shadow's
+ *       rendered contrast, which depends on the backdrop and the blur radius and which no token table can resolve;
+ *   (c) BOUNDARY - the rung names a boundary token and the rule that wears it. That rule must paint the raised layer
+ *       as its background and must apply the token as a border, and the token - composited over the layer beneath it,
+ *       as CSS paints it - must read at or above `ELEVATION_BOUNDARY_FLOOR` (3:1, the WCAG 1.4.11 floor
+ *       `--border-control` already follows).
  *
  * A rung holding none of the three is `elevation_indistinct`, naming the pair, its ratio, the floor and which means the
  * gate looked for and did not find. A declared means that does not hold is its own violation
  * (`elevation_shadow_*`, `elevation_boundary_*`), because a declaration the sheet does not keep is a false claim
  * whether or not luminance rescued the rung.
  *
- * The shipped sheet holds (a) and nothing else, and the run prints that rather than assuming it: it declares no
- * `--shadow-*` token at all, and the one >=3:1 boundary token, `--border-control`, is worn by some members of each
- * family (`.game-action`, `.small-button`, `.form-select`, `.memory-filter-chip`) and by none of the canonical ones the
- * rungs are about (`.app-bar` and `.context-panel` wear `--border-subtle`; `.message.companion .message-bubble` wears
- * `--border-glass`), so a per-rung boundary claim would be false for the element the rung exists for. The ladder rests
- * on the luminance floor alone.
+ * The shipped sheet holds (b) exactly where it has to. The light appearance's panel and card are both `#ffffff`, so the
+ * `panel->card` rung reads 1.00:1 and no luminance floor can carry it: `--shadow-card` is the card's only edge there,
+ * and the claim names the rule that wears it (`.memory-notebook`). `canvas->card` claims the same token on its own rule
+ * (`.message.companion .message-bubble`) even though it also clears the floor at 1.05:1, because a margin of 0.4% is
+ * not the edge the reader sees. Nothing claims (c): the light `--border-subtle` reads 1.20:1 on every layer it borders
+ * and `--border-control` - the one token that does read 3:1 - is worn by the controls the form and action rules paint,
+ * not by the canonical member of any layer, and a claim a rule does not wear is a violation rather than a rescue. The
+ * dark appearance declares the same token with the value its cards already painted, so a card wears one name in both;
+ * its rungs are carried by luminance there (1.07-1.15:1), which is why the means printed per rung is the reading and
+ * not a palette's reputation.
  *
  * WHAT IT DOES NOT MEASURE (named here so the reading is not overclaimed)
  *
@@ -109,8 +118,9 @@
  * (`<theme> <label> fg=#rrggbb bg=#rrggbb ratio=17.33 min=4.5 verdict=pass|fail|unreadable`), then
  * `elevation_ladder: examined R rung(s) in L layer(s) over K appearance(s), step floor 1.05:1, boundary floor 3:1`, one
  * `  <theme> layers: surface-canvas=#rrggbb ...` line per appearance, and one line per rung or sibling
- * (`  <theme> surface-canvas->surface-card beneath=#rrggbb raised=#rrggbb ratio=1.15 floor=1.05 means=luminance
- * verdict=pass|fail|unreadable|not_measured|sibling`). The JSON verdict line carries both populations
+ * (`  <theme> surface-canvas->surface-card beneath=#rrggbb raised=#rrggbb ratio=1.15 floor=1.05
+ * means=luminance+shadow:shadow-card verdict=pass|fail|unreadable|not_measured|sibling`), where a token-carrying means
+ * names the token that earned it. The JSON verdict line carries both populations
  * (`{"gate":"contrast-tokens","examined":N,"tokens":M,"elevation":{...},"violations":[...],"status":...}`) and a
  * `checks` entry per rule. A pair below its minimum is REPORTED and exits 0 by default; `--fail` makes it exit 1. Zero
  * pairs, an unreadable stylesheet and a stylesheet with no custom property are `blocked` and exit 1 in every mode - a
@@ -126,12 +136,17 @@
  *            token declared `color-mix(...)` -> `token_unreadable:<theme>:<label>:<token>`; an empty pair list ->
  *            `status:"blocked"`, exit 1; a light root one shade too pale -> the same pair named under `light` while the
  *            `dark` reading of it still passes; a `[data-theme="sepia"]` root written outside the token-root shape ->
- *            `theme_selector_unread:sepia`; the same stylesheet with its light `--surface-canvas` set to #f8f9fa - a
- *            palette every pair still passes - -> `elevation_indistinct:light:surface-canvas->surface-card` at 1.01:1
+ *            `theme_selector_unread:sepia`; a light palette whose card is two code values from its canvas - every pair
+ *            still passing - -> `elevation_indistinct:light:surface-canvas->surface-card` at 1.01:1
  *            (floor 1.05) with the three means it looked for and did not find, while the pair readings of that same run
- *            stay green; a rung carried by a declared `--shadow-card` painted as a `box-shadow` -> `verdict=pass
- *            means=shadow` at a ratio under the floor; a rung carried by a `--border-control` painted as a border ->
- *            `means=boundary` at >= 3:1, and the same declaration over a 1.1:1 hairline ->
+ *            stay green; a rung carried by a declared `--shadow-card` painted as a `box-shadow` by the rule that paints
+ *            its raised layer -> `verdict=pass means=shadow:shadow-card` at a ratio under the floor; the same token
+ *            declared and painted by a DIFFERENT rule, or declared and not painted at all ->
+ *            `elevation_shadow_unpainted` (the paper claim this extension exists for: a shadow nobody wears would have
+ *            passed the previous gate, which only asked whether some rule somewhere painted the token); a rung claiming
+ *            a rule the sheet does not have -> `elevation_shadow_rule_absent`, and one whose named rule paints a
+ *            different layer -> `elevation_shadow_off_surface`; a rung carried by a `--border-control` painted as a
+ *            border -> `means=boundary:border-control` at >= 3:1, and the same declaration over a 1.1:1 hairline ->
  *            `elevation_boundary_below_floor`; a `--surface-sheet` layer no rung raises and no sibling declares ->
  *            `elevation_layer_without_rung`; a shadow token declared as `rgba(...,0)` -> `elevation_shadow_invisible`
  *            (gates/product/check-contrast-tokens.test.mjs builds each in a temp dir).
@@ -328,9 +343,12 @@ export const ELEVATION_BOUNDARY_FLOOR = 3;
 /**
  * The rungs: the layer beneath, the layer raised above it, and the rule that stacks them.
  *
- * `shadow` and `boundary` are the other two means a rung may claim, and each names a token the theme has to declare
- * and the sheet has to paint. No rung here claims either: the sheet declares no shadow token at all, and the one
- * >=3:1 boundary token it has is not worn by the canonical member of any layer (see the header).
+ * `shadow` and `boundary` are the other two means a rung may claim, and each names a token the theme has to declare AND
+ * the selector of the rule that has to wear it - the rule must paint the raised layer and apply the token. The two card
+ * rungs claim `--shadow-card` because the light appearance's panel and card are both `#ffffff`: the card's edge there is
+ * the shadow, and no luminance floor can stand in for it. Nothing claims a boundary: the light `--border-subtle` reads
+ * 1.20:1 wherever it is drawn and `--border-control` is worn by the control rules, not by the canonical member of any
+ * layer, so a boundary claim on these rungs would be false for the element each rung exists for.
  */
 export const ELEVATION_STEPS = [
   {
@@ -342,6 +360,7 @@ export const ELEVATION_STEPS = [
     beneath: "surface-panel",
     raised: "surface-card",
     why: "`.memory-notebook` paints `--surface-card` inside the panel-painted `.context-panel` drawer",
+    shadow: { token: "shadow-card", rule: ".memory-notebook" },
   },
   {
     beneath: "surface-card",
@@ -354,6 +373,7 @@ export const ELEVATION_STEPS = [
     why:
       "a card with no panel between it and the page: `.message.companion .message-bubble` and `.avatar-large` paint " +
       "`--surface-card` straight onto the canvas-painted `.chat-view`",
+    shadow: { token: "shadow-card", rule: ".message.companion .message-bubble" },
   },
 ];
 
@@ -384,6 +404,10 @@ const SHADOW = /(?:^|[\s;{])box-shadow:\s*[^;}]*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
 /** A token painted as a border, so `border-radius` and `border-collapse` cannot pass as an edge. */
 const BOUNDARY =
   /(?:^|[\s;{])(?:border|border-(?:top|right|bottom|left|inline|block|color)(?:-[a-z]+)*):\s*[^;}]*var\(\s*--([a-z0-9-]+)\s*\)/gmu;
+/** The three declarations a means can be kept by, read as property names off a parsed rule. */
+const BACKGROUND = /^background(?:-color)?$/u;
+const BOX_SHADOW = /^box-shadow$/u;
+const BORDER = /^border(?:-(?:top|right|bottom|left|inline|block|color)(?:-[a-z]+)*)?$/u;
 /** A token that is exactly one alias of another token. */
 const ALIAS = /^var\(\s*--([a-z0-9-]+)\s*\)$/u;
 const HEX = /^#([0-9a-f]{3}|[0-9a-f]{6})$/iu;
@@ -406,6 +430,56 @@ const THEMED_ROOT = /^:root\[data-theme="([a-z0-9-]+)"\]$/u;
 const ANY_THEME_SELECTOR = /\[data-theme="([a-z0-9-]+)"\]/gu;
 
 const stripComments = (css) => css.replace(COMMENTS, "");
+
+/**
+ * Every innermost rule of the sheet: its selector list and the declaration text under it.
+ *
+ * Only the innermost blocks are collected, so a rule inside `@layer` or `@media` is found and the at-rule around it is
+ * not - which is what a means claim needs, because it names a selector and has to read the declarations that element
+ * wears. A selector this parser cannot read is not a silent omission: a claim naming a selector no rule carries is
+ * `elevation_*_rule_absent`.
+ */
+export function rulesOf(css) {
+  const rules = [];
+  for (const match of stripComments(css).matchAll(/([^{}]+)\{([^{}]*)\}/gu)) {
+    const selectors = match[1]
+      .split(",")
+      .map((selector) => selector.trim().replace(/\s+/gu, " "))
+      .filter((selector) => selector.length > 0);
+    if (selectors.length === 0) continue;
+    rules.push({ selectors, body: match[2] });
+  }
+  return rules;
+}
+
+/** One rule's declarations as `[property, value]` pairs. */
+function declarationsIn(body) {
+  const declarations = [];
+  for (const statement of body.split(";")) {
+    const colon = statement.indexOf(":");
+    if (colon < 0) continue;
+    declarations.push([statement.slice(0, colon).trim(), statement.slice(colon + 1).trim()]);
+  }
+  return declarations;
+}
+
+/**
+ * The declarations an element wearing `selector` reads: every rule that names it, together, which is the set the cascade
+ * composes. A selector no rule carries is `null` - a rule that is not there rather than a rule that says nothing.
+ */
+function wearOf(selector, rules) {
+  const wanted = selector.trim().replace(/\s+/gu, " ");
+  const bodies = rules.filter((rule) => rule.selectors.includes(wanted)).map((rule) => rule.body);
+  return bodies.length === 0 ? null : bodies;
+}
+
+/** True when the element wearing these declarations sets `property` to a value that reads `--token`. */
+function wears(bodies, property, token) {
+  const tokenReference = new RegExp(`var\\(\\s*--${token}\\s*\\)`, "u");
+  return bodies.some((body) =>
+    declarationsIn(body).some(([name, value]) => property.test(name) && tokenReference.test(value)),
+  );
+}
 
 /**
  * The token table of every appearance, and which tokens the sheet paints as ink and as a surface - the pair list's
@@ -459,6 +533,7 @@ export function readStylesheet(css) {
     themes,
     tokens,
     unread,
+    rules: rulesOf(css),
     inks: painted(INK),
     surfaces: painted(SURFACE),
     shadows: painted(SHADOW),
@@ -577,7 +652,7 @@ export function checkContrastTokens({
     return blockedReading(`${stylesheet} could not be read`);
   }
   if (pairs.length === 0) return blockedReading("no pair to measure");
-  const { themes, tokens, unread, inks, surfaces, shadows, boundaries } = readStylesheet(css);
+  const { themes, tokens, unread, rules, inks, surfaces } = readStylesheet(css);
   if (tokens.size === 0) return blockedReading(`${stylesheet} declares no custom property`);
 
   const rows = [];
@@ -640,7 +715,7 @@ export function checkContrastTokens({
       });
 
   const pairsPassed = violations.length === 0;
-  const elevation = elevationOf({ themes, steps, shadows, boundaries });
+  const elevation = elevationOf({ themes, steps, rules });
   violations.push(...elevation.violations);
 
   return {
@@ -704,7 +779,7 @@ function measurePair({ theme, pair, tokens }) {
  * One rung in one appearance: the two layers, the ratio they paint, the means the rung holds, and the violations for any
  * declared means the sheet does not keep.
  */
-function measureRung({ theme, step, tokens, shadows, boundaries }) {
+function measureRung({ theme, step, tokens, rules }) {
   const label = `${step.beneath}->${step.raised}`;
   const row = {
     theme,
@@ -737,16 +812,17 @@ function measureRung({ theme, step, tokens, shadows, boundaries }) {
   row.beneathHex = hexOf(beneath.rgb);
   row.raisedHex = hexOf(raised.rgb);
   row.ratio = contrastRatio(raised.rgb, beneath.rgb);
-  if (row.ratio >= ELEVATION_STEP_FLOOR) row.means.push("luminance");
+  if (row.ratio >= ELEVATION_STEP_FLOOR) row.means.push({ mean: "luminance", token: null, rule: null });
 
   if (step.shadow !== undefined) {
-    const shadow = shadowClaim({ theme, label, step, tokens, shadows });
-    if (shadow.violation === null) row.means.push("shadow");
+    const shadow = shadowClaim({ theme, label, step, tokens, rules });
+    if (shadow.violation === null) row.means.push({ mean: "shadow", token: step.shadow.token, rule: step.shadow.rule });
     else claims.push(shadow.violation);
   }
   if (step.boundary !== undefined) {
-    const boundary = boundaryClaim({ theme, label, step, tokens, boundaries, beneath });
-    if (boundary.violation === null) row.means.push("boundary");
+    const boundary = boundaryClaim({ theme, label, step, tokens, rules, beneath });
+    if (boundary.violation === null)
+      row.means.push({ mean: "boundary", token: step.boundary.token, rule: step.boundary.rule });
     else claims.push(boundary.violation);
   }
 
@@ -764,55 +840,85 @@ function layerUnreadable(step, beneath, raised) {
 }
 
 /**
- * Means (b) for one rung: a shadow token the theme declares, the sheet paints, and that is not fully transparent. A
- * declared means that does not hold is a violation of its own, whether or not luminance rescued the rung.
+ * Means (b) for one rung: a shadow token the theme declares, and the rule the rung names painting the raised layer and
+ * applying the token as a `box-shadow`. A declared means that does not hold is a violation of its own, whether or not
+ * luminance rescued the rung - and a token that is declared, or painted by some other rule, is not this layer's edge.
  */
-function shadowClaim({ theme, label, step, tokens, shadows }) {
-  const claim = (code, detail) => ({
-    violation: { code, theme, label, token: step.shadow, detail },
-  });
-  const value = tokens.get(step.shadow);
+function shadowClaim({ theme, label, step, tokens, rules }) {
+  const token = step.shadow.token;
+  const claim = (code, detail) => ({ violation: { code, theme, label, token, detail } });
+  const value = tokens.get(token);
   if (value === undefined)
     return claim(
       `elevation_shadow_undeclared:${theme}:${label}`,
-      `the rung claims \`--${step.shadow}\` as its shadow, and the ${theme} appearance does not declare it`,
+      `the rung claims \`--${token}\` as its shadow, and the ${theme} appearance does not declare it`,
     );
-  if (!shadows.has(step.shadow))
+  const worn = wearOf(step.shadow.rule, rules);
+  if (worn === null)
+    return claim(
+      `elevation_shadow_rule_absent:${theme}:${label}`,
+      `the rung names \`${step.shadow.rule}\` as the rule that casts \`--${token}\`, and no rule in the sheet carries ` +
+        "that selector",
+    );
+  if (!wears(worn, BACKGROUND, step.raised))
+    return claim(
+      `elevation_shadow_off_surface:${theme}:${label}`,
+      `\`${step.shadow.rule}\` does not paint \`--${step.raised}\` as its background, so the shadow it casts is not ` +
+        "this layer's",
+    );
+  if (!wears(worn, BOX_SHADOW, token))
     return claim(
       `elevation_shadow_unpainted:${theme}:${label}`,
-      `\`--${step.shadow}\` is declared and no rule paints it as a \`box-shadow\`, so no layer wears it`,
+      `\`${step.shadow.rule}\` paints \`--${step.raised}\` and applies no \`box-shadow: var(--${token})\`, so the ` +
+        "token is declared and the layer it was declared for does not wear it",
     );
   if ((shadowAlpha(value) ?? 0) === 0)
     return claim(
       `elevation_shadow_invisible:${theme}:${label}`,
-      `\`--${step.shadow}\` is \`${value}\`, whose strongest colour is fully transparent: it casts nothing`,
+      `\`--${token}\` is \`${value}\`, whose strongest colour is fully transparent: it casts nothing`,
     );
   return { violation: null };
 }
 
 /**
- * Means (c) for one rung: a boundary token the theme declares, the sheet paints, and that reads at or above WCAG
- * 1.4.11's 3:1 against the layer beneath. A translucent boundary is composited over that layer, as CSS paints it.
+ * Means (c) for one rung: a boundary token the theme declares, and the rule the rung names painting the raised layer and
+ * applying the token as a border, at or above WCAG 1.4.11's 3:1 against the layer beneath. A translucent boundary is
+ * composited over that layer, as CSS paints it.
  */
-function boundaryClaim({ theme, label, step, tokens, boundaries, beneath }) {
+function boundaryClaim({ theme, label, step, tokens, rules, beneath }) {
+  const token = step.boundary.token;
   const claim = (code, detail, ratio) => ({
-    violation: { code, theme, label, token: step.boundary, detail, ...(ratio === undefined ? {} : { ratio }) },
+    violation: { code, theme, label, token, detail, ...(ratio === undefined ? {} : { ratio }) },
   });
-  const value = tokens.get(step.boundary);
+  const value = tokens.get(token);
   if (value === undefined)
     return claim(
       `elevation_boundary_undeclared:${theme}:${label}`,
-      `the rung claims \`--${step.boundary}\` as its boundary, and the ${theme} appearance does not declare it`,
+      `the rung claims \`--${token}\` as its boundary, and the ${theme} appearance does not declare it`,
     );
-  if (!boundaries.has(step.boundary))
+  const worn = wearOf(step.boundary.rule, rules);
+  if (worn === null)
+    return claim(
+      `elevation_boundary_rule_absent:${theme}:${label}`,
+      `the rung names \`${step.boundary.rule}\` as the rule that wears \`--${token}\`, and no rule in the sheet carries ` +
+        "that selector",
+    );
+  if (!wears(worn, BACKGROUND, step.raised))
+    return claim(
+      `elevation_boundary_off_surface:${theme}:${label}`,
+      `\`${step.boundary.rule}\` does not paint \`--${step.raised}\` as its background, so the border it draws is not ` +
+        "this layer's edge",
+    );
+  if (!wears(worn, BORDER, token))
     return claim(
       `elevation_boundary_unpainted:${theme}:${label}`,
-      `\`--${step.boundary}\` is declared and no rule paints it as a border, so no layer wears it`,
+      `\`${step.boundary.rule}\` paints \`--${step.raised}\` and applies no border from \`--${token}\`, so the token is ` +
+        "declared and the layer it was declared for does not wear it",
     );
-  const colour = colourOf(step.boundary, tokens);
+  const colour = colourOf(token, tokens);
   if (colour.unreadable !== undefined)
     return claim(
-      `token_unreadable:${theme}:${label}:${step.boundary}`,
+      `token_unreadable:${theme}:${label}:${token}`,
       `${colour.unreadable}; this boundary cannot be measured until it is one colour`,
     );
   const painted = colour.alpha < 1 ? over(colour, beneath.rgb) : colour.rgb;
@@ -820,7 +926,7 @@ function boundaryClaim({ theme, label, step, tokens, boundaries, beneath }) {
   if (ratio < ELEVATION_BOUNDARY_FLOOR)
     return claim(
       `elevation_boundary_below_floor:${theme}:${label}`,
-      `\`--${step.boundary}\` reads ${ratio.toFixed(2)}:1 on \`--${step.beneath}\`, under the ` +
+      `\`--${token}\` reads ${ratio.toFixed(2)}:1 on \`--${step.beneath}\`, under the ` +
         `${ELEVATION_BOUNDARY_FLOOR}:1 a boundary that identifies a component needs`,
       Number(ratio.toFixed(2)),
     );
@@ -829,16 +935,19 @@ function boundaryClaim({ theme, label, step, tokens, boundaries, beneath }) {
 
 /** The other two means named as missing, for a rung that luminance did not carry either. */
 function missingMeans(row, step) {
+  const held = (mean) => row.means.some((carried) => carried.mean === mean);
   const missing = [];
-  if (!row.means.includes("shadow"))
+  if (!held("shadow"))
     missing.push(
-      step.shadow === undefined ? "no shadow token is declared for the rung" : `--${step.shadow} does not carry it`,
+      step.shadow === undefined
+        ? "no shadow token is declared for the rung"
+        : `--${step.shadow.token} does not carry it`,
     );
-  if (!row.means.includes("boundary"))
+  if (!held("boundary"))
     missing.push(
       step.boundary === undefined
         ? `no boundary token reads ${ELEVATION_BOUNDARY_FLOOR}:1 against --${step.beneath}`
-        : `--${step.boundary} does not carry it`,
+        : `--${step.boundary.token} does not carry it`,
     );
   return missing;
 }
@@ -861,7 +970,7 @@ function indistinctViolation({ theme, step, row }) {
 }
 
 /** Every rung of one appearance, and the violations the rungs produce there. */
-function rungRows({ theme, table, steps, population, shadows, boundaries }) {
+function rungRows({ theme, table, steps, population, rules }) {
   const rows = [];
   const violations = [];
   for (const step of steps) {
@@ -880,7 +989,7 @@ function rungRows({ theme, table, steps, population, shadows, boundaries }) {
       });
       continue;
     }
-    const { row, claims } = measureRung({ theme, step, tokens: table, shadows, boundaries });
+    const { row, claims } = measureRung({ theme, step, tokens: table, rules });
     rows.push(row);
     violations.push(...claims);
     if (row.verdict === "fail") violations.push(indistinctViolation({ theme, step, row }));
@@ -956,7 +1065,7 @@ function driftViolations(known, steps) {
  * The elevation ladder over every appearance: each rung's ratio and means, each sibling's printed reading, the layer
  * population of every appearance, and the violations the rungs and the population produce.
  */
-function elevationOf({ themes, steps, shadows, boundaries }) {
+function elevationOf({ themes, steps, rules }) {
   const layers = [];
   const rows = [];
   const violations = [];
@@ -970,7 +1079,7 @@ function elevationOf({ themes, steps, shadows, boundaries }) {
       const colour = colourOf(layer, table);
       layers.push({ theme, layer, hex: colour.unreadable === undefined ? hexOf(colour.rgb) : null });
     }
-    const rungs = rungRows({ theme, table, steps, population, shadows, boundaries });
+    const rungs = rungRows({ theme, table, steps, population, rules });
     rows.push(...rungs.rows, ...siblingRows({ theme, table, population }));
     violations.push(...rungs.violations, ...coverageViolations({ theme, population, steps }));
   }
@@ -990,6 +1099,11 @@ function elevationOf({ themes, steps, shadows, boundaries }) {
     status,
   };
 }
+
+/**
+ * One kept means as it is printed: `luminance`, or the means and the token that earned it (`shadow:shadow-card`).
+ */
+const describedMean = (carried) => (carried.token === null ? carried.mean : `${carried.mean}:${carried.token}`);
 
 /**
  * Print the reading and return the exit code: `blocked` is always 1, a failing pair or rung is 1 only under `--fail`.
@@ -1021,7 +1135,7 @@ export function reportContrastTokens(result, { fail = false, out = process.stdou
     out.write(
       `  ${row.theme.padEnd(width)} ${row.label} beneath=${row.beneathHex ?? "-"} raised=${row.raisedHex ?? "-"} ` +
         `ratio=${row.ratio === null ? "-" : row.ratio.toFixed(2)} floor=${elevation.floor} ` +
-        `means=${row.means.length === 0 ? "none" : row.means.join("+")} verdict=${row.verdict}` +
+        `means=${row.means.length === 0 ? "none" : row.means.map(describedMean).join("+")} verdict=${row.verdict}` +
         `${row.reason === null ? "" : ` (${row.reason})`}\n`,
     );
   for (const violation of result.violations) err.write(`${violation.code}\n  ${violation.detail}\n`);
