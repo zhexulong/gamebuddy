@@ -112,7 +112,11 @@ function playerTurnLabel(locale: string | undefined): string {
  * writes back; without this pass the model would read `{{char}}` literally. `{{time}}`/`{{date}}` stay literal on
  * purpose, because this text is the cached Tier-1 prefix and a value that changes every turn would re-fold it.
  */
-export function renderIdentityProfile(profile: IdentityProfile, locale?: string): string {
+export function renderIdentityProfile(
+  profile: IdentityProfile,
+  locale?: string,
+  options?: Readonly<{ omitPresetMarkerFields?: boolean }>,
+): string {
   const macros = identityProfileMacros(profile, locale);
   const render = (text: string): string => renderMacros(text, macros);
   const templates = COMPANION_FORMAT_TEMPLATES;
@@ -123,15 +127,15 @@ export function renderIdentityProfile(profile: IdentityProfile, locale?: string)
   ];
 
   if (profile.persona !== undefined) {
-    if (profile.persona.core !== undefined)
+    if (!options?.omitPresetMarkerFields && profile.persona.core !== undefined)
       lines.push(fillTemplate(templates.coreDisposition ?? "", [render(profile.persona.core)]));
-    if (profile.persona.interactionStyle !== undefined)
+    if (!options?.omitPresetMarkerFields && profile.persona.interactionStyle !== undefined)
       lines.push(fillTemplate(templates.interactionStyle ?? "", [render(profile.persona.interactionStyle)]));
     if (profile.persona.expressionStyle !== undefined)
       lines.push(fillTemplate(templates.expressionStyle ?? "", [render(profile.persona.expressionStyle)]));
   }
 
-  if (profile.examples !== undefined && profile.examples.length > 0) {
+  if (!options?.omitPresetMarkerFields && profile.examples !== undefined && profile.examples.length > 0) {
     const playerLabel = playerTurnLabel(locale);
     lines.push("");
     lines.push(templates.dialogueExamples ?? "");
@@ -206,10 +210,15 @@ export function renderPlayerPromptAddition(addition: GamePromptAddition): string
 }
 
 /** The Chat surface's prompt: the Chat block, then the rest of the one assembly. */
-export function buildChatCompanionSystemPrompt(profile: IdentityProfile, locale?: string): string {
+export function buildChatCompanionSystemPrompt(
+  profile: IdentityProfile,
+  locale?: string,
+  options?: Readonly<{ omitPresetMarkerFields?: boolean }>,
+): string {
   return buildCompanionSystemPrompt(profile, {
     surfaceBlock: CHAT_SURFACE_DIVERGENCE,
     ...(locale === undefined ? {} : { locale }),
+    ...(options?.omitPresetMarkerFields ? { omitPresetMarkerFields: true } : {}),
   });
 }
 
@@ -226,12 +235,23 @@ export function buildChatCompanionSystemPrompt(profile: IdentityProfile, locale?
  */
 export function buildCompanionSystemPrompt(
   profile: IdentityProfile,
-  options: Readonly<{ surfaceBlock: string; locale?: string; playerAddition?: GamePromptAddition }>,
+  options: Readonly<{
+    surfaceBlock: string;
+    locale?: string;
+    playerAddition?: GamePromptAddition;
+    omitPresetMarkerFields?: boolean;
+  }>,
 ): string {
   const macros = identityProfileMacros(profile, options.locale);
   const lines: (string | null)[] = [];
   if (options.surfaceBlock.length > 0) lines.push(options.surfaceBlock, "");
-  lines.push(renderIdentityProfile(profile, options.locale));
+  lines.push(
+    renderIdentityProfile(
+      profile,
+      options.locale,
+      options.omitPresetMarkerFields ? { omitPresetMarkerFields: true } : undefined,
+    ),
+  );
   if (profile.characterVoice !== undefined) lines.push("", renderCardDirective(profile.characterVoice, macros));
   if (options.playerAddition !== undefined && options.playerAddition.length > 0)
     lines.push("", renderPlayerPromptAddition(options.playerAddition));

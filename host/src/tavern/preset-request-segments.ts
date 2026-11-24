@@ -138,11 +138,40 @@ export async function boundPresetSampling(
 }
 
 /**
+ * The markers a Chat request supplies from the bound companion profile and thread sources.
+ *
+ * `worldInfoBefore` / `worldInfoAfter` are intentionally omitted here because `catalog-service.ts` + `magic-context`
+ * already place constant and keyword-triggered worldbook entries in `m[0]` / `m[1]` for KV prefix-cache stability;
+ * `main` / `jailbreak` stay owned by the preset unless explicitly overridden.
+ */
+export function presetRequestMarkers(sources: PresetMacroSources): Readonly<Record<string, string>> {
+  const profile = sources.profile;
+  const table = macroTable({ char: profile.identity.name, user: sources.persona?.name, locale: sources.locale });
+  const render = (text: string): string => renderMacros(text, table);
+  const markers: Record<string, string> = {};
+
+  if (profile.persona?.core !== undefined) markers.charDescription = render(profile.persona.core);
+  if (profile.persona?.interactionStyle !== undefined)
+    markers.charPersonality = render(profile.persona.interactionStyle);
+  if (sources.persona?.description !== undefined && sources.persona.description.length > 0) {
+    markers.personaDescription = sources.persona.description;
+  }
+  if (sources.scenario !== undefined) markers.scenario = render(sources.scenario.text);
+  if (profile.examples !== undefined && profile.examples.length > 0) {
+    const playerLabel =
+      typeof sources.locale === "string" && sources.locale.toLowerCase().startsWith("zh") ? "你" : "You";
+    markers.dialogueExamples = profile.examples
+      .map((ex) => `<START>\n${playerLabel}: ${render(ex.user)}\n${profile.identity.name}: ${render(ex.companion)}`)
+      .join("\n");
+  }
+  return Object.freeze(markers);
+}
+
+/**
  * The seam's two halves for one rendered pass.
  *
- * `assemble` closes over the pass only for `prefixHash` - the Host's own statement about the bytes it placed, which
- * the vendor never reads. The buckets come from the arguments, so the vendor and this function can never disagree
- * about what was handed over.
+ * `assemble` closes over `pass` (which retains SillyTavern entry `role`s and `prefixHash`) while `segments` keeps the
+ * transport-agnostic text buckets expected by `vendor/magic-context`.
  */
 export function presetRequestAssembly(pass: PresetPass): PresetRequestAssembly {
   const segments: PresetRequestSegments = Object.freeze({
@@ -154,7 +183,7 @@ export function presetRequestAssembly(pass: PresetPass): PresetRequestAssembly {
     pass,
     segments,
     assemble: (input) => ({
-      messages: placeSegments(input.messages, input),
+      messages: placeSegments(input.messages, pass),
       prefixHash: pass.prefixHash,
     }),
   });
@@ -211,27 +240,27 @@ export async function publishPresetRequestSegments(
  * The returned array is always a new one: the vendor keeps the reference it was given when this seam is absent, so
  * returning the same array here would make "placed nothing" and "placed everything" indistinguishable to a reader.
  */
-function placeSegments(
-  messages: readonly unknown[],
-  segments: Readonly<{
-    before: readonly string[];
-    after: readonly string[];
-    depth: readonly Readonly<{ depth: number; content: string }>[];
-  }>,
-): unknown[] {
+function wireRoleOf(role: "system" | "user" | "assistant"): "user" | "assistant" {
+  // Mid-conversation `system` messages are dropped by `pi-ai` `collapseSystemMessages`, so post-head `system`
+  // entries map to `user`, while `assistant` (prefill / assistant-depth injections) is preserved faithfully.
+  return role === "assistant" ? "assistant" : "user";
+}
+
+function placeSegments(messages: readonly unknown[], pass: Pick<PresetPass, "before" | "after" | "depth">): unknown[] {
   const placed = [...messages];
-  if (segments.before.length > 0) {
-    const prefix = segments.before.join("\n\n");
+  if (pass.before.length > 0) {
+    const prefix = pass.before.map((segment) => segment.text).join("\n\n");
     const head = placed[0];
     if (isMessageWithRole(head, "system")) placed[0] = withText(head, prefix);
     else placed.unshift(textMessage("system", prefix));
   }
-  for (const text of segments.after) placed.push(textMessage("user", text));
+  for (const segment of pass.after) placed.push(textMessage(wireRoleOf(segment.role), segment.text));
   // Counted back from the END of the assembled array (§2.4), and inserted from the far end inward so an insertion
-  // never moves the index a later one was computed from. Same depth keeps the preset's own order.
+  // never moves the index a later one was computed from. Never splice ahead of the leading system message.
+  const floorIndex = isMessageWithRole(placed[0], "system") ? 1 : 0;
   const end = placed.length;
-  for (const block of [...segments.depth].reverse()) {
-    placed.splice(Math.max(0, end - block.depth), 0, textMessage("user", block.content));
+  for (const block of [...pass.depth].reverse()) {
+    placed.splice(Math.max(floorIndex, end - block.depth), 0, textMessage(wireRoleOf(block.role), block.text));
   }
   return placed;
 }

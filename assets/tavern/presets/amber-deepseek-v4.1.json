@@ -23,6 +23,12 @@
       "marker": true
     },
     {
+      "identifier": "personaDescription",
+      "name": "Persona Description",
+      "system_prompt": true,
+      "marker": true
+    },
+    {
       "identifier": "charDescription",
       "name": "Character Description",
       "system_prompt": true,
@@ -71,10 +77,11 @@
   ],
   "prompt_order": [
     {
-      "character_id": 100000,
+      "character_id": 100001,
       "order": [
         { "identifier": "main", "enabled": true },
         { "identifier": "worldInfoBefore", "enabled": true },
+        { "identifier": "personaDescription", "enabled": true },
         { "identifier": "charDescription", "enabled": true },
         { "identifier": "charPersonality", "enabled": true },
         { "identifier": "scenario", "enabled": true },

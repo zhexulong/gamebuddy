@@ -510,7 +510,7 @@ test("Default.json's selected group partitions exactly: every row is sent, named
   });
 });
 
-test("amber's 9 rows are 7 sent + 1 cut + 1 in-chat: jailbreak (position 1, depth 0) leaves the tail empty", async () => {
+test("amber's 10 rows are 7 sent + 1 named (personaDescription) + 1 cut + 1 in-chat: jailbreak (position 1, depth 0) leaves the tail empty", async () => {
   await withRealPresets(({ amber }) => {
     const rows = assembledOrderRows(amber.file);
     const expected = expectedPlacement(amber.document, rows, SLOTS);
@@ -521,7 +521,7 @@ test("amber's 9 rows are 7 sent + 1 cut + 1 in-chat: jailbreak (position 1, dept
     // the buckets instead of matching a count somebody re-measured by hand.
     const declared = {
       sent: [...DEFAULTS_PREFIX],
-      named: [],
+      named: ["personaDescription"],
       cut: ["chatHistory"],
       depth: ["jailbreak"],
       disabled: [],
@@ -540,7 +540,7 @@ test("amber's 9 rows are 7 sent + 1 cut + 1 in-chat: jailbreak (position 1, dept
     assert.deepEqual(
       expected.named,
       declared.named,
-      "amber has no marker without a source, so the ladder's second rung must not start naming slots for it",
+      "amber's 100001 group carries personaDescription, which is named unfilled when the assembly supplies no persona",
     );
 
     assert.deepEqual(
@@ -552,7 +552,7 @@ test("amber's 9 rows are 7 sent + 1 cut + 1 in-chat: jailbreak (position 1, dept
       [],
       "jailbreak follows the cut in prompt_order but carries injection_position 1, so it cannot be tail content (openai.js:1198-1201)",
     );
-    assertSameSet("amber's unfilled slots", assembly.unfilled, []);
+    assertSameSet("amber's unfilled slots", assembly.unfilled, ["personaDescription"]);
     assertSameSet("amber's switched-off rows", assembly.disabled, []);
 
     const block = assembly.depth[0];

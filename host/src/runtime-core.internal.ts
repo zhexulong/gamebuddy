@@ -101,6 +101,7 @@ import {
 import {
   boundPresetSampling,
   presetRequestMacros,
+  presetRequestMarkers,
   publishPresetRequestSegments,
   type PresetThreadSources,
 } from "./tavern/preset-request-segments.js";
@@ -1311,31 +1312,30 @@ export async function createRuntimeWithFixedToolsCore(
       : async (): Promise<void> => {
           // The provider is what makes this cost nothing when no preset is bound: `renderPresetPass` reads the binding
           // first and only then asks for the context.
-          const macros = async (): Promise<MacroContext> =>
-            presetRequestMacros({
-              profile,
-              ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
-              // The chat thread's bound persona and scenario. Only the Chat construction holds them
-              // (`PresetThreadSources`), and a Game runtime passes none, so its preset's `{{persona}}` and
-              // `{{scenario}}` keep their token and are reported.
-              ...(chatSurface?.presetThreadSources ?? {}),
-            });
+          const macroSources = {
+            profile,
+            ...(presentation?.profile.locale === undefined ? {} : { locale: presentation.profile.locale }),
+            // The chat thread's bound persona and scenario. Only the Chat construction holds them
+            // (`PresetThreadSources`), and a Game runtime passes none, so its preset's `{{persona}}` and
+            // `{{scenario}}` keep their token and are reported.
+            ...(chatSurface?.presetThreadSources ?? {}),
+          };
+          const macros = async (): Promise<MacroContext> => presetRequestMacros(macroSources);
           await publishPresetRequestSegments({
             projectDir: chatPreset.projectDir,
             presets: chatPreset.presets,
             binding: chatPreset.binding,
             macros,
-            // No marker content is supplied yet: the companion card's fields and the bound world book are the Chat
-            // pipeline's to hand over, and until they are, `unfilled` names every slot that stayed empty
-            // (`preset-request-segments.ts` prints them) instead of the request carrying a blank region.
-            markers: Object.freeze({}),
+            markers: presetRequestMarkers(macroSources),
           });
         };
   // One string, built here rather than inline below, because it is the whole of what the two surfaces install as their
   // system prompt and both guards that used to read it are gone with the substring mechanism they guarded.
   const buildCompanionSystemPrompt = (): string =>
     runtimeSurface === "chat"
-      ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale)
+      ? buildChatCompanionSystemPrompt(profile, presentation?.profile.locale, {
+          omitPresetMarkerFields: chatPresetSampling !== null,
+        })
       : withPresetMain(
           buildGameCompanionSystemPrompt(profile, presentation?.profile.locale, gamePromptAddition),
           gameSessionPreset,

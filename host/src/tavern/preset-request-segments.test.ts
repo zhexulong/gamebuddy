@@ -19,6 +19,7 @@ import {
   PRESET_UNRESOLVED_MACROS_PREFIX,
   boundPresetSampling,
   presetRequestMacros,
+  presetRequestMarkers,
   publishPresetRequestSegments,
 } from "./preset-request-segments.js";
 import { createPresetStore, type PresetStore } from "./preset-store.js";
@@ -532,4 +533,130 @@ test("the macro provider is asked once per published request, and never when not
     assert.equal(await publishCounted(), null);
     assert.equal(calls, 0, "an unbound preset renders nothing, so its context is never read");
   });
+});
+
+test("after and depth segments preserve assistant role and clamp depth after the leading system message", async () => {
+  const rolePreset = {
+    name: "Role & Depth Clamping Fixture",
+    prompts: [
+      { identifier: "main", name: "Main", role: "system", content: "SYSTEM-HEAD" },
+      { identifier: "chatHistory", name: "Chat History", marker: true },
+      { identifier: "afterPrefill", name: "Prefill", role: "assistant", content: "ASSISTANT-PREFILL" },
+      {
+        identifier: "deepAssistant",
+        name: "Deep Assistant",
+        role: "assistant",
+        content: "DEEP-ASSISTANT",
+        injection_position: 1,
+        injection_depth: 99,
+        injection_order: 10,
+      },
+      {
+        identifier: "deepSystem",
+        name: "Deep System",
+        role: "system",
+        content: "DEEP-SYSTEM-TO-USER",
+        injection_position: 1,
+        injection_depth: 0,
+        injection_order: 10,
+      },
+    ],
+    prompt_order: [
+      {
+        character_id: 100001,
+        order: [
+          { identifier: "main", enabled: true },
+          { identifier: "chatHistory", enabled: true },
+          { identifier: "afterPrefill", enabled: true },
+          { identifier: "deepAssistant", enabled: true },
+          { identifier: "deepSystem", enabled: true },
+        ],
+      },
+    ],
+  };
+
+  await withBoundPreset(
+    async (bound) => {
+      const assembly = await publishPresetRequestSegments({
+        projectDir: bound.projectDir,
+        presets: bound.presets,
+        binding: bound.binding,
+        macros: async () => presetRequestMacros({ profile: PROFILE }),
+        markers: Object.freeze({}),
+      });
+      assert.ok(assembly !== null);
+      const placed = assembly.assemble({ messages: baseMessages(), ...assembly.segments })
+        .messages as readonly unknown[];
+      assert.equal((placed[0] as { role?: string }).role, "system", "leading system message stays at index 0");
+      assert.match(textOf(placed[1]), /DEEP-ASSISTANT/, "depth 99 clamps to index 1, never ahead of system[0]");
+      assert.equal((placed[1] as { role?: string }).role, "assistant", "assistant role is preserved at depth");
+      assert.match(textOf(placed[placed.length - 2]), /ASSISTANT-PREFILL/);
+      assert.equal(
+        (placed[placed.length - 2] as { role?: string }).role,
+        "assistant",
+        "assistant prefill preserves role",
+      );
+      assert.match(textOf(placed[placed.length - 1]), /DEEP-SYSTEM-TO-USER/);
+      assert.equal((placed[placed.length - 1] as { role?: string }).role, "user", "post-head system maps to user");
+    },
+    true,
+    rolePreset,
+  );
+});
+
+test("presetRequestMarkers fills char/persona/scenario/examples so prompt_order controls placement", async () => {
+  const orderedPreset = {
+    name: "Marker Order Fixture",
+    prompts: [
+      { identifier: "main", name: "Main", role: "system", content: "MAIN-LINE" },
+      { identifier: "scenario", name: "Scenario", marker: true },
+      { identifier: "personaDescription", name: "Persona", marker: true },
+      { identifier: "charDescription", name: "CharDesc", marker: true },
+      { identifier: "charPersonality", name: "CharPers", marker: true },
+      { identifier: "dialogueExamples", name: "Examples", marker: true },
+      { identifier: "chatHistory", name: "Chat History", marker: true },
+    ],
+    prompt_order: [
+      {
+        character_id: 100001,
+        order: [
+          { identifier: "main", enabled: true },
+          { identifier: "scenario", enabled: true },
+          { identifier: "personaDescription", enabled: true },
+          { identifier: "charDescription", enabled: true },
+          { identifier: "charPersonality", enabled: false },
+          { identifier: "dialogueExamples", enabled: true },
+          { identifier: "chatHistory", enabled: true },
+        ],
+      },
+    ],
+  };
+
+  await withBoundPreset(
+    async (bound) => {
+      const profileWithExamples: IdentityProfile = Object.freeze({
+        ...PROFILE,
+        examples: Object.freeze([{ user: "Hi {{char}}", companion: "Hey {{user}}" }]),
+      });
+      const sources = { profile: profileWithExamples, persona: PLAYER_PERSONA, scenario: BOUND_SCENARIO };
+      const assembly = await publishPresetRequestSegments({
+        projectDir: bound.projectDir,
+        presets: bound.presets,
+        binding: bound.binding,
+        macros: async () => presetRequestMacros(sources),
+        markers: presetRequestMarkers(sources),
+      });
+      assert.ok(assembly !== null);
+      assert.deepEqual(assembly.pass.unfilled, []);
+      const head = assembly.segments.before.join("\n\n");
+      const idxScenario = head.indexOf("SCENARIO-SENTINEL-9c0d");
+      const idxPersona = head.indexOf("PERSONA-SENTINEL-7a8b");
+      const idxDesc = head.indexOf("DESCRIPTION-SENTINEL-1a2b");
+      const idxExamples = head.indexOf("<START>\nYou: Hi Mira\nMira: Hey USER-SENTINEL-5e6f");
+      assert.ok(idxScenario > 0 && idxPersona > idxScenario && idxDesc > idxPersona && idxExamples > idxDesc);
+      assert.equal(head.includes("PERSONALITY-SENTINEL-3c4d"), false, "disabled charPersonality marker is omitted");
+    },
+    true,
+    orderedPreset,
+  );
 });
