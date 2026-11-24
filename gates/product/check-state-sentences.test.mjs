@@ -86,6 +86,7 @@ describe("check-state-sentences", () => {
     assert.deepEqual([...CODES].sort(), [
       "cabin_handoff_finish_not_declared",
       "cabin_occupancy_answer_states_no_sentence",
+      "cabin_release_refusal_states_no_sentence",
       "phase_sentence_not_declared",
       "population_empty",
       "sentence_key_missing",
@@ -257,17 +258,71 @@ describe("check-state-sentences: the cabin probe's answers", () => {
   });
 
   test("a tree that declares no answers at all is blocked rather than green over a question nobody answered", (t) => {
-    const lifecycle = copy(SOURCES.lifecycle, "no-answer-vocabulary.ts", [
-      ["export type CabinOccupancyAnswer =", "export type CabinOccupancyAnswerGone ="],
+    // The answer vocabulary is the WIRE's now (`CABIN_OCCUPANCY_ANSWERS` in the client), so the injection renames
+    // the array that declares it.
+    const api = copy(SOURCES.api, "no-answer-vocabulary.ts", [
+      ["const CABIN_OCCUPANCY_ANSWERS =", "const CABIN_OCCUPANCY_ANSWERS_GONE ="],
     ]);
-    const verdict = checkStateSentencesOf({ lifecycle });
+    const verdict = checkStateSentencesOf({ api });
     assert.equal(verdict.status, "blocked");
     assert.ok(
       verdict.findings.some(
-        (entry) => entry.code === "population_empty" && entry.detail.includes("CabinOccupancyAnswer was not read"),
+        (entry) => entry.code === "population_empty" && entry.detail.includes("CABIN_OCCUPANCY_ANSWERS was not read"),
       ),
       JSON.stringify(verdict.findings, null, 2),
     );
     t.diagnostic(`state-sentences.answers.blocked: ${verdict.findings.map((entry) => entry.code).join(", ")}`);
+  });
+});
+
+/**
+ * The release's four assertions are a population the gate derives too, from the wire's own release vocabulary:
+ * an assertion that keeps the quarantine with no sentence would leave the player reading the screen they were
+ * already on, with the fact that refused named nowhere.
+ */
+describe("check-state-sentences: the cabin release's refusals", () => {
+  test("the real tree declares one sentence per refusal, so none of the four is silent", (t) => {
+    const text = readFileSync(SOURCES.lifecycle, "utf8");
+    const refusals = [...text.matchAll(/when: "release_([a-z_]+)",/gu)].map((match) => match[1]);
+    assert.deepEqual(
+      [...new Set(refusals)].sort(),
+      [
+        "evidence_not_fresh_for_this_world",
+        "guardian_objects_not_proven_dead",
+        "record_is_not_the_quarantined_attempt",
+        "registration_names_another_attempt",
+      ],
+      "the four assertions the release can refuse by are the four the state declares a sentence for",
+    );
+    t.diagnostic(`state-sentences.release: ${[...new Set(refusals)].join(", ")}`);
+  });
+
+  test("a refusal whose sentence was lost is reported by name", (t) => {
+    const lifecycle = copy(SOURCES.lifecycle, "refusal-without-a-sentence.ts", [
+      ['when: "release_guardian_objects_not_proven_dead",', 'when: "always",'],
+    ]);
+    const verdict = checkStateSentencesOf({ lifecycle });
+    assert.equal(verdict.status, "failed");
+    const [reported] = verdict.findings.filter(
+      (entry) => entry.code === "cabin_release_refusal_states_no_sentence",
+    );
+    assert.ok(reported !== undefined, JSON.stringify(verdict.findings, null, 2));
+    assert.match(reported.detail, /the release refused because "guardian_objects_not_proven_dead"/u);
+    t.diagnostic(`state-sentences.release.red: ${reported.detail}`);
+  });
+
+  test("a tree that declares no release vocabulary is blocked rather than green over a press nobody answers", (t) => {
+    const api = copy(SOURCES.api, "no-release-vocabulary.ts", [
+      ["const CABIN_QUARANTINE_RELEASES =", "const CABIN_QUARANTINE_RELEASES_GONE ="],
+    ]);
+    const verdict = checkStateSentencesOf({ api });
+    assert.equal(verdict.status, "blocked");
+    assert.ok(
+      verdict.findings.some(
+        (entry) => entry.code === "population_empty" && entry.detail.includes("CABIN_QUARANTINE_RELEASES was not read"),
+      ),
+      JSON.stringify(verdict.findings, null, 2),
+    );
+    t.diagnostic(`state-sentences.release.blocked: ${verdict.findings.map((entry) => entry.code).join(", ")}`);
   });
 });

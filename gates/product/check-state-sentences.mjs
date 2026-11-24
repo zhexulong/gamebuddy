@@ -100,6 +100,15 @@ const typescript = createRequire(join(WEB_ROOT, "package.json"))("typescript");
 export const SOURCES = {
   lifecycle: join(WEB_ROOT, "src", "game-lifecycle-controls.ts"),
   catalogue: join(WEB_ROOT, "src", "i18n.ts"),
+  /**
+   * The wire vocabulary the surface derives its own from.
+   *
+   * The release's refusal members are read HERE rather than from the lifecycle module, because the lifecycle
+   * module derives them (`Exclude<StardewCabinOccupancyAnswerV1["release"], "released" | "not_licensed">`): a
+   * derived type has no literal members for a source reader to enumerate, and enumerating them from the wire's
+   * own array is what keeps one spelling of a fact that crosses a process boundary.
+   */
+  api: join(WEB_ROOT, "src", "composed-reference-game-browser-api.ts"),
 };
 
 /**
@@ -137,6 +146,7 @@ export const CODES = Object.freeze([
   "phase_sentence_not_declared",
   "cabin_handoff_finish_not_declared",
   "cabin_occupancy_answer_states_no_sentence",
+  "cabin_release_refusal_states_no_sentence",
   "population_empty",
 ]);
 
@@ -148,7 +158,11 @@ export function checkStateSentencesOf(overrides) {
   try {
     return checkStateSentences();
   } finally {
-    Object.assign(SOURCES, { lifecycle: saved.lifecycle, catalogue: saved.catalogue });
+    Object.assign(SOURCES, {
+      lifecycle: saved.lifecycle,
+      catalogue: saved.catalogue,
+      api: saved.api,
+    });
     FORWARD_PATH_SOURCES.lifecycle = saved.lifecycle;
   }
 }
@@ -360,13 +374,16 @@ export function checkStateSentences() {
         );
 
   // Every answer the `uncertain` state's own vocabulary declares has a sentence to state it with. The
-  // population is the answer union, so a fourth answer cannot arrive without words for it.
-  const answers = [...new Set(stringLiterals(unionTypeMembers(file, "CabinOccupancyAnswer")))];
+  // population is the wire's answer vocabulary, read from the one array the client's type derives from, so a
+  // fourth answer cannot arrive without words for it.
+  const api = parseFile(SOURCES.api);
+  const answers = stringArray(api, "CABIN_OCCUPANCY_ANSWERS") ?? [];
   if (answers.length === 0)
     blocked.push(
       finding(
         "population_empty",
-        "CabinOccupancyAnswer was not read, so no answer of the cabin probe could be held to stating a sentence",
+        "CABIN_OCCUPANCY_ANSWERS was not read from the wire contract, so no answer of the cabin probe could be held " +
+          "to stating a sentence",
       ),
     );
   const uncertainWhens = new Set((cabin.sentences.get("uncertain") ?? []).map((entry) => entry.when));
@@ -377,6 +394,30 @@ export function checkStateSentences() {
           "cabin_occupancy_answer_states_no_sentence",
           `cabin/uncertain carries the answer "${answer}" and declares no sentence for it: a probe that answers ` +
             `${answer} leaves the player reading the same screen with nothing said about which answer they are looking at`,
+        ),
+      );
+
+  // Every assertion the ONE release can refuse by states a sentence too, and the population is the wire's own
+  // release vocabulary minus the two members that are not refusals: `released` is a state the panel leaves, and
+  // `not_licensed` is "no release was attempted". A press that kept the quarantine with no sentence would leave
+  // the player reading the screen they were already on, with the fact that refused named nowhere.
+  const releases = stringArray(api, "CABIN_QUARANTINE_RELEASES") ?? [];
+  const refusals = releases.filter((member) => member !== "released" && member !== "not_licensed");
+  if (refusals.length === 0)
+    blocked.push(
+      finding(
+        "population_empty",
+        "CABIN_QUARANTINE_RELEASES was not read from the wire contract, so no release refusal could be held to " +
+          "stating a sentence",
+      ),
+    );
+  for (const refusal of refusals)
+    if (!uncertainWhens.has(`release_${refusal}`))
+      findings.push(
+        finding(
+          "cabin_release_refusal_states_no_sentence",
+          `cabin/uncertain can be told the release refused because "${refusal}" and declares no sentence for it: ` +
+            `the attempt stays quarantined and the player is told nothing about which fact refused`,
         ),
       );
 
@@ -511,6 +552,10 @@ function main() {
         {
           id: "every_probe_answer_states_its_sentence",
           status: failed("cabin_occupancy_answer_states_no_sentence") ? "failed" : "passed",
+        },
+        {
+          id: "every_release_refusal_states_its_sentence",
+          status: failed("cabin_release_refusal_states_no_sentence") ? "failed" : "passed",
         },
       ],
       findings: verdict.findings,

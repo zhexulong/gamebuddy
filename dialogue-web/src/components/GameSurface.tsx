@@ -11,6 +11,7 @@ import {
   type GameFactPatchV1,
   type GameResumeResultV1,
   type StardewCabinChoiceV1,
+  type StardewCabinOccupancyAnswerV1,
 } from "../composed-reference-game-browser-api";
 import {
   deriveGameLifecycleControlAvailability,
@@ -464,7 +465,39 @@ export function GameSurface({
   });
 
   /**
+   * Applies one answer of the cabin probe to the state the press was offered from.
+   *
+   * The surface carries the ANSWER and what the Host did with it, never a step of its own:
+   *
+   * - `already_bound` is the game saying this save holds her, so the handoff is over and the panel states
+   *   where she is. The cabin's own name is not a fact this page can know from an opaque id, and a page that
+   *   has never confirmed anything says "her cabin" rather than naming one from the offer list.
+   * - `not_bound`/`unknown` keep the state, with the answer and - when the Host tried and could not - the
+   *   ONE assertion that kept the attempt. "Still uncertain" with no reason would be the screen the player
+   *   was already looking at.
+   * - `released` is not a state this panel states, it is a state it leaves: the attempt is free, so the
+   *   handoff is read again and the cabin choice comes back.
+   */
+  const applyCabinOccupancyAnswer = (answer: StardewCabinOccupancyAnswerV1): void => {
+    if (answer.occupancy.answer === "already_bound") {
+      setCabinView({ kind: "moved_in", cabinLabel: null });
+      return;
+    }
+    setCabinView({
+      kind: "uncertain",
+      occupancy: answer.occupancy.answer,
+      releaseRefusal: answer.release === "released" || answer.release === "not_licensed" ? null : answer.release,
+    });
+    if (answer.release === "released") void readCabins("refresh_pressed");
+  };
+
+  /**
    * The read the player's own step takes, and the one place a press's failed read is published.
+   *
+   * `uncertain` is the one state whose press is NOT a read of the projection: its question is about the
+   * game's own document (does this save hold her, and may the held attempt be freed), so the press asks the
+   * Host that question and the panel states the answer. Every other state's press re-reads the projection,
+   * which is what it renders.
    *
    * The sentence is the catalogue's, not a second vocabulary: `composedProblemView` words every
    * failure on this shell, and the answer it gives this one names the read taken again - which is the
@@ -473,7 +506,8 @@ export function GameSurface({
    */
   const readGameAgain = async (): Promise<void> => {
     try {
-      await rereadGame();
+      if (cabinView.kind === "uncertain") applyCabinOccupancyAnswer(await composedApi.readStardewCabinOccupancy());
+      else await rereadGame();
       setGameReadFailure(null);
     } catch (error) {
       setGameReadFailure({ sentence: composedProblemView(error, labels).detail, code: observedProblemCode(error) });
@@ -682,7 +716,7 @@ export function GameSurface({
         // followed successful publication. Never refetch or replay this command.
         // No probe of the game has answered since: `null` is this state's own word for that, and the
         // declared sentences say what each answer will mean once one has.
-        setCabinView({ kind: "uncertain", occupancy: null });
+        setCabinView({ kind: "uncertain", occupancy: null, releaseRefusal: null });
       }
     } finally {
       // Released on every path, not only the stale one. This flag is a re-entrancy guard for the

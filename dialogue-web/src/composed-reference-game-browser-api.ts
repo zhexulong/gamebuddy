@@ -72,6 +72,40 @@ const OUTCOMES = ["none", "succeeded", "failed", "cancelled"] as const;
 const ACTION_AUTHORITY_STATUSES = ["unavailable", "active", "paused"] as const;
 const CABIN_CHOICES_KEYS = ["apiVersion", "choices"] as const;
 const CABIN_CHOICE_KEYS = ["displayLabel", "availability", "choiceHandle", "expiresAtMs"] as const;
+const CABIN_OCCUPANCY_KEYS = ["apiVersion", "occupancy", "release"] as const;
+const CABIN_OCCUPANCY_FIELDS_KEYS = [
+  "answer",
+  "reason",
+  "cabinId",
+  "boundBy",
+  "publishedAtUnixMs",
+  "observedAtUnixMs",
+] as const;
+/** The Mod's three answers, and every reason its document could not decide. */
+const CABIN_OCCUPANCY_ANSWERS = ["not_bound", "already_bound", "unknown"] as const;
+const CABIN_OCCUPANCY_UNKNOWN_REASONS = [
+  "session_document_missing",
+  "session_document_unreadable",
+  "session_document_unauthenticated",
+  "session_document_stale",
+  "session_document_clock_ahead",
+  "session_document_other_world",
+  "session_host_not_ready",
+  "session_protocol_mismatch",
+  "manifest_farmhand_unavailable",
+] as const;
+/**
+ * What the press did with its answer. `not_licensed` is every answer that licenses nothing; the four
+ * refusals are the release's own assertions, one name each.
+ */
+const CABIN_QUARANTINE_RELEASES = [
+  "released",
+  "not_licensed",
+  "record_is_not_the_quarantined_attempt",
+  "registration_names_another_attempt",
+  "guardian_objects_not_proven_dead",
+  "evidence_not_fresh_for_this_world",
+] as const;
 const CABIN_CONFIRMATION_KEYS = ["apiVersion", "status"] as const;
 const INSTALLATION_DISCOVERY_KEYS = ["apiVersion", "candidates", "diagnostics"] as const;
 /**
@@ -496,6 +530,26 @@ type StardewCabinChoicesV1 = Readonly<{
   choices: readonly StardewCabinChoiceV1[];
 }>;
 
+/**
+ * The cabin press's answer: the Mod's three answers, with their reason, and what the Host did with it.
+ *
+ * `publishedAtUnixMs` is null exactly when no authenticated document answered, and the two clocks are
+ * carried so `unknown/session_document_stale` means what it says over the wire and not only inside the
+ * Host's own tests. The world and farmhand the answer is about never travel: they are the attempt's own.
+ */
+export type StardewCabinOccupancyAnswerV1 = Readonly<{
+  apiVersion: 1;
+  occupancy: Readonly<{
+    answer: (typeof CABIN_OCCUPANCY_ANSWERS)[number];
+    reason: (typeof CABIN_OCCUPANCY_UNKNOWN_REASONS)[number] | null;
+    cabinId: string | null;
+    boundBy: "companion" | "manifest_farmhand" | null;
+    publishedAtUnixMs: number | null;
+    observedAtUnixMs: number;
+  }>;
+  release: (typeof CABIN_QUARANTINE_RELEASES)[number];
+}>;
+
 type StardewCabinConfirmationRequestV1 = Readonly<{
   apiVersion: 1;
   idempotencyKey: string;
@@ -615,6 +669,13 @@ export type ComposedReferenceGameBrowserApi = Readonly<{
   cancelResume(request: GameResumeCancelRequestV1): Promise<GameResumeCancelResultV1>;
   endgameGame(request: GameEndgameRequestV1): Promise<GameEndgameResultV1>;
   readStardewCabins(): Promise<StardewCabinChoicesV1>;
+  /**
+   * The press's own question: does this save hold her?
+   *
+   * A POST with no body: the answer can license one Host-side release, so this is an operation on the
+   * attempt rather than a read of a projection, and the attempt it is about is the session's own.
+   */
+  readStardewCabinOccupancy(): Promise<StardewCabinOccupancyAnswerV1>;
   /** The player's own Stardew settings: the one settings route group the Game surface owns. */
   readStardewPlayerSettings(): Promise<StardewPlayerSettingsV1>;
   saveStardewPlayerSettings(request: StardewPlayerSettingsRequestV1): Promise<StardewPlayerSettingsV1>;
@@ -741,6 +802,47 @@ function validateStardewCabinChoices(value: unknown): StardewCabinChoicesV1 {
     );
   }
   return Object.freeze({ apiVersion: 1, choices: Object.freeze(choices) });
+}
+
+/**
+ * The press's answer, held to the contract the Host validates its own reply against.
+ *
+ * The reason is validated against the same nine the Host's probe can produce, and `reason` is null
+ * exactly when the answer is not `unknown`: a reply that said `not_bound` and carried a reason would be
+ * two answers in one frame, and the surface would have to pick one.
+ */
+function validateStardewCabinOccupancy(value: unknown): StardewCabinOccupancyAnswerV1 {
+  const invalid = new ComposedReferenceGameProtocolError("invalid_stardew_cabin_answer");
+  if (!isRecord(value) || !hasExactKeys(value, CABIN_OCCUPANCY_KEYS) || value.apiVersion !== 1) throw invalid;
+  const occupancy = value.occupancy;
+  if (!isRecord(occupancy) || !hasExactKeys(occupancy, CABIN_OCCUPANCY_FIELDS_KEYS)) throw invalid;
+  if (!CABIN_OCCUPANCY_ANSWERS.includes(occupancy.answer as (typeof CABIN_OCCUPANCY_ANSWERS)[number])) throw invalid;
+  const reason = occupancy.reason;
+  if (
+    reason !== null &&
+    !CABIN_OCCUPANCY_UNKNOWN_REASONS.includes(reason as (typeof CABIN_OCCUPANCY_UNKNOWN_REASONS)[number])
+  )
+    throw invalid;
+  if ((occupancy.answer === "unknown") !== (reason !== null)) throw invalid;
+  if (!isNullableLabel(occupancy.cabinId, MAX_CABIN_DISPLAY_LABEL_LENGTH)) throw invalid;
+  if (occupancy.boundBy !== null && occupancy.boundBy !== "companion" && occupancy.boundBy !== "manifest_farmhand")
+    throw invalid;
+  if ((occupancy.answer === "already_bound") !== (occupancy.cabinId !== null && occupancy.boundBy !== null)) throw invalid;
+  if (occupancy.publishedAtUnixMs !== null && !isSafeInteger(occupancy.publishedAtUnixMs, 0)) throw invalid;
+  if (!isSafeInteger(occupancy.observedAtUnixMs, 0)) throw invalid;
+  if (!CABIN_QUARANTINE_RELEASES.includes(value.release as (typeof CABIN_QUARANTINE_RELEASES)[number])) throw invalid;
+  return Object.freeze({
+    apiVersion: 1,
+    occupancy: Object.freeze({
+      answer: occupancy.answer as StardewCabinOccupancyAnswerV1["occupancy"]["answer"],
+      reason: reason as StardewCabinOccupancyAnswerV1["occupancy"]["reason"],
+      cabinId: occupancy.cabinId as string | null,
+      boundBy: occupancy.boundBy as StardewCabinOccupancyAnswerV1["occupancy"]["boundBy"],
+      publishedAtUnixMs: occupancy.publishedAtUnixMs as number | null,
+      observedAtUnixMs: occupancy.observedAtUnixMs as number,
+    }),
+    release: value.release as StardewCabinOccupancyAnswerV1["release"],
+  });
 }
 
 const SETTINGS_REQUIRED_KEYS = [
@@ -1645,6 +1747,15 @@ export function createComposedReferenceGameBrowserApi(
         "/api/composed-reference-game/v1/game/stardew/cabins",
         { method: "GET" },
         validateStardewCabinChoices,
+      );
+    },
+    async readStardewCabinOccupancy(): Promise<StardewCabinOccupancyAnswerV1> {
+      if (csrfToken === undefined) throw new ComposedReferenceGameProtocolError("missing_composed_session");
+      return exchange(
+        fetchLike,
+        "/api/composed-reference-game/v1/game/stardew/cabins/occupancy",
+        { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken } },
+        validateStardewCabinOccupancy,
       );
     },
     async readStardewInstallationDiscovery(): Promise<StardewInstallationDiscoveryV1> {

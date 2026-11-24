@@ -248,6 +248,16 @@ const en = {
     "The game answered that she is already in this save. Switch to Stardew Valley and look for her in the farmhouse.",
   stardewCabinOccupancyUnknown:
     "The game did not answer this time, so this panel cannot say whether she is in the save, and it will not guess in either direction. Load the farm in Stardew Valley if it is not loaded, then press this button again.",
+  // What the release did NOT do, one sentence per assertion. A press that kept the quarantine has to say which
+  // fact it could not establish: "still uncertain" is the state the player was already reading.
+  stardewCabinQuarantineKeptRecordChanged:
+    "The attempt this page holds is no longer the one the game answered about, so nothing was released - freeing a different attempt is exactly the second cabin request this panel must never send. Nothing was changed here.",
+  stardewCabinQuarantineKeptRegistrationMoved:
+    "Another GameBuddy attempt has taken over this installation since this page was opened, so the attempt held here is not the one to release. Nothing was changed.",
+  stardewCabinQuarantineKeptGuardianAlive:
+    "GameBuddy's own helper for this attempt is still running, and starting a second GameBuddy over a world the first one still holds is the double binding this attempt is held to prevent. Close Stardew Valley, quit GameBuddy from the tray icon, and press this button again.",
+  stardewCabinQuarantineKeptEvidenceStale:
+    "The game's answer was too old, or about a different world, to free anything with. Nothing was changed; load this farm in Stardew Valley and press this button again.",
   // The handoff is over: she is in the farm, so the block that offered the cabins says where she is and
   // leaves the one step that remains, which is the game itself.
   stardewCabinHers: "Her cabin",
@@ -1762,6 +1772,14 @@ const zh: Messages = {
     "游戏回答：她已经在这份存档里了。切换到《星露谷物语》，去农舍找她吧。",
   stardewCabinOccupancyUnknown:
     "这次游戏没有回答，所以这一页无法判断她在不在存档里，也不会往任何一边猜。如果《星露谷物语》还没载入农场，先载入农场，再按一次这个按钮。",
+  stardewCabinQuarantineKeptRecordChanged:
+    "这一页所在的尝试已经不是游戏刚刚回答的那一次，所以什么都没释放——放掉另一个尝试，正是这一页绝不能发出的第二次小屋请求。这里没有任何变化。",
+  stardewCabinQuarantineKeptRegistrationMoved:
+    "打开这一页之后，另一个 GameBuddy 尝试已经接管了这套安装，所以这里被扣住的尝试已经不归它释放。这里没有任何变化。",
+  stardewCabinQuarantineKeptGuardianAlive:
+    "这个尝试对应的 GameBuddy 辅助进程还在运行；在第一个 GameBuddy 还握着世界的时候再起第二个，正是这个被扣住的尝试要防止的重复绑定。请关掉《星露谷物语》，从系统托盘退出 GameBuddy，再按一次这个按钮。",
+  stardewCabinQuarantineKeptEvidenceStale:
+    "游戏的回答太旧了，或者说的是另一个世界，不能凭它释放任何东西。这里没有任何变化；请在《星露谷物语》里载入这个农场，再按一次这个按钮。",
   stardewCabinHers: "她的小屋",
   stardewCabinMovedIn: "她已经在这份存档里了，{{record}}就是她住的小屋。",
   stardewCabinMovedInCabinUnknown: "那间小屋",

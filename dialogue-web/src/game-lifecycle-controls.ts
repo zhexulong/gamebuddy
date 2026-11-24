@@ -1,5 +1,5 @@
 import { assertNever } from "./assert-never";
-import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-reference-game-browser-api";
+import type { GameBrowserStateV1, StardewCabinChoiceV1, StardewCabinOccupancyAnswerV1 } from "./composed-reference-game-browser-api";
 import type { Messages } from "./i18n";
 
 /**
@@ -768,7 +768,7 @@ export type CabinViewState =
    * on the Host (`decideStardewCabinQuarantineStep`), so this surface carries the ANSWER and never a fourth
    * outcome of its own.
    */
-  | Readonly<{ kind: "uncertain"; occupancy: CabinOccupancyAnswer | null }>
+  | Readonly<{ kind: "uncertain"; occupancy: CabinOccupancyAnswer | null; releaseRefusal: CabinQuarantineReleaseRefusal | null }>
   /** The read could not be made, and the panel offers the control that makes it again. */
   | Readonly<{ kind: "unavailable"; reread: boolean }>
   /**
@@ -795,8 +795,21 @@ export type CabinViewState =
  * the document could not be trusted - stale, unreadable, forged, another world, or a host that was not
  * ready. `unknown` never stands for `not_bound`: the difference is what a second signed manifest into the
  * same world would cost.
+ *
+ * The spelling is the wire's (`StardewCabinOccupancyAnswerV1`), not a second list: the answers the surface
+ * can state are exactly the answers the Host can send.
  */
-export type CabinOccupancyAnswer = "not_bound" | "already_bound" | "unknown";
+export type CabinOccupancyAnswer = StardewCabinOccupancyAnswerV1["occupancy"]["answer"];
+
+/**
+ * Which of the release's four assertions kept the quarantined attempt where it is.
+ *
+ * `released` is absent on purpose: a released attempt is not a state this panel states, it is a state the
+ * panel LEAVES - the press re-reads the cabin handoff and offers the choice again. What the surface can
+ * carry is the refusal, one name per fact, so "the attempt stays quarantined" is never a sentence without
+ * a reason in it.
+ */
+export type CabinQuarantineReleaseRefusal = Exclude<StardewCabinOccupancyAnswerV1["release"], "released" | "not_licensed">;
 
 /**
  * The presses that act on the handoff itself: choosing a cabin, or asking for the two reads a player
@@ -974,7 +987,7 @@ export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], Cabin
   confirming: Object.freeze({ kind: "confirming" as const, choices: Object.freeze([]), choiceHandle: "CHOICE" }),
   admitted: Object.freeze({ kind: "admitted" as const, cabinLabel: "Cabin 1" }),
   moved_in: Object.freeze({ kind: "moved_in" as const, cabinLabel: null }),
-  uncertain: Object.freeze({ kind: "uncertain" as const, occupancy: null }),
+  uncertain: Object.freeze({ kind: "uncertain" as const, occupancy: null, releaseRefusal: null }),
   unavailable: Object.freeze({ kind: "unavailable" as const, reread: false }),
   missing: Object.freeze({ kind: "missing" as const, reread: false }),
 });
@@ -1084,7 +1097,11 @@ export type CabinSentenceKey =
   | "stardewCabinMovedInStep"
   | "stardewCabinOccupancyNotBound"
   | "stardewCabinOccupancyAlreadyBound"
-  | "stardewCabinOccupancyUnknown";
+  | "stardewCabinOccupancyUnknown"
+  | "stardewCabinQuarantineKeptRecordChanged"
+  | "stardewCabinQuarantineKeptRegistrationMoved"
+  | "stardewCabinQuarantineKeptGuardianAlive"
+  | "stardewCabinQuarantineKeptEvidenceStale";
 
 /**
  * When a declared sentence is the one this state is showing.
@@ -1096,7 +1113,9 @@ export type CabinSentenceKey =
  *
  * The three `occupancy_*` members are one per answer in `CabinOccupancyAnswer`, and the name is derived
  * from the answer rather than chosen: `gates/product/check-state-sentences.mjs` reads that union and
- * fails an answer this state has no sentence for, so a fourth answer cannot arrive unspelled.
+ * fails an answer this state has no sentence for, so a fourth answer cannot arrive unspelled. The four
+ * `release_*` members are derived the same way from `CabinQuarantineReleaseRefusal`: a press that kept the
+ * quarantine says WHICH assertion refused, because "still uncertain" is the state the player was already in.
  */
 export type CabinSentenceWhen =
   | "always"
@@ -1106,7 +1125,11 @@ export type CabinSentenceWhen =
   | "stale_refusal"
   | "occupancy_not_bound"
   | "occupancy_already_bound"
-  | "occupancy_unknown";
+  | "occupancy_unknown"
+  | "release_record_is_not_the_quarantined_attempt"
+  | "release_registration_names_another_attempt"
+  | "release_guardian_objects_not_proven_dead"
+  | "release_evidence_not_fresh_for_this_world";
 
 /** One sentence of a cabin-handoff state, with the tone and the drawing the panel gives it. */
 export type CabinSentence = Readonly<{
@@ -1175,6 +1198,34 @@ export const CABIN_HANDOFF_SENTENCE = Object.freeze({
       when: "occupancy_unknown",
       testId: "cabin-occupancy-unknown",
     },
+    {
+      key: "stardewCabinQuarantineKeptRecordChanged",
+      as: "note",
+      tone: "warning",
+      when: "release_record_is_not_the_quarantined_attempt",
+      testId: "cabin-quarantine-kept-record-changed",
+    },
+    {
+      key: "stardewCabinQuarantineKeptRegistrationMoved",
+      as: "note",
+      tone: "warning",
+      when: "release_registration_names_another_attempt",
+      testId: "cabin-quarantine-kept-registration-moved",
+    },
+    {
+      key: "stardewCabinQuarantineKeptGuardianAlive",
+      as: "note",
+      tone: "warning",
+      when: "release_guardian_objects_not_proven_dead",
+      testId: "cabin-quarantine-kept-guardian-alive",
+    },
+    {
+      key: "stardewCabinQuarantineKeptEvidenceStale",
+      as: "note",
+      tone: "warning",
+      when: "release_evidence_not_fresh_for_this_world",
+      testId: "cabin-quarantine-kept-evidence-stale",
+    },
   ],
   unavailable: [
     { key: "stardewCabinsAwaitingSession", as: "status", tone: "info", when: "awaits_session" },
@@ -1209,6 +1260,14 @@ export function cabinSentenceShown(
       return view.state.kind === "uncertain" && view.state.occupancy === "already_bound";
     case "occupancy_unknown":
       return view.state.kind === "uncertain" && view.state.occupancy === "unknown";
+    case "release_record_is_not_the_quarantined_attempt":
+      return view.state.kind === "uncertain" && view.state.releaseRefusal === "record_is_not_the_quarantined_attempt";
+    case "release_registration_names_another_attempt":
+      return view.state.kind === "uncertain" && view.state.releaseRefusal === "registration_names_another_attempt";
+    case "release_guardian_objects_not_proven_dead":
+      return view.state.kind === "uncertain" && view.state.releaseRefusal === "guardian_objects_not_proven_dead";
+    case "release_evidence_not_fresh_for_this_world":
+      return view.state.kind === "uncertain" && view.state.releaseRefusal === "evidence_not_fresh_for_this_world";
     default:
       return assertNever(sentence.when);
   }

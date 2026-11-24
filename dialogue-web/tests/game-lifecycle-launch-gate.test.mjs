@@ -826,20 +826,64 @@ test("cabin-forward-path.4: an unconfirmed confirmation offers the probe and nev
     const sentence = CABIN_HANDOFF_SENTENCE.uncertain.find((entry) => entry.when === `occupancy_${answer}`);
     assert.ok(sentence !== undefined, `the ${answer} answer has no sentence`);
     assert.equal(
-      cabinSentenceShown(sentence, { state: { kind: "uncertain", occupancy: answer }, awaitsSession: false }),
+      cabinSentenceShown(sentence, {
+        state: { kind: "uncertain", occupancy: answer, releaseRefusal: null },
+        awaitsSession: false,
+      }),
       true,
       `the ${answer} answer's sentence is shown exactly when the state carries that answer`,
     );
     assert.equal(
-      cabinSentenceShown(sentence, { state: { kind: "uncertain", occupancy: null }, awaitsSession: false }),
+      cabinSentenceShown(sentence, {
+        state: { kind: "uncertain", occupancy: null, releaseRefusal: null },
+        awaitsSession: false,
+      }),
       false,
       `the ${answer} answer's sentence is hidden while the probe has not answered`,
     );
   }
+  // What a press that KEPT the quarantine says: one sentence per assertion, shown exactly when the state carries
+  // that refusal. "Still uncertain" is the screen the player was already on, so each refusal names the fact that
+  // could not be established - the four names are the release's own, not a second vocabulary.
+  const refusals = {
+    record_is_not_the_quarantined_attempt: MESSAGES.stardewCabinQuarantineKeptRecordChanged,
+    registration_names_another_attempt: MESSAGES.stardewCabinQuarantineKeptRegistrationMoved,
+    guardian_objects_not_proven_dead: MESSAGES.stardewCabinQuarantineKeptGuardianAlive,
+    evidence_not_fresh_for_this_world: MESSAGES.stardewCabinQuarantineKeptEvidenceStale,
+  };
+  assert.equal(new Set(Object.values(refusals)).size, 4, "the four refusals state four different sentences");
+  assert.equal(
+    CABIN_HANDOFF_SENTENCE.uncertain.filter((sentence) => sentence.when.startsWith("release_")).length,
+    4,
+    "the state declares exactly one sentence per assertion that can keep the quarantine",
+  );
+  for (const refusal of Object.keys(refusals)) {
+    const sentence = CABIN_HANDOFF_SENTENCE.uncertain.find((entry) => entry.when === `release_${refusal}`);
+    assert.ok(sentence !== undefined, `the ${refusal} refusal has no sentence`);
+    assert.equal(
+      cabinSentenceShown(sentence, {
+        state: { kind: "uncertain", occupancy: "not_bound", releaseRefusal: refusal },
+        awaitsSession: false,
+      }),
+      true,
+      `the ${refusal} refusal's sentence is shown exactly when the state carries that refusal`,
+    );
+    assert.equal(
+      cabinSentenceShown(sentence, {
+        state: { kind: "uncertain", occupancy: "not_bound", releaseRefusal: null },
+        awaitsSession: false,
+      }),
+      false,
+      `the ${refusal} refusal's sentence is hidden when nothing was refused`,
+    );
+  }
   assert.doesNotMatch(
-    [MESSAGES.stardewCabinConfirmationUncertain, MESSAGES.stardewCabinCheckGameHint, ...Object.values(answers)].join(
-      "\n",
-    ),
+    [
+      MESSAGES.stardewCabinConfirmationUncertain,
+      MESSAGES.stardewCabinCheckGameHint,
+      ...Object.values(answers),
+      ...Object.values(refusals),
+    ].join("\n"),
     /reload|recovery/iu,
     "a step this state cannot perform stays out of its copy, including the answers its probe can give: a reload talks to the same GameBuddy, and recovery refuses a terminal attempt",
   );
