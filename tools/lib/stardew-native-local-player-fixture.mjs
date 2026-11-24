@@ -780,6 +780,13 @@ export function fixtureActions(action) {
   if (action === "shake_tree") return ["shake_tree"];
   if (action === "take_pedestal_item") return ["take_pedestal_item"];
   if (action === "toggle_fence_gate") return ["toggle_fence_gate"];
+  // The two "put ONE carried item INTO a placed thing" actions. Each publishes its own action and NOTHING else: the
+  // deposit IS the thing under test, and a sibling capability would only widen a world that already holds what the
+  // action needs - one EMPTY container plus one item the container's own acceptance rule takes, which is exactly what
+  // `ModEntry.Fixtures.PlacedDepositTargets.cs` arms. No other lane's set shares either id, so neither world can be
+  // armed by another lane's `--action`.
+  if (action === "put_item_in_fish_tank") return ["put_item_in_fish_tank"];
+  if (action === "place_item_on_pedestal") return ["place_item_on_pedestal"];
   // Movement family: the fixture warps the actor beside the water / horse /
   // mine entrance and production alone launches / mounts / enters.
   if (action === "use_raft") return ["use_raft"];
@@ -1099,6 +1106,13 @@ export function fixtureScenario(actions, action) {
   if (actions.includes("shake_tree")) return "native_shake_tree_v1";
   if (actions.includes("take_pedestal_item")) return "native_take_pedestal_item_v1";
   if (actions.includes("toggle_fence_gate")) return "native_toggle_fence_gate_v1";
+  // The two container-deposit worlds, action-keyed for the reason every line in this block is: NOTHING in either action
+  // set matches an `actions.includes(...)` rule below, so the chain would answer "" - the ordinary world - and the run
+  // would look for an empty fish tank (a `Furniture` in `location.furniture`) or an empty pedestal (an `ItemPedestal` in
+  // `location.objects`) in a world that stages neither. Each Given is its own because a tank is indoor furniture and a
+  // pedestal stands outdoors on the Farm, so no single world carries both.
+  if (action === "put_item_in_fish_tank") return "native_put_item_in_fish_tank_v1";
+  if (action === "place_item_on_pedestal") return "native_place_item_on_pedestal_v1";
   // The world-object lane: ONE scenario arms all three Givens (a placeable tapper on a mature tree,
   // a placed machine, a twig, a barrel, and the axe/pickaxe to act with).
   if (
