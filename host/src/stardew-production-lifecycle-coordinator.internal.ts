@@ -187,8 +187,32 @@ export type StardewGameSurfaceAttachmentView = Readonly<{
     | "disconnected";
 }>;
 
+/**
+ * The cabin this attachment bound: the Mod's own identity for it, and the word the offer list rendered for that
+ * identity at the moment the press named it.
+ *
+ * Both halves travel together on purpose. The identity is content - it names a cabin in the world's own document -
+ * while the word is only a rendering of that identity's position in that document, so a word published without the
+ * identity could be re-attributed to a different cabin by the next reader.
+ */
+export type StardewGameSurfaceAttachmentCabinView = Readonly<{ cabinId: string; label: string }>;
+
 export type StardewGameSurfaceAttachmentReader = Readonly<{
   readAttachmentView(): StardewGameSurfaceAttachmentView;
+  /**
+   * The cabin the attachment bound, or `null` for an attachment this lifecycle did not establish through a cabin
+   * confirmation (a created world, the headless operational lease) and while nothing is attached.
+   *
+   * It rides this reader rather than `readAttachmentView` because it is a fact about the cabin, not about the
+   * attachment's standing: those two words are read by every consumer, while the cabin is only ever published beside
+   * them. The guard is the attachment itself - `null` whenever the generation reached this read as 0 - so a word
+   * cannot outlive the binding it was recorded for, and every path that establishes a different binding replaces or
+   * clears it.
+   *
+   * Optional because it is the one read a reader can honestly not offer: a reader that has no cabin to publish (a
+   * mock, or a Host from before the fact) answers by omission, and the projection then publishes no word at all.
+   */
+  readAttachmentCabinView?(): StardewGameSurfaceAttachmentCabinView | null;
 }>;
 
 /**
@@ -1556,6 +1580,15 @@ function createCoordinator(
   let farmhandGameRuntimeLease: ConnectedSemanticGameLease | undefined;
   let farmhandGameRuntimeFacadeClosed = false;
   let attachmentGeneration = 0;
+  /**
+   * The cabin the live attachment bound, recorded by the confirmation that bound her.
+   *
+   * It is kept beside the generation rather than inside it because a resume re-attaches the SAME world (same cabin)
+   * while a create binds a new one, and the two must not be confused: the reader publishes this record only while
+   * something is attached, every path that establishes a different binding replaces or clears it, and a word that
+   * outlived its binding therefore cannot reach the surface.
+   */
+  let attachmentCabin: StardewGameSurfaceAttachmentCabinView | null = null;
   let attachmentConnectionStatus: StardewGameSurfaceAttachmentView["connectionStatus"] = "none";
   // Coordinator-owned action authority: a resume creates a newer activation
   // whose authority pauses until a fresh explicit Game instruction reopens it.
@@ -1711,6 +1744,9 @@ function createCoordinator(
         generation: attachmentGeneration,
         connectionStatus: attachmentConnectionStatus,
       });
+    },
+    readAttachmentCabinView(): StardewGameSurfaceAttachmentCabinView | null {
+      return attachmentGeneration === 0 ? null : attachmentCabin;
     },
   });
   const launchReadinessReader: StardewGameSurfaceLaunchReadinessReader = Object.freeze({
@@ -2614,6 +2650,10 @@ function createCoordinator(
           enteredLease.activateCommittedIngress();
           if (isClosing()) throw new Error("stardew_lifecycle_closing");
           attachmentGeneration = 1;
+          // The cabin this press bound, by the Mod's own identity for it and the word its offer carried. The join
+          // manifest the admission above verified is the same cabin (`stardew-attachment.ts` matches it against the
+          // live session document), so this record is a fact the binding established rather than a copy of the offer.
+          attachmentCabin = Object.freeze({ cabinId: handle.choice.cabinId, label: handle.choice.displayLabel });
           attachmentConnectionStatus = "connected_idle";
           actionAuthorityStatus = "active";
           publishGameFact("attachment");
@@ -3628,6 +3668,8 @@ function createCoordinator(
           resumedGameSessionId = metadata.gameSessionId;
           publishGameFact("selectedWorld");
           attachmentGeneration = Math.max(attachmentGeneration + 1, 1);
+          // A created world is a new binding, and the cabin she is given in it is not the cabin this record names.
+          attachmentCabin = null;
           attachmentConnectionStatus = "reconnecting";
           actionAuthorityStatus = "paused";
           publishGameFact("attachment");
@@ -4124,6 +4166,8 @@ function createCoordinator(
         // lease owner (the task-ingress composition arms before committing).
         enteredLease.host.attachVoiceStopper(async () => undefined);
         attachmentGeneration = 1;
+        // The headless operational lease attaches nothing through a cabin confirmation, so it carries no cabin.
+        attachmentCabin = null;
         attachmentConnectionStatus = "connected_idle";
         actionAuthorityStatus = "active";
         publishGameFact("attachment");

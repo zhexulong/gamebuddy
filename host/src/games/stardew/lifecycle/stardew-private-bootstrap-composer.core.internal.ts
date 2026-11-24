@@ -451,7 +451,16 @@ declare const stardewManifestAdmissionBrand: unique symbol;
  */
 type StardewManifestAdmission = Readonly<{ readonly [stardewManifestAdmissionBrand]: never }>;
 
+/**
+ * One cabin this companion may move into.
+ *
+ * `cabinId` is the Mod's own identity for the cabin (`stardew-session.json` `cabins[].cabinId`, written from
+ * `cabin.NameOrUniqueName`), and `displayLabel` is this layer's rendering of it: the cabin's position in the Mod's
+ * own, UNFILTERED cabin list. The pair travels together because the word alone cannot say which cabin it names - a
+ * label re-derived later from a shorter list would point at a different cabin.
+ */
 export type StardewManifestHandoffChoice = Readonly<{
+  cabinId: string;
   displayLabel: string;
   expiresAtMs: number;
   selection: StardewManifestHandoffSelection;
@@ -2387,19 +2396,26 @@ function createManifestHandoffCoordinatorCore(
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       const flow = createOwnedPlayerHostAttachmentFlowCore(owner, compositionIdentity, readClock);
       const session = await flow.readLiveSession();
-      const availableCabins = session.cabins.filter(
-        (cabin) =>
-          !cabin.isBusy &&
-          (cabin.boundCompanionId === "" || cabin.boundCompanionId === ownerFacts.privateMaterial.value?.companionId),
-      );
+      // The label is the cabin's position in the Mod's own list, taken BEFORE the filter. Numbering the cabins this
+      // companion may use renumbered her cabin whenever another companion bound one before it: the same cabin was
+      // "Cabin 1" in one world state and "Cabin 2" in the next, so the word could not be carried across a reload.
       const choices = await Promise.all(
-        availableCabins.map(async (cabin, index) =>
-          Object.freeze({
-            displayLabel: `Cabin ${index + 1}`,
-            expiresAtMs: Math.min(ownerFacts.expiresAtMs, session.expiresAtUnixMs),
-            selection: await coordinator.select(owner, cabin.cabinId),
-          }),
-        ),
+        session.cabins
+          .map((cabin, index) => ({ cabin, label: `Cabin ${index + 1}` }))
+          .filter(
+            ({ cabin }) =>
+              !cabin.isBusy &&
+              (cabin.boundCompanionId === "" ||
+                cabin.boundCompanionId === ownerFacts.privateMaterial.value?.companionId),
+          )
+          .map(async ({ cabin, label }) =>
+            Object.freeze({
+              cabinId: cabin.cabinId,
+              displayLabel: label,
+              expiresAtMs: Math.min(ownerFacts.expiresAtMs, session.expiresAtUnixMs),
+              selection: await coordinator.select(owner, cabin.cabinId),
+            }),
+          ),
       );
       assertManifestHandoffOwnerAdmissible(ownerFacts, readClock);
       return Object.freeze(choices);

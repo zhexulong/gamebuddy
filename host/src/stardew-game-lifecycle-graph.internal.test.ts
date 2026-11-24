@@ -584,7 +584,8 @@ test("lifecycle-graph.5: every declared state publishes exactly one instance wor
       Object.freeze({ readRoleLifecycleView: async () => view }),
       Object.freeze({
         readAttachmentView: () =>
-          Object.freeze({ status: "none" as const, generation: 0, cabin: null, connectionStatus: "none" as const }),
+          Object.freeze({ status: "none" as const, generation: 0, connectionStatus: "none" as const }),
+        readAttachmentCabinView: () => null,
       }),
       Object.freeze({
         readLaunchReadinessView: () =>

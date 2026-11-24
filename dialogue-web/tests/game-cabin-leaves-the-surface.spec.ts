@@ -35,14 +35,20 @@ async function controlInventory(within: Locator) {
   );
 }
 
-/** A running game this browser holds the companion in: the Host's own attachment, published. */
+/**
+ * A running game this browser holds the companion in: the Host's own attachment, published.
+ *
+ * `cabinLabel` is the cabin the Host bound her to, and it deliberately does not match the offer this page can read
+ * ("Cabin 1" below): the word a reload shows must be the Host's own for the cabin it bound, not one this surface can
+ * derive from the list on screen. `Cabin 4` is the fourth cabin in that world, the second one she may use.
+ */
 const boundGame = {
   ...game,
   game: {
     ...game.game,
     prerequisites: { status: "met", detectedGame: "Stardew Valley" },
     instance: { status: "running", gameTitle: "Stardew Valley", generation: 1 },
-    attachment: { status: "attached", generation: 1 },
+    attachment: { status: "attached", generation: 2, cabinLabel: "Cabin 4" },
     connectionStatus: "connected_idle",
     actionAuthority: "active",
   },
@@ -54,6 +60,21 @@ const cabinOffer = {
   apiVersion: 1,
   choices: [{ displayLabel: "Cabin 1", availability: "available", choiceHandle: cabinChoiceHandle, expiresAtMs }],
 };
+
+/**
+ * The same farm, and the same page, on a Host that publishes no cabin with its attachment - one from before the fact.
+ *
+ * The honest answer there is "her cabin": the panel must not fall back to the offer list's own numbering, which would
+ * name whichever cabin the list happens to hold rather than the one she is in.
+ */
+const boundGameWithoutCabinWord = {
+  ...boundGame,
+  game: {
+    ...boundGame.game,
+    attachment: { status: "attached", generation: 1 },
+  },
+};
+const boundRootWithoutCabinWord = { ...root, game: boundGameWithoutCabinWord };
 
 test("a save the companion is already in offers no cabin to confirm, and says where she is", async ({ page }) => {
   await page.route("**/api/composed-reference-game/v1/bootstrap", (route) => route.fulfill(jsonOk(boundRoot)));
@@ -72,6 +93,9 @@ test("a save the companion is already in offers no cabin to confirm, and says wh
   const movedIn = panel.getByTestId("cabin-moved-in");
   await expect(movedIn).toBeVisible();
   await expect(movedIn).toContainText(/already in this save/iu);
+  // THE CABIN IS NAMED, by the Host's own word for the binding. It is not "Cabin 1", which is the only cabin this page
+  // can read for itself: a name taken from that list would point at a different cabin as soon as another bound one.
+  await expect(movedIn).toContainText(/in Cabin 4/u);
   await expect(movedIn).toContainText(/Switch to Stardew Valley and look for her in the farmhouse/u);
 
   const inventory = await controlInventory(movedIn);
@@ -97,4 +121,39 @@ test("before she is in, the same block still offers the cabin the Host advertise
   await expect(handoff.getByTestId("cabin-choice-list")).toContainText("Cabin 1");
   await expect(handoff.getByRole("button", { name: "Confirm cabin" })).toBeVisible();
   await expect(panel.getByTestId("cabin-moved-in")).toHaveCount(0);
+});
+
+/**
+ * The same farm on a Host that publishes no cabin with its attachment, which is a Host from before the fact.
+ *
+ * Nothing is known about which cabin she is in, and the panel says so: "her cabin". The one thing it must not do is
+ * reuse the offer list's numbering - "Cabin 1" is the only cabin this page can read, and the whole reason the word is
+ * published by the Host is that the list cannot answer which cabin the binding chose.
+ */
+test("a Host that publishes no cabin leaves the sentence at \"her cabin\", never the offer's number", async ({ page }) => {
+  await page.route("**/api/composed-reference-game/v1/bootstrap", (route) =>
+    route.fulfill(jsonOk(boundRootWithoutCabinWord)),
+  );
+  await page.route("**/api/composed-reference-game/v1/game/stardew/cabins", (route) =>
+    route.fulfill(jsonOk(cabinOffer)),
+  );
+  await page.route("**/api/composed-reference-game/v1/state", (route) =>
+    route.fulfill(jsonOk(boundRootWithoutCabinWord)),
+  );
+  await stubGameRead(page, boundGameWithoutCabinWord);
+  await page.route("**/api/tavern/v1/draft", (route) => route.fulfill(jsonOk(draft)));
+
+  await page.goto(`/#profile=composed-reference-game&boot=${token}`);
+  await openGameDrawer(page);
+  const panel = page.getByRole("region", { name: "Game state" });
+  const movedIn = panel.getByTestId("cabin-moved-in");
+  await expect(movedIn).toBeVisible();
+  const text = await movedIn.innerText();
+  console.log(`[cabin-moved-in-unnamed] text=${JSON.stringify(text)}`);
+  expect(text, `the noun a Host published no cabin for was named anyway: ${JSON.stringify(text)}`).toContain(
+    "in her cabin",
+  );
+  expect(text, `the offer list's number stood in for a cabin the Host never named: ${JSON.stringify(text)}`).not.toContain(
+    "Cabin 1",
+  );
 });

@@ -10,6 +10,7 @@ import { createGameEventStream } from "./game-event-stream.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceActionAuthorityView,
+  StardewGameSurfaceAttachmentCabinView,
   StardewGameSurfaceAttachmentReader,
   StardewGameSurfaceAttachmentView,
   StardewGameSurfaceCapabilityReader,
@@ -35,8 +36,9 @@ function profile() {
 
 function attachment(
   view: StardewGameSurfaceAttachmentView = Object.freeze({ status: "none", generation: 0, connectionStatus: "none" }),
+  cabin: StardewGameSurfaceAttachmentCabinView | null = null,
 ): StardewGameSurfaceAttachmentReader {
-  return Object.freeze({ readAttachmentView: () => view });
+  return Object.freeze({ readAttachmentView: () => view, readAttachmentCabinView: () => cabin });
 }
 
 function launchReadiness(
@@ -222,7 +224,7 @@ test("read-only provider accepts a reader-only fresh lifecycle and projects only
     prerequisites: { status: "unknown", detectedGame: null },
     instance: { status: "none", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
-    attachment: { status: "none", generation: 0 },
+    attachment: { status: "none", generation: 0, cabinLabel: null },
     connectionStatus: "none",
     actionAuthority: "unavailable",
     role: null,
@@ -246,7 +248,7 @@ test("read-only provider projects unavailable lifecycle without fabricated attac
     prerequisites: { status: "unknown", detectedGame: null },
     instance: { status: "unread", gameTitle: null, generation: 0 },
     compatibility: { status: "unchecked", message: null },
-    attachment: { status: "none", generation: 0 },
+    attachment: { status: "none", generation: 0, cabinLabel: null },
     connectionStatus: "none",
     actionAuthority: "unavailable",
     role: null,
@@ -309,6 +311,33 @@ test("compatibility mapping is explicit and does not attest attachment readiness
   }
 });
 
+/**
+ * THE BOUND CABIN'S WORD IS THE HOST'S, AND IT IS PUBLISHED WITH THE BINDING IT BELONGS TO.
+ *
+ * The surface used to know which cabin she moved into only from the offer it had just confirmed, so a page opened
+ * afterwards could say "her cabin" and nothing more (`.tmp/lane-copyreach.md`). The word now travels on the attachment
+ * fact: the cabin the coordinator recorded, or `null` when the binding named none - never a name the projection makes
+ * up, because a name taken from the list of offers would point at a different cabin after the next bind.
+ */
+test("provider publishes the bound cabin's word, and states null when the binding named none", async () => {
+  const read = (cabin: StardewGameSurfaceAttachmentCabinView | null): Promise<GameBrowserStateV1> =>
+    createGameBrowserStateProvider(
+      profile(),
+      lifecycle(authenticatedView("verified")),
+      attachment(Object.freeze({ status: "attached", generation: 2, connectionStatus: "connected_idle" }), cabin),
+      launchReadiness(),
+      actionAuthority("active"),
+    ).readState(context);
+
+  const named = await read(Object.freeze({ cabinId: "cabin-second", label: "Cabin 2" }));
+  assert.deepEqual(named.game.attachment, { status: "attached", generation: 2, cabinLabel: "Cabin 2" });
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(named), true);
+
+  const unnamed = await read(null);
+  assert.deepEqual(unnamed.game.attachment, { status: "attached", generation: 2, cabinLabel: null });
+  assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(unnamed), true);
+});
+
 test("provider projects only Host-owned attachment generation and connection state", async () => {
   for (const connectionStatus of ["connected_idle", "stopping", "stopped", "failed"] as const) {
     const state = await createGameBrowserStateProvider(
@@ -318,7 +347,7 @@ test("provider projects only Host-owned attachment generation and connection sta
       launchReadiness(),
     ).readState(context);
     assert.equal(GameBrowserValidatorsV1.GameBrowserStateV1Schema.Check(state), true);
-    assert.deepEqual(state.game.attachment, { status: "attached", generation: 1 });
+    assert.deepEqual(state.game.attachment, { status: "attached", generation: 1, cabinLabel: null });
     assert.equal(state.game.connectionStatus, connectionStatus);
     // No capability reader is mounted in this construction, so the projection says so (`not_measured` + a reason)
     // instead of publishing the `0` the old literal did.

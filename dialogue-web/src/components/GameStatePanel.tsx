@@ -1110,10 +1110,10 @@ function cabinSentenceTestId(sentence: CabinSentence): string {
 /**
  * One declared cabin sentence as the player reads it.
  *
- * `moved_in` is the only one carrying a value: the cabin's label, known when this surface is the one
- * that confirmed her and unknowable after a reload, where the words fall back to "her cabin" rather than
- * to a number the list happened to show. `recordLabel` is the catalogue's own substitution, so the
- * Chinese sentence and the Latin label do not run together.
+ * `moved_in` is the only one carrying a value: the bound cabin's word as the Host published it with the attachment
+ * (`GameSessionControls.cabinLabel`), so a page that never confirmed anything still names it. When the Host published
+ * none the words fall back to "her cabin", never to a number the offer list happened to show. `recordLabel` is the
+ * catalogue's own substitution, so the Chinese sentence and the Latin label do not run together.
  */
 function cabinSentenceLabel(key: CabinSentenceKey, labels: Messages, state: CabinViewState): string {
   if (key !== "stardewCabinMovedIn") return labels[key];

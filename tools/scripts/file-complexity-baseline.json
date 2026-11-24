@@ -13,7 +13,7 @@
     "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts": 5208,
     "host/src/continuity-semantic-store/continuity-semantic-production-store.ts": 5159,
     "host/src/event-pump.ts": 6259,
-    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts": 6217,
+    "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts": 6233,
     "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.private.test.ts": 6415,
     "host/src/protocol.test.ts": 5001,
     "host/src/protocol.ts": 6545,

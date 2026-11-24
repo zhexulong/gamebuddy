@@ -204,7 +204,19 @@ const GAME_INSTANCE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   ...GAME_INSTANCE_OPTIONAL_KEYS,
 ]);
 const GAME_COMPATIBILITY_KEYS = ["status", "message"] as const;
-const GAME_ATTACHMENT_KEYS = ["status", "generation"] as const;
+const GAME_ATTACHMENT_REQUIRED_KEYS = ["status", "generation"] as const;
+/**
+ * The attachment member the contract declares `Type.Optional`: `cabinLabel`.
+ *
+ * It is the word for the cabin the attachment bound, published by a Host that records one. Absent is "this Host does
+ * not publish cabin labels" and `null` is "this attachment bound no cabin this Host can name" - both render as "her
+ * cabin", and neither licenses this client to name a cabin from the offers it happens to be holding.
+ */
+const GAME_ATTACHMENT_OPTIONAL_KEYS = ["cabinLabel"] as const;
+const GAME_ATTACHMENT_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  ...GAME_ATTACHMENT_REQUIRED_KEYS,
+  ...GAME_ATTACHMENT_OPTIONAL_KEYS,
+]);
 const GAME_CAPABILITY_PUBLISHED_KEYS = ["status", "count"] as const;
 const GAME_CAPABILITY_NOT_MEASURED_KEYS = ["status", "reason"] as const;
 
@@ -264,6 +276,8 @@ export type GameBrowserStateV1 = Readonly<{
     attachment: Readonly<{
       status: (typeof ATTACHMENT_STATUSES)[number];
       generation: number;
+      /** The bound cabin's word; absent on a Host that publishes none, `null` when the binding named no cabin. */
+      cabinLabel?: string | null;
     }>;
     connectionStatus: (typeof CONNECTION_STATUSES)[number];
     actionAuthority: (typeof ACTION_AUTHORITY_STATUSES)[number];
@@ -1049,11 +1063,15 @@ function validateGameFactPatch(value: unknown): GameFactPatchV1 {
       return value as unknown as GameFactPatchV1;
     }
     case "attachment": {
+      const attachmentKeys = isRecord(game.attachment) ? Object.keys(game.attachment) : [];
       if (
         !isRecord(game.attachment) ||
-        !hasExactKeys(game.attachment, GAME_ATTACHMENT_KEYS) ||
+        !GAME_ATTACHMENT_REQUIRED_KEYS.every((key) => attachmentKeys.includes(key)) ||
+        !attachmentKeys.every((key) => GAME_ATTACHMENT_ALLOWED_KEYS.has(key)) ||
         !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
         !isSafeInteger(game.attachment.generation, 0) ||
+        (game.attachment.cabinLabel !== undefined &&
+          !isNullableLabel(game.attachment.cabinLabel, MAX_CABIN_DISPLAY_LABEL_LENGTH)) ||
         !isOneOf(game.connectionStatus, CONNECTION_STATUSES) ||
         !isRecord(game.capabilitySummary) ||
         !isCapabilitySummary(game.capabilitySummary)
@@ -1160,11 +1178,15 @@ function isGameProjection(value: unknown): value is GameBrowserStateV1 {
   ) {
     return false;
   }
+  const attachmentKeys = isRecord(game.attachment) ? Object.keys(game.attachment) : [];
   if (
     !isRecord(game.attachment) ||
-    !hasExactKeys(game.attachment, GAME_ATTACHMENT_KEYS) ||
+    !GAME_ATTACHMENT_REQUIRED_KEYS.every((key) => attachmentKeys.includes(key)) ||
+    !attachmentKeys.every((key) => GAME_ATTACHMENT_ALLOWED_KEYS.has(key)) ||
     !isOneOf(game.attachment.status, ATTACHMENT_STATUSES) ||
-    !isSafeInteger(game.attachment.generation, 0)
+    !isSafeInteger(game.attachment.generation, 0) ||
+    (game.attachment.cabinLabel !== undefined &&
+      !isNullableLabel(game.attachment.cabinLabel, MAX_CABIN_DISPLAY_LABEL_LENGTH))
   ) {
     return false;
   }

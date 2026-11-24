@@ -8,6 +8,7 @@ import {
   attachmentRequestId,
   availableCabins,
   prepareCabinCoordinator,
+  confirmFirstCabin,
   installLifecycleTestHooks,
   canonicalTemporaryRoot,
   temporaryRoots,
@@ -203,6 +204,81 @@ test("dynamic cabin handoff admits one manifest and launches the exact owned AI 
       status: "none",
       generation: 0,
       connectionStatus: "none",
+    });
+    // Nothing is attached, so nothing names a cabin: the word cannot outlive the binding it was published with.
+    assert.equal(fixture.coordinator.attachmentReader.readAttachmentCabinView?.(), null);
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * THE CABIN SHE MOVED INTO IS A FACT THE HOST PUBLISHES WITH THE BINDING, not a label the page that pressed the
+ * confirm keeps for itself.
+ *
+ * The Mod's document names each cabin by identity (`cabins[].cabinId`, written from `cabin.NameOrUniqueName`) and
+ * carries no label at all (`FarmhandProvisioningFact` has id, owner, bound companion, busy), so the word is this
+ * layer's rendering of the cabin's position in the Mod's own list - and it travels with the identity it was rendered
+ * for. A page opened afterwards reads both from the attachment and can name her cabin; before this, only the page that
+ * pressed the confirm knew it (`.tmp/lane-copyreach.md` §1).
+ */
+test("the attachment publishes the cabin her confirmation bound, by the Mod's identity and the word it carried", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    await confirmFirstCabin(fixture);
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentCabinView?.(), {
+      cabinId: "cabin-alpha",
+      label: "Cabin 1",
+    });
+  } finally {
+    await fixture.coordinator.close();
+    await fixture.broker.close();
+  }
+});
+
+/**
+ * The word is the cabin's place in the MOD'S OWN list, never its slot among the cabins this companion may use.
+ *
+ * In this world the first cabin is already another companion's, so the offer list this companion may confirm starts
+ * at the second one. Numbering the offers made that cabin "Cabin 1" — the same word the first cabin carried in the
+ * previous world state, and the reason a stale word could not be told apart from a real one. The binding publishes the
+ * identity it actually bound with the word for that identity, so a world where her cabin moved gives a different pair
+ * rather than the old word over a new cabin.
+ */
+test("the bound cabin's word follows its identity, not its slot among the offers", async () => {
+  const fixture = await prepareCabinCoordinator(Date.now() + 5 * 60_000);
+  try {
+    // Cabin 1 belongs to another companion; cabin 2 is hers. Everything else (busy, foreign) is filtered from the
+    // offers, and the world's own order is what the words are rendered from.
+    await publishSignedPlayerHostSession(
+      fixture.runtimeRoot,
+      "player-generation-1",
+      [
+        { cabinId: "cabin-alpha", ownerFarmhandId: "101", boundCompanionId: "other-companion", isBusy: false },
+        { cabinId: "cabin-beta", ownerFarmhandId: "202", boundCompanionId: "companion-1", isBusy: false },
+        { cabinId: "cabin-busy", ownerFarmhandId: "303", boundCompanionId: "", isBusy: true },
+      ],
+      Date.now() + 5 * 60_000,
+    );
+    const choices = await fixture.coordinator.activationOwner.readCabinChoices(fixture.broker.issue("cabin_read"));
+    assert.deepEqual(
+      choices.choices.map((choice) => choice.displayLabel),
+      ["Cabin 2"],
+      "her cabin is the world's second cabin, and the offer may not renumber it to fit the list",
+    );
+    const confirmation = fixture.coordinator.activationOwner.confirmCabinChoice(fixture.broker.issue("cabin_confirm"), {
+      apiVersion: 1,
+      choiceHandle: choices.choices[0]!.choiceHandle,
+      idempotencyKey: "confirm-second-cabin-key",
+      confirmed: true,
+    });
+    const request = await waitForAttachmentRequest(fixture.runtimeRoot);
+    await publishAttachmentAdmission(fixture.runtimeRoot, request, availableCabins[1]!);
+    await confirmation;
+    assert.deepEqual(fixture.coordinator.attachmentReader.readAttachmentCabinView?.(), {
+      cabinId: "cabin-beta",
+      label: "Cabin 2",
     });
   } finally {
     await fixture.coordinator.close();

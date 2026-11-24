@@ -10,6 +10,7 @@ import type { StardewCompatibilityStatus } from "../stardew-compatibility.js";
 import type {
   StardewGameSurfaceActionAuthorityReader,
   StardewGameSurfaceActionAuthorityView,
+  StardewGameSurfaceAttachmentCabinView,
   StardewGameSurfaceAttachmentReader,
   StardewGameSurfaceAttachmentView,
   StardewGameSurfaceCapabilityReader,
@@ -97,6 +98,7 @@ export function createGameBrowserStateProvider(
     return {
       lifecycleView,
       attachmentView,
+      attachmentCabinView: attachment.readAttachmentCabinView?.() ?? null,
       launchReadinessView,
       actionAuthorityView,
       installationView,
@@ -127,6 +129,11 @@ export function createGameBrowserStateProvider(
 type GameBrowserViews = Readonly<{
   lifecycleView: StardewRoleLifecycleView;
   attachmentView: StardewGameSurfaceAttachmentView;
+  /**
+   * The cabin the live attachment bound, or null. It is read through the attachment reader because it is a fact of
+   * that binding, and it is projected onto the attachment's own fact so the surface can name her cabin after a reload.
+   */
+  attachmentCabinView: StardewGameSurfaceAttachmentCabinView | null;
   launchReadinessView: StardewGameSurfaceLaunchReadinessView;
   actionAuthorityView: StardewGameSurfaceActionAuthorityView | undefined;
   installationView: "registered" | "absent" | undefined;
@@ -201,6 +208,10 @@ function projectGameFacts(views: GameBrowserViews): Readonly<{
         attachment: Object.freeze({
           status: views.attachmentView.status,
           generation: views.attachmentView.generation,
+          // The bound cabin's word, published with the binding it belongs to. Absent and `null` are one answer to the
+          // surface ("say 'her cabin'"); the Host states `null` explicitly so the attachment frame can clear a word a
+          // previous binding published.
+          cabinLabel: views.attachmentCabinView?.label ?? null,
         }),
         connectionStatus: views.attachmentView.connectionStatus,
         capabilitySummary: projectCapabilitySummary(views.capabilityView),

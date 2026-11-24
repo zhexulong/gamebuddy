@@ -798,10 +798,6 @@ test("cabin-forward-path.4: an unconfirmed confirmation offers the probe and nev
     !uncertain.includes("confirm"),
     "a second confirmation is the one thing the state forbids, and the Host refuses it",
   );
-  // The copy beside that control has to say what it does and does not do, and what is left when the answer has not
-  // changed - the state is otherwise an identical screen after the press. It may not promise a recovery nobody
-  // performs: the shipped sentence told the player to reload the page and to wait for recovery, and neither can
-  // release a quarantined attempt (measured 2026-11-24).
   // The control's own label has to say what the press ASKS, because "check the game again" reads as a refresh of this
   // panel rather than as a question put to the game about her.
   assert.match(MESSAGES.stardewCabinCheckGame, /whether she moved in/u);
@@ -899,13 +895,48 @@ test("cabin-forward-path.8: the handoff is finished exactly when the Host's atta
       `${kind} still offers a press once the handoff is over, which is the control a finished action would draw`,
     );
   }
-  // The label survives only from the press that confirmed it: a page opened on a farm she is already in cannot know
-  // which cabin it was, and says "her cabin" rather than guessing one of the offers it just read.
+  // THE WORD IS THE HOST'S, PUBLISHED WITH THE BINDING IT BELONGS TO, so a page that never confirmed anything can
+  // still name her cabin - the point of carrying it across the boundary at all.
+  const withBoundCabin = (cabinLabel, generation) => ({
+    ...GAME_SESSION_INPUTS.attached_connected,
+    game: {
+      ...GAME_SESSION_INPUTS.attached_connected.game,
+      game: {
+        ...GAME_SESSION_INPUTS.attached_connected.game.game,
+        attachment: { status: "attached", generation, cabinLabel },
+      },
+    },
+  });
+  const published = deriveGameSessionControls(withBoundCabin("Cabin 2", 2));
+  assert.equal(published.cabinLabel, "Cabin 2", "the Host's word for the bound cabin reaches the derivation");
+  assert.equal(
+    deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.choices, controls: published }).cabinLabel,
+    "Cabin 2",
+    "a reloaded page names the cabin the Host bound, which it never confirmed itself",
+  );
+  // A Host that publishes no word (one from before the fact) leaves the surface the label it confirmed, and otherwise
+  // "her cabin" - never a number re-read from the offers it happens to hold.
   assert.equal(deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.admitted, controls: inFarm }).cabinLabel, "Cabin 1");
   assert.equal(
     deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.choices, controls: inFarm }).cabinLabel,
     null,
-    "a reloaded page never names a cabin it did not confirm",
+    "a reloaded page never names a cabin it did not confirm and the Host did not publish",
+  );
+  // A REBIND IS A DIFFERENT BINDING and is never served the word of the one before it. The Host states the word for
+  // the cabin it bound, or none at all - a generation that carries `null` (her cabin moved, or a world she was
+  // created into) renders as "her cabin" whatever the previous binding was called.
+  const reboundToNothing = deriveGameSessionControls(withBoundCabin(null, 3));
+  assert.equal(reboundToNothing.cabinLabel, null);
+  assert.equal(
+    deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.confirming, controls: reboundToNothing }).cabinLabel,
+    null,
+    "the binding that published no cabin inherits no word from the one before it",
+  );
+  const reboundToAnother = deriveGameSessionControls(withBoundCabin("Cabin 3", 4));
+  assert.equal(
+    deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.choices, controls: reboundToAnother }).cabinLabel,
+    "Cabin 3",
+    "the newer binding's own cabin is the one named",
   );
   t.diagnostic(`cabin-forward-path.8: ${CABIN_HANDOFF_KINDS.length} kind(s) retire to ${CABIN_HANDOFF_FINISHED_BY.becomes}`);
 });

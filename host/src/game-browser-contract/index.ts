@@ -253,6 +253,16 @@ export const GameCompatibilityV1Schema = strictObject({
 export const GameAttachmentStateV1Schema = strictObject({
   status: AttachmentStatus,
   generation: NonNegativeGeneration,
+  /**
+   * The cabin this attachment bound, as the attached world's own document names it - rendered for the surface, never
+   * a native identity (the browser contract publishes no raw ids: the cabin list carries `choiceHandle`, not
+   * `cabinId`).
+   *
+   * `null` is the Host saying it knows of no cabin for this attachment; the key absent is a Host that does not publish
+   * cabin labels at all. The surface answers both with "her cabin", and it never derives a name of its own, because a
+   * name taken from the list of offers on screen would point at a different cabin after the next bind.
+   */
+  cabinLabel: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 128 }), Type.Null()])),
 });
 
 /**

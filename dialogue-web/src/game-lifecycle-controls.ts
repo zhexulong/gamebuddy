@@ -341,6 +341,17 @@ export type GameSessionControls = Readonly<{
    */
   companionInFarm: boolean;
   /**
+   * The cabin the live attachment bound, as the Host published it with that binding, or `null` when this
+   * Host published no word for it (an attachment that bound no cabin, or a Host from before the fact).
+   *
+   * It rides the attachment fact rather than this surface's memory of confirming, which is what makes it
+   * survive a reload: the page that pressed the confirm kept the label it confirmed, and a page opened
+   * afterwards had nothing to say but "her cabin" (`.tmp/lane-copyreach.md` §1). The surface never derives
+   * a name of its own from the offers it can read - a name taken from that list points at a different cabin
+   * as soon as another companion binds one.
+   */
+  cabinLabel: string | null;
+  /**
    * Every step this state offers, in reading order. Never empty: `AGENTS.md`'s
    * zero-forward-path rule is why that is an invariant here rather than a hope,
    * and the gate fails by name on the phase that breaks it. `terminal` is the one
@@ -386,7 +397,13 @@ const RESUMABLE_CONNECTION_STATUSES: ReadonlySet<string> = new Set(["failed", "d
 type GameSessionControlFlags = Partial<
   Omit<
     GameSessionControls,
-    "phase" | "forwardActions" | "waitingForGame" | "restartRequired" | "rereadAvailable" | "companionInFarm"
+    | "phase"
+    | "forwardActions"
+    | "waitingForGame"
+    | "restartRequired"
+    | "rereadAvailable"
+    | "companionInFarm"
+    | "cabinLabel"
   >
 >;
 
@@ -439,6 +456,9 @@ export function deriveGameSessionControls(
       installationRequired: false,
       ...flags,
       companionInFarm,
+      // The Host's own word for the cabin this attachment bound. It is read from the published attachment
+      // rather than from the cabin handoff, so the cabin can be named on a page that never pressed a confirm.
+      cabinLabel: view.game?.game.attachment.cabinLabel ?? null,
       forwardActions: Object.freeze([...forwardActions]),
       waitingForGame: phase === "launching" || phase === "running_without_attachment",
       restartRequired: phase === "launch_failed",
@@ -717,9 +737,9 @@ export type CabinViewState =
   /**
    * The confirmation was admitted: she is moving in and the game is what happens next.
    *
-   * `cabinLabel` is the label of the offer this surface confirmed, kept because the label is the only
-   * record of WHICH cabin she moved into: the Host publishes the binding as an attachment, never as a
-   * cabin's name, so a surface that dropped the label could not say where she went.
+   * `cabinLabel` is the label of the offer this surface confirmed, kept because it is the only record of WHICH cabin
+   * she moved into on a Host that publishes no cabin with its attachment; a Host that does publish one supersedes it
+   * in `moved_in` (see `deriveCabinHandoffView`).
    */
   | Readonly<{ kind: "admitted"; cabinLabel: string }>
   /**
@@ -729,9 +749,12 @@ export type CabinViewState =
    * This is the one cabin state derived from a PUBLISHED fact rather than from this surface's own press
    * (`deriveCabinHandoffView`), because the list outlives the press: a page opened on a farm she is
    * already in reads the cabin offers again, and a confirm drawn there would be a press whose action is
-   * finished. `cabinLabel` is known exactly when this surface is the one that confirmed her, and null
-   * after a reload - the honest "the Host's binding does not carry the name" rather than the number of
-   * whichever offer the list happened to list first.
+   * finished.
+   *
+   * `cabinLabel` is the Host's own word for the bound cabin, so a page that never confirmed anything can still name
+   * it. It is null exactly when the Host published none (an attachment that bound no cabin this Host can name, or a
+   * Host from before the fact), and the copy then says "her cabin" rather than reusing a label from the offer list - a
+   * name taken from that list would point at a different cabin as soon as another companion bound one.
    */
   | Readonly<{ kind: "moved_in"; cabinLabel: string | null }>
   /**
@@ -922,8 +945,12 @@ export const CABIN_HANDOFF_FINISHED_BY = Object.freeze({
  * The attachment is the product's record that she is bound in this save, and it outlives the press that put
  * her there: a page reopened on the same farm reads the cabin offers again (`CabinHandoff`'s own first read),
  * and a list drawn there offers a confirm the Host can only refuse for the life of the attempt. So the
- * finished state is derived from the published fact rather than from this surface's memory of confirming,
- * and `cabinLabel` survives only where this surface is the one that confirmed.
+ * finished state is derived from the published fact rather than from this surface's memory of confirming.
+ *
+ * The name she is given is the Host's own (`controls.cabinLabel`), which is the word for the cabin the binding
+ * established and therefore the one that survives a reload. This surface's confirmed label is the fallback for a
+ * Host that publishes none, and null is the honest answer when neither exists - never a label re-read from the
+ * offer list, which would name whichever cabin the list happens to hold now.
  */
 export function deriveCabinHandoffView(
   view: Readonly<{ cabin: CabinViewState; controls: GameSessionControls }>,
@@ -931,7 +958,7 @@ export function deriveCabinHandoffView(
   if (!view.controls[CABIN_HANDOFF_FINISHED_BY.fact]) return view.cabin;
   return Object.freeze({
     kind: CABIN_HANDOFF_FINISHED_BY.becomes,
-    cabinLabel: view.cabin.kind === "admitted" ? view.cabin.cabinLabel : null,
+    cabinLabel: view.controls.cabinLabel ?? (view.cabin.kind === "admitted" ? view.cabin.cabinLabel : null),
   });
 }
 
