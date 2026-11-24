@@ -184,14 +184,68 @@ public sealed class NavigationDoorTopologyGateTests
     public void TheLiveGraphIsBuiltFromTheTraversableLegs()
     {
         string source = ReadRepositoryFile(WorldSourceRelativePath);
-        string topology = MethodBody(source, "TryCreateCurrentOrdinaryWarpTopology");
+        // The edge source lives in `TryBuildSources`, which is also where the map the body stands on becomes a node
+        // (`round99`). The live method publishes what that one builder returns and nothing else builds a node list.
+        string sources = MethodBody(source, "TryBuildSources");
 
-        topology.Should().Contain(
+        sources.Should().Contain(
             "new NavigationOrdinaryWarpLegs(sourceId, TraversableTopologyLegs(location))",
             "the loaded locations' legs go through the exit rule before they become edges of the graph");
-        topology.Should().NotContain(
+        sources.Should().NotContain(
             "new NavigationOrdinaryWarpLegs(sourceId, ProjectTopologyLegs(location))",
             "the unfiltered projection is not what the live graph is built from");
+        MethodBody(source, "TryCreateCurrentOrdinaryWarpTopology").Should().Contain(
+            "TryBuildSources(",
+            "the graph the live source publishes is the one that node builder returns");
+    }
+
+    /// <summary>
+    /// `a_map_the_body_stands_on_is_a_node_of_its_own_graph:&lt;map&gt;` - a navigation asked from a map the loaded list does
+    /// not hold still has a graph that starts where she stands.
+    ///
+    /// <para>
+    /// MEASURED `round99` (`plan_441`, `plan_443`): `navigate_to_destination` from `UndergroundMine1` to `Farm` answered
+    /// <c>blocked / destination_access_indeterminate</c> with <c>topology=route_topology_invalid</c>, twice, and the planner
+    /// had not read one edge. A generated mine level is not in <c>Game1.locations</c> - <c>MineShaft.GetMine</c> keeps it in
+    /// its own <c>activeMines</c> and <c>Game1.getLocationFromNameInLocationsList</c> only falls back to it after scanning
+    /// <c>locations</c> (Game1.cs:10268-10292) - so the node loop never yielded the map she was standing on and the planner
+    /// fail-closed on its own root. Every map the game builds on demand has that shape.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AMapTheLoadedListDoesNotHoldIsStillASourceNode()
+    {
+        using GateWorld world = GateWorld.Create();
+        GameLocation mineLevel = GateWorld.Location("UndergroundMine1");
+
+        bool built = Game1NavigationWorldSource.TryBuildSources(
+            mineLevel, world.Locations.ToList(), out List<NavigationOrdinaryWarpLegs> sources, out HashSet<string> sourceIds, out string reasonCode);
+
+        this.output.WriteLine($"sources examined {sources.Count} · ids {string.Join(",", sourceIds)}");
+        built.Should().BeTrue(reasonCode);
+        reasonCode.Should().Be("accepted");
+        sourceIds.Should().Contain("UndergroundMine1", "the map the body stands on is a node of its own graph");
+        sources.Should().Contain(node => node.SourceId == "UndergroundMine1");
+        sources.Count.Should().Be(world.Locations.Count + 1, "the standing map joins the loaded maps instead of replacing one");
+        sources.Select(node => node.SourceId).Should().OnlyHaveUniqueItems();
+    }
+
+    /// <summary>
+    /// The other half of the same rule: a map the loaded list DOES hold keeps the single node it already had, so the fix
+    /// cannot introduce a duplicate source key - which the planner rejects outright (<c>route_topology_invalid</c>).
+    /// </summary>
+    [Fact]
+    public void AStandingMapTheLoadedListHoldsAddsNoSecondNode()
+    {
+        using GateWorld world = GateWorld.Create();
+        GameLocation farm = world.Locations.Single(location => location.Name == "Farm");
+
+        bool built = Game1NavigationWorldSource.TryBuildSources(
+            farm, world.Locations.ToList(), out List<NavigationOrdinaryWarpLegs> sources, out _, out string reasonCode);
+
+        built.Should().BeTrue(reasonCode);
+        sources.Count.Should().Be(world.Locations.Count);
+        sources.Select(node => node.SourceId).Should().OnlyHaveUniqueItems();
     }
 
     private static string WithoutComments(string source) =>
@@ -316,7 +370,7 @@ public sealed class NavigationDoorTopologyGateTests
             location.doors.Add(new Point(sourceX, sourceY), new NetString(target));
         }
 
-        private static GameLocation Location(string name)
+        internal static GameLocation Location(string name)
         {
             var location = new GameLocation();
             var map = new xTile.Map();

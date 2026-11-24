@@ -43,7 +43,7 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         bool actionable = player!.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp;
         // The way OUT of this map when it is not an ordinary warp. A mine level's exits are the ladder tiles its own
         // Buildings layer carries, so no graph edge reaches off it and a destination on another map is genuinely
-        // unreachable from here - with a leg the caller can take, and the map it lands on, named by the terminal.
+        // unreachable from here - with a leg the caller can take, and the map it lands on, named below.
         bool hasMapExit = ExecutionManager.TryDescribeMapExit(location, out string mapExitStep, out string mapExitLanding);
         return new NavigationWorldView(
             true,
@@ -190,31 +190,8 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             return false;
 
         IList<GameLocation> locations = Game1.locations;
-        if (locations is null || locations.Count == 0)
-        {
-            reasonCode = "loaded_locations_unavailable";
+        if (!TryBuildSources(currentLocation, locations, out List<NavigationOrdinaryWarpLegs> sources, out HashSet<string> sourceIds, out reasonCode))
             return false;
-        }
-
-        HashSet<string> sourceIds = new(StringComparer.Ordinal);
-        List<NavigationOrdinaryWarpLegs> sources = new();
-        foreach (GameLocation location in locations)
-        {
-            string sourceId = location.NameOrUniqueName;
-            if (string.IsNullOrWhiteSpace(sourceId))
-            {
-                reasonCode = "loaded_source_identity_invalid";
-                return false;
-            }
-            if (!sourceIds.Add(sourceId))
-            {
-                reasonCode = "loaded_source_identity_duplicate";
-                return false;
-            }
-
-            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, TraversableTopologyLegs(location)));
-        }
-
         string currentSource = currentLocation.NameOrUniqueName;
         if (!sourceIds.Contains(acceptedBinding.CanonicalDestinationIdentity))
         {
@@ -239,6 +216,61 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             .ToArray();
 
         topology = new NavigationOrdinaryWarpTopology(currentSource, filteredSources);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>
+    /// The graph's source nodes: every loaded map, and the map the body STANDS ON even when it is not one of them.
+    ///
+    /// <para>
+    /// MEASURED `round99` (`plan_441`, `plan_443`): `navigate_to_destination` from `UndergroundMine1` to `Farm` was
+    /// answered <c>topology=route_topology_invalid</c>, twice, and the planner had not read a single edge - because a
+    /// mine level is not in <c>Game1.locations</c>. `MineShaft.GetMine` keeps generated levels in its own
+    /// <c>activeMines</c> and <c>Game1.getLocationFromNameInLocationsList</c> falls back to it only after scanning
+    /// <c>locations</c> (Game1.cs:10268-10292), so the loop below never saw the map the body was standing on and the
+    /// planner fail-closed on its own root. Every map the game builds on demand has that shape.
+    /// </para>
+    /// <para>
+    /// The standing map is added through the SAME projection as every other source, so it is a node and not a privilege:
+    /// its exits go through <see cref="TraversableTopologyLegs"/> like everyone else's, and a map the loop already
+    /// yielded keeps the single node it had (<c>sourceIds.Add</c> is the membership test).
+    /// </para>
+    /// </summary>
+    internal static bool TryBuildSources(
+        GameLocation currentLocation,
+        IList<GameLocation>? locations,
+        out List<NavigationOrdinaryWarpLegs> sources,
+        out HashSet<string> sourceIds,
+        out string reasonCode)
+    {
+        sources = new List<NavigationOrdinaryWarpLegs>();
+        sourceIds = new HashSet<string>(StringComparer.Ordinal);
+        reasonCode = "loaded_locations_unavailable";
+        if (locations is null || locations.Count == 0)
+            return false;
+
+        foreach (GameLocation location in locations)
+        {
+            string sourceId = location.NameOrUniqueName;
+            if (string.IsNullOrWhiteSpace(sourceId))
+            {
+                reasonCode = "loaded_source_identity_invalid";
+                return false;
+            }
+            if (!sourceIds.Add(sourceId))
+            {
+                reasonCode = "loaded_source_identity_duplicate";
+                return false;
+            }
+
+            sources.Add(new NavigationOrdinaryWarpLegs(sourceId, TraversableTopologyLegs(location)));
+        }
+
+        string currentSource = currentLocation.NameOrUniqueName;
+        if (sourceIds.Add(currentSource))
+            sources.Add(new NavigationOrdinaryWarpLegs(currentSource, TraversableTopologyLegs(currentLocation)));
+
         reasonCode = "accepted";
         return true;
     }
