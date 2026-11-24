@@ -422,8 +422,11 @@ string? bodyProgramUnavailableReason = null,
         if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "navigation_read_request", out reasonCode)) return false;
         if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
 
+        // `find_destination` is NOT read here any more: searching is text matching over a published name list and needs no
+        // game thread, so the Host answers it from `TryDestinationIndex` (`design/adr/0014-thin-stardew-mod.md`). This
+        // route serves the live world map, which does need the game thread.
         string operation = envelope!.Payload.Operation;
-        if (operation is not ("inspect_world_map" or "find_destination")
+        if (operation != "inspect_world_map"
             || !this.capabilityPublicationProvider().CapabilitySet.AllowsReadOperation(operation))
         { reasonCode = "operation_not_available"; return false; }
 
@@ -431,58 +434,64 @@ string? bodyProgramUnavailableReason = null,
         if (set is null) { reasonCode = "world_map_unavailable"; return false; }
 
         BridgeNavigationReadArgs args = envelope.Payload.Args;
-        BridgeNavigationReadResult payload;
-        if (operation == "find_destination")
-        {
-            var context = new NavigationBindingContext(
-                this.navigationRuntimeInstanceId,
-                this.scope,
-                set.Generation,
-                ++this.navigationObservationSequence,
-                DateTimeOffset.UtcNow);
-            DestinationSearchResult result = new DestinationSearch().Find(set, args.Query!, this.navigationReferences, context);
-            payload = new BridgeNavigationReadResult(
-                result.Status,
-                result.Reason,
-                null,
-                null,
-                result.Candidates?.Select(candidate => new BridgeDestinationSearchCandidate(
-                    candidate.Label,
-                    candidate.ContextLabel,
-                    ToBridgeSelector(candidate.Selector),
-                    candidate.UnlockState)).ToArray(),
-                result.Destination is null ? null : ToBridgeSelector(result.Destination),
-                result.UnlockState);
-        }
-        else
-        {
-            var context = new NavigationBindingContext(
-                this.navigationRuntimeInstanceId,
-                this.scope,
-                set.Generation,
-                ++this.navigationObservationSequence,
-                DateTimeOffset.UtcNow);
-            WorldMapProjection projection = new(this.navigationReferences);
-            WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
-                ? projection.ProjectNode(set, args.NodeRef, context)
-                : args.Cursor is not null && args.NodeRef is null
-                    ? projection.ProjectCursor(set, args.Cursor, context)
-                    : args.NodeRef is null && args.Cursor is null
-                        ? projection.ProjectRoot(set, context)
-                        : WorldMapProjectionResult.Blocked("world_map_unavailable");
-            payload = result.BlockedReason is null
-                ? new BridgeNavigationReadResult(
-                    "succeeded",
-                    "world_map_observed",
-                    result.Entries!.Select(entry => new BridgeWorldMapEntry(
-                        entry.Label,
-                        entry.ContextLabel,
-                        entry.NodeRef,
-                        entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
-                    result.NextCursor)
-                : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
-        }
+        var context = new NavigationBindingContext(
+            this.navigationRuntimeInstanceId,
+            this.scope,
+            set.Generation,
+            ++this.navigationObservationSequence,
+            DateTimeOffset.UtcNow);
+        WorldMapProjection projection = new(this.navigationReferences);
+        WorldMapProjectionResult result = args.NodeRef is not null && args.Cursor is null
+            ? projection.ProjectNode(set, args.NodeRef, context)
+            : args.Cursor is not null && args.NodeRef is null
+                ? projection.ProjectCursor(set, args.Cursor, context)
+                : args.NodeRef is null && args.Cursor is null
+                    ? projection.ProjectRoot(set, context)
+                    : WorldMapProjectionResult.Blocked("world_map_unavailable");
+        BridgeNavigationReadResult payload = result.BlockedReason is null
+            ? new BridgeNavigationReadResult(
+                "succeeded",
+                "world_map_observed",
+                result.Entries!.Select(entry => new BridgeWorldMapEntry(
+                    entry.Label,
+                    entry.ContextLabel,
+                    entry.NodeRef,
+                    entry.Destination is null ? null : ToBridgeSelector(entry.Destination))).ToArray(),
+                result.NextCursor)
+            : new BridgeNavigationReadResult("blocked", result.BlockedReason, null, null);
         response = Reply("navigation_read_result", envelope.CorrelationId, payload);
+        reasonCode = "accepted";
+        return true;
+    }
+
+    /// <summary>
+    /// One generation's flat destination name list, published so the Host can answer `find_destination` itself.
+    ///
+    /// <para>
+    /// Deliberately not gated on a published capability, for the same reason the content-table and rectangle reads are
+    /// not: the names are the world the actor already stands in, the route is still authenticated and owner-thread only,
+    /// and the action policy is enforced where the model asks it (`stardew_find_destination`'s own readiness check). It
+    /// creates no execution and no receipt. The answer is a refusal with `destination_index_too_large` rather than a
+    /// partial list when the world holds more places than one frame states.
+    /// </para>
+    /// </summary>
+    internal bool TryDestinationIndex(long generation, BridgeEnvelope<BridgeDestinationIndexRequest>? envelope, out BridgeEnvelope<BridgeDestinationIndexResult>? response, out string reasonCode)
+    {
+        response = null;
+        if (!IsAuthenticated(generation, out reasonCode) || !IsValidEnvelope(envelope, "destination_index_request", out reasonCode)) return false;
+        if (!this.actionRouter.IsOnOwnerThread) { reasonCode = "game_thread_required"; return false; }
+
+        DerivedDestinationSet? set = this.navigationSetProvider();
+        if (set is null) { reasonCode = "world_map_unavailable"; return false; }
+
+        var context = new NavigationBindingContext(
+            this.navigationRuntimeInstanceId,
+            this.scope,
+            set.Generation,
+            ++this.navigationObservationSequence,
+            DateTimeOffset.UtcNow);
+        BridgeDestinationIndexResult payload = DestinationIndexPublication.Build(set, this.navigationReferences, context);
+        response = Reply("destination_index_result", envelope!.CorrelationId, payload);
         reasonCode = "accepted";
         return true;
     }
