@@ -1,0 +1,974 @@
+{
+  "schema": "gamebuddy-line-range-citation-baseline/v1",
+  "note": "Line-range citations of source code, recorded from a real scan by `node gates/stardew/check-stardew-source-citations.mjs --update` and never by hand. Each row is `{ path, cited }`: the file the claim is written in and the citation text, with no line number. A row whose citation is converted stops matching and reds the gate until it is deleted; a range that is not recorded here is red the moment it lands. Converting a citation changes the tree, then `--update` records what is left.",
+  "rows": [
+    {
+      "path": "desktop/GameBuddy.Desktop.Tests/GuardianPerAttemptTopologyTests.cs",
+      "cited": "WindowsNative.cs:95-97"
+    },
+    {
+      "path": "dialogue-web/tests/i18n.test.mjs",
+      "cited": "CompanionCabinProvisioning.cs:250-258"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "BridgeProtocolModels.cs:396-397"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "farmhandexecutioncontroller.cs:1918-1932"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "HostFarmhandProvisioner.cs:260-262"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "ModEntry.cs:641-647"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "ModEntry.Fixtures.cs:4070-4071"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "navigationoutcomedecider.cs:79-81"
+    },
+    {
+      "path": "fixtures/stardew/RUNBOOK.md",
+      "cited": "StardewBodyController.cs:218-223"
+    },
+    {
+      "path": "gates/stardew/audit-stardew-open-ground-claims.mjs",
+      "cited": "StardewBodyController.cs:1196-1274"
+    },
+    {
+      "path": "gates/stardew/check-stardew-game-thread-affinity.test.mjs",
+      "cited": "PipeWorker.cs:Nowhere"
+    },
+    {
+      "path": "gates/stardew/check-stardew-invented-gates.mjs",
+      "cited": "farmhandexecutioncontroller.shopactions.cs:187-188"
+    },
+    {
+      "path": "gates/stardew/check-stardew-invented-gates.mjs",
+      "cited": "X.cs:NNN"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "FixtureActionTests.cs:cut_weeds"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "SyntheticActionTests.cs:cut_weeds"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "SyntheticActionTests.cs:cut_weeds"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "SyntheticActionTests.cs:cut_weeds"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "SyntheticActionTests.cs:gone_action"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "SyntheticActionTests.cs:gone_action"
+    },
+    {
+      "path": "gates/stardew/check-stardew-lifecycle-pins.test.mjs",
+      "cited": "TwoActions.cs:unattributed"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.test.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.test.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-loop-closure.test.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "gates/stardew/check-stardew-native-multiplayer-sensitivity.mjs",
+      "cited": "farmhandexecutioncontroller.cs:4729-4732"
+    },
+    {
+      "path": "gates/stardew/check-stardew-tick-handler-allocation.test.mjs",
+      "cited": "LocalTicked.cs:OnTick"
+    },
+    {
+      "path": "gates/stardew/check-stardew-tick-handler-allocation.test.mjs",
+      "cited": "Ticked.cs:OnTick"
+    },
+    {
+      "path": "gates/stardew/check-stardew-tick-handler-allocation.test.mjs",
+      "cited": "Ticked.cs:OnTick"
+    },
+    {
+      "path": "gates/stardew/check-stardew-tick-handler-allocation.test.mjs",
+      "cited": "Ticked.cs:OnTick"
+    },
+    {
+      "path": "gates/stardew/check-stardew-tick-handler-allocation.test.mjs",
+      "cited": "Ticked.cs:OnTick"
+    },
+    {
+      "path": "host/src/action-registry.ts",
+      "cited": "BridgeProtocolModels.cs:150-158"
+    },
+    {
+      "path": "host/src/body-program-packing.test.ts",
+      "cited": "resourcetoolactions.cs:857-887"
+    },
+    {
+      "path": "host/src/body-program-packing.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:857-887"
+    },
+    {
+      "path": "host/src/body-program-planting.ts",
+      "cited": "farmhandexecutioncontroller.targetdiscovery.cs:1417-1419"
+    },
+    {
+      "path": "host/src/body-program-script.test.ts",
+      "cited": "FarmhandActionDefinitions.cs:746-762"
+    },
+    {
+      "path": "host/src/body-program-script.test.ts",
+      "cited": "farmhandexecutioncontroller.modalactions.cs:129-131"
+    },
+    {
+      "path": "host/src/body-program-script.ts",
+      "cited": "FarmhandActionDefinitions.cs:746-762"
+    },
+    {
+      "path": "host/src/body-program-script.ts",
+      "cited": "FarmhandBodyProgramCatalogProjection.cs:96-102"
+    },
+    {
+      "path": "host/src/body-program-script.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:62-63"
+    },
+    {
+      "path": "host/src/body-program-script.ts",
+      "cited": "file.cs:symbol"
+    },
+    {
+      "path": "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.test.ts",
+      "cited": "Program.cs:79-82"
+    },
+    {
+      "path": "host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.test.ts",
+      "cited": "Program.cs:82-87"
+    },
+    {
+      "path": "host/src/composition/stardew/stardew-guardian-launch-native-parity.test.ts",
+      "cited": "GuardianSupervisor.cs:362-367"
+    },
+    {
+      "path": "host/src/composition/stardew/stardew-guardian-launch-native-parity.test.ts",
+      "cited": "GuardianSupervisor.cs:396-400"
+    },
+    {
+      "path": "host/src/composition/stardew/stardew-guardian-platform.test.ts",
+      "cited": "DesktopHostBootstrapBroker.cs:198-215"
+    },
+    {
+      "path": "host/src/composition/stardew/stardew-guardian-platform.ts",
+      "cited": "DesktopHostBootstrapBroker.cs:198-215"
+    },
+    {
+      "path": "host/src/composition/stardew/stardew-guardian-platform.ts",
+      "cited": "WindowsJobRecoveryClassifier.cs:33-40"
+    },
+    {
+      "path": "host/src/event-pump.ts",
+      "cited": "StardewSalientEventHooks.cs:196-207"
+    },
+    {
+      "path": "host/src/local-stardew-bridge-attestation.test.ts",
+      "cited": "RouteReenteringBodyProgramExecutor.cs:301-305"
+    },
+    {
+      "path": "host/src/protocol-target-facts-domain.test.ts",
+      "cited": "farmhandexecutioncontroller.cs:2846-2850"
+    },
+    {
+      "path": "host/src/protocol-target-facts-domain.test.ts",
+      "cited": "farmhandexecutioncontroller.fixedpoints.cs:58-65"
+    },
+    {
+      "path": "host/src/protocol.ts",
+      "cited": "FarmhandActionDefinitions.cs:290-291"
+    },
+    {
+      "path": "host/src/snapshot-projection-consumed-fields.test.ts",
+      "cited": "farmhandexecutioncontroller.cs:1408-1411"
+    },
+    {
+      "path": "host/src/stardew-action-remedy.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:52-53"
+    },
+    {
+      "path": "host/src/stardew-attachment.ts",
+      "cited": "HostFarmhandProvisioner.cs:143-150"
+    },
+    {
+      "path": "host/src/stardew-completion-contract-mintability.test.ts",
+      "cited": "movementactions.cs:1321-1326"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.actorstateactions.cs:297-303"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.actorstateactions.cs:439-446"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.animaldooractions.cs:194-197"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.containeractions.cs:107-113"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.containeractions.cs:192-196"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.cookingactions.cs:244-253"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.cookingactions.cs:244-253"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.crabpotactions.cs:177-185"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.craftingactions.cs:151-154"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.cs:1326-1331"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.cs:1498-1502"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.cs:1524-1529"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.expressionactions.cs:82-90"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.facilityactions.cs:129-133"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.facilityactions.cs:169-171"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.facilityactions.cs:184-189"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.facilityactions.cs:46-52"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.facilityactions.cs:88-98"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.farmingconstructionactions.cs:386-394"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.farmingconstructionactions.cs:847-856"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:531-554"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:785-805"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.machinesanimalsitemsactions.cs:574-578"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.modalactions.cs:255-260"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.modalactions.cs:353-359"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:103-137"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:56-61"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:611-617"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:800-808"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.pedestalfenceactions.cs:131-135"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.petbowlactions.cs:112-115"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:308-324"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:575-584"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:60-99"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:626-633"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.shippingactions.cs:106-111"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.slimehutchtroughactions.cs:135-138"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.transportactions.cs:267-269"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.treebushactions.cs:114-117"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.treebushactions.cs:185-188"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "farmhandexecutioncontroller.treebushactions.cs:67-72"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "movementactions.cs:100-101"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "movementactions.cs:1321-1326"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "movementactions.cs:1357-1360"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "resourcetoolactions.cs:392-393"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "shopactions.cs:1526-1530"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:835-853"
+    },
+    {
+      "path": "host/src/stardew-completion-contracts.ts",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:863-894"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "farmhandexecutioncontroller.modalactions.cs:353-359"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:56-61"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:65-92"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "movementactions.cs:1321-1326"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "movementactions.cs:1388-1396"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:863-894"
+    },
+    {
+      "path": "host/src/stardew-completion-evidence-coverage.test.ts",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:865-874"
+    },
+    {
+      "path": "host/src/stardew-completion-unfinished-success-gate.test.ts",
+      "cited": "farmhandexecutioncontroller.verdicts.cs:7-13"
+    },
+    {
+      "path": "host/src/stardew-completion-unfinished-success-gate.test.ts",
+      "cited": "file.cs:Member"
+    },
+    {
+      "path": "host/src/stardew-game-integration-adapter.test.ts",
+      "cited": "FarmhandActionDefinitions.cs:554-563"
+    },
+    {
+      "path": "host/src/stardew-game-integration-adapter.test.ts",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:103-137"
+    },
+    {
+      "path": "host/src/stardew-game-integration-adapter.test.ts",
+      "cited": "movementactions.cs:56-61"
+    },
+    {
+      "path": "host/src/stardew-integration-launcher-body-program.internal.ts",
+      "cited": "RouteReenteringBodyProgramExecutor.cs:301-305"
+    },
+    {
+      "path": "host/src/stardew-owned-farmhand-game-world-creation-seam.internal.ts",
+      "cited": "FarmhandProvisioningModels.cs:142-173"
+    },
+    {
+      "path": "host/src/stardew-owned-farmhand-game-world-creation-seam.internal.ts",
+      "cited": "HostFarmhandProvisioner.cs:646-702"
+    },
+    {
+      "path": "host/src/stardew-settled-reason-read-gate.test.ts",
+      "cited": "farmhandexecutioncontroller.modalactions.cs:92-98"
+    },
+    {
+      "path": "host/src/world-state-target-freshness.test.ts",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:305-314"
+    },
+    {
+      "path": "integrations/stardew/action-development/contracts/actor-admissibility/actor-admissibility.v1.json",
+      "cited": "WorldModel.cs:514-525"
+    },
+    {
+      "path": "integrations/stardew/action-development/contracts/generated/native-multiplayer-sensitivity.v1.json",
+      "cited": "farmhandexecutioncontroller.cs:4721-4732"
+    },
+    {
+      "path": "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs",
+      "cited": "BridgeProtocolModels.cs:841-849"
+    },
+    {
+      "path": "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:427-476"
+    },
+    {
+      "path": "integrations/stardew/action-development/src/analysis/stardew-action-inventory-reconciliation.mjs",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:437-445"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs",
+      "cited": "BuildingData.cs:271-291"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs",
+      "cited": "BuildingData.cs:282-289"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs",
+      "cited": "farmhandexecutioncontroller.machinesanimalsitemsactions.cs:89-99"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.buildingchestactions.cs",
+      "cited": "machinesanimalsitemsactions.cs:89-99"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "cited": "FarmhandActionDefinitions.cs:173-179"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:1271-1276"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.cs",
+      "cited": "FarmhandForEachHealing.cs:181-196"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.geodeactions.cs",
+      "cited": "farmhandexecutioncontroller.cs:1956-1970"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.geodeactions.cs",
+      "cited": "farmhandexecutioncontroller.cs:332-358"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.geodeactions.cs",
+      "cited": "farmhandexecutioncontroller.movementactions.cs:43-44"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.geodeactions.cs",
+      "cited": "farmhandexecutioncontroller.shopactions.cs:30-42"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.geodeactions.cs",
+      "cited": "farmhandexecutioncontroller.shopactions.cs:517-717"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
+      "cited": "Farmer.decompiled.cs:8968-8984"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.machinesanimalsitemsactions.cs",
+      "cited": "Quest.decompiled.cs:622-629"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.nameentityactions.cs",
+      "cited": "transportactions.cs:43-44"
+    },
+    {
+      "path": "integrations/stardew/farmhandexecutioncontroller.resourcetoolactions.cs",
+      "cited": "farmhandexecutioncontroller.buildingchestactions.cs:246-270"
+    },
+    {
+      "path": "integrations/stardew/FarmhandProvisioner.cs",
+      "cited": "ModEntry.Fixtures.cs:194-206"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.cs",
+      "cited": "SCore.cs:1315-1326"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.cs",
+      "cited": "farmhandexecutioncontroller.craftingactions.cs:48-58"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.cs",
+      "cited": "ModEntry.Fixtures.WiaToolApproach.cs:72-83"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.ScenarioInitializers.Crops.cs",
+      "cited": "farmhandexecutioncontroller.craftingactions.cs:48-58"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.TalkToNpcSharedWorld.cs",
+      "cited": "acceptednavigationexecution.cs:158-160"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.TalkToNpcSharedWorld.cs",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:175-213"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.TalkToNpcSharedWorld.cs",
+      "cited": "ModEntry.Fixtures.ItemTile.cs:73-85"
+    },
+    {
+      "path": "integrations/stardew/ModEntry.Fixtures.TalkToNpcSharedWorld.cs",
+      "cited": "ModEntry.Fixtures.ShopPurchase.cs:41-46"
+    },
+    {
+      "path": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
+      "cited": "FarmhandForEachKindActions.cs:54-61"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/BodyOwnerSlotTableTests.cs",
+      "cited": "movementactions.cs:1522-1524"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/BodyOwnerSlotTableTests.cs",
+      "cited": "movementactions.cs:1522-1524"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/BuildingChestActionTests.cs",
+      "cited": "BuildingData.cs:271-291"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/CropApproachWiringTests.cs",
+      "cited": "farmhandexecutioncontroller.cs:3686-3689"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/DeclaredToolSelectionTests.cs",
+      "cited": "farmhandexecutioncontroller.buildingchestactions.cs:246-270"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/EngineParityHarnessTests.cs",
+      "cited": "SomeTable.cs:AChargeLadder"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/EngineParityHarnessTests.cs",
+      "cited": "SomeTable.cs:AChargeLadder"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ModalDismissActionTests.cs",
+      "cited": "NpcDialoguePager.cs:82-83"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/OpenGeodeActionSourceShapeTests.cs",
+      "cited": "farmhandexecutioncontroller.cs:1956-1970"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/PendingSaveIsTheEnginesAnswerSourceShapeTests.cs",
+      "cited": "HostFarmhandProvisioner.cs:121-143"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScytheTargetIdentityTests.cs",
+      "cited": "farmhandexecutioncontroller.cs:3597-3602"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScytheTargetIdentityTests.cs",
+      "cited": "farmhandexecutioncontroller.cs:3597-3602"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScytheTargetIdentityTests.cs",
+      "cited": "farmhandexecutioncontroller.cs:6088-6090"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScytheTargetIdentityTests.cs",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:1561-1567"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/ScytheTargetIdentityTests.cs",
+      "cited": "resourcetoolactions.cs:1561-1567"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SeedSupplyProjectionTests.cs",
+      "cited": "ModEntry.Fixtures.ShopPurchase.cs:41-105"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/SeedSupplyProjectionTests.cs",
+      "cited": "ShopMenuHeadlessProbe.cs:13-16"
+    },
+    {
+      "path": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/WaterTargetApproachTests.cs",
+      "cited": "StardewBodyController.cs:1325-1331"
+    },
+    {
+      "path": "tools/action-breadth-baseline.json",
+      "cited": "BridgeProtocol.cs:2394-2396"
+    },
+    {
+      "path": "tools/action-breadth-baseline.json",
+      "cited": "BridgeProtocolModels.cs:614-630"
+    },
+    {
+      "path": "tools/action-breadth-baseline.json",
+      "cited": "FarmhandActionDefinitions.cs:515-526"
+    },
+    {
+      "path": "tools/action-breadth-baseline.json",
+      "cited": "FarmhandActionDefinitions.cs:882-885"
+    },
+    {
+      "path": "tools/derive-stardew-actor-admissibility.mjs",
+      "cited": "WorldModel.cs:514-525"
+    },
+    {
+      "path": "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs",
+      "cited": "farmhandexecutioncontroller.cs:2528-2532"
+    },
+    {
+      "path": "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs",
+      "cited": "farmhandexecutioncontroller.cs:4721-4732"
+    },
+    {
+      "path": "tools/derive-stardew-native-multiplayer-sensitivity-register.mjs",
+      "cited": "farmhandexecutioncontroller.cs:4721-4732"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "cited": "ExecutionAdmission.cs:368-499"
+    },
+    {
+      "path": "tools/gate-falsifier-decisions.md",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "tools/lib/action-breadth.mjs",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:713-728"
+    },
+    {
+      "path": "tools/lib/action-breadth.mjs",
+      "cited": "farmhandexecutioncontroller.targetdiscovery.cs:1068-1080"
+    },
+    {
+      "path": "tools/lib/guardian-role-broker.mjs",
+      "cited": "DesktopHostBootstrapBroker.cs:245-252"
+    },
+    {
+      "path": "tools/lib/guardian-role-broker.mjs",
+      "cited": "DesktopHostBootstrapBroker.cs:268-286"
+    },
+    {
+      "path": "tools/lib/guardian-role-broker.mjs",
+      "cited": "DesktopHostBootstrapBroker.cs:60-79"
+    },
+    {
+      "path": "tools/lib/guardian-role-broker.mjs",
+      "cited": "GuardianSupervisor.cs:143-162"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "CurrentUserRootLayout.cs:134-139"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "CurrentUserRootLayout.cs:85-100"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "DesktopHostBootstrapBroker.cs:60-79"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "DesktopHostBootstrapBroker.cs:63-67"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "Program.cs:392-394"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "Program.cs:392-394"
+    },
+    {
+      "path": "tools/lib/live-run-preflight.mjs",
+      "cited": "RuntimeSupervisor.cs:143-144"
+    },
+    {
+      "path": "tools/lib/multiday-baseline.mjs",
+      "cited": "StardewSalientEventHooks.cs:64-75"
+    },
+    {
+      "path": "tools/lib/multiday-baseline.mjs",
+      "cited": "StardewSalientEventHooks.cs:64-75"
+    },
+    {
+      "path": "tools/lib/multiday-baseline.mjs",
+      "cited": "StardewSalientEventHooks.cs:64-75"
+    },
+    {
+      "path": "tools/lib/replay-engine.test.mjs",
+      "cited": "StardewBodyController.cs:1120-1126"
+    },
+    {
+      "path": "tools/lib/stardew-decompile-root.mjs",
+      "cited": "File.cs:line"
+    },
+    {
+      "path": "tools/lib/stardew-published-action-registry.mjs",
+      "cited": "farmhandexecutioncontroller.resourcetoolactions.cs:684-728"
+    },
+    {
+      "path": "tools/live-run/frontend/capture/game-launch-verdict.mjs",
+      "cited": "HostFarmhandProvisioner.cs:152-156"
+    },
+    {
+      "path": "tools/live-run/frontend/capture/game-launch-verdict.mjs",
+      "cited": "HostFarmhandProvisioner.cs:152-156"
+    },
+    {
+      "path": "tools/live-run/frontend/capture/game-launch-verdict.mjs",
+      "cited": "HostFarmhandProvisioner.cs:572-580"
+    },
+    {
+      "path": "tools/live-run/frontend/capture/game-launch-verdict.mjs",
+      "cited": "HostFarmhandProvisioner.cs:572-580"
+    },
+    {
+      "path": "tools/live-run/frontend/capture/w-game-launch.cjs",
+      "cited": "HostFarmhandProvisioner.cs:572-580"
+    },
+    {
+      "path": "tools/live-run/game/launch-ladder-live.mjs",
+      "cited": "farmhandexecutioncontroller.lifecycleactions.cs:103-107"
+    },
+    {
+      "path": "tools/live-run/game/launch-ladder-live.mjs",
+      "cited": "ModConfig.cs:66-68"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.mjs",
+      "cited": "farmhandexecutioncontroller.lifecycleactions.cs:108-117"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.mjs",
+      "cited": "farmhandexecutioncontroller.lifecycleactions.cs:135-154"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.mjs",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:1056-1101"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.mjs",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:1091-1099"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.test.mjs",
+      "cited": "farmhandexecutioncontroller.lifecycleactions.cs:108-117"
+    },
+    {
+      "path": "tools/live-run/game/night-verdict.test.mjs",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:1069-1070"
+    },
+    {
+      "path": "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs",
+      "cited": "farmhandexecutioncontroller.lifecycleactions.cs:135-154"
+    },
+    {
+      "path": "tools/live-run/game/run-stardew-native-local-agent-ab-live.test.mjs",
+      "cited": "SleepAndAdvanceDayLifecycle.cs:1085-1100"
+    },
+    {
+      "path": "tools/run-stardew-multiplayer-live-loop.mjs",
+      "cited": "HostFarmhandProvisioner.cs:110-126"
+    },
+    {
+      "path": "tools/run-stardew-multiplayer-live-loop.mjs",
+      "cited": "ModConfig.cs:347-353"
+    },
+    {
+      "path": "tools/run-stardew-multiplayer-live-loop.mjs",
+      "cited": "ModEntry.Fixtures.cs:5319-5334"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-craft-partial-recovery-chain-smoke.mjs",
+      "cited": "StardewBodyController.cs:129-135"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-harvest-inventory-full-recovery-chain-smoke.mjs",
+      "cited": "StardewBodyController.cs:129-135"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-interact-npc-with-item-smoke.mjs",
+      "cited": "Quest.decompiled.cs:622-629"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
+      "cited": "BridgeProtocolModels.cs:396-397"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-multiplayer-live-loop-smoke.mjs",
+      "cited": "ModEntry.cs:641-647"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-stamina-recovery-chain-smoke.mjs",
+      "cited": "StardewBodyController.cs:129-135"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+      "cited": "destinationsearch.cs:159-163"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:175-213"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:336-342"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+      "cited": "navigationoutcomedecider.cs:79-81"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.mjs",
+      "cited": "StardewBodyController.cs:130-160"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.test.mjs",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:346-389"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.test.mjs",
+      "cited": "navigationoutcomedecider.cs:79-81"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.test.mjs",
+      "cited": "navigationoutcomedecider.cs:79-81"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.test.mjs",
+      "cited": "StardewBodyController.cs:130-160"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-talk-to-npc-smoke.test.mjs",
+      "cited": "StardewBodyController.cs:130-160"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-use-warp-item-smoke.test.mjs",
+      "cited": "farmhandexecutioncontroller.itemtileactions.cs:373-378"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-water-crop-resource-recovery-chain-smoke.mjs",
+      "cited": "StardewBodyController.cs:129-135"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-water-slime-hutch-trough-smoke.mjs",
+      "cited": "StardewBodyController.cs:129-135"
+    },
+    {
+      "path": "tools/run-stardew-native-local-player-wia-tool-approach-smoke.test.mjs",
+      "cited": "farmhandexecutioncontroller.cs:3627-3634"
+    },
+    {
+      "path": "tools/run-stardew-shared-world-action.ps1",
+      "cited": "HostFarmhandProvisioner.cs:260-262"
+    },
+    {
+      "path": "tools/stardew-observation-gap-baseline.json",
+      "cited": "machinesanimalsitemsactions.cs:1153-1172"
+    }
+  ]
+}

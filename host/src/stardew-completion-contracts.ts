@@ -75,7 +75,7 @@ function isStorageContainerKind(value: string | undefined): boolean {
 }
 
 /**
- * movementactions.cs:611-617 CompleteTravelAfterWarp for select_mine_elevator_floor.
+ * movementactions.cs:CompleteTravelAfterWarp for select_mine_elevator_floor.
  * Floor 0 targets the mine-entrance MAP and emits only the expected/actual pair; a
  * generated floor lands in a MineShaft and appends `level`. In both shapes only the
  * destination LOCATION is a postcondition - the native layout picks the landing tile.
@@ -99,7 +99,7 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
  * The three producer shapes of enter_mine's `mine_entered` terminal:
  *   transportactions.cs:194  level;tile;from_level — ladder descent, synchronous;
  *   transportactions.cs:232  level;tile            — mine entrance, synchronous;
- *   movementactions.cs:611-617 expected;actual;level — the asynchronous Warped arrival,
+ *   movementactions.cs:CompleteTravelAfterWarp expected;actual;level — the asynchronous Warped arrival,
  *     where the native MineShaft layout owns the landing tile.
  * All three prove the same declared/reached level; none is admitted with a foreign shape.
  */
@@ -108,7 +108,7 @@ function hasMineElevatorFloorCompletionEvidence(detail: string): boolean {
  *
  * <para>
  * THE SYNCHRONOUS ONE is the answer itself: the game's `ExitMine_Leave` response performs the warp inside
- * `GameLocation.answerDialogueAction`, so `transportactions.cs:426-427` states which question was asked, which
+ * `GameLocation.answerDialogueAction`, so `transportactions.cs:ExecuteUseMineLadder` states which question was asked, which
  * response settled it, the ladder it was asked at and where the actor ended up.
  * </para>
  * <para>
@@ -183,7 +183,7 @@ function hasMineEntryCompletionEvidence(detail: string): boolean {
 
 /**
  * The gift branch of interact_npc_with_item
- * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:885-889). Succeeded is exactly
+ * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:ExecuteInteractNpcWithItem). Succeeded is exactly
  * `giftGiven && consumedExactlyOne && (giftRecorded || pointsChanged)`, and the native answer
  * is asked with `showResponse: false`, so no dialogue may have been mounted.
  */
@@ -250,7 +250,7 @@ function hasGiftGivenCompletionEvidence(detail: string): boolean {
 
 /**
  * The delivery-quest branch of interact_npc_with_item
- * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:747-769). Succeeded is exactly
+ * (farmhandexecutioncontroller.machinesanimalsitemsactions.cs:ExecuteInspectNpcRelationship). Succeeded is exactly
  * `deliveryCompleted && consumedRequiredNumber && noModalMounted`, where `noModalMounted` is the
  * receipt's own `dialogue_open_after=false && menu_open_after=false` pair.
  */
@@ -345,8 +345,8 @@ function hasDayAdvancedCompletionEvidence(detail: string): boolean {
 
 /**
  * The shared body of water_pet_bowl and water_slime_hutch_trough
- * (farmhandexecutioncontroller.petbowlactions.cs:98-115,
- * farmhandexecutioncontroller.slimehutchtroughactions.cs:121-138). Both run the same native
+ * (farmhandexecutioncontroller.petbowlactions.cs:ExecuteWaterPetBowl,
+ * farmhandexecutioncontroller.slimehutchtroughactions.cs:ExecuteWaterSlimeHutchTrough). Both run the same native
  * watering-tool path, so both owe the same relation water_crop already asserts: the watered
  * flag flipped from false to true, at most one unit left the can (a bottomless can or an
  * enchantment legitimately consumes none), and the embodied stamina half closes.
@@ -1381,7 +1381,7 @@ function hasBreakRockSourceCompletionEvidence(detail: string): boolean {
  * `rock_source_damaged`: the swing LANDED and the stone is still standing.
  *
  * <para>
- * This is the producer's own second arm, not a contract opinion: `resourcetoolactions.cs:392-393` grades one dispatch
+ * This is the producer's own second arm, not a contract opinion: `resourcetoolactions.cs:AnswerRockSource` grades one dispatch
  * with `RockSourceSwing.MadeProgress(before, after)` and then names it
  * `removed ? "rock_source_broken" : "rock_source_damaged"`, because one `Pickaxe.DoFunction` only subtracts
  * `upgradeLevel + 1 + additionalPower` from `MinutesUntilReady` and returns early while the remainder is positive
@@ -1412,7 +1412,7 @@ function hasBreakRockSourceDamageEvidence(detail: string): boolean {
  * The shape the `consumes` settlements mint when the target's row has left the world:
  * `target;named_tile;tile=none;settled_by`.
  *
- * ONE SHAPE, TWO FAMILIES. `AnswerRockSource` and `AnswerWeed` (`resourcetoolactions.cs:308-324`, `:1262-1280`) print
+ * ONE SHAPE, TWO FAMILIES. `AnswerRockSource` and `AnswerWeed` (`resourcetoolactions.cs:AnswerRockSource`, `resourcetoolactions.cs:AnswerWeed`) print
  * the same four clauses and differ only in the family their own declaration names, which is why the family is the
  * argument rather than a second predicate. `target` is the OPAQUE ID the request carried and not a tile: these families
  * are addressed by identity, so the settlement has to name the identity it found gone, and `named_tile` is the tile that
@@ -3652,14 +3652,14 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     // here and the rule admits exactly those shapes. No key, code or relation is invented.
   },
   select_mine_elevator_floor: (claim) => {
-    // farmhandexecutioncontroller.movementactions.cs:611-617 CompleteTravelAfterWarp:
+    // farmhandexecutioncontroller.movementactions.cs:CompleteTravelAfterWarp:
     //   expected=<location>:<x>,<y>;actual=<location>:<x>,<y>[;level=<mineLevel>]
     // Floor 0 targets the mine-entrance MAP, so `level` is absent there; a generated
     // floor lands in a MineShaft and appends it. The landing TILE is native-chosen.
     return claim.reasonCode === "mine_elevator_floor_selected" && hasMineElevatorFloorCompletionEvidence(claim.detail);
   },
   ride_bus: (claim) => {
-    // farmhandexecutioncontroller.busactions.cs:200-210 UpdateBusRide. The world owns the
+    // farmhandexecutioncontroller.busactions.cs:UpdateBusRide. The world owns the
     // departure; this terminal is the arrival it produced, so the two location facts and
     // the fare are the whole contract. `money_after` is read from the actor afterwards and
     // is reported, never asserted (a fare refund/reward may move it either way).
@@ -4265,7 +4265,7 @@ export const STARDEW_COMPLETION_CONTRACTS = Object.freeze({
     );
   },
   respond_level_up: (claim) => {
-    // Evidence literal: farmhandexecutioncontroller.modalactions.cs:355-516 RequestLocalRespondLevelUp —
+    // Evidence literal: farmhandexecutioncontroller.modalactions.cs:RequestLocalRespondLevelUp —
     // modal_type;skill;level;is_profession;chosen_profession;remaining_new_levels;pair_settled;
     // profession_settled;menu_closed. The Mod mints `level_up_resolved` only when
     // `pairSettled && professionSettled && !menu.isActive`, and it writes the SAME evidence under
