@@ -27,6 +27,7 @@ import {
 import { createMountedTurnTransitionAuthority } from "../tavern/chat-thread-store.mounted-turn-transition.internal.js";
 import { canonicalTestRoot } from "../test-support/canonical-test-root.test-support.js";
 import {
+  type AbandonedClaimedCancelChatTurn,
   type AbandonedStartedChatTurn,
   settleAbandonedChatTurnOnStartup,
   settleNeverStartedChatTurnOnMount,
@@ -140,12 +141,6 @@ async function abandonedTurn(
       running.revoke();
     }
     if (upTo === "running") return claimed.attempt.attemptId;
-    if (upTo === "cancel_claimed") {
-      // Another authority won this turn's durable cancel while the prompt was still generating.
-      const claimedCancel = (await durableAt()) + 3;
-      await presentation({ operation: "claim_cancel", claimedAtMs: claimedCancel });
-      return claimed.attempt.attemptId;
-    }
     const committedAtMs = (await durableAt()) + 3;
     await presentation({
       operation: "commit_presentation",
@@ -153,6 +148,12 @@ async function abandonedTurn(
       message: { messageId: "companion_reply_01", text: "I am still here.", occurredAtMs: committedAtMs },
       committedAtMs,
     });
+    if (upTo === "cancel_claimed") {
+      // Another authority won this turn's durable cancel while the prompt was still generating, after the
+      // reply had already been presented: the claim is the winner and the final `cancel` was never written.
+      await presentation({ operation: "claim_cancel", claimedAtMs: (await durableAt()) + 4 });
+      return claimed.attempt.attemptId;
+    }
     if (upTo === "presentation_committed") return claimed.attempt.attemptId;
     await presentation({ operation: "claim_completion", claimedAtMs: (await durableAt()) + 4 });
     return claimed.attempt.attemptId;
@@ -164,34 +165,40 @@ async function abandonedTurn(
 /** The production settlement, driven against this root's real store and real P5 transition seam. */
 function settle(root: string, store: ReturnType<typeof createChatThreadStore>, outcome: WindowsOwnerDeathOutcome) {
   const authority = createMountedTurnTransitionAuthority();
+  /** One P5 transition written the way the settlement writes it: after the turn's own last durable write. */
+  const transition = async (
+    attempt: AbandonedStartedChatTurn["attempt"],
+    terminal: (atMs: number) => PresentationTransition,
+  ): Promise<void> => {
+    const operation = authority.mintOperation();
+    try {
+      const atMs = Math.max(
+        Date.now(),
+        (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs,
+      );
+      await transitionMountedPresentation(
+        {
+          ...binding(root),
+          authority: authority.authority,
+          operationAuthority: operation.authority,
+          selectionGeneration: attempt.selectionGeneration,
+          runtimeBindingDigest: attempt.runtimeBindingDigest,
+          runtimeOwner: attempt.runtimeOwner,
+          attemptId: attempt.attemptId,
+        },
+        terminal(atMs),
+      );
+    } finally {
+      operation.revoke();
+    }
+  };
   return settleAbandonedChatTurnOnStartup(
     chat,
     async () => (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).turnLedger,
-    async (turn: AbandonedStartedChatTurn) => {
-      const operation = authority.mintOperation();
-      try {
-        // The same guard the production caller applies: a settlement is never timed before the turn
-        // it closes.
-        const failedAtMs = Math.max(
-          Date.now(),
-          (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs,
-        );
-        await transitionMountedPresentation(
-          {
-            ...binding(root),
-            authority: authority.authority,
-            operationAuthority: operation.authority,
-            selectionGeneration: turn.attempt.selectionGeneration,
-            runtimeBindingDigest: turn.attempt.runtimeBindingDigest,
-            runtimeOwner: turn.attempt.runtimeOwner,
-            attemptId: turn.attempt.attemptId,
-          },
-          { operation: "fail", reasonCode: "interrupted", failedAtMs },
-        );
-      } finally {
-        operation.revoke();
-      }
-    },
+    async (turn: AbandonedStartedChatTurn) =>
+      transition(turn.attempt, (failedAtMs) => ({ operation: "fail", reasonCode: "interrupted", failedAtMs })),
+    async (turn: AbandonedClaimedCancelChatTurn) =>
+      transition(turn.attempt, (cancelledAtMs) => ({ operation: "cancel", cancelledAtMs })),
     Object.freeze({ verify: async (exactOwner) => createTestWindowsOwnerDeathVerification(exactOwner, outcome) }),
   ).finally(() => authority.revoke());
 }
@@ -380,6 +387,9 @@ async function settleNeverStarted(
       async () => {
         throw new Error("a turn that never started must not be settled as an interrupted prompt");
       },
+      async () => {
+        throw new Error("a turn that never started was never claimed into a cancel");
+      },
       Object.freeze({
         verify: async (exactOwner) => createTestWindowsOwnerDeathVerification(exactOwner, outcome),
       }),
@@ -540,23 +550,28 @@ test("a Chat with no current turn owes no recovery and says nothing", async () =
  * How every non-terminal turn a dead Host can leave ends.
  *
  * The population is the ledger's own non-terminal statuses rather than a list someone remembered:
- * `Record<NonTerminalTurnStatus, …>` stops compiling the moment `ChatTurnLedger` gains a status, and
- * the matrix below drives each of the four started steps through the real store, so this table
- * cannot claim a settlement the store refuses. The two steps a turn can die at before its prompt
- * starts are driven by `settleNeverStarted`, in their own two cases above.
+ * `Record<NonTerminalTurnStatus, …>` stops compiling the moment `ChatTurnLedger` gains a status, and the
+ * table has no spelling for a refusal - a ledger state with no forward path is the defect this file exists
+ * to catch, so it is not an outcome the table admits. The four started steps are driven below through the
+ * real store; the two steps a turn can die at before its prompt starts are driven by `settleNeverStarted`,
+ * in their own two cases above.
  */
 type NonTerminalTurnStatus = Exclude<ChatTurnLedger["status"], "completed" | "cancelled" | "failed">;
 
-const HOST_DEATH_OUTCOMES: Record<
-  NonTerminalTurnStatus,
-  Readonly<{ settlement: "settled" | "deferred" | "refused"; code: string }>
-> = {
+type HostDeathOutcome =
+  | Readonly<{ settlement: "deferred"; code: "chat_turn_recovery_deferred_to_mount" }>
+  | Readonly<{ settlement: "settled"; code: string; terminal: "failed" | "cancelled" }>;
+
+const HOST_DEATH_OUTCOMES: Record<NonTerminalTurnStatus, HostDeathOutcome> = {
   accepted_queued: { settlement: "deferred", code: "chat_turn_recovery_deferred_to_mount" },
   attempt_starting: { settlement: "deferred", code: "chat_turn_recovery_deferred_to_mount" },
-  running: { settlement: "settled", code: "chat_turn_recovery_settled" },
-  presentation_committed: { settlement: "settled", code: "chat_turn_recovery_settled" },
-  completion_claimed: { settlement: "settled", code: "chat_turn_recovery_settled" },
-  cancel_claimed: { settlement: "refused", code: "chat_turn_recovery_blocked_turn_state" },
+  running: { settlement: "settled", code: "chat_turn_recovery_settled", terminal: "failed" },
+  presentation_committed: { settlement: "settled", code: "chat_turn_recovery_settled", terminal: "failed" },
+  completion_claimed: { settlement: "settled", code: "chat_turn_recovery_settled", terminal: "failed" },
+  // The member that had no forward path at all: its durable cancel claim was answered with `turn_busy` for
+  // the life of the root, because the runner that owed the final `cancel` was the process that died. It now
+  // ends as the `cancelled` turn a live cancel leaves.
+  cancel_claimed: { settlement: "settled", code: "chat_turn_recovery_settled_cancel_claimed", terminal: "cancelled" },
 };
 
 /** The steps this file drives itself; the rest are the two deferred ones, proven above. */
@@ -585,11 +600,8 @@ test("every step a dead Host can leave a started turn in ends the way this table
     const { root, store, attemptId } = await fixture(deadOwnerPid, step);
     try {
       // The store really is in that step: the fixture drove the real transitions, it did not seed a row.
-      assert.equal(
-        (await ledger(store))?.status,
-        step,
-        `the fixture left the turn in ${String((await ledger(store))?.status)}`,
-      );
+      const abandoned = await ledger(store);
+      assert.equal(abandoned?.status, step, `the fixture left the turn in ${String(abandoned?.status)}`);
       await assert.rejects(
         send(root, store, "bcdefghijklmnopqrstuvw"),
         /turn_busy/u,
@@ -600,39 +612,96 @@ test("every step a dead Host can leave a started turn in ends the way this table
       assert.equal(result?.settlement, expected.settlement, `${step}`);
       assert.equal(result?.code, expected.code, `${step}`);
       assert.equal(result?.turnStatus, step, `${step}: the settlement names the step it found`);
+      assert.equal(result?.ownerOutcome, "proven_dead", `${step}: the settlement names what the OS said`);
       assert.match(diagnostics, new RegExp(`state=${step}`, "u"), `${step}: the diagnostic names the state`);
+      if (expected.settlement !== "settled") assert.fail(`${step}: every step driven here has a forward path`);
 
-      if (expected.settlement === "settled") {
-        const settled = await ledger(store);
-        assert.equal(settled?.status, "failed", `${step}: the abandoned turn is explained, not vanished`);
-        assert.equal(settled?.status === "failed" ? settled.reasonCode : undefined, "interrupted", `${step}`);
-        assert.equal(settled?.status === "failed" ? settled.attempt.attemptId : undefined, attemptId, `${step}`);
-        // A reply that had already reached the transcript stays visible; a turn that never got that far
-        // keeps no presentation at all.
-        const presented = settled?.status === "failed" ? settled.presentation : null;
-        if (step === "presentation_committed" || step === "completion_claimed") {
-          assert.equal(presented?.expressionId, "companion_reply_01", `${step}: the committed reply stays readable`);
-          assert.equal(
-            (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).messages.some(
-              (message) => message.messageId === "companion_reply_01",
-            ),
-            true,
-            `${step}: its transcript row stays`,
-          );
-        } else {
-          assert.equal(presented, null, `${step}: nothing was presented, so nothing is claimed`);
-        }
-        assert.equal((await send(root, store, "cdefghijklmnopqrstuvwx")).status, "accepted_queued", `${step}`);
+      const settled = await ledger(store);
+      if (settled?.status === "failed") {
+        assert.equal(expected.terminal, "failed", `${step}: this step ends as the failed turn it is`);
+        assert.equal(settled.reasonCode, "interrupted", `${step}: the prompt it lost is explained as interrupted`);
+      } else if (settled?.status === "cancelled") {
+        assert.equal(expected.terminal, "cancelled", `${step}: this step ends as the cancelled turn it is`);
+        // The terminal a LIVE cancel leaves, which is the point of the cancel-claim case: the claim the dead
+        // owner won keeps its own stamp, the reply already presented stays readable in the transcript, and
+        // the row is the same `cancelled` turn an ordinary Stop would have produced.
+        assert.equal(
+          settled.cancelClaimedAtMs,
+          abandoned?.status === "cancel_claimed" ? abandoned.cancelClaimedAtMs : undefined,
+          `${step}: the claim's own stamp is preserved, not re-minted`,
+        );
+        assert.ok(
+          settled.cancelledAtMs >= settled.cancelClaimedAtMs,
+          `${step}: the terminal is not timed before the claim it finishes`,
+        );
+        assert.equal(
+          settled.presentation?.expressionId,
+          "companion_reply_01",
+          `${step}: the reply the claim interrupted stays readable`,
+        );
       } else {
-        // A durable cancel another authority already won: the settlement refuses to replace that winner
-        // and leaves the row exactly as it is. The row is now permanently `turn_busy` for this root,
-        // because the runner that claimed the cancel was the process that died - the one forward path
-        // this settlement does not take, reported rather than asserted as correct.
-        assert.equal((await ledger(store))?.status, "cancel_claimed");
-        await assert.rejects(send(root, store, "cdefghijklmnopqrstuvwx"), /turn_busy/u);
+        assert.fail(`${step}: the abandoned turn is still ${settled === null ? "no ledger" : settled.status}`);
       }
+      assert.equal(settled.attempt.attemptId, attemptId, `${step}: the exact attempt it lost travels with it`);
+      assert.equal(settled.observation.phase, "running", `${step}: the observation it held travels with it`);
+      // A reply that had already reached the transcript stays visible; a turn that never got that far keeps
+      // no presentation at all.
+      if (step === "presentation_committed" || step === "completion_claimed") {
+        assert.equal(
+          settled.presentation?.expressionId,
+          "companion_reply_01",
+          `${step}: the committed reply stays readable`,
+        );
+        assert.equal(
+          (await store.resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).messages.some(
+            (message) => message.messageId === "companion_reply_01",
+          ),
+          true,
+          `${step}: its transcript row stays`,
+        );
+      } else if (settled.status === "failed") {
+        assert.equal(settled.presentation, null, `${step}: nothing was presented, so nothing is claimed`);
+      }
+      assert.equal((await send(root, store, "cdefghijklmnopqrstuvwx")).status, "accepted_queued", `${step}`);
     } finally {
       cleanup(root, store);
     }
   }
 });
+
+test("a claimed cancel whose owner is still alive is refused by name, and the claim is left exactly as it was", async () => {
+  const { root, store } = await fixture(deadOwnerPid, "cancel_claimed");
+  try {
+    const before = await ledger(store);
+    const { diagnostics } = await captureDiagnostics(async () => {
+      await assert.rejects(settle(root, store, "alive"), /chat_turn_recovery_blocked_owner_alive/u);
+    });
+    assert.match(diagnostics, /state=cancel_claimed/u);
+    assert.match(diagnostics, new RegExp(`owner_pid=${deadOwnerPid}`, "u"));
+    assert.match(diagnostics, /another GameBuddy is already running/u);
+    // Nothing changed: the claim is still the winner, and the send is still refused for the same reason.
+    assert.deepEqual(await ledger(store), before);
+    await assert.rejects(send(root, store, "bcdefghijklmnopqrstuvw"), /turn_busy/u);
+  } finally {
+    cleanup(root, store);
+  }
+});
+
+for (const outcome of ["mismatch", "ambiguous", "unavailable"] as const)
+  test(`a claimed cancel with an ${outcome} owner verdict is refused with its reason instead of settled`, async () => {
+    const { root, store } = await fixture(deadOwnerPid, "cancel_claimed");
+    try {
+      const before = await ledger(store);
+      const { diagnostics } = await captureDiagnostics(async () => {
+        await assert.rejects(settle(root, store, outcome), /chat_turn_recovery_blocked_owner_unknown/u);
+      });
+      assert.match(diagnostics, /state=cancel_claimed/u);
+      assert.match(diagnostics, new RegExp(`owner=${outcome}`, "u"));
+      assert.match(diagnostics, /could not be proven/u);
+      assert.doesNotMatch(diagnostics, /another GameBuddy is already running/u);
+      assert.deepEqual(await ledger(store), before);
+      await assert.rejects(send(root, store, "bcdefghijklmnopqrstuvw"), /turn_busy/u);
+    } finally {
+      cleanup(root, store);
+    }
+  });

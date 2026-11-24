@@ -83,6 +83,7 @@ import {
   ExactThreadNotFoundError,
   ExactThreadSurfaceMismatchError,
   nextSwipeIndex,
+  type PresentationTransition,
   readSwipePosition,
   swipePositionAfterRemoval,
   transitionMountedProviderStart,
@@ -828,8 +829,19 @@ async function ensureCurrentAuthoredContext(
   }
 }
 
-function isTerminalTurnStatusForCoordinator(status: string): boolean {
-  return status === "completed" || status === "cancelled" || status === "failed";
+/**
+ * The ledger states after which a turn owes nothing. It is one list, so the predicate below and the
+ * startup settlement's per-state decision cannot drift apart: a status that is not here is a status the
+ * settlement has to give a forward path.
+ */
+const TERMINAL_TURN_STATUSES = [
+  "completed",
+  "cancelled",
+  "failed",
+] as const satisfies readonly ChatTurnLedger["status"][];
+
+function isTerminalTurnStatusForCoordinator(status: string): status is (typeof TERMINAL_TURN_STATUSES)[number] {
+  return (TERMINAL_TURN_STATUSES as readonly string[]).includes(status);
 }
 
 function sameBindingForCoordinator(a: unknown, b: unknown): boolean {
@@ -3007,11 +3019,57 @@ async function createFreshChatRuntimeAuthority(
   };
 
   /**
+   * The one durable write this settlement makes for a turn its owner abandoned, through the same P5
+   * transition seam every live turn transition goes through. The exact attempt facts come from the ledger
+   * the dead owner left - the store's attempt CAS refuses a settlement that invents its own - and the
+   * transition authority is minted for this single write, because there is no mount to lend one.
+   *
+   * The settlement is written at the later of now and the turn's own last durable write: a mount can settle
+   * a turn microseconds after its last transition, and the store refuses any transition timed before the
+   * turn it closes.
+   */
+  async function settleAbandonedTurnThroughPresentationSeam(
+    chat: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
+    turn: AbandonedStartedChatTurn | AbandonedClaimedCancelChatTurn,
+    terminal: (atMs: number) => PresentationTransition,
+  ): Promise<void> {
+    const transitionAuthority = createMountedTurnTransitionAuthority();
+    const operationAuthority = transitionAuthority.mintOperation();
+    try {
+      const atMs = Math.max(
+        Date.now(),
+        (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs,
+      );
+      await transitionMountedPresentation(
+        Object.freeze({
+          authority: transitionAuthority.authority,
+          operationAuthority: operationAuthority.authority,
+          runtimeRoot: provision.runtimeCwd,
+          playerId: provision.principal.playerId,
+          companionId: provision.principal.companionId,
+          continuityId: provision.principal.continuityId,
+          chatThreadId: chat.chatThreadId,
+          chatSurfaceSessionId: chat.chatSurfaceSessionId,
+          selectionGeneration: turn.attempt.selectionGeneration,
+          runtimeBindingDigest: turn.attempt.runtimeBindingDigest,
+          runtimeOwner: turn.attempt.runtimeOwner,
+          attemptId: turn.attempt.attemptId,
+        }),
+        Object.freeze(terminal(atMs)),
+      );
+    } finally {
+      operationAuthority.revoke();
+      transitionAuthority.revoke();
+    }
+  }
+
+  /**
    * The Chat half of startup recovery. It reads the Chat the runtime is about to mount from the same
    * durable selection the bootstrap reads, proves the abandoned attempt's owner dead through the one OS
-   * verifier the Game side already uses, and settles the turn as failed/`interrupted` through the
-   * ordinary P5 transition authority - the same durable seam every other turn transition goes through,
-   * fed the attempt facts the ledger itself holds.
+   * verifier the Game side already uses, and settles the turn through the ordinary P5 presentation seam
+   * every live transition goes through - fed the attempt facts the ledger itself holds: an abandoned
+   * prompt as failed/`interrupted`, and an abandoned cancel claim as the `cancelled` terminal its claim
+   * was owed.
    *
    * A turn whose prompt never started is not settled here: the only shape that can close it is the cancel
    * seam a mounted authority owns (`settleNeverStartedChatTurnOnMount`), so its settlement is deferred until
@@ -3027,39 +3085,17 @@ async function createFreshChatRuntimeAuthority(
     const settlement = await settleAbandonedChatTurnOnStartup(
       chat,
       async () => (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).turnLedger,
-      async (turn) => {
-        const transitionAuthority = createMountedTurnTransitionAuthority();
-        const operationAuthority = transitionAuthority.mintOperation();
-        try {
-          // The settlement is written at the later of now and the turn's own last durable write: a
-          // mount can settle a turn microseconds after the turn's last transition, and the store
-          // refuses any transition timed before the turn it closes.
-          const failedAtMs = Math.max(
-            Date.now(),
-            (await mountedStore().resumeThread(chat.chatThreadId, chat.chatSurfaceSessionId)).thread.updatedAtMs,
-          );
-          await transitionMountedPresentation(
-            Object.freeze({
-              authority: transitionAuthority.authority,
-              operationAuthority: operationAuthority.authority,
-              runtimeRoot: provision.runtimeCwd,
-              playerId: provision.principal.playerId,
-              companionId: provision.principal.companionId,
-              continuityId: provision.principal.continuityId,
-              chatThreadId: chat.chatThreadId,
-              chatSurfaceSessionId: chat.chatSurfaceSessionId,
-              selectionGeneration: turn.attempt.selectionGeneration,
-              runtimeBindingDigest: turn.attempt.runtimeBindingDigest,
-              runtimeOwner: turn.attempt.runtimeOwner,
-              attemptId: turn.attempt.attemptId,
-            }),
-            Object.freeze({ operation: "fail" as const, reasonCode: "interrupted" as const, failedAtMs }),
-          );
-        } finally {
-          operationAuthority.revoke();
-          transitionAuthority.revoke();
-        }
-      },
+      async (turn) =>
+        settleAbandonedTurnThroughPresentationSeam(chat, turn, (failedAtMs) => ({
+          operation: "fail" as const,
+          reasonCode: "interrupted" as const,
+          failedAtMs,
+        })),
+      async (turn) =>
+        settleAbandonedTurnThroughPresentationSeam(chat, turn, (cancelledAtMs) => ({
+          operation: "cancel" as const,
+          cancelledAtMs,
+        })),
       ownerDeathVerifier,
     );
     deferredUnstartedTurn = settlement?.settlement === "deferred" ? settlement : undefined;
@@ -5051,6 +5087,12 @@ export type AbandonedStartedChatTurn = Extract<
   { status: "running" | "presentation_committed" | "completion_claimed" }
 >;
 /**
+ * The one non-terminal ledger state whose durable cancel was already won by the process that then exited.
+ * The claim is the winner and it is not this Host's to replace; what it owes is the final `cancel` the
+ * dead runner never wrote, which is the same P5 transition a live runner writes after its own claim.
+ */
+export type AbandonedClaimedCancelChatTurn = Extract<ChatTurnLedger, { status: "cancel_claimed" }>;
+/**
  * One startup Chat settlement, carrying the facts an operator needs to attribute a recovery nobody
  * watched: which Chat and turn owed it, who owned the abandoned attempt, what the OS said about that
  * owner, and whether the turn was settled. No path, token, credential or player text.
@@ -5068,7 +5110,10 @@ export type StartupChatTurnRecoverySettlement = Readonly<{
   (
     | Readonly<{
         settlement: "settled";
-        code: "chat_turn_recovery_settled" | "chat_turn_recovery_settled_never_started";
+        code:
+          | "chat_turn_recovery_settled"
+          | "chat_turn_recovery_settled_never_started"
+          | "chat_turn_recovery_settled_cancel_claimed";
       }>
     | Readonly<{
         settlement: "refused";
@@ -5103,11 +5148,22 @@ export type StartupChatTurnRecoverySettlement = Readonly<{
  * mounted authority owns), so it is not settled HERE - it is handed to the mount as a `deferred` settlement
  * and closed there by `settleNeverStartedChatTurnOnMount`. The owner proof is still taken here, for every
  * non-terminal state: a live owner must never be cancelled by a process that merely started later.
+ *
+ * A turn whose durable cancel was already claimed is a different kind of residue: the claim IS a winner,
+ * so nothing here may replace it, and until this settlement finished it the claim had no forward path at
+ * all - the runner that owed the final `cancel` was the process that died. With the owner proven dead,
+ * `finishClaimedCancel` writes that one transition through the store's own P5 seam, which is the same
+ * transition a live runner writes; the terminal row is then the `cancelled` shape a live cancel leaves,
+ * not a state invented here.
+ *
+ * The decision below is exhaustive over the non-terminal ledger states on purpose: `ChatTurnLedger`
+ * gaining a status without a forward path here stops compiling instead of answering `turn_busy` forever.
  */
 export async function settleAbandonedChatTurnOnStartup(
   chat: Readonly<{ chatThreadId: string; chatSurfaceSessionId: string }>,
   readTurn: () => Promise<ChatTurnLedger | null>,
   interruptStartedTurn: (turn: AbandonedStartedChatTurn) => Promise<void>,
+  finishClaimedCancel: (turn: AbandonedClaimedCancelChatTurn) => Promise<void>,
   ownerDeathVerifier: WindowsOwnerDeathVerifier,
 ): Promise<StartupChatTurnRecoverySettlement | null> {
   const turn = await readTurn();
@@ -5119,25 +5175,6 @@ export async function settleAbandonedChatTurnOnStartup(
     turnStatus: turn.status,
     settledAtUnixMs: Date.now(),
   };
-  if (
-    turn.status !== "running" &&
-    turn.status !== "presentation_committed" &&
-    turn.status !== "completion_claimed" &&
-    turn.status !== "accepted_queued" &&
-    turn.status !== "attempt_starting"
-  ) {
-    // `cancel_claimed`: another authority already won the durable cancel and the runner that owns the
-    // prompt finishes it. Nothing here may replace that winner.
-    const refusal = Object.freeze({
-      ...unsettled,
-      settlement: "refused" as const,
-      code: "chat_turn_recovery_blocked_turn_state" as const,
-      ownerPid: null,
-      ownerOutcome: null,
-    });
-    recordStartupChatTurnRecovery(refusal);
-    return refusal;
-  }
   const owner = "attempt" in turn ? turn.attempt.runtimeOwner : null;
   const ownerOutcome = owner === null ? null : await verifyOwnerDeathOrUnknown(ownerDeathVerifier, owner);
   const decided = {
@@ -5157,23 +5194,40 @@ export async function settleAbandonedChatTurnOnStartup(
     if (code === "chat_turn_recovery_blocked_turn_active") return refusal;
     throw new SemanticProductionCoordinatorError(code);
   }
-  if (turn.status === "accepted_queued" || turn.status === "attempt_starting") {
-    const deferred = Object.freeze({
-      ...decided,
-      settlement: "deferred" as const,
-      code: "chat_turn_recovery_deferred_to_mount" as const,
-    });
-    recordStartupChatTurnRecovery(deferred);
-    return deferred;
+  switch (turn.status) {
+    case "accepted_queued":
+    case "attempt_starting": {
+      const deferred = Object.freeze({
+        ...decided,
+        settlement: "deferred" as const,
+        code: "chat_turn_recovery_deferred_to_mount" as const,
+      });
+      recordStartupChatTurnRecovery(deferred);
+      return deferred;
+    }
+    case "running":
+    case "presentation_committed":
+    case "completion_claimed": {
+      await interruptStartedTurn(turn);
+      const settled = Object.freeze({
+        ...decided,
+        settlement: "settled" as const,
+        code: "chat_turn_recovery_settled" as const,
+      });
+      recordStartupChatTurnRecovery(settled);
+      return settled;
+    }
+    case "cancel_claimed": {
+      await finishClaimedCancel(turn);
+      const settled = Object.freeze({
+        ...decided,
+        settlement: "settled" as const,
+        code: "chat_turn_recovery_settled_cancel_claimed" as const,
+      });
+      recordStartupChatTurnRecovery(settled);
+      return settled;
+    }
   }
-  await interruptStartedTurn(turn);
-  const settled = Object.freeze({
-    ...decided,
-    settlement: "settled" as const,
-    code: "chat_turn_recovery_settled" as const,
-  });
-  recordStartupChatTurnRecovery(settled);
-  return settled;
 }
 /**
  * The turn a dead Host left before its prompt ever started: accepted but never claimed, or claimed without
@@ -5229,23 +5283,34 @@ export async function settleNeverStartedChatTurnOnMount(
  * written here as well as a settlement that lets it continue.
  */
 function recordStartupChatTurnRecovery(settlement: StartupChatTurnRecoverySettlement): void {
-  const what =
-    settlement.code === "chat_turn_recovery_settled"
-      ? "settled the turn its dead owner left behind as interrupted; the next message is accepted"
-      : settlement.code === "chat_turn_recovery_settled_never_started"
-        ? "settled the turn that never started before its dead owner exited as cancelled; the next message is accepted"
-        : settlement.code === "chat_turn_recovery_deferred_to_mount"
-          ? "handing the turn that never started to the mount's own cancel seam"
-          : settlement.code === "chat_turn_recovery_blocked_owner_alive"
-            ? "refused: another GameBuddy is already running. Close it, then start GameBuddy again."
-            : settlement.code === "chat_turn_recovery_blocked_turn_active"
-              ? "left the turn this process is still running alone; only its own runner may settle it"
-              : settlement.code === "chat_turn_recovery_blocked_owner_unknown"
-                ? "refused: the previous Chat owner's death could not be proven, so its turn was left untouched"
-                : "refused: the abandoned turn is in a state another authority owns, so it was left untouched";
+  const what = startupChatTurnRecoverySentence(settlement.code);
   process.stderr.write(
     `[chat-recovery] startup ${what} chat=${settlement.chatThreadId} surface=${settlement.chatSurfaceSessionId} turn=${settlement.turnId} state=${settlement.turnStatus} owner_pid=${settlement.ownerPid === null ? "none" : String(settlement.ownerPid)} owner=${settlement.ownerOutcome ?? "none"} at=${new Date(settlement.settledAtUnixMs).toISOString()}\n`,
   );
+}
+/**
+ * The one sentence a silent Chat turn settlement leaves, keyed by its code: a settlement this function can
+ * report but cannot word stops compiling instead of writing a line an operator cannot attribute.
+ */
+function startupChatTurnRecoverySentence(code: StartupChatTurnRecoverySettlement["code"]): string {
+  switch (code) {
+    case "chat_turn_recovery_settled":
+      return "settled the turn its dead owner left behind as interrupted; the next message is accepted";
+    case "chat_turn_recovery_settled_never_started":
+      return "settled the turn that never started before its dead owner exited as cancelled; the next message is accepted";
+    case "chat_turn_recovery_settled_cancel_claimed":
+      return "finished the cancel its dead owner claimed and never completed, as cancelled; the next message is accepted";
+    case "chat_turn_recovery_deferred_to_mount":
+      return "handing the turn that never started to the mount's own cancel seam";
+    case "chat_turn_recovery_blocked_owner_alive":
+      return "refused: another GameBuddy is already running. Close it, then start GameBuddy again.";
+    case "chat_turn_recovery_blocked_turn_active":
+      return "left the turn this process is still running alone; only its own runner may settle it";
+    case "chat_turn_recovery_blocked_owner_unknown":
+      return "refused: the previous Chat owner's death could not be proven, so its turn was left untouched";
+    case "chat_turn_recovery_blocked_turn_state":
+      return "refused: the abandoned turn is in a state another authority owns, so it was left untouched";
+  }
 }
 function recoveryReceipt(target: ProductionGameRecoveryTarget) {
   const permit = target.permit;
