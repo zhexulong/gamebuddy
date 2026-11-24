@@ -3,9 +3,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
-import { PLAN_SELF_WAIT_BUDGET_MS } from "./body-program-script.js";
+import { PLAN_SELF_WAIT_BUDGET_MS, PLAN_SELF_WAIT_HOLD_MS } from "./body-program-script.js";
 import { planSelfWaitDecision } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
-import { PROGRAM_STATUS_WAIT_SETTLEMENTS, waitForTerminalProgramStatus } from "./program-status-wait.js";
+import {
+  PROGRAM_STATUS_WAIT_SETTLEMENTS,
+  type ProgramStatusSilenceBound,
+  waitForTerminalProgramStatus,
+} from "./program-status-wait.js";
 import { ROOT } from "./wire-declaration.test-support.js";
 
 /**
@@ -23,15 +27,21 @@ import { ROOT } from "./wire-declaration.test-support.js";
  * of them is in `programTrace.jsonl` with its own `settledAtMs`, so the journal published a terminal state for all nine
  * and the pump owed nothing. Each is one dispatched node still `running` at the bound, in a plan whose own span ran from
  * 6,865 ms (`refill_watering_can`) to 328,317 ms (`sleep`) - `navigate_to_destination` at 55 s and 19 s, `ship_item` at
- * 22 s. The budget is derived from the plan's NODE COUNT (`planSelfWaitDecision`: nodes x `PLAN_NODE_PACE_MS`), so a
- * one-node plan is predicted at 629 ms and held for the 6,000 ms budget whatever its action is; the nine are the actions
- * that prediction does not describe, and waiting longer for them is what the run already paid for.
+ * 22 s. The bound those calls held with was the plan's NODE COUNT times a recorded per-node pace (`planSelfWaitDecision`),
+ * so a one-node plan was predicted at 629 ms and held for the 6,000 ms budget whatever its action was; the nine are the
+ * actions that prediction does not describe.
  * </p>
  * <p>
  * SO THE READINGS THIS FILE PROTECTS ARE TWO, and they pull in opposite directions. The median - 1,686 ms - must not
  * move: the wait is the right shape for the forty. The nine must stop answering with a bare word. A change that bought
  * the nine by holding the forty longer would fail here, which is why the replay below drives the recorded bound and
  * asserts the same clock.
+ * </p>
+ * <p>
+ * THE RULE IS NO LONGER PER NODE, and the last test below is where that shows: replayed through the bound the tool now
+ * holds with (a silence window the plan renews by finishing a step, inside a total of its own), every one of the nine ends
+ * INSIDE one window with the node named - because a single dispatched action settles nothing while it runs, so no renewal
+ * can come. The nine are therefore not cut by the total either: they are the case the window exists for.
  * </p>
  */
 
@@ -95,7 +105,7 @@ const median = (values: readonly number[]): number => {
 };
 
 /** The wait, driven with a fake clock over the read the run actually received, and nothing else. */
-async function replay(hold: Hold) {
+async function replay(hold: Hold, bound: number | ProgramStatusSilenceBound = hold.waitedMs) {
   assert.ok(hold.lastRead !== undefined, `${hold.programId} has no recorded last read to replay`);
   let clockMs = 0;
   let reads = 0;
@@ -105,7 +115,7 @@ async function replay(hold: Hold) {
       return hold.lastRead;
     },
     hold.lastRead,
-    hold.waitedMs,
+    bound,
     () => clockMs,
     async (milliseconds) => {
       clockMs += milliseconds;
@@ -113,6 +123,9 @@ async function replay(hold: Hold) {
   );
   return { outcome, clockMs, reads };
 }
+
+/** The bound the tool passes when the caller names nothing: the product's own two numbers. */
+const PRODUCT_BOUND = Object.freeze({ silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS });
 
 test("the median hold is the run's own, and the nine are the minority it does not describe", () => {
   const holds = ROUND94.holds.map((hold) => hold.waitedMs);
@@ -194,13 +207,19 @@ test("every one of the nine now answers with the node it was waiting on and what
 
 /**
  * THE ANSWER TO (1), MEASURED: what these nine have in common is that they were all still going, not that any of them
- * was stuck.
+ * was stuck - and none of them is a plan the TOTAL would have cut.
  *
  * A stuck node would have no terminal state in the journal, and a lost receipt would have one the Host never read. Every
- * one of the nine carries its own `settledAtMs`, and every one of those is past the bound - so the class is the third
- * one, "it was settling, later than the bound", and the reason it was later is that the bound never looked at the action.
+ * one of the nine carries its own `settledAtMs`, and every one of those is past the window - so the class is the third
+ * one, "it was settling, later than the window", and the reason is that a single dispatched action settles nothing while
+ * it runs, so nothing can renew the window.
+ *
+ * WHAT CHANGED HERE: the rule used to be `nodes x 629 ms` against the budget, so this test could assert each plan was
+ * predicted to finish sooner than it ran. There is no prediction to contradict any more - the rule holds every plan and
+ * predicts nothing - so the assertion is the one that still means something: every one of the nine sits between the
+ * window (which ended the hold) and the total (which did not).
  */
-test("all nine settled after the bound, and none of them was stuck", () => {
+test("all nine settled after the window and well inside the total, and none of them was stuck", () => {
   const report: string[] = [];
   for (const hold of expired) {
     const span = hold.journalSpanMs;
@@ -210,20 +229,22 @@ test("all nine settled after the bound, and none of them was stuck", () => {
     );
     assert.ok(
       span > PLAN_SELF_WAIT_BUDGET_MS,
-      `${hold.programId} settled in ${String(span)} ms, inside the bound, so it was not one of the nine`,
+      `${hold.programId} settled in ${String(span)} ms, inside the window, so it was not one of the nine`,
     );
-    // THE PREDICTION THAT HELD THE TURN, from the product's own rule: it knows the plan's node count and nothing else, so
-    // a one-node plan is predicted at the per-node pace and held for the budget. Every one of the nine ran for longer than
-    // that prediction, and that is the whole of what they have in common.
-    const nodeCount = hold.lastRead?.snapshot.nodes.length ?? 0;
-    const decision = planSelfWaitDecision(nodeCount, undefined);
-    assert.equal(decision.wait, true, `${hold.programId} was not held, so it is not one of the nine`);
+    // THE TOTAL IS NOT WHAT CUT THEM, whatever their span: a single dispatched action settles nothing while it runs, so
+    // no renewal can come and the WINDOW hands the turn back first. Two of these nine ran past the total (`sleep` at
+    // 174 s), and the window still ends them - which is what the next test drives through the product's bound.
     assert.ok(
-      span > decision.predictedMs,
-      `${hold.programId}: predicted ${String(decision.predictedMs)} ms and ran ${String(span)} ms`,
+      span > PLAN_SELF_WAIT_BUDGET_MS,
+      `${hold.programId} settled in ${String(span)} ms, inside the window, so it was not one of the nine`,
     );
+    // AND THE RULE HOLDS EVERY ONE OF THEM, at one declaration for all: `round94`'s node count is no longer an input, and
+    // the bound it answers with is the product's own two numbers.
+    const decision = planSelfWaitDecision(undefined);
+    assert.equal(decision.wait, true, `${hold.programId} is not held, so it is not one of the nine`);
+    assert.deepEqual(decision.wait ? decision.bound : null, PRODUCT_BOUND, "the hold's bound is the product's own");
     report.push(
-      `${hold.programId} (${String(nodeCount)} node, predicted ${String(decision.predictedMs)} ms) ` +
+      `${hold.programId} (${String(hold.lastRead?.snapshot.nodes.length ?? 0)} node) ` +
         `${hold.script.split("\n")[0] ?? ""} → ${String(span)} ms`,
     );
   }
@@ -231,9 +252,52 @@ test("all nine settled after the bound, and none of them was stuck", () => {
     expired.every((hold) => hold.lastRead?.snapshot.state === "active"),
     "an expired hold on a plan the journal had already stopped would be a different defect",
   );
-  process.stdout.write(
-    `\nthe nine settled ${String(expired.length)} of ${String(ROUND94.holds.length)}: ${report.join(" · ")}\n`,
+  // The population is printed because the two facts it holds apart are the point: every one of the nine outlasted the
+  // window, and the ones past the total show that the total is not what decides a hold nothing can renew.
+  const pastTheTotal = expired.filter((hold) => (hold.journalSpanMs ?? 0) > PLAN_SELF_WAIT_HOLD_MS);
+  assert.ok(
+    pastTheTotal.length > 0,
+    "blocked: no hold here outlasted the total, so the ceiling's relationship to these nine was not examined",
   );
+  process.stdout.write(
+    `\nthe nine settled ${String(expired.length)} of ${String(ROUND94.holds.length)} ` +
+      `(${String(pastTheTotal.length)} past the ${String(PLAN_SELF_WAIT_HOLD_MS)} ms total): ${report.join(" · ")}\n`,
+  );
+});
+
+/**
+ * THE RULE AS IT STANDS, RE-DRIVEN OVER THE NINE: they end inside ONE window, and the total is never reached.
+ *
+ * The bound is the object the tool now passes, so this is the product's rule rather than a replay of a recorded duration:
+ * a single dispatched action settles nothing while it runs, no renewal can come, and the hold hands back the block that
+ * names the node. `cutByHoldCeiling` is the fact that says the TOTAL was not what ended them - the distinction that makes
+ * the ceiling a bound rather than the node allowance it replaced.
+ */
+test("through the product's own bound, every one of the nine ends inside a window - not at the total", async () => {
+  const examined: string[] = [];
+  for (const hold of expired) {
+    const { outcome, clockMs } = await replay(hold, PRODUCT_BOUND);
+    assert.equal(
+      clockMs <= PLAN_SELF_WAIT_BUDGET_MS + 1_000,
+      true,
+      `${hold.programId} held ${String(clockMs)} ms on a plan that settled nothing, so a window is not what ended it`,
+    );
+    assert.equal(outcome.waited.terminality, "active", `${hold.programId} was not still running`);
+    assert.equal(
+      "settledWhileHeld" in outcome.waited && outcome.waited.settledWhileHeld,
+      0,
+      "nothing settled while the call held it, so nothing renewed it",
+    );
+    assert.equal(
+      "cutByHoldCeiling" in outcome.waited && outcome.waited.cutByHoldCeiling,
+      false,
+      `${hold.programId}: the total is not what ended this hold`,
+    );
+    assert.equal(outcome.waited.unsettled?.node?.nodeId, hold.node, "the answer names the node the plan is on");
+    examined.push(`${hold.programId} ${String(hold.node)} · held ${String(clockMs)} ms · one window`);
+  }
+  assert.equal(examined.length, ROUND94.recorded.atOrAbove5500, `examined ${String(examined.length)} expiries`);
+  process.stdout.write(`\n${examined.join("\n")}\n`);
 });
 
 /**

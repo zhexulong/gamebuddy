@@ -26,7 +26,6 @@ import { loadHostDeploymentManifest } from "./deployment-manifest.js";
 import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import {
   MAX_PLAN_NODES,
-  MAX_PLAN_SELF_WAIT_NODES,
   PLAN_ACTION_LIFECYCLES,
   PLAN_TOOL_SLOT_MEANING,
   planActionsFromRegistrations,
@@ -1212,18 +1211,20 @@ test("a plan answers each node's own state by index, so a refusal cannot be read
 });
 
 /**
- * A SHORT PLAN'S OWN OUTCOME COMES BACK IN THE CALL THAT SUBMITTED IT, through the real tool, socket and Mod shapes.
+ * EVERY PLAN'S OWN OUTCOME COMES BACK IN THE CALL THAT SUBMITTED IT, through the real tool, socket and Mod shapes.
  *
  * Measured 2026-11-20 (`round84`): 33 of 59 programmes were 1-3 nodes and a plan executes in 1-4 s, while one model turn
  * cost a median 6.18 s to decide and 10.1 s to deliver - so for most of her work the turn boundary cost more than the
- * work. The call now holds its own turn for a plan whose nodes fit `MAX_PLAN_SELF_WAIT_NODES` (derived in
- * `plan-self-wait.test.ts`) and answers a longer one on acceptance, saying `waited: false` and why.
+ * work. The call holds its own turn for the plan it submitted, and the bound is the PLAN'S OWN SILENCE (a window renewed
+ * by every step that finishes, inside a total - `plan-self-wait.test.ts`), not its node count.
  *
- * BOTH ARMS ARE DRIVEN HERE, because the boundary is the product: a test that only proved the short arm would pass for a
- * rule that held every plan, which is the behaviour that made `program_stop` unreachable mid-swing.
+ * THE ARM THAT CHANGED IS THE TEN-NODE PLAN, and it is the product: a plan answered on acceptance because it wrote more
+ * than nine nodes was the rule this replaces, and the only call in this test whose answer the node count could still
+ * decide is the one that asks for no hold at all. A test that dropped it would pass for a rule that held every plan for
+ * the wrong reason - which is why the escape hatch is driven too.
  */
 test(
-  "a plan that fits one wait comes back settled from the same call, and a longer one says why it was not held",
+  "a ten-node plan comes back settled from the same call, and only `waitMs: 0` declines the hold",
   { timeout: 20_000 },
   async () => {
     const requests: BridgeMessage[] = [];
@@ -1287,28 +1288,33 @@ test(
             const result = await tool.execute("self_wait", params, new AbortController().signal, () => undefined);
             return result.details as Record<string, unknown>;
           };
-          // (1) PAST THE THRESHOLD: ten nodes, no `waitMs`. The call must NOT hold the turn, and must say why - an answer
-          // silent about it leaves "this plan settles in a second" and "this plan outlasts the bound" looking alike.
+          // (1) A TEN-NODE PLAN, no `waitMs`: the count that used to send this plan back on acceptance is not an input
+          // any more, so the call reads the journal and answers with the plan's own terminal state.
           const longScript = Array.from(
-            { length: MAX_PLAN_SELF_WAIT_NODES + 1 },
+            { length: 10 },
             (_unused, index) => `builder.move_to_tile({ x: ${String(index + 2)}, y: 12 });`,
           ).join("\n");
           const long = await execute("stardew_plan_work", { script: longScript });
-          assert.equal(long.accepted, true, "the Mod accepts a plan the call declines to hold");
-          assert.equal(
-            long.waited,
+          assert.equal(long.accepted, true, "the Mod accepts the plan");
+          const longWait = long.waited as
+            | Readonly<{ settled: boolean; terminality: string; settledWhileHeld: number; cutByHoldCeiling: boolean }>
+            | false;
+          assert.notEqual(
+            longWait,
             false,
-            `a plan of ${String(MAX_PLAN_SELF_WAIT_NODES + 1)} nodes is answered on acceptance, not behind a bound it would outlast`,
+            "a plan of ten nodes is held by its own call: the rule no longer asks how many nodes it wrote",
           );
-          assert.equal(long.waitReason, "plan_outlasts_the_wait_bound", "and the answer names the reason");
-          assert.equal(long.settled, false, "the batch itself is answered as the Mod recorded it");
+          assert.equal((longWait as Readonly<{ settled: boolean }>).settled, true, "and it settled inside the call");
+          assert.equal((longWait as Readonly<{ terminality: string }>).terminality, "terminal");
           assert.equal(
-            long.remaining,
-            MAX_PLAN_SELF_WAIT_NODES + 1,
-            "with every step still to run, none claimed as done",
+            (longWait as Readonly<{ cutByHoldCeiling: boolean }>).cutByHoldCeiling,
+            false,
+            "the hold ended on the settlement, not on the total",
           );
-          // (2) INSIDE THE THRESHOLD: two nodes, no `waitMs`. The call reads the journal, holds the turn until it settles,
-          // and answers with the terminal state - which is the whole point: the same turn continues with the outcome.
+          assert.equal(long.settled, true, "so the batch is answered terminal, in this answer");
+          assert.equal(long.remaining, 0, "with every step settled, none claimed as done it did not reach");
+          // (2) THE SHORT PLAN: two nodes, no `waitMs`. The call reads the journal, holds the turn until it settles, and
+          // answers with the terminal state - which is the whole point: the same turn continues with the outcome.
           const short = await execute("stardew_plan_work", {
             script: "builder.move_to_tile({ x: 5, y: 8 });\nbuilder.move_to_tile({ x: 6, y: 8 });",
           });
@@ -1886,7 +1892,7 @@ test("attested fixed body-program closures recheck restrictive live policy witho
               new AbortController().signal,
               () => undefined,
             ),
-          /body_program_preflight_rejected/,
+          /rejectionCode=policy_identity_mismatch/,
         );
         assert.equal(requests.filter((request) => request.type === "program_submit").length, 0);
       } finally {

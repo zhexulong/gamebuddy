@@ -19,9 +19,8 @@ import {
   legalPlanActionIds,
   lookaheadIneligibility,
   MAX_PLAN_NODES,
-  MAX_PLAN_SELF_WAIT_NODES,
-  PLAN_NODE_PACE_MS,
   PLAN_SELF_WAIT_BUDGET_MS,
+  PLAN_SELF_WAIT_HOLD_MS,
   PLAN_TOOL_SLOT_MEANING,
   type PlanScriptRequest,
   type PublishedPlanAction,
@@ -82,6 +81,7 @@ import {
   type PlanAnswerNode,
   type PlanBatchAnswer,
   type ProgramStatusProgress,
+  type ProgramStatusWaitBound,
   type ProgramStatusWaitFacts,
   planBatchAnswer,
   programStatusProgress,
@@ -529,17 +529,18 @@ function createBodyProgramTools(
             //
             // Neither extreme is right, because the population is not one shape: measured `round84`, 33 of 59
             // programmes were 1-3 nodes and a plan executes in 1-4 s, so for most of her work the turn boundary costs
-            // more than the work. A SHORT plan is therefore held until it settles, and the threshold is DERIVED
-            // (`planSelfWaitDecision`: the plan's node count times the observed per-node pace, against
-            // `PLAN_SELF_WAIT_BUDGET_MS`) rather than a node count picked by hand. The bound is no larger than one
-            // decision, so a wait that expires costs no more than the turn it was meant to save. A plan past the
-            // threshold returns on acceptance exactly as before.
+            // more than the work. EVERY plan is therefore held, and what ends the hold is the PLAN'S OWN SILENCE
+            // (`planSelfWaitDecision`: a window of `PLAN_SELF_WAIT_BUDGET_MS` renewed by every step that finishes, and a
+            // total of `PLAN_SELF_WAIT_HOLD_MS` no renewal crosses) rather than a node count. The node count was the
+            // first rule and `round94`/`round95` is what it cost: nine holds spent 6,000 ms on one-node plans whose own
+            // action ran 6.9 s to 328 s, and every one of them came back with a word.
             //
             // This is the opposite of a lookahead: nothing is planned before the result exists. And the wait is NOT a new
             // mechanism: it is the same reader, the same cap and the same progress ledger the status tool uses, so a plan
-            // that outlives the bound returns exactly what a status call would have, saying `waited.settled: false`.
+            // still running when the hold ends returns exactly what a status call would have - `waited.settled: false`,
+            // the node it is on, and the publication that ends it.
             const { waitMs } = params as { waitMs?: number };
-            const selfWait = planSelfWaitDecision(nodes.length, waitMs);
+            const selfWait = planSelfWaitDecision(waitMs);
             if (!selfWait.wait) {
               // The submit already carries the Mod's journal as the Mod recorded it, so the non-waiting answer needs no
               // second call and no invented state: a program accepted as `idempotent` reports the state its nodes are in
@@ -582,7 +583,7 @@ function createBodyProgramTools(
                       unsettled: null,
                     } satisfies ProgramStatusWaitFacts),
                   })
-                : await waitForTerminalProgramStatus(readStatus, first, selfWait.boundMs);
+                : await waitForTerminalProgramStatus(readStatus, first, selfWait.bound);
               // The model is being handed this settlement in the result of this call, so the pump owes no fact for it.
               // A wait that gave up claims nothing and the watch delivers the plan when it does settle.
               if (settled.waited.terminality === "terminal") delivery.answerInTool();
@@ -614,6 +615,13 @@ function createBodyProgramTools(
                   // The same fields a status call carries, so a plan that outlived the bound needs no second call to learn
                   // what is left and whether anything moved while this one held the turn.
                   status: settled.result,
+                  // A hold that ended on its TOTAL says so in the words the caller reads, because "nothing settled for a
+                  // window" and "it is still working and we stopped anyway" are two facts it decides differently on. The
+                  // progress travels with it - `settledWhileHeld`, `unsettled`, every node's `elapsedMs` - so a cut hold is
+                  // never a bare word.
+                  ...("cutByHoldCeiling" in settled.waited && settled.waited.cutByHoldCeiling
+                    ? { waitReason: PLAN_SELF_WAIT_REASON.holdCeiling }
+                    : {}),
                   ...world,
                 },
               );
@@ -1242,46 +1250,49 @@ const PLAN_UNIDENTIFIED_FAMILIES: readonly string[] = Object.freeze([
   "warpItemTargets",
 ]);
 
-/** Why this call did not hold its turn for the plan's own settlement. */
-export type PlanSelfWaitRefusal =
+/** Why this call did or did not hold its turn, in the words the plan answer carries. */
+export const PLAN_SELF_WAIT_REASON = Object.freeze({
   /** The caller said so (`waitMs: 0`): it is about to stop, append to or redirect the plan, and that is the point of the call. */
-  | "caller_asked_never"
-  /** The plan's nodes are predicted to outlast the budget, so a held turn would expire instead of answering. */
-  | "plan_outlasts_the_wait_bound";
+  callerAskedNever: "caller_asked_never",
+  /** The hold reached its total while the plan was still moving: the answer carries the progress, not a failure. */
+  holdCeiling: "plan_still_running_at_the_hold_ceiling",
+});
+
+export type PlanSelfWaitReason = (typeof PLAN_SELF_WAIT_REASON)[keyof typeof PLAN_SELF_WAIT_REASON];
 
 /**
- * Whether `stardew_plan_work` holds its turn for the settlement of the plan it just submitted, and for how long.
+ * Whether `stardew_plan_work` holds its turn for the settlement of the plan it just submitted, and how it is bounded.
  *
  * <p>
- * THE DECISION IS DERIVED FROM THE WORK, not from a node count someone picked. `predictedMs` is the plan's node count
- * times the observed per-node pace (`PLAN_NODE_PACE_MS`), and `PLAN_SELF_WAIT_BUDGET_MS` is one decision's worth of
- * time, so the two numbers that decide are both measurements - a threshold written as "two nodes" would be a number no
- * later reading could contradict. `plan-self-wait.test.ts` re-derives it over `round84`'s own programmes.
+ * THE RULE NO LONGER ASKS HOW BIG THE PLAN IS. It used to: `predictedMs = nodeCount x 629` against a 6,000 ms budget, so
+ * a plan of nine nodes or fewer was held for the budget and a tenth node was not held at all - a node count standing in
+ * for "is this plan moving", which is the one question a wait can ask about itself. Measured `round94`/`round95`: of 49
+ * holds, nine spent the whole budget and came back `in_flight_not_done`, every one of them on a plan whose single
+ * dispatched node was still `running` and did settle later. The default is therefore a `ProgramStatusSilenceBound`: the
+ * window `PLAN_SELF_WAIT_BUDGET_MS` that every finished step renews, under the total `PLAN_SELF_WAIT_HOLD_MS` no
+ * renewal crosses.
  * </p>
  *
  * <p>
- * A CALLER'S OWN BOUND WINS, in both directions, because the wait is the one thing that takes the stop away: `0` keeps
- * the turn free for a caller about to stop or change the plan, and a positive bound is capped by the same maximum the
- * status tool obeys. Only an OMITTED bound is the rule's to decide.
+ * A CALLER'S OWN BOUND STILL WINS, in both directions, because the wait is the one thing that takes the stop away: `0`
+ * keeps the turn free for a caller about to stop or change the plan, and a positive bound is a DURATION the caller named
+ * (capped by the same maximum the status tool obeys) - nothing extends it, and it carries no ceiling to report because
+ * the caller's own number already is one.
  * </p>
  */
 export type PlanSelfWaitDecision =
-  | Readonly<{ wait: true; boundMs: number; predictedMs: number }>
-  | Readonly<{ wait: false; boundMs: 0; predictedMs: number; reasonCode: PlanSelfWaitRefusal }>;
+  | Readonly<{ wait: true; bound: ProgramStatusWaitBound }>
+  | Readonly<{ wait: false; reasonCode: PlanSelfWaitReason }>;
 
-export function planSelfWaitDecision(nodeCount: number, requestedWaitMs: number | undefined): PlanSelfWaitDecision {
-  const predictedMs = nodeCount * PLAN_NODE_PACE_MS;
-  if (typeof requestedWaitMs === "number" && Number.isFinite(requestedWaitMs))
-    return requestedWaitMs <= 0
-      ? Object.freeze({ wait: false, boundMs: 0, predictedMs, reasonCode: "caller_asked_never" })
-      : Object.freeze({
-          wait: true,
-          boundMs: Math.min(Math.trunc(requestedWaitMs), MAX_PROGRAM_STATUS_WAIT_MS),
-          predictedMs,
-        });
-  return predictedMs <= PLAN_SELF_WAIT_BUDGET_MS
-    ? Object.freeze({ wait: true, boundMs: PLAN_SELF_WAIT_BUDGET_MS, predictedMs })
-    : Object.freeze({ wait: false, boundMs: 0, predictedMs, reasonCode: "plan_outlasts_the_wait_bound" });
+export function planSelfWaitDecision(requestedWaitMs: number | undefined): PlanSelfWaitDecision {
+  if (typeof requestedWaitMs === "number" && Number.isFinite(requestedWaitMs)) {
+    if (requestedWaitMs <= 0) return Object.freeze({ wait: false, reasonCode: PLAN_SELF_WAIT_REASON.callerAskedNever });
+    return Object.freeze({ wait: true, bound: Math.min(Math.trunc(requestedWaitMs), MAX_PROGRAM_STATUS_WAIT_MS) });
+  }
+  return Object.freeze({
+    wait: true,
+    bound: Object.freeze({ silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS }),
+  });
 }
 
 function planToolParameters() {
@@ -1290,26 +1301,26 @@ function planToolParameters() {
       script: Type.String({
         minLength: 1,
         maxLength: 8192,
-        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live: a plan holds at most ${String(MAX_PLAN_NODES)} nodes; await, require, import, fetch and timers do not exist here and are refused by name.`,
+        description: `One synchronous script body, called once with \`snapshot\` (the frozen live observation) and \`builder\`; call builder.<actionId>({...}) with exactly the argument names that action declares, or builder.equipFor(<actionId>, <target>) to write an equip step. \`snapshot.tile\` is your own \`{ x, y }\` and one array exists per target family: ${PLAN_TARGET_FAMILIES.join(", ")}; every entry carries \`targetId\` except these, which carry only their own fields: ${PLAN_UNIDENTIFIED_FAMILIES.join(", ")}; and every entry carries \`x\` and \`y\` except ${PLAN_TILELESS_FAMILIES.join(", ")}. doorTargets names its source tile as \`sourceX\`/\`sourceY\` and its arrival map as \`targetLocation\`; chests carries \`chestId\`, \`displayName\`, \`isFridge\` and its own \`items\` array of \`{ slot, qualifiedItemId, displayName, stack }\` - every item the container holds, which is never truncated. \`snapshot.currentTool\` is the qualified id of the tool the farmer holds, \`snapshot.currentToolSlot\` is the slot it is in, and \`snapshot.toolSlots\` lists \`{ slot, label, upgradeLevel }\` for every tool in the pack. Before writing a tool action, ask \`stardew_plan_shape\` for that action: it names the tool category, any minimum upgrade level and what a \`slot\` argument holds, so no slot has to be guessed from tool order. Write the equip step with \`builder.equipFor(<actionId>, <target>)\`: it writes \`equip_tool\` before the action unless that tool is already the held one, and returns the slot to pass to the action. builder.nodeCount and builder.isFull() are live: a plan holds at most ${String(MAX_PLAN_NODES)} nodes; await, require, import, fetch and timers do not exist here and are refused by name. \`Math\` does exist, as its ten pure members only - abs, ceil, floor, max, min, pow, round, sign, sqrt, trunc - so arithmetic on a row's coordinates is one expression; \`Math.random\` is refused by name like every other member it does not carry.`,
       }),
       /**
        * Declared here because the tool already reads it: a parameter the implementation honours but the schema hides is
-       * a capability nothing can reach. The DEFAULT is the rule's now (`planSelfWaitDecision`: a plan that fits one wait is
-       * held for it), so this is what a caller passes to overrule the rule in either direction - `0` to keep the turn
-       * free, a longer bound when this plan genuinely needs the settled answer - and the text says what each costs.
+       * a capability nothing can reach. The DEFAULT is a silence-bounded hold (`planSelfWaitDecision`), so this is what
+       * a caller passes to overrule the rule in either direction - `0` to keep the turn free, a named duration when this
+       * plan needs a deadline of its own - and the text says what each costs.
        */
       waitMs: Type.Optional(
         Type.Integer({
           minimum: 0,
           maximum: MAX_PROGRAM_STATUS_WAIT_MS,
           description:
-            "Leave it out. A plan of " +
-            String(MAX_PLAN_SELF_WAIT_NODES) +
-            " nodes or fewer is already held until it settles (bound " +
+            "Leave it out. Every plan is held until it settles: each step that finishes buys another " +
             String(PLAN_SELF_WAIT_BUDGET_MS) +
-            " ms, no more than one of your own decisions costs), and a longer plan is not held: holding it would spend the bound on nodes that outlast it. Pass 0 to never hold this turn - do that when you are about to stop, append to or redirect the plan - or a positive bound up to " +
+            " ms of quiet, and the whole hold is capped at " +
+            String(PLAN_SELF_WAIT_HOLD_MS) +
+            " ms - holding costs nothing until the plan stops moving, and a plan that keeps working is never cut to a word. Pass 0 to never hold this turn - do that when you are about to stop, append to or redirect the plan - or a duration up to " +
             String(MAX_PROGRAM_STATUS_WAIT_MS) +
-            " when this particular plan needs the settled answer. While the call is held you cannot stop, append or steer. When the bound runs out, `waited.unsettled` names the plan, the node it is on and the publication that ends it (`node_receipt`, `node_dispatch` or `program_terminal`), so waiting again is a choice made against that fact instead of the only word on offer.",
+            " when this particular plan needs a deadline of your own. While the call is held you cannot stop, append or steer. When the hold ends, `waited.unsettled` names the plan, the node it is on and the publication that ends it (`node_receipt`, `node_dispatch` or `program_terminal`), `waited.settledWhileHeld` counts the steps that bought it time, and `waitReason: plan_still_running_at_the_hold_ceiling` says the hold was spent rather than the plan given up on - so waiting again is a choice made against those facts instead of the only word on offer.",
         }),
       ),
     },

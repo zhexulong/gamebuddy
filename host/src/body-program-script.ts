@@ -11,6 +11,7 @@ import {
 } from "./body-program-packing.js";
 import { planSecondSowRefusal } from "./body-program-planting.js";
 import type { StardewTileRead } from "./game-connection.js";
+import { MAX_PROGRAM_STATUS_WAIT_MS } from "./program-status-wait.js";
 import {
   type ActionRegistration,
   type BodyProgramCandidateRequest,
@@ -976,13 +977,13 @@ export const PLAN_ACTION_LIFECYCLES: readonly string[] = Object.freeze(["publish
 /**
  * What a plan script may not name, refused before it runs.
  *
- * Each entry either leaves the sandbox (require/import/fetch/process/globalThis), makes the plan
- * non-deterministic (Date, Math.random, timers) or re-enters compilation (eval, Function). The same
- * names are absent from the context, so this list is the readable refusal rather than the only fence.
+ * Each entry either leaves the sandbox (require/import/fetch/process/globalThis), reads the clock (`Date`,
+ * `performance`, timers) or re-enters compilation (eval, Function). The same names are absent from the context, so this
+ * list is the readable refusal rather than the only fence. `Math` is NOT here: a script receives a curated `Math` (see
+ * `PLAN_MATH`) and every member outside it is refused by `forbiddenMathReference`, which names the member the script
+ * reached (`Math.random`) rather than the object it was reached from.
  */
 const FORBIDDEN_PLAN_REFERENCES: readonly string[] = Object.freeze([
-  "Math.random",
-  "Math",
   "Date",
   "performance",
   "await",
@@ -1007,7 +1008,6 @@ const FORBIDDEN_PLAN_REFERENCES: readonly string[] = Object.freeze([
 
 /** Deleted from the fresh context as well, so a reference that slips past the scan still resolves to nothing. */
 const ABSENT_PLAN_GLOBALS: readonly string[] = Object.freeze([
-  "Math",
   "Date",
   "performance",
   "setTimeout",
@@ -1021,6 +1021,43 @@ const ABSENT_PLAN_GLOBALS: readonly string[] = Object.freeze([
   "module",
   "globalThis",
 ]);
+
+/**
+ * The arithmetic a plan may do: the ten members of `Math` that are pure functions of their arguments.
+ *
+ * <p>
+ * WHY THIS REPLACES A BLANKET REFUSAL. `Math` was in `FORBIDDEN_PLAN_REFERENCES`, so a script that compared two distances
+ * was refused as `plan_script_uses_forbidden:Math` and the fix was to rewrite the arithmetic by hand - measured in one
+ * session's own record, whose thinking read "Math is forbidden. Rewrite without Math" and spent the turn on subtraction
+ * and multiplication instead of on the work. That refusal bought nothing: none of these ten can read the clock, open a
+ * socket or draw a random number, and the script already runs arbitrary `for`/`if`/`.sort` over the snapshot.
+ * </p>
+ *
+ * <p>
+ * `Math.random` IS STILL REFUSED BY NAME, and so is every other member: the context carries THIS object as `Math`, and
+ * `forbiddenMathReference` reads the source for a `Math` that is not one of these ten. The two halves are the same fact
+ * read twice - the scan is the answer the author reads, the object is what the script really has - so neither can be
+ * loosened without the other.
+ * </p>
+ */
+export const PLAN_MATH = Object.freeze({
+  abs: Math.abs,
+  ceil: Math.ceil,
+  floor: Math.floor,
+  max: Math.max,
+  min: Math.min,
+  pow: Math.pow,
+  round: Math.round,
+  sign: Math.sign,
+  sqrt: Math.sqrt,
+  trunc: Math.trunc,
+});
+
+/**
+ * The members of `PLAN_MATH`, DERIVED from it: the scan's allow-list and the object the sandbox carries are one
+ * declaration, so a member added above is allowed below and a member removed above is refused below.
+ */
+const PLAN_MATH_MEMBERS: ReadonlySet<string> = new Set(Object.keys(PLAN_MATH));
 
 /**
  * The builder's action vocabulary: exactly the registrations the Mod's own Body Program catalog will accept -
@@ -1360,6 +1397,13 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  * `body-program-script.test.ts` passed on a budget that no longer measured anything. The description is unchanged
  * (7,234 both readings), so the ceiling follows the floor: 7,234 + 283 = 7,517, and it may only fall from here.
  *
+ * RE-MEASURED 2026-11-24 WITH THE SILENCE HOLD: the description's two-arm sentence ("a plan of N nodes or fewer is held
+ * until it settles ... a longer plan returns as soon as it is accepted") became the one hold every plan gets, which cost
+ * 18 characters net - the node count left, the renewed window and the total arrived - so the description reads 7,353 and
+ * the pair 7,515 of 7,517 (it was 7,335 and 7,497). The ceiling is unchanged, and a rewrite that says more in fewer
+ * words is what fits: `Math`'s ten pure members are taught in the tool's own `script` parameter instead, where they cost
+ * the pair nothing.
+ *
  * THE TWO SIDES ARE READ FROM THEIR OWN OWNERS. The description is read live (`planWorkDescription`); the Game floor's size
  * is the floor's own recorded reading (`GAME_SURFACE_PROMPT_FLOOR.conductBlock.chars` in
  * `game-surface-prompt-floor.test-support.ts`), which the floor's suite holds against the prompt the product really builds -
@@ -1371,35 +1415,31 @@ function planExampleCharge(action: "till_soil" | "water_crop"): string {
  */
 export const GAME_PROSE_PAIR_BUDGET_CHARS = 7517;
 
-/**
- * How long `stardew_plan_work` may hold its own call waiting for the plan it just submitted to settle.
+/*
+ * THE TWO NUMBERS A HELD `stardew_plan_work` TURN IS BOUNDED BY, side by side because they answer two different
+ * questions: `PLAN_SELF_WAIT_BUDGET_MS` is the SILENCE window (what renews the hold - one finished step buys another),
+ * and `PLAN_SELF_WAIT_HOLD_MS` is the TOTAL (what bounds it, however much progress the plan makes).
  *
- * THE BUDGET IS ONE DECISION, NOT ONE PLAN'S PATIENCE. Measured 2026-11-20 (`round84`): a model turn costs a median
- * 6.18 s to decide and 10.1 s to deliver, and the 1,702.7 s between its programmes was 437.5 s of queue wait and
- * 1,265.2 s of turn gaps - so a plan that settles inside the call that submitted it costs the run nothing, and one that
- * outlasts this bound costs no more than the turn the wait was meant to save. `program-status-wait.ts`'s 30 s cap is a
- * different question (how long a caller who ASKED to wait may wait); nothing here raises it.
+ * The silence window asks whether the plan is still getting through its work, which is the one thing a wait can see.
+ * Measured 2026-11-23 (`round94`/`round95`): nine of 49 holds spent a whole 6,000 ms and came back with a word, for plans
+ * whose own span ran from 6,865 ms (`refill_watering_can`) to 328,317 ms (`sleep`) - none stuck, every one of them
+ * `snapshotChanged: true` for the whole hold. What decided those waits was the plan's NODE COUNT, which describes how
+ * fast nodes settle on average and says nothing about whether THIS plan is moving: a `sleep` and a `move_to_tile` were
+ * handed the same 6,000 ms. A window renewed by a step that finished is the same question asked of the plan itself.
+ *
+ * The total is the ceiling a renewal cannot cross, and it is deliberately NOT per node: one window per node written is
+ * `nodeCount x a constant` wearing a ceiling's clothes, and it would cut a forty-node plan at the same per-node
+ * allowance that was wrong before. It is three of the longest wait a caller may name (`MAX_PROGRAM_STATUS_WAIT_MS`),
+ * because a plan that keeps finishing steps is doing exactly what it was asked to: measured 2026-11-24 (`round99`), a
+ * 26-node programme ran 21.4 s end to end - so 90 s is more than four times the longest multi-node programme on record,
+ * and a well-behaved plan cannot reach it.
  */
+
+/** The window a step that FINISHED buys: how long the plan may settle nothing before the hold hands back what it has. */
 export const PLAN_SELF_WAIT_BUDGET_MS = 6_000;
 
-/**
- * The pace one node of a plan was measured at, which is what makes the threshold below a DERIVATION.
- *
- * A MEASUREMENT, NOT A KNOB: `round84`'s 57 accepted programmes, each programme's own span (its journal's first
- * `atMs` to its last `settledAtMs`) divided by its node count - p50 629 ms, p90 2,480 ms - so the pace is what the
- * work actually took, not what a node count chosen by hand would assume. A threshold written as `2` or `3` would be
- * that hand-picked number standing beside a measurement nothing can check it against, which is the drift the family
- * tables and the prose budget exist to prevent; `plan-self-wait.test.ts` re-derives the threshold from this pace over
- * the run's own programmes and prints how many of them it covers.
- */
-export const PLAN_NODE_PACE_MS = 629;
-
-/**
- * The largest plan whose own settlement is predicted to fit inside the budget: DERIVED, never written.
- * `floor(6_000 / 629) = 9` - and a plan past it is answered as soon as the Mod accepts, because holding that turn would
- * buy nothing but an expired bound.
- */
-export const MAX_PLAN_SELF_WAIT_NODES = Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PLAN_NODE_PACE_MS);
+/** The total a hold may spend however many steps finish while it watches: three of the status tool's own maximum. */
+export const PLAN_SELF_WAIT_HOLD_MS = 3 * MAX_PROGRAM_STATUS_WAIT_MS;
 
 /**
  * The `stardew_plan_work` description: what the tool does, and the builder methods it exposes, named and taking the
@@ -1416,15 +1456,19 @@ export const MAX_PLAN_SELF_WAIT_NODES = Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PL
  * hand-maintained list to drift from the Mod's catalog. Every action is printed once, under the family the Mod declared
  * it in, as the call it is: its declared argument names in parentheses, `sleep()` for the five that declare none.
  *
- * The other thing it has to teach is WHEN THE CALL RETURNS, BECAUSE IT IS NOT THE SAME ANSWER FOR EVERY PLAN. A plan
- * whose nodes fit `MAX_PLAN_SELF_WAIT_NODES` is held until it settles, so the same turn carries on with the outcome in
- * hand - measured `round84`: 51 of 57 programmes were shorter than one turn, and the turn boundaries between them cost
- * 1,265.2 s of that run. A longer plan returns as soon as the Mod accepts, because a held call makes `stop`, `append`
- * and a player's steering unreachable exactly while they matter. For those the wake is not invented here: a dispatched
- * node's execution receipt reaches the same pump as every other fact (`host-service.ts` `acceptIntegrationFact` ->
+ * The other thing it has to teach is WHEN THE CALL RETURNS. EVERY PLAN IS HELD: the call waits until the plan settles,
+ * renewing its window every time a step FINISHES, and gives up only when the plan has settled nothing for
+ * `PLAN_SELF_WAIT_BUDGET_MS` or after `PLAN_SELF_WAIT_HOLD_MS` in total. The two arms that used to exist - a short plan
+ * held, a longer one answered as soon as the Mod accepted - were a NODE COUNT deciding whether the outcome was worth
+ * waiting for, and `round94`/`round95` is what that cost: nine holds of 6,000 ms on one-node plans whose own action ran
+ * from 6.9 s (`refill_watering_can`) to 328 s (`sleep`), every one of them still working when the call gave up. A plan
+ * still running when the hold ends hands back what it has, naming the step it is on, so "wait again" is a choice made
+ * against a fact. Measured `round84`: 51 of 57 programmes were shorter than one turn, and the turn boundaries between
+ * them cost 1,265.2 s of that run. Measured 2026-11-03 (`round29`): 48 `program_status` calls, `waitMs` median 30,000,
+ * 248 s blocked - the description never said a receipt was coming, so the wake is stated here too: a dispatched node's
+ * execution receipt reaches the same pump as every other fact (`host-service.ts` `acceptIntegrationFact` ->
  * `CompanionEventPump.flush`), and a terminal receipt is not a held progress fact, so it starts a follow-up turn
- * (`event-pump.ts` `#hasPendingFactTrigger`). Measured 2026-11-03 (`round29`): 48 `program_status` calls, `waitMs` median
- * 30,000, 248 s blocked - the description never said a receipt was coming.
+ * (`event-pump.ts` `#hasPendingFactTrigger`).
  *
  * THE BATCH IS TAUGHT AS THE JAVASCRIPT IT IS. A `for` over a snapshot family, an `if` that leaves out the tiles she does
  * not mean to touch, and one call per tile: that is the shape that buys twenty actions for one turn. It replaced a
@@ -1451,9 +1495,9 @@ export const MAX_PLAN_SELF_WAIT_NODES = Math.floor(PLAN_SELF_WAIT_BUDGET_MS / PL
  */
 export function planWorkDescription(actions: readonly PublishedPlanAction[]): string {
   return (
-    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. A plan of " +
-    String(MAX_PLAN_SELF_WAIT_NODES) +
-    " nodes or fewer is held until it settles, so its outcome is in this answer; a longer plan returns as soon as it is accepted - do NOT poll it, each step's receipt arrives later as a new message. THE CLOCK RUNS WHILE YOU THINK: one program costs one turn whatever its node count, so plan it all in ONE script. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by family and printing its declared arguments - `sleep()` takes none, and ends the day only from inside your own farmhouse or cabin (`not_home` outdoors) - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - and stardew_look_up answers what the session holds; all cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. When `builder.isFull()` is true, plan the rest in the next script of this same turn:\n" +
+    "Write one script over the current snapshot and the builder, one builder.<actionId>({...}) call per step; the host compiles it into a single plan the Mod runs in the game and advances itself. A plan is held until it settles, so its outcome is in this answer; a finished step renews it, up to " +
+    String(PLAN_SELF_WAIT_HOLD_MS / 1_000) +
+    " s; one still running then names the step it is on - do NOT poll it, each step's receipt arrives later as a new message. THE CLOCK RUNS WHILE YOU THINK: one program costs one turn whatever its node count, so plan it all in ONE script. Keep composing; end the turn only when you have nothing more to plan. Every answer carries `nodes`: one entry per node you wrote, with the Mod's `state` (`succeeded` only when its receipt proved it, `rejected`/`failed`/`cancelled` when it did not, `pending`/`running` before it stopped), a `reasonCode` when it did not succeed, and its `tile` - plus `settled` (true only when every node has stopped) and `remaining`. stardew_action_program_status is for a plan that is not moving, not a progress bar. Every action below is a builder method, grouped by family and printing its declared arguments - `sleep()` takes none, and ends the day only from inside your own farmhouse or cabin (`not_home` outdoors) - so one line is the whole call; ask stardew_plan_shape for their types and closed sets, once for every action the script will call. A SHAPE - a 3-wide 20-long strip, the strip along a fence - is one RECTANGLE to query, not a reason to observe again and guess the tiles in between: stardew_observe takes it as `select: [{ x: { from, to }, y: { from, to } }]` and answers every tile of it - `occupantKind`, `tillable`, `passable` - and stardew_look_up answers what the session holds; all cost the plan no node. A call the compiler refuses costs only that call: the rest run, the answer says `planStatus: partial` and names the dropped calls, so fix and resend. When `builder.isFull()` is true, plan the rest in the next script of this same turn:\n" +
     `${planActionVocabularyText(actions)}\n` +
     "The script is ordinary JavaScript over `snapshot` and `builder`: `for`, `if`, `.filter`, `.sort` run; timers,\n" +
     "randomness, the network and eval are refused by name.\n" +
@@ -1546,14 +1590,18 @@ const PLAN_LAYOUT_FACTS: Readonly<Record<string, readonly string[]>> = Object.fr
 export type PlanIterationCondition =
   /** The row field the loop guards on: iterating the row is work when this field says so. */
   | Readonly<{ rowField: string }>
-  /** Why every published row of the family already needs the work, so no guard is owed. */
+  /**
+   * Why every published row of the family already needs the work, so no guard is owed. It owes a
+   * `file.cs:symbol` citation of the Mod code that decides it: a symbol the gate can find wherever it moved, where
+   * a line range would expire silently.
+   */
   | Readonly<{ publishedAsWork: string }>;
 
 export const PLAN_ITERATION_CONDITIONS: Readonly<Record<string, PlanIterationCondition>> = Object.freeze({
   soilTiles: Object.freeze({ rowField: "hoeDirt" }),
   cropTargets: Object.freeze({
     publishedAsWork:
-      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() - and records `AlreadyWatered` instead of a row (`farmhandtargetdiscovery.cs:2217-2238`), so every published row is a tile the Can is still needed on",
+      "`DiscoverCropTargets` answers only a crop whose `CropNeedsWater` holds - crop != null && needsWatering() && !isWatered() - and records `AlreadyWatered` instead of a row (`farmhandtargetdiscovery.cs:DiscoverCropTargets`), so every published row is a tile the Can is still needed on",
   }),
 });
 
@@ -1856,6 +1904,9 @@ export function compilePlanScript(
   const forbidden = FORBIDDEN_PLAN_REFERENCES.find((reference) => mentionsReference(scriptSource, reference));
   if (forbidden !== undefined)
     return refused(`plan_script_uses_forbidden:${forbidden}`, scriptSource, snapshotRevision);
+  const forbiddenMath = forbiddenMathReference(scriptSource);
+  if (forbiddenMath !== null)
+    return refused(`plan_script_uses_forbidden:${forbiddenMath}`, scriptSource, snapshotRevision);
   if (snapshot === null || snapshot === undefined || !isUsableSnapshot(snapshot))
     return refused("plan_snapshot_unavailable", scriptSource, snapshotRevision);
 
@@ -2082,7 +2133,11 @@ function runPlanScriptAttempt(
   state: PlanScriptState,
 ): PlanScriptAttempt {
   const context = createContext(
-    Object.freeze({ snapshot: frozenSnapshot, builder: createPlanBuilder(actions, frozenSnapshot, state) }),
+    Object.freeze({
+      snapshot: frozenSnapshot,
+      builder: createPlanBuilder(actions, frozenSnapshot, state),
+      Math: PLAN_MATH,
+    }),
     { name: "gamebuddy-plan-script", codeGeneration: { strings: false, wasm: false } },
   );
   const global = runInContext("globalThis", context) as Record<string, unknown>;
@@ -5040,6 +5095,26 @@ function atPlanCall<TResult>(state: PlanScriptState, actionId: string | null, ru
 /** Word-bounded, so an argument value or target id that merely contains the token is not a false hit on it. */
 function mentionsReference(source: string, reference: string): boolean {
   return new RegExp(`(^|[^A-Za-z0-9_$])${reference.replace(/[.$]/gu, "\\$&")}([^A-Za-z0-9_$]|$)`, "u").test(source);
+}
+
+/**
+ * Every `Math` a script reaches that is not one of `PLAN_MATH`'s members, named as the script wrote it.
+ *
+ * `Math` is matched only where it stands on its own - not after a `.` and not inside a longer identifier - so a snapshot
+ * field called `math` is not a hit. What FOLLOWS it decides the name: `.member` is allowed only for a curated member, and
+ * anything else (a bare `Math`, `Math[...]`, `Math.random`) is refused, because the only `Math` this sandbox carries is
+ * `PLAN_MATH` and a script that could reach past it would have a capability nothing declared.
+ */
+function forbiddenMathReference(source: string): string | null {
+  for (const match of source.matchAll(/(^|[^A-Za-z0-9_$.])Math\b/gu)) {
+    const access = /^\s*(?:\.\s*([A-Za-z_$][A-Za-z0-9_$]*)|\[)/u.exec(
+      source.slice((match.index ?? 0) + match[0].length),
+    );
+    if (access !== null && access[1] !== undefined && PLAN_MATH_MEMBERS.has(access[1])) continue;
+    if (access === null) return "Math";
+    return access[1] === undefined ? "Math[...]" : `Math.${access[1]}`;
+  }
+  return null;
 }
 
 function isTimeout(error: unknown): boolean {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,13 +11,14 @@ import {
   compilePlanScript,
   GAME_PROSE_PAIR_BUDGET_CHARS,
   MAX_PLAN_NODES,
-  MAX_PLAN_SELF_WAIT_NODES,
   MAX_REPORTED_PLAN_READINGS,
   MODAL_CLEARING_PLAN_ACTION_IDS,
   PLAN_FORM_ACTION_IDS,
   PLAN_ITERATION_CONDITIONS,
+  PLAN_MATH,
   PLAN_PLACE_READINGS,
   PLAN_SCRIPT_BUDGET_MS,
+  PLAN_SELF_WAIT_HOLD_MS,
   PLAN_SNAPSHOT_DISCOVERY_RADIUS,
   PLAN_SNAPSHOT_READINGS,
   type PlanIterationCondition,
@@ -1625,6 +1626,79 @@ test("a script that reaches outside its sandbox is refused by name, and nothing 
     assert.equal(refusalOf(compile(script)), `plan_script_uses_forbidden:${name}`);
 });
 
+/**
+ * `Math` IS THE TEN PURE MEMBERS, AND EVERY OTHER `Math` IS STILL REFUSED BY NAME.
+ *
+ * <p>
+ * THE RED CASE THIS ANSWERS, from one session's own record: a plan that compared two distances was refused as
+ * `plan_script_uses_forbidden:Math`, her thinking read "Math is forbidden. Rewrite without Math", and the turn went on
+ * subtraction and multiplication instead of on the work. A blanket refusal of an object whose ten members are total
+ * functions of their arguments bought nothing the sandbox does not already give away.
+ * </p>
+ *
+ * <p>
+ * WHAT MAY NOT LOOSEN WITH IT is the other half: `Math.random` is the one member that would make a plan non-deterministic,
+ * and a member the object does not carry must not be reachable by spelling it. The scan reads the SOURCE, so the refusal
+ * arrives before anything runs and names the member the author wrote - `Math.random`, `Math.imul`, a bare `Math` or a
+ * computed `Math[...]` - rather than the object it was reached from.
+ * </p>
+ */
+test("a plan computes with Math's pure members, and every other member is still refused by name", () => {
+  // THE POSITIVE, and it is the shape that was refused: a distance, used to order a published family.
+  const sorted = compile(
+    `
+const here = snapshot.tile;
+const byDistance = snapshot.cropTargets
+  .map((row) => Math.sqrt(Math.pow(row.x - here.x, 2) + Math.pow(row.y - here.y, 2)))
+  .sort((left, right) => left - right);
+const nearest = Math.trunc(byDistance[0] ?? 0);
+const usable = Math.max(1, Math.ceil(nearest));
+const gap = Math.abs(usable - Math.round(byDistance.length));
+const smaller = Math.min(usable, gap);
+if (Math.sign(smaller) >= 0 && Math.floor(usable) >= 0)
+  builder.water_crop({ x: 11, y: 10, expectedTargetId: "crop_01", charge: 0 });
+`,
+    { cropTargets: [crop("crop_01", 11, 10), crop("crop_02", 14, 12)], tile: { x: 10, y: 10 } },
+  );
+  assert.equal(
+    sorted.status,
+    "compiled",
+    `a plan doing arithmetic is not refused: ${sorted.status === "refused" ? sorted.reasonCode : sorted.status}`,
+  );
+  assert.equal(nodesOf(sorted).length, 1, "and the work it planned is in the program");
+  // THE NEGATIVE, one member at a time: the object the sandbox carries is the whole allow-list.
+  for (const [script, name] of [
+    ["const pick = Math.random();", "Math.random"],
+    ["const seed = Math.imul(3, 4);", "Math.imul"],
+    ["const now = Math.now();", "Math.now"],
+    ["const shorthand = Math;", "Math"],
+    ['const computed = Math["random"]();', "Math[...]"],
+  ] as const)
+    assert.equal(
+      refusalOf(compile(script)),
+      `plan_script_uses_forbidden:${name}`,
+      `the refusal names the member the script reached: ${script}`,
+    );
+  // And the curated object is not the engine's: a fence that shipped `Math.random` inside it would pass the scan above.
+  assert.deepEqual(Object.keys(PLAN_MATH).sort(), [
+    "abs",
+    "ceil",
+    "floor",
+    "max",
+    "min",
+    "pow",
+    "round",
+    "sign",
+    "sqrt",
+    "trunc",
+  ]);
+  assert.equal(
+    "random" in PLAN_MATH,
+    false,
+    "the object the sandbox carries must not contain the one member the sandbox refuses",
+  );
+});
+
 test("a plan is refused by name past the corruption bound, never truncated", () => {
   // The bound is 256, not 16. It is the READ-BACK corruption bound on a journal this product could have written, and it
   // was 16 - which is not a corruption bound at all: a 16-node plan is ordinary, so the writer's policy was being enforced
@@ -2724,13 +2798,10 @@ test("an empty plan says whether the script never asked for a step or asked and 
   // declaration instead of the compiler's.
   assert.match(
     refusalOf(
-      compile(
-        "try { builder.remove_placed_item({ x: 5, y: 6 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');",
-        {
-          currentToolSlot: 3,
-          toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
-        },
-      ),
+      compile("try { builder.remove_placed_item({ x: 5, y: 6 }); } catch (error) {}\nbuilder.equipFor('cut_weeds');", {
+        currentToolSlot: 3,
+        toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }],
+      }),
     ),
     /^plan_script_missing_argument:remove_placed_item\.expectedTargetId:/u,
   );
@@ -3255,7 +3326,10 @@ builder.dig_artifact_spot({ x: 7, y: 6, slot: hoe, expectedTargetId: 'artifact_s
     },
   );
   assert.deepEqual(
-    nodesOf(result).map((node) => [node.actionId, (node.arguments.slot as unknown as { canonicalValue?: string } | undefined)?.canonicalValue ?? null]),
+    nodesOf(result).map((node) => [
+      node.actionId,
+      (node.arguments.slot as unknown as { canonicalValue?: string } | undefined)?.canonicalValue ?? null,
+    ]),
     [
       ["cut_weeds", "3"],
       ["dig_artifact_spot", "5"],
@@ -3348,7 +3422,10 @@ test("a plan cannot write an equip_tool step, and the refusal names the reason",
     { toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }] },
   );
   assert.equal(besideIt.status, "partial");
-  assert.deepEqual(nodesOf(besideIt).map((node) => node.actionId), ["cut_weeds"]);
+  assert.deepEqual(
+    nodesOf(besideIt).map((node) => node.actionId),
+    ["cut_weeds"],
+  );
   assert.deepEqual(accountOf(besideIt).dropped, ["n01:plan_script_equip_undone_by_the_step_it_precedes:equip_tool"]);
   // The action itself is not withdrawn: it is still a published action of the Mod, reachable outside a plan.
   assert.ok(
@@ -3986,9 +4063,9 @@ test("the pair gate turns red on added prose, and on a sentence that moved witho
  * The three program tools' descriptions as the model is handed them: `stardew_plan_work` is compiled here, and the two
  * readers are written inline beside the tools that mount them, so they are read off that source.
  *
- * One reader for all three, because the defect this pins is a CONVERSATION between them: `plan_work` holds a short plan's
- * turn and answers a longer one on acceptance, so a description that advertises watching the plan is the instruction that
- * fills the gap - whichever of the three states it.
+ * One reader for all three, because the defect this pins is a CONVERSATION between them: `plan_work` holds the turn for
+ * every plan it submits, so a description that advertises watching the plan is the instruction that fills the gap -
+ * whichever of the three states it.
  */
 function programToolDescriptions(): Readonly<Record<"planWork" | "programStatus" | "programEvents", string>> {
   const source = readFileSync(
@@ -4022,17 +4099,20 @@ function descriptionOfToolAfter(source: string, marker: string): string {
 }
 
 test("stardew_plan_work says when it returns, for which plan, and that the turn keeps composing", () => {
-  // THE TWO ARMS ARE TWO FACTS, and the condition between them is the product's own threshold rather than a number
-  // written here: a description that said "two nodes" while the rule waited for nine would be a second spelling of the
-  // same fact, and the model would plan against the wrong one. `round84` is why the first arm exists at all - 33 of 59
+  // EVERY PLAN IS HELD, SO WHAT THE DESCRIPTION STATES IS THE TWO BOUNDS, from the product's own constants rather than
+  // numbers written here: a description that said "two nodes" while the rule held every plan would be a second spelling
+  // of the same fact, and the model would plan against the wrong one. `round84` is why a hold exists at all - 33 of 59
   // programmes were 1-3 nodes and a plan runs in 1-4 s, so for most of her work the turn boundary cost more than the
-  // work (`1,265.2 s` of the run's `1,702.7 s` between programmes), while a description that said nothing about a wake
+  // work (`1,265.2 s` of the run's `1,702.7 s` between programmes) - while a description that said nothing about a wake
   // produced 48 `stardew_action_program_status` calls and 248 s blocked (`round29`).
   const { planWork } = programToolDescriptions();
   assert.match(
     planWork,
-    new RegExp(`A plan of ${String(MAX_PLAN_SELF_WAIT_NODES)} nodes or fewer is held until it settles`, "u"),
-    "the condition under which the call holds its turn is stated, with the rule's own threshold",
+    new RegExp(
+      `A plan is held until it settles, so its outcome is in this answer; a finished step renews it, up to ${String(PLAN_SELF_WAIT_HOLD_MS / 1_000)} s`,
+      "u",
+    ),
+    "the hold, what renews it and the TOTAL it is capped at are all stated from the rule's own numbers",
   );
   assert.match(
     planWork,
@@ -4041,8 +4121,15 @@ test("stardew_plan_work says when it returns, for which plan, and that the turn 
   );
   assert.match(
     planWork,
+    /one still running then names the step it is on/u,
+    "a hold cut at the total says what it carries, so a cut plan is not left guessing either",
+  );
+  // THE ARM THAT IS GONE, asserted rather than left to a reader: a longer plan answered on acceptance was the node-count
+  // rule, and a description that still said it would teach a wait the tool no longer performs.
+  assert.doesNotMatch(
+    planWork,
     /a longer plan returns as soon as it is accepted/u,
-    "the other arm says when IT returns, so neither plan is left guessing",
+    "the sentence that answered a long plan on acceptance is gone, because no plan is answered that way now",
   );
   assert.match(planWork, /do NOT poll/u, "and forbids polling it");
   assert.match(
@@ -4817,41 +4904,58 @@ function unprintedGuardFindings(
   });
 }
 
-/** The Mod source a `publishedAsWork` reason cites, in the one spelling a citation may take: `<file>.cs:<from>-<to>`. */
-const PUBLICATION_CITATION = /`([A-Za-z][A-Za-z0-9_.]*)\.cs:(\d+)-(\d+)`/u;
+/**
+ * The Mod source a `publishedAsWork` reason cites, in the one spelling a citation may take: `<file>.cs:<symbol>`.
+ *
+ * A RANGE IS NOT A CITATION: `farmhandtargetdiscovery.cs:2217-2238` named `DiscoverCropTargets` until the file grew to
+ * 2,843 lines and the range stopped containing it, and nothing about the reason changed - so the reason kept claiming an
+ * anchor that had silently moved. A symbol is looked up wherever it went, which is what makes the anchor checkable.
+ */
+const PUBLICATION_CITATION = /`([A-Za-z][A-Za-z0-9_.]*)\.cs:([A-Za-z_][A-Za-z0-9_]*)`/u;
+
+/**
+ * Whether `source` declares `symbol`: a line whose access modifier and return type are followed by the name and its
+ * parameter list, which is the shape every member of this Mod is written in.
+ *
+ * A MENTION IS NOT A DECLARATION - `DiscoveryExclusionReasons.AlreadyWatered` and `ExecutionManager.CropNeedsWater` are
+ * named inside the same file without either being declared there, so the name alone would anchor a reason to a call
+ * site. The modifier is what tells the two apart without parsing C#.
+ *
+ * WHAT THIS DOES NOT ACCEPT: a member with no parameter list - a property, a constant, an enum member - reads as
+ * undeclared here. That is the shape this gate asks for, not an oversight: the thing a `publishedAsWork` reason owes is
+ * the predicate that decides publication, and every such predicate in this Mod is a method.
+ */
+function declaresSymbol(source: readonly string[], symbol: string): boolean {
+  const declaration = new RegExp(`\\b(?:public|private|protected|internal)\\s[^;{}=]*\\b${symbol}\\s*\\(`, "u");
+  return source.some((line) => declaration.test(line));
+}
 
 /**
  * The anchor a `publishedAsWork` reason owes: a citation of the Mod code whose publication predicate makes the family the
- * condition, and a named symbol that citation really contains.
+ * condition, and a symbol that file really declares.
  *
  * WITHOUT THIS, `publishedAsWork` IS A FREE-TEXT EXCUSE: the exemption would be prose a lane could write about any family
  * - the list of reasons that outlive their reason, which is what every other table in this tree avoids by deriving its
- * population. A reason that names real C# and a range that really mentions the symbol is as far as a test can reach into
- * another language, and it is enough to make the escape hatch cost a citation.
+ * population. Finding the symbol is as far as a test can reach into another language: it proves the reason points at
+ * code that exists, and it does NOT prove that code still publishes only rows needing the work - that second question is
+ * a reading of the C# predicate, owed by whoever changes it, and nothing here pretends to answer it.
  */
 function publicationAnchorFindings(family: string, reason: string): readonly string[] {
   const prefix = `a_row_a_plan_iterates_says_when_iterating_it_is_work:${family}:published-as-work`;
   const cited = PUBLICATION_CITATION.exec(reason);
-  if (cited === null) return [`${prefix} (the reason cites no \`<file>.cs:<from>-<to>\`)`];
-  const source = readFileSync(resolve(hostRoot, `../integrations/stardew/${cited[1] as string}.cs`), "utf8").split(
-    "\n",
-  );
-  const from = Number(cited[2]);
-  const to = Number(cited[3]);
-  if (!(from >= 1 && to >= from && to <= source.length))
+  if (cited === null)
+    return [`${prefix} (the reason cites no \`<file>.cs:<symbol>\`, so nothing in the Mod anchors it)`];
+  const citedFile = `${cited[1] as string}.cs`;
+  const symbol = cited[2] as string;
+  const source = existsSync(resolve(hostRoot, `../integrations/stardew/${citedFile}`))
+    ? readFileSync(resolve(hostRoot, `../integrations/stardew/${citedFile}`), "utf8").split("\n")
+    : [];
+  if (!declaresSymbol(source, symbol))
     return [
-      `${prefix} (${cited[1] as string}.cs has ${String(source.length)} lines, and the reason cites ${String(from)}-${String(to)})`,
+      `${prefix} (${citedFile} declares no \`${symbol}\`, and the reason claims that symbol publishes only rows that ` +
+        `need the work)`,
     ];
-  const citedLines = source.slice(from - 1, to).join("\n");
-  const symbols = [...reason.replace(cited[0], "").matchAll(/`([A-Za-z_][A-Za-z0-9_]*)`/gu)].map(
-    (match) => match[1] as string,
-  );
-  const anchored = symbols.filter((symbol) => citedLines.includes(symbol));
-  if (anchored.length > 0) return [];
-  return [
-    `${prefix} (none of ${symbols.length === 0 ? "the reason's own symbols, of which it names none" : symbols.join(", ")} ` +
-      `is in ${cited[1] as string}.cs:${String(from)}-${String(to)})`,
-  ];
+  return [];
 }
 
 test("a_row_a_plan_iterates_says_when_iterating_it_is_work: every family the recipe iterates states its condition", () => {
@@ -4995,19 +5099,33 @@ test("a_row_a_plan_iterates_says_when_iterating_it_is_work is red on a bare fami
     ],
     "a loop whose guarded state no row prints is the composition defect itself, named by family and field",
   );
-  // And a `publishedAsWork` reason has to cite Mod source that really carries the symbols it names.
+  // And a `publishedAsWork` reason has to cite Mod source that really declares the symbol it names.
   assert.match(
     publicationAnchorFindings("cropTargets", "every row needs water")[0] ?? "",
     /^a_row_a_plan_iterates_says_when_iterating_it_is_work:cropTargets:published-as-work \(the reason cites no /u,
     "an excuse with no citation is a reason and not an anchor",
   );
+  // A SYMBOL THAT IS NOT THERE: this is the shipped reason with the function renamed, and the gate finds the file and
+  // the declaration it no longer has - which is `DiscoverCropTargets` after a rename, whether or not any line moved.
   assert.match(
     publicationAnchorFindings(
       "cropTargets",
-      "`DiscoverCropTargets` answers only `CropNeedsWater` rows (`farmhandexecutioncontroller.targetdiscovery.cs:1-3`)",
+      "`DiscoverCropTargetsEveryCrop` answers only `CropNeedsWater` rows " +
+        "(`farmhandtargetdiscovery.cs:DiscoverCropTargetsEveryCrop`)",
     )[0] ?? "",
-    /is in farmhandexecutioncontroller\.targetdiscovery\.cs:1-3/u,
-    "a citation that names a range not containing what it cites does not anchor the reason",
+    /farmhandtargetdiscovery\.cs declares no `DiscoverCropTargetsEveryCrop`, and the reason claims that symbol publishes only rows that need the work/u,
+    "a citation whose symbol the file does not declare is red, naming the file, the symbol and the claim",
+  );
+  // A RANGE IS NOT A CITATION: the shipped reason cited `farmhandtargetdiscovery.cs:2217-2238` for `DiscoverCropTargets`
+  // until that file grew to 2,843 lines and the range stopped containing it, which no gate could see. The same range is
+  // now read as naming no symbol at all, and the finding says which spelling it asks for.
+  assert.match(
+    publicationAnchorFindings(
+      "cropTargets",
+      "`DiscoverCropTargets` answers only `CropNeedsWater` rows (`farmhandtargetdiscovery.cs:2217-2238`)",
+    )[0] ?? "",
+    /the reason cites no `<file>\.cs:<symbol>`/u,
+    "a line range expires silently and is not the anchor the gate can follow",
   );
   assert.deepEqual(
     publicationAnchorFindings(
