@@ -614,7 +614,17 @@ export function isSeedTargetFact(value: unknown): boolean {
 export function isFertilizerTargetFact(value: unknown): boolean {
   return (
     isRecord(value) &&
-    hasOnlyKeys(value, ["targetId", "slot", "x", "y", "qualifiedItemId", "displayName", "canApplyFertilizer", "surface", "surfaceOwner"]) &&
+    hasOnlyKeys(value, [
+      "targetId",
+      "slot",
+      "x",
+      "y",
+      "qualifiedItemId",
+      "displayName",
+      "canApplyFertilizer",
+      "surface",
+      "surfaceOwner",
+    ]) &&
     isOpaqueId(value.targetId) &&
     isToolSlot(value.slot) &&
     isTileCoordinate(value.x) &&
@@ -2132,7 +2142,8 @@ function optionalTileList(value: unknown): boolean {
       value.length >= 1 &&
       value.length <= 8 &&
       value.every(
-        (tile) => isRecord(tile) && hasExactKeys(tile, ["x", "y"]) && isTileCoordinate(tile.x) && isTileCoordinate(tile.y),
+        (tile) =>
+          isRecord(tile) && hasExactKeys(tile, ["x", "y"]) && isTileCoordinate(tile.x) && isTileCoordinate(tile.y),
       ))
   );
 }
@@ -2333,7 +2344,12 @@ export function hasExactKeysOrOptional(
 }
 
 export function isOpaqueId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+  return (
+    typeof value === "string" &&
+    value.length >= OPAQUE_ID_MINIMUM_LENGTH &&
+    value.length <= OPAQUE_ID_MAXIMUM_LENGTH &&
+    /^[A-Za-z0-9_-]+$/.test(value)
+  );
 }
 
 /**
@@ -2364,6 +2380,27 @@ export function isMachineInputCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 9999;
 }
 
+/**
+ * The four number domains the wire validates with a predicate, each stated ONCE beside the predicate that enforces it.
+ *
+ * <p>
+ * They are exported because the tool schemas the model is handed must describe the same domain the validator admits, and
+ * a schema that derived it by PROBING the predicate was a second authority for a number the predicate already decides -
+ * and it answered with the wrong one wherever an action's own declaration is narrower or wider than the family predicate.
+ * </p>
+ */
+export const TILE_COORDINATE_MINIMUM = 0;
+export const TILE_COORDINATE_MAXIMUM = 1000;
+/**
+ * A warp SOURCE tile may lie one tile outside the map: walking off the west edge warps from `X = -1` (Town declares
+ * `-1 53 BusStop`), which is why `travel` and `enter_exit` accept a floor a walk target does not.
+ */
+export const WARP_SOURCE_COORDINATE_MINIMUM = -1;
+export const TOOL_SLOT_MINIMUM = 0;
+export const TOOL_SLOT_MAXIMUM = 36;
+export const OPAQUE_ID_MINIMUM_LENGTH = 1;
+export const OPAQUE_ID_MAXIMUM_LENGTH = 128;
+
 export function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length <= 128);
 }
@@ -2380,9 +2417,30 @@ export function isFiniteNumber(value: unknown): value is number {
 }
 
 export function isTileCoordinate(value: unknown): value is number {
-  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 1000;
+  return (
+    isFiniteNumber(value) &&
+    Number.isInteger(value) &&
+    value >= TILE_COORDINATE_MINIMUM &&
+    value <= TILE_COORDINATE_MAXIMUM
+  );
+}
+
+/**
+ * Where a warp's SOURCE tile may stand: an ordinary map cell, or one tile outside it for an edge exit.
+ *
+ * Kept beside `isTileCoordinate` because the two ranges differ on their floor and nothing else, and an action taking a
+ * warp source (`travel`, `enter_exit`) must be described by THIS one - a schema built from the walk-target range refuses
+ * the one tile an edge exit has.
+ */
+export function isWarpSourceCoordinate(value: unknown): value is number {
+  return (
+    isFiniteNumber(value) &&
+    Number.isInteger(value) &&
+    value >= WARP_SOURCE_COORDINATE_MINIMUM &&
+    value <= TILE_COORDINATE_MAXIMUM
+  );
 }
 
 export function isToolSlot(value: unknown): value is number {
-  return isFiniteNumber(value) && Number.isInteger(value) && value >= 0 && value <= 36;
+  return isFiniteNumber(value) && Number.isInteger(value) && value >= TOOL_SLOT_MINIMUM && value <= TOOL_SLOT_MAXIMUM;
 }
