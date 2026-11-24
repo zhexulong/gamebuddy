@@ -130,6 +130,25 @@
           "required": ["name"],
           "additionalProperties": false,
           "properties": { "name": { "type": "string" } }
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "What the action is called in the tool a model is handed. Published with description and targetKinds or not at all: an action that publishes none writes its tool text in its own mount block, and an absent member is that statement rather than an empty string."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The sentence a model reads about the action itself (an argument's own meaning is described on its argumentSchema entry). 2048 is above the longest sentence the Mod publishes today, 1437, and is the ceiling its producer declares."
+        },
+        "targetKinds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+          "description": "The kinds of thing the action acts on (world_object, modal, pet), the words a caller's own search is matched against."
         }
       }
     }

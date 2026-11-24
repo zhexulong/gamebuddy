@@ -88,7 +88,32 @@ public sealed record FarmhandActionDescriptorProjection(
     /// with its reason is a declaration, and the empty list is what this member replaces.
     /// </para>
     /// </summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionEffectsProjection? Effects = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] FarmhandActionEffectsProjection? Effects = null,
+    /// <summary>
+    /// What this action is CALLED in the tool a model is handed, or null on an action that publishes no label.
+    ///
+    /// <para>
+    /// Published because the same two facts were written in the HOST, keyed by action id, and a consumer that has to build
+    /// a tool out of a declaration instead of out of a name it recognizes needs them on the declaration itself
+    /// (<see cref="FarmhandActionPresentation"/> states which actions carry them). Omitted when null, like the members
+    /// above, so the fifty-eight actions whose tool text is still written in its own mount block keep the exact wire shape
+    /// they had before - and so the absence says "no label published" rather than shipping an empty string, which the
+    /// artifact's reader refuses.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Label = null,
+    /// <summary>The sentence a model reads about this action, or null when the action publishes none (see <see cref="Label"/>).</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Description = null,
+    /// <summary>
+    /// The kinds of thing this action acts on (`world_object`, `modal`, `pet`), or null when the action publishes none.
+    ///
+    /// <para>
+    /// These words were the Host adapter table's alone: they are what `stardew_search_interactions` matches a caller's
+    /// own words against and what the plan gate reads to answer whether an action only runs while a modal is open - two
+    /// readers outside the game answering from a copy. Omitted when null, like `Label` and `Description`.
+    /// </para>
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? TargetKinds = null
 );
 
 /// <summary>
@@ -267,6 +292,9 @@ public static class FarmhandActionSurfacePublication
 
         IReadOnlyList<FarmhandActionResourceTemplateValueProjection> resourceClaims = Array.AsReadOnly(descriptor.ResourceTemplate.Select(claim =>
             new FarmhandActionResourceTemplateValueProjection(claim.Key, claim.Value.ToString())).ToArray());
+        // The action's presentation is declared beside the catalog rather than on the descriptor, so this is the ONE
+        // place the artifact reads it: an action with no row publishes no label, and the coverage test holds that set.
+        FarmhandActionPresentation? presentation = FarmhandActionPresentationCatalog.For(registration.ActionId);
         return new FarmhandActionDescriptorProjection(
             registration.ActionId,
             registration.IdentityVersion,
@@ -289,10 +317,13 @@ public static class FarmhandActionSurfacePublication
                     Array.AsReadOnly(effects.Declared.Select(effect =>
                         new FarmhandActionEffectProjection(effect.Class.ToWireValue(), effect.Subject, effect.ObservedBy)).ToArray()),
                     effects.None)
-                : null);
+                : null,
+            Label: presentation?.Label,
+            Description: presentation?.Description,
+            TargetKinds: presentation?.TargetKinds);
     }
 
-    private static void ValidateIdentity(string value, string name)
+    internal static void ValidateIdentity(string value, string name)
     {
         if (string.IsNullOrEmpty(value)
             || value.Length < 2

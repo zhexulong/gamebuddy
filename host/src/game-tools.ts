@@ -1636,261 +1636,6 @@ function declaredIntegerArgument(action: ExecutionRequest["action"], name: strin
 }
 
 /**
- * The presentation of each descriptor-derived Game Action tool, and the whole of what its mount states for itself.
- *
- * The Mod's declaration owns the action's arguments, their domains and its name; this table owns what the declaration
- * cannot carry - the label and the sentence a model reads - and nothing else. The mount below therefore reads: the ids
- * are `STARDEW_DESCRIPTOR_DERIVED_ACTION_IDS` (the registry's own list), the parameters are the declaration's arguments,
- * and the forwarded names are the declaration's names. A row here is typed against that list, so an action added to it
- * without a label is a compile error rather than a mount that quietly lost its description, and a row for an action the
- * list does not name is one too.
- */
-const DECLARED_ACTION_TOOL_PRESENTATION: Readonly<
-  Record<StardewDescriptorDerivedActionId, Readonly<{ label: string; description: string }>>
-> = Object.freeze({
-  send_multiplayer_chat: Object.freeze({
-    label: "Say one line to the lobby",
-    description:
-      "Send one chat line to the whole multiplayer lobby through the game own chat egress. It takes exactly one string (`text`), moves nobody, opens nothing and touches no inventory, and it is REFUSED when there is no lobby (chat_multiplayer_only), when the text is blank or longer than one native chat line (chat_message_invalid), or when you send again inside the minimum interval (chat_rate_limited, with retry_after_ms). The receipt proves the SEND only: it never claims that anyone read the line.",
-  }),
-  name_entity: Object.freeze({
-    label: "Name your horse",
-    description:
-      "Give your own horse its name through the game own naming settlement. It takes exactly one string (`text`) and no target: the subject is YOUR horse, found live. It is REFUSED when you own no horse (name_entity_target_unavailable), when the horse already carries a name (name_entity_target_already_named), or when the name is blank, longer than 64 characters, or carries a `;` or `=` (name_entity_name_invalid). The receipt reports the name READ BACK from the entity, never the call itself.",
-  }),
-  express_emote: Object.freeze({
-    label: "Express Stardew Emote",
-    description:
-      "Show a native overhead emote balloon for the companion actor. A gesture is one step by nature, so this tool is mounted on its own beside the plan builder and is NOT a step inside `stardew_plan_work`: one call is the whole gesture, it never queues behind the work in front of it, and its settlement is its own. It takes exactly one `emote` word, and this parameter list carries the closed set of words the Mod accepts.",
-  }),
-  face_direction: Object.freeze({
-    label: "Face Stardew Direction",
-    description:
-      "Turn the companion actor to face a cardinal direction (up, right, down, left). Mounted on its own beside the plan builder for the same reason as `stardew_express_emote` - a turn is one step by nature and is NOT a step inside `stardew_plan_work` - and it takes exactly one `direction` word, whose closed set this parameter list carries.",
-  }),
-  interact_npc_with_item: Object.freeze({
-    label: "Offer Item to NPC",
-    description:
-      "Offer one carried inventory item to an adjacent villager. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). A matching native quest delivery completes first and returns quest_item_delivered; the ordinary gift path returns gift_given.",
-  }),
-  talk_to_npc: Object.freeze({
-    label: "Talk to Villager",
-    description:
-      "Talk to an adjacent villager: the Mod drives the game's own NPC.checkAction talk branch, so the villager's real dialogue is what appears. x, y and expectedTargetId must be copied exactly from the npcRelationshipTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). Empty your hands first: with an item in hand the game takes the gift path instead and the action refuses with hands_not_empty, and a villager who is asleep or out of reach is refused too. Returns talk_to_npc_talked when the dialogue is open; the actor stays inside that dialogue until it is closed (stardew_dismiss_modal, or stardew_answer_dialogue for a question).",
-  }),
-  pet_animal: Object.freeze({
-    label: "Pet Animal",
-    description:
-      "Pet a nearby pet. x, y and expectedTargetId must be copied exactly from the petTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates). The pet target is bound by identity: if it has moved away, the native interaction returns a rejection instead of petting a different pet. A pet that is stationary right now is the reliable target; a moving one may leave before dispatch returns. Returns pet_completed.",
-  }),
-  pet_farm_animal: Object.freeze({
-    label: "Pet Farm Animal",
-    description:
-      "Pet one of your own farm animals - a cow, chicken, sheep, pig, duck, rabbit or dinosaur - in the barn, coop or pasture you are standing in. This is NOT stardew_pet_animal: that one pets the household cat/dog, this one pets barn and coop stock through the game's own FarmAnimal.pet, and the two read different day markers. x, y and expectedTargetId must be copied exactly from the farmAnimalPetTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates): x and y are only the tile the animal was published at, and the animal is named by the opaque id, so the Mod re-resolves it from its live tile and walks the actor into reach when it has wandered, while an animal that is no longer in the building is refused as farm_animal_target_gone instead of petting a different one. A second pet attempt in the same day is refused as farm_animal_already_petted_today, because the game's pet would open the animal menu and change no friendship at all. Also refused by name: farm_animal_cracker_would_be_consumed (a held Golden Animal Cracker would be spent instead of petting) and farm_animal_pet_requires_movement_after_1900 (after 19:00 only a moving animal answers a pet). Returns farm_animal_petted with the friendship before and after; an animal whose friendship and wasPet marker did not move comes back as farm_animal_pet_postcondition_not_observed rather than as a pet that never happened.",
-  }),
-  sleep: Object.freeze({
-    label: "Sleep and Advance the Day",
-    description:
-      "End the day the way the player does: the Farmhand walks to its own bed, lets the native bedtime path run, declares bedtime-ready through that same native path, and then observes the native save and new-day transition. In a shared world the night completes only when every required player is ready; the Farmhand never marks another player ready and never forces the day. Takes no arguments. Returns day_advanced when the native save and day transition are observed, blocked with requires_other_player when the ready barrier is still waiting on someone else.",
-  }),
-  dismiss_modal: Object.freeze({
-    label: "Dismiss a Dialog",
-    description:
-      "Close the informational native dialogue currently on screen (a DialogueBox with no pending question) through the native closeDialogue path. The dialog must have been opened by the world (a villager, a door gate, an event) and must not be a question that requires choosing an answer.",
-  }),
-  ride_bus: Object.freeze({
-    label: "Ride the Bus",
-    description:
-      "Ride the native bus from the Bus Stop ticket machine to the desert. Stand next to the ticket machine first (otherwise the action refuses with bus_ticket_machine_out_of_reach). The Mod verifies the vault, the driver and the fare itself, then drives the game's own ticket interaction: the receipt arrives as bus_arrived when the actor is in the desert, or bus_arrival_unconfirmed if the ride never completes.",
-  }),
-  withdraw_silo_hay: Object.freeze({
-    label: "Take hay from a silo",
-    description:
-      "Withdraw one hay from a discovered silo. Stand within reach of the silo first. Read the opaque target id, its tile and the stored `hay` count from the `siloTargets` entries of the most recent observation (the same list `stardew_deposit_silo_hay` reads). The Mod re-resolves the silo from the opaque target id and asserts BOTH halves of the move (the silo store drops by one and the carried hay rises by one), so a one-sided change is never reported as success.",
-  }),
-  clear_fish_pond: Object.freeze({
-    label: "Empty a fish pond",
-    description:
-      "Empty a built fish pond of every occupant through the pond own clearing settlement. Read the opaque target id, its tile, the pond type, the occupant count and the fish type from the `fishPondTargets` projection. The fish are NOT destroyed: each one is put on the ground as debris for you to collect, and the pond itself is reset and must be restocked from scratch. An empty pond is never advertised, and one that was already emptied refuses by name (pond_already_empty) rather than clearing nothing and calling it a success.",
-  }),
-  build_farm_building: Object.freeze({
-    label: "Commission a farm building",
-    description:
-      "Commission a farm building at a site the game itself accepts. Read the opaque target id, its tile, the `buildingType`, the `buildCost` and the `buildDays` from the `farmBuildingTargets` entries of the most recent observation - the site carries the type, so name the site and never a bare structure. The commission charges the build cost and the materials the game declares, and the terminal is a building standing on that site with a durable id; a site the game no longer accepts, or that you cannot afford or supply, is refused by name rather than built.",
-  }),
-  accept_daily_quest: Object.freeze({
-    label: "Accept the day's posted quest",
-    description:
-      "Accept the help-wanted quest the town has posted for today. Read the opaque target id, the `questType` and the `title` from the `dailyQuestTargets` entries of the most recent observation, and check `acceptedDailyQuest`: it is the day flag the accept turns true, so a day that already accepted one refuses by name instead of accepting twice. The board is only where a player reads the offer; naming the quest is what this does.",
-  }),
-  accept_special_order: Object.freeze({
-    label: "Accept an offered special order",
-    description:
-      "Accept one of the special orders a board is offering. Read the opaque target id, the `questKey` and the `orderType` from the `specialOrderTargets` entries of the most recent observation, and expect the order to appear in the snapshot's `activeSpecialOrderKeys` afterwards; an order that is already active, or whose board has already been used for an accept, is refused by name.",
-  }),
-  claim_museum_reward: Object.freeze({
-    label: "Collect the museum rewards you are owed",
-    description:
-      "Collect every museum donation reward this player is entitled to. Read the opaque target id and the `rewardCount` from the `museumRewardTargets` entries of the most recent observation; the reward items are delivered into the backpack and recorded as collected. A museum with nothing to collect is refused by name rather than reporting an empty success.",
-  }),
-  redeem_prize_ticket: Object.freeze({
-    label: "Redeem a prize ticket",
-    description:
-      "Redeem one prize ticket at the machine. It takes NO arguments: the prize is whatever the machine own track head offers you right now, derived by the game from your own ticketPrizesClaimed stat, so there is nothing to choose and nothing to name. The receipt proves BOTH halves - the ticket stack fell by exactly one AND the prize entered your pack - and it refuses by name when you hold no ticket (prize_ticket_unavailable) or your pack cannot take the prize (prize_inventory_full) rather than dropping it on the ground.",
-  }),
-  tailor_clothing: Object.freeze({
-    label: "Tailor clothing from a recipe pair",
-    description:
-      "Consume the cloth and the reagent a live sewing-machine recipe pairs and produce that recipe's garment into your backpack. Read the opaque target id, the two backpack slots (`leftSlot`/`rightSlot`) and the produced item id from the `tailoringTargets` entries of the most recent observation; the Mod re-reads both named slots on the game thread and refuses by name when the pair no longer mints the published id. A garment only part of which fits is reported as `clothing_tailoring_output_dropped`, never as a full success.",
-  }),
-  color_placed_object: Object.freeze({
-    label: "Repaint a placed chest",
-    description:
-      "Repaint one placed chest with one of the game's own 21 palette colours. Read the opaque target id, its tile (`x`, `y`) and the `color` it already carries from the `colorTargets` entries of the most recent observation, then name the palette index (`colorSelection`) it should carry. Only palette colours are writable, so no RGB value is accepted, and a repaint to the colour it already carries is refused by name instead of being reported as a change.",
-  }),
-  dye_clothing_with_item: Object.freeze({
-    label: "Dye clothing with one item",
-    description:
-      "Recolour one existing garment from one dye item. Read the opaque target id, the garment slot (`leftSlot`), the dye slot (`rightSlot`) and the garment's CURRENT `garmentColour` from the `tailoringTargets` entries of the most recent observation. The receipt proves the dye was spent AND the colour settled, and reports before/expected/after; a colour that did not move is never reported as success.",
-  }),
-  toggle_animal_door: Object.freeze({
-    label: "Toggle an animal door",
-    description:
-      "Open or close a barn or coop animal door. Stand within reach of the building first. Read the opaque target id, its tile and the current `isOpen` state from the `animalDoorTargets` entries of the most recent observation. The Mod re-resolves the building from the opaque target id and asserts the door state flipped; the receipt carries the observed before/after state.",
-  }),
-  use_obelisk: Object.freeze({
-    label: "Use a warp obelisk",
-    description:
-      "Activate a discovered warp obelisk. Stand within reach of it first. Read the opaque target id, `route`, tile and `destination` from the `obeliskTargets` entries of the most recent observation. The Mod chooses the destination from the target itself (a Data/Buildings obelisk building, or the island farm obelisk tile), so name the structure and never a destination; the arrival is the terminal, not the dispatch.",
-  }),
-  shop_purchase: Object.freeze({
-    label: "Buy from a shop",
-    description:
-      "Buy goods from a shop the game says is open here. Read the opaque target id, `shopId`, the owner tile and `stockItemIds` from the `shopTargets` entries of the most recent observation; `stockItemIds` lists what this shop actually sells, so do not request an item it does not name. A shop may be opened by an eligible owner (an NPC) OR by its own tile or object, which is why a target can exist with no owner standing nearby; the Mod reads owner eligibility and stock from the game's own content data, and the purchase runs through the game's own shop menu. Only a counter whose own TILE is the shop has to be reached before it can be used; a counter an eligible owner NPC runs opens from anywhere in that room, so no walk is required for it. The action never walks.",
-  }),
-  select_mine_elevator_floor: Object.freeze({
-    label: "Use the Mine Elevator",
-    description:
-      "Select an already-reached floor on the mine elevator. Read the opaque target id, `floor` and `isCurrentFloor` from the `mineElevatorFloorTargets` entries of the most recent observation. The offered floors come from the Mod reading the live lowest level reached, so a level the player has not unlocked cannot be requested. Floor 0 returns to the mine entrance and is only valid from inside the mine.",
-  }),
-  answer_dialogue: Object.freeze({
-    label: "Answer a Dialogue",
-    description:
-      "Choose one response from the currently displayed native question dialogue. responseKey must exactly match a response offered by the live DialogueBox.",
-  }),
-  respond_level_up: Object.freeze({
-    label: "Settle a Level-up",
-    description:
-      'Settle the level-up the actor is being shown: choice "confirm" for an ordinary level, or "branch_a"/"branch_b" for one of the two professions a level-5 or level-10 menu offers. Pass the skill and level the menu is about, so a persistent choice can never be applied to the wrong level-up.',
-  }),
-  ride_minecart: Object.freeze({
-    label: "Ride a Native Minecart",
-    description:
-      "Ride one advertised native minecart objective from a live station tile. x, y and expectedTargetId must be copied exactly from the minecartTargets entries of the MOST RECENT observe result for the current location (never invent or guess coordinates); x,y is the STATION tile, not the destination. The Mod re-derives the network, its unlock, the destination condition and the ticket price on the game thread from the live map tile and Data/Minecarts, then performs the native ride. Only the minecart_ride_completed receipt, which names the ridden objective and the exact arrival tile, reports success.",
-  }),
-  sweep_scythe: Object.freeze({
-    label: "Sweep the Scythe Arc",
-    description:
-      "Swing the scythe ONCE at a tile arc. x and y are only the tile the Farmhand must FACE, copied from the MOST RECENT observe result for the current location (never invent or guess coordinates) - there is no target id, because one swing covers a SET of tiles the engine itself samples, and the scythe comes from the action's own `tool:scythe` claim rather than a slot you name. The receipt is that arc's own measurement: arc_tiles, arc_sweepable and arc_clear count what it sampled, and changed names the tiles that moved with what stood on each before the swing. Completion is the NAMED tile moving (scythe_sweep_cut); a swing that left it alone comes back as scythe_sweep_partial rather than as a completed sweep, and nothing here claims a monster hit.",
-  }),
-  use_mine_ladder: Object.freeze({
-    label: "Leave the mine by its ladder",
-    description:
-      "Leave the mine level you are inside through its own exit ladder, so you are not trapped when nothing can be mined. x, y and expectedTargetId must be copied exactly from the mineEntranceTargets entries of the most recent observe result: inside a mine level that family publishes the ladder tiles, and the exit ladder is the one this action owns. The game opens its own Leave question and performs the warp, so no destination is accepted here. A row that belongs to the DESCENDING ladder is refused by name and points at stardew_enter_mine; to choose a floor you have already reached, use stardew_select_mine_elevator_floor.",
-  }),
-  load_building_chest: Object.freeze({
-    label: "Load a building chest",
-    description:
-      "Put the held item into a storage chest the BUILDING itself declares, such as a Mill's input chest. Stand within reach of the building first. Read the opaque target id, its tile, the chest id and the load hint from the buildingChestTargets entries of the most recent observation. Only the native Load branch is driven; a chest the game exposes only through a menu is refused by name.",
-  }),
-  collect_building_chest_output: Object.freeze({
-    label: "Collect building chest output",
-    description:
-      "Take what a building's OWN output chest holds, such as a Mill's flour or a Junimo Hut's crops. Stand within reach of the building first. Read the opaque target id, its tile and `stackCount` from the `buildingChestTargets` entries of the most recent observation. A chest holding two or more stacks is refused by name (building_chest_requires_menu), because the native branch would open a container menu this action does not drive; otherwise the Mod asserts the stack left the chest AND arrived in the pack.",
-  }),
-  use_warp_item: Object.freeze({
-    label: "Use a held warp totem",
-    description:
-      "Use a held warp totem (farm, mountain, beach, desert or island) through the game's own object-use path, consuming the totem and warping the Farmhand. slot and expectedQualifiedItemId must be copied exactly from the warpItemTargets entry of the MOST RECENT observe result. The destination comes from the totem itself; only the arrival postcondition can report success.",
-  }),
-  pan_ore: Object.freeze({
-    label: "Pan the water for ore",
-    description:
-      "Pan an ore-panning spot with the Copper Pan the Farmhand is holding. slot, x and y must be copied exactly from the panSites entry of the MOST RECENT observe result; the tile is re-checked against the game's own live panning point, so a stale site is refused rather than panned. Only the observed point change plus the panning counter can report success.",
-  }),
-  claim_mail_attachment: Object.freeze({
-    label: "Claim a mailbox attachment",
-    description:
-      "Claim whatever is waiting in a mailbox. x, y and expectedTargetId must be copied exactly from the mailboxTargets entry of the MOST RECENT observe result; the target id binds the location, the tile and the pending letter, so a stale id is refused rather than claiming the next letter. A letter whose %item attachment has to be delivered is completed with the native letter exit, not discarded.",
-  }),
-  equip_wearable: Object.freeze({
-    label: "Equip a wearable",
-    description:
-      "Put a wearable Farmhand inventory item into the body slot it belongs to. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot (hat, shirt, pants, boots, left_ring, right_ring), so a stale id is refused. slot and expectedQualifiedItemId must be copied from the inventoryItemFacts entry of that same result: that is the pack slot holding the item to wear. A repeat of the same equip is an idempotent success, not an error.",
-  }),
-  unequip_wearable: Object.freeze({
-    label: "Unequip a wearable",
-    description:
-      "Take the wearable out of a body slot and put it into a free pack slot. expectedTargetId must be copied exactly from the wearableTargets entry of the MOST RECENT observe result: it names the BODY slot to empty, so a stale id is refused. slot is the DESTINATION pack slot and must be a slot that the same result does not list in inventoryItemFacts (that list holds only OCCUPIED slots) and that is below inventorySlots. The action refuses when the pack is full rather than losing the item, and emptying an already-empty body slot is an idempotent success.",
-  }),
-  dismount_transport: Object.freeze({
-    label: "Dismount the ridden transport",
-    description:
-      "Get off the horse or other mount the Farmhand is currently riding. This action takes NO arguments. It is a pure state assertion: it refuses when the actor is not riding anything, and only the observed end state (!isRidingHorse) can report success.",
-  }),
-  place_owned_object: Object.freeze({
-    label: "Place an owned object",
-    description:
-      "Place a big-craftable the Farmhand owns onto a live lawful tile. slot, x, y, expectedQualifiedItemId and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the target id names the exact placement candidate, so a stale id is refused rather than placed somewhere else. Only the observed new object on the tile can report success.",
-  }),
-  remove_placed_item: Object.freeze({
-    label: "Remove a placed object",
-    description:
-      "Remove a placed object from the world with the tool that can remove it: the action takes an Axe or Pickaxe out of the pack (the object itself decides which one removes it) and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one. x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. A pack with neither tool, or a tool that cannot remove THIS object, is refused by name rather than silently doing nothing, and success is the object being GONE from the tile.",
-  }),
-  move_placed_furniture: Object.freeze({
-    label: "Pick up placed furniture",
-    description:
-      "Pick up a piece of furniture that is already placed in the room, so it can be put down somewhere else. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; a stale id is refused rather than lifting a different piece that now stands there. There is no slot to name: the game chooses which backpack slot receives it. If the pack is full the piece goes back exactly where it stood and the action is refused by name - it is never silently lost - and success is the piece gone from the room AND one more in the pack.",
-  }),
-  break_container: Object.freeze({
-    label: "Break a container",
-    description:
-      "Break a breakable container on the map, such as a crate or barrel. The action takes a tool the container accepts (any heavy hitter) out of the pack and puts the actor's previous selection back, so slot is the number from toolSlots in the MOST RECENT observe result and need not be the held one; x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry. Success is the container being GONE and its drops accounted for, not the tool's return value.",
-  }),
-  rotate_furniture: Object.freeze({
-    label: "Rotate placed furniture",
-    description:
-      "Turn one already-placed piece of furniture one step through its own rotation cycle, in place. x, y and expectedTargetId must be copied exactly from the `placed_furniture` entry of the worldObjectTargets list in the MOST RECENT observe result; there is no angle to name, because the piece's own `rotations` data decides whether it alternates or steps. A piece with fewer than two rotations is refused by name (`furniture_rotation_unsupported`), never reported as a turn that did nothing, and success is the piece's rotation changed while it still stands on the same tile.",
-  }),
-  remove_fence: Object.freeze({
-    label: "Remove a placed fence",
-    description:
-      "Take one placed fence or fence gate off its tile with the tool the fence's own data accepts. x, y, expectedTargetId and the TOOL's slot must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Fence.performToolAction answers false on every branch, including the one that destroyed the fence, so success is the fence GONE from the location plus the drops it produced; a tool that cannot remove that exact fence is refused by name (`remove_fence_tool_cannot_remove_target`).",
-  }),
-  put_item_in_fish_tank: Object.freeze({
-    label: "Put an item in a fish tank",
-    description:
-      "Put one backpack item into a placed fish tank, letting the tank's own CanBeDeposited rule decide whether it may hold it. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result. Success is the tank holding exactly one more item, that one, while the pack lost exactly one; an item the tank will not hold is refused by name (`fish_tank_rejects_item`), and a deposit the engine took the item for but never completed is put back and reported, never as a success.",
-  }),
-  place_item_on_pedestal: Object.freeze({
-    label: "Place an item on a pedestal",
-    description:
-      "Place one backpack item on an empty pedestal, whose own drop-in action decides acceptance. slot, the item's expectedQualifiedItemId, x, y and expectedTargetId must be copied exactly from the worldObjectTargets entry of the MOST RECENT observe result; the id names the `empty_pedestal` row, because a pedestal already holding something has no such row. An occupied pedestal is refused by name (`pedestal_occupied`) before the call, because its own branch would knock the standing item off, and success is the pedestal's heldObject being this item while the pack lost exactly one.",
-  }),
-  break_resource_clump: Object.freeze({
-    label: "Break a large stump, log or boulder",
-    description:
-      "Use the Axe or Pickaxe a large stump, hollow log, boulder or meteorite demands on it, one call swinging until the clump is gone. x, y and expectedTargetId must be copied exactly from the debrisTargets entries of the MOST RECENT observe result - never invent or guess coordinates. There is no slot to name: the handler selects the tool the clump's own switch requires and restores the previous selection, and a pack that cannot supply the level it needs is refused by name (`clump_tool_too_weak`). Success is the clump GONE, not the swing's return value.",
-  }),
-  open_geode: Object.freeze({
-    label: "Open a geode",
-    description:
-      "Crack one carried geode at the blacksmith's own counter, through the game's GeodeMenu, so the machine's assignment and fee decide what comes out. slot and expectedQualifiedItemId must be copied exactly from the `inventoryItemFacts` row of the MOST RECENT observe result, and the slice is checked against that id before anything is consumed, so a stale pair is refused rather than opening a different item. There is no target id and no tile: the counter is the location's own. A counter out of reach, a fee the actor cannot pay and a full backpack are each refused by name, and success is the geode gone and the reward in the pack.",
-  }),
-});
-
-/**
  * Mounts the complete Game Action tool surface for the life of a connected
  * session. The mounted tool NAME set is constant: per-action eligibility is
  * decided at execution time by executeGameAction against the Mod's live
@@ -1924,10 +1669,13 @@ export function createStardewActionTools(
     expressionTurnGate,
   );
   // Every action whose tool is a projection of the Mod's own declaration, mounted through the one rule a mount has: the
-  // parameters are `buildCandidateToolSchema` over the published descriptor, and the names forwarded to the wire are that
-  // same descriptor's. Forty-eight blocks used to spell each of these out by hand - the schema call, the forwarded names
-  // and the arm that admitted it - and every one of them was a second copy of a declaration the Mod already publishes.
-  // The condition is unchanged: a descriptor that cannot open its own arm means the tool is not mounted.
+  // parameters are `buildCandidateToolSchema` over the published descriptor, the names forwarded to the wire are that
+  // same descriptor's, and the label and the sentence a model reads are the declaration's too. Forty-eight blocks used to
+  // spell each of these out by hand - the schema call, the forwarded names and the arm that admitted it - and every one of
+  // them was a second copy of a declaration the Mod already publishes; the label and the sentence were a THIRD copy, in a
+  // table beside this loop keyed by action id, which is why a factory could not be written here: the two facts a tool says
+  // about itself were in a Host file. That table is gone (`2026-11-24`), and the Mod publishes all three facts instead. The
+  // condition is unchanged: a descriptor that cannot open its own arm means the tool is not mounted.
   //
   // WHAT THIS LOOP READS, AND WHAT IT DOES NOT. It reads the Mod's own published descriptor (`registration.descriptor`
   // through `isModDescriptorComplete`, which only ever closes) and nothing else: not `lifecycle`, not the live capability
@@ -1945,12 +1693,17 @@ export function createStardewActionTools(
     if (registration?.descriptor === undefined) continue;
     const descriptor = registration.descriptor;
     if (!isModDescriptorComplete(actionId, descriptor)) continue;
-    const presentation = DECLARED_ACTION_TOOL_PRESENTATION[actionId];
+    // The label and the sentence are the declaration's, and a descriptor that publishes neither cannot open its own arm
+    // for the same reason one whose arguments it cannot read cannot: this mount states nothing the Mod did not declare, so
+    // there is no second text here to fall back to. What holds the two sides together is
+    // `action-tool-presentation-derivation.test.ts`, whose population is the artifact and which fails by name on an action
+    // the loop should answer and cannot.
+    if (descriptor.label === undefined || descriptor.description === undefined) continue;
     tools.push(
       makeGameActionTool({
         name: STARDEW_ACTION_TOOL_NAMES[actionId],
-        label: presentation.label,
-        description: presentation.description,
+        label: descriptor.label,
+        description: descriptor.description,
         parameters: buildCandidateToolSchema(actionId, descriptor),
         action: actionId,
         toArgs: (params) => declaredArguments(descriptor, params),

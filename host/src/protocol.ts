@@ -2262,6 +2262,26 @@ export type ActionRegistrationDescriptor = Readonly<{
     }>[];
     none?: string;
   }>;
+  /**
+   * What this action is CALLED, the sentence a model reads about it, and the kinds of thing it acts on - the Mod's own
+   * declaration (`FarmhandActionPresentation`), absent on every action that publishes none.
+   *
+   * <p>
+   * READ, NOT MERELY TOLERATED. These three were Host presentation: the label and the sentence sat in
+   * `game-tools.ts`'s presentation table keyed by action id, and the kinds sat in the adapter table beside it - so a
+   * consumer that builds a tool out of a declaration instead of out of a name it recognizes could not exist. The mount
+   * loop reads `label` and `description` from here, and the action's own publication decides whether it has one: an
+   * absent pair is the statement that this action's text is still written in its own mount block.
+   * </p>
+   * <p>
+   * THE THREE TRAVEL TOGETHER. A label with no sentence is a tool the model can call and not understand, so
+   * `isValidActionDescriptor` refuses a descriptor that carries one without the others - and refuses a blank one, because
+   * absence is how an action says it publishes no prose.
+   * </p>
+   */
+  label?: string;
+  description?: string;
+  targetKinds?: readonly string[];
 }>;
 
 export type ActionRegistration = Readonly<{
@@ -6373,6 +6393,7 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
         "recoveryDiagnostic",
         "evidence",
         "postconditionVerification",
+        "chore",
         "x",
         "y",
       ],
@@ -6413,6 +6434,13 @@ function isBodyProgramNodeStatus(value: unknown): boolean {
     (value.postconditionVerification === undefined ||
       value.postconditionVerification === null ||
       BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState)) &&
+    // The family the node's work CONSUMED, typed. Not a proof and not a reason: it names which family the work finished,
+    // so the settlement can count what is left of it from the reading already in hand. It rides the states that proved an
+    // effect for the same reason `evidence` does - a node that proved nothing finished no chore.
+    (value.chore === undefined ||
+      value.chore === null ||
+      (typeof value.chore === "string" &&
+        BODY_PROGRAM_PROOF_NODE_STATES.has(value.state as BodyProgramNodeState))) &&
     isBodyProgramNodeState(value.state) &&
     isNonNegativeInt32(value.nodeAttempt) &&
     isNonNegativeInt32(value.admissionAttempt)
@@ -6730,6 +6758,12 @@ const KNOWN_ACTION_DESCRIPTOR_KEYS = [
   // closure`), so a member the artifact carries and this list lacks reports `host_whitelist_missing_member` - the same
   // drift `arguments`, `watchdogMs`, `evidenceSchema` and `canonicalCodec` sit in this list from the other direction.
   "effects",
+  // What the action is called, the sentence a model reads about it, and the kinds it acts on (`FarmhandActionPresentation`
+  // on the Mod side). Read by the descriptor-derived mount loop, which is the reason they are on the wire at all: without
+  // them that loop had to look the label up in a Host table keyed by action id.
+  "label",
+  "description",
+  "targetKinds",
 ] as const;
 
 /**
@@ -6902,6 +6936,26 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
       value.targetFamily.length > 64 ||
       !/^[a-z][a-zA-Z0-9]{0,63}$/.test(value.targetFamily)
     )
+      return false;
+  }
+
+  if (value.label !== undefined || value.description !== undefined || value.targetKinds !== undefined) {
+    // The three presentation facts travel together or not at all: a label beside no sentence is a tool the model can call
+    // and not understand. Blank is refused as well, because ABSENCE is how an action says it publishes no prose - and a
+    // present-but-empty label would read on this side exactly like one that is there. The prose ceiling is the Mod's own
+    // (`FarmhandActionPresentationCatalog.MaximumDescriptionLength`), stated here so a sentence that passes the producer
+    // cannot be refused at hello.
+    if (typeof value.label !== "string" || value.label.length === 0 || value.label.length > 128) return false;
+    if (value.label.trim().length === 0) return false;
+    if (
+      typeof value.description !== "string" ||
+      value.description.length === 0 ||
+      value.description.length > 2048 ||
+      value.description.trim().length === 0
+    )
+      return false;
+    if (!Array.isArray(value.targetKinds) || value.targetKinds.length === 0 || value.targetKinds.length > 8) return false;
+    if (!value.targetKinds.every((kind) => typeof kind === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(kind)))
       return false;
   }
 
