@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { TextEncoder } from "node:util";
 import {
   isCurrentMountedChatRuntimeLease,
@@ -73,9 +73,27 @@ export function createMemoryManagementService(
     profileId: identityProfile.profileId,
     profileRevision: identityProfile.revision,
   });
-  const handleSecret = randomBytes(32);
-  const projectHandle = (stateToken: string): string =>
-    createHmac("sha256", handleSecret).update(`memory\0${continuityId}\0${stateToken}`, "utf8").digest("base64url");
+  /**
+   * One browser-safe opaque reference to one durable subject of this continuity.
+   *
+   * The subject of a handle is a Memory row or a chapter - both survive the process that served them - so
+   * the handle must be a function of that row and of the continuity, and of nothing about the process that
+   * happened to answer. It used to be an HMAC keyed on a secret drawn here (`randomBytes(32)` at
+   * construction), which made every handle and the projection revision built from it die with the service:
+   * a panel holding the projection it read was answered `memory_mutation_conflict` for a row that had not
+   * changed - after a mount rotation, a chat teardown/remount or a Host restart, because the browser keeps
+   * that projection (`ManagementSurfacePanel` CASes on `view.projectionRevision` and addresses rows by
+   * `row.handle`).
+   *
+   * The secret protected nothing this derivation does not: a handle is only ever resolved by equality
+   * against a row this continuity has just read (`projectHandle(candidate.stateToken) === command.handle`),
+   * never trusted as authority, so a forged one addresses a row its holder could already read, while
+   * stability is the property the client actually depends on. Opacity and continuity isolation are carried
+   * by the preimage instead: one domain, the continuity id, one opaque subject, nothing readable.
+   */
+  const project = (domain: "memory" | "chapter" | "projection", subject: string): string =>
+    createHash("sha256").update(`${domain}\0${continuityId}\0${subject}`, "utf8").digest("base64url");
+  const projectHandle = (stateToken: string): string => project("memory", stateToken);
   let facadePromise: Promise<MemoryCrudFacade> | undefined;
   let closed = false;
   let inFlight = 0;
@@ -114,12 +132,10 @@ export function createMemoryManagementService(
   };
 
   /**
-   * A chapter's opaque handle. Same construction as a memory handle - an HMAC over the continuity and a
-   * subject - so a chapter id never reaches the browser and two continuities cannot address each other's
-   * chapters.
+   * A chapter's opaque handle. The same derivation as a memory handle, in its own domain, so a chapter id
+   * never reaches the browser and two continuities cannot address each other's chapters.
    */
-  const projectChapterHandle = (chapterId: number): string =>
-    createHmac("sha256", handleSecret).update(`chapter\0${continuityId}\0${chapterId}`, "utf8").digest("base64url");
+  const projectChapterHandle = (chapterId: number): string => project("chapter", String(chapterId));
 
   /**
    * One chapter, projected as TWO facts that the store keeps in one status column.
@@ -185,9 +201,12 @@ export function createMemoryManagementService(
       });
     });
     memories.sort((left, right) => left.handle.localeCompare(right.handle));
-    const projectionRevision = createHmac("sha256", handleSecret)
-      .update(JSON.stringify({ memories, chapters }), "utf8")
-      .digest("base64url");
+    // The contract's own words for this value are "an opaque content fingerprint of the projected rows so a
+    // client can detect a changed set" (browser-contract `MemoryReadV1Schema`). A fingerprint has to be a
+    // function of the content - keyed on the process, one unchanged projection produced a different revision
+    // after every remount, so the CAS refused writes for rows nobody had touched. Continuity scoping comes in
+    // through the handles it hashes and through the derivation itself.
+    const projectionRevision = project("projection", JSON.stringify({ memories, chapters }));
     const result: MemoryReadV1 = Object.freeze({
       apiVersion: TAVERN_BROWSER_API_VERSION,
       projectionRevision,

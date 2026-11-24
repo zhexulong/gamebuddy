@@ -554,6 +554,129 @@ test("mounted memory service mutates only after projection CAS and always return
   assert.match((results.stale as { error: string }).error, /memory_mutation_conflict/);
 });
 
+test("a projection the browser holds still verifies after the service is rebuilt, because it is the row's and not the process's", async () => {
+  const results = await mounted(`
+    const row = (stateToken, content) => ({ playerAuthored: false, stateToken, content, category: "semantic", status: "active" });
+    let rows = [row("tok_keep", "The farmer loves blueberries.")];
+    const writes = [];
+    const stub = Object.freeze({
+      listMemories: async () => rows,
+      listChapters: async () => [],
+      create: async () => { throw new Error("unexpected create"); },
+      update: async ({ stateToken, content }) => {
+        writes.push({ stateToken, content });
+        rows = rows.map((entry) => entry.stateToken === stateToken ? { ...entry, stateToken: "tok_keep_v2", content } : entry);
+      },
+      archive: async () => { throw new Error("unexpected archive"); },
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
+    });
+    // The service a page's first read came from: it answers, then it goes away exactly as it does when a
+    // mount is rotated, a Chat is torn down and remounted, or the Host restarts.
+    const before = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const held = await before.read();
+    await before.close();
+    // The service that answers the NEXT request, over the same durable row.
+    const after = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const rebuilt = await after.read();
+    const outcome = await run(async () => await after.mutate({
+      apiVersion: 1,
+      operation: "update",
+      expectedProjectionRevision: held.projectionRevision,
+      handle: held.memories[0].handle,
+      content: "The farmer loves strawberries.",
+    }));
+    process.stdout.write(JSON.stringify({ held, rebuilt, outcome, writes }));
+    await after.close();
+    await lease.close();
+    await authority.close();
+  `);
+  const held = results.held as {
+    projectionRevision: string;
+    memories: ReadonlyArray<{ handle: string; content: string }>;
+  };
+  const rebuilt = results.rebuilt as {
+    projectionRevision: string;
+    memories: ReadonlyArray<{ handle: string; content: string }>;
+  };
+  const outcome = results.outcome as { ok: boolean; error?: string; value?: { projectionRevision: string } };
+  // The write the browser sends from its held projection lands. Keyed on a per-construction secret it did not:
+  // the next service had never minted these values, so the CAS and the handle lookup both refused a row nobody
+  // had touched (`memory_mutation_conflict`).
+  assert.equal(outcome.ok, true, `the write from the held projection was refused: ${outcome.error ?? "no error"}`);
+  assert.deepEqual(results.writes, [{ stateToken: "tok_keep", content: "The farmer loves strawberries." }]);
+  // The projection is a function of the rows: a rebuild over unchanged rows reproduces both the handle and the
+  // revision, which is what makes the projection the panel holds a value the next service can verify.
+  assert.equal(rebuilt.memories[0]!.handle, held.memories[0]!.handle);
+  assert.equal(rebuilt.projectionRevision, held.projectionRevision);
+  // And the revision is still a CAS: the row it changed now projects a different one.
+  assert.notEqual(outcome.value!.projectionRevision, held.projectionRevision);
+});
+
+test("a handle minted for another continuity never resolves here, even over the same row", async () => {
+  const results = await mounted(`
+    const rows = [{ playerAuthored: false, stateToken: "tok_shared", content: "The farmer loves blueberries.", category: "semantic", status: "active" }];
+    const writes = [];
+    const stub = Object.freeze({
+      listMemories: async () => rows,
+      listChapters: async () => [],
+      create: async () => { throw new Error("unexpected create"); },
+      update: async (input) => { writes.push(input); },
+      archive: async () => { throw new Error("unexpected archive"); },
+      updateChapter: async () => { throw new Error("unexpected chapter update"); },
+      deleteChapter: async () => { throw new Error("unexpected chapter delete"); },
+    });
+    const otherManifest = { ...manifest, principal: { ...manifest.principal, continuityId: "continuity_02" } };
+    const mine = createMemoryManagementService({ manifest, lease, profile }, stub);
+    const elsewhere = createMemoryManagementService({ manifest: otherManifest, lease, profile }, stub);
+    const mineRead = await mine.read();
+    const elsewhereRead = await elsewhere.read();
+    const stolen = await run(async () => await mine.mutate({
+      apiVersion: 1,
+      operation: "update",
+      expectedProjectionRevision: elsewhereRead.projectionRevision,
+      handle: elsewhereRead.memories[0].handle,
+      content: "written from the other continuity",
+    }));
+    const own = await run(async () => await mine.mutate({
+      apiVersion: 1,
+      operation: "update",
+      expectedProjectionRevision: mineRead.projectionRevision,
+      handle: mineRead.memories[0].handle,
+      content: "written by this continuity",
+    }));
+    process.stdout.write(JSON.stringify({
+      mineHandle: mineRead.memories[0].handle,
+      elsewhereHandle: elsewhereRead.memories[0].handle,
+      mineRevision: mineRead.projectionRevision,
+      elsewhereRevision: elsewhereRead.projectionRevision,
+      stolen,
+      own,
+      writes,
+    }));
+    await elsewhere.close();
+    await mine.close();
+    await lease.close();
+    await authority.close();
+  `);
+  // One durable row, two continuities: the handle is a function of both, so it differs.
+  assert.notEqual(results.mineHandle, results.elsewhereHandle);
+  assert.notEqual(results.mineRevision, results.elsewhereRevision);
+  // A command carrying the other continuity's projection is refused...
+  assert.equal((results.stolen as { ok: boolean }).ok, false);
+  assert.match((results.stolen as { error: string }).error, /memory_mutation_conflict/);
+  // ...and the same command from the continuity that owns the row lands, so the refusal is the scope and
+  // not a writer that refuses everything.
+  assert.equal((results.own as { ok: boolean }).ok, true);
+  assert.deepEqual(
+    (results.writes as ReadonlyArray<{ continuityId: string; content: string }>).map((write) => ({
+      continuityId: write.continuityId,
+      content: write.content,
+    })),
+    [{ continuityId: "continuity_01", content: "written by this continuity" }],
+  );
+});
+
 test("mounted memory service rejects concurrent creates sharing the same projection revision", async () => {
   const results = await mounted(`
     let rows = [];

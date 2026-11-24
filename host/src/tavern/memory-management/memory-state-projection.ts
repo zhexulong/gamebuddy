@@ -15,8 +15,8 @@ import type { MemoryManagementService } from "./memory-management.js";
  * 200 with rows from the route in the same breath.
  *
  * The probe is `MemoryManagementService.read()` - the same call the route makes: two vendored
- * SQLite list reads (`listMemories`, `listChapters`) and the HMAC projection revision over them,
- * once per `/state` read. That is the cost of the truth, and it is the price the management
+ * SQLite list reads (`listMemories`, `listChapters`) and the content-fingerprint projection revision over
+ * them, once per `/state` read. That is the cost of the truth, and it is the price the management
  * snapshot already paid; a constant is not cheaper in any way that matters, because the surface
  * that had to work around it is the one this module exists to delete.
  */
