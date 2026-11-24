@@ -2051,6 +2051,7 @@ public sealed partial class ModEntry : Mod
                     "observe_request" => this.HandleObserve(state, inbound.Generation, inbound.Json),
                     "observe_scene_request" => this.HandleObserveScene(state, inbound.Generation, inbound.Json, correlationId),
                     "navigation_read_request" => this.HandleNavigationRead(state, inbound.Generation, inbound.Json, correlationId),
+                    "destination_index_request" => this.HandleDestinationIndex(state, inbound.Generation, inbound.Json, correlationId),
                     "data_query_request" => this.HandleDataQuery(state, inbound.Generation, inbound.Json, correlationId),
                     "tile_area_request" => this.HandleTileAreaQuery(state, inbound.Generation, inbound.Json, correlationId),
                     "execution_request" => this.HandleExecute(state, inbound.Generation, inbound.Json),
@@ -2413,6 +2414,14 @@ public sealed partial class ModEntry : Mod
             return this.SerializeError(state, correlationId, parseReason);
         return this.SerializeBridgeResponse<BridgeNavigationReadRequest, BridgeNavigationReadResult>(state, request,
             (BridgeEnvelope<BridgeNavigationReadRequest> r, out BridgeEnvelope<BridgeNavigationReadResult>? response, out string reason) => state.BridgeSession!.TryNavigationRead(generation, r, out response, out reason), out _);
+    }
+
+    private string? HandleDestinationIndex(ScreenEmbodimentState state, long generation, string json, string? correlationId)
+    {
+        if (!BridgeProtocol.TryDeserializeDestinationIndexRequest(json, out BridgeEnvelope<BridgeDestinationIndexRequest>? request, out string parseReason) || request is null)
+            return this.SerializeError(state, correlationId, parseReason);
+        return this.SerializeBridgeResponse<BridgeDestinationIndexRequest, BridgeDestinationIndexResult>(state, request,
+            (BridgeEnvelope<BridgeDestinationIndexRequest> r, out BridgeEnvelope<BridgeDestinationIndexResult>? response, out string reason) => state.BridgeSession!.TryDestinationIndex(generation, r, out response, out reason), out _);
     }
 
     private string? HandleDataQuery(ScreenEmbodimentState state, long generation, string json, string? correlationId)
