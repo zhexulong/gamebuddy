@@ -175,12 +175,12 @@ export interface ProgramStatusWaitOutcome<TResult> {
  * <p>
  * THE TWO BOUNDS ANSWER TWO QUESTIONS, and telling them apart is the defect this exists for. A NUMBER is a duration the
  * caller named - "give me at most this long" - so it starts when the call does and nothing extends it. A silence bound is
- * what `stardew_plan_work` needs to hold its own turn with, and the number it holds it with today was wrong: measured
- * `round94`/`round95`, nine of 49 holds spent the whole 6,000 ms and came back `in_flight_not_done`, for plans whose own
- * journal span ran from 6,865 ms (`refill_watering_can`) to 328,317 ms (`sleep`). None of the nine was stuck - all nine
- * had `snapshotChanged: true` for the whole hold and all nine published a terminal state later. What decided their wait
- * was the plan's NODE COUNT (`planSelfWaitDecision`), so a `sleep` and a `move_to_tile` were given the same 6,000 ms and
- * neither was given the time it actually took.
+ * what `stardew_plan_work` holds its own turn with, and the wait it held it with before this was decided by the plan's
+ * NODE COUNT: measured `round94`/`round95`, nine of 49 holds spent the whole 6,000 ms and came back
+ * `in_flight_not_done`, for plans whose own journal span ran from 6,865 ms (`refill_watering_can`) to 328,317 ms
+ * (`sleep`). None of the nine was stuck - all nine had `snapshotChanged: true` for the whole hold and all nine published
+ * a terminal state later - so a `sleep` and a `move_to_tile` were given the same 6,000 ms and neither was given the time
+ * it actually took.
  * </p>
  *
  * <p>
@@ -191,12 +191,14 @@ export interface ProgramStatusWaitOutcome<TResult> {
  * </p>
  *
  * <p>
- * THAT RENEWAL IS ALSO THE FLOOR, and it is a node ceiling rather than a duration: a hold cannot outlast
- * `(1 + settledWhileHeld)` windows, and the settled set is monotone and cannot exceed the plan's own node count, so a
- * program that republishes something every 900 ms forever is handed back after one silent window. It is not
- * `PLAN_NODE_PACE_MS` in disguise: 629 ms per node was a duration assumed BEFORE anything ran, which is why a `sleep`
- * and a `move_to_tile` were handed the same 6,000 ms, where here a window is bought only by an observed settlement and
- * nothing is predicted. The arithmetic is published on the answer (`settledWhileHeld`) rather than kept here.
+ * THAT RENEWAL NEEDS A CEILING, AND THE CEILING IS A TOTAL: `holdMs` bounds the whole hold however many settlements renew
+ * it. Renewal alone is a node allowance in disguise - a hold would last one window per node the caller wrote - and that
+ * is the arithmetic this bound replaced: 629 ms a node was a duration assumed BEFORE anything ran, which is why a `sleep`
+ * and a `move_to_tile` were handed the same 6,000 ms. A total is not about the plan's size at all: `stardew_plan_work`
+ * passes `PLAN_SELF_WAIT_HOLD_MS`, three of the longest wait a caller may name, so a plan that keeps finishing steps
+ * keeps its turn for three times the longest single wait a caller could have asked for - and then it is handed back with
+ * the progress it made rather than cut at a per-node allowance. The two numbers are ONE declaration side by side
+ * because they answer two questions: `silenceMs` is what RENEWS, `holdMs` is what BOUNDS.
  * </p>
  *
  * <p>
@@ -207,8 +209,14 @@ export interface ProgramStatusWaitOutcome<TResult> {
  * </p>
  */
 export interface ProgramStatusSilenceBound {
-  /** How long the plan may settle nothing before the wait hands back what it has. */
+  /** How long the plan may settle nothing before the wait hands back what it has: one finished step buys another window. */
   readonly silenceMs: number;
+  /**
+   * The most the hold may spend IN TOTAL, renewals included - the one ceiling a plan that keeps finishing steps cannot
+   * buy past. Independent of the plan's node count on purpose: one window per node is the node allowance this bound
+   * exists to replace, and it cuts a long plan by a number that knows nothing about the action it is on.
+   */
+  readonly holdMs: number;
 }
 
 /**
@@ -222,10 +230,16 @@ export type ProgramStatusWaitBound = number | ProgramStatusSilenceBound;
 /**
  * What a SILENCE-bounded wait proved: every fact a wait reports, plus the progress that bought the hold its time.
  *
- * `settledWhileHeld` is what explains a hold longer than one window AND proves it cannot be much longer: nodes that
- * reached a settled state while the call held the turn, counted by the journal's own node id, each one restarting the
- * window. A hold that returns at 40 s with `settledWhileHeld: 39` was working the whole way; one that returns at 40 s
- * with `settledWhileHeld: 0` was resting on `first` and had a bound that was never renewed.
+ * `settledWhileHeld` is what explains a hold longer than one window: nodes that reached a settled state while the call
+ * held the turn, counted by the journal's own node id, each one restarting the window. A hold that returns at 40 s with
+ * `settledWhileHeld: 39` was working the whole way; one that returns at 40 s with `settledWhileHeld: 0` was resting on
+ * `first` and had a bound that was never renewed.
+ *
+ * `cutByHoldCeiling` is the arm `holdMs` exists for: the hold reached its TOTAL while the plan was still active, so it
+ * ended on progress rather than on silence. The answer is not a failure - `result` is a real read, `settledWhileHeld`
+ * counts the steps that bought the time and `unsettled` names the node it stopped on - but it says WHICH bound ended the
+ * wait, because "nothing settled for a window" and "it is still working and we stopped anyway" are two facts a caller
+ * decides differently on.
  *
  * The rest of "what progress was made" is already published beside it and is deliberately not repeated: the node the
  * plan is on and the publication that ends it are `unsettled`, and how long that node has been in its state is
@@ -234,6 +248,7 @@ export type ProgramStatusWaitBound = number | ProgramStatusSilenceBound;
  */
 export interface PlanSettlementWaitFacts extends ProgramStatusWaitFacts {
   readonly settledWhileHeld: number;
+  readonly cutByHoldCeiling: boolean;
 }
 
 export interface PlanSettlementWaitOutcome<TResult> {
@@ -1215,6 +1230,18 @@ export function waitForTerminalProgramStatus<TResult>(
   now?: () => number,
   sleep?: (milliseconds: number) => Promise<void>,
 ): Promise<PlanSettlementWaitOutcome<TResult>>;
+/**
+ * The two above, for a caller whose bound is a value of BOTH kinds - `stardew_plan_work` takes a duration the caller named
+ * or the silence bound it defaults to, and passes whichever it decided on. Its answer is the union because which facts
+ * came back depends on which question it asked: only the silence arm reports `settledWhileHeld` and `cutByHoldCeiling`.
+ */
+export function waitForTerminalProgramStatus<TResult>(
+  read: () => Promise<TResult>,
+  first: TResult,
+  bound: ProgramStatusWaitBound,
+  now?: () => number,
+  sleep?: (milliseconds: number) => Promise<void>,
+): Promise<ProgramStatusWaitOutcome<TResult> | PlanSettlementWaitOutcome<TResult>>;
 export async function waitForTerminalProgramStatus<TResult>(
   read: () => Promise<TResult>,
   first: TResult,
@@ -1226,7 +1253,14 @@ export async function waitForTerminalProgramStatus<TResult>(
     0,
     Math.min(MAX_PROGRAM_STATUS_WAIT_MS, Math.trunc(typeof bound === "number" ? bound : bound.silenceMs)),
   );
-  let deadline = now() + windowMs;
+  // THE TOTAL the renewals cannot cross, and `Infinity` for a duration - a bound the caller named has no ceiling to
+  // reach, because nothing extends it in the first place.
+  const holdDeadline =
+    typeof bound === "number" ? Number.POSITIVE_INFINITY : now() + Math.max(0, Math.trunc(bound.holdMs));
+  // THE DEADLINE IS THE WINDOW, CAPPED BY THE TOTAL. The cap is what makes the ceiling a bound rather than a second
+  // check: every renewal below is written through it, so the loop the windows already drive is the loop the total ends,
+  // and no arm of it can be reached only when the ceiling is.
+  let deadline = Math.min(now() + windowMs, holdDeadline);
   let previous = first;
   let snapshotChanged = false;
   let unchangedPolls = 0;
@@ -1234,7 +1268,9 @@ export async function waitForTerminalProgramStatus<TResult>(
   // `first` already carried, because a node that was done before this call cannot buy it another window.
   const settledNodes = typeof bound === "number" ? null : new Set(settledNodeIds(first));
   let settledWhileHeld = 0;
-  // The flag comes from the read, not from the path. `settle` takes no terminality argument, so no arm can state one.
+  // The flag comes from the read AND the clock, not from the arm that returned. `settle` takes no terminality and no
+  // "why it ended" argument, so no return arm can state either: a read that proved the plan stopped ended the wait on
+  // its settlement, and the ceiling is the clock having reached the total, which `holdDeadline` is the one statement of.
   const settle = (result: TResult): ProgramStatusWaitOutcome<TResult> | PlanSettlementWaitOutcome<TResult> => {
     const readTerminality = programStatusTerminality(result);
     return Object.freeze({
@@ -1244,7 +1280,12 @@ export async function waitForTerminalProgramStatus<TResult>(
         unreadable: readTerminality.unreadable,
         snapshotChanged,
         unsettled: unsettledProgramme(result),
-        ...(settledNodes === null ? {} : { settledWhileHeld }),
+        ...(settledNodes === null
+          ? {}
+          : {
+              settledWhileHeld,
+              cutByHoldCeiling: now() >= holdDeadline && readTerminality.terminality !== "terminal",
+            }),
       }),
     });
   };
@@ -1269,7 +1310,7 @@ export async function waitForTerminalProgramStatus<TResult>(
         if (!settledNodes.has(nodeId)) {
           settledNodes.add(nodeId);
           settledWhileHeld += 1;
-          deadline = now() + windowMs;
+          deadline = Math.min(now() + windowMs, holdDeadline);
         }
     previous = result;
     return result;
