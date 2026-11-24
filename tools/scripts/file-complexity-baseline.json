@@ -29,7 +29,7 @@
     "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs": 2487,
     "integrations/stardew/StardewBodyController.cs": 3069,
     "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs": 2160,
-    "tools/lib/harness-conformance.mjs": 1865,
+    "tools/lib/harness-conformance.mjs": 1871,
     "tools/lib/multiday-baseline.test.mjs": 2002,
     "tools/lib/stardew-native-local-player-fixture.mjs": 1753,
     "tools/lib/task-purpose.test.mjs": 2265,

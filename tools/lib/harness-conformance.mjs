@@ -468,6 +468,14 @@ const GATES_WITH_FALSIFIER = Object.freeze([
   "check-snapshot-field-rendering.mjs",
   "check-evidence-bundle.mjs",
   "check-fail-closed-forward-path.mjs",
+  // Prints `sentences examined N · naming a step M · naming a step that cannot work K` over every (state, sentence)
+  // pair the Game surface declares, plus a six-entry `checks[]` verdict, so its default run is the report this suite
+  // reads. Its falsifier is gates/product/check-state-sentences.test.mjs: the shipped `uncertain` sentence replayed in
+  // each catalogue is `sentence_names_a_step_the_product_cannot_perform` naming `cabin/uncertain`, `moved_in` offering
+  // `confirm` is `step_offered_for_an_action_that_is_finished`, a sentence naming a step its state does not offer is
+  // named, a state with no steps and a sentence that names none is `sentence_names_no_step_but_offers_none`, a tree with
+  // no retirement declaration is blocked, and a module declaring nothing is `population_empty`.
+  "check-state-sentences.mjs",
   "check-game-context-pressure.mjs",
   "check-game-historian-rubric.mjs",
   "check-live-run-failure-dump.mjs",

@@ -671,7 +671,7 @@ export function GameSurface({
           choiceHandle: renewed.choiceHandle,
           confirmed: true,
         });
-        setCabinView({ kind: "admitted" });
+        setCabinView({ kind: "admitted", cabinLabel: renewed.displayLabel });
       } catch (error) {
         if (error instanceof ComposedReferenceGameProblemError && error.code === "stardew_cabin_choice_stale") {
           cabinConfirmationActiveRef.current = false;

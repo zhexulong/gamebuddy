@@ -106,7 +106,7 @@ test("a lapsed offer still reaches the game, and the game's refusal is a named a
   // And the retry is the list in front of the player: a second press on the fresh offer is admitted.
   await handoff.getByRole("button", { name: "Confirm cabin" }).click();
   await expect.poll(() => cabinConfirmRequests).toBe(2);
-  await expect(panel).toContainText("Cabin request admitted");
+  await expect(panel).toContainText("Cabin request received");
 });
 
 test("a live offer confirms on the first press", async ({ page }) => {
@@ -127,5 +127,5 @@ test("a live offer confirms on the first press", async ({ page }) => {
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Confirm cabin" }).click();
   await expect.poll(() => cabinConfirmRequests).toBe(1);
-  await expect(panel).toContainText("Cabin request admitted");
+  await expect(panel).toContainText("Cabin request received");
 });

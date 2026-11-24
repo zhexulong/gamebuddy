@@ -1117,6 +1117,15 @@ function readCatalogues() {
 
 export { controlMarkers, phaseMembers, tavernMembers, gameMembers, turnMembers, turnStates, selfHealsEvidence };
 
+/**
+ * The TypeScript readers themselves, for the gates that read the same declarations.
+ *
+ * `gates/product/check-state-sentences.mjs` holds a player sentence to the steps its state offers, and it reads the
+ * lifecycle module's declaration nodes with exactly these - two gates with two copies of "what counts as an object
+ * property" is two answers to one question, and the second copy is the one that goes stale.
+ */
+export { constantsOf, objectProperties, parseFile, stringArray, stringLiterals, unionTypeMembers, unwrap };
+
 // ---------------------------------------------------------------------------------------------------
 // The run
 // ---------------------------------------------------------------------------------------------------

@@ -411,6 +411,29 @@ const UNREAD_INDIRECT_READS = [
   },
   {
     reason:
+      "read through a computed key: the Game panel renders the sentences its state declares - `labels[sentence.key]` " +
+      "over `GAME_PHASE_SENTENCE` and `CABIN_HANDOFF_SENTENCE` in components/GameStatePanel.tsx - so the keys here are the " +
+      "closed lists those two declarations in game-lifecycle-controls.ts name. That is the point of the indirection: the " +
+      "words and the steps of one state are one declaration, and `gates/product/check-state-sentences.mjs` holds them to it",
+    keys: [
+      "gameDisconnectedWorldRunning",
+      "gameLaunchQuarantined",
+      "gameNotRead",
+      "gameWaitingForGame",
+      "stardewCabinsAwaitingSession",
+      "stardewCabinsLoading",
+      "stardewCabinsMissing",
+      "stardewCabinsReread",
+      "stardewCabinsUnavailable",
+      "stardewCabinCheckGameHint",
+      "stardewCabinChoiceStaleRefused",
+      "stardewCabinConfirmationUncertain",
+      "stardewCabinMovedInStep",
+      "stardewManifestAdmitted",
+    ],
+  },
+  {
+    reason:
       "read through a computed key: `connectionFailureText`'s closed `labels[key]` union in components/management-panels.tsx",
     keys: [
       "connectionFailureInvalidEndpoint",

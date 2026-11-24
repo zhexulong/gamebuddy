@@ -40,11 +40,13 @@ import { createGameBrowserStateProvider } from "../../host/src/game-browser/game
 import { composeGameProfile } from "../../host/src/game-browser-contract/index.js";
 import {
   deriveCabinHandoffActions,
+  deriveCabinHandoffView,
   deriveCabinLaunchLine,
   deriveGameLifecycleControlAvailability,
   deriveGameSessionControls,
   GAME_SESSION_INPUTS,
   GAME_SESSION_PHASES,
+  CABIN_HANDOFF_FINISHED_BY,
   CABIN_HANDOFF_INPUTS,
   CABIN_HANDOFF_KINDS,
   setupStagedNothing,
@@ -752,7 +754,11 @@ test("cabin-forward-path.2: the union, the kind list and the inputs are one auth
 
 test("cabin-forward-path.3: only an admitted handoff is over, and only an in-flight one waits", (t) => {
   const terminal = CABIN_HANDOFF_KINDS.filter((kind) => deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).includes("terminal"));
-  assert.deepEqual(terminal, ["admitted"], "the handoff is over exactly where the companion is moving in");
+  assert.deepEqual(
+    terminal,
+    ["admitted", "moved_in"],
+    "the handoff is over exactly where the companion is moving in or already in, and nowhere else",
+  );
   const waiting = CABIN_HANDOFF_KINDS.filter((kind) =>
     deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS[kind]).includes("wait_for_read"),
   );
@@ -781,16 +787,28 @@ test("cabin-forward-path.3: only an admitted handoff is over, and only an in-fli
  */
 test("cabin-forward-path.4: an unconfirmed confirmation offers the game read and never the cabin read", (t) => {
   const uncertain = deriveCabinHandoffActions(CABIN_HANDOFF_INPUTS.uncertain);
-  assert.deepEqual([...uncertain], ["read_game_again"]);
+  // Two steps, and the second one is off this page: the attempt the state was born from is released by GameBuddy
+  // starting again, and the Host refuses any further confirmation for its own lifetime. A sentence that names the
+  // tray quit is a state that offers it (`gates/product/check-state-sentences.mjs`).
+  assert.deepEqual([...uncertain], ["read_game_again", "restart_gamebuddy"]);
   assert.ok(!uncertain.includes("read_cabins_again"), "the cabin read would re-arm a confirmation the Host refuses");
   assert.ok(
     !uncertain.includes("confirm"),
     "a second confirmation is the one thing the state forbids, and the Host refuses it",
   );
-  // The copy beside that control has to say what it does and does not do, and what happens when
-  // the answer has not changed - the state is otherwise an identical screen after the press.
+  // The copy beside that control has to say what it does and does not do, and what is left when the answer has not
+  // changed - the state is otherwise an identical screen after the press. It may not promise a recovery nobody
+  // performs: the shipped sentence told the player to reload the page and to wait for recovery, and neither can
+  // release a quarantined attempt (measured 2026-11-24).
   assert.match(MESSAGES.stardewCabinCheckGameHint, /never sent a second time/u);
-  assert.match(MESSAGES.stardewCabinCheckGameHint, /waiting for recovery/u);
+  assert.match(MESSAGES.stardewCabinCheckGameHint, /quit GameBuddy from the tray/u);
+  assert.match(MESSAGES.stardewCabinConfirmationUncertain, /cannot confirm her a second time/u);
+  assert.match(MESSAGES.stardewCabinConfirmationUncertain, /tray icon \(Quit GameBuddy\)/u);
+  assert.doesNotMatch(
+    `${MESSAGES.stardewCabinConfirmationUncertain}\n${MESSAGES.stardewCabinCheckGameHint}`,
+    /reload|recovery/iu,
+    "the two steps that shipped in this state cannot release it: a reload talks to the same GameBuddy, and recovery refuses a terminal attempt",
+  );
   t.diagnostic(`cabin-forward-path.4: uncertain -> ${uncertain.join("+")}`);
 });
 
@@ -813,6 +831,45 @@ test("cabin-forward-path.5 (mutation): a kind whose state offers nothing is repo
     "the real kind in the same population passes: the comparison is not simply always-red",
   );
   t.diagnostic(`cabin-forward-path.5: planted -> ${findings.join(" | ")}`);
+});
+
+/**
+ * The state transition, driven through the real derivation: once the Host's own attachment says she is in this save,
+ * every cabin-handoff kind becomes `moved_in` and offers no press on the handoff.
+ *
+ * This is what makes the list leave the surface instead of hanging around greyed out. A control whose action is
+ * finished is not a disabled control; it is a control that is gone, and the state it leaves behind states where she
+ * is and the one step that remains (`cabin-forward-path.4`'s sibling in `i18n.ts`).
+ */
+test("cabin-forward-path.8: the handoff is finished exactly when the Host's attachment says she is in the farm", (t) => {
+  const inFarm = deriveGameSessionControls(GAME_SESSION_INPUTS.attached_connected);
+  const notInFarm = deriveGameSessionControls(GAME_SESSION_INPUTS.running_without_attachment);
+  assert.equal(inFarm[CABIN_HANDOFF_FINISHED_BY.fact], true, "the attached phase is the one the fact names");
+  assert.equal(notInFarm[CABIN_HANDOFF_FINISHED_BY.fact], false);
+  for (const kind of CABIN_HANDOFF_KINDS) {
+    const before = CABIN_HANDOFF_INPUTS[kind];
+    assert.deepEqual(
+      deriveCabinHandoffView({ cabin: before, controls: notInFarm }),
+      before,
+      `${kind} is left exactly as it is while she is not in the farm`,
+    );
+    const after = deriveCabinHandoffView({ cabin: before, controls: inFarm });
+    assert.equal(after.kind, CABIN_HANDOFF_FINISHED_BY.becomes, `${kind} becomes the finished state once she is in`);
+    assert.deepEqual(
+      [...deriveCabinHandoffActions(after)],
+      ["terminal"],
+      `${kind} still offers a press once the handoff is over, which is the control a finished action would draw`,
+    );
+  }
+  // The label survives only from the press that confirmed it: a page opened on a farm she is already in cannot know
+  // which cabin it was, and says "her cabin" rather than guessing one of the offers it just read.
+  assert.equal(deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.admitted, controls: inFarm }).cabinLabel, "Cabin 1");
+  assert.equal(
+    deriveCabinHandoffView({ cabin: CABIN_HANDOFF_INPUTS.choices, controls: inFarm }).cabinLabel,
+    null,
+    "a reloaded page never names a cabin it did not confirm",
+  );
+  t.diagnostic(`cabin-forward-path.8: ${CABIN_HANDOFF_KINDS.length} kind(s) retire to ${CABIN_HANDOFF_FINISHED_BY.becomes}`);
 });
 
 /**

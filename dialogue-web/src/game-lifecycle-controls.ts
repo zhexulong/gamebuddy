@@ -1,5 +1,6 @@
 import { assertNever } from "./assert-never";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "./composed-reference-game-browser-api";
+import type { Messages } from "./i18n";
 
 /**
  * The single derivation of the three lifecycle controls the player sees
@@ -713,7 +714,26 @@ export type CabinViewState =
    */
   | Readonly<{ kind: "choices"; choices: readonly StardewCabinChoiceV1[]; staleRefusal: boolean }>
   | Readonly<{ kind: "confirming"; choices: readonly StardewCabinChoiceV1[]; choiceHandle: string }>
-  | Readonly<{ kind: "admitted" }>
+  /**
+   * The confirmation was admitted: she is moving in and the game is what happens next.
+   *
+   * `cabinLabel` is the label of the offer this surface confirmed, kept because the label is the only
+   * record of WHICH cabin she moved into: the Host publishes the binding as an attachment, never as a
+   * cabin's name, so a surface that dropped the label could not say where she went.
+   */
+  | Readonly<{ kind: "admitted"; cabinLabel: string }>
+  /**
+   * She is already in this save: the Host's own attachment says this browser holds the companion in the
+   * player's farm, so the handoff is over and nothing about it is left to choose.
+   *
+   * This is the one cabin state derived from a PUBLISHED fact rather than from this surface's own press
+   * (`deriveCabinHandoffView`), because the list outlives the press: a page opened on a farm she is
+   * already in reads the cabin offers again, and a confirm drawn there would be a press whose action is
+   * finished. `cabinLabel` is known exactly when this surface is the one that confirmed her, and null
+   * after a reload - the honest "the Host's binding does not carry the name" rather than the number of
+   * whichever offer the list happened to list first.
+   */
+  | Readonly<{ kind: "moved_in"; cabinLabel: string | null }>
   | Readonly<{ kind: "uncertain" }>
   /** The read could not be made, and the panel offers the control that makes it again. */
   | Readonly<{ kind: "unavailable"; reread: boolean }>
@@ -733,58 +753,65 @@ export type CabinViewState =
   | Readonly<{ kind: "missing"; reread: boolean }>;
 
 /**
- * The step each cabin-handoff state offers, named rather than implied.
- *
- * `AGENTS.md`'s zero-forward-path rule is why this exists: a state the handoff can really be
- * in, from which the player could do nothing, is a dead end whose only exit is reloading the
- * page - and reloading drops the Host connection and this surface's own attachment. The three
- * members that are not a press on this page are still steps a player takes:
- *
- * - `wait_for_read` is the handoff's own in-flight read or confirmation settling it
- *   (`loading`, `confirming`). The panel states it rather than offering a control whose
- *   command is already in flight.
- * - `terminal` is the handoff being over (`admitted`): the companion is moving in and the game
- *   is what happens next.
- * - `read_cabins_again` / `read_game_again` are the reads this surface owns, and they are
- *   deliberately two different ones - see `deriveCabinHandoffActions`.
+ * The presses that act on the handoff itself: choosing a cabin, or asking for the two reads a player
+ * owns. A state whose handoff is over must offer none of them (`CABIN_HANDOFF_FINISHED_BY`).
  */
-export type CabinHandoffAction = "terminal" | "confirm" | "wait_for_read" | "read_cabins_again" | "read_game_again";
+export type CabinHandoffPress = "confirm" | "read_cabins_again" | "read_game_again";
 
 /**
- * The one step each state offers, in reading order.
+ * The readings of a handoff that is in flight or over - not presses on it.
  *
- * `uncertain` is the state that forced the distinction between the two reads. Its fact is a
- * confirmation whose publication is unknown (`stardew_cabin_publication_uncertain`), and the
- * one thing that must not happen next is a second confirmation: the Host keeps the confirmed
- * choice handle consumed and answers any later confirmation with
- * `stardew_cabin_confirmation_conflict` for the life of the coordinator. Re-reading the cabin
- * choices would therefore re-arm a confirm button the Host can only refuse, so the honest step
- * is the panel's own authoritative read of the game: it sends no handoff command at all, and
- * the attachment the Host publishes once the confirmation landed is what answers the question.
- * When it did not land, the state stays exactly as it is, and the panel says so.
+ * `wait_for_read` is the handoff's own in-flight read or confirmation settling it (`loading`,
+ * `confirming`): the panel states it rather than offering a control whose command is already in
+ * flight. `terminal` is the handoff being over (the companion is moving in, or already in the farm) and
+ * the game is what happens next.
  */
+export type CabinHandoffReading = "wait_for_read" | "terminal";
+
+/**
+ * The one cabin step that leaves the software, borrowed from the session's own vocabulary rather than
+ * spelled a second time: `restart_gamebuddy` is "quit GameBuddy from the tray icon and open it again".
+ *
+ * `uncertain` names it because the attempt that state was born from is released by nothing on this page
+ * - the same fact `launch_failed`'s declaration states - and a state whose sentence names the tray quit
+ * has to offer it, or the sentence is a step the state does not have (`gates/product/check-state-sentences.mjs`).
+ */
+export type CabinHandoffAction = CabinHandoffPress | CabinHandoffReading | OutOfBandIntervention;
+
+/**
+ * The one step each state offers, in reading order - the single declaration, so the panel, the derivation
+ * and the gates that hold the copy to it cannot disagree.
+ *
+ * The record's type is the totality guarantee: a kind added to `CabinViewState` does not compile until it
+ * states its step, the same refusal `deriveCabinHandoffActions` used to keep with `assertNever`, and
+ * `AGENTS.md`'s zero-forward-path rule is why a state may not simply offer nothing.
+ *
+ * `uncertain` is the state that forced the distinction between the two reads. Its fact is a confirmation
+ * whose publication is unknown (`stardew_cabin_publication_uncertain`), and the one thing that must not
+ * happen next is a second confirmation: the Host keeps the confirmed choice handle consumed and answers
+ * any later confirmation with `stardew_cabin_confirmation_conflict` for the life of the coordinator.
+ * Re-reading the cabin choices would therefore re-arm a confirm button the Host can only refuse, so the
+ * honest step on this page is the panel's own authoritative read of the game: it sends no handoff command
+ * at all, and the attachment the Host publishes once the confirmation landed is what answers the question.
+ * What is left when it did not land is off this page, and the state says so in words (`i18n.ts`).
+ *
+ * `moved_in` offers `terminal` because the handoff is over there: she is in the farm, so every press the
+ * other states offer has already had its effect.
+ */
+export const CABIN_HANDOFF_ACTIONS = Object.freeze({
+  loading: ["wait_for_read"],
+  choices: ["confirm"],
+  confirming: ["wait_for_read"],
+  admitted: ["terminal"],
+  moved_in: ["terminal"],
+  uncertain: ["read_game_again", "restart_gamebuddy"],
+  unavailable: ["read_cabins_again"],
+  missing: ["read_cabins_again"],
+} as const satisfies Readonly<Record<CabinViewState["kind"], readonly CabinHandoffAction[]>>);
+
+/** The steps one cabin-handoff state offers, by kind. */
 export function deriveCabinHandoffActions(state: CabinViewState): readonly CabinHandoffAction[] {
-  switch (state.kind) {
-    case "loading":
-    case "confirming":
-      return Object.freeze(["wait_for_read"]);
-    case "choices":
-      return Object.freeze(["confirm"]);
-    case "unavailable":
-    case "missing":
-      return Object.freeze(["read_cabins_again"]);
-    case "uncertain":
-      return Object.freeze(["read_game_again"]);
-    case "admitted":
-      return Object.freeze(["terminal"]);
-    // The assertion travels with the switch. The declared return type already refuses a new kind -
-    // `strict` answers `TS2366: Function lacks ending return statement and return type does not include
-    // 'undefined'` the moment one is added - but that guarantee belongs to this signature, while
-    // `assertNever` belongs to the switch: a later edit that returns a value, relaxes the type or puts a
-    // statement after it keeps the refusal only if the guard is here.
-    default:
-      return assertNever(state);
-  }
+  return CABIN_HANDOFF_ACTIONS[state.kind];
 }
 
 /**
@@ -840,30 +867,57 @@ export function deriveCabinLaunchLine(
       return Object.freeze({ kind: "wait_expired", attempts: view.wait.attempts });
     case "not_launching":
       return Object.freeze({ kind: "none" });
-    // The assertion travels with the switch for the reason `deriveCabinHandoffActions` states: the
-    // declaration already refuses a new kind, and the guard keeps that refusal in the switch itself.
+    // The assertion travels with the switch; the declaration already refuses a missing kind, and the guard
+    // keeps that refusal in the switch itself rather than only in the signature.
     default:
       return assertNever(view.wait);
   }
 }
 
+/**
+ * The session fact that finishes the handoff, and the state the handoff becomes when it holds.
+ *
+ * One declaration, three readers: `deriveCabinHandoffView` returns that state, the panel draws it, and
+ * `gates/product/check-state-sentences.mjs` holds it to "no press on a handoff that is over". The fact is a
+ * field of `GameSessionControls` - `companionInFarm` is true exactly while the Host's own attachment puts the
+ * companion in the player's farm - rather than a boolean derived again beside it.
+ */
+export const CABIN_HANDOFF_FINISHED_BY = Object.freeze({
+  fact: "companionInFarm" as const,
+  becomes: "moved_in" as const,
+});
+
+/**
+ * What the handoff is, once the Host's own facts are folded in.
+ *
+ * The attachment is the product's record that she is bound in this save, and it outlives the press that put
+ * her there: a page reopened on the same farm reads the cabin offers again (`CabinHandoff`'s own first read),
+ * and a list drawn there offers a confirm the Host can only refuse for the life of the attempt. So the
+ * finished state is derived from the published fact rather than from this surface's memory of confirming,
+ * and `cabinLabel` survives only where this surface is the one that confirmed.
+ */
+export function deriveCabinHandoffView(
+  view: Readonly<{ cabin: CabinViewState; controls: GameSessionControls }>,
+): CabinViewState {
+  if (!view.controls[CABIN_HANDOFF_FINISHED_BY.fact]) return view.cabin;
+  return Object.freeze({
+    kind: CABIN_HANDOFF_FINISHED_BY.becomes,
+    cabinLabel: view.cabin.kind === "admitted" ? view.cabin.cabinLabel : null,
+  });
+}
+
 /** Every kind the union above declares, for the handoff's totality gate to enumerate. */
-export const CABIN_HANDOFF_KINDS: readonly CabinViewState["kind"][] = Object.freeze([
-  "loading",
-  "choices",
-  "confirming",
-  "admitted",
-  "uncertain",
-  "unavailable",
-  "missing",
-]);
+export const CABIN_HANDOFF_KINDS: readonly CabinViewState["kind"][] = Object.freeze(
+  Object.keys(CABIN_HANDOFF_ACTIONS) as CabinViewState["kind"][],
+);
 
 /** The cheapest instance of each kind, so the gate drives the real derivation per state. */
 export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], CabinViewState>> = Object.freeze({
   loading: Object.freeze({ kind: "loading" as const }),
   choices: Object.freeze({ kind: "choices" as const, choices: Object.freeze([]), staleRefusal: false }),
   confirming: Object.freeze({ kind: "confirming" as const, choices: Object.freeze([]), choiceHandle: "CHOICE" }),
-  admitted: Object.freeze({ kind: "admitted" as const }),
+  admitted: Object.freeze({ kind: "admitted" as const, cabinLabel: "Cabin 1" }),
+  moved_in: Object.freeze({ kind: "moved_in" as const, cabinLabel: null }),
   uncertain: Object.freeze({ kind: "uncertain" as const }),
   unavailable: Object.freeze({ kind: "unavailable" as const, reread: false }),
   missing: Object.freeze({ kind: "missing" as const, reread: false }),
@@ -887,3 +941,221 @@ export const CABIN_HANDOFF_INPUTS: Readonly<Record<CabinViewState["kind"], Cabin
 export function setupStagedNothing(game: GameBrowserStateV1 | null): boolean {
   return game !== null && game.game.instance.status === "none" && game.game.instance.generation < 1;
 }
+
+// ---------------------------------------------------------------------------------------------------
+// The copy each state draws, declared where its steps are so a gate can hold the words to them
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * The catalogue key of the one sentence a session phase states in place of a control.
+ *
+ * A closed union rather than `keyof Messages`, because the sentence is a fact about the state: a key
+ * added here is a sentence this surface has chosen to say, and the panel's `labels[sentence.key]` is
+ * typed by it.
+ */
+export type GamePhaseSentenceKey =
+  | "gameLaunchQuarantined"
+  | "gameWaitingForGame"
+  | "gameDisconnectedWorldRunning"
+  | "gameNotRead";
+
+/**
+ * The sentence one phase states, and how the panel draws it.
+ *
+ * `testId` travels with it so the marker a mounted journey reads is the same declaration as the words:
+ * the state, its sentence and its marker cannot drift apart in three places.
+ */
+export type GamePhaseSentence = Readonly<{
+  key: GamePhaseSentenceKey;
+  tone: "danger" | "progress" | "info";
+  testId: string;
+}>;
+
+/**
+ * The sentence each session phase states where its step is, or `null` for a phase whose step is a
+ * control that needs no words beside it.
+ *
+ * This is the declaration `gates/product/check-state-sentences.mjs` reads: a sentence a phase states is
+ * a sentence that may name a step, and the step it names has to be one the phase offers. The panel
+ * renders exactly this table, so the words and the steps are one fact instead of two that agree today.
+ *
+ * `no_projection` states nothing because it has no step of its own to describe (the AppBar is the way
+ * out); `ended_attempt_ready` states nothing because its step is the activation control itself, whose
+ * own label is the whole sentence; the four staging phases and the attached phases are the same.
+ */
+export const GAME_PHASE_SENTENCE: Readonly<Record<GameSessionPhase, GamePhaseSentence | null>> = Object.freeze({
+  no_projection: null,
+  pre_activation: null,
+  activated_not_launched: null,
+  launching: Object.freeze({ key: "gameWaitingForGame", tone: "progress", testId: "game-waiting-for-game" }),
+  running_without_attachment: Object.freeze({
+    key: "gameWaitingForGame",
+    tone: "progress",
+    testId: "game-waiting-for-game",
+  }),
+  disconnected_world_running: Object.freeze({
+    key: "gameDisconnectedWorldRunning",
+    tone: "info",
+    testId: "game-disconnected-world-running",
+  }),
+  launch_failed: Object.freeze({ key: "gameLaunchQuarantined", tone: "danger", testId: "game-launch-quarantined" }),
+  ended_attempt_ready: null,
+  game_not_read: Object.freeze({ key: "gameNotRead", tone: "progress", testId: "game-not-read" }),
+  attached_connected: null,
+  attached_actions_paused: null,
+  attached_stopping: null,
+  attached_stopped: null,
+  attached_syncing: null,
+  attached_reconnecting: null,
+  attached_unconnected: null,
+  attached_resumable: null,
+  attached_unsettled: null,
+  attached_resume_failed: null,
+});
+
+/** The catalogue keys a cabin-handoff state's own copy is drawn from. */
+export type CabinSentenceKey =
+  | "stardewCabinsLoading"
+  | "stardewCabinsMissing"
+  | "stardewCabinsUnavailable"
+  | "stardewCabinsAwaitingSession"
+  | "stardewCabinsReread"
+  | "stardewCabinConfirmationUncertain"
+  | "stardewCabinCheckGameHint"
+  | "stardewManifestAdmitted"
+  | "stardewCabinChoiceStaleRefused"
+  | "stardewCabinMovedIn"
+  | "stardewCabinMovedInStep";
+
+/**
+ * When a declared sentence is the one this state is showing.
+ *
+ * Two of the five are the panel's own answers rather than the probe's - `reread` is "the click was read
+ * and the answer had not changed", `stale_refusal` is the game's own word about the press before the
+ * list - and they ride the state they belong to (`CabinViewState`), so a sentence cannot claim a
+ * condition its state does not carry.
+ */
+export type CabinSentenceWhen = "always" | "awaits_session" | "not_awaits_session" | "reread" | "stale_refusal";
+
+/** One sentence of a cabin-handoff state, with the tone and the drawing the panel gives it. */
+export type CabinSentence = Readonly<{
+  key: CabinSentenceKey;
+  /** `status` is an announced line with a tone; `note` is the quiet line under or above a control. */
+  as: "status" | "note";
+  tone: "info" | "progress" | "action" | "warning" | "success";
+  when: CabinSentenceWhen;
+  /**
+   * The marker the rendered line carries, where a journey already reads that line by it. A sentence
+   * without one is marked by its own key, so a new member is reachable to the next reading instead of
+   * being only reachable by text.
+   */
+  testId?: string;
+}>;
+
+/**
+ * The sentences each cabin-handoff state states, in reading order - the declaration the panel renders
+ * and `gates/product/check-state-sentences.mjs` holds to the state's steps.
+ *
+ * The handoff used to decide this in per-kind JSX blocks, which is why the one sentence a player could
+ * not act on (`uncertain`'s) was invisible to every gate: the words were markup, and the step the words
+ * named was a second fact in another file. Here they are one table.
+ *
+ * `moved_in` is the shape the other declarations exist for: the handoff is over, so its copy names no
+ * press on it - a statement of where she is and the one step that is left, which is the game itself.
+ */
+export const CABIN_HANDOFF_SENTENCE = Object.freeze({
+  loading: [{ key: "stardewCabinsLoading", as: "note", tone: "progress", when: "always" }],
+  choices: [
+    {
+      key: "stardewCabinChoiceStaleRefused",
+      as: "status",
+      tone: "warning",
+      when: "stale_refusal",
+      testId: "cabin-choice-stale",
+    },
+  ],
+  confirming: [],
+  admitted: [{ key: "stardewManifestAdmitted", as: "status", tone: "success", when: "always" }],
+  moved_in: [
+    { key: "stardewCabinMovedIn", as: "status", tone: "success", when: "always" },
+    { key: "stardewCabinMovedInStep", as: "note", tone: "action", when: "always" },
+  ],
+  uncertain: [
+    { key: "stardewCabinConfirmationUncertain", as: "status", tone: "warning", when: "always" },
+    { key: "stardewCabinCheckGameHint", as: "note", tone: "warning", when: "always" },
+  ],
+  unavailable: [
+    { key: "stardewCabinsAwaitingSession", as: "status", tone: "info", when: "awaits_session" },
+    { key: "stardewCabinsUnavailable", as: "status", tone: "info", when: "not_awaits_session" },
+    { key: "stardewCabinsReread", as: "note", tone: "info", when: "reread" },
+  ],
+  missing: [
+    { key: "stardewCabinsMissing", as: "status", tone: "action", when: "always" },
+    { key: "stardewCabinsReread", as: "note", tone: "info", when: "reread" },
+  ],
+} as const satisfies Readonly<Record<CabinViewState["kind"], readonly CabinSentence[]>>);
+
+/** Whether one declared cabin sentence is the one this state is showing. */
+export function cabinSentenceShown(
+  sentence: CabinSentence,
+  view: Readonly<{ state: CabinViewState; awaitsSession: boolean }>,
+): boolean {
+  switch (sentence.when) {
+    case "always":
+      return true;
+    case "awaits_session":
+      return view.awaitsSession;
+    case "not_awaits_session":
+      return !view.awaitsSession;
+    case "reread":
+      return (view.state.kind === "missing" || view.state.kind === "unavailable") && view.state.reread;
+    case "stale_refusal":
+      return view.state.kind === "choices" && view.state.staleRefusal;
+    default:
+      return assertNever(sentence.when);
+  }
+}
+
+/** Every step either half of the vocabulary declares: what a sentence may name. */
+export type StepName = InSystemAction | OutOfBandIntervention | CabinHandoffAction;
+
+/**
+ * How a step is named in copy: by the label of the control that presses it, or - for the one step that
+ * is the tray's own menu item rather than a control of ours - by the words on that item.
+ *
+ * The label rather than a free-text phrase, so there is one spelling of a control's name: `labelKey` is
+ * the key the panel's button renders, and a sentence that tells the player to press it uses the same
+ * words. `phrase` exists for `restart_gamebuddy` alone, because its words are the tray's ("Quit
+ * GameBuddy") and no catalogue we own renders them.
+ */
+export type StepLabel = Readonly<{ labelKey: keyof Messages }> | Readonly<{ phrase: string }>;
+
+/**
+ * The words each step is named by, and `null` for the steps no control names (the game's own progress,
+ * the handoff being over) - a sentence states those in its own words, and there is no label to match.
+ *
+ * `gates/product/check-state-sentences.mjs` reads this table to tell a sentence that names a step from a
+ * sentence that does not, and then holds it to the steps its state offers. The record's type makes a
+ * step added to either union state its label here before the tree compiles.
+ */
+export const STEP_LABELS: Readonly<Record<StepName, StepLabel | null>> = Object.freeze({
+  terminal: null,
+  wait_for_game: null,
+  wait_for_read: null,
+  activate: Object.freeze({ labelKey: "gameActivation" }),
+  setup: Object.freeze({ labelKey: "gameSetup" }),
+  launch: Object.freeze({ labelKey: "gameLaunch" }),
+  stop: Object.freeze({ labelKey: "gameStop" }),
+  disconnect: Object.freeze({ labelKey: "gameDisconnect" }),
+  endgame: Object.freeze({ labelKey: "gameEndgame" }),
+  resume: Object.freeze({ labelKey: "gameResume" }),
+  retry_resume: Object.freeze({ labelKey: "gameRetry" }),
+  cancel_resume: Object.freeze({ labelKey: "gameResumeCancel" }),
+  create: Object.freeze({ labelKey: "gameCreate" }),
+  reopen: Object.freeze({ labelKey: "gameReopen" }),
+  reread_game: Object.freeze({ labelKey: "gameReadAgain" }),
+  confirm: Object.freeze({ labelKey: "stardewCabinConfirm" }),
+  read_cabins_again: Object.freeze({ labelKey: "stardewCabinsRefresh" }),
+  read_game_again: Object.freeze({ labelKey: "stardewCabinCheckGame" }),
+  restart_gamebuddy: Object.freeze({ phrase: "Quit GameBuddy" }),
+});

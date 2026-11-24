@@ -16,25 +16,34 @@ import {
   X,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { gameOperationFailureSentence, type GameOperationFailure } from "../composed-problem-view";
-import type { Messages } from "../i18n";
+import { type GameOperationFailure, gameOperationFailureSentence } from "../composed-problem-view";
 import type { GameBrowserStateV1, StardewCabinChoiceV1 } from "../composed-reference-game-browser-api";
-import { deriveCabinHandoffActions, deriveCabinLaunchLine } from "../game-lifecycle-controls";
 import type {
   CabinLaunchLine,
   CabinLaunchWaitState,
+  CabinSentence,
+  CabinSentenceKey,
   CabinViewState,
   GameSessionControls,
 } from "../game-lifecycle-controls";
 import {
+  CABIN_HANDOFF_SENTENCE,
+  cabinSentenceShown,
+  deriveCabinHandoffActions,
+  deriveCabinHandoffView,
+  deriveCabinLaunchLine,
+  GAME_PHASE_SENTENCE,
+} from "../game-lifecycle-controls";
+import {
+  type CapabilityBoard,
+  type CapabilityBoardCard,
   compatibilityLabel,
   connectionLabel,
   deriveCapabilityBoard,
   instanceLabel,
   outcomeLabel,
-  type CapabilityBoard,
-  type CapabilityBoardCard,
 } from "../game-presentation";
+import { type Messages, recordLabel } from "../i18n";
 import { useArmedConfirmation } from "./armed-confirmation";
 import { preventImeFormSubmit } from "./ime-composition";
 
@@ -288,6 +297,14 @@ export function GameStatePanel({
    * before that with `gameActivationRequired`); at `activated_not_launched` neither is
    * offered, which is what makes step 1 disappear rather than ask for work already done.
    */
+  // The handoff as the Host's own facts leave it: once the attachment says she is in this save, the
+  // list, its confirm and both of its reads belong to a handoff that is over, and the block states where
+  // she is instead (`CABIN_HANDOFF_FINISHED_BY`). Derived here rather than in the shell because the fact
+  // it turns on is the session derivation's own (`companionInFarm`).
+  const cabinView = deriveCabinHandoffView({ cabin, controls: session.controls });
+  // The one sentence this state states, or none: the declaration the gate reads pairs it with the steps
+  // the same state offers.
+  const phaseSentence = GAME_PHASE_SENTENCE[session.controls.phase];
   const stagingAction: "activate" | "setup" | null =
     session.controls.forwardActions[0] === "activate"
       ? "activate"
@@ -313,7 +330,7 @@ export function GameStatePanel({
   // block below the groups once it is in the farm.
   const cabinHandoff = (
     <CabinHandoff
-      state={cabin}
+      state={cabinView}
       labels={labels}
       // The Host serves cabin choices only while a Player Host instance it
       // launched is awaiting attestation; with no instance the read fails with
@@ -369,38 +386,18 @@ export function GameStatePanel({
               established is not drawn at all. Once the companion is in the farm
               the same group holds the actions-resume affordance it held before. */}
           <PanelGroup id="game-group-next-step" title={labels.gameGroupNextStep}>
-            {/* The state whose step is not a control on this page, stated where the
-                guide would have been so the player is never left reading a panel of
-                withdrawn controls with nothing saying why. It holds the guide back
-                because every control in it is refused for the life of this Host
-                process, so showing it would be exactly the trap design/26 §1 rules
-                out. */}
-            {session.controls.restartRequired && (
-              <p className="game-status" data-tone="danger" role="status" data-testid="game-launch-quarantined">
-                {labels.gameLaunchQuarantined}
-              </p>
-            )}
-            {session.controls.waitingForGame && (
-              <p className="game-status" data-tone="progress" role="status" data-testid="game-waiting-for-game">
-                {labels.gameWaitingForGame}
-              </p>
-            )}
-            {/* The player disconnected and the world kept running. The waiting sentence above is a
-                promise nobody keeps here - nothing is on its way - so this state says what really
-                happened, that the farm is still running (a disconnect stops the companion, never the
-                world), and what is left: the panel's own read of the game, which is how a world the
-                player has since quit in the game reaches the ending's step. */}
-            {session.controls.disconnectedWorldRunning && (
-              <p className="game-status" data-tone="info" role="status" data-testid="game-disconnected-world-running">
-                {labels.gameDisconnectedWorldRunning}
-              </p>
-            )}
-            {/* The Host has not read the player's game. Every control in the guide below acts
-                on a premise that read would establish, so the guide is held back and the
-                step that belongs to this state - the read itself - is the only one drawn. */}
-            {session.controls.phase === "game_not_read" && (
-              <p className="game-status" data-tone="progress" role="status" data-testid="game-not-read">
-                {labels.gameNotRead}
+            {/* The state's own sentence, from the one declaration that pairs it with the steps this
+                state offers (`GAME_PHASE_SENTENCE`). It used to be four hand-written guards here, which
+                is why no gate could ask whether the words named a step the state really has: the sentence
+                and its state were written twice, in two files. A phase with no sentence states nothing. */}
+            {phaseSentence !== null && (
+              <p
+                className="game-status"
+                data-tone={phaseSentence.tone}
+                role="status"
+                data-testid={phaseSentence.testId}
+              >
+                {labels[phaseSentence.key]}
               </p>
             )}
             {/* The read this page owns, and the one step two states share: a game the Host has not read
@@ -697,18 +694,7 @@ export function GameStatePanel({
                 means absent, never a disabled lookalike. */}
             {session.controls.endgameAvailable && (
               <div className="game-endgame" data-testid="game-endgame">
-                {!session.endgame.confirmArmed ? (
-                  <button
-                    ref={endgamePair.triggerRef}
-                    type="button"
-                    className="game-action danger"
-                    data-testid="game-endgame-open"
-                    onClick={handlers.armEndgame}
-                  >
-                    <Power size={16} aria-hidden="true" />
-                    {labels.gameEndgame}
-                  </button>
-                ) : (
+                {session.endgame.confirmArmed ? (
                   <div
                     className="game-endgame-confirm"
                     data-testid="game-endgame-confirm"
@@ -742,6 +728,17 @@ export function GameStatePanel({
                       </button>
                     </div>
                   </div>
+                ) : (
+                  <button
+                    ref={endgamePair.triggerRef}
+                    type="button"
+                    className="game-action danger"
+                    data-testid="game-endgame-open"
+                    onClick={handlers.armEndgame}
+                  >
+                    <Power size={16} aria-hidden="true" />
+                    {labels.gameEndgame}
+                  </button>
                 )}
                 {session.endgame.active && (
                   <p className="game-status" data-tone="progress" role="status">
@@ -1008,9 +1005,19 @@ function CabinHandoff({
   onReread(): void;
 }) {
   const actions = deriveCabinHandoffActions(state);
+  // The state's declared copy, filtered by the conditions it carries.
+  const sentences = CABIN_HANDOFF_SENTENCE[state.kind].filter((sentence) =>
+    cabinSentenceShown(sentence, { state, awaitsSession }),
+  );
+  // `moved_in` is not a selection at all: she is in the farm, so the heading says whose cabin it is.
+  const inHerCabin = state.kind === "moved_in";
   return (
-    <section className="stardew-cabin-handoff game-subpanel" aria-label={labels.stardewCabinSelection}>
-      <h4 className="section-subtitle">{labels.stardewCabinSelection}</h4>
+    <section
+      className="stardew-cabin-handoff game-subpanel"
+      aria-label={inHerCabin ? labels.stardewCabinHers : labels.stardewCabinSelection}
+      data-testid={inHerCabin ? "cabin-moved-in" : undefined}
+    >
+      <h4 className="section-subtitle">{inHerCabin ? labels.stardewCabinHers : labels.stardewCabinSelection}</h4>
       {/* The launch's own two readings. `reading` names the attempt the budget is on, so a panel that
           keeps asking says so instead of looking like a control that did nothing; `wait_expired` is
           the budget spent with no cabin, and it names the step that is left. */}
@@ -1031,33 +1038,22 @@ function CabinHandoff({
           {labels.stardewCabinsLaunchWaitExpired}
         </p>
       )}
-      {state.kind === "loading" && <p className="game-subpanel-note">{labels.stardewCabinsLoading}</p>}
-      {state.kind === "missing" && (
-        <p className="game-status" data-tone="action" role="status">
-          {labels.stardewCabinsMissing}
+      {/* The state's own copy, from `CABIN_HANDOFF_SENTENCE`: one declared sentence list per kind, filtered
+          by the conditions the state carries. The words and the steps below them are two halves of one
+          declaration in `../game-lifecycle-controls`, which is what lets a gate hold the words to the
+          steps - the `uncertain` sentence that told the player to reload the page named a step no state
+          offers, and markup alone could not be read for it. */}
+      {sentences.map((sentence) => (
+        <p
+          key={sentence.key}
+          className={sentence.as === "note" ? "game-subpanel-note" : "game-status"}
+          data-tone={sentence.as === "note" ? undefined : sentence.tone}
+          role="status"
+          data-testid={cabinSentenceTestId(sentence)}
+        >
+          {cabinSentenceLabel(sentence.key, labels, state)}
         </p>
-      )}
-      {state.kind === "unavailable" &&
-        (awaitsSession ? (
-          <p className="game-status" data-tone="info" role="status">
-            {labels.stardewCabinsAwaitingSession}
-          </p>
-        ) : (
-          <p className="game-status" data-tone="info" role="status">
-            {labels.stardewCabinsUnavailable}
-          </p>
-        ))}
-      {/* What the refresh just found, stated where the control is: a player who has built
-          a cabin and pressed again needs to know the click was read, and that the answer
-          had not changed yet. It sits between the sentence and the control, so neither of
-          them moves when it appears. Both states the control is offered in report it - one
-          control that acknowledges the click in one state and silently repeats itself in
-          the other is the defect this button was added to fix. */}
-      {(state.kind === "missing" || state.kind === "unavailable") && state.reread && (
-        <p className="game-subpanel-note" role="status">
-          {labels.stardewCabinsReread}
-        </p>
-      )}
+      ))}
       {/*
         Offered for BOTH unavailable shapes, and it is the only thing on this panel that can change the answer.
         The failing state and the not-yet state look identical to a player and have the same cure, so one
@@ -1071,39 +1067,17 @@ function CabinHandoff({
           {labels.stardewCabinsRefresh}
         </button>
       )}
-      {state.kind === "uncertain" && (
-        <p className="game-status" data-tone="warning" role="status">
-          {labels.stardewCabinConfirmationUncertain}
-        </p>
-      )}
       {/* The one honest step out of an unconfirmed confirmation. It is not the cabin read:
           that would re-offer a confirm button the Host refuses for the life of this attempt
           (`stardew_cabin_confirmation_conflict`, because the confirmed choice is consumed).
-          This sends no handoff command at all, and the sentence beside it says what it can and
+          This sends no handoff command at all, and the sentence above it says what it can and
           cannot change, so a press that finds the same answer is a stated outcome rather than
           a control that quietly did nothing. */}
       {actions.includes("read_game_again") && (
-        <>
-          <button type="button" className="game-secondary-action" onClick={onReread}>
-            <RefreshCw size={16} aria-hidden="true" />
-            {labels.stardewCabinCheckGame}
-          </button>
-          <p className="game-subpanel-note">{labels.stardewCabinCheckGameHint}</p>
-        </>
-      )}
-      {state.kind === "admitted" && (
-        <p className="game-status" data-tone="success" role="status">
-          {labels.stardewManifestAdmitted}
-        </p>
-      )}
-      {/* The game's own answer to the press that got here, immediately above the list it produced.
-          The list IS the answer: those offers were read again after the refusal, so the sentence says
-          what happened and the player's next act is the one the list already offers. Replacing the
-          list with a sentence instead would read as the choice having disappeared. */}
-      {state.kind === "choices" && state.staleRefusal && (
-        <p className="game-status" data-tone="warning" role="status" data-testid="cabin-choice-stale">
-          {labels.stardewCabinChoiceStaleRefused}
-        </p>
+        <button type="button" className="game-secondary-action" onClick={onReread}>
+          <RefreshCw size={16} aria-hidden="true" />
+          {labels.stardewCabinCheckGame}
+        </button>
       )}
       {(state.kind === "choices" || state.kind === "confirming") && (
         <ul className="game-choice-list" data-testid="cabin-choice-list">
@@ -1126,6 +1100,26 @@ function CabinHandoff({
       )}
     </section>
   );
+}
+
+/** The marker a declared cabin sentence's line carries: the one a journey already reads, or its key. */
+function cabinSentenceTestId(sentence: CabinSentence): string {
+  return sentence.testId ?? `cabin-sentence-${sentence.key}`;
+}
+
+/**
+ * One declared cabin sentence as the player reads it.
+ *
+ * `moved_in` is the only one carrying a value: the cabin's label, known when this surface is the one
+ * that confirmed her and unknowable after a reload, where the words fall back to "her cabin" rather than
+ * to a number the list happened to show. `recordLabel` is the catalogue's own substitution, so the
+ * Chinese sentence and the Latin label do not run together.
+ */
+function cabinSentenceLabel(key: CabinSentenceKey, labels: Messages, state: CabinViewState): string {
+  if (key !== "stardewCabinMovedIn") return labels[key];
+  const cabin =
+    state.kind === "moved_in" && state.cabinLabel !== null ? state.cabinLabel : labels.stardewCabinMovedInCabinUnknown;
+  return recordLabel(labels.stardewCabinMovedIn, cabin);
 }
 
 /** The icon that decorates a board card. One declared icon family (lucide). */

@@ -225,11 +225,23 @@ const en = {
   stardewCabinsLaunchWaitExpired:
     'Your game is still starting, and the cabins have not come back yet. Load your farm, then press "Read cabins again" - that asks this same game once more without leaving this page.',
   stardewManifestAdmitted: "Cabin request received. Waiting for the game world to be ready.",
+  // The one state whose copy cannot name a step this page offers and be right, and the sentence that
+  // shipped it said "reload the page to recover manually" - a reload talks to the same GameBuddy, and the
+  // failed attempt it is stuck on is released only when GameBuddy starts again. So the sentences say what
+  // is true (the confirmation is out, and this page cannot send another), what the read above can and
+  // cannot do, and the one step that really can: the tray's own Quit GameBuddy, named by its location the
+  // way `gameLaunchQuarantined` names it.
   stardewCabinConfirmationUncertain:
-    "Confirmation is still awaiting verification. Do not confirm again. Wait for recovery or reload the page to recover manually.",
+    "Your cabin confirmation was sent and its answer never came back. This page cannot confirm her a second time, and checking the game again only reads it. If she is in the farm, that read shows her there; if she is not, quit GameBuddy itself from the tray icon (Quit GameBuddy) and open it again - the GameBuddy that opens starts clean and can let her move in.",
   stardewCabinCheckGame: "Check the game again",
   stardewCabinCheckGameHint:
-    "This only reads the game: the cabin confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this step keeps waiting for recovery.",
+    "This only reads the game: your confirmation is never sent a second time. If it had landed, the game shows up here as connected; if it had not, this line stays exactly as it is, and the way forward is the sentence above - quit GameBuddy from the tray and open it again.",
+  // The handoff is over: she is in the farm, so the block that offered the cabins says where she is and
+  // leaves the one step that remains, which is the game itself.
+  stardewCabinHers: "Her cabin",
+  stardewCabinMovedIn: "She is already in this save, in {{record}}.",
+  stardewCabinMovedInCabinUnknown: "her cabin",
+  stardewCabinMovedInStep: "Switch to Stardew Valley and look for her in the farmhouse.",
   // The game's own answer to a confirmation, which is the only party that can give one: the page
   // sends the choice and the game decides whether it was still good. Both sentences say which party
   // decided, because a page that enforces this itself is exactly the defect that made step 3
@@ -1689,7 +1701,7 @@ const zh: Messages = {
     "《星露谷物语》在伙伴住进农场前就退出了。这次退出 GameBuddy 要等到重新打开才会清掉，所以它不会再启动游戏，刷新这一页也不会改变这一点。请从系统托盘退出 GameBuddy 本身（Quit GameBuddy），再重新打开：重新打开之后，游戏就能正常启动。",
   gameWaitingForGame: "正在等待游戏把这个窗口接到你的农场上。载入你想玩的农场，载入后这个面板会更新。",
   gameDisconnectedWorldRunning:
-    "你已断开游戏连接，而你离开的那个农场仍在运行：断开的是你的伙伴，从来不是你的世界。这个版本里 GameBuddy 还不能重新接进一个已经在运行的游戏——你可以在自己的游戏窗口里继续玩，或者在那里退出游戏后，再在这里重新读取你的游戏，面板会显示那个结局和重新开始的步骤。",
+    "你已经断开这个游戏的连接，而你离开的那个农场仍在运行：断开的是你的伙伴，从来不是你的世界。这个版本里 GameBuddy 还不能重新接进一个已经在运行的游戏——你可以在自己的游戏窗口里继续玩，或者在那里退出游戏后，再在这里重新读取你的游戏，面板会显示那个结局和重新开始的步骤。",
   gameNotRead: "GameBuddy 还没读到你的游戏，所以现在还不能说你的伙伴能做什么。请再读一次。",
   gameReadAgain: "再读一次我的游戏",
   // 游戏页顶端那张“她现在怎么样”的卡片。每一句都对应投影里已经发布的事实：`attachment.status`
@@ -1727,10 +1739,15 @@ const zh: Messages = {
   stardewCabinsLaunchWaitExpired:
     "游戏仍在启动，小屋还没有读取结果。先载入农场，然后按“再读一次小屋”：它会在当前页面上再问一次这个游戏。",
   stardewManifestAdmitted: "已收到小屋入住申请，正在等待游戏世界准备就绪…",
-  stardewCabinConfirmationUncertain: "确认结果仍在等待验证。请勿再次确认；等待恢复，或重新加载页面进行手动恢复。",
+  stardewCabinConfirmationUncertain:
+    "小屋确认已经发出，但结果没有回来。这一页不能再确认一次，而“再查一次游戏状态”也只是重新读取。如果她已经住进农场，那一步会显示她在那儿；如果还没有，请从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开——重新打开的 GameBuddy 是干净的，才能让她搬进来。",
   stardewCabinCheckGame: "再查一次游戏状态",
   stardewCabinCheckGameHint:
-    "这一步只重新读取游戏状态，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这一步会继续等待恢复。",
+    "这一步只重新读取游戏，不会再次发送小屋确认。如果确认已经生效，这里会显示游戏已连接；如果还没有，这里不会变化，往前的路是上面那句话里的：从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开。",
+  stardewCabinHers: "她的小屋",
+  stardewCabinMovedIn: "她已经在这份存档里了，{{record}}就是她住的小屋。",
+  stardewCabinMovedInCabinUnknown: "那间小屋",
+  stardewCabinMovedInStep: "切换到《星露谷物语》，去农舍找她吧。",
   stardewCabinChoiceStaleRefused:
     "游戏回答：你刚才的选择已经失效，所以没有确认任何内容。这里的小屋刚刚重新读取过了——重选一间，再确认。",
 

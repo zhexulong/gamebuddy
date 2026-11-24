@@ -83,7 +83,7 @@ test("the confirm press renews the offer and sends the handle its own read minte
   console.log(`[cabin-lease-renewed] reads=${cabinReads} confirm=${JSON.stringify(sent)}`);
   expect(sent.choiceHandle, "the confirm carries the handle the press's read minted").toBe(handleOfRead(2));
   expect(cabinReads, "one read to renew, and the mount's own read before it").toBe(2);
-  await expect(panel).toContainText("Cabin request admitted");
+  await expect(panel).toContainText("Cabin request received");
 });
 
 test("an offer the page has watched pass its window says nothing about the lease, in either language", async ({

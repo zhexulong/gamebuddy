@@ -81,7 +81,7 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
   await openGameDrawer(page);
   const panel = page.getByRole("region", { name: "Game state" });
   await panel.getByRole("button", { name: "Confirm cabin" }).click();
-  await expect(panel).toContainText(/still awaiting verification/i);
+  await expect(panel).toContainText(/awaiting verification|sent and its answer never came back/i);
 
   const handoff = panel.locator(".stardew-cabin-handoff");
   const inventory = await controlInventory(handoff);
@@ -98,7 +98,7 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
   const check = handoff.getByRole("button", { name: "Check the game again" });
   await expect(check).toBeVisible();
   await expect(handoff).toContainText(/never sent a second time/iu);
-  await expect(handoff).toContainText(/keeps waiting for recovery/iu);
+  await expect(handoff).toContainText(/way forward is the sentence above/iu);
 
   const readsBefore = gameRead.reads();
   await check.click();
@@ -107,7 +107,7 @@ test("an unconfirmed cabin confirmation offers a step of its own that sends no s
   await expect(handoff.getByRole("button", { name: "Confirm cabin" })).toHaveCount(0);
   // The answer had not changed, and the panel still says so rather than showing a screen that
   // looks as though the press did nothing.
-  await expect(handoff).toContainText(/still awaiting verification/i);
+  await expect(handoff).toContainText(/awaiting verification|sent and its answer never came back/i);
 });
 
 test("with no installation registered the enable control is withheld and its reason is stated", async ({ page }) => {
