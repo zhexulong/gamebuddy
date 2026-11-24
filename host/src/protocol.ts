@@ -6865,7 +6865,6 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
         // label that says nothing, and an ABSENT one is how the surface says "the name is the whole story".
         if (typeof arg.description !== "string" || arg.description.length === 0) return false;
         if (arg.description.length > MAX_ARGUMENT_DESCRIPTION_LENGTH) return false;
-        return false;
       }
       if ("enum" in arg && arg.enum !== undefined) {
         if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;

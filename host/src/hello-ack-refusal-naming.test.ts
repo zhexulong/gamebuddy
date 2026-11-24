@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { diagnoseBridgeMessage, newEnvelope, type Scope, validateBridgeMessage } from "./protocol.js";
+import {
+  diagnoseBridgeMessage,
+  MAX_ARGUMENT_DESCRIPTION_LENGTH,
+  newEnvelope,
+  type Scope,
+  validateBridgeMessage,
+} from "./protocol.js";
 
 /**
  * A REFUSED HANDSHAKE NAMES THE MEMBER THAT DRIFTED, NOT ONLY THE FRAME.
@@ -27,6 +33,14 @@ import { diagnoseBridgeMessage, newEnvelope, type Scope, validateBridgeMessage }
  * The second test is the member the live run was actually refused for, at the size it was refused at: the pin's own
  * artifact published `use_mine_ladder.expectedTargetId` at 595 characters while `isValidActionDescriptor` admits at
  * most 512 for an argument's sentence, so ONE descriptor was refused and the whole registration list went with it.
+ * </p>
+ *
+ * <p>
+ * The third test is the member the NEXT run was refused for - `registrations.travel` - where the sentence was not the
+ * fault. `travel` is registration index 2 and the catalogue's FIRST registration whose argument carries a sentence at
+ * all, so a predicate that refuses a DESCRIBED argument refuses `travel` and names it, while every action at indices 0
+ * and 1 (no sentences) passes. The bound and the sentence are unchanged by that reading: what a reader has to be able
+ * to tell apart is "this sentence is too long" from "this argument has a sentence", and only the first is a refusal.
  * </p>
  */
 
@@ -167,4 +181,86 @@ test("an argument sentence over the Host's bound refuses the whole acknowledgeme
       `${String(length)}: the refusal must name the registration whose sentence has to be shortened`,
     );
   }
+});
+
+test("an argument that carries a sentence is admitted: the sentence's presence is not the refusal", () => {
+  // THE LIVE FRAME'S THIRD REGISTRATION. `cc3469a8`'s run reached a save, a cabin and the Mod's own
+  // `ready/manifest_issued` document, and the attach died on `hello_ack_member:registrations.travel`. This is that
+  // registration's descriptor as the Mod at that commit projects it (`BridgeSession.WireDescriptor` over
+  // `FarmhandActionCatalog.Transition`): the two coordinates, each carrying the 319-character source-tile meaning, the
+  // `-1`/`1000` floor and ceiling from `FarmhandWarpCoordinateRange.MinimumSourceCoordinate`, an empty resource
+  // template, and the warp family it addresses. Nothing here is run-specific, so nothing is trimmed.
+  const SOURCE_TILE_SENTENCE =
+    "The SOURCE tile of the transition - the door or warp tile you must already be standing next to. This is NOT the destination: which map and tile you arrive at is decided by the warp itself, and `snapshot.warps[]` lists each one as `{sourceX, sourceY, target, accessible}` with the source side matching these coordinates.";
+  const travelDescriptor = (sentence: string | null) => {
+    const coordinate = (name: string) =>
+      sentence === null
+        ? { name, type: "integer", minimum: -1, maximum: 1000 }
+        : { name, type: "integer", description: sentence, minimum: -1, maximum: 1000 };
+    return {
+      arguments: [coordinate("x"), coordinate("y")],
+      outputFacts: {},
+      resourceTemplate: { claims: [] },
+      effect: "write",
+      postcondition: { name: "native_action_postcondition" },
+      targetFamily: "warps",
+    };
+  };
+  const frame = (sentence: string | null) =>
+    newEnvelope(
+      "hello_ack",
+      scope,
+      {
+        sessionId: "session_01",
+        capabilities: ["move_to_tile", "travel"],
+        catalogRevision: 1,
+        policyIdentity: { value: "0123456789abcdef0123456789abcdef", capabilityRevision: 1 },
+        enabledActionIds: ["move_to_tile", "travel"],
+        presentationLocale: "en-US",
+        registrations: [
+          {
+            actionId: "move_to_tile",
+            familyId: "movement_navigation",
+            identityVersion: 1,
+            lifecycle: "published",
+            kind: "execution",
+          },
+          {
+            actionId: "travel",
+            familyId: "transport_warps",
+            identityVersion: 1,
+            lifecycle: "published",
+            kind: "execution",
+            descriptor: travelDescriptor(sentence),
+          },
+        ],
+        runtimeRole: "farmhand_client",
+        launchGeneration: "generation_01",
+      },
+      `hello_travel_${String(sentence?.length ?? 0)}`,
+      now,
+    );
+
+  // The reading the live attach died on, and its control: the SAME descriptor with no sentence at all is admitted, so
+  // the only thing between the two is whether the argument carries one.
+  for (const sentence of [SOURCE_TILE_SENTENCE, null]) {
+    assert.equal(
+      validateBridgeMessage(frame(sentence), scope, now),
+      null,
+      `${String(sentence?.length ?? 0)}-character sentence: an argument carrying one is a member the wire DECLARES, so ` +
+        "it cannot refuse the acknowledgement - and the only sentence over the bound is still refused below",
+    );
+    assert.equal(
+      diagnoseBridgeMessage(frame(sentence), scope, now),
+      null,
+      `${String(sentence?.length ?? 0)}-character sentence: the refusal must not name registrations.travel`,
+    );
+  }
+
+  // The bound did not move: one character past it still refuses, and still names the action whose sentence to shorten.
+  assert.equal(
+    diagnoseBridgeMessage(frame("x".repeat(MAX_ARGUMENT_DESCRIPTION_LENGTH + 1)), scope, now),
+    "hello_ack_member:registrations.travel",
+    "a sentence over the bound is the one refusal a described argument still earns",
+  );
 });
