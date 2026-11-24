@@ -35,6 +35,10 @@
  *      (`step_offered_for_an_action_that_is_finished`). The state is reached once the Host's own attachment says the
  *      companion is in this save, so a confirm drawn there is a press whose action is over - the shape a player met by
  *      reopening the page on a farm she was already in.
+ *   6. every answer of a state's own question has a sentence (`cabin_occupancy_answer_states_no_sentence`). The
+ *      population is `CabinOccupancyAnswer` - the vocabulary the `uncertain` state carries - and the requirement is
+ *      one declared sentence whose `when` is `occupancy_<answer>`. An answer that can arrive with no words for it is
+ *      a screen that changed for no stated reason, which is the same defect as #1 one layer down.
  *
  * THE POPULATION IS DERIVED, never listed: the phases are `GAME_SESSION_PHASES`, their steps are the derivation's own
  * `build(...)` calls (read by `phaseMembers`, the reader `check-fail-closed-forward-path.mjs` already owns), the cabin
@@ -56,6 +60,12 @@
  *                    naming the state and the press (same falsifier)
  * red-proof: history HEAD before this lane declares no `CABIN_HANDOFF_FINISHED_BY` and no finished state, so the run is
  *                    `blocked` naming the missing retirement instead of green over a handoff nobody finishes
+ *                    (gates/product/check-state-sentences.test.mjs)
+ * red-proof: inject  the `uncertain` table's `occupancy_already_bound` sentence removed ->
+ *                    `cabin_occupancy_answer_states_no_sentence` naming cabin/uncertain and the answer, exit 1 (same
+ *                    falsifier)
+ * red-proof: history HEAD before `CabinOccupancyAnswer` existed, the answer population is empty and the run is
+ *                    `blocked` rather than green over a question with no declared answers
  *                    (gates/product/check-state-sentences.test.mjs)
  */
 export const gateDeclaration = {
@@ -126,6 +136,7 @@ export const CODES = Object.freeze([
   "step_offered_for_an_action_that_is_finished",
   "phase_sentence_not_declared",
   "cabin_handoff_finish_not_declared",
+  "cabin_occupancy_answer_states_no_sentence",
   "population_empty",
 ]);
 
@@ -166,15 +177,27 @@ function catalogueTexts(path) {
 
 /** The `{ key: "<catalogue key>", ... }` a sentence-table entry resolves to, through identifier indirection. */
 function sentenceKeyOf(node, constants) {
+  const properties = sentenceFieldsOf(node, constants);
+  const key = properties?.get("key");
+  return key === undefined ? null : (stringLiterals(key).find((text) => text.length > 0) ?? null);
+}
+
+/** The `when` a sentence-table entry declares, read the same way its key is. */
+function sentenceWhenOf(node, constants) {
+  const properties = sentenceFieldsOf(node, constants);
+  const when = properties?.get("when");
+  return when === undefined ? null : (stringLiterals(when).find((text) => text.length > 0) ?? null);
+}
+
+/** The object literal one sentence-table entry names, through the identifier indirection either reader needs. */
+function sentenceFieldsOf(node, constants) {
   let value = unwrap(node);
   for (let hops = 0; hops < 8 && typescript.isIdentifier(value); hops += 1) {
     const declaration = constants.get(value.text);
     if (declaration === undefined) break;
     value = unwrap(declaration);
   }
-  const properties = objectProperties(value);
-  const key = properties?.get("key");
-  return key === undefined ? null : (stringLiterals(key).find((text) => text.length > 0) ?? null);
+  return objectProperties(value);
 }
 
 /** The session phases and the one sentence key each states - `null` is a phase that states none, and it is a
@@ -218,8 +241,8 @@ function declaredCabin(file) {
       [...sentenceTable].map(([kind, node]) => [
         kind,
         [...(unwrap(node).elements ?? [])]
-          .map((entry) => sentenceKeyOf(entry, constants))
-          .filter((key) => key !== null),
+          .map((entry) => ({ key: sentenceKeyOf(entry, constants), when: sentenceWhenOf(entry, constants) }))
+          .filter((entry) => entry.key !== null),
       ]),
     ),
     presses,
@@ -302,8 +325,9 @@ export function checkStateSentences() {
     if (key === null) continue;
     members.push({ axis: "phase", state: phase, steps: phaseSteps.get(phase) ?? [], key });
   }
-  for (const [kind, keys] of cabin.sentences)
-    for (const key of keys) members.push({ axis: "cabin", state: kind, steps: cabin.steps.get(kind) ?? [], key });
+  for (const [kind, entries] of cabin.sentences)
+    for (const entry of entries)
+      members.push({ axis: "cabin", state: kind, steps: cabin.steps.get(kind) ?? [], key: entry.key });
 
   const declared = new Set([...phaseSentences.keys()]);
   for (const phase of phases)
@@ -334,6 +358,27 @@ export function checkStateSentences() {
               `the companion is already in this save, so the press can only be refused`,
           ),
         );
+
+  // Every answer the `uncertain` state's own vocabulary declares has a sentence to state it with. The
+  // population is the answer union, so a fourth answer cannot arrive without words for it.
+  const answers = [...new Set(stringLiterals(unionTypeMembers(file, "CabinOccupancyAnswer")))];
+  if (answers.length === 0)
+    blocked.push(
+      finding(
+        "population_empty",
+        "CabinOccupancyAnswer was not read, so no answer of the cabin probe could be held to stating a sentence",
+      ),
+    );
+  const uncertainWhens = new Set((cabin.sentences.get("uncertain") ?? []).map((entry) => entry.when));
+  for (const answer of answers)
+    if (!uncertainWhens.has(`occupancy_${answer}`))
+      findings.push(
+        finding(
+          "cabin_occupancy_answer_states_no_sentence",
+          `cabin/uncertain carries the answer "${answer}" and declares no sentence for it: a probe that answers ` +
+            `${answer} leaves the player reading the same screen with nothing said about which answer they are looking at`,
+        ),
+      );
 
   let naming = 0;
   let cannotWork = 0;
@@ -462,6 +507,10 @@ function main() {
         {
           id: "every_phase_states_its_sentence",
           status: failed("phase_sentence_not_declared") ? "failed" : "passed",
+        },
+        {
+          id: "every_probe_answer_states_its_sentence",
+          status: failed("cabin_occupancy_answer_states_no_sentence") ? "failed" : "passed",
         },
       ],
       findings: verdict.findings,

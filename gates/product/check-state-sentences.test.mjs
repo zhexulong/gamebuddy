@@ -85,6 +85,7 @@ describe("check-state-sentences", () => {
   test("the declared code vocabulary is the one the gate reports", (t) => {
     assert.deepEqual([...CODES].sort(), [
       "cabin_handoff_finish_not_declared",
+      "cabin_occupancy_answer_states_no_sentence",
       "phase_sentence_not_declared",
       "population_empty",
       "sentence_key_missing",
@@ -223,5 +224,50 @@ describe("check-state-sentences", () => {
       JSON.stringify(verdict.findings, null, 2),
     );
     t.diagnostic(`state-sentences.8: ${verdict.findings.map((entry) => entry.code).join(", ")}`);
+  });
+});
+
+/**
+ * The probe's answers are a population the gate derives, so an answer added to the vocabulary cannot arrive
+ * unspelled - and an answer that loses its sentence is reported by name rather than leaving the player on a screen
+ * that changed for no stated reason.
+ */
+describe("check-state-sentences: the cabin probe's answers", () => {
+  test("the real tree declares one sentence per answer, so none of the three is silent", (t) => {
+    const text = readFileSync(SOURCES.lifecycle, "utf8");
+    const answers = [...text.matchAll(/when: "occupancy_([a-z_]+)",/gu)].map((match) => match[1]);
+    assert.deepEqual(
+      [...new Set(answers)].sort(),
+      ["already_bound", "not_bound", "unknown"],
+      "the three answers the probe can give are the three the state declares a sentence for",
+    );
+    t.diagnostic(`state-sentences.answers: ${[...new Set(answers)].join(", ")}`);
+  });
+
+  test("an answer whose sentence was lost is reported by name", (t) => {
+    const lifecycle = copy(SOURCES.lifecycle, "answer-without-a-sentence.ts", [
+      ['when: "occupancy_already_bound",', 'when: "always",'],
+    ]);
+    const verdict = checkStateSentencesOf({ lifecycle });
+    assert.equal(verdict.status, "failed");
+    const [reported] = verdict.findings.filter((entry) => entry.code === "cabin_occupancy_answer_states_no_sentence");
+    assert.ok(reported !== undefined, JSON.stringify(verdict.findings, null, 2));
+    assert.match(reported.detail, /cabin\/uncertain carries the answer "already_bound"/u);
+    t.diagnostic(`state-sentences.answers.red: ${reported.detail}`);
+  });
+
+  test("a tree that declares no answers at all is blocked rather than green over a question nobody answered", (t) => {
+    const lifecycle = copy(SOURCES.lifecycle, "no-answer-vocabulary.ts", [
+      ["export type CabinOccupancyAnswer =", "export type CabinOccupancyAnswerGone ="],
+    ]);
+    const verdict = checkStateSentencesOf({ lifecycle });
+    assert.equal(verdict.status, "blocked");
+    assert.ok(
+      verdict.findings.some(
+        (entry) => entry.code === "population_empty" && entry.detail.includes("CabinOccupancyAnswer was not read"),
+      ),
+      JSON.stringify(verdict.findings, null, 2),
+    );
+    t.diagnostic(`state-sentences.answers.blocked: ${verdict.findings.map((entry) => entry.code).join(", ")}`);
   });
 });
