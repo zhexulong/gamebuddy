@@ -153,7 +153,7 @@ internal sealed class AcceptedNavigationExecution
                 "navigation_completed",
                 $"destination={resolution.DisplayLabel ?? "destination"};location={view.CurrentSourceLocation};arrived=true;postcondition=true"),
             NavigationRoutePlanKind.NextEdge => new NavigationOutcome(ExecutionState.Running, "accepted", null, route.NextLeg),
-            _ => MapTopologyTerminal(resolution, route.ReasonCode),
+            _ => MapTopologyTerminal(resolution, view, route.ReasonCode),
         };
         return new NavigationPlan(resolution, view, outcome);
     }
@@ -168,18 +168,54 @@ internal sealed class AcceptedNavigationExecution
 
     private static NavigationOutcome MapTopologyTerminal(
         NavigationDestinationResolution resolution,
+        NavigationWorldView view,
         string reasonCode) => reasonCode switch
     {
-        "destination_unreachable" => new NavigationOutcome(
-            ExecutionState.Blocked, reasonCode,
-            $"destination={resolution.DisplayLabel ?? "destination"};topology=unreachable"),
         "destination_identity_invalid" => new NavigationOutcome(
             ExecutionState.Rejected, "destination_selector_invalid",
             $"destination={resolution.DisplayLabel ?? "destination"};topology=destination_identity_invalid"),
+        // A GRAPH THAT DOES NOT HOLD WHERE THE BODY STANDS IS NOT AN UNREAD FACT. `route_source_unloaded` is the planner
+        // saying the source it was asked to plan from is not one of its nodes, and `destination_unreachable` is the same
+        // answer for a graph that does hold the source and still reaches nowhere: nothing in this map's own topology walks
+        // to the destination. Neither is `destination_access_indeterminate` - that word says a fact could not be read, and
+        // a caller can only answer it by observing again, which is what `round99` did five times in one day.
+        "destination_unreachable" or "route_source_unloaded" => new NavigationOutcome(
+            ExecutionState.Blocked, "destination_unreachable", DescribeUnroutedDestination(resolution, view)),
         _ => new NavigationOutcome(
             ExecutionState.Blocked, "destination_access_indeterminate",
             $"destination={resolution.DisplayLabel ?? "destination"};topology={reasonCode}"),
     };
+
+    /// <summary>
+    /// `destination_unreachable` said as ONE answer: the map the body stands on, and - when this map's own way out is not
+    /// an ordinary warp - the leg that leaves it and the map it lands on, so the destination has a place it IS reachable
+    /// from instead of a verdict that leaves the caller to guess.
+    ///
+    /// <para>
+    /// MEASURED `round99` (`plan_441`, `plan_443`): `navigate_to_destination` from `UndergroundMine1` answered twice with
+    /// <c>blocked / destination_access_indeterminate</c> and nothing else, and the companion spent the rest of the day on
+    /// single steps. The step is spelled <c>&lt;action&gt;@&lt;published target id&gt;</c>, the shape the reachability gate
+    /// already publishes for a clear plan, and it names the SAME id `MineEntranceTargets` advertises for
+    /// <c>use_mine_ladder</c>, so it can be acted on without a second lookup.
+    /// </para>
+    /// <para>
+    /// It states its own <c>next_step=</c> only when it has a specific one: <see cref="NavigationNextStep.Describe"/> leaves
+    /// a sentence that already names a step alone, which is how a site that knows the game's own condition wins over the
+    /// generic word, and how a map with no such exit keeps the table's <c>choose_a_reachable_destination</c> instead of a
+    /// second spelling of it.
+    /// </para>
+    /// </summary>
+    private static string DescribeUnroutedDestination(
+        NavigationDestinationResolution resolution,
+        NavigationWorldView view)
+    {
+        string evidence = $"destination={resolution.DisplayLabel ?? "destination"};topology=unreachable"
+            + $";from={view.CurrentSourceLocation ?? "unknown"}";
+        if (view.SourceExitStep is not { Length: > 0 } step)
+            return evidence;
+
+        return $"{evidence};leg={step};landing={view.SourceExitLanding ?? "unknown"};next_step={step}";
+    }
 
     private static NavigationDestinationResolution Resolve(
         NavigationDestinationSelector selector,

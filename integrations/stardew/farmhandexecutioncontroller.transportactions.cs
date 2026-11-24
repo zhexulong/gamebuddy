@@ -385,6 +385,35 @@ internal sealed partial class ExecutionManager
         _ => (MineEntranceLocation, MineExitTileX, MineExitTileY),
     };
 
+    /// <summary>
+    /// The leg OUT of the map the body stands on, when that map's way out is not an ordinary warp, as the step a caller
+    /// can take and the map it lands on. A mine level is the case: its exits are the ladder tiles its own Buildings layer
+    /// carries, never rows of <c>warps</c>, so no navigation graph built from warps and doors has an edge off it.
+    ///
+    /// <para>
+    /// Both halves are read from the authority that already executes the act, not restated: the target id is the SAME
+    /// published <c>mine_entrance_&lt;16 hex&gt;</c> id <c>MineEntranceTargets</c> advertises for <c>use_mine_ladder</c>
+    /// (<see cref="BuildMineEntryTargetId"/> with <see cref="MineExitLadderSelector"/>), and the landing map is the one
+    /// the game's own <c>ExitMine_Leave</c> chooses (<see cref="MineExitDestination"/>). A destination that is not
+    /// reachable from this map is therefore answered with where it IS reachable from.
+    /// </para>
+    /// <para>
+    /// MEASURED `round99` (`plan_441`, `plan_443`): `navigate_to_destination` from `UndergroundMine1` to `Farm` answered
+    /// twice with `destination_access_indeterminate`, a word that leaves a reader with nothing to plan.
+    /// </para>
+    /// </summary>
+    internal static bool TryDescribeMapExit(GameLocation? location, out string step, out string landing)
+    {
+        step = string.Empty;
+        landing = string.Empty;
+        if (location is not MineShaft shaft || !TryFindMineExitLadderTile(shaft, out int exitX, out int exitY))
+            return false;
+
+        step = $"use_mine_ladder@{BuildMineEntryTargetId(shaft.NameOrUniqueName, exitX, exitY, MineExitLadderSelector)}";
+        landing = MineExitDestination(shaft.mineLevel).Location;
+        return true;
+    }
+
     private static MineLadderTargetResolution ResolveMineLadderTarget(GameLocation? location, int targetX, int targetY, string expectedTargetId, MineLadderKind wanted)
     {
         if (location is not MineShaft shaft)

@@ -58,7 +58,24 @@ internal sealed record NavigationWorldView(
     bool BoundaryExcludesDestination,
     bool DestinationTemporarilyUnavailable,
     bool TransitionAmbiguousOrUnknown,
-    bool UncorrelatedTransition);
+    bool UncorrelatedTransition)
+{
+    /// <summary>
+    /// The leg OUT of the map the body stands on when that map's way out is not an ordinary warp, as the step a caller
+    /// can take: <c>use_mine_ladder@mine_entrance_&lt;16 hex&gt;</c> for the exit ladder a mine level's own Buildings layer
+    /// carries. Null when every way out of this map is a warp or a door, which the topology already routes.
+    ///
+    /// <para>
+    /// It exists so a terminal can answer with a STEP instead of a verdict: MEASURED `round99` (`plan_441`, `plan_443`),
+    /// `navigate_to_destination` from `UndergroundMine1` to `Farm` answered <c>destination_access_indeterminate</c>, a word
+    /// that tells a caller the Mod does not know - so she fell back to single steps for the rest of the day.
+    /// </para>
+    /// </summary>
+    internal string? SourceExitStep { get; init; }
+
+    /// <summary>The map <see cref="SourceExitStep"/> lands on: where the destination IS reachable from.</summary>
+    internal string? SourceExitLanding { get; init; }
+}
 
 /// <summary>One authoritative lifecycle terminal for a Navigation execution.</summary>
 internal sealed record NavigationOutcome(

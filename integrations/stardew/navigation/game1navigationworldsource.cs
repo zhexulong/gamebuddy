@@ -41,6 +41,10 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
         string? current = location!.NameOrUniqueName;
         // ONE reading of "the player may act this frame", and the hold is described only when it says she may not.
         bool actionable = player!.CanMove && Game1.activeClickableMenu is null && !Game1.eventUp;
+        // The way OUT of this map when it is not an ordinary warp. A mine level's exits are the ladder tiles its own
+        // Buildings layer carries, so no graph edge reaches off it and a destination on another map is genuinely
+        // unreachable from here - with a leg the caller can take, and the map it lands on, named by the terminal.
+        bool hasMapExit = ExecutionManager.TryDescribeMapExit(location, out string mapExitStep, out string mapExitLanding);
         return new NavigationWorldView(
             true,
             actionable ? null : WorldModel.DescribeCurrentNavigationHold(player),
@@ -52,7 +56,11 @@ internal sealed class Game1NavigationWorldSource : INavigationWorldSource, INavi
             binding.CanonicalDestinationIdentity.StartsWith("Undermine", StringComparison.Ordinal),
             false,
             false,
-            false);
+            false)
+        {
+            SourceExitStep = hasMapExit ? mapExitStep : null,
+            SourceExitLanding = hasMapExit ? mapExitLanding : null,
+        };
     }
 
     /// <summary>

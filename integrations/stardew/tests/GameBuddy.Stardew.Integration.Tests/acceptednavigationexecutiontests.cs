@@ -170,6 +170,143 @@ public sealed class AcceptedNavigationExecutionTests
         plan.Outcome.State.Should().Be(ExecutionState.Blocked);
     }
 
+    /// <summary>
+    /// ROUND99's SHAPE, at the layer that decides it: a navigation asked from a mine level for a destination on another
+    /// map. `UndergroundMine1` is a graph node with no ordinary legs (its way out is the exit ladder, not a warp), `Farm`
+    /// is four hops away, and the answer must be the LEG THAT LEAVES THIS MAP - the published `use_mine_ladder` target -
+    /// with the map it lands on, so the caller can act instead of observing again.
+    /// </summary>
+    [Fact]
+    public void MineLevelToFarm_NamesTheLadderOutOfTheMapInsteadOfIndeterminate()
+    {
+        const string ladderStep = "use_mine_ladder@mine_entrance_0123456789abcdef";
+        NavigationWorldView view = View(true, true, "UndergroundMine1", at: false) with
+        {
+            SourceExitStep = ladderStep,
+            SourceExitLanding = "Mine",
+        };
+        AcceptedNavigationExecution coordinator = MineToFarm(view);
+
+        NavigationPlan plan = coordinator.PlanNextRouteLeg();
+
+        plan.Outcome.State.Should().Be(ExecutionState.Blocked);
+        plan.Outcome.TerminalReasonCode.Should().Be("destination_unreachable");
+        plan.Outcome.Evidence.Should()
+            .Contain("destination=Farm")
+            .And.Contain("from=UndergroundMine1")
+            .And.Contain($"next_step={ladderStep}")
+            .And.Contain("landing=Mine");
+        // The specific step wins over the table's generic word: one sentence, one instruction.
+        NavigationNextStep.Describe("destination_unreachable", plan.Outcome.Evidence)
+            .Should().NotContain("choose_a_reachable_destination");
+    }
+
+    /// <summary>
+    /// The same request against the graph `round99` actually got: the planner was handed a topology that does not hold the
+    /// map the body stands on (`topology=route_topology_invalid` in the receipt). That is not an unread fact - the body's
+    /// map and its exit are known - so it must answer with the leg, never with `observe_before_acting`.
+    /// </summary>
+    [Fact]
+    public void AGraphThatDoesNotHoldTheStandingMap_AnswersWithTheLegNotIndeterminate()
+    {
+        const string ladderStep = "use_mine_ladder@mine_entrance_0123456789abcdef";
+        NavigationWorldView view = View(true, true, "UndergroundMine1", at: false) with
+        {
+            SourceExitStep = ladderStep,
+            SourceExitLanding = "Mine",
+        };
+        // No `UndergroundMine1` node at all, which is exactly what the live builder produced before it held the standing
+        // map: `plan_441` and `plan_443` both carried `topology=route_topology_invalid`.
+        NavigationOrdinaryWarpTopology graph = new("UndergroundMine1", new[]
+        {
+            new NavigationOrdinaryWarpLegs("Mine", new[] { MineToMountain() }),
+            new NavigationOrdinaryWarpLegs("Mountain", new[] { MountainToFarm() }),
+            new NavigationOrdinaryWarpLegs("Farm", Array.Empty<NavigationTransitionLeg>()),
+        });
+        AcceptedNavigationExecution coordinator = AcceptedNavigationExecution.ForAcceptedDestination(
+            AcceptedNavigationExecution.Admit(Label("Farm"), RuntimeSnapshot(new FixedWorldSource(view), new FixedConnectivitySource(graph))));
+
+        NavigationPlan plan = coordinator.PlanNextRouteLeg();
+
+        plan.Outcome.State.Should().Be(ExecutionState.Blocked);
+        plan.Outcome.TerminalReasonCode.Should().Be("destination_unreachable");
+        plan.Outcome.Evidence.Should().Contain($"next_step={ladderStep}").And.Contain("from=UndergroundMine1");
+    }
+
+    /// <summary>
+    /// The positive half, in the same graph: a destination the ordinary legs DO reach is admitted in one go, with the
+    /// first leg of the route armed and no refusal at all.
+    /// </summary>
+    [Fact]
+    public void AReachableDestinationInTheSameGraph_StillArmsTheFirstLegInOneGo()
+    {
+        AcceptedNavigationExecution coordinator = AcceptedNavigationExecution.ForAcceptedDestination(
+            AcceptedNavigationExecution.Admit(
+                Label("Farm"),
+                RuntimeSnapshot(
+                    new FixedWorldSource(View(true, true, "Mine", at: false)),
+                    new FixedConnectivitySource(MineGraph("Mine")))));
+
+        NavigationPlan plan = coordinator.PlanNextRouteLeg();
+
+        plan.IsTerminal.Should().BeFalse();
+        plan.Outcome.State.Should().Be(ExecutionState.Running);
+        plan.Outcome.TerminalReasonCode.Should().Be("accepted");
+        plan.Outcome.NextLeg.Should().Be(MineToMountain());
+    }
+
+    /// <summary>
+    /// The boundary that does not move: a map with no exit leg keeps the plain answer, and no step is invented for it.
+    /// A caller's next move there is a destination the topology reaches, which the table already names once.
+    /// </summary>
+    [Fact]
+    public void NoRouteInsideOneMap_KeepsItsOwnCodeAndInventsNoStep()
+    {
+        // The body stands on `Mine`, the destination is `Farm`, and no ordinary leg of this graph reaches it. There is no
+        // exit leg here either, so the answer stays the plain one and the table's own word is the only step published.
+        NavigationOrdinaryWarpTopology graph = new("Mine", new[]
+        {
+            new NavigationOrdinaryWarpLegs("Mine", Array.Empty<NavigationTransitionLeg>()),
+            new NavigationOrdinaryWarpLegs("Mountain", new[] { MountainToFarm() }),
+            new NavigationOrdinaryWarpLegs("Farm", Array.Empty<NavigationTransitionLeg>()),
+        });
+        AcceptedNavigationExecution coordinator = AcceptedNavigationExecution.ForAcceptedDestination(
+            AcceptedNavigationExecution.Admit(
+                Label("Farm"),
+                RuntimeSnapshot(
+                    new FixedWorldSource(View(true, true, "Mine", at: false)),
+                    new FixedConnectivitySource(graph))));
+
+        NavigationPlan plan = coordinator.PlanNextRouteLeg();
+
+        plan.Outcome.TerminalReasonCode.Should().Be("destination_unreachable");
+        plan.Outcome.Evidence.Should().Contain("from=Mine").And.NotContain("next_step=").And.NotContain("leg=");
+        NavigationNextStep.Describe("destination_unreachable", plan.Outcome.Evidence)
+            .Should().EndWith("next_step=choose_a_reachable_destination");
+    }
+
+    private static NavigationTransitionLeg MineToMountain() => new("Mountain", 20, 4, 9, 4, IsDoor: false);
+
+    private static NavigationTransitionLeg MountainToFarm() => new("Farm", 31, 5, 44, 44, IsDoor: false);
+
+    /// <summary>
+    /// The mine level's own graph as the live builder now produces it: the level is a node with no ordinary legs, and
+    /// the map it can only leave through its ladder is what the rest of the valley hangs off.
+    /// </summary>
+    private static NavigationOrdinaryWarpTopology MineGraph(string current) => new(current, new[]
+    {
+        new NavigationOrdinaryWarpLegs("UndergroundMine1", Array.Empty<NavigationTransitionLeg>()),
+        new NavigationOrdinaryWarpLegs("Mine", new[] { MineToMountain() }),
+        new NavigationOrdinaryWarpLegs("Mountain", new[] { MountainToFarm() }),
+        new NavigationOrdinaryWarpLegs("Farm", Array.Empty<NavigationTransitionLeg>()),
+    });
+
+    private static AcceptedNavigationExecution MineToFarm(NavigationWorldView view) =>
+        AcceptedNavigationExecution.ForAcceptedDestination(
+            AcceptedNavigationExecution.Admit(
+                Label("Farm"),
+                RuntimeSnapshot(new FixedWorldSource(view), new FixedConnectivitySource(MineGraph("UndergroundMine1")))));
+
     [Fact]
     public void DestinationLockedOnBodyIsTerminal()
     {
@@ -236,7 +373,11 @@ public sealed class AcceptedNavigationExecutionTests
     private static DerivedDestinationSet DestinationSet(string generation) => new(
         generation,
         new NavigationSourceNode("root", null, null, null, Array.Empty<NavigationSourceNode>()),
-        new[] { new NavigationDestination("stardew", "Mine", "Mine", null) });
+        new[]
+        {
+            new NavigationDestination("stardew", "Mine", "Mine", null),
+            new NavigationDestination("stardew", "Farm", "Farm", null),
+        });
 
     private static NavigationRuntimeSnapshot RuntimeSnapshot(
         INavigationWorldSource world,

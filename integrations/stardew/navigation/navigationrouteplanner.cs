@@ -122,7 +122,7 @@ internal sealed class NavigationRoutePlanner
         }
 
         if (!sources.ContainsKey(topologySource))
-            return NavigationRoutePlanResult.Terminal("route_topology_invalid");
+            return NavigationRoutePlanResult.Terminal("route_source_unloaded");
 
         // Malformed edges are rejected, never silently accepted. Missing
         // endpoints fail closed before any traversal.
