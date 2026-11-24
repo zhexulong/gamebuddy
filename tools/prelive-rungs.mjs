@@ -226,6 +226,15 @@ export const L0_GATES = Object.freeze([
   // every silent omission named and every unreadable reading blocked instead of green. Measured here: `actions examined 106 ·
   // surfaces 6 · pairs checked 307`, 0.1 s of file reads and no child process.
   "gates/stardew/check-action-surface-parity.mjs",
+  // The bounds half of that matrix, and the one nothing read: a hand-written tool schema states a whole-number range for
+  // an action argument, the Mod publishes the range it accepts, and the two are two authorities unless something compares
+  // them. Measured where the missing comparison already cost a live coordinate: the Host learned `x`/`y`'s floor by
+  // PROBING its own predicate, answered `0..1000`, and refused `-1` - the only tile an edge exit names
+  // (`FarmhandWarpCoordinateRange.MinimumSourceCoordinate`, `Town`'s own `-1 53 BusStop`). Measured here 2026-11-24:
+  // `arguments examined 197 · declared-only 56 · hand-written-only 0 · disagreeing 0 · agreed 141 · unreadable 0`, 0.2 s
+  // (one TypeScript parse of `host/src/game-tools.ts`), and red on both injected shapes - the walk-target constant on a
+  // warp source, and a bound the declaration does not state.
+  "gates/stardew/check-action-argument-bound-parity.mjs",
   // NOT listed again here: `tools/check-armed-destructive-actions.mjs` is already three members up, with the
   // measurement that put it in this rung. A second entry is a gate that runs twice - `rung_member_duplicated`.
   // One declaration for the Mod bundle: the project's own outputs (`<AssemblyName>`, each `<ProjectReference>`'s
