@@ -1768,8 +1768,7 @@ const zh: Messages = {
     "这一步是直接问游戏本身：这份存档里是不是已经有她了；小屋确认绝不会再发出第二次。如果她已经住进去，这一页会显示出来；如果还没有，上面那句话仍然有效，往前的路是从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开。",
   stardewCabinOccupancyNotBound:
     "游戏回答：这份存档里没有她——那次小屋入住申请根本没有生效，所以没有重复写入，也没有一个“搬到一半”的伙伴需要清理。从系统托盘退出 GameBuddy 本身（Quit GameBuddy）再重新打开，就会放掉那个被扣住的尝试，小屋选择会跟着新的 GameBuddy 一起回来。",
-  stardewCabinOccupancyAlreadyBound:
-    "游戏回答：她已经在这份存档里了。切换到《星露谷物语》，去农舍找她吧。",
+  stardewCabinOccupancyAlreadyBound: "游戏回答：她已经在这份存档里了。切换到《星露谷物语》，去农舍找她吧。",
   stardewCabinOccupancyUnknown:
     "这次游戏没有回答，所以这一页无法判断她在不在存档里，也不会往任何一边猜。如果《星露谷物语》还没载入农场，先载入农场，再按一次这个按钮。",
   stardewCabinQuarantineKeptRecordChanged:

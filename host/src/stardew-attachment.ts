@@ -252,15 +252,16 @@ export class StardewAttachmentFlow {
    * so the one release this answer licenses can re-check freshness and world identity at its own moment
    * rather than trusting a value read earlier.
    */
-  public async readCabinOccupancy(
-    expected: StardewCabinOccupancyExpectation,
-  ): Promise<StardewCabinOccupancyReading> {
+  public async readCabinOccupancy(expected: StardewCabinOccupancyExpectation): Promise<StardewCabinOccupancyReading> {
     if (!isOpaque(expected.saveId) || !isOpaque(expected.worldId))
       throw new Error("invalid_cabin_occupancy_expectation");
     if (expected.farmhandId !== null && !isNativeId(expected.farmhandId))
       throw new Error("invalid_cabin_occupancy_expectation");
     const observedAtUnixMs = this.now();
-    const reading = (occupancy: StardewCabinOccupancy, publishedAtUnixMs: number | null): StardewCabinOccupancyReading =>
+    const reading = (
+      occupancy: StardewCabinOccupancy,
+      publishedAtUnixMs: number | null,
+    ): StardewCabinOccupancyReading =>
       Object.freeze({
         occupancy,
         expectation: Object.freeze({
@@ -297,7 +298,8 @@ export class StardewAttachmentFlow {
       return reading(unknownOccupancy("session_document_other_world"), session.publishedAtUnixMs);
     if (session.state === "protocol_mismatch")
       return reading(unknownOccupancy("session_protocol_mismatch"), session.publishedAtUnixMs);
-    if (session.state !== "ready") return reading(unknownOccupancy("session_host_not_ready"), session.publishedAtUnixMs);
+    if (session.state !== "ready")
+      return reading(unknownOccupancy("session_host_not_ready"), session.publishedAtUnixMs);
     const held = session.cabins.find((cabin) => cabin.boundCompanionId === this.#options.companionId);
     if (held !== undefined)
       return reading(

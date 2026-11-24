@@ -92,7 +92,12 @@ const gameProfileWithSettings = composeGameProfile({
 const gameProfileWithCabins = composeGameProfile({
   profileId: "gamebuddy.game.preview",
   releaseTier: "game_preview",
-  operationIds: ["game.state.read", "game.stardew.cabins.read", "game.stardew.cabins.confirm", "game.stardew.cabins.occupancy"],
+  operationIds: [
+    "game.state.read",
+    "game.stardew.cabins.read",
+    "game.stardew.cabins.confirm",
+    "game.stardew.cabins.occupancy",
+  ],
   navigationItemIds: ["game"],
 });
 const gameProfileWithCabinReadOnly = composeGameProfile({
@@ -1822,13 +1827,21 @@ test("authenticated Stardew cabin routes dispatch only exact frozen wire contrac
     // The press the surface offers: a POST (the answer can license one release), no body, CSRF-bound.
     const occupancyResponse = await fetch(`${cabinPath}/occupancy`, {
       method: "POST",
-      headers: { origin: server.origin, cookie, "content-type": "application/json", "x-csrf-token": root.chat.csrfToken },
+      headers: {
+        origin: server.origin,
+        cookie,
+        "content-type": "application/json",
+        "x-csrf-token": root.chat.csrfToken,
+      },
     });
     assert.equal(occupancyResponse.status, 200);
     assert.deepEqual(await occupancyResponse.json(), observedOccupancy);
     assert.equal(occupancyCalls, 1);
     // A press without the CSRF header is not the player's: the broker refuses it before the seam runs.
-    const unbound = await fetch(`${cabinPath}/occupancy`, { method: "POST", headers: { origin: server.origin, cookie } });
+    const unbound = await fetch(`${cabinPath}/occupancy`, {
+      method: "POST",
+      headers: { origin: server.origin, cookie },
+    });
     assert.equal(unbound.status, 401);
     assert.equal(occupancyCalls, 1);
   } finally {

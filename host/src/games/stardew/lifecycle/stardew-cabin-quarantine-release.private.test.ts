@@ -112,9 +112,7 @@ async function bindAttempt(root: string, bootstrapId: string, ownerRecordRevisio
  * The advertisement is written LAST, so every case below starts from the same evidence and differs only in
  * the assertion it forces false.
  */
-async function quarantinedAttempt(
-  options: Readonly<{ session?: (token: string) => unknown }> = {},
-) {
+async function quarantinedAttempt(options: Readonly<{ session?: (token: string) => unknown }> = {}) {
   const fixture = await prepareManifestHandoffFixture();
   const ownerView = ownerTestView(fixture.owner);
   await publishReadyRegistration(fixture.root);

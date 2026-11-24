@@ -827,7 +827,8 @@ function validateStardewCabinOccupancy(value: unknown): StardewCabinOccupancyAns
   if (!isNullableLabel(occupancy.cabinId, MAX_CABIN_DISPLAY_LABEL_LENGTH)) throw invalid;
   if (occupancy.boundBy !== null && occupancy.boundBy !== "companion" && occupancy.boundBy !== "manifest_farmhand")
     throw invalid;
-  if ((occupancy.answer === "already_bound") !== (occupancy.cabinId !== null && occupancy.boundBy !== null)) throw invalid;
+  if ((occupancy.answer === "already_bound") !== (occupancy.cabinId !== null && occupancy.boundBy !== null))
+    throw invalid;
   if (occupancy.publishedAtUnixMs !== null && !isSafeInteger(occupancy.publishedAtUnixMs, 0)) throw invalid;
   if (!isSafeInteger(occupancy.observedAtUnixMs, 0)) throw invalid;
   if (!CABIN_QUARANTINE_RELEASES.includes(value.release as (typeof CABIN_QUARANTINE_RELEASES)[number])) throw invalid;

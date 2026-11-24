@@ -4,7 +4,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { StardewAttachmentFlow, type StardewCabinOccupancy, type StardewCabinOccupancyExpectation } from "./stardew-attachment.js";
+import {
+  StardewAttachmentFlow,
+  type StardewCabinOccupancy,
+  type StardewCabinOccupancyExpectation,
+} from "./stardew-attachment.js";
 
 const token = "test-session-token-012345";
 const baseSession = {

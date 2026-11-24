@@ -1,5 +1,9 @@
 import { assertNever } from "./assert-never";
-import type { GameBrowserStateV1, StardewCabinChoiceV1, StardewCabinOccupancyAnswerV1 } from "./composed-reference-game-browser-api";
+import type {
+  GameBrowserStateV1,
+  StardewCabinChoiceV1,
+  StardewCabinOccupancyAnswerV1,
+} from "./composed-reference-game-browser-api";
 import type { Messages } from "./i18n";
 
 /**
@@ -768,7 +772,11 @@ export type CabinViewState =
    * on the Host (`decideStardewCabinQuarantineStep`), so this surface carries the ANSWER and never a fourth
    * outcome of its own.
    */
-  | Readonly<{ kind: "uncertain"; occupancy: CabinOccupancyAnswer | null; releaseRefusal: CabinQuarantineReleaseRefusal | null }>
+  | Readonly<{
+      kind: "uncertain";
+      occupancy: CabinOccupancyAnswer | null;
+      releaseRefusal: CabinQuarantineReleaseRefusal | null;
+    }>
   /** The read could not be made, and the panel offers the control that makes it again. */
   | Readonly<{ kind: "unavailable"; reread: boolean }>
   /**
@@ -809,7 +817,10 @@ export type CabinOccupancyAnswer = StardewCabinOccupancyAnswerV1["occupancy"]["a
  * carry is the refusal, one name per fact, so "the attempt stays quarantined" is never a sentence without
  * a reason in it.
  */
-export type CabinQuarantineReleaseRefusal = Exclude<StardewCabinOccupancyAnswerV1["release"], "released" | "not_licensed">;
+export type CabinQuarantineReleaseRefusal = Exclude<
+  StardewCabinOccupancyAnswerV1["release"],
+  "released" | "not_licensed"
+>;
 
 /**
  * The presses that act on the handoff itself: choosing a cabin, or asking for the two reads a player

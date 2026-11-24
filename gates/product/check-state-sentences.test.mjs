@@ -303,9 +303,7 @@ describe("check-state-sentences: the cabin release's refusals", () => {
     ]);
     const verdict = checkStateSentencesOf({ lifecycle });
     assert.equal(verdict.status, "failed");
-    const [reported] = verdict.findings.filter(
-      (entry) => entry.code === "cabin_release_refusal_states_no_sentence",
-    );
+    const [reported] = verdict.findings.filter((entry) => entry.code === "cabin_release_refusal_states_no_sentence");
     assert.ok(reported !== undefined, JSON.stringify(verdict.findings, null, 2));
     assert.match(reported.detail, /the release refused because "guardian_objects_not_proven_dead"/u);
     t.diagnostic(`state-sentences.release.red: ${reported.detail}`);

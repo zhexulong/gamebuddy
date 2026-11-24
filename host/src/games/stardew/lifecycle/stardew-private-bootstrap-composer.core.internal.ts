@@ -966,7 +966,8 @@ function createStardewPrivateBootstrapCore(dependencies: StardewPrivateBootstrap
  * and the dedicated test composition hold it.
  */
 type ClosedBootstrapCore = Readonly<{
-  readonly composition: StardewPrivateBootstrapComposition;  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
+  readonly composition: StardewPrivateBootstrapComposition;
+  consumeStagedOwnedPlayerHostProfile(owner: StardewOwnedPlayerHostBootstrap): void;
   createOwnedPlayerHostAttachmentFlow(owner: StardewOwnedPlayerHostBootstrap): StardewAttachmentFlow;
   readAndCorrelateOwnedPlayerHostSession(owner: StardewOwnedPlayerHostBootstrap): Promise<boolean>;
   createOwnedPlayerHostManifestHandoffCoordinator(): StardewManifestHandoffCoordinator;
@@ -1689,12 +1690,14 @@ export type StardewCabinQuarantineReleaseRefusal =
   /** (d) The answer is not a fresh `not_bound` about this attempt's own world. */
   | "evidence_not_fresh_for_this_world";
 
-const CABIN_QUARANTINE_RELEASE_REFUSALS: Readonly<Record<StardewCabinQuarantineReleaseRefusal, string>> = Object.freeze({
-  record_is_not_the_quarantined_attempt: "stardew_cabin_quarantine_record_is_not_the_quarantined_attempt",
-  registration_names_another_attempt: "stardew_cabin_quarantine_registration_names_another_attempt",
-  guardian_objects_not_proven_dead: "stardew_cabin_quarantine_guardian_objects_not_proven_dead",
-  evidence_not_fresh_for_this_world: "stardew_cabin_quarantine_evidence_not_fresh_for_this_world",
-});
+const CABIN_QUARANTINE_RELEASE_REFUSALS: Readonly<Record<StardewCabinQuarantineReleaseRefusal, string>> = Object.freeze(
+  {
+    record_is_not_the_quarantined_attempt: "stardew_cabin_quarantine_record_is_not_the_quarantined_attempt",
+    registration_names_another_attempt: "stardew_cabin_quarantine_registration_names_another_attempt",
+    guardian_objects_not_proven_dead: "stardew_cabin_quarantine_guardian_objects_not_proven_dead",
+    evidence_not_fresh_for_this_world: "stardew_cabin_quarantine_evidence_not_fresh_for_this_world",
+  },
+);
 
 /** The error the release throws for one refusal, so a caller classifies it by the same name it reports. */
 export function stardewCabinQuarantineReleaseRefusalName(refusal: StardewCabinQuarantineReleaseRefusal): string {
@@ -2785,7 +2788,11 @@ function createManifestHandoffCoordinatorCore(
       // `terminal` is the state the quarantine this read exists for leaves the binding in
       // (`quarantineOwnedPlayerHostOwner` -> `terminalizeOwnedPlayerHostOwner`), so the one thing that
       // makes the read impossible is the material being gone or the bind still in flight.
-      if (material === null || ownerFacts.bindingState.value === "unbound" || ownerFacts.bindingState.value === "binding")
+      if (
+        material === null ||
+        ownerFacts.bindingState.value === "unbound" ||
+        ownerFacts.bindingState.value === "binding"
+      )
         throw new Error("stardew_cabin_occupancy_unavailable");
       const runtimeRoot = dirname(dirname(ownerFacts.durableOwner.transactionDirectory));
       const ownerPath = join(ownerFacts.durableOwner.transactionDirectory, OWNER_FILE);

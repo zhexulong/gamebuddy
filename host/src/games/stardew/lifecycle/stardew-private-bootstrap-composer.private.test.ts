@@ -2013,6 +2013,9 @@ test("only the production internal and dedicated test-only adapter import the co
   assert.deepEqual(
     coreImporters.sort(),
     [
+      // The cabin-quarantine release suite drives the composer's own refusal names, so it reads the core's
+      // exported classifier instead of spelling them again.
+      "stardew-cabin-quarantine-release.private.test.ts",
       "stardew-private-bootstrap-composer.internal.ts",
       "stardew-private-bootstrap-composer.test-support-internal.ts",
       thisTestLeaf,
@@ -2050,6 +2053,7 @@ test("production internal composition exposes only the private C1 materializer w
       "consumeOwnedFarmhandBridgeConnection",
       "createOwnedPlayerHostAttachmentFlow",
       "createOwnedPlayerHostManifestHandoffCoordinator",
+      "forgetOwnedPlayerHostMaterial",
       "launchMaterializedAiClient",
       "launchMaterializedAiClientContained",
       "launchStagedPlayerHost",
@@ -2070,6 +2074,7 @@ test("production internal composition exposes only the private C1 materializer w
   );
   assert.equal(typeof internal.materializeAiClientProfileAfterManifestAdmission, "function");
   assert.equal(typeof internal.quarantineOwnedPlayerHostOwner, "function");
+  assert.equal(typeof internal.forgetOwnedPlayerHostMaterial, "function");
   assert.deepEqual(Object.keys(internal.composition).sort(), [
     "aiClientProcessOwner",
     "broker",
