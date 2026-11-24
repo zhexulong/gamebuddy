@@ -1,6 +1,6 @@
 {
-  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 81 ts member(s) over 30 (2 at Biome's ceiling), 58 cs member(s) over 30, 10 class(es) over 200, 23 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 115, class ExecutionManager = 4063, largest ExecutionManager at 25612 lines / 858 members across 54 partial(s).",
-  "revision": "1a84bb85",
+  "note": "Cognitive complexity and class size recorded from the commit named in `revision`: per member, per class and per type size. Members are keyed by qualified signature (not file:line, so moving a method between the partials of its class is not a new offender, and a lambda by its nearest named owner plus its ordinal, so inserting lines above it is not one either); `file` and `line` are recorded for the reader. A ts member that reads at Biome's ceiling carries `saturated: true`, because 255 is that producer's floor and not a count - it cannot be grown past and it cannot be verified to have held still. An entry may carry a `reason` naming the commit that bought its growth, and `--update` keeps it. Re-record with `node tools/check-cognitive-complexity.mjs --update` in its own commit. The ts numbers come from Biome's complexity/noExcessiveCognitiveComplexity and the cs numbers from this gate's own S3776 implementation over tree-sitter-c-sharp; the two are never compared or summed, so each carries its own `producer`. Every entry here is debt measured on the tree at `revision`, not an accepted value: a recorded value may only shrink, a member that falls to its bound leaves this file, and a class whose structure moved is stale rather than grown. Recorded: 83 ts member(s) over 30 (2 at Biome's ceiling), 59 cs member(s) over 30, 10 class(es) over 200, 24 type(s) over 1000 lines / 40 members. Worst: ts host/src/reference-pipeline-dialogue-web.delegated.ts#dispatch = >=255 (biome saturates at 255), cs ExecutionManager.Update() = 113, class ExecutionManager = 4093, largest ExecutionManager at 25923 lines / 866 members across 54 partial(s).",
+  "revision": "9afad727",
   "producers": {
     "ts": "biome 2.2.4 complexity/noExcessiveCognitiveComplexity (maxAllowedComplexity 30 from biome.json)",
     "cs": "SonarSource S3776 over @vscode/tree-sitter-wasm 0.3.1 tree-sitter-c-sharp.wasm, implemented by tools/check-cognitive-complexity.mjs"
@@ -27,8 +27,8 @@
       "language": "cs",
       "name": "BodyProgramJournalPersistence.ValidateNode(BodyProgramJournalProgram,VerifiedBodyProgramNode,BodyProgramJournalNode,BodyProgramPolicyIdentity,string?)",
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
-      "line": 254,
-      "value": 63
+      "line": 265,
+      "value": 72
     },
     {
       "id": "cs:BodyStateReachabilityMatrixTests.Build(Func<string, bool>?,Func<OpenBodyProgramJournalAuthority, string, long, BodyProgramControllerResult<BodyProgramStatusSnapshot>>?,Func<string, BodyProgramModalKind>?)",
@@ -43,7 +43,7 @@
       "language": "cs",
       "name": "BridgeProtocol.ExecutionArgumentProperties(string?)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
-      "line": 2328,
+      "line": 2487,
       "value": 63,
       "reason": "recorded at 604844a6: 60 -> 63, and `line` -> 2275. Two commits touch this file in b047bb19..604844a6 (ecf18222, 5a068fa9) and both are wire work: the charged-use fields and sweep_scythe's arc fact each add a property arm to this projection. 63 is the ceiling now."
     },
@@ -53,15 +53,15 @@
       "name": "BridgeProtocol.TrySerialize(T,string,string)",
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 54,
-      "value": 32
+      "value": 37
     },
     {
       "id": "cs:BridgeSession.TryExecute(long,BridgeEnvelope<BridgeExecutionRequest>?,BridgeEnvelope<BridgeReceipt>?,string)",
       "language": "cs",
       "name": "BridgeSession.TryExecute(long,BridgeEnvelope<BridgeExecutionRequest>?,BridgeEnvelope<BridgeReceipt>?,string)",
       "file": "integrations/stardew/BridgeSession.cs",
-      "line": 543,
-      "value": 41
+      "line": 570,
+      "value": 42
     },
     {
       "id": "cs:CompanionPresentationPolicyTests.Run()",
@@ -101,7 +101,7 @@
       "language": "cs",
       "name": "ExecutionManager.Cancel(string,string,string)",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 782,
+      "line": 790,
       "value": 40
     },
     {
@@ -117,7 +117,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateBridgeSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1187,
+      "line": 1195,
       "value": 112
     },
     {
@@ -125,7 +125,7 @@
       "language": "cs",
       "name": "ExecutionManager.CreateSnapshot()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1099,
+      "line": 1107,
       "value": 34
     },
     {
@@ -133,7 +133,7 @@
       "language": "cs",
       "name": "ExecutionManager.DescribeActiveExecution()",
       "file": "integrations/stardew/farmhandexecutioncontroller.cs",
-      "line": 1423,
+      "line": 1435,
       "value": 99
     },
     {
@@ -183,7 +183,7 @@
       "name": "ExecutionManager.Update()",
       "file": "integrations/stardew/farmhandexecutioncontroller.frameloop.cs",
       "line": 16,
-      "value": 115,
+      "value": 113,
       "reason": "recorded at 604844a6: 97 -> 107. The record was taken at b047bb19. Six commits touch `farmhandexecutioncontroller.cs` in that range (bae00966, ecf18222, af4ff94d, db37ba8b, f891b3ff, 5a068fa9) and the per-tick stage markers plus the pickup settle clock are the ones that reach `Update`; the ten points are accumulated over those, not one hunk. 107 is the ceiling now and it is still the worst cs function in the tree."
     },
     {
@@ -191,7 +191,7 @@
       "language": "cs",
       "name": "FarmhandBodyProgramController.AdvanceAwaitingNodes(string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramController.cs",
-      "line": 624,
+      "line": 642,
       "value": 43,
       "reason": "33 -> 36 in `df79b260`, which made a cutscene something the waiting node waits out instead of spending the plan on. Three branches, no move: the owner and the signature are unchanged."
     },
@@ -200,8 +200,8 @@
       "language": "cs",
       "name": "FarmhandExecutionAcceptance.IsValidArgumentValue(FarmhandActionArgument,FarmhandExecutionAcceptanceFacts,BridgeExecutionArgs,Func<BridgeNavigationDestinationSelector?, bool>?)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandExecutionAcceptance.cs",
-      "line": 188,
-      "value": 42,
+      "line": 271,
+      "value": 33,
       "reason": "recorded at 604844a6: 40 -> 42, and `line` -> 133. `ecf18222` is the only commit touching this file in b047bb19..604844a6; the two points are the charge/area argument checks it added to the shared admission validator. 42 is the ceiling now."
     },
     {
@@ -209,7 +209,7 @@
       "language": "cs",
       "name": "FarmhandForEachExpansion.Expand(FarmhandForEachLoop,string,IEnumerable<FarmhandForEachRow>,FarmhandForEachDispatch,Func<bool>,Func<string, bool>,Func<string, LocalExecutionReceipt?>)",
       "file": "integrations/stardew/src/Core/Policy/FarmhandForEachExpansion.cs",
-      "line": 243,
+      "line": 254,
       "value": 34
     },
     {
@@ -229,11 +229,19 @@
       "value": 33
     },
     {
+      "id": "cs:FarmhandTargetDiscovery.DiscoverHarvestWhereabouts(DiscoveryExclusionRecorder)",
+      "language": "cs",
+      "name": "FarmhandTargetDiscovery.DiscoverHarvestWhereabouts(DiscoveryExclusionRecorder)",
+      "file": "integrations/stardew/farmhandtargetdiscovery.cs",
+      "line": 1297,
+      "value": 32
+    },
+    {
       "id": "cs:FarmhandTargetDiscovery.DiscoverWorldObjectTargets(Farmer,int)",
       "language": "cs",
       "name": "FarmhandTargetDiscovery.DiscoverWorldObjectTargets(Farmer,int)",
       "file": "integrations/stardew/farmhandtargetdiscovery.cs",
-      "line": 2478,
+      "line": 2624,
       "value": 59
     },
     {
@@ -266,8 +274,8 @@
       "language": "cs",
       "name": "ModEntry.DrainLocalPipeBridge(ScreenEmbodimentState)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 2007,
-      "value": 71,
+      "line": 2009,
+      "value": 72,
       "reason": "70 -> 71 in `51ccae18`: the multiplexer's switch expression gained the `farmhand_action_policy_request` arm, and an arm is one point. Collapsing the three per-type marker `if`s above it was tried in this lane and the tree refused it - tools/run-stardew-native-local-player-navigation-mutation-smoke.test.mjs:227 builds the phase vocabulary from `MonitorNativeChatIngress(\"literal\")` emissions and fails with `navigation_execution_dequeued is no longer emitted anywhere in the Mod`, and the same function refuses a marker passed as a value. One literal emission per message type is that guard's own requirement, so one point is what a new wire type costs here. Recorded, not absorbed; the revert in this lane is the proof it cannot be deleted."
     },
     {
@@ -331,7 +339,7 @@
       "language": "cs",
       "name": "ModEntry.OnUpdateTicked(object?,UpdateTickedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1220,
+      "line": 1222,
       "value": 42
     },
     {
@@ -339,7 +347,7 @@
       "language": "cs",
       "name": "ModEntry.OnWarped(object?,WarpedEventArgs)",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 1519,
+      "line": 1521,
       "value": 71
     },
     {
@@ -347,7 +355,7 @@
       "language": "cs",
       "name": "ModEntry.TryCreateSceneObservationInput()",
       "file": "integrations/stardew/ModEntry.cs",
-      "line": 2844,
+      "line": 2855,
       "value": 60
     },
     {
@@ -371,8 +379,8 @@
       "language": "cs",
       "name": "OpenBodyProgramJournalAuthority.TryComplete(HostAdmissionGrant,BodyProgramTerminalResult)",
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
-      "line": 674,
-      "value": 47
+      "line": 710,
+      "value": 52
     },
     {
       "id": "cs:PathPredicateProbe.CollectCandidateTargets(GameLocation,Point,int,int)",
@@ -413,7 +421,7 @@
       "language": "cs",
       "name": "RouteReenteringBodyProgramExecutor.TryBuildRowArguments(IFarmhandForEachWorld,FarmhandForEachTarget,string,FarmhandActionDescriptor?,IReadOnlyDictionary<string, BodyProgramCanonicalValue>?,string)",
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
-      "line": 754,
+      "line": 791,
       "value": 40
     },
     {
@@ -442,19 +450,19 @@
       "value": 31
     },
     {
-      "id": "cs:StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool,bool)",
+      "id": "cs:StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool,bool,Func<WalkableComponent?>?)",
       "language": "cs",
-      "name": "StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool,bool)",
+      "name": "StardewBodyController.AssessReachability(Point,Point,Func<Point, bool>,int,bool,bool,Func<WalkableComponent?>?)",
       "file": "integrations/stardew/StardewBodyController.flood.cs",
-      "line": 75,
-      "value": 42
+      "line": 110,
+      "value": 43
     },
     {
       "id": "cs:StardewBodyController.TryStartCore(LocalMoveSpec,Farmer,int,string,string?)",
       "language": "cs",
       "name": "StardewBodyController.TryStartCore(LocalMoveSpec,Farmer,int,string,string?)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 919,
+      "line": 921,
       "value": 58
     },
     {
@@ -462,7 +470,7 @@
       "language": "cs",
       "name": "StardewBodyController.Update(int)",
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 1240,
+      "line": 1242,
       "value": 44
     },
     {
@@ -496,7 +504,7 @@
       "language": "ts",
       "name": "host/src/body-program-script.ts#bindSnapshotReadings",
       "file": "host/src/body-program-script.ts",
-      "line": 2968,
+      "line": 3057,
       "value": 35
     },
     {
@@ -540,6 +548,14 @@
       "value": 34
     },
     {
+      "id": "ts:host/src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.ts#materializeContextForPiSession",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.ts#materializeContextForPiSession",
+      "file": "host/src/continuity-semantic-chat-runtime-construction/continuity-semantic-chat-runtime-construction.internal.ts",
+      "line": 230,
+      "value": 31
+    },
+    {
       "id": "ts:host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#completed#lambda2",
       "language": "ts",
       "name": "host/src/continuity-semantic-deployment-composition/continuity-semantic-game-facade.internal.ts#completed#lambda2",
@@ -552,15 +568,15 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#execute",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 369,
-      "value": 36
+      "line": 377,
+      "value": 39
     },
     {
       "id": "ts:host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda13",
       "language": "ts",
       "name": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts#materializeEnter#lambda13",
       "file": "host/src/continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.ts",
-      "line": 2030,
+      "line": 2106,
       "value": 48,
       "reason": "the same function the record called `materializeEnter#lambda11`, at the same 48: Biome reports 48 for the callback passed to `materializeExactEnter` in both trees (`72582adf` at line 1514, HEAD at line 1522). Only the ID moved, and this gate names an anonymous function by its nearest named owner plus `anonymousOrdinal`, which counts the anonymous functions in that owner's subtree (11 at `72582adf`, 13 at HEAD). The two added are `1f9ae023`'s `tracedStep` wrappers around the recovery-journal open and the recovery-binding read. Nothing was raised: 48 stays the ceiling, and this row exists because the identity moved, not because the number did."
     },
@@ -569,7 +585,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#attempt#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 3631,
+      "line": 3704,
       "value": 34
     },
     {
@@ -577,7 +593,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#request#lambda5",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 3211,
+      "line": 3284,
       "value": 50
     },
     {
@@ -585,7 +601,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts#resumeInitialChatWithContent#lambda1",
       "file": "host/src/continuity-semantic-production-coordinator/continuity-semantic-production-coordinator.internal.ts",
-      "line": 4311,
+      "line": 4388,
       "value": 37
     },
     {
@@ -593,7 +609,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-provisioning/continuity-semantic-provisioning.internal.ts#string",
       "file": "host/src/continuity-semantic-provisioning/continuity-semantic-provisioning.internal.ts",
-      "line": 977,
+      "line": 981,
       "value": 40
     },
     {
@@ -601,7 +617,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-provisioning/continuity-semantic-provisioning.internal.ts#value",
       "file": "host/src/continuity-semantic-provisioning/continuity-semantic-provisioning.internal.ts",
-      "line": 1004,
+      "line": 1008,
       "value": 44
     },
     {
@@ -609,7 +625,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#currentChatRuntimeState",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 3746,
+      "line": 3860,
       "value": 40
     },
     {
@@ -617,7 +633,15 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#prepareGame#lambda1",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 4276,
+      "line": 4390,
+      "value": 31
+    },
+    {
+      "id": "ts:host/src/continuity-semantic-store/continuity-semantic-production-store.ts#recoverChatRuntimeTeardown#lambda1",
+      "language": "ts",
+      "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#recoverChatRuntimeTeardown#lambda1",
+      "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
+      "line": 3680,
       "value": 31
     },
     {
@@ -625,7 +649,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#runChatCommand#lambda1",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 2148,
+      "line": 2178,
       "value": 54
     },
     {
@@ -633,7 +657,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#step#lambda1",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 3896,
+      "line": 4010,
       "value": 49
     },
     {
@@ -641,7 +665,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#validateMaterialization",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 1764,
+      "line": 1794,
       "value": 87
     },
     {
@@ -649,7 +673,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#validateV35ChatCommandTrail",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 2721,
+      "line": 2751,
       "value": 59
     },
     {
@@ -657,7 +681,7 @@
       "language": "ts",
       "name": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts#validateV35ChatExtension",
       "file": "host/src/continuity-semantic-store/continuity-semantic-production-store.ts",
-      "line": 2572,
+      "line": 2602,
       "value": 47
     },
     {
@@ -674,7 +698,7 @@
       "language": "ts",
       "name": "host/src/fact-brief.ts#worldFactLine",
       "file": "host/src/fact-brief.ts",
-      "line": 1241,
+      "line": 1237,
       "value": 55,
       "reason": "recorded at 11e7cc9b: 36 -> 40. `90b1cabf` added the four points first, `9adf97b5`'s merge resolved this file to the side without them (36 again at `9adf97b5` and at `a958bcc3`), and `9801e3f4` (a stalled execution is the Mod's verdict) put them back - so the reading that stands today is that commit's."
     },
@@ -683,7 +707,7 @@
       "language": "ts",
       "name": "host/src/game-tools.ts#execute",
       "file": "host/src/game-tools.ts",
-      "line": 1059,
+      "line": 1060,
       "value": 44
     },
     {
@@ -707,7 +731,7 @@
       "language": "ts",
       "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#launchWithGeneration",
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
-      "line": 4315,
+      "line": 4648,
       "value": 31
     },
     {
@@ -715,7 +739,7 @@
       "language": "ts",
       "name": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts#reserveOwnedPlayerHostBootstrap",
       "file": "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts",
-      "line": 1122,
+      "line": 1183,
       "value": 34
     },
     {
@@ -731,8 +755,8 @@
       "language": "ts",
       "name": "host/src/local-stardew-bridge.ts#LocalStardewBridgeClient.receive",
       "file": "host/src/local-stardew-bridge.ts",
-      "line": 991,
-      "value": 102,
+      "line": 1033,
+      "value": 103,
       "reason": "recorded 96 at 11e7cc9b and 96 at `53d605b8^`; 106 at `53d605b8` and at HEAD. `53d605b8` (`bridge(attachment): a reply to a request we stopped waiting for is late news, not a teardown`) added 48 lines to this file and deleted none: the late-reply arm is a new branch chain inside `receive`, and no other commit has touched the file since this record. RECORDED AS DEBT, not accepted: the ten points are the new arm's branches, and the cheaper shape - lifting the late-reply arm into its own method - is a change to the bridge's receive path that this lane does not make."
     },
     {
@@ -748,8 +772,8 @@
       "language": "ts",
       "name": "host/src/protocol.ts#diagnoseSnapshot",
       "file": "host/src/protocol.ts",
-      "line": 5297,
-      "value": 69,
+      "line": 5732,
+      "value": 71,
       "reason": "63 -> 65 in `251b0da0`: the one added arm is the optional `sleepAdmitsHere` guard (`!== undefined && !== null && typeof !== \\\"boolean\\\"`), which refuses a non-boolean night verdict by name (`invalid_snapshot:sleepAdmitsHere`). Not extracted: folding that test into a shared `isBooleanOrAbsent` helper is a change to protocol.ts's guard set, outside this unit's bounds, and doing it for this one field while the neighbouring optional-field guards stay inline would be a second spelling of one rule rather than one. 65 -> 67 here: the wallet's arm is the same three-part optional scalar test (`value.money !== undefined && value.money !== null && !isNonNegativeSafeInteger(value.money)`), inline for the same reason - a balance the diagnostic cannot name is a refusal that prints the bare `invalid_snapshot` the rest of this function exists to replace. Two points for one field, measured by the gate's own biome reading."
     },
     {
@@ -757,16 +781,17 @@
       "language": "ts",
       "name": "host/src/protocol.ts#isValidActionDescriptor",
       "file": "host/src/protocol.ts",
-      "line": 6364,
-      "value": 199
+      "line": 6833,
+      "value": 217,
+      "reason": "recorded at 9afad727: 199 -> 217 (+18), and this entry had no reason before - the fit was recorded, the arithmetic was not. One addition and one deletion in the same unit: the presentation pair (`label` + `targetKinds`) is validated on the descriptor now (they travel together, the label is refused blank, the kinds list is bounded - four arms and the return that closes them), and the `description` sentence left this surface for the Host's own tool descriptions, taking its three-part string check with it. WHAT BELONGS ELSEWHERE: the pair is one member's contract, the same shape `isValidActionRegistration` beside it already has, so it is a candidate for its own predicate rather than eighteen points inside a 195-line chain; the extraction is a host/src edit and this record is the gate's own reading of the tree, so it is measured here instead of paid here."
     },
     {
       "id": "ts:host/src/protocol.ts#validateBridgeMessage",
       "language": "ts",
       "name": "host/src/protocol.ts#validateBridgeMessage",
       "file": "host/src/protocol.ts",
-      "line": 2801,
-      "value": 69,
+      "line": 3022,
+      "value": 66,
       "reason": "recorded at 11e7cc9b: 66 -> 69, in `51ccae18` (a policy change reaches a running world as a message, not a poll). Measured 66 at 83ae46f0, 69 at that commit and at every commit after it."
     },
     {
@@ -791,7 +816,7 @@
       "language": "ts",
       "name": "host/src/runtime-core.internal.ts#createRuntimeWithFixedToolsCore",
       "file": "host/src/runtime-core.internal.ts",
-      "line": 924,
+      "line": 950,
       "value": 170
     },
     {
@@ -815,7 +840,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#activateHeadlessOperationalGame",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4013,
+      "line": 4203,
       "value": 59
     },
     {
@@ -823,7 +848,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attachResumedWorld",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3174,
+      "line": 3361,
       "value": 49
     },
     {
@@ -831,7 +856,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3306,
+      "line": 3493,
       "value": 64
     },
     {
@@ -839,7 +864,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#attempt#lambda2#2",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 3491,
+      "line": 3678,
       "value": 47
     },
     {
@@ -847,7 +872,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#closeAttempt",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 4187,
+      "line": 4379,
       "value": 60,
       "reason": "The 54 this entry carried was recorded at 72582adf (line 3279) and never re-recorded until this merge, and the growth is not the merge's: closeAttempt's body at HEAD and in the merged tree carries the same 25 `if (`, one `||` and eight `&&`, and the only difference between the two is the `activationState` -> `lifecycleState` rename the Game lifecycle state unification brought - no branch was added or removed. The 54 -> 60 is the 13 commits that touched this file in 72582adf..1e1462c4 (dbe8d84e, dab87336, 1045be81, de97a6f2, 12490460, 53db64d8, b5cbc3d1, 64b47000, 247d267d, 10596b5c, b7fb63aa, e074ae98, 38af38f2) accumulating over a file that grew from 3279 to 4031 lines, so 60 measures today's body and is not a rewrite. 60 is the ceiling now."
     },
@@ -856,7 +881,7 @@
       "language": "ts",
       "name": "host/src/stardew-production-lifecycle-coordinator.internal.ts#promise#lambda5",
       "file": "host/src/stardew-production-lifecycle-coordinator.internal.ts",
-      "line": 2573,
+      "line": 2675,
       "value": 44
     },
     {
@@ -956,7 +981,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#acceptMounted#lambda2",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3328,
+      "line": 3307,
       "value": 54
     },
     {
@@ -964,7 +989,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#assertP5ReadBack",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5749,
+      "line": 5734,
       "value": 36
     },
     {
@@ -972,7 +997,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#cancelActiveTurn#lambda1",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3087,
+      "line": 3066,
       "value": 46
     },
     {
@@ -980,7 +1005,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#createProfileAware#lambda1",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 2287,
+      "line": 2257,
       "value": 36
     },
     {
@@ -988,7 +1013,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#editTranscriptMessage#lambda2",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 2890,
+      "line": 2869,
       "value": 33
     },
     {
@@ -996,7 +1021,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#selectAuthoredContextVolatileSourceRefs",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 305,
+      "line": 316,
       "value": 31
     },
     {
@@ -1004,7 +1029,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#transitionMountedPresentation#lambda3",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3627,
+      "line": 3606,
       "value": 121
     },
     {
@@ -1012,7 +1037,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#transitionMountedProviderStart#lambda1",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 3518,
+      "line": 3497,
       "value": 59
     },
     {
@@ -1020,7 +1045,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateP5TerminalishCommon",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5133,
+      "line": 5118,
       "value": 64
     },
     {
@@ -1028,7 +1053,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validatePresentationTransition",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5632,
+      "line": 5617,
       "value": 41
     },
     {
@@ -1036,7 +1061,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateTurnIntegrity",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 5959,
+      "line": 5944,
       "value": 32
     },
     {
@@ -1044,7 +1069,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#validateTurnLedger",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 4981,
+      "line": 4966,
       "value": 41
     },
     {
@@ -1052,7 +1077,7 @@
       "language": "ts",
       "name": "host/src/tavern/chat-thread-store.ts#writeWorldInfoBinding",
       "file": "host/src/tavern/chat-thread-store.ts",
-      "line": 4046,
+      "line": 4031,
       "value": 36
     },
     {
@@ -1060,8 +1085,8 @@
       "language": "ts",
       "name": "host/src/tavern/composed-reference-game-static-shell-composition.ts#startComposedReferenceGameStaticShellComposition",
       "file": "host/src/tavern/composed-reference-game-static-shell-composition.ts",
-      "line": 106,
-      "value": 34,
+      "line": 111,
+      "value": 37,
       "reason": "recorded at 11e7cc9b: 32 -> 33, in `12490460` (the facts that move without a player are announced at the assignment) - the only commit that touched this file in the range."
     },
     {
@@ -1085,7 +1110,7 @@
       "language": "ts",
       "name": "host/src/tavern/memory-management/memory-management.ts#operation",
       "file": "host/src/tavern/memory-management/memory-management.ts",
-      "line": 234,
+      "line": 253,
       "value": 38
     },
     {
@@ -1152,7 +1177,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
       "line": 16,
-      "value": 259
+      "value": 277
     },
     {
       "id": "cs:BridgeProtocol",
@@ -1160,7 +1185,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "value": 552,
+      "value": 581,
       "reason": "Re-recorded at 2014f1c2: 543 -> 552 and methods 141 -> 142 in the same commit. THE 9 POINTS are `HasExecutionArgumentShape(JsonElement, string, string[])` - the inbound `args` shape now reads the catalogue row's own `ResolvedAtExecution` instead of the exact set `HasExactProperties` demanded, so a clearing node may leave out the slot its `tool:` claim answers for. THE METHOD is that helper: its registration lookup, the `names`/`seen` pair, the duplicate-name arm and the per-declared-name `resolvable` test are the branches. The previous arithmetic (550 -> 558 at `a3e6eb34`) is superseded by this reading, not lost: this row measured 543 on the tree that preceded this commit, which is the number that was compared, not the 558 its own reason quoted."
     },
     {
@@ -1169,7 +1194,7 @@
       "parts": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "value": 317,
+      "value": 314,
       "reason": "317, three points below the 320 recorded at bfc0c628, over the same single part and the same 82 methods. `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member) is the only commit to touch this file since that record, so the fall is the six catch-all arms that left its wire projections - four of them could only ever return a word a named member already owns - with the one `!Enum.IsDefined(state)` guard that replaced the fifth adding a point back. The lines it bought are in this type's size entry."
     },
     {
@@ -1178,7 +1203,7 @@
       "parts": 54,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "value": 4063,
+      "value": 4093,
       "reason": "4078 -> 4062 across the same 54 partials, recorded by the same pass that read `cs:FarmhandTargetDiscovery` at 811 -> 827. The two totals are 4889 in both readings, so the 16 points left for the split's new type rather than being refactored away here: a number that fell by leaving is not debt retired, and 4062 is still against a 200 class bound."
     },
     {
@@ -1187,16 +1212,16 @@
       "parts": 1,
       "file": "integrations/stardew/farmhandtargetdiscovery.cs",
       "line": 25,
-      "value": 846,
+      "value": 870,
       "reason": "811 -> 827 points while `cs:ExecutionManager` read 4078 -> 4062: the same 16 points on the other side of a move (pair total 4889 in both readings), not growth in decisions. 827 against the 200 class bound, and it will keep climbing as the split's remaining discovery code arrives, so this number is the split arriving rather than a budget being spent."
     },
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 60,
+      "parts": 61,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "value": 2876,
+      "value": 2943,
       "reason": "Re-recorded at b47f4dd6: 2861 -> 2870 (+9). The arithmetic is one unit - the animal house's site search judged the farm's CURRENT ground and called it the only possible one (`object=2332` of 5195 candidates on `round93`), so a tile is now classified by `TileOccupancy.Of` and cleared when a published `Clears` declaration opens it. `ModEntry.Fixtures.PlaySessionAnimal.cs` +241/-43 (four new members: `PlaySessionAnimalFootprintWall`, `ClearPlaySessionAnimalFootprint`, `PlaySessionAnimalFootprintFirstWall`, `ProbePlaySessionAnimalFootprint`; the search keeps only its loop and its reading, and its own complexity FELL 54 -> 42) and `ModEntry.Fixtures.cs` +5 (the comment that names the new rule). Nothing else in this type moved."
     },
     {
@@ -1205,7 +1230,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "value": 267,
+      "value": 275,
       "reason": "259 -> 268 in two commits: `df79b260` +1 (`TryRejectAdmission` took a third parameter and reads 18 where its predecessor read 17) and `e2a6ae87` +8 (`AttributeExecution(string?)`, new, which is also the type's 60 -> 61st method)."
     },
     {
@@ -1214,7 +1239,7 @@
       "parts": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 42,
-      "value": 216,
+      "value": 227,
       "reason": "recorded at 604844a6: 201 -> 203, `lines` 1103 -> 1111 over the same 38 methods - `ecf18222`'s charged-use request fields, the same change that took `TryBuildExecutionRequest` 41 -> 43."
     },
     {
@@ -1230,8 +1255,8 @@
       "name": "StardewBodyController",
       "parts": 2,
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 44,
-      "value": 453,
+      "line": 45,
+      "value": 472,
       "reason": "420 -> 407 in `55e4a27e` (a tile's kind names the action that clears it): the tile-kind vocabulary moved out to `TileOccupantKind` and took 13 points and one method with it. Recorded lower, not higher - 91 -> 90 methods and 2642 -> 2617 lines are the same move."
     }
   ],
@@ -1243,8 +1268,8 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramAuthorityTests.cs",
       "line": 11,
-      "lines": 2149,
-      "methods": 123,
+      "lines": 2192,
+      "methods": 124,
       "reason": "Re-recorded at 2014f1c2: lines 2119 -> 2149 (+44/-14 in the file), methods 123 -> 123. The 30 net lines are `ProjectedWeedNodeWithNeitherItsToolSlotNorItsIdentityIsAdmittedAndOneThatDropsItsTileIsRefused`, which replaced `ProjectedWeedNodeWithoutItsToolSlotIsRefusedByActionNameAndMissingArgument`: the old fact (a weed node without a slot was `invalid_arguments:cut_weeds`) is now its inverse, so the same test drives the admitted node and one whose `y` is missing through the journal authority, and `WeedArguments` grew the `withTargetId` half. Assertions in a test class: no branches, no new member."
     },
     {
@@ -1254,8 +1279,8 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Core.Tests/BodyProgramControllerPumpTests.cs",
       "line": 20,
-      "lines": 1658,
-      "methods": 52
+      "lines": 1743,
+      "methods": 54
     },
     {
       "id": "cs:BodyProgramJournalPersistence",
@@ -1264,8 +1289,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/BodyProgramJournalPersistence.cs",
       "line": 16,
-      "lines": 857,
-      "methods": 51
+      "lines": 915,
+      "methods": 53
     },
     {
       "id": "cs:BridgeBodyProgramProtocolTests",
@@ -1284,8 +1309,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Protocol/BridgeProtocol.cs",
       "line": 13,
-      "lines": 2474,
-      "methods": 142,
+      "lines": 2633,
+      "methods": 148,
       "reason": "Re-recorded at 2014f1c2: lines 2439 -> 2474 and methods 141 -> 142. THE METHOD is `HasExecutionArgumentShape(JsonElement args, string action, string[] declared)`, the inbound-shape door that reads the catalogue row's `ResolvedAtExecution` rather than a third list; THE LINES are that method's own span (its doc comment, the registration lookup, the two sets, the duplicate arm and the resolvable arm) and the call site that swapped `HasExactProperties` for it. The previous arithmetic (lines 2421 -> 2455, methods 141 -> 143 at `a3e6eb34`) was stale in both fields and wrong in direction on methods: this row measured 141 before this commit, so the 143 it claimed was a count its own tree never had."
     },
     {
@@ -1306,8 +1331,8 @@
       "files": 1,
       "file": "integrations/stardew/BridgeSession.cs",
       "line": 17,
-      "lines": 1771,
-      "methods": 82,
+      "lines": 1839,
+      "methods": 85,
       "reason": "Re-recorded at d41ef50e: 1767 -> 1771 lines over the SAME 82 methods and the same single part. All four lines are `bfd5871a` (a catch-all arm is what stops the compiler noticing the next member), the only commit to touch this file since bfc0c628. SIX catch-all arms left and what replaced them is the cost: `BodyProgramExecutionOriginKind`'s `_ =>` became the named `BodyProgramExecutionOriginKind.Unattributed =>`; the `BodyProgramSubmitCode`, `BodyProgramControllerResultCode`, `BodyProgramQueryCode` and `BodyProgramState` tables lost their `_ =>` outright, because each switch already names every member and the arm could only return a word one of them owns; and `BodyProgramNodeState`'s `_ =>` became a `!Enum.IsDefined(state)` guard in front of a switch that now names all thirteen, so a cast-invalid int is still answered by name while a fourteenth member fails the build here. Those two code lines and the paragraphs saying why no catch-all is left are the whole +4: the compiler noticing the next member is bought with lines, not with branches, and the type's own complexity FELL 320 -> 317 in the same commit."
     },
     {
@@ -1317,8 +1342,8 @@
       "files": 53,
       "file": "integrations/stardew/ExecutionEvidence.cs",
       "line": 106,
-      "lines": 25612,
-      "methods": 858,
+      "lines": 25923,
+      "methods": 866,
       "reason": "Re-recorded at e8e7c7e1's tree, which moved while it was being read: the first reading of this pass was 25623 -> 25577 lines and 858 -> 857 methods, and this second one - the recorded one - is 25584 lines / 858 methods at the same 54 parts, because a method arrived in the type while the gate ran (this worktree is shared and the Mod is being edited in it). THE SPLIT'S ARITHMETIC IS THEREFORE IN THE PAIR, not in this entry alone: `cs:FarmhandTargetDiscovery` read 2531 lines / 90 methods / 811 points -> 2579 / 91 / 827 while this type went 25623 / 858 / 4078 -> 25577 / 857 / 4062, so one method and its 16 points moved with both totals constant (948 methods and 4889 points in both readings); a record reshuffle would have moved the file and kept the counts, and a new method would have raised them. THE CODE IS THERE AND NOT COPIED: `DiscoverWearableTargets`, `DiscoverAnimalDoorTargets`, `DiscoverBuildFarmBuildingTargets`, `DiscoverBuildingChestTargets`, `DiscoverWorldObjectTargets` and `NearestFirstRadiusWindowRows` are declared in `integrations/stardew/farmhandtargetdiscovery.cs` and this type reaches every one of them through `FarmhandTargetDiscovery.` (farmhandexecutioncontroller.cs:1199, 1219, 1339, 1346, 1348, 1903). NOT VERIFIED: WHICH method crossed, because the members list holds only the over-bound ones and `farmhandtargetdiscovery.cs` is untracked. Read 858 -> 858 here as the split starting and being interrupted, never as this debt shrinking: 25584 lines is still 25 times the 1000-line ceiling and no partial has left the type (54 -> 54)."
     },
     {
@@ -1328,9 +1353,19 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/Policy/FarmhandActionDefinitions.cs",
       "line": 669,
-      "lines": 1626,
+      "lines": 1692,
       "methods": 55,
       "reason": "Re-recorded at 2014f1c2: lines 1571 -> 1620 (+334/-3 landed by 5b10e0d2, +65 by 2014f1c2) and methods 53 -> 54. The record was STALE, not current, when this pass replaced it: it predated the effects landing (5b10e0d2), which added the `effects` declarations this class publishes and the helpers that name them. THE METHOD is 2014f1c2's `ResolvesToolSlotAtExecution(FarmhandActionDescriptor)`: it throws at type initialisation for a row that declares no `tool:` claim or no `slot`, so the omission cannot be granted to a body that could not answer it. THE ROWS are the fifteen actions that now pass `AutoSelectedToolSlotMeaning` into `SlotTargetWith`. Class complexity is 9, so these lines are declarations, not branches."
+    },
+    {
+      "id": "cs:FarmhandBodyProgramController",
+      "name": "FarmhandBodyProgramController",
+      "parts": 1,
+      "files": 1,
+      "file": "integrations/stardew/src/Core/BodyPrograms/FarmhandBodyProgramController.cs",
+      "line": 72,
+      "lines": 1019,
+      "methods": 41
     },
     {
       "id": "cs:FarmhandCapabilityPublicationProjectionMetadata",
@@ -1350,8 +1385,8 @@
       "files": 1,
       "file": "integrations/stardew/farmhandtargetdiscovery.cs",
       "line": 25,
-      "lines": 2673,
-      "methods": 92,
+      "lines": 2819,
+      "methods": 97,
       "reason": "Recorded by the pass that read `cs:ExecutionManager` at 25623 -> 25577 lines / 858 -> 857 methods: this type went 90 -> 91 methods and 2531 -> 2579 lines at 1 part. It is the discovery split's other half - the six discovery methods listed on that entry are declared HERE and `ExecutionManager` only calls them - so the +1 method and the lines that came with it are the moved unit plus this file's own usings, not new behaviour. Over the ceiling on its own now (2579 lines / 91 methods), which is where the rest of the split should keep arriving."
     },
     {
@@ -1383,19 +1418,19 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs",
       "line": 52,
-      "lines": 1538,
+      "lines": 1551,
       "methods": 33,
       "reason": "recorded at 604844a6: 1147 lines, first record, and it is over the 1000-line ceiling. This is a TEST type (`GameBuddy.Stardew.Integration.Tests/MagnetPickupItemTests.cs`) whose length is a table of pickup cases rather than a branched body - its class complexity is 13 against a bound of 200 - so the ceiling reading is the whole fact. `c4519440` (`[forage] a distance is a walk, not a verdict`) then took it 1147 -> 1151 lines over the SAME 26 methods (+5/-1: the case that states the walk instead of a refusal beyond the click radius), which is one more row in the table, not one more branch. RECORDED AS DEBT: splitting the case table into partials or a data source is what would take it under 1000, and nothing in this unit does that."
     },
     {
       "id": "cs:ModEntry",
       "name": "ModEntry",
-      "parts": 60,
-      "files": 60,
+      "parts": 61,
+      "files": 61,
       "file": "integrations/stardew/ModEntry.Fixtures.AcceptDailyQuest.cs",
       "line": 10,
-      "lines": 16867,
-      "methods": 363,
+      "lines": 17274,
+      "methods": 371,
       "reason": "Re-recorded at b47f4dd6: lines 16423 -> 16643 (+220), methods 357 -> 361 (+4), parts 60 -> 60. The +4 methods and the file-level lines are the animal-house site-ground unit: `ModEntry.Fixtures.PlaySessionAnimal.cs` +241/-43 (`PlaySessionAnimalFootprintWall`, `ClearPlaySessionAnimalFootprint`, `PlaySessionAnimalFootprintFirstWall`, `ProbePlaySessionAnimalFootprint`, and the site search rewritten to use them) and `ModEntry.Fixtures.cs` +5. The file arithmetic is +246 lines while the record moves +220, and the 26-line difference is not attributable to this unit: the observed diff against the stitched type is what the gate measured, and `git diff --numstat -- 'integrations/stardew/ModEntry*.cs'` names these two files and no others, so nothing else in this type changed here. THEN, in the same worktree and not yet committed: the play-session world's load-bearing reservation, methods 361 -> 363 (+2: the placement seam `LayPlaySessionProp` and the local function `TryPlacePlaySessionProp` that the reservation and the sweep both call in place of the six per-family loops, so the initializer's own complexity FELL 64 -> 63) and lines measured, not added up: the arithmetic in the sentence above is not the gate's span. `integrations/stardew/ModEntry*.cs` totals 16815 file lines at HEAD and the stitched struct measures 16782 there, so the recorded 16643 was 139 lines LOW before this unit touched anything. This unit adds 20 file lines - `ModEntry.Fixtures.cs` +166/-151 and `ModEntry.Fixtures.PlaySessionProps.cs` +27/-22 - and 16835 - 33 = 16802 is the span measured on this tree."
     },
     {
@@ -1426,8 +1461,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/OpenBodyProgramJournalAuthority.cs",
       "line": 19,
-      "lines": 1263,
-      "methods": 61,
+      "lines": 1314,
+      "methods": 62,
       "reason": "lines 1209 -> 1211 in `a3e6eb34` (+5/-3 in the file) at the same 61 methods and the same one part: `TryComplete`'s `provesEffect` stopped spelling the outcome set and asks `BodyProgramValidation.MayCarryProof`, the declaration the wire validator refuses a frame by, and the two lines that replaced it are its comment. A re-partition of one authority plus a comment, not a member."
     },
     {
@@ -1437,8 +1472,8 @@
       "files": 1,
       "file": "integrations/stardew/src/Core/BodyPrograms/RouteReenteringBodyProgramExecutor.cs",
       "line": 42,
-      "lines": 1172,
-      "methods": 39,
+      "lines": 1209,
+      "methods": 40,
       "reason": "lines 1103 -> 1111 at 604844a6 over the same 38 methods and 1 part; `ecf18222`'s charged-use request fields."
     },
     {
@@ -1458,9 +1493,9 @@
       "parts": 2,
       "files": 2,
       "file": "integrations/stardew/StardewBodyController.cs",
-      "line": 44,
-      "lines": 3042,
-      "methods": 97,
+      "line": 45,
+      "lines": 3238,
+      "methods": 105,
       "reason": "91 -> 90 methods and 2642 -> 2617 lines in `55e4a27e`, which moved the tile-kind vocabulary to `TileOccupantKind`. Re-recorded lower - the class shrank, so no growth needs a reason here."
     },
     {
@@ -1470,7 +1505,7 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 35,
-      "lines": 1949,
+      "lines": 2030,
       "methods": 19,
       "reason": "lines 1547 -> 1590 in `664224bb` (+45/-2 in the file) at the same 12 methods and the same one part: the enclosing test type grew with the nested `TargetFamilyWorld` fixture it builds, whose own five new helpers are the row below. Length is the whole fact - the type declares cases, not branches."
     },
@@ -1481,8 +1516,8 @@
       "files": 1,
       "file": "integrations/stardew/tests/GameBuddy.Stardew.Integration.Tests/TargetFamilyCompletenessTests.cs",
       "line": 630,
-      "lines": 1353,
-      "methods": 74,
+      "lines": 1434,
+      "methods": 76,
       "reason": "methods 65 -> 70 and lines 1228 -> 1271 in `664224bb`, which added five fixture helpers: `TileSheet()`, `MakeWater(int,int)`, `MakeWall(int,int)`, `ClearWall(int,int)` and `RemoveResourceClump(int,int)`. `TileSheet()` is the tile-sheet setup extracted out of `MakeDiggable`, so it is a move plus four new fixture verbs; the nested type's complexity is unchanged at 82."
     }
   ]
