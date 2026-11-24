@@ -45,11 +45,20 @@
  *
  * WHICH PROGRAM, ALWAYS. An aggregate ratio is a number nobody can act on, so every reading prints its
  * worst three programs with the piece of the wall clock that held them: `held by node n03
- * collect_animal_product 1.5s (64% of the wall)` is a slow node, `held by the 0.2s idle between n01 and
- * n02 (59% of the wall), not by any node` is the Host round trip and the model's thinking, and neither
- * is visible in the aggregate. Measured 2026-11-24 over the corpus: `plan_299` (17 nodes) took 127.7s
- * against a 34.4s floor - ratio 3.71 - while its run's aggregate read 0.86, so the offender was inside a
- * passing-looking number.
+ * collect_animal_product 1.5s (64% of the wall)` is a node's service time, `held by the 0.2s idle between
+ * n01 and n02 (59% of the wall), not by any node` is the Host round trip and the model's thinking, and
+ * neither is visible in the aggregate. Measured 2026-11-24 over the corpus: `plan_299` (17 nodes) took
+ * 127.7s against a 34.4s floor - ratio 3.71 - while its run's aggregate read 0.86, so the offender was
+ * inside a passing-looking number.
+ *
+ * A DOMINANT NODE IS WHERE THE WALL WENT, NOT BY ITSELF A VERDICT ABOUT US. The `collect_animal_product`
+ * example above was read as a slow node and was not one: measured on `round99`'s `plan_133_e83871efb30f7844`
+ * the Mod's own cost line for that node read `total_ms=12.02;dispatch_ms=12.02;admission_ms=0.01;
+ * approach_ms=0.00;floods=0`, while its journal span was 1465 ms - the engine's `MilkPail` animation (four
+ * 400 ms frames), which the floor had priced as a generic 480 ms swing. Corrected there (`ANIMATION_CLASS`),
+ * the same program reads 1.41 instead of 4.47. So the ratio beside the span is what decides whether the
+ * span was ours, and a floor that under-prices one action makes the engine's own animation look like our
+ * latency in exactly the line a reader trusts for "which node to fix".
  *
  * THE THRESHOLD IS READ OFF THE DISTRIBUTION, NOT CHOSEN FOR COMFORT. Rounds 94-99 measured aggregate
  * ratios of 0.30, 0.40, 0.31, 0.25 and 0.34; the pooled corpus (682 priced programs) reads 0.45; and
@@ -222,11 +231,23 @@ function dominantSpanOf(nodes) {
     const at = timeOf(node.atMs);
     const settled = timeOf(node.settledAtMs);
     if (settledBefore !== null && at !== null && at > settledBefore) {
-      const idle = { kind: "idle", nodeId: node.nodeId, afterNodeId: nodeBefore, actionId: node.actionId, ms: at - settledBefore };
+      const idle = {
+        kind: "idle",
+        nodeId: node.nodeId,
+        afterNodeId: nodeBefore,
+        actionId: node.actionId,
+        ms: at - settledBefore,
+      };
       if (dominant === null || idle.ms > dominant.ms) dominant = idle;
     }
     if (at !== null && settled !== null && settled >= at) {
-      const service = { kind: "node", nodeId: node.nodeId, actionId: node.actionId, ms: settled - at, first: index === 0 };
+      const service = {
+        kind: "node",
+        nodeId: node.nodeId,
+        actionId: node.actionId,
+        ms: settled - at,
+        first: index === 0,
+      };
       if (dominant === null || service.ms > dominant.ms) dominant = service;
     }
     if (settled !== null) {
@@ -332,7 +353,9 @@ export function measureProgramPace({ bundleRoot } = {}) {
     bundles: directories.length,
     programs,
     examined: readings.length,
-    excluded: Object.freeze(Object.fromEntries([...excluded.entries()].sort(([left], [right]) => (left < right ? -1 : 1)))),
+    excluded: Object.freeze(
+      Object.fromEntries([...excluded.entries()].sort(([left], [right]) => (left < right ? -1 : 1))),
+    ),
     readings: Object.freeze(readings),
     wallMs,
     floorMs: round(floorMs),
@@ -349,8 +372,7 @@ export function measureProgramPace({ bundleRoot } = {}) {
 /** The verdict: the ratio above the ceiling, or a population too small to say anything. */
 export function compareProgramPace({ measurement, ceiling = PROGRAM_PACE_CEILING } = {}) {
   if (measurement.status === "no_bundle_root") return Object.freeze({ kind: "blocked", why: "no_bundle_root" });
-  if (measurement.status === "no_priced_program")
-    return Object.freeze({ kind: "blocked", why: "no_priced_program" });
+  if (measurement.status === "no_priced_program") return Object.freeze({ kind: "blocked", why: "no_priced_program" });
   if (measurement.examined < PROGRAM_PACE_POPULATION_FLOOR)
     return Object.freeze({ kind: "insufficient_population", examined: measurement.examined });
   if (measurement.ratio > ceiling) return Object.freeze({ kind: "above", ratio: measurement.ratio, ceiling });
@@ -422,8 +444,10 @@ export function renderProgramPace({ measurement, verdict, bundleRoot }) {
   // The worst members are printed ALWAYS, on a green run too: an aggregate cannot say which program to fix,
   // and the three below this line are the whole reason the number moved. They are named, not gated - the
   // verdict rests on the aggregate - but a tail program that holds a schedule is a reading in its own right
-  // (`round99`'s `plan_133` reads 4.47 over three barn chores whose 2.3s was one milking node and the walk
-  // into the first node, which this floor charges nowhere).
+  // (`round99`'s `plan_133` read 4.47 over three barn chores whose 2.3s was one milking node and the walk
+  // into the first node, which this floor charges nowhere; the milking node turned out to be the engine's own
+  // 1600 ms animation, so the program reads 1.41 on the corrected price and only the walk half is this
+  // floor's gap).
   lines.push(...memberLines(measurement));
   if (verdict.kind === "insufficient_population") {
     lines.push(

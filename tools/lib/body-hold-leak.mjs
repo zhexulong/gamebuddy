@@ -68,16 +68,22 @@ const EXECUTION_STATE_PATH = resolve(
 export const IMPLICIT_BODY_HOLD_LEAK = "implicit_body_hold_leak";
 
 /**
- * The longest legitimate tool animation the tree declares, in milliseconds: `toolSwing`'s 480 ms (`Tool.cs:610-620`,
- * `animateOnce(160|168|176|184, 60f * num, 8)` at `num = 1`) against the watering can's 375 ms (`:585-596`,
- * `animateOnce(164|172|180|188, 125f * num, 3)`). Derived from `ANIMATION_CLASS` rather than restated, because a second
- * copy of 480 is a bound that drifts while both copies look right - and a bound nobody can trace is a threshold someone
- * will tune.
+ * The longest legitimate tool animation the tree declares, in milliseconds: EVERY numeric class of `ANIMATION_CLASS`, so a
+ * branch added there joins this bound without an edit here. It was a hand-listed pair (`toolSwing` 480 against the
+ * watering can's 375) until the livestock tools' 4 x 400 ms cycle was priced, and that pair would have kept claiming 480 ms
+ * is the longest while the milk pail holds the body for 1600 - the same shape of stale hand copy the class table itself
+ * carries. Derived rather than restated, because a second copy of a number is a bound that drifts while both copies look
+ * right - and a bound nobody can trace is a threshold someone will tune.
  */
-export const USING_TOOL_BOUND_MS = Math.max(ANIMATION_CLASS.toolSwing, ANIMATION_CLASS.wateringCanSwing);
+const LONGEST_ANIMATION_CLASS = Object.entries(ANIMATION_CLASS)
+  .filter(([, ms]) => typeof ms === "number")
+  .reduce((longest, entry) => (entry[1] > longest[1] ? entry : longest));
 
-const USING_TOOL_BOUND_SOURCE =
-  "tools/lib/action-pace.mjs ANIMATION_CLASS.toolSwing = 480 ms (`Tool.cs:610-620` animateOnce(160|168|176|184, 60f * num, 8) at num = 1)";
+export const USING_TOOL_BOUND_MS = LONGEST_ANIMATION_CLASS[1];
+
+const USING_TOOL_BOUND_SOURCE = `tools/lib/action-pace.mjs ANIMATION_CLASS.${LONGEST_ANIMATION_CLASS[0]} = ${String(
+  LONGEST_ANIMATION_CLASS[1],
+)} ms, the longest animation class that file declares`;
 
 /** The two wire words that are a SUCCESS. Every other terminal state is a non-Succeeded end. */
 const SUCCEEDED_STATES = Object.freeze(["succeeded", "partially_succeeded"]);

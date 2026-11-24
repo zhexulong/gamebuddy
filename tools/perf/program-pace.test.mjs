@@ -82,10 +82,7 @@ async function bundleOf(root, name, { programs, traceStrideMs = 100 }) {
     trace[trace.length - 1].settledAtMs = entry.wallMs;
   }
   await writeFile(join(directory, "result.json"), `${JSON.stringify({ programOutcomes }, null, 2)}\n`);
-  await writeFile(
-    join(directory, "programTrace.jsonl"),
-    trace.map((row) => JSON.stringify(row)).join("\n") + "\n",
-  );
+  await writeFile(join(directory, "programTrace.jsonl"), trace.map((row) => JSON.stringify(row)).join("\n") + "\n");
   return directory;
 }
 
@@ -112,10 +109,7 @@ test("a priced program says which span held it: one slow node, or the idle betwe
     programId: "plan_idle",
     startMs: 0,
     wallMs: 1_500,
-    nodes: [
-      timed("n01", "cut_weeds", { x: 1, y: 1 }, 0, 200),
-      timed("n02", "cut_weeds", { x: 1, y: 2 }, 1_400, 1_500),
-    ],
+    nodes: [timed("n01", "cut_weeds", { x: 1, y: 1 }, 0, 200), timed("n02", "cut_weeds", { x: 1, y: 2 }, 1_400, 1_500)],
   });
   assert.equal(slowIdle.dominant.kind, "idle");
   assert.equal(slowIdle.dominant.afterNodeId, "n01");
@@ -148,20 +142,22 @@ test("the first node's span is marked, because the walk into a program is charge
 
 test("the floor is one swing per node plus the lattice between the tiles the run recorded", () => {
   const priced = priceProgram(
-    program("plan_a", [
-      node("n01", "cut_weeds", { x: 10, y: 10 }),
-      node("n02", "cut_weeds", { x: 13, y: 10 }),
-      node("n03", "break_rock", { x: 13, y: 11 }),
-    ], 10_000),
+    program(
+      "plan_a",
+      [
+        node("n01", "cut_weeds", { x: 10, y: 10 }),
+        node("n02", "cut_weeds", { x: 13, y: 10 }),
+        node("n03", "break_rock", { x: 13, y: 11 }),
+      ],
+      10_000,
+    ),
   );
   assert.equal(priced.excluded, null);
   assert.equal(priced.walkTiles, 4, "3 tiles then 1 tile: the first node's walk-in is not charged, and is not zero");
   assert.equal(
     priced.floorMs,
     Math.round(
-      (nativeFloorMs({ action: "cut_weeds" }) * 2 +
-        nativeFloorMs({ action: "break_rock" }) +
-        4 * WALK_MS_PER_TILE) *
+      (nativeFloorMs({ action: "cut_weeds" }) * 2 + nativeFloorMs({ action: "break_rock" }) + 4 * WALK_MS_PER_TILE) *
         100,
     ) / 100,
   );
@@ -170,11 +166,15 @@ test("the floor is one swing per node plus the lattice between the tiles the run
 
 test("a node with no tile holds the position where it was, because it does not move the actor", () => {
   const priced = priceProgram(
-    program("plan_b", [
-      node("n01", "equip_tool", null),
-      node("n02", "cut_weeds", { x: 4, y: 4 }),
-      node("n03", "cut_weeds", { x: 6, y: 4 }),
-    ], 3_000),
+    program(
+      "plan_b",
+      [
+        node("n01", "equip_tool", null),
+        node("n02", "cut_weeds", { x: 4, y: 4 }),
+        node("n03", "cut_weeds", { x: 6, y: 4 }),
+      ],
+      3_000,
+    ),
   );
   assert.equal(priced.excluded, null, "an equip_tool names no target and must not cost the program its floor");
   assert.equal(priced.walkTiles, 2, "the two cut_weeds are two tiles apart; the equip adds a swing and no walk");
@@ -189,9 +189,8 @@ test("what cannot be priced is excluded by name, never dropped", () => {
     "crossed_a_map",
   );
   assert.equal(
-    priceProgram(
-      program("sleepy", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "sleep", null)], 900),
-    ).excluded,
+    priceProgram(program("sleepy", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "sleep", null)], 900))
+      .excluded,
     "unpriced:sleep",
   );
   assert.equal(
@@ -206,7 +205,11 @@ test("a bundle's programs are priced from its own two artifacts, and the aggrega
     await bundleOf(root, "2026-01-01T00-00-00-000Z-one", {
       programs: [
         program("plan_a", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 2_000),
-        program("plan_b", [node("n01", "move_to_tile", { x: 5, y: 5 }), node("n02", "cut_weeds", { x: 5, y: 6 })], 1_000),
+        program(
+          "plan_b",
+          [node("n01", "move_to_tile", { x: 5, y: 5 }), node("n02", "cut_weeds", { x: 5, y: 6 })],
+          1_000,
+        ),
         program("plan_c", [node("n01", "cut_weeds", { x: 9, y: 9 })], 400),
       ],
     });
@@ -218,7 +221,10 @@ test("a bundle's programs are priced from its own two artifacts, and the aggrega
     assert.equal(measurement.wallMs, 3_000);
     assert.equal(measurement.ratio, Math.round((3_000 / measurement.floorMs) * 100) / 100);
     assert.deepEqual(measurement.readings.map((reading) => reading.programId).sort(), ["plan_a", "plan_b"]);
-    assert.equal(measurement.readings.every((reading) => reading.walkTiles >= 0), true);
+    assert.equal(
+      measurement.readings.every((reading) => reading.walkTiles >= 0),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -235,7 +241,9 @@ test("a schedule four times its floor fails, naming the ratio and the population
         Array.from({ length: 10 }, (_, index) => node(`n${String(index + 1)}`, "cut_weeds", { x: 3, y: 3 })),
         19_200,
       );
-    await bundleOf(root, "2026-01-01T00-00-00-000Z-dense", { programs: [heavy("plan_a"), heavy("plan_b"), heavy("plan_c")] });
+    await bundleOf(root, "2026-01-01T00-00-00-000Z-dense", {
+      programs: [heavy("plan_a"), heavy("plan_b"), heavy("plan_c")],
+    });
     const measurement = measureProgramPace({ bundleRoot: root });
     const verdict = compareProgramPace({ measurement });
     assert.equal(measurement.ratio, 4);
@@ -264,12 +272,18 @@ test("an empty population and a too-small one are blocked, not passed", async ()
     const empty = measureProgramPace({ bundleRoot: root });
     assert.equal(empty.status, "no_priced_program");
     assert.equal(compareProgramPace({ measurement: empty }).kind, "blocked");
-    const rendered = renderProgramPace({ measurement: empty, verdict: compareProgramPace({ measurement: empty }), bundleRoot: root });
+    const rendered = renderProgramPace({
+      measurement: empty,
+      verdict: compareProgramPace({ measurement: empty }),
+      bundleRoot: root,
+    });
     assert.equal(rendered.failed, false, "nothing to price is a blocked reading, never a pass and never a failure");
     assert.match(rendered.lines.join("\n"), /^program_pace_blocked: no_priced_program /mu);
 
     await bundleOf(root, "2026-01-02T00-00-00-000Z-thin", {
-      programs: [program("plan_a", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 900)],
+      programs: [
+        program("plan_a", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 900),
+      ],
     });
     const thin = measureProgramPace({ bundleRoot: root });
     assert.equal(thin.examined, 1);
@@ -306,7 +320,10 @@ test("the gate entry prints this section, and the walk's direction is on the lin
     assert.match(stdout, /^program_pace: 3 programs · wall /mu);
     assert.match(stdout, /\(ceiling, walk=lattice_lower_bound\)/u);
     // A GREEN RUN NAMES ITS MEMBERS TOO: the three densest are printed before the verdict, so a lane reads
-    assert.match(stdout, /^ {2}densest: plan_b nodes 2 walk 1 tiles · wall 0\.5s · floor 1\.5s · ratio 0\.34 · held by node n02 cut_weeds 0\.4s \(80% of the wall\)$/mu);
+    assert.match(
+      stdout,
+      /^ {2}densest: plan_b nodes 2 walk 1 tiles · wall 0\.5s · floor 1\.5s · ratio 0\.34 · held by node n02 cut_weeds 0\.4s \(80% of the wall\)$/mu,
+    );
     assert.equal(stdout.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
     assert.match(stdout, /^program_pace_ok examined=3 ratio=/mu);
     assert.equal(PROGRAM_PACE_WALK, "lattice_lower_bound");
@@ -347,42 +364,41 @@ test("a doubled schedule is red at the tightened ceiling, while the same run at 
   }
 });
 
-test(
-  "round99's own programs replay as a reading, not as a pass or a failure",
-  { skip: !existsSync(ROUND_99) },
-  () => {
-    const measurement = measureProgramPace({ bundleRoot: ROUND_99 });
-    assert.equal(measurement.bundles, 1);
-    assert.equal(measurement.programs, 36, "round99 dispatched 36 programs");
-    assert.equal(measurement.examined, 10, "ten of them are priceable schedules; the rest are excluded by name");
-    assert.deepEqual(measurement.excluded, { crossed_a_map: 8, single_node: 18 });
-    assert.equal(measurement.ratio, 0.34);
-    assert.equal(measurement.distribution.max, 4.47);
-    const verdict = compareProgramPace({ measurement });
-    assert.equal(verdict.kind, "ok");
-    const rendered = renderProgramPace({ measurement, verdict, bundleRoot: ROUND_99 });
-    assert.equal(rendered.failed, false);
-    const text = rendered.lines.join("\n");
-    assert.match(text, /^program_pace_ok examined=10 ratio=0\.34 ceiling=0\.6$/mu);
-    // A GREEN READING NAMES ITS WORST THREE, and this one already says something: the 4.47 program is three
-    // successful barn chores (pet a cow, equip the pail, milk it) whose 2.3 s was 64% one milking node, while the
-    // program below it lost 59% of its half-second to the idle BETWEEN two nodes. Different defects, one number.
-    assert.match(
-      text,
-      /^ {2}densest: plan_133_e83871efb30f7844 nodes 3 walk 0 tiles · wall 2\.3s · floor 0\.5s · ratio 4\.47 · held by node n03 collect_animal_product 1\.5s \(64% of the wall\)$/mu,
-    );
-    assert.match(
-      text,
-      /^ {2}densest: plan_347_2b25eb5271eb2ae9 .* · held by the 0\.2s idle between n01 and n02 \(59% of the wall\), not by any node$/mu,
-    );
-    assert.equal(text.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
-    // The programs the reading could not price are named, and their number is the difference to the
-    // population: a run cannot lose its programs to an exclusion nobody can see.
-    const priced = programsOf(ROUND_99);
-    assert.equal(priced.length, 36);
-    assert.equal(bundleDirectories(ROUND_99).length, 1);
-  },
-);
+test("round99's own programs replay as a reading, not as a pass or a failure", { skip: !existsSync(ROUND_99) }, () => {
+  const measurement = measureProgramPace({ bundleRoot: ROUND_99 });
+  assert.equal(measurement.bundles, 1);
+  assert.equal(measurement.programs, 36, "round99 dispatched 36 programs");
+  assert.equal(measurement.examined, 10, "ten of them are priceable schedules; the rest are excluded by name");
+  assert.deepEqual(measurement.excluded, { crossed_a_map: 8, single_node: 18 });
+  assert.equal(measurement.ratio, 0.34);
+  assert.equal(measurement.distribution.max, 1.41);
+  const verdict = compareProgramPace({ measurement });
+  assert.equal(verdict.kind, "ok");
+  const rendered = renderProgramPace({ measurement, verdict, bundleRoot: ROUND_99 });
+  assert.equal(rendered.failed, false);
+  const text = rendered.lines.join("\n");
+  assert.match(text, /^program_pace_ok examined=10 ratio=0\.34 ceiling=0\.6$/mu);
+  // A GREEN READING NAMES ITS WORST THREE, and the worst of them is now read correctly. It was 4.47 and read as
+  // "a slow node"; the node is the engine's own animation. Measured 2026-11-24: that node's `[game-thread-cost]`
+  // line read `total_ms=12.02;dispatch_ms=12.02;admission_ms=0.01;approach_ms=0.00;floods=0` while its journal
+  // span was 1465 ms of `MilkPail` (four 400 ms frames), which the floor was pricing as a generic 480 ms swing.
+  // Corrected, the same program reads 1.41 - the milking IS the wall clock, and 1.41 is what the engine's own
+  // floor says about it. The program below it loses 59% of its half-second to the idle BETWEEN two nodes.
+  assert.match(
+    text,
+    /^ {2}densest: plan_133_e83871efb30f7844 nodes 3 walk 0 tiles · wall 2\.3s · floor 1\.6s · ratio 1\.41 · held by node n03 collect_animal_product 1\.5s \(64% of the wall\)$/mu,
+  );
+  assert.match(
+    text,
+    /^ {2}densest: plan_347_2b25eb5271eb2ae9 .* · held by the 0\.2s idle between n01 and n02 \(59% of the wall\), not by any node$/mu,
+  );
+  assert.equal(text.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
+  // The programs the reading could not price are named, and their number is the difference to the
+  // population: a run cannot lose its programs to an exclusion nobody can see.
+  const priced = programsOf(ROUND_99);
+  assert.equal(priced.length, 36);
+  assert.equal(bundleDirectories(ROUND_99).length, 1);
+});
 
 test("the ceiling sits above every round94-99 reading and below a doubled one", () => {
   // The corpus the line was set from, derived from the artifacts rather than listed by hand: every bundle of
@@ -392,7 +408,9 @@ test("the ceiling sits above every round94-99 reading and below a doubled one", 
     .map((name) => join(LADDER, name));
   const measured = recent
     .map((directory) => measureProgramPace({ bundleRoot: directory }))
-    .filter((measurement) => measurement.status === "measured" && measurement.examined >= PROGRAM_PACE_POPULATION_FLOOR);
+    .filter(
+      (measurement) => measurement.status === "measured" && measurement.examined >= PROGRAM_PACE_POPULATION_FLOOR,
+    );
   assert.equal(measured.length, 5, "rounds 94-99 that priced a schedule: five of them");
   for (const measurement of measured)
     assert.equal(

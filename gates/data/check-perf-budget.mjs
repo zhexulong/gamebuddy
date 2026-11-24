@@ -104,11 +104,15 @@
  * printed, and a run with too few priceable programs says so instead of averaging what is left.
  *
  * EVERY READING NAMES ITS WORST THREE PROGRAMS, on a green run as well as a red one, with the span that
- * held each: `held by node n03 collect_animal_product 1.5s (64% of the wall)` is a slow node, `held by
- * the 0.2s idle between n01 and n02` is the Host round trip and the model thinking. Measured on
- * `round99`: 4.47 - the run's worst program - was three successful barn chores whose 2.3s was one
- * milking node. Measured over the corpus, the three densest are 21.01, 17.9 and 13.28, and every one of
- * them is held by its FIRST node, whose walk in the floor charges nowhere: a small program's ratio is
+ * held each: `held by node n03 collect_animal_product 1.5s (64% of the wall)` is a node's service time,
+ * `held by the 0.2s idle between n01 and n02` is the Host round trip and the model thinking. Measured on
+ * `round99`: the run's worst program was three successful barn chores whose 2.3s was one milking node -
+ * and that node was NOT a slow node: the Mod's own cost line read `total_ms=12.02;approach_ms=0.00;
+ * floods=0` while the 1465 ms was the engine's `MilkPail` animation (four 400 ms frames), which the floor
+ * had priced as a generic 480 ms swing. Priced at its own branch the same program reads 1.41, so the
+ * corpus max moved from 4.47 to the first-node walks below. Measured over the corpus, the three densest
+ * are 21.01, 17.9 and 13.28, and every one of them is held by its FIRST node, whose walk in the floor
+ * charges nowhere: a small program's ratio is
  * often the metric's gap rather than the run's defect, which is why the verdict rests on the aggregate.
  *
  *   node tools/check-perf-budget.mjs --program-pace-only      # just the program-schedule verdict
@@ -172,16 +176,8 @@ import {
   measureActionPace,
   renderActionPace,
 } from "../../tools/lib/action-pace.mjs";
-import {
-  compareProgramPace,
-  measureProgramPace,
-  renderProgramPace,
-} from "../../tools/lib/program-pace.mjs";
-import {
-  compareTurnWaste,
-  measureTurnWaste,
-  renderTurnWaste,
-} from "../../tools/lib/turn-waste.mjs";
+import { compareProgramPace, measureProgramPace, renderProgramPace } from "../../tools/lib/program-pace.mjs";
+import { compareTurnWaste, measureTurnWaste, renderTurnWaste } from "../../tools/lib/turn-waste.mjs";
 import { assessBenchmarkArtifact } from "../../tools/perf/artifact-readiness.mjs";
 import { benchFiles, caseResults, runSuite } from "../../tools/perf/run-benchmarks.mjs";
 import { runWhenEntry } from "../../tools/scripts/cli-entry.mjs";
@@ -551,7 +547,8 @@ async function main(argv) {
   // The three artifact sections run before the microbenchmark comparison and OUTSIDE the machine
   // skip inside `checkMicrobenchmarks`: they read run artifacts, not ops/sec out of this box, so
   // another machine's microbenchmark baseline has nothing to say about them.
-  const paceFailed = actionPaceSection({ root, argv }) || programPaceSection({ root, argv }) || turnWasteSection({ root, argv });
+  const paceFailed =
+    actionPaceSection({ root, argv }) || programPaceSection({ root, argv }) || turnWasteSection({ root, argv });
   return await checkMicrobenchmarks({ root, argv, paceFailed });
 }
 

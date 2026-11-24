@@ -86,6 +86,37 @@ test("one swing, one tile of work, and the engine's own branches decide the floo
   );
 });
 
+// THE FLOOR THAT ACCUSED THE ENGINE. `collect_animal_product` was priced as a generic `toolSwing` (8 x 60 ms = 480),
+// while `MilkPail.beginUsing`/`Shears.beginUsing` start `FarmerSprite.animateOnce(287|283 + facing, …)` and
+// `FarmerSprite.getAnimationFromIndex` declares those four indices as four frames of 400 ms ended by `Farmer.useTool`.
+// MEASURED 2026-11-24 (`round99`, `plan_133_e83871efb30f7844` n03): the node's journal span was 1465 ms beside the Mod's
+// own cost line `total_ms=12.02;dispatch_ms=12.02;admission_ms=0.01;approach_ms=0.00;floods=0`, i.e. 1.5 s of the
+// engine's animation against 12 ms of ours - and the 480 ms floor made that program the run's worst at 4.47x.
+// The red is the old assignment: put `collect_animal_product` back in `toolSwing` and every assertion below fails.
+test("the livestock tools' cycle is priced at its own frame table, not the generic swing", () => {
+  assert.equal(animationClassOf("collect_animal_product"), "animalProductSwing");
+  assert.equal(
+    ANIMATION_CLASS.animalProductSwing,
+    4 * 400,
+    "the four frames `FarmerSprite.getAnimationFromIndex` declares for 283..290, 400 ms each",
+  );
+  assert.equal(nativeFloorMs({ action: "collect_animal_product" }), 1600);
+  assert.notEqual(
+    nativeFloorMs({ action: "collect_animal_product" }),
+    ANIMATION_CLASS.toolSwing,
+    "the generic `Tool.endUsing` swing is not this action's branch, and pricing it there accuses the engine",
+  );
+  // The measured span has to sit UNDER the floor: a reading of 1465 ms is the engine's own animation, so a floor of 480
+  // turns it into 3.05x of "our" overhead for a handler the same run measured at 12.02 ms.
+  assert.ok(
+    nativeFloorMs({ action: "collect_animal_product" }) > 1465,
+    "the engine's own 1465 ms milk animation must not read as time spent above its floor",
+  );
+  // The rest of the tool family keeps its own price: one action's frame table is not a reclassification of the others.
+  assert.equal(nativeFloorMs({ action: "scythe_crop" }), ANIMATION_CLASS.toolSwing);
+  assert.equal(nativeFloorMs({ action: "chop_tree" }), ANIMATION_CLASS.toolSwing);
+});
+
 test("the class table's population is the Mod's action catalogue, not a list of five actions", () => {
   const classes = actionAnimationClasses();
   // The catalogue is read from the Mod's registrations; every action in it resolves to a class.
@@ -365,7 +396,11 @@ test("a doubled duration names the action, and the bound is the recorded ratio p
     // A single node has no predecessor tile, so this program records NO walk at all: `null`, not a zero that
     // would read as "the action never walks".
     assert.equal(recorded.actions.harvest_crop.walkTiles, null);
-    assert.equal(recorded.actions.harvest_crop.walkSource, "lattice", "the program channel is the one that would record it");
+    assert.equal(
+      recorded.actions.harvest_crop.walkSource,
+      "lattice",
+      "the program channel is the one that would record it",
+    );
     // The bound carries one quantum of the floor's own resolution: a 1 ms stamp cannot bound
     // itself to zero, or the next reading of an instant action is a false regression.
     assert.equal(paceBound(recorded.actions.harvest_crop), (120 + 1 / 16.67) * (1 + ACTION_PACE_TOLERANCE));

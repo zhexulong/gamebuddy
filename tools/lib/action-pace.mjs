@@ -193,17 +193,28 @@ const MOVEMENT_MULTIPLIER = Object.freeze({
 /**
  * The animation classes the engine gates an action's cycle on, and what each costs.
  *
- * These are the branches of `Tool.endUsing`, not free choices:
- *  - `toolSwing`     `Tool.cs:610-620` - `animateOnce(160|168|176|184, 60f * num, 8)`,
- *                    with `num = 1` while the farmer has stamina (`Tool.cs:571`); so
+ * These are the branches of the engine's own animation tables, not free choices:
+ *  - `toolSwing`     `Tool.endUsing` - `animateOnce(160|168|176|184, 60f * num, 8)`,
+ *                    with `num = 1` while the farmer has stamina (`Tool.update`); so
  *                    8 frames x 60 ms = 480 ms. Hoe, axe, pickaxe, scythe, and any
  *                    generic active tool all land in this branch.
- *  - `wateringCanSwing` `Tool.cs:585-596` - `animateOnce(164|172|180|188, 125f * num, 3)`;
+ *  - `wateringCanSwing` `Tool.endUsing` - `animateOnce(164|172|180|188, 125f * num, 3)`;
  *                    3 frames x 125 ms = 375 ms.
+ *  - `animalProductSwing` `MilkPail.beginUsing`/`Shears.beginUsing` start
+ *                    `FarmerSprite.animateOnce(287|283 + facing, …)`, and those four indices are
+ *                    declared in `FarmerSprite.getAnimationFromIndex` as FOUR FRAMES OF 400 ms
+ *                    whose last frame ends in `Farmer.useTool` - so the milking/shearing cycle the
+ *                    engine forces is 4 x 400 = 1600 ms, 3.3x a generic swing. Measured 2026-11-24
+ *                    (`round99`, `plan_133_e83871efb30f7844` n03): the node's journal span was
+ *                    1465 ms while the Mod's own cost line read `total_ms=12.02;approach_ms=0.00;
+ *                    floods=0`, so this action priced as a 480 ms swing was the floor accusing the
+ *                    engine's animation of being our latency. `FarmerSprite.intervalModifier`
+ *                    (`Farmer.update`) scales each frame by ~0.90-0.93 at a farmhand's walk speed,
+ *                    which is runtime state the way an exhausted farmer's doubled frames are: the
+ *                    declared frames are the floor, and the modifier only shortens the wait.
  *  - `hand`          no animation branch at all, so the engine's minimum for an
- *                    interaction is one tick: `Tool.beginUsing`'s `instantUse` path
- *                    (`Tool.cs:638-644`) applies the tool and clears `UsingTool` inside
- *                    the same call.
+ *                    interaction is one tick: `Tool.beginUsing`'s `instantUse` path applies the
+ *                    tool and clears `UsingTool` inside the same call.
  *  - `walk`          no animation; the whole cost is the walk.
  *  - `unpriced`      the engine declares no constant for this work (a menu, a warp, the
  *                    day rollover, fishing). `null`, never a guessed number.
@@ -211,6 +222,7 @@ const MOVEMENT_MULTIPLIER = Object.freeze({
 export const ANIMATION_CLASS = Object.freeze({
   toolSwing: 480,
   wateringCanSwing: 375,
+  animalProductSwing: 1600,
   hand: TICK_MS.value,
   walk: 0,
   unpriced: null,
@@ -305,6 +317,14 @@ export function assertDeclaredConstants(constants = DECLARED_CONSTANTS) {
  * tool-family handler drives (`RequestLocalTillSoil` -> hoe, `RequestLocalWaterCrop` ->
  * wateringCan, `RequestLocalCutWeeds` -> scythe, …) and records that `harvest_crop` is
  * a hand pick with no tool involved.
+ *
+ * THIS TABLE IS A HAND COPY OF THAT KNOWLEDGE, and it is therefore the shape of the
+ * defect that priced `collect_animal_product` as a generic 480 ms swing while the
+ * engine's own branch for the milk pail is 1600 ms: a number describing the engine,
+ * written down away from the engine. The fix that removes the copy is for the Mod's
+ * descriptor to publish each action's native animation (kind, frames, interval) and for
+ * this file to read it; until then this remains the exception list, and a new class here
+ * costs an entry in `ANIMATION_CLASS` too.
  */
 const ACTION_ANIMATION_CLASS = Object.freeze({
   toolSwing: Object.freeze([
@@ -321,9 +341,11 @@ const ACTION_ANIMATION_CLASS = Object.freeze({
     "cut_weeds",
     "cut_grass",
     "scythe_crop",
-    "collect_animal_product",
   ]),
   wateringCanSwing: Object.freeze(["water_crop", "refill_watering_can", "water_pet_bowl", "water_slime_hutch_trough"]),
+  // The one action that drives the livestock tools: `MilkPail`/`Shears` are their own frame table
+  // (4 x 400 ms), not the generic `Tool.endUsing` swing, which is why one entry here is worth a class.
+  animalProductSwing: Object.freeze(["collect_animal_product"]),
   walk: Object.freeze(["move_to_tile"]),
   unpriced: Object.freeze([
     // Menus and modal interactions: the engine has no per-interaction animation constant.
@@ -513,7 +535,12 @@ function flatRows(path) {
       unattributed += 1;
       continue;
     }
-    rows.push({ action: entry.action, ms: entry.settledAtMs - entry.dispatchedAtMs, tiles: null, walkSource: "unrecorded" });
+    rows.push({
+      action: entry.action,
+      ms: entry.settledAtMs - entry.dispatchedAtMs,
+      tiles: null,
+      walkSource: "unrecorded",
+    });
   }
   return { rows, rejected, unattributed };
 }
@@ -527,8 +554,7 @@ function flatRows(path) {
  * a ceiling (`walk=lattice`).
  */
 function latticeTiles(left, right) {
-  const tileOf = (node) =>
-    typeof node?.tile?.x === "number" && typeof node?.tile?.y === "number" ? node.tile : null;
+  const tileOf = (node) => (typeof node?.tile?.x === "number" && typeof node?.tile?.y === "number" ? node.tile : null);
   const from = tileOf(left);
   const to = tileOf(right);
   if (from === null || to === null) return null;
@@ -685,7 +711,9 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     for (const row of rows) {
       const key = `${channel}:${row.action}`;
       if (!byChannel.has(key)) byChannel.set(key, { channel, action: row.action, instances: [] });
-      byChannel.get(key).instances.push({ ms: row.ms, tiles: row.tiles ?? null, walkSource: row.walkSource ?? "unrecorded" });
+      byChannel
+        .get(key)
+        .instances.push({ ms: row.ms, tiles: row.tiles ?? null, walkSource: row.walkSource ?? "unrecorded" });
     }
   };
   for (const path of files.timelines) {
@@ -731,9 +759,9 @@ export function measureActionPace({ bundleRoot, classes = defaultClasses() } = {
     // weeks (see the header).
     const walked = chosen.instances.map((instance) => instance.tiles).filter((tiles) => typeof tiles === "number");
     const walkTiles = walked.length === 0 ? null : round(percentile(walked, 0.5));
-    const walkSource = chosen.instances.find((instance) => instance.walkSource !== "unrecorded")?.walkSource ?? "unrecorded";
-    const floorMs =
-      className === null ? null : nativeFloorMs({ action, tiles: 1, distance: walkTiles ?? 0, classes });
+    const walkSource =
+      chosen.instances.find((instance) => instance.walkSource !== "unrecorded")?.walkSource ?? "unrecorded";
+    const floorMs = className === null ? null : nativeFloorMs({ action, tiles: 1, distance: walkTiles ?? 0, classes });
     rows.push(
       Object.freeze({
         action,

@@ -1147,7 +1147,10 @@ test("a delivered bubble that carries a fragment is refused by name, and the spe
         /^speech {14}5 of 5 lines {2}AGREE/mu,
         "a refused bubble is counted with the lines it was refused beside, not dropped from the population",
       );
-      assert.match(output, /^ {2}refused +bubble_carried_a_fragment:b 十五包防风草种子到手，兜里还剩七百六 {2}<- result\.json sessionTurns\[\]\.refusedBubbles/mu);
+      assert.match(
+        output,
+        /^ {2}refused +bubble_carried_a_fragment:b 十五包防风草种子到手，兜里还剩七百六 {2}<- result\.json sessionTurns\[\]\.refusedBubbles/mu,
+      );
     },
   ));
 
@@ -1458,15 +1461,27 @@ test("a tool still up at its own settlement is a leak past the tree's longest de
       withResult: true,
       session: null,
       // The shape `farmhandexecutioncontroller.fishingactions.cs` publishes when it settles beside the body:
-      // `can_move=…|using_tool=…`. A swing the tree declares lasts at most 480 ms, so a settle-time `using_tool=true`
-      // has outlived every one of them by construction.
+      // `can_move=…|using_tool=…`. The longest animation the tree declares bounds it, so a settle-time
+      // `using_tool=true` has outlived every one of them by construction.
       bridgeFacts: [expiredCast("location=Forest;can_move=false|using_tool=true")],
     }),
     (runDir) => {
       const output = runVerdict(runDir);
-      assert.match(output, /^body {2}implicit_body_hold_leak:fish_here:fish_here_catch_window_deadline_expired/mu);
+      assert.match(firstScreen(output), /^implicit_body_hold_leak:fish_here:fish_here_catch_window_deadline_expired/u);
       assert.match(output, /using_tool=true x1/u);
-      assert.match(output, /bound {13}480 ms <- tools\/lib\/action-pace\.mjs ANIMATION_CLASS\.toolSwing/u);
+      // The printed bound is the longest class the tree declares, derived here from that declaration rather than
+      // restated: a fourth animation branch must move this line without this test editing the number.
+      const [longestClass] = Object.entries(ANIMATION_CLASS)
+        .filter(([, ms]) => typeof ms === "number")
+        .reduce((best, entry) => (entry[1] > best[1] ? entry : best));
+      assert.match(
+        output,
+        new RegExp(
+          `bound\\s+${String(USING_TOOL_BOUND_MS)} ms <- tools/lib/action-pace\\.mjs ANIMATION_CLASS\\.${longestClass}`,
+          "u",
+        ),
+        `the printed bound must name the longest declared class (${longestClass}), got:\n${output}`,
+      );
     },
   ));
 
@@ -1599,7 +1614,7 @@ test("the [body-hold] lines are read as sites with the clocks they carry, and a 
   );
   assert.equal(
     USING_TOOL_BOUND_MS,
-    Math.max(ANIMATION_CLASS.toolSwing, ANIMATION_CLASS.wateringCanSwing),
+    Math.max(...Object.values(ANIMATION_CLASS).filter((ms) => typeof ms === "number")),
     "the bound is the longest tool animation the tree declares, derived rather than restated",
   );
 });
@@ -1617,7 +1632,10 @@ test("the two prompt-level rows name the producer that did not write, never the 
   // Two shapes, because the file's absence has two causes and the detail must name the one this bundle shows: a bundle that
   // kept a runtime root and holds no record, and a bundle that never captured a root at all.
   for (const [build, flag] of [
-    [() => ({ withResult: true, session: sessionFile({ steps: [{ calls: [observeCall("c1")] }] }) }), /holds a runtime root with no such file/u],
+    [
+      () => ({ withResult: true, session: sessionFile({ steps: [{ calls: [observeCall("c1")] }] }) }),
+      /holds a runtime root with no such file/u,
+    ],
     [() => ({ withResult: false, session: null }), /holds no runtime root at all/u],
   ])
     withFixture(build, (runDir) => {
