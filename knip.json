@@ -5,9 +5,9 @@
         // knip reads the file arguments of `package.json` scripts itself, so a tool a script runs needs no row
         // here; a tool a PowerShell or Python entry point runs does not have that path into the graph. The three
         // rows that used to stand here (`tools/*.mjs`, `tools/sandbox/*.mjs`, `tools/live-run/**/*.mjs`) covered
-        // 115 files between them, and 33 of those are covered by no row below because nothing in this tree runs or
+        // 115 files between them, and 34 of those are covered by no row below because nothing in this tree runs or
         // reads them: they are reported as unused files, which is the finding the governance doc asks for rather
-        // than an entry asserting a reachability nothing backs (measured 2026-11-24, `.tmp/lane-governance.md`).
+        // than an entry asserting a reachability nothing backs (measured 2026-11-25, `.tmp/lane-governance.md`).
         //
         // Each row names the one consumer knip cannot follow. A row whose file disappears is an unmatched pattern,
         // which knip prints as a configuration hint, so the lists expire themselves; a new tool is uncovered until
