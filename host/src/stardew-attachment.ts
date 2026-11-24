@@ -92,6 +92,75 @@ export type StardewJoinManifest = Readonly<{
   signature: string;
 }>;
 
+/**
+ * How far ahead of this Host's clock the Mod's own stamp may be, and how old its publication may be
+ * before the advertisement stops being evidence about the world it describes.
+ *
+ * The skew is the guard `readLiveSession` already applies, named once for both readers. The age is
+ * this module's own: the Mod publishes at the top of every tick and stamps an expiry a few seconds
+ * out (measured 2026-11-24: a beat every ~1 s, `expiresAtUnixMs` ~2.7-3.0 s after the stamp), so a
+ * document five beats old means the publisher stopped while its expiry still claims a live world.
+ */
+const SESSION_CLOCK_SKEW_MS = 30_000;
+const CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS = 5_000;
+
+/**
+ * What the Mod's own published advertisement says about THIS companion's cabin, in the save the
+ * Player Host currently has loaded.
+ *
+ * Three answers, and `unknown` is an answer rather than an error: after a cabin press whose signed
+ * manifest WAS admitted, the difference between "this save does not hold her" and "the game did not
+ * say" is the difference between releasing a quarantined attempt and keeping it. A stale, forged,
+ * unreadable or other-world document must never answer `not_bound` - that is the reading that would
+ * let a second manifest into the world.
+ *
+ * `not_bound` is the strong claim, and the two facts it needs are the reason it can be made at all:
+ * the Mod writes the farmhand the manifest named into the chosen cabin in the same accepted request
+ * that issues the manifest (`readIssuedManifest` reads that binding back before the admission
+ * exists), while its FORMAL companion attachment is published on a later beat. So "no cabin holds
+ * her" alone would be true of a world where the publication already landed; `not_bound` therefore
+ * also requires that no cabin holds the manifest's own farmhand, and is unavailable while no admitted
+ * manifest names one.
+ */
+export type StardewCabinOccupancy =
+  | Readonly<{ status: "not_bound" }>
+  | Readonly<{
+      status: "already_bound";
+      cabinId: string;
+      /**
+       * Which of the advertisement's two columns holds her: the formal companion attachment, or the
+       * farmhand the admitted manifest created in that cabin before the attachment caught up.
+       */
+      boundBy: "companion" | "manifest_farmhand";
+    }>
+  | Readonly<{ status: "unknown"; reason: StardewCabinOccupancyUnknownReason }>;
+
+/** Every reason a live advertisement could not decide the question, each naming the layer that failed. */
+export type StardewCabinOccupancyUnknownReason =
+  | "session_document_missing"
+  | "session_document_unreadable"
+  | "session_document_unauthenticated"
+  | "session_document_stale"
+  | "session_document_clock_ahead"
+  | "session_document_other_world"
+  | "session_host_not_ready"
+  | "session_protocol_mismatch"
+  | "manifest_farmhand_unavailable";
+
+/**
+ * The world and the farmhand the answer has to be about.
+ *
+ * `saveId`/`worldId` come from the attempt's own admitted material: an advertisement of a save the
+ * player has since loaded instead says nothing about this attempt's save, and the same per-attempt
+ * session directory serves it. `farmhandId` is the manifest the press had admitted, and `null` means
+ * no admission is in hand - see `StardewCabinOccupancy` for why absence cannot then be proven.
+ */
+export type StardewCabinOccupancyExpectation = Readonly<{
+  saveId: string;
+  worldId: string;
+  farmhandId: string | null;
+}>;
+
 export type StardewAttachmentOptions = Readonly<{
   sessionDirectory: string;
   sessionToken: string;
@@ -147,12 +216,63 @@ export class StardewAttachmentFlow {
     const session = validateSession(value);
     const now = this.now();
     if (session.expiresAtUnixMs <= now) throw new Error("stardew_session_expired");
-    if (session.publishedAtUnixMs > now + 30_000) throw new Error("stardew_session_clock_invalid");
+    if (session.publishedAtUnixMs > now + SESSION_CLOCK_SKEW_MS) throw new Error("stardew_session_clock_invalid");
     if (!verifySignature(session, this.#options.sessionToken)) throw new Error("stardew_session_authentication_failed");
     if (session.integrationId !== STARDew_INTEGRATION_ID || session.schemaVersion !== STARDew_PROVISIONING_VERSION)
       throw new Error("stardew_protocol_mismatch");
     if (session.state !== "ready") throw new Error(`stardew_${session.state}`);
     return session;
+  }
+
+  /**
+   * The bounded, non-mutating read behind the cabin-occupancy answer: one `stardew-session.json`
+   * read through the same validator, signature and liveness rules `readLiveSession` applies, and no
+   * write, reservation, arm or bridge command of any kind.
+   *
+   * It answers instead of throwing, because every way of not knowing is one of the THREE answers the
+   * forward step is decided from; the refusals it can give are the ones `StardewCabinOccupancy`
+   * enumerates. A malformed EXPECTATION is not an answer: that is a caller defect and refuses.
+   */
+  public async readCabinOccupancy(expected: StardewCabinOccupancyExpectation): Promise<StardewCabinOccupancy> {
+    if (!isOpaque(expected.saveId) || !isOpaque(expected.worldId))
+      throw new Error("invalid_cabin_occupancy_expectation");
+    if (expected.farmhandId !== null && !isNativeId(expected.farmhandId))
+      throw new Error("invalid_cabin_occupancy_expectation");
+    let raw: string;
+    try {
+      raw = await readFile(resolve(this.#options.sessionDirectory, "stardew-session.json"), "utf8");
+    } catch (error) {
+      return unknownOccupancy(isFileNotFound(error) ? "session_document_missing" : "session_document_unreadable");
+    }
+    let session: StardewSessionAdvertisement;
+    try {
+      session = validateSession(JSON.parse(raw) as unknown);
+    } catch {
+      return unknownOccupancy("session_document_unreadable");
+    }
+    if (!verifySignature(session, this.#options.sessionToken))
+      return unknownOccupancy("session_document_unauthenticated");
+    const now = this.now();
+    if (session.expiresAtUnixMs <= now || now - session.publishedAtUnixMs > CABIN_OCCUPANCY_PUBLISHED_WITHIN_MS)
+      return unknownOccupancy("session_document_stale");
+    if (session.publishedAtUnixMs > now + SESSION_CLOCK_SKEW_MS)
+      return unknownOccupancy("session_document_clock_ahead");
+    if (session.saveId !== expected.saveId || session.worldId !== expected.worldId)
+      return unknownOccupancy("session_document_other_world");
+    if (session.state === "protocol_mismatch") return unknownOccupancy("session_protocol_mismatch");
+    if (session.state !== "ready") return unknownOccupancy("session_host_not_ready");
+    const held = session.cabins.find((cabin) => cabin.boundCompanionId === this.#options.companionId);
+    if (held !== undefined)
+      return Object.freeze({ status: "already_bound" as const, cabinId: held.cabinId, boundBy: "companion" as const });
+    if (expected.farmhandId === null) return unknownOccupancy("manifest_farmhand_unavailable");
+    const farmhandCabin = session.cabins.find((cabin) => cabin.ownerFarmhandId === expected.farmhandId);
+    if (farmhandCabin !== undefined)
+      return Object.freeze({
+        status: "already_bound" as const,
+        cabinId: farmhandCabin.cabinId,
+        boundBy: "manifest_farmhand" as const,
+      });
+    return Object.freeze({ status: "not_bound" as const });
   }
 
   public async verifyCabinChoice(
@@ -409,6 +529,10 @@ async function atomicWrite(path: string, content: string): Promise<void> {
 function isRetryableFileReplaceError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return ["EEXIST", "EPERM", "EBUSY", "ETXTBSY"].includes((error as NodeJS.ErrnoException).code ?? "");
+}
+
+function unknownOccupancy(reason: StardewCabinOccupancyUnknownReason): StardewCabinOccupancy {
+  return Object.freeze({ status: "unknown" as const, reason });
 }
 
 function isFileNotFound(error: unknown): boolean {

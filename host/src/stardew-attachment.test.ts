@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -809,4 +809,193 @@ test("Stardew attachment sole verifier requires exact player-host runtime role a
       await rm(directory, { recursive: true, force: true });
     }
   }
+});
+
+/**
+ * The cabin-occupancy probe, one case per answer, each over a real `stardew-session.json` written by
+ * the same signer the Mod's own beats are written with.
+ *
+ * The expectation is the attempt's own: this save, this world, and the farmhand the admitted manifest
+ * named. `now` is held at 2_000 ms, so the document's own expiry and this module's publication-age
+ * bound are the only things that decide freshness.
+ */
+const OCCUPANCY_EXPECTED = { saveId: "save_01", worldId: "world_01", farmhandId: "123456789" };
+
+function occupancyFlow(directory: string, nowMs = 2_000): StardewAttachmentFlow {
+  return new StardewAttachmentFlow({
+    sessionDirectory: directory,
+    sessionToken: token,
+    companionId: "companion_01",
+    cabinId: "cabin_01",
+    nowMs: () => nowMs,
+  });
+}
+
+async function withSessionDocument(document: unknown, run: (directory: string) => Promise<void>): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), "gamebuddy-stardew-"));
+  try {
+    if (document !== null) await writeFile(join(directory, "stardew-session.json"), String(document));
+    await run(directory);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("cabin occupancy: a live advertisement that holds neither her nor the manifest's farmhand answers not_bound", async () => {
+  await withSessionDocument(JSON.stringify(signed(baseSession)), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), { status: "not_bound" });
+  });
+});
+
+test("cabin occupancy: a live advertisement whose cabin holds her answers already_bound with that cabin", async () => {
+  const session = signed({
+    ...baseSession,
+    cabins: [{ cabinId: "cabin_07", ownerFarmhandId: "123456789", boundCompanionId: "companion_01", isBusy: false }],
+  });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+      status: "already_bound",
+      cabinId: "cabin_07",
+      boundBy: "companion",
+    });
+  });
+});
+
+/**
+ * The shape the live run actually published one beat before the formal attachment: the Mod binds the
+ * farmhand the manifest named into the chosen cabin when it accepts the request
+ * (`SMAPI-latest.txt` 04:34:50, `wrote 1 Farmhand binding(s) into the engine's save cycle`), and
+ * `boundCompanionId` only catches up on a later beat (04:35:01). A probe that looked at the companion
+ * column alone would answer `not_bound` here and release the quarantine into a second manifest.
+ */
+test("cabin occupancy: a cabin holding the manifest's farmhand is already_bound, never not_bound", async () => {
+  const session = signed({
+    ...baseSession,
+    cabins: [
+      { cabinId: "cabin_01", ownerFarmhandId: "987654321", boundCompanionId: "", isBusy: false },
+      { cabinId: "cabin_02", ownerFarmhandId: "123456789", boundCompanionId: "", isBusy: false },
+    ],
+  });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+      status: "already_bound",
+      cabinId: "cabin_02",
+      boundBy: "manifest_farmhand",
+    });
+  });
+});
+
+test("cabin occupancy: an advertisement past its own expiry answers unknown, never not_bound", async () => {
+  const session = signed({ ...baseSession, publishedAtUnixMs: 1_000, expiresAtUnixMs: 1_900 });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+      status: "unknown",
+      reason: "session_document_stale",
+    });
+  });
+});
+
+test("cabin occupancy: an advertisement whose publisher stopped answers unknown even while its own expiry claims life", async () => {
+  // Seven beats after the stamp, with an hour of claimed life left: the publisher is gone, so the
+  // document describes a world this Host has no way to know is still the one it describes.
+  const session = signed({ ...baseSession, publishedAtUnixMs: 1_000, expiresAtUnixMs: 3_600_000 });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory, 8_000).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+      status: "unknown",
+      reason: "session_document_stale",
+    });
+  });
+});
+
+test("cabin occupancy: an unreadable, missing or forged advertisement answers unknown", async () => {
+  const cases = [
+    {
+      label: "truncated document",
+      document: '{"schemaVersion":1,"integrationId":"stardew"',
+      reason: "session_document_unreadable",
+    },
+    { label: "missing document", document: null, reason: "session_document_missing" },
+    {
+      label: "forged signature",
+      document: JSON.stringify({ ...baseSession, signature: "tampered-session-signature" }),
+      reason: "session_document_unauthenticated",
+    },
+    {
+      label: "published ahead of this Host's clock",
+      document: JSON.stringify(signed({ ...baseSession, publishedAtUnixMs: 40_000, expiresAtUnixMs: 60_000 })),
+      reason: "session_document_clock_ahead",
+    },
+  ] as const;
+  for (const item of cases) {
+    await withSessionDocument(item.document, async (directory) => {
+      assert.deepEqual(
+        await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED),
+        { status: "unknown", reason: item.reason },
+        item.label,
+      );
+    });
+  }
+});
+
+test("cabin occupancy: an advertisement of another save proves nothing about this attempt's save", async () => {
+  // The player loaded a different save in the same game: the same per-attempt session directory now
+  // carries a world this attempt never published into.
+  const session = signed({ ...baseSession, saveId: "save_02", worldId: "world_02" });
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED), {
+      status: "unknown",
+      reason: "session_document_other_world",
+    });
+  });
+});
+
+test("cabin occupancy: a host that is not ready, or speaks another protocol, answers unknown", async () => {
+  const cases = [
+    { state: "host_not_ready", reason: "session_host_not_ready" },
+    { state: "protocol_mismatch", reason: "session_protocol_mismatch" },
+  ] as const;
+  for (const item of cases) {
+    await withSessionDocument(JSON.stringify(signed({ ...baseSession, state: item.state })), async (directory) => {
+      assert.deepEqual(
+        await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED),
+        { status: "unknown", reason: item.reason },
+        item.state,
+      );
+    });
+  }
+});
+
+test("cabin occupancy: without the manifest's farmhand, absence cannot be proven", async () => {
+  // No admitted manifest in hand (a Host that restarted): the companion column alone cannot tell a
+  // world the publication never reached from one where the Mod bound the farmhand a beat ago.
+  await withSessionDocument(JSON.stringify(signed(baseSession)), async (directory) => {
+    assert.deepEqual(await occupancyFlow(directory).readCabinOccupancy({ ...OCCUPANCY_EXPECTED, farmhandId: null }), {
+      status: "unknown",
+      reason: "manifest_farmhand_unavailable",
+    });
+  });
+});
+
+test("cabin occupancy: the probe reads the document and writes nothing", async () => {
+  const session = signed(baseSession);
+  await withSessionDocument(JSON.stringify(session), async (directory) => {
+    const before = await readdir(directory);
+    await occupancyFlow(directory).readCabinOccupancy(OCCUPANCY_EXPECTED);
+    assert.deepEqual(await readdir(directory), before, "a probe that wrote would be a second writer of the attempt");
+    assert.equal(await readFile(join(directory, "stardew-session.json"), "utf8"), JSON.stringify(session));
+  });
+});
+
+test("cabin occupancy: a malformed expectation refuses instead of answering", async () => {
+  await withSessionDocument(JSON.stringify(signed(baseSession)), async (directory) => {
+    const flow = occupancyFlow(directory);
+    await assert.rejects(
+      () => flow.readCabinOccupancy({ ...OCCUPANCY_EXPECTED, saveId: "../escape" }),
+      /invalid_cabin_occupancy_expectation/,
+    );
+    await assert.rejects(
+      () => flow.readCabinOccupancy({ ...OCCUPANCY_EXPECTED, farmhandId: "not-a-native-id" }),
+      /invalid_cabin_occupancy_expectation/,
+    );
+  });
 });
