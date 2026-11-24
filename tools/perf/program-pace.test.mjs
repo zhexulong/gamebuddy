@@ -1,20 +1,25 @@
 // red-proof: fixture  a bundle whose three 10-node programs each take 4x their native floor -> the CLI prints
-//   `program_pace_above_native_floor:4:1` with the population, exit 1 (tools/perf/program-pace.test.mjs)
+//   `program_pace_above_native_floor:4:1` with the population AND names the program and the node that held it, exit 1
+//   (tools/perf/program-pace.test.mjs)
+// red-proof: fixture  the same healthy schedules with their wall clocks doubled -> `program_pace_above_native_floor:0.68:0.6`,
+//   exit 1, while every `round94`-`round99` bundle stays green at that same 0.6 (tools/perf/program-pace.test.mjs)
 // red-proof: history  `round99`'s own programs -> `program_pace_ok examined=10 ratio=0.34`, so the gate can be green
 //   on a run that really happened, and the reading prints `walk=lattice_lower_bound` because the walk it charges is
 //   a lower bound on the route (tools/perf/program-pace.test.mjs)
 /**
  * Program pace's own checks: does the floor come out of the run's own node tiles, are the programs it cannot
- * price excluded BY NAME rather than silently dropped, and does a dense program fail the gate while an honest
- * run passes it.
+ * price excluded BY NAME rather than silently dropped, does a dense program fail the gate while an honest
+ * run passes it, and does every reading name the program that held it.
  *
  * The parts of a program's reading are asserted one at a time (`priceProgram`) before the aggregate, because the
  * aggregate is a sum and a sum can be right for the wrong reason: a lattice walk charged to the wrong node, or a
- * transit program priced across a warp, would move the total without any single assertion noticing.
+ * transit program priced across a warp, would move the total without any single assertion noticing. The member
+ * lines are asserted for the same reason - an aggregate that fails while naming the wrong program is a reading
+ * a lane cannot act on.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -27,6 +32,7 @@ import {
   compareProgramPace,
   measureProgramPace,
   PROGRAM_PACE_CEILING,
+  PROGRAM_PACE_MEMBERS,
   PROGRAM_PACE_POPULATION_FLOOR,
   PROGRAM_PACE_WALK,
   priceProgram,
@@ -36,7 +42,8 @@ import {
 
 const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "gates", "data", "check-perf-budget.mjs");
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const ROUND_99 = join(repositoryRoot, ".live-runs", "game-ladder", "2026-11-24T09-55-06-982Z-multiday_routine");
+const LADDER = join(repositoryRoot, ".live-runs", "game-ladder");
+const ROUND_99 = join(LADDER, "2026-11-24T09-55-06-982Z-multiday_routine");
 
 const node = (nodeId, actionId, tile, state = "succeeded") => ({ nodeId, actionId, tile, state });
 const program = (programId, nodes, wallMs) => ({
@@ -81,6 +88,63 @@ async function bundleOf(root, name, { programs, traceStrideMs = 100 }) {
   );
   return directory;
 }
+
+test("a priced program says which span held it: one slow node, or the idle between two of them", () => {
+  const timed = (nodeId, actionId, tile, atMs, settledAtMs) => ({ nodeId, actionId, tile, atMs, settledAtMs });
+  // 1.5 s of the 2.3 s is inside the last node: a slow NODE.
+  const slowNode = priceProgram({
+    programId: "plan_slow",
+    startMs: 0,
+    wallMs: 2_300,
+    nodes: [
+      timed("n01", "cut_weeds", { x: 1, y: 1 }, 0, 600),
+      timed("n02", "cut_weeds", { x: 1, y: 2 }, 100, 700),
+      timed("n03", "break_rock", { x: 1, y: 3 }, 800, 2_300),
+    ],
+  });
+  assert.equal(slowNode.dominant.kind, "node");
+  assert.equal(slowNode.dominant.nodeId, "n03");
+  assert.equal(slowNode.dominant.actionId, "break_rock");
+  assert.equal(slowNode.dominant.ms, 1_500);
+  assert.equal(slowNode.dominant.first, false);
+  // 1.2 s of the 1.5 s is BETWEEN two nodes: the Host round trip and the model thinking, not the game.
+  const slowIdle = priceProgram({
+    programId: "plan_idle",
+    startMs: 0,
+    wallMs: 1_500,
+    nodes: [
+      timed("n01", "cut_weeds", { x: 1, y: 1 }, 0, 200),
+      timed("n02", "cut_weeds", { x: 1, y: 2 }, 1_400, 1_500),
+    ],
+  });
+  assert.equal(slowIdle.dominant.kind, "idle");
+  assert.equal(slowIdle.dominant.afterNodeId, "n01");
+  assert.equal(slowIdle.dominant.nodeId, "n02");
+  assert.equal(slowIdle.dominant.ms, 1_200);
+  // A program whose trace carries no per-node timing has no span to name, and that is `null` rather than a zero.
+  const blind = priceProgram(
+    program("plan_blind", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 900),
+  );
+  assert.equal(blind.excluded, null);
+  assert.equal(blind.dominant, null);
+});
+
+test("the first node's span is marked, because the walk into a program is charged nowhere", () => {
+  const priced = priceProgram({
+    programId: "plan_walk_in",
+    startMs: 0,
+    wallMs: 1_000,
+    nodes: [
+      { nodeId: "n01", actionId: "move_to_tile", tile: { x: 20, y: 4 }, atMs: 0, settledAtMs: 900 },
+      { nodeId: "n02", actionId: "cut_weeds", tile: { x: 20, y: 5 }, atMs: 950, settledAtMs: 1_000 },
+    ],
+  });
+  assert.equal(priced.walkTiles, 1, "only the lattice BETWEEN nodes is charged");
+  assert.deepEqual(
+    { kind: priced.dominant.kind, nodeId: priced.dominant.nodeId, first: priced.dominant.first },
+    { kind: "node", nodeId: "n01", first: true },
+  );
+});
 
 test("the floor is one swing per node plus the lattice between the tiles the run recorded", () => {
   const priced = priceProgram(
@@ -178,8 +242,16 @@ test("a schedule four times its floor fails, naming the ratio and the population
     assert.equal(verdict.kind, "above");
     const rendered = renderProgramPace({ measurement, verdict, bundleRoot: root });
     assert.equal(rendered.failed, true);
-    assert.match(rendered.lines.join("\n"), /^program_pace_above_native_floor:4:1 examined=3 /mu);
-    assert.match(rendered.lines.join("\n"), /^program_pace_population: .* programs examined 3 walk=lattice_lower_bound$/mu);
+    const text = rendered.lines.join("\n");
+    assert.match(text, /^program_pace_above_native_floor:4:0\.6 examined=3 /mu);
+    assert.match(text, /^program_pace_population: .* programs examined 3 walk=lattice_lower_bound$/mu);
+    // The verdict names its offender: an aggregate of 4 with no program under it is a number nobody can act on.
+    // The 18.3 s sits inside the LAST node (the fixture's stride stamps only the final settle), so the line says
+    // a slow node rather than the idle between nodes - the two have different fixes.
+    assert.match(
+      text,
+      /^ {2}densest: plan_a nodes 10 walk 0 tiles · wall 19\.2s · floor 4\.8s · ratio 4 · held by node n10 cut_weeds 18\.3s \(95% of the wall\)$/mu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -216,11 +288,12 @@ test("an empty population and a too-small one are blocked, not passed", async ()
 test("the gate entry prints this section, and the walk's direction is on the line", async () => {
   const root = await mkdtemp(join(tmpdir(), "program-pace-cli-"));
   try {
+    // Three schedules at about a third of their floor: a good day, and its members are named on it.
     await bundleOf(root, "2026-01-01T00-00-00-000Z-cli", {
       programs: [
-        program("plan_a", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 1_000),
-        program("plan_b", [node("n01", "cut_weeds", { x: 4, y: 4 }), node("n02", "cut_weeds", { x: 5, y: 4 })], 1_100),
-        program("plan_c", [node("n01", "cut_weeds", { x: 8, y: 8 }), node("n02", "cut_weeds", { x: 9, y: 8 })], 900),
+        program("plan_a", [node("n01", "cut_weeds", { x: 1, y: 1 }), node("n02", "cut_weeds", { x: 2, y: 1 })], 450),
+        program("plan_b", [node("n01", "cut_weeds", { x: 4, y: 4 }), node("n02", "cut_weeds", { x: 5, y: 4 })], 500),
+        program("plan_c", [node("n01", "cut_weeds", { x: 8, y: 8 }), node("n02", "cut_weeds", { x: 9, y: 8 })], 400),
       ],
     });
     const stdout = execFileSync(process.execPath, [gatePath, "--program-pace-only", "--bundles", root], {
@@ -232,8 +305,43 @@ test("the gate entry prints this section, and the walk's direction is on the lin
     assert.match(stdout, /^program_pace_population: bundleRoot=.* programs examined 3 walk=lattice_lower_bound/mu);
     assert.match(stdout, /^program_pace: 3 programs · wall /mu);
     assert.match(stdout, /\(ceiling, walk=lattice_lower_bound\)/u);
+    // A GREEN RUN NAMES ITS MEMBERS TOO: the three densest are printed before the verdict, so a lane reads
+    assert.match(stdout, /^ {2}densest: plan_b nodes 2 walk 1 tiles · wall 0\.5s · floor 1\.5s · ratio 0\.34 · held by node n02 cut_weeds 0\.4s \(80% of the wall\)$/mu);
+    assert.equal(stdout.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
     assert.match(stdout, /^program_pace_ok examined=3 ratio=/mu);
     assert.equal(PROGRAM_PACE_WALK, "lattice_lower_bound");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a doubled schedule is red at the tightened ceiling, while the same run at its measured pace is green", async () => {
+  const root = await mkdtemp(join(tmpdir(), "program-pace-doubled-"));
+  try {
+    // Ten one-tile swings: the floor is 10 x 480 ms with no walk at all, so the wall clock IS the multiple.
+    const paced = (programId, factor) =>
+      program(
+        programId,
+        Array.from({ length: 10 }, (_, index) => node(`n${String(index + 1)}`, "cut_weeds", { x: 3, y: 3 })),
+        Math.round(4_800 * factor),
+      );
+    await bundleOf(root, "2026-01-01T00-00-00-000Z-pace", {
+      programs: [paced("plan_a", 0.34), paced("plan_b", 0.34), paced("plan_c", 0.34)],
+    });
+    const measured = measureProgramPace({ bundleRoot: root });
+    assert.equal(measured.ratio, 0.34);
+    assert.equal(compareProgramPace({ measurement: measured }).kind, "ok", "round99's own aggregate stays green");
+
+    // The same run with every program taking twice as long: 0.68. This is the regression the old 1.0 line could
+    // not see, and it is the one a doubled Host round trip would produce.
+    await bundleOf(root, "2026-01-01T00-00-00-000Z-pace", {
+      programs: [paced("plan_a", 0.68), paced("plan_b", 0.68), paced("plan_c", 0.68)],
+    });
+    const doubled = measureProgramPace({ bundleRoot: root });
+    assert.equal(doubled.ratio, 0.68);
+    const verdict = compareProgramPace({ measurement: doubled });
+    assert.equal(verdict.kind, "above");
+    assert.equal(renderProgramPace({ measurement: doubled, verdict, bundleRoot: root }).failed, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -254,7 +362,20 @@ test(
     assert.equal(verdict.kind, "ok");
     const rendered = renderProgramPace({ measurement, verdict, bundleRoot: ROUND_99 });
     assert.equal(rendered.failed, false);
-    assert.match(rendered.lines.join("\n"), /^program_pace_ok examined=10 ratio=0.34 ceiling=1$/mu);
+    const text = rendered.lines.join("\n");
+    assert.match(text, /^program_pace_ok examined=10 ratio=0\.34 ceiling=0\.6$/mu);
+    // A GREEN READING NAMES ITS WORST THREE, and this one already says something: the 4.47 program is three
+    // successful barn chores (pet a cow, equip the pail, milk it) whose 2.3 s was 64% one milking node, while the
+    // program below it lost 59% of its half-second to the idle BETWEEN two nodes. Different defects, one number.
+    assert.match(
+      text,
+      /^ {2}densest: plan_133_e83871efb30f7844 nodes 3 walk 0 tiles · wall 2\.3s · floor 0\.5s · ratio 4\.47 · held by node n03 collect_animal_product 1\.5s \(64% of the wall\)$/mu,
+    );
+    assert.match(
+      text,
+      /^ {2}densest: plan_347_2b25eb5271eb2ae9 .* · held by the 0\.2s idle between n01 and n02 \(59% of the wall\), not by any node$/mu,
+    );
+    assert.equal(text.split(/\r?\n/u).filter((line) => line.startsWith("  densest: ")).length, PROGRAM_PACE_MEMBERS);
     // The programs the reading could not price are named, and their number is the difference to the
     // population: a run cannot lose its programs to an exclusion nobody can see.
     const priced = programsOf(ROUND_99);
@@ -263,7 +384,27 @@ test(
   },
 );
 
-test("the ceiling is the engine's own line, above the worst run in the distribution", () => {
-  assert.equal(PROGRAM_PACE_CEILING, 1, "above 1.0 the run spent more time inside programs than the engine forces");
-  assert.equal(PROGRAM_PACE_CEILING > 0.45, true, "the corpus aggregate over 682 programs is 0.45");
+test("the ceiling sits above every round94-99 reading and below a doubled one", () => {
+  // The corpus the line was set from, derived from the artifacts rather than listed by hand: every bundle of
+  // the last two recorded days. A population of zero is a blocked reading, not a pass.
+  const recent = readdirSync(LADDER)
+    .filter((name) => name.startsWith("2026-11-23") || name.startsWith("2026-11-24"))
+    .map((name) => join(LADDER, name));
+  const measured = recent
+    .map((directory) => measureProgramPace({ bundleRoot: directory }))
+    .filter((measurement) => measurement.status === "measured" && measurement.examined >= PROGRAM_PACE_POPULATION_FLOOR);
+  assert.equal(measured.length, 5, "rounds 94-99 that priced a schedule: five of them");
+  for (const measurement of measured)
+    assert.equal(
+      measurement.ratio < PROGRAM_PACE_CEILING,
+      true,
+      `${measurement.bundleRoot} reads ${String(measurement.ratio)} against the ${String(PROGRAM_PACE_CEILING)} ceiling`,
+    );
+  // The tightened line is placed by two readings, not by comfort: the pooled corpus is 0.45 and twice the worst
+  // of rounds 94-99 is 0.80, so a ceiling anywhere in between catches a doubling while every good day passes.
+  assert.equal(PROGRAM_PACE_CEILING, 0.6);
+  assert.equal(PROGRAM_PACE_CEILING > 0.45, true, "the pooled corpus aggregate is 0.45");
+  assert.equal(PROGRAM_PACE_CEILING < 0.68, true, "twice round99's 0.34 must cross the line, and it does at 0.68");
+  const worst = Math.max(...measured.map((measurement) => measurement.ratio));
+  assert.equal(worst * 2 > PROGRAM_PACE_CEILING, true, "twice the worst of rounds 94-99 must be red");
 });

@@ -99,9 +99,17 @@
  * program's schedule (`tools/lib/program-pace.mjs`). It divides a program's own wall clock - the Mod's
  * `programTrace.jsonl`, first node's dispatch to last node's settle - by the native floor of the same
  * nodes (one swing each plus the lattice between the tiles they worked). A run's aggregate is the line
- * that is gated, at 1.0: above it the run spent more time inside programs than the engine forces. Its
- * population is printed, and a run with too few priceable programs says so instead of averaging what
- * is left.
+ * that is gated, at 0.6: 1.5x the worst of rounds 94-99, 1.33x the pooled corpus (0.45), and below the
+ * 0.68 a doubled `round99` reads - the 1.0 it replaced could not see a doubling. Its population is
+ * printed, and a run with too few priceable programs says so instead of averaging what is left.
+ *
+ * EVERY READING NAMES ITS WORST THREE PROGRAMS, on a green run as well as a red one, with the span that
+ * held each: `held by node n03 collect_animal_product 1.5s (64% of the wall)` is a slow node, `held by
+ * the 0.2s idle between n01 and n02` is the Host round trip and the model thinking. Measured on
+ * `round99`: 4.47 - the run's worst program - was three successful barn chores whose 2.3s was one
+ * milking node. Measured over the corpus, the three densest are 21.01, 17.9 and 13.28, and every one of
+ * them is held by its FIRST node, whose walk in the floor charges nowhere: a small program's ratio is
+ * often the metric's gap rather than the run's defect, which is why the verdict rests on the aggregate.
  *
  *   node tools/check-perf-budget.mjs --program-pace-only      # just the program-schedule verdict
  *
@@ -110,7 +118,21 @@
  * three causes - the share of submission-bearing turns whose submissions all produced no state change
  * (no receipt, refused, or a receipt the Mod's own words call "already done"), the refused work she
  * re-sent, and identical reads repeated with no action between. A turn the artifacts cannot decide is
- * `not_measured` and is never counted as waste.
+ * `not_measured` and is never counted as waste. The ceiling is 0.5, and it is placed by two readings:
+ * the last two days' worst (0.472) stays green and twice `round99` (0.562) is red.
+ *
+ * THE JUDGED RUN'S EMPTY TURNS ARE NAMED, grouped by cause, one line per cause: `refused 14: turn 9
+ * stardew_plan_work plan_script_uses_forbidden:Math · turn 30 stardew_express_emote(express_emote)
+ * cutscene_active · ...` and `no_receipt:stardew_observe 5: turn 6 stardew_observe · ...`. That is what
+ * the number cannot say and a lane needs: `round99`'s 28.1% is 14 refusals under eleven codes - five
+ * the Host's script compiler refusing a plan before a node ran, four the body's own animation channel
+ * (three `cutscene_active`, one `emote_busy`), five the navigation and movement terminals - plus 13
+ * reads that could not change anything by construction.
+ *
+ * WHAT NEITHER OF THE TWO CAN SEE, stated on their lines as well: program pace prices TIME, never
+ * outcome, so a program that is fast and wrong reads as dense; and turn waste counts a turn that got
+ * one `succeeded` receipt as work however little it bought, so six refused-then-corrected attempts
+ * inside one turn read as a working turn.
  *
  *   node tools/check-perf-budget.mjs --turn-waste-only        # just the turn account
  *
@@ -119,10 +141,12 @@
  * red-proof: fixture  a bundle whose `harvest_crop` duration is doubled -> `action_pace_above_native_floor:harvest_crop:`
  *                     naming the action, its ratio, ours and the floor, exit 1 (tools/perf/action-pace.test.mjs)
  * red-proof: fixture  a bundle whose three programs each take 4x their native floor ->
- *                     `program_pace_above_native_floor:4:1 examined=3` with the population, exit 1
+ *                     `program_pace_above_native_floor:4:0.6 examined=3` with the population and the program named,
+ *                     exit 1 (tools/perf/program-pace.test.mjs)
+ * red-proof: fixture  the same schedules at 0.34 stay green at the 0.6 ceiling while the doubled 0.68 is red
  *                     (tools/perf/program-pace.test.mjs)
- * red-proof: fixture  a run with 10 empty turns of 19 -> `turn_waste_above_ceiling:0.526:0.5`, exit 1
- *                     (tools/perf/turn-waste.test.mjs)
+ * red-proof: fixture  a run with 10 empty turns of 19 -> `turn_waste_above_ceiling:0.526:0.5`, exit 1, with the ten
+ *                     turns named by index and tool (tools/perf/turn-waste.test.mjs)
  * red-proof: fixture  a baseline carrying another machine's `machine` -> `perf_budget_not_measured:machine_identity_changed:`
  *                     with both identities and `compared=0`, exit 1, where it used to exit 0; the same fixture with
  *                     `--accept-machine-skip` -> `perf_budget_skipped: ... compared=0`, exit 0 (tools/perf/budget.test.mjs)

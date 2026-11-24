@@ -4,17 +4,22 @@
 // source-expiry: when the reason codes move out of `farmhandexecutioncontroller.*.cs` (a rename, a split, or the
 //   Mod's receipts moving to a generated vocabulary), this check must read that vocabulary instead; it fails loudly
 //   on the missing file rather than passing on no rows.
-// red-proof: fixture  a synthetic run with 10 empty turns of 19 -> `turn_waste_above_ceiling:0.526:0.5`, exit 1
-//   (tools/perf/turn-waste.test.mjs)
+// red-proof: fixture  a synthetic run with 10 empty turns of 19 -> `turn_waste_above_ceiling:0.526:0.5`, exit 1, and the
+//   10 empty turns are named by index and tool (tools/perf/turn-waste.test.mjs)
+// red-proof: fixture  a run at twice `round99`'s share (0.562) -> red at the 0.5 ceiling, which is placed between the
+//   last two days' worst (0.472) and that doubling (tools/perf/turn-waste.test.mjs)
 // red-proof: history  `round99`'s own record -> `turn_waste: empty turns 27 of 96 = 28.1% · refused resubmissions 1 ·
-//   repeated identical reads 0`, `turn_waste_ok` (tools/perf/turn-waste.test.mjs)
+//   repeated identical reads 0`, `turn_waste_ok`, and the 27 turns named one by one with their refusal codes
+//   (tools/perf/turn-waste.test.mjs)
 /**
  * Turn waste's own checks: is a turn's emptiness decided by what its submissions bought rather than by prose; are
- * the three numbers kept apart; and is a turn the artifacts cannot decide kept OUT of the waste count.
+ * the three numbers kept apart; is a turn the artifacts cannot decide kept OUT of the waste count; and does the
+ * reading name the turns that were empty rather than only their share.
  *
  * The three numbers have three causes, so they are asserted separately: a suite that only checked the share would
  * pass a run whose share came from retries and a run whose share came from reads. `round99` is the case all three
- * were written for - one refused plan re-sent, four observe rounds, and no identical re-read.
+ * were written for - one refused plan re-sent, four observe rounds, and no identical re-read - and its 27 empty
+ * turns are 14 refusals with 11 different codes and 13 reads, which is the difference the printout has to show.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -196,10 +201,17 @@ test("ten empty turns of nineteen fail the gate, and the three numbers are print
     assert.equal(verdict.kind, "above");
     const rendered = renderTurnWaste({ measurement, verdict, bundleRoot: root });
     assert.equal(rendered.failed, true);
-    assert.match(rendered.lines.join("\n"), /^turn_waste: empty turns 10 of 19 = 52\.6% \(every run in the population\) · refused resubmissions 0 · repeated identical reads 0$/mu);
-    assert.match(rendered.lines.join("\n"), /^ {2}worst run: 2026-01-01T00-00-00-000Z-empty 10 of 19 = 52\.6%$/mu);
-    assert.match(rendered.lines.join("\n"), /^ {2}judged run: 2026-01-01T00-00-00-000Z-empty 10 of 19 = 52\.6% /mu);
-    assert.match(rendered.lines.join("\n"), /^turn_waste_above_ceiling:0\.526:0\.5 runs=1 run=2026-01-01T00-00-00-000Z-empty /mu);
+    const text = rendered.lines.join("\n");
+    assert.match(text, /^turn_waste: empty turns 10 of 19 = 52\.6% \(every run in the population\) · refused resubmissions 0 · repeated identical reads 0$/mu);
+    assert.match(text, /^ {2}worst run: 2026-01-01T00-00-00-000Z-empty 10 of 19 = 52\.6%$/mu);
+    assert.match(text, /^ {2}judged run: 2026-01-01T00-00-00-000Z-empty 10 of 19 = 52\.6% /mu);
+    // THE RED CASE NAMES ITS MEMBERS: ten empty turns, each with the turn index and what was submitted.
+    assert.match(text, /^ {2}empty turns of the judged run \(10 turn\(s\), 10 submission\(s\)\), by cause:$/mu);
+    assert.match(
+      text,
+      /^ {4}no_receipt:stardew_observe 10: turn 10 stardew_observe · turn 11 stardew_observe · turn 12 stardew_observe · turn 13 stardew_observe · turn 14 stardew_observe · turn 15 stardew_observe · turn 16 stardew_observe · turn 17 stardew_observe · turn 18 stardew_observe · turn 19 stardew_observe$/mu,
+    );
+    assert.match(text, /^turn_waste_above_ceiling:0\.526:0\.5 runs=1 run=2026-01-01T00-00-00-000Z-empty /mu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -247,6 +259,11 @@ test("repeated reads need the same selection and no action between them", async 
       turn([{ id: "a1", name: "stardew_express_emote", arguments: { emote: "note" } }]),
       result("a1", "stardew_express_emote", executed("x1", "express_emote", "succeeded", "emote_started")),
       ...observe("o3", { limit: 3 }),
+      // Nine real actions after the reads, so the run is large enough to be the one the verdict judges.
+      ...Array.from({ length: 9 }, (_, index) => [
+        turn([{ id: `w${String(index)}`, name: "stardew_express_emote", arguments: { emote: "note" } }]),
+        result(`w${String(index)}`, "stardew_express_emote", executed(`y${String(index)}`, "express_emote", "succeeded", "emote_started")),
+      ]).flat(),
     ];
     await bundleOf(root, "2026-01-01T00-00-00-000Z-reads", { lines });
     const measurement = measureTurnWaste({ bundleRoot: root });
@@ -254,6 +271,18 @@ test("repeated reads need the same selection and no action between them", async 
     assert.equal(measurement.repeatedReads, 1, "only the second read of the pair repeats an identical selection");
     assert.equal(measurement.empty.turns, 3, "all three read turns bought nothing the receipts can show");
     assert.deepEqual(measurement.reads.byTool, { stardew_observe: 3 });
+    // The pair is named by TURN, not only by selection: `turn 2 (repeats turn 1)` is the shape a reader can find
+    // in the session record, and the third read is not marked because an action happened in between.
+    assert.deepEqual(measurement.newest.emptyTurns, [
+      { turn: 1, submissions: [{ cause: "no_receipt:stardew_observe", code: null, submitted: "stardew_observe", repeatsTurn: null }] },
+      { turn: 2, submissions: [{ cause: "no_receipt:stardew_observe", code: null, submitted: "stardew_observe", repeatsTurn: 1 }] },
+      { turn: 4, submissions: [{ cause: "no_receipt:stardew_observe", code: null, submitted: "stardew_observe", repeatsTurn: null }] },
+    ]);
+    const text = renderTurnWaste({ measurement, verdict: compareTurnWaste({ measurement }), bundleRoot: root }).lines.join("\n");
+    assert.match(
+      text,
+      /^ {4}no_receipt:stardew_observe 3: turn 1 stardew_observe · turn 2 stardew_observe \(repeats turn 1\) · turn 4 stardew_observe$/mu,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -297,13 +326,19 @@ test("a refused resubmission is the SAME work after a refusal, and a later reque
   }
 });
 
-test("the gate entry prints this section for a healthy synthetic run", async () => {
+test("the gate entry prints this section for a healthy synthetic run, offenders included", async () => {
   const root = await mkdtemp(join(tmpdir(), "turn-waste-cli-"));
   try {
     const lines = [];
     for (let index = 0; index < TURN_WASTE_POPULATION_FLOOR; index += 1) {
       lines.push(turn([{ id: `c${String(index)}`, name: "stardew_express_emote", arguments: { emote: "note" } }]));
       lines.push(result(`c${String(index)}`, "stardew_express_emote", executed(`x${String(index)}`, "express_emote", "succeeded", "emote_started")));
+    }
+    // Four read turns: a GREEN run still names them, because a share of 25% is exactly the reading a lane has to
+    // decide whether to accept.
+    for (let index = 0; index < 4; index += 1) {
+      lines.push(turn([{ id: `o${String(index)}`, name: "stardew_observe", arguments: { limit: index } }]));
+      lines.push(result(`o${String(index)}`, "stardew_observe", `<world-state> revision ${String(index)}`));
     }
     await bundleOf(root, "2026-01-01T00-00-00-000Z-healthy", { lines });
     const stdout = execFileSync(process.execPath, [gatePath, "--turn-waste-only", "--bundles", root], {
@@ -312,10 +347,15 @@ test("the gate entry prints this section for a healthy synthetic run", async () 
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    assert.match(stdout, /^turn_waste_population: bundleRoot=.* bundles with a session record 1 · turns examined 12 /mu);
-    assert.match(stdout, /^turn_waste: empty turns 0 of 12 = 0\.0% \(every run in the population\) · refused resubmissions 0 · repeated identical reads 0$/mu);
-    assert.match(stdout, /^ {2}judged run: 2026-01-01T00-00-00-000Z-healthy 0 of 12 = 0\.0% /mu);
-    assert.match(stdout, /^turn_waste_ok runs=1 judged=0 ceiling=0\.5$/mu);
+    assert.match(stdout, /^turn_waste_population: bundleRoot=.* bundles with a session record 1 · turns examined 16 /mu);
+    assert.match(stdout, /^turn_waste: empty turns 4 of 16 = 25\.0% \(every run in the population\) · refused resubmissions 0 · repeated identical reads 0$/mu);
+    assert.match(stdout, /^ {2}judged run: 2026-01-01T00-00-00-000Z-healthy 4 of 16 = 25\.0% /mu);
+    assert.match(
+      stdout,
+      /^ {2}empty turns of the judged run \(4 turn\(s\), 4 submission\(s\)\), by cause:$/mu,
+    );
+    assert.match(stdout, /^ {4}no_receipt:stardew_observe 4: turn 13 stardew_observe · turn 14 stardew_observe · turn 15 stardew_observe · turn 16 stardew_observe$/mu);
+    assert.match(stdout, /^turn_waste_ok runs=1 judged=0\.25 ceiling=0\.5$/mu);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -339,7 +379,7 @@ test("a bundle that names no session record is counted, not read as a zero", asy
 });
 
 test(
-  "round99's own record replays as three numbers",
+  "round99's own record replays as three numbers, and names the 27 turns behind them",
   { skip: !existsSync(ROUND_99) },
   () => {
     const measurement = measureTurnWaste({ bundleRoot: ROUND_99 });
@@ -355,5 +395,97 @@ test(
     assert.equal(verdict.kind, "ok");
     assert.equal(renderTurnWaste({ measurement, verdict, bundleRoot: ROUND_99 }).failed, false);
     assert.equal(TURN_WASTE_CEILING, 0.5);
+
+    // THE OFFENDERS, derived from the reading rather than copied from a run: every empty turn it counted must be
+    // named in the printout, with the submission it made. A printout that silently drops one is worse than none.
+    const text = renderTurnWaste({ measurement, verdict, bundleRoot: ROUND_99 }).lines.join("\n");
+    for (const emptyTurn of measurement.newest.emptyTurns)
+      assert.equal(text.includes(`turn ${String(emptyTurn.turn)} `), true, `turn ${String(emptyTurn.turn)} is not named`);
+    assert.equal(
+      measurement.newest.emptyTurns.reduce((total, emptyTurn) => total + emptyTurn.submissions.length, 0),
+      28,
+      "27 empty turns made 28 submissions: one turn read twice",
+    );
+    // Fourteen of the 27 are REFUSALS under eleven distinct codes, and they are not one problem: five are the
+    // Host's script compiler refusing a plan before any node ran, four are the body hold (`cutscene_active` 3,
+    // `emote_busy` 1), and five are the Mod's navigation and movement terminals (`no_native_path`,
+    // `warp_out_of_range`, `destination_locked` and two `destination_access_indeterminate`). Each code must
+    // appear on the line its turn is named on.
+    const codes = measurement.newest.emptyTurns
+      .flatMap((emptyTurn) => emptyTurn.submissions)
+      .filter((submission) => submission.cause === "refused")
+      .map((submission) => submission.code);
+    assert.equal(codes.length, 14);
+    assert.equal(new Set(codes).size, 11, "eleven distinct refusal codes, so the 14 are not one defect repeated");
+    assert.equal(codes.filter((code) => code.startsWith("plan_script_")).length, 5, "the Host's compiler refused five scripts");
+    assert.equal(codes.filter((code) => code === "cutscene_active").length, 3);
+    assert.equal(codes.filter((code) => code === "destination_access_indeterminate").length, 2);
+    for (const code of codes) assert.equal(text.includes(code), true, `${code} is counted but not printed`);
+    // The refusal family the printout now makes visible: the compiler's, the body hold's and the navigation
+    // terminal's. These are the codes the remedy table (`host/src/stardew-action-remedy.ts`) answers by name.
+    assert.match(text, /^ {4}refused 14: turn 9 stardew_plan_work plan_script_uses_forbidden:Math · /mu);
+    assert.match(text, /turn 30 stardew_express_emote\(express_emote\) cutscene_active · /u);
+    assert.match(text, /turn 88 stardew_express_emote\(express_emote\) cutscene_active · /u);
+    assert.match(text, /turn 109 stardew_express_emote\(express_emote\) emote_busy$/mu);
+    // A turn that made the same submission twice is named ONCE, because `turn 1 ... · turn 1 ...` reads as a
+    // defect in the printout rather than in the run; a settling answer that names no code says so rather than
+    // looking like a read.
+    assert.match(text, /^ {4}no_receipt:stardew_look_up 2: turn 1 stardew_look_up \(×2\)$/mu);
+    assert.match(
+      text,
+      /^ {4}no_change 1: turn 83 stardew_plan_work\(navigate_to_destination\) \(no code in the answer\)$/mu,
+    );
+    // And the reads, which are a different problem: they could not change anything by construction.
+    assert.match(
+      text,
+      /^ {4}no_receipt:stardew_observe 5: turn 6 stardew_observe · turn 7 stardew_observe · turn 26 stardew_observe · turn 90 stardew_observe · turn 105 stardew_observe$/mu,
+    );
   },
 );
+
+test("twice as much waste as round99 crosses the ceiling, and the ceiling sits between the two", () => {
+  // The line is placed by two readings: the last two days' worst
+  // (`2026-11-22T06-04`, 0.472) must stay green, and twice `round99` (0.281) must be red. The whole era's
+  // worst is 0.650 (`2026-11-21T12-50`, 20 turns), and that day is red by design: more than half its working
+  // turns bought nothing.
+  assert.equal(TURN_WASTE_CEILING > 0.472, true, "reds a day that really happened on 2026-11-22");
+  assert.equal(TURN_WASTE_CEILING < 0.281 * 2, true, "lets a doubled round99 through");
+});
+
+test("a run at twice round99's share fails, and it names the turns that made it fail", async () => {
+  const root = await mkdtemp(join(tmpdir(), "turn-waste-doubled-"));
+  try {
+    // 32 working turns, 18 of them empty: 0.5625, exactly the share a doubled `round99` would read.
+    const lines = [];
+    for (let index = 0; index < 14; index += 1) {
+      lines.push(turn([{ id: `w${String(index)}`, name: "stardew_express_emote", arguments: { emote: "note" } }]));
+      lines.push(result(`w${String(index)}`, "stardew_express_emote", executed(`x${String(index)}`, "express_emote", "succeeded", "emote_started")));
+    }
+    for (let index = 0; index < 18; index += 1) {
+      lines.push(turn([{ id: `p${String(index)}`, name: "stardew_plan_work", arguments: { script: `builder.enter_exit({ x: ${String(index)}, y: 12 });` } }]));
+      lines.push(
+        result(`p${String(index)}`, "stardew_plan_work", {
+          programId: `plan_${String(index)}`,
+          settled: true,
+          nodes: [{ nodeId: "n01", actionId: "enter_exit", state: "rejected", reasonCode: "warp_out_of_range" }],
+        }),
+      );
+    }
+    await bundleOf(root, "2026-01-01T00-00-00-000Z-doubled", { lines });
+    const measurement = measureTurnWaste({ bundleRoot: root });
+    assert.equal(measurement.share, 0.563);
+    const verdict = compareTurnWaste({ measurement });
+    assert.equal(verdict.kind, "above");
+    const rendered = renderTurnWaste({ measurement, verdict, bundleRoot: root });
+    assert.equal(rendered.failed, true);
+    const text = rendered.lines.join("\n");
+    assert.match(text, /^turn_waste_above_ceiling:0\.563:0\.5 /mu);
+    assert.match(text, /^ {2}empty turns of the judged run \(18 turn\(s\), 18 submission\(s\)\), by cause:$/mu);
+    assert.match(
+      text,
+      /^ {4}refused 18: turn 15 stardew_plan_work\(enter_exit\) warp_out_of_range · turn 16 .* · turn 32 stardew_plan_work\(enter_exit\) warp_out_of_range$/mu,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -43,16 +43,27 @@
  * population is two programs has not measured a schedule, and the line says `too_few_programs` rather
  * than printing a ratio over a population that cannot support one.
  *
- * THE THRESHOLD IS THE ENGINE'S OWN LINE, NOT A ROUND NUMBER. Rounds 94-99 measured aggregate ratios
- * of 0.30, 0.40, 0.31, 0.25 and 0.34 over 19, 29, 12, 18 and 10 programs, so the worst of them spent
- * 40% of the time the engine itself forces. `PROGRAM_PACE_CEILING` is 1.0: above it the run spent
- * MORE time inside its programs than the engine forces for the same work, and everything above 1.0
- * is our own overhead. That is 2.5x the worst reading in the distribution, and it is the boundary
- * the metric means rather than a value that looked comfortable.
+ * WHICH PROGRAM, ALWAYS. An aggregate ratio is a number nobody can act on, so every reading prints its
+ * worst three programs with the piece of the wall clock that held them: `held by node n03
+ * collect_animal_product 1.5s (64% of the wall)` is a slow node, `held by the 0.2s idle between n01 and
+ * n02 (59% of the wall), not by any node` is the Host round trip and the model's thinking, and neither
+ * is visible in the aggregate. Measured 2026-11-24 over the corpus: `plan_299` (17 nodes) took 127.7s
+ * against a 34.4s floor - ratio 3.71 - while its run's aggregate read 0.86, so the offender was inside a
+ * passing-looking number.
+ *
+ * THE THRESHOLD IS READ OFF THE DISTRIBUTION, NOT CHOSEN FOR COMFORT. Rounds 94-99 measured aggregate
+ * ratios of 0.30, 0.40, 0.31, 0.25 and 0.34; the pooled corpus (682 priced programs) reads 0.45; and
+ * of the 31 runs in the corpus with three or more priceable programs, 21 sit at or below 0.50 and the
+ * ten above it are the 2026-11-18..11-21 runs that carried the 127-second and 101-second programs.
+ * `PROGRAM_PACE_CEILING` is 0.6 - 1.5x the worst of rounds 94-99, 1.33x the corpus, and BELOW the
+ * smallest doubling that has to be caught: a 2x regression of `round99` reads 0.68 and of the corpus
+ * 0.90. The previous 1.0 line was 2.5x the worst run, which means a run could have doubled its
+ * schedule and stayed green.
  *
  * WHAT IT CANNOT SEE, stated: the gaps BETWEEN programs are not in any program's wall clock, so a run
  * that spends an hour deciding what to do next reads as dense here and must be judged by the turn
- * account beside it (`tools/lib/turn-waste.mjs`).
+ * account beside it (`tools/lib/turn-waste.mjs`). A program that is fast but WRONG - six refusals that
+ * each cost nothing - also reads as dense: this module prices time, never outcome.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -87,12 +98,13 @@ const TRANSIT = new Set(TRANSIT_ACTIONS);
  * How many times the native floor a run's programs may take before the schedule is a defect.
  *
  * MEASURED over rounds 94-99: 0.30 (19 programs), 0.40 (29), 0.31 (12), 0.25 (18) and 0.34 (10); over
- * the whole 402-bundle `game-ladder` corpus with 682 priced programs the aggregate is 0.45. The line
- * is 1.0 - the point where the time spent INSIDE programs exceeds the time the engine itself forces
- * for that work - which is 2.2x the corpus aggregate and 2.5x the worst single run in the
- * distribution, and it is the boundary the metric means rather than a value that looked comfortable.
+ * the whole `game-ladder` corpus with 682 priced programs the pooled aggregate is 0.45. The line is 0.6:
+ * 1.5x the worst of those five runs and 1.33x the corpus, while staying under the 0.68 a doubled
+ * `round99` would read - the 1.0 it replaces was 2.5x the worst run and could not see a doubling at all.
+ * The runs above it in the corpus (0.76, 0.86, 1.07) are the 2026-11-18..11-21 days whose worst programs
+ * took 127.7s, 101.8s and 10.8s against floors of 34.4s, 58.8s and 2.6s: real defects, not noise.
  */
-export const PROGRAM_PACE_CEILING = 1;
+export const PROGRAM_PACE_CEILING = 0.6;
 
 /** Below this many examined programs a run has not measured a schedule, whatever the ratio says. */
 export const PROGRAM_PACE_POPULATION_FLOOR = 3;
@@ -101,6 +113,9 @@ export const PROGRAM_PACE_POPULATION_FLOOR = 3;
 export const PROGRAM_PACE_WALK = "lattice_lower_bound";
 
 const round = (value) => (value === null || value === undefined ? null : Math.round(value * 100) / 100);
+
+/** How many programs a reading names, always printed, so the number has an offender beside it. */
+export const PROGRAM_PACE_MEMBERS = 3;
 
 /** Every bundle under `root`: a directory holding a `result.json` is one run. */
 export function bundleDirectories(root) {
@@ -170,6 +185,9 @@ export function programsOf(bundleDirectory) {
               nodeId: row.nodeId,
               actionId: typeof info?.actionId === "string" ? info.actionId : null,
               tile: isTile(info?.tile) ? info.tile : null,
+              // The Mod's own clock for this node, kept so a reading can say WHERE the wall clock went.
+              atMs: typeof row.atMs === "number" ? row.atMs : null,
+              settledAtMs: typeof row.settledAtMs === "number" ? row.settledAtMs : null,
             });
           }),
         ),
@@ -183,6 +201,41 @@ const isTile = (tile) =>
   typeof tile?.x === "number" && typeof tile?.y === "number" && Number.isFinite(tile.x) && Number.isFinite(tile.y);
 
 const lattice = (left, right) => Math.abs(right.x - left.x) + Math.abs(right.y - left.y);
+
+/**
+ * The single largest piece of a program's wall clock, and which side it came from.
+ *
+ * Two things can hold a schedule: a NODE's own service time (dispatch to settle, which includes the walk
+ * in to that node's tile) or the IDLE between one node's settle and the next node's dispatch (the Mod's
+ * result travelling back, the Host's turn, the model thinking about the next node). The aggregate ratio
+ * cannot tell those apart and they have opposite fixes, so every priced program carries its dominant one.
+ *
+ * `first` marks a dominant node that is the program's first: its service time includes the walk into the
+ * program, which the floor charges nowhere (`priceProgram` starts charging tiles at the second node).
+ */
+function dominantSpanOf(nodes) {
+  const timeOf = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+  let dominant = null;
+  let settledBefore = null;
+  let nodeBefore = null;
+  nodes.forEach((node, index) => {
+    const at = timeOf(node.atMs);
+    const settled = timeOf(node.settledAtMs);
+    if (settledBefore !== null && at !== null && at > settledBefore) {
+      const idle = { kind: "idle", nodeId: node.nodeId, afterNodeId: nodeBefore, actionId: node.actionId, ms: at - settledBefore };
+      if (dominant === null || idle.ms > dominant.ms) dominant = idle;
+    }
+    if (at !== null && settled !== null && settled >= at) {
+      const service = { kind: "node", nodeId: node.nodeId, actionId: node.actionId, ms: settled - at, first: index === 0 };
+      if (dominant === null || service.ms > dominant.ms) dominant = service;
+    }
+    if (settled !== null) {
+      settledBefore = settled;
+      nodeBefore = node.nodeId;
+    }
+  });
+  return dominant;
+}
 
 /**
  * One program's reading, or the reason it cannot be priced.
@@ -219,6 +272,8 @@ export function priceProgram(program) {
     floorMs: round(floorMs),
     walkTiles,
     ratio: round(program.wallMs / floorMs),
+    // Every priced program can be asked where its time went; the reading prints it for the worst.
+    dominant: dominantSpanOf(program.nodes),
   };
 }
 
@@ -302,6 +357,42 @@ export function compareProgramPace({ measurement, ceiling = PROGRAM_PACE_CEILING
   return Object.freeze({ kind: "ok", ratio: measurement.ratio, ceiling });
 }
 
+const seconds = (ms) => `${(ms / 1000).toFixed(1)}s`;
+
+/** The share of a program's wall clock that its dominant span held, as a whole percentage. */
+const shareOf = (span, wallMs) => (wallMs <= 0 ? 0 : Math.round((span.ms / wallMs) * 100));
+
+/**
+ * The worst `PROGRAM_PACE_MEMBERS` programs by ratio, each with the span that held it.
+ *
+ * A program id alone is not an offender a reader can follow when the population spans bundles - the default
+ * invocation pools every run under `.live-runs` - so the bundle is named as well whenever there is more than
+ * one of them.
+ */
+function memberLines(measurement) {
+  const bundles = new Set(measurement.readings.map((reading) => reading.bundle));
+  const where = (reading) =>
+    bundles.size > 1 && typeof reading.bundle === "string" ? `${reading.bundle.split(/[\\/]/u).pop()} ` : "";
+  const held = (reading) => {
+    const span = reading.dominant ?? null;
+    if (span === null) return "held by no recorded span (the trace carries no node timing)";
+    const share = `${String(shareOf(span, reading.wallMs))}% of the wall`;
+    if (span.kind === "idle")
+      return `held by the ${seconds(span.ms)} idle between ${String(span.afterNodeId)} and ${String(span.nodeId)} (${share}), not by any node`;
+    const action = span.actionId === null ? "" : ` ${span.actionId}`;
+    const first = span.first === true ? ", and it is the program's first node, whose walk in is charged nowhere" : "";
+    return `held by node ${String(span.nodeId)}${action} ${seconds(span.ms)} (${share})${first}`;
+  };
+  return [...measurement.readings]
+    .sort((left, right) => right.ratio - left.ratio)
+    .slice(0, PROGRAM_PACE_MEMBERS)
+    .map(
+      (reading) =>
+        `  densest: ${where(reading)}${reading.programId} nodes ${String(reading.nodes)} walk ${String(reading.walkTiles)} tiles · ` +
+        `wall ${seconds(reading.wallMs)} · floor ${seconds(reading.floorMs)} · ratio ${String(reading.ratio)} · ${held(reading)}`,
+    );
+}
+
 /** Everything the gate prints for this section, and whether it failed. */
 export function renderProgramPace({ measurement, verdict, bundleRoot }) {
   const lines = [];
@@ -320,6 +411,20 @@ export function renderProgramPace({ measurement, verdict, bundleRoot }) {
     );
     return { lines, failed: false };
   }
+  if (verdict.kind !== "insufficient_population") {
+    const { distribution, wallMs, floorMs } = measurement;
+    lines.push(
+      `program_pace: ${String(measurement.examined)} programs · wall ${seconds(wallMs)} · floor ${seconds(floorMs)} · ` +
+        `ratio ${String(verdict.ratio)} (ceiling, walk=${PROGRAM_PACE_WALK}) · per program min ${String(distribution.min)} ` +
+        `p50 ${String(distribution.p50)} p90 ${String(distribution.p90)} max ${String(distribution.max)}`,
+    );
+  }
+  // The worst members are printed ALWAYS, on a green run too: an aggregate cannot say which program to fix,
+  // and the three below this line are the whole reason the number moved. They are named, not gated - the
+  // verdict rests on the aggregate - but a tail program that holds a schedule is a reading in its own right
+  // (`round99`'s `plan_133` reads 4.47 over three barn chores whose 2.3s was one milking node and the walk
+  // into the first node, which this floor charges nowhere).
+  lines.push(...memberLines(measurement));
   if (verdict.kind === "insufficient_population") {
     lines.push(
       `program_pace_too_few_programs: programs examined ${String(verdict.examined)} of ${String(measurement.programs)} ` +
@@ -328,20 +433,6 @@ export function renderProgramPace({ measurement, verdict, bundleRoot }) {
     );
     return { lines, failed: false };
   }
-  const { distribution, wallMs, floorMs } = measurement;
-  lines.push(
-    `program_pace: ${String(measurement.examined)} programs · wall ${(wallMs / 1000).toFixed(1)}s · floor ${(floorMs / 1000).toFixed(1)}s · ` +
-      `ratio ${String(verdict.ratio)} (ceiling, walk=${PROGRAM_PACE_WALK}) · per program min ${String(distribution.min)} ` +
-      `p50 ${String(distribution.p50)} p90 ${String(distribution.p90)} max ${String(distribution.max)}`,
-  );
-  // The tail is printed and NOT gated: a small program's ceiling is dominated by the walk INTO its first
-  // node, which no artifact records (measured `round99`: `plan_133` reads 4.47 over three one-swing nodes
-  // whose 2.3 s was almost all approach). A reader can see them; the verdict rests on the aggregate.
-  for (const reading of [...measurement.readings].sort((left, right) => right.ratio - left.ratio).slice(0, 5))
-    lines.push(
-      `  densest: ${reading.programId} nodes ${String(reading.nodes)} walk ${String(reading.walkTiles)} tiles · ` +
-        `wall ${(reading.wallMs / 1000).toFixed(1)}s · floor ${(reading.floorMs / 1000).toFixed(1)}s · ratio ${String(reading.ratio)}`,
-    );
   if (verdict.kind === "ok") {
     lines.push(
       `program_pace_ok examined=${String(measurement.examined)} ratio=${String(verdict.ratio)} ceiling=${String(verdict.ceiling)}`,

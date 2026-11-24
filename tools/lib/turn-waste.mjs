@@ -33,8 +33,13 @@
  * A TURN IS WASTE WHEN EVERY SUBMISSION IT MADE BUYED NOTHING - all of them `no_receipt`,
  * `refused` or `no_change`. That is the empty-turn share.
  *
- * AND THE THREE NUMBERS ARE PRINTED APART, because they have three different causes and one
- * number would hide all of them:
+ * THE THREE NUMBERS ARE PRINTED APART, because they have three different causes and one number would hide
+ * all of them, and the JUDGED RUN'S EMPTY TURNS ARE NAMED ONE BY ONE: a share is not a reading a lane can act
+ * on, so the section prints, grouped by cause, `turn 41 stardew_observe`, `turn 12 stardew_plan_work
+ * (move_to_tile,enter_exit) policy_identity_mismatch` and `turn 43 stardew_observe (repeats turn 41)`. A
+ * reader goes from the number to the offender without re-deriving the analysis, and `round99`'s 27 empty
+ * turns - 14 refusals under eleven codes, 13 reads that could buy nothing by construction - are visible as
+ * the two different problems they are.
  *
  *   empty turns            turns whose submissions all produced no state change (the share below);
  *   refused resubmissions  a refused submission re-sent as the same work - keyed on the CONTENT she
@@ -52,17 +57,32 @@
  * that submitted nothing at all (she spoke, or answered with no tool) is not an empty turn either:
  * it is counted beside the population, since a turn with no submission has nothing to have bought.
  *
- * THE THRESHOLD IS READ OFF THE DISTRIBUTION, NOT CHOSEN. Rounds 94-99 measured empty-turn shares of
- * 34.5% (30 of 87), 19.5% (23 of 118), 34.2% (39 of 114), 16.7% (30 of 180) and 28.1% (27 of 96); the
- * worst is 34.5%, and `TURN_WASTE_CEILING` sits at 0.5 - half her working turns - which is 1.45x the
- * worst of them and the point where the day is the harness's rather than the world's.
+ * THE THRESHOLD IS READ OFF THE DISTRIBUTION, AND IT HAS NO ROOM IN EITHER DIRECTION. The last two days
+ * (2026-11-22..11-24, 10 recorded runs) read 0.167 to 0.472, and the whole current era (2026-11-18..11-24,
+ * 21 runs) 0.167 to 0.650. `TURN_WASTE_CEILING` is 0.5: 1.06x the last two days' worst (`2026-11-22T06-04`,
+ * 25 of 53 turns) and 0.89x the smallest doubling that has to be caught - twice `round99`, 0.562. Tightening
+ * it to 0.45 would red two days of that same week that really happened (0.457 and 0.472); lifting it to 0.55
+ * would let a doubled `round99` through. Two era readings DO sit above it (`2026-11-19T04-46` 0.519 of 185
+ * turns, `2026-11-21T12-50` 0.650 of 20), and by this metric's own meaning those days were wasteful: more
+ * than half of their working turns bought nothing. The line the gate showed as loose (1.78x) was loose
+ * against `round99` alone, not against the population it judges.
+ *
+ * THE POPULATION IS SPLIT ON TIME, and that split is what makes one ceiling possible at all: the corpus is
+ * bimodal - the 2026-10 and 11-01..11-11 runs read 0.54-1.00 (their turns were reads), the 11-18+ era reads
+ * 0.17-0.65 - and the verdict judges only the MOST RECENT judgeable run, so an old day cannot red today's
+ * reading. The split is on recency, not on program size or map, because the harness the turns meet is what
+ * changed between the two modes.
+ *
+ * WHAT IT CANNOT SEE, stated: a turn that submits one action and gets a `succeeded` receipt counts as work
+ * however little it bought, so six refused-then-corrected attempts inside one turn read as a working turn;
+ * and a bundle that publishes no session record is `withoutRecord`, never a zero.
  *
  * THE RUN IS THE UNIT THE VERDICT JUDGES, and the corpus is printed beside it. A share over every run in
  * a checkout mixes a day that read its way across the map with one that worked, and MEASURED 2026-11-24:
- * 74 of the 106 recorded runs sit above 0.5 - all of them 2026-10 runs whose turns were reads - so a
- * corpus ceiling would be red on history forever and a lane would learn to ignore it. The verdict reads
- * the MOST RECENT judgeable run (the day just run, and the line names it), the corpus aggregate and the
- * three worst runs are printed above it, and a run smaller than `TURN_WASTE_POPULATION_FLOOR` working
+ * 74 of the 106 recorded runs sit above 0.5 - every one of them a 2026-10 or early-11 day whose turns were
+ * reads - so a corpus ceiling would be red on history forever and a lane would learn to ignore it. The
+ * verdict reads the MOST RECENT judgeable run (the day just run, and the line names it), the corpus aggregate
+ * and the three worst runs are printed above it, and a run smaller than `TURN_WASTE_POPULATION_FLOOR` working
  * turns is not judged at all.
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -106,9 +126,10 @@ const REFUSED = new Set(REFUSED_STATES);
  *
  * MEASURED over rounds 94-99 (`2026-11-23T03-13-05-598Z` .. `2026-11-24T09-55-06-982Z`): 34.5% (30 of
  * 87 turns), 19.5% (23/118), 34.2% (39/114), 16.7% (30/180), 28.1% (27/96). `round98` published no
- * session record and is counted `withoutRecord`, not as a zero. The line is 0.5 - HALF her working
- * turns - which is 1.45x the worst reading in that distribution: below it the waste is the tail of a
- * real day, and above it the day was spent on the harness instead of on the world.
+ * session record and is counted `withoutRecord`, not as a zero. The line is 0.5, placed by two readings
+ * from the era it judges rather than by comfort: the last two days' worst is 0.472
+ * (`2026-11-22T06-04`, 25 of 53 turns), and twice `round99` - the smallest doubling that must be red - is
+ * 0.562. Tightening to 0.45 reds two days of that week; lifting to 0.55 lets a doubling through.
  */
 export const TURN_WASTE_CEILING = 0.5;
 
@@ -292,6 +313,43 @@ export function outcomeOf({ tool, answer, unreadable = false, outcomes }) {
 }
 
 /**
+ * What she put on the wire, for the line that names an empty turn: the tool, and the work when the answer
+ * or the refusal names it, so `stardew_plan_work(move_to_tile,enter_exit)` says WHICH plan was refused.
+ */
+function submittedOf({ tool, answer }) {
+  const actions = Array.isArray(answer?.nodes)
+    ? [...new Set(answer.nodes.map((node) => node?.actionId).filter((action) => typeof action === "string"))].sort()
+    : [];
+  if (actions.length > 0) return `${tool}(${actions.join(",")})`;
+  if (typeof answer?.actionId === "string") return `${tool}(${answer.actionId})`;
+  return tool;
+}
+
+/** The cause a submission is counted under, in the two vocabularies the printout uses. */
+const causeOf = (entry) => (entry.outcome.kind === "no_receipt" ? `no_receipt:${entry.tool}` : entry.outcome.kind);
+
+/**
+ * One empty turn, as the line that names it needs it: which turn of the run it was, and each submission it
+ * made with the cause it was counted under and the code the answer gave (a read has no code - it could not
+ * change anything by construction - while a refusal or a nothing-changed receipt has the Mod's own words).
+ */
+function emptyTurnOf({ turn, classified }) {
+  return Object.freeze({
+    turn,
+    submissions: Object.freeze(
+      classified.map((entry) =>
+        Object.freeze({
+          cause: causeOf(entry),
+          code: entry.outcome.kind === "no_receipt" ? null : (entry.outcome.why ?? null),
+          submitted: submittedOf({ tool: entry.tool, answer: entry.answer }),
+          repeatsTurn: entry.repeatsTurn ?? null,
+        }),
+      ),
+    ),
+  });
+}
+
+/**
  * Every turn, every submission and the three readings over them.
  *
  * POPULATION: the bundles under `bundleRoot` that publish a session record. A bundle that names no
@@ -361,18 +419,22 @@ export function measureTurnWaste({ bundleRoot } = {}) {
     let bundleEmpty = 0;
     let bundleRefusedResubmissions = 0;
     let bundleRepeatedReads = 0;
+    let turn = 0;
+    const bundleEmptyTurns = [];
     const answers = new Map();
     for (const record of records) {
       if (record?.message?.role !== "toolResult") continue;
       answers.set(record.message.toolCallId, record.message);
     }
     // The run's own reads, in order, so a repeat is a repeat of an identical selection with no action
-    // between. Reset by any action submission: a read after work is a fresh look, not a repeat.
+    // between. Reset by any action submission: a read after work is a fresh look, not a repeat. The map
+    // holds the TURN each key was read at, so a repeat can name the turn it repeats rather than a count.
     let readsSinceAction = new Map();
     for (const record of records) {
       const message = record?.message;
       if (message?.role !== "assistant") continue;
       turns.examined += 1;
+      turn += 1;
       const calls = (Array.isArray(message.content) ? message.content : []).filter((part) => part?.type === "toolCall");
       const classified = [];
       for (const call of calls) {
@@ -402,7 +464,8 @@ export function measureTurnWaste({ bundleRoot } = {}) {
         const outcome = outcomeOf({ tool: call.name, answer, unreadable, outcomes });
         submissions.examined += 1;
         submissions[outcome.kind] += 1;
-        classified.push({ tool: call.name, argumentsOfCall: call.arguments, answer, outcome });
+        const entry = { tool: call.name, argumentsOfCall: call.arguments, answer, outcome, repeatsTurn: null };
+        classified.push(entry);
         // A REFUSED RESUBMISSION IS A RE-SEND OF REFUSED WORK WHILE NOTHING HAS MOVED. The cost being
         // counted is the turn the refusal made her spend, so the retry has to be the NEXT attempt at the
         // same work: a refusal is remembered only until some submission changes something, because after
@@ -441,8 +504,9 @@ export function measureTurnWaste({ bundleRoot } = {}) {
               repeatedReads += 1;
               bundleRepeatedReads += 1;
               repeatedReadKeys.set(key, (repeatedReadKeys.get(key) ?? 0) + 1);
+              entry.repeatsTurn = readsSinceAction.get(key);
             }
-            readsSinceAction.set(key, true);
+            readsSinceAction.set(key, turn);
           }
         }
       }
@@ -464,8 +528,9 @@ export function measureTurnWaste({ bundleRoot } = {}) {
       if (classified.every((entry) => entry.outcome.kind !== "changed")) {
         emptyTurns += 1;
         bundleEmpty += 1;
+        bundleEmptyTurns.push(emptyTurnOf({ turn, classified }));
         for (const entry of classified) {
-          const cause = entry.outcome.kind === "no_receipt" ? `no_receipt:${entry.tool}` : entry.outcome.kind;
+          const cause = causeOf(entry);
           byCause.set(cause, (byCause.get(cause) ?? 0) + 1);
         }
       }
@@ -475,6 +540,7 @@ export function measureTurnWaste({ bundleRoot } = {}) {
         bundle: directory,
         turns: bundleTurns,
         empty: bundleEmpty,
+        emptyTurns: Object.freeze(bundleEmptyTurns),
         refusedResubmissions: bundleRefusedResubmissions,
         repeatedReads: bundleRepeatedReads,
         share: bundleTurns === 0 ? null : Math.round((bundleEmpty / bundleTurns) * 1000) / 1000,
@@ -542,7 +608,7 @@ function detailLines(measurement) {
   const causes = Object.entries(measurement.empty.byCause)
     .map(([cause, count]) => `${cause}:${String(count)}`)
     .join(", ");
-  lines.push(`  the submissions inside them, by cause: ${causes.length === 0 ? "none" : causes}`);
+  lines.push(`  the submissions inside them (every run in the population), by cause: ${causes.length === 0 ? "none" : causes}`);
   for (const [key, count] of measurement.refusedResubmissionKeys)
     lines.push(`  refused resubmission: ${key} re-sent ${String(count)} time(s) while nothing had moved`);
   for (const [key, count] of measurement.repeatedReadKeys)
@@ -557,6 +623,59 @@ function detailLines(measurement) {
         `kept out of the share: ${Object.entries(measurement.notMeasured.byCause)
           .map(([why, count]) => `${why}:${String(count)}`)
           .join(", ")}`,
+    );
+  return lines;
+}
+
+/**
+ * The judged run's empty turns, NAMED AND GROUPED BY CAUSE, printed on a green run as well as a red one.
+ *
+ * A share tells a lane how much of the day bought nothing and never which turns did; the number that is
+ * worth acting on is `turn 12 stardew_plan_work(move_to_tile,enter_exit) policy_identity_mismatch`, because
+ * it names the turn in the session record, the work that was asked for, and the code the answer gave. Reads
+ * carry no code - they cannot change anything by construction - so their line is the turn and the tool.
+ */
+function memberLines(reading) {
+  const groups = new Map();
+  let members = 0;
+  // A turn that submitted the same thing twice under the same cause is ONE offender named once, with the
+  // count beside it - `turn 1 stardew_look_up · turn 1 stardew_look_up` reads as a defect in the printout.
+  const named = new Map();
+  for (const turn of reading.emptyTurns ?? []) {
+    for (const submission of turn.submissions) {
+      members += 1;
+      if (!groups.has(submission.cause)) groups.set(submission.cause, []);
+      const code =
+        submission.code === null
+          ? submission.cause.startsWith("no_receipt")
+            ? ""
+            : " (no code in the answer)"
+          : ` ${submission.code}`;
+      const repeats =
+        submission.repeatsTurn === null || submission.repeatsTurn === undefined
+          ? ""
+          : ` (repeats turn ${String(submission.repeatsTurn)})`;
+      const line = `turn ${String(turn.turn)} ${submission.submitted}${code}${repeats}`;
+      const key = `${submission.cause}\u0000${line}`;
+      const seen = named.get(key);
+      if (seen === undefined) {
+        const entry = { line, count: 1 };
+        named.set(key, entry);
+        groups.get(submission.cause).push(entry);
+      } else seen.count += 1;
+    }
+  }
+  if (groups.size === 0) return [`  empty turns of the judged run: none, so there is no offender to name`];
+  const lines = [
+    `  empty turns of the judged run (${String(reading.empty)} turn(s), ${String(members)} submission(s)), by cause:`,
+  ];
+  const ordered = [...groups.entries()].sort((left, right) =>
+    right[1].length === left[1].length ? (left[0] < right[0] ? -1 : 1) : right[1].length - left[1].length,
+  );
+  for (const [cause, entries] of ordered)
+    lines.push(
+      `    ${cause} ${String(entries.reduce((total, entry) => total + entry.count, 0))}: ` +
+        entries.map((entry) => (entry.count === 1 ? entry.line : `${entry.line} (×${String(entry.count)})`)).join(" · "),
     );
   return lines;
 }
@@ -602,6 +721,7 @@ export function renderTurnWaste({ measurement, verdict, bundleRoot }) {
     `  judged run: ${verdict.bundle.split(/[\\/]/u).pop()} ${String(measurement.newest.empty)} of ` +
       `${String(measurement.newest.turns)} = ${((verdict.share ?? 0) * 100).toFixed(1)}% (the most recent run in this population)`,
   );
+  lines.push(...memberLines(measurement.newest));
   lines.push(...detailLines(measurement));
   if (verdict.kind === "ok") {
     lines.push(

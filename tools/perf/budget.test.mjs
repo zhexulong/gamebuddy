@@ -27,9 +27,9 @@ import {
   recordingLine,
   revisionLine,
   worstOfProcesses,
-} from "../check-perf-budget.mjs";
+} from "../../gates/data/check-perf-budget.mjs";
 
-const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "check-perf-budget.mjs");
+const gatePath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "gates", "data", "check-perf-budget.mjs");
 
 const recorded = { opsPerSecond: 500, perOpMicros: 2 };
 
