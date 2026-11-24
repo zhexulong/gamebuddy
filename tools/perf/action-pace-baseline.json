@@ -98,9 +98,9 @@
       "instances": 16
     },
     "collect_animal_product": {
-      "ratio": 3.05,
+      "ratio": 0.92,
       "oursMs": 1465,
-      "floorMs": 480,
+      "floorMs": 1600,
       "walkTiles": 0,
       "walkSource": "lattice",
       "instances": 1
