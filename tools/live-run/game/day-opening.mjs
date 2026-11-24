@@ -4,9 +4,9 @@
  * The first prompt of a day is the one turn with nothing behind it, so a run that hands it over before the world has
  * been read is a run whose day started blind - and that is a fact about the HARNESS, which is why every reading here
  * publishes "not measured" with its own reason instead of a pass. `awaitDayOpeningWorld` waits (bounded in polls as
- * well as in the clock), `readDayFirstDelivery` reads what the Host actually delivered for that day out of this run's
- * own session record, and `assessDayStarts`/`assessCompanionArrival` turn those readings into the verdict codes the
- * session verdict orders against every behavioural claim about the day.
+ * well as in the clock), `readDayStartDeliveries` reads what the Host actually delivered for each scheduled day out of
+ * this run's own session record, and `assessDayStarts`/`assessCompanionArrival` turn those readings into the verdict
+ * codes the session verdict orders against every behavioural claim about the day.
  */
 
 /**
@@ -87,52 +87,86 @@ export function dayPromptWithoutObservation(prompt, opening, locale) {
 }
 
 /**
- * What the Host actually DELIVERED for one day's first turn, read from this run's own session record.
+ * What the Host actually DELIVERED for each scheduled day's first turn, read from this run's own session record.
  *
  * <p>
- * The reading is the session's user message at the moment the day's first prompt was issued, and nothing else: a day that
- * carried `世界：尚未收到观察` started blind, however healthy the turn after it looked. `fromIndex` is captured BEFORE the
- * turn - the count of user messages the record already held - so a gate's line or a later turn can never be read as the
- * day's opening.
+ * THE DAY'S DELIVERY IS THE MESSAGE CARRYING THE DAY'S OWN WORDS, not the message at a POSITION in the record. The
+ * harness hands a day's prompt to the Host, and the Host writes it into the record at its next request boundary - measured
+ * on `round99`: day 2's prompt was admitted at 10:07:55 and reached the record at 10:09:52 (117 s later, behind the
+ * pump's own event batch), day 3's at 178 s. A reading indexed off the record as it stood when the turn OPENED - a count
+ * of user messages taken before the prompt, then the first message after it - therefore read a record the day had not
+ * reached yet: `days started blind 0 of 3` beside `day_start_reading_missing:2` and `:3` on a run that delivered all
+ * three notes (`MULTIDAY_DAY_NOTES days scheduled 3 · notes delivered 3`) and opened every day on an observed world. The
+ * position was never the fact; the words are, and they are the harness's own (`promptForDay`), so nothing here has to
+ * guess at a record's shape.
  * </p>
  *
  * <p>
- * NOT MEASURED is its own answer, with the reason, and never a pass: an unreadable record, a record that rotated mid-turn
- * (a compaction writes a new file and every index in it means something else), and a turn that appended no user message
- * at all are three different gaps with three different owners.
+ * The days are read IN ORDER, each searching from where the previous one was found, so a rotation that asks the same
+ * task on two days reads two deliveries instead of the first one twice.
+ * </p>
+ *
+ * <p>
+ * NOT MEASURED is its own answer, with the reason, and never a pass: an unreadable record, a day whose words are nowhere
+ * in it (the prompt was admitted and never delivered - the same gap `assessPlayerInputSchedule` names from the note's
+ * side), and a day scheduled without words to look for are three different gaps with three different owners.
  * </p>
  */
-export function readDayFirstDelivery({
-  day,
-  texts,
-  fromIndex,
-  sourcePath = null,
-  readingPath = null,
-  waitedMs = null,
-  marker,
-}) {
-  const unmeasured = (reason) =>
-    Object.freeze({ day, waitedMs, measured: false, startedBlind: false, worldState: null, reason });
+export function readDayStartDeliveries({ days, texts, marker }) {
+  const scheduled = Array.isArray(days) ? days : [];
+  const unmeasured = (entry, reason) =>
+    Object.freeze({
+      day: Number.isInteger(entry?.day) ? entry.day : null,
+      waitedMs: Number.isInteger(entry?.waitedMs) ? entry.waitedMs : null,
+      measured: false,
+      startedBlind: false,
+      worldState: null,
+      reason,
+    });
   // A reading with no marker would compare every delivery against "" and call each one blind, and one with a missing
   // marker would call every delivery sound; both are silent, so the caller must name what it is looking for.
   if (typeof marker !== "string" || marker.length === 0) throw new Error("day_start_marker_required");
-  if (typeof sourcePath === "string" && typeof readingPath === "string" && sourcePath !== readingPath)
-    return unmeasured("session_record_changed_mid_turn");
-  if (!Array.isArray(texts)) return unmeasured("session_record_unreadable");
-  if (!Number.isInteger(fromIndex) || fromIndex < 0 || texts.length <= fromIndex)
-    return unmeasured("no_user_message_after_day_prompt");
-  const delivered = texts[fromIndex];
-  const block = /<world-state>([\s\S]*?)<\/world-state>/u.exec(delivered)?.[1]?.trim() ?? null;
-  return Object.freeze({
-    day,
-    waitedMs,
-    measured: true,
-    startedBlind: delivered.includes(marker),
-    // The block itself, bounded: the evidence a reader needs, and never the whole delivery (the player's own note is in
-    // there and is read for matching only).
-    worldState: block === null ? null : `<world-state>${block.slice(0, 200)}</world-state>`,
-    reason: null,
-  });
+  if (!Array.isArray(texts))
+    return Object.freeze(scheduled.map((entry) => unmeasured(entry, "session_record_unreadable")));
+  const readings = [];
+  // Where the previous day's delivery was found: the next day's search starts after it, so the order of the days and the
+  // order of the record are the same order.
+  let from = 0;
+  for (const entry of scheduled) {
+    const words = typeof entry?.prompt === "string" ? entry.prompt : "";
+    if (words.trim().length === 0) {
+      readings.push(unmeasured(entry, "day_prompt_text_missing"));
+      continue;
+    }
+    let at = -1;
+    for (let index = from; index < texts.length; index += 1) {
+      const text = texts[index];
+      if (typeof text === "string" && text.includes(words)) {
+        at = index;
+        break;
+      }
+    }
+    if (at < 0) {
+      readings.push(unmeasured(entry, "day_prompt_not_in_session"));
+      continue;
+    }
+    from = at + 1;
+    const delivered = texts[at];
+    const block = /<world-state>([\s\S]*?)<\/world-state>/u.exec(delivered)?.[1]?.trim() ?? null;
+    readings.push(
+      Object.freeze({
+        day: Number.isInteger(entry?.day) ? entry.day : null,
+        waitedMs: Number.isInteger(entry?.waitedMs) ? entry.waitedMs : null,
+        measured: true,
+        startedBlind: delivered.includes(marker),
+        // The block itself, bounded: the evidence a reader needs, and never the whole delivery (the player's own note is
+        // in there and is read for matching only).
+        worldState: block === null ? null : `<world-state>${block.slice(0, 200)}</world-state>`,
+        reason: null,
+      }),
+    );
+  }
+  return Object.freeze(readings);
 }
 
 /**

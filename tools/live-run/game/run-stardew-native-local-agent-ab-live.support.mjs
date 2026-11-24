@@ -884,9 +884,26 @@ export const sessionLine = (text) =>
 // every run, because nothing in this harness ever asked the Host to hand the reading over.
 //
 // These tests hold both ends: the reading that NAMES a blind day, and the attach boundary that stops one happening.
-export const ROUND49_FIRST_DELIVERY = ["…", "<world-state>", "世界：尚未收到观察", "</world-state>"].join("\n");
+//
+// A DELIVERY IS THE DAY'S OWN WORDS WITH THE BLOCKS AFTER THEM (`host/src/fact-brief.ts#composeFactBrief`: the player's
+// text is the head of the turn, verbatim, and the machine's blocks follow it), which is why the reading finds a day by its
+// words instead of by a position in the record. The words come from the table that WRITES them rather than being spelled
+// again here.
+const PROMPT_SCOPE = loadPromptScope();
+export const DAY_ONE_WORDS = PROMPT_SCOPE.SCENARIO_PROMPTS.multiday_routine.zh(1, "clear_east_patch");
+
+export const DAY_TWO_WORDS = PROMPT_SCOPE.SCENARIO_PROMPTS.multiday_routine.zh(2, "tend_the_animals");
+
+export const ROUND49_FIRST_DELIVERY = [
+  DAY_ONE_WORDS,
+  "…",
+  "<world-state>",
+  "世界：尚未收到观察",
+  "</world-state>",
+].join("\n");
 
 export const OBSERVED_FIRST_DELIVERY = [
+  DAY_ONE_WORDS,
   "<world-state>",
   "世界（revision 0，刚刚更新）06:20（清晨）；春季 1 日；位置: 农舍；种子: 2 花椰菜种子",
   "</world-state>",

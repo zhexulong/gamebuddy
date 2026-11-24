@@ -12,6 +12,8 @@ import { sessionEntries } from "../../lib/session-jsonl.mjs";
 import { assessPlayerInputSchedule, SCHEDULED_DIALOGUE_GATES } from "../dialogue-gates.mjs";
 import {
   BLIND_MARKER,
+  DAY_ONE_WORDS,
+  DAY_TWO_WORDS,
   dayTurnSource,
   deciderFactNames,
   deciderReturnedReasons,
@@ -43,7 +45,10 @@ test("the day's shortage fact is composed once, on the first turn, and published
   );
   assert.match(RUNNER_SOURCE, /taskId: taskForDay\(day\),\s*snapshot: client\.state\?\.snapshot \?\? null,/);
   // And the first-turn prompt is the one that carries it: a fact appended to a later turn would repeat.
-  assert.match(RUNNER_SOURCE, /turns === 1\s*\?\s*withDayFact\(promptForDay\(day\), dayFact\)/);
+  assert.match(RUNNER_SOURCE, /turns === 1\s*\?\s*withDayFact\(dayWords, dayFact\)/);
+  // The day's own words are named ONCE, because two readers need the same string: the prompt that is asked, and the words
+  // the day's delivery is found by in the session record.
+  assert.match(RUNNER_SOURCE, /const dayWords = turns === 1 \? promptForDay\(day\) : null;/);
   // Published, so "she was handed the supply and did not go" is distinguishable from "nothing ever told her".
   assert.match(RUNNER_SOURCE, /const seedFacts = \[\];/);
   assert.match(RUNNER_SOURCE, /if \(dayFact !== null\) seedFacts\.push\(Object\.freeze\(\{ day, \.\.\.dayFact \}\)\);/);
@@ -454,9 +459,10 @@ test("the note assertion is wired to the session record, the planner's clock and
   // 3. The reading is taken from THIS run's session record, and prints its population so a zero is visible as a zero.
   assert.match(
     RUNNER_SOURCE,
-    /sessionTexts: readSessionPlayerTexts\(sessionSearch\.path\),/u,
+    /const sessionDeliveryTexts = readSessionPlayerTexts\(sessionSearch\.path\);/u,
     "the reading must read what arrived, not what was sent",
   );
+  assert.match(RUNNER_SOURCE, /sessionTexts: sessionDeliveryTexts,/u, "and it is that read the note reading is handed");
   assert.match(RUNNER_SOURCE, /MULTIDAY_DAY_NOTES[\s\S]{0,200}dayNoteDelivery\.reading/u);
   // 4. And it reaches the verdict: an arm of the session verdict (so `completed` is unreachable), a clause of its own,
   //    and the reading itself in result.json.
@@ -467,18 +473,16 @@ test("the note assertion is wired to the session record, the planner's clock and
 });
 
 test("a day that opened without a world is a finding, named with its day and the wait in front of it", () => {
-  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
-    "readDayFirstDelivery",
+  const [readDayStartDeliveries, assessDayStarts] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "readDayStartDeliveries",
     "assessDayStarts",
   ]);
   // RED, on round49's own delivery: the message that reached her carried no world.
-  const blind = readDayFirstDelivery({
-    day: 1,
+  const blind = readDayStartDeliveries({
+    days: [{ day: 1, prompt: DAY_ONE_WORDS, waitedMs: 15_000 }],
     texts: [ROUND49_FIRST_DELIVERY],
-    fromIndex: 0,
-    waitedMs: 15_000,
     marker: BLIND_MARKER,
-  });
+  })[0];
   assert.equal(blind.measured, true);
   assert.equal(blind.startedBlind, true, "round49's first delivery was handed a turn with no world in it");
   const red = assessDayStarts({ scheduledDays: 1, readings: [blind] });
@@ -493,13 +497,11 @@ test("a day that opened without a world is a finding, named with its day and the
 
   // GREEN, on the delivery the attach boundary produces: the world-state block is the reading itself, so a reader can
   // check the judgement instead of trusting it.
-  const observed = readDayFirstDelivery({
-    day: 1,
+  const observed = readDayStartDeliveries({
+    days: [{ day: 1, prompt: DAY_ONE_WORDS, waitedMs: 0 }],
     texts: [OBSERVED_FIRST_DELIVERY],
-    fromIndex: 0,
-    waitedMs: 0,
     marker: BLIND_MARKER,
-  });
+  })[0];
   assert.equal(observed.startedBlind, false);
   assert.match(observed.worldState ?? "", /^<world-state>世界（revision 0/u);
   const green = assessDayStarts({ scheduledDays: 1, readings: [observed] });
@@ -508,9 +510,66 @@ test("a day that opened without a world is a finding, named with its day and the
   assert.equal(green.verdictCode, null);
 });
 
+test("a day is found by its own words, not by the message that happened to arrive after the turn opened", () => {
+  const [readDayStartDeliveries, assessDayStarts] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "readDayStartDeliveries",
+    "assessDayStarts",
+  ]);
+  // ROUND99'S OWN SHAPE: day 2's prompt was admitted at 10:07:55 and the Host wrote it into the record at 10:09:52, with
+  // the pump's own batches in between. A reading indexed off the record as it stood when the turn opened took "the next
+  // user message" and found none (`day_start_reading_missing:2:no_user_message_after_day_prompt`), and the day AFTER it was
+  // read off the day before: day 1's reading was the attach batch, not the day's words.
+  const round99 = [
+    OBSERVED_FIRST_DELIVERY,
+    "<world-facts>\n- 12:00 又过了一个时辰：1200 ·current\n</world-facts>",
+    "<world-facts>\n- express_emote 没做成。A cutscene currently holds the farmhand.\n</world-facts>",
+    `${DAY_TWO_WORDS}\n<world-state>\n世界（revision 104，刚刚更新）08:10（上午）；1年第6天 春季；位置: 农场\n</world-state>`,
+  ];
+  const readings = readDayStartDeliveries({
+    days: [
+      { day: 1, prompt: DAY_ONE_WORDS, waitedMs: 0 },
+      { day: 2, prompt: DAY_TWO_WORDS, waitedMs: 250 },
+    ],
+    texts: round99,
+    marker: BLIND_MARKER,
+  });
+  assert.deepEqual(
+    readings.map((reading) => [reading.day, reading.measured, reading.startedBlind]),
+    [
+      [1, true, false],
+      [2, true, false],
+    ],
+    "both days were delivered and both opened on an observed world",
+  );
+  assert.match(readings[1].worldState ?? "", /1年第6天/u, "day 2's reading is day 2's own delivery");
+  assert.equal(readings[1].waitedMs, 250);
+  const assessed = assessDayStarts({ scheduledDays: 2, readings });
+  assert.deepEqual(assessed.findings, []);
+  assert.equal(
+    assessed.verdictCode,
+    null,
+    "a delivered day cannot be blocked for a prompt the record had not reached yet",
+  );
+
+  // TWO DAYS THAT ASK THE SAME THING read two deliveries, in order, instead of the first one twice.
+  const repeated = readDayStartDeliveries({
+    days: [
+      { day: 1, prompt: DAY_ONE_WORDS, waitedMs: 0 },
+      { day: 2, prompt: DAY_ONE_WORDS, waitedMs: 0 },
+    ],
+    texts: [ROUND49_FIRST_DELIVERY, OBSERVED_FIRST_DELIVERY],
+    marker: BLIND_MARKER,
+  });
+  assert.deepEqual(
+    repeated.map((reading) => reading.startedBlind),
+    [true, false],
+    "the second day reads the second delivery, not the first one over again",
+  );
+});
+
 test("the reading is over the days the run scheduled, so zero days and an unread record cannot pass", () => {
-  const [readDayFirstDelivery, assessDayStarts] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
-    "readDayFirstDelivery",
+  const [readDayStartDeliveries, assessDayStarts] = extractRunnerFunction(RUNNER_SURFACE_SOURCE, [
+    "readDayStartDeliveries",
     "assessDayStarts",
   ]);
   // A run that scheduled no day has not been measured, and `0 of 0` would agree with itself.
@@ -520,26 +579,32 @@ test("the reading is over the days the run scheduled, so zero days and an unread
   assert.equal(empty.verdictCode, "no_days_scheduled", "zero population is blocked, never green");
 
   // The three gaps that are not "blind" and are not a pass either, each with its own owner.
-  const unread = readDayFirstDelivery({ day: 1, texts: null, fromIndex: 0, marker: BLIND_MARKER });
+  const unread = readDayStartDeliveries({
+    days: [{ day: 1, prompt: DAY_ONE_WORDS, waitedMs: null }],
+    texts: null,
+    marker: BLIND_MARKER,
+  })[0];
   assert.equal(unread.measured, false);
   assert.equal(unread.reason, "session_record_unreadable");
   const blocked = assessDayStarts({ scheduledDays: 1, readings: [unread] });
   assert.equal(blocked.findings[0].code, "day_start_reading_missing:1:session_record_unreadable");
   assert.equal(blocked.verdictCode, "day_start_reading_missing:1:session_record_unreadable");
-  const appended = readDayFirstDelivery({ day: 2, texts: ["one message"], fromIndex: 1, marker: BLIND_MARKER });
-  assert.equal(appended.reason, "no_user_message_after_day_prompt");
-  const rotated = readDayFirstDelivery({
-    day: 1,
+  // A day the record never carried: the prompt was admitted and never delivered, which is a finding about the day and not
+  // a silence about her.
+  const never = readDayStartDeliveries({
+    days: [{ day: 2, prompt: DAY_TWO_WORDS, waitedMs: 0 }],
     texts: [OBSERVED_FIRST_DELIVERY],
-    fromIndex: 0,
-    sourcePath: "before.jsonl",
-    readingPath: "after.jsonl",
     marker: BLIND_MARKER,
-  });
-  assert.equal(rotated.reason, "session_record_changed_mid_turn");
+  })[0];
+  assert.equal(never.reason, "day_prompt_not_in_session");
+  // A day scheduled without words to look for is the harness's own gap, named as one.
+  assert.equal(
+    readDayStartDeliveries({ days: [{ day: 1, prompt: "", waitedMs: 0 }], texts: [], marker: BLIND_MARKER })[0].reason,
+    "day_prompt_text_missing",
+  );
   // And a reading with no marker fails loudly: comparing against "" would call every delivery blind or every one sound.
   assert.throws(
-    () => readDayFirstDelivery({ day: 1, texts: [OBSERVED_FIRST_DELIVERY], fromIndex: 0 }),
+    () => readDayStartDeliveries({ days: [{ day: 1, prompt: DAY_ONE_WORDS }], texts: [OBSERVED_FIRST_DELIVERY] }),
     /day_start_marker_required/u,
   );
 });

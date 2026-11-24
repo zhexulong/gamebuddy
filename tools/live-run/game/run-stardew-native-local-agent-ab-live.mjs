@@ -209,7 +209,7 @@ import {
   awaitDayOpeningWorld,
   dayPromptWithoutObservation,
   NOTHING_OBSERVED_WORLD,
-  readDayFirstDelivery,
+  readDayStartDeliveries,
 } from "./day-opening.mjs";
 // Program executions are a second kind of execution, written beside the request frames and merged back at read time.
 // The module's own header states the invariant these two files have to satisfy together.
@@ -4344,7 +4344,10 @@ try {
       revision: Number.isInteger(revision) ? revision : null,
     });
   };
-  // Every day's start, in order: whether the world was there, how long the wait was, and what the Host actually delivered.
+  // Every day's start, in order: the words the harness asked that day with, and how long the world took to arrive. The
+  // DELIVERY is not read here - the Host writes the day's prompt into the session record at its next request boundary,
+  // which was 117 s after the turn opened on `round99` - so the reading is resolved from the record at closure, by the
+  // day's own words (see `readDayStartDeliveries`).
   const dayStarts = [];
   /**
    * The world, before the day - and the code that says so when it was not there.
@@ -4357,25 +4360,6 @@ try {
     if (opening.observed !== true)
       process.stderr.write(`day_prompt_delivered_without_observation:${String(day)}:${String(opening.waitedMs)}\n`);
     return opening;
-  };
-  // Where the session record stood before a turn, so the day's own delivery is the message at this index and not whatever
-  // a gate or a later turn appended.
-  const sessionDeliveryCursor = () => {
-    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
-    const texts = readSessionPlayerTexts(found.path);
-    return Object.freeze({ path: found.path ?? null, fromIndex: texts === null ? 0 : texts.length });
-  };
-  const readDayStart = (day, cursor, waitedMs) => {
-    const found = findRunSessionJsonl(gameSessionPaths.sessionDir);
-    return readDayFirstDelivery({
-      day,
-      texts: readSessionPlayerTexts(found.path),
-      fromIndex: cursor?.fromIndex ?? 0,
-      sourcePath: cursor?.path ?? null,
-      readingPath: found.path ?? null,
-      waitedMs,
-      marker: NOTHING_OBSERVED_WORLD,
-    });
   };
   let status = null;
   // The promise the CURRENT day's turn settles on. The night watcher waits on it so "the night has not begun"
@@ -4564,7 +4548,6 @@ try {
             // `世界：尚未收到观察` costs a whole turn of looking (`round49`), and the reading it costs is one the harness
             // already held. The bound's expiry is named (`day_prompt_delivered_without_observation`) and the turn is still
             // delivered, with the prompt saying so.
-            const dayStartCursor = turns === 1 ? sessionDeliveryCursor() : null;
             const opening = turns === 1 ? await dayOpeningFor(day) : null;
             // The day's shortage fact, read from the world as it stands at the FIRST turn of the day: what the task
             // asks for, what she holds, and where the missing seed is sold. Null when there is nothing to say (the task
@@ -4578,12 +4561,16 @@ try {
                   })
                 : null;
             if (dayFact !== null) seedFacts.push(Object.freeze({ day, ...dayFact }));
+            // THE HARNESS'S OWN WORDS FOR THE DAY, named once: the day's prompt without the facts appended to it. It is also
+            // the anchor the day's delivery is found by in the session record, because the Host writes the player's text
+            // in first, verbatim (`host/src/fact-brief.ts#composeFactBrief`), so the asked words are what is found there.
+            const dayWords = turns === 1 ? promptForDay(day) : null;
             // WHAT SHE IS ASKED, from the reason that opened the turn and nothing else. Every wake this loop can issue
             // after the day's first turn is one of these four questions, and each is named: there is no generic "carry on"
             // left to fall through to, and no clock left to choose a prompt by.
             const prompt =
               turns === 1
-                ? withDayFact(promptForDay(day), dayFact)
+                ? withDayFact(dayWords, dayFact)
                 : wake.reason === WAKE_REASON.dayEndOffer || wake.reason === WAKE_REASON.objectiveUnreachableForToday
                   ? promptForLateDay(day)
                   : wake.reason === WAKE_REASON.stallWake
@@ -4605,9 +4592,11 @@ try {
             // settled, so a reading taken after it would date the day's note to the end of the day it opened.
             const spokenAt = readWorldClock();
             const walked = await runAgentTurn(deliveredPrompt, tools, { reason: wake.reason });
-            // WHAT THE HOST ACTUALLY DELIVERED for this day's opening, from the session record: the reading that says a
-            // day started blind even when everything after it looked healthy.
-            if (turns === 1) dayStarts.push(readDayStart(day, dayStartCursor, opening?.waitedMs ?? null));
+            // WHICH DAYS WERE ASKED WHAT, recorded where the question is handed over. Its DELIVERY is resolved at closure
+            // from the session record: the Host appends the prompt at its next request boundary, which is minutes after
+            // this turn opens (`round99`).
+            if (turns === 1)
+              dayStarts.push(Object.freeze({ day, prompt: dayWords, waitedMs: opening?.waitedMs ?? null }));
             playerInputs.push(
               Object.freeze({
                 day,
@@ -4983,12 +4972,12 @@ try {
     // THE RUN'S FIRST TURN WAITS FOR THE WORLD, the same boundary the multi-day loop's day-1 turn keeps: a single-goal
     // rung handed a blind first prompt spends its opening turn looking (`round49`), and the reading it costs is one the
     // harness already held.
-    const firstDayCursor = sessionDeliveryCursor();
     const firstOpening = await dayOpeningFor(1);
     const firstDeliveredPrompt =
       firstOpening.observed === true ? prompt : dayPromptWithoutObservation(prompt, firstOpening, localeKey);
     const firstTurn = await runAgentTurn(firstDeliveredPrompt, tools, { reason: WAKE_REASON.dayStart });
-    dayStarts.push(readDayStart(1, firstDayCursor, firstOpening.waitedMs));
+    // This rung's day is its prompt, and its delivery is resolved at closure like the multi-day loop's days.
+    dayStarts.push(Object.freeze({ day: 1, prompt, waitedMs: firstOpening.waitedMs }));
     status = firstTurn.status;
     agentTurnResult = firstTurn.turn;
     sessionTurns.push(
@@ -5304,6 +5293,9 @@ try {
   );
   const spokeToPlayer = typeof presentedSummary === "string" && presentedSummary.trim().length > 0;
   const sessionSpoken = SCENARIO !== "morning_routine" || spokeToPlayer;
+  // THE RECORD, READ ONCE, for the three readings that ask what actually ARRIVED: two reads of a file still being appended
+  // to could let two clauses describe the same delivery differently.
+  const sessionDeliveryTexts = readSessionPlayerTexts(sessionSearch.path);
   // WHAT SHE WAS ACTUALLY TOLD, per scheduled day, read from the session record rather than from what the harness sent.
   //
   // `round49` delivered exactly one player message, it was the stance gate's, and the day's note appeared nowhere in the
@@ -5315,7 +5307,7 @@ try {
     schedulesDayNotes: SCENARIO === "multiday_routine",
     scheduled: dayTasksScheduled.map(({ day, task }) => ({ day, task, note: dayNoteFragment(task, localeKey) })),
     inputs: playerInputs,
-    sessionTexts: readSessionPlayerTexts(sessionSearch.path),
+    sessionTexts: sessionDeliveryTexts,
     sessionReason: sessionSearch.reason ?? null,
   });
   console.error(
@@ -5323,11 +5315,19 @@ try {
     dayNoteDelivery.reading,
     dayNoteDelivery.findings.map((finding) => finding.code).join(","),
   );
-  // DID ANY DAY START BLIND? Read from the world-state block each day's first delivery actually carried, over the days
-  // this run scheduled - printed, because a reading nobody prints is a reading nobody sees.
+  // DID ANY DAY START BLIND? Read from the world-state block the delivery carrying each day's own words actually carried,
+  // over the days this run scheduled - printed, because a reading nobody prints is a reading nobody sees.
+  //
+  // RESOLVED HERE, AT CLOSURE, and not when each day's turn went quiet: the Host writes a day's prompt into the record at
+  // its next request boundary, which was 117-178 s after the turn opened on `round99` - so a reading taken then found a
+  // record the day had not reached yet and reported `no_user_message_after_day_prompt` on the days that were delivered.
   const dayStartAssessment = assessDayStarts({
     scheduledDays: SCENARIO === "multiday_routine" ? dayTasksScheduled.length : 1,
-    readings: dayStarts,
+    readings: readDayStartDeliveries({
+      days: dayStarts,
+      texts: sessionDeliveryTexts,
+      marker: NOTHING_OBSERVED_WORLD,
+    }),
   });
   console.error(
     "DAY_STARTS",
@@ -5338,7 +5338,7 @@ try {
   // snapshot, `companionArrivalFact` mints one `companion_arrival` per Game session, and the record says whether it did.
   const companionArrival = assessCompanionArrival({
     attached: runtime?.connected !== undefined,
-    texts: readSessionPlayerTexts(sessionSearch.path),
+    texts: sessionDeliveryTexts,
   });
   console.error("COMPANION_ARRIVAL", companionArrival.reading, companionArrival.verdictCode ?? "");
 
