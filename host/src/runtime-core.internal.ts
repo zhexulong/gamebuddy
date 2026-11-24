@@ -268,9 +268,9 @@ let magicContextScopeTail: Promise<void> = Promise.resolve();
 let magicContextHeldScope: Readonly<{ preempt: () => void }> | undefined;
 
 /**
- * Runs `work` with the process pointed at one runtime root's Magic Context store, and only then.
+ * Runs `work` with the process's Magic Context environment pointed at one runtime root, and only then.
  *
- * Magic Context discovers its config and SQLite root through process globals - cwd, `XDG_DATA_HOME`,
+ * Magic Context discovers its config and SQLite root through process globals - `XDG_DATA_HOME`,
  * `XDG_CONFIG_HOME` and `MAGIC_CONTEXT_STORAGE_DIR` - and resolves them per call rather than once, so a
  * window that pins them is a window for the whole process. Two owners of this global therefore cannot
  * have it open at the same time: the runtime's own mount and the session-end reflection each pin a
@@ -281,6 +281,14 @@ let magicContextHeldScope: Readonly<{ preempt: () => void }> | undefined;
  * spawns its `pi` children with `{...process.env}` - a child in which the lean `ctx_*` entry calls
  * `openDatabase()` at start and is therefore a store client: its root is decided by the environment it
  * inherits at spawn. Anything spawned inside `work` belongs to this root; nothing on disk records it.
+ *
+ * THE WORKING DIRECTORY IS NOT ONE OF THEM. It is process state every other party in this process can see - a
+ * concurrent turn, a spawned child and any relative path read all answer with whatever the process last stood on -
+ * and it is not a value this scope can own. So this function no longer moves it. A holder resolves its own root
+ * through the input it is handed: the argument the vendored API accepts (`loadPiConfig({ cwd: root.runtimeCwd })`, as
+ * the reflection passes it) or the environment this scope pins. The reflection's window - a spawned provider call
+ * bounded at a minute - therefore moves nothing; the mount is the one caller that cannot pass anything, and it pins
+ * the directory itself, at that call, for the seconds `loader.reload()` takes.
  *
  * A FOREGROUND request never waits for a background holder's provider call. The one holder that calls a
  * model is the session-end reflection, and it passes `scope.preempt`, so a mount that arrives while it is
@@ -324,7 +332,6 @@ export async function withRuntimeMagicContextRoot<T>(
       dataHome,
       storageDir: join(dataHome, "cortexkit", "magic-context"),
     });
-    const previousCwd = process.cwd();
     const previousDataDir = process.env.XDG_DATA_HOME;
     const previousConfigDir = process.env.XDG_CONFIG_HOME;
     const previousStorageDir = process.env.MAGIC_CONTEXT_STORAGE_DIR;
@@ -344,10 +351,8 @@ export async function withRuntimeMagicContextRoot<T>(
       // aborted` and the turn terminalizes `failed` with `runtime_unavailable`. Pin the same runtime-owned
       // root the XDG path derives, so the store is the runtime's whatever the surrounding process carries.
       process.env.MAGIC_CONTEXT_STORAGE_DIR = root.storageDir;
-      process.chdir(root.runtimeCwd);
       return await work(root);
     } finally {
-      process.chdir(previousCwd);
       if (previousDataDir === undefined) delete process.env.XDG_DATA_HOME;
       else process.env.XDG_DATA_HOME = previousDataDir;
       if (previousConfigDir === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -362,16 +367,36 @@ export async function withRuntimeMagicContextRoot<T>(
 }
 
 /**
- * Mounts the extension at one runtime root: `loader.reload()` is what makes the extension resolve its
- * store, so it runs inside that root's scope and reads this runtime's own paths whatever the surrounding
- * process carries.
+ * Mounts the extension at one runtime root: `loader.reload()` is what makes the extension resolve its store and its
+ * config, so it runs inside that root's scope and reads this runtime's own paths whatever the surrounding process
+ * carries.
+ *
+ * THE ONE PLACE THIS PROCESS'S WORKING DIRECTORY MOVES, and the vendor constraint that forces it.
+ *
+ * `pi-coding-agent` hands an extension factory nothing but its `ExtensionAPI` (`ExtensionFactory = (pi) => …`), which
+ * carries no project directory, and the vendored entry reads the process's own there - twice: `const bootProjectDir =
+ * process.cwd()` (pi-plugin `src/index.ts:1238`) and `const projectDir = process.cwd()` (`:1418`), which decide the
+ * boot config, the boot project registration and the migration scan. That directory IS this runtime's root: the mount
+ * writes that runtime's project-tier config at `<root>/.cortexkit/magic-context.jsonc`. So the window is pinned around
+ * the mount alone - `loader.reload()` is seconds, not a provider call - and restored in a `finally` on both paths.
+ *
+ * EXPIRY: this pin dies the moment `ExtensionAPI` carries a project directory (or the entry takes one), and the
+ * replacement is to pass it. Until then the exposure is bounded and named rather than spread over every holder: the
+ * session-end reflection, which used to hold the same window across an 8 748 ms spawned provider call, passes its root
+ * to the API that accepts one (`dreamer.loadPiConfig({ cwd })`) and moves nothing.
  */
 export async function reloadMagicContextInRuntimeRoot(
   loader: DefaultResourceLoader,
   runtimeCwd: string,
 ): Promise<void> {
-  await withRuntimeMagicContextRoot(runtimeCwd, async () => {
-    await loader.reload();
+  await withRuntimeMagicContextRoot(runtimeCwd, async (root) => {
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(root.runtimeCwd);
+      await loader.reload();
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 }
 

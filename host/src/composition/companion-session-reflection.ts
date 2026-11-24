@@ -36,7 +36,7 @@ interface DreamerSubpath {
   openRuntimeDatabase: () => {
     prepare: (sql: string) => { get: (...params: unknown[]) => unknown };
   } | null;
-  loadPiConfig: () => Readonly<{ config: unknown }>;
+  loadPiConfig: (options: Readonly<{ cwd: string }>) => Readonly<{ config: unknown }>;
   dreamerRunConfig: (config: unknown, fallback: unknown) => unknown;
   registerPiDreamerProject: (options: Readonly<Record<string, unknown>>) => void;
   runPiDreamForProject: (projectIdentity: string, task: string, registrationOwner: object) => Promise<unknown>;
@@ -164,6 +164,11 @@ export async function reflectCompanionSessionOnce(
  * Everything that resolves a path happens here, while the scope holds: the module import, the store open, the
  * two reads that decide whether there is anything to reflect on, the config load and the registration. The
  * attempt it returns names the vendored dreamer's own abort, because stopping the call is the dreamer's job.
+ *
+ * The config load names its directory: `loadPiConfig` takes a `cwd`, and this runtime's project-tier config lives at
+ * `<root>/.cortexkit/magic-context.jsonc`, so passing the root is what makes the same values reach the registration
+ * without the process standing anywhere in particular. It is the difference between a reflection that needs the
+ * process's working directory (and held it across a spawned provider call) and one that carries its own.
  */
 async function planAgainstRuntimeStore(root: RuntimeMagicContextRoot): Promise<CompanionReflectionPlan> {
   // The specifier is spelled here, as a literal, because the production artifact's external-closure gate declares a
@@ -190,7 +195,7 @@ async function planAgainstRuntimeStore(root: RuntimeMagicContextRoot): Promise<C
   if ((compartments?.n ?? 0) === 0)
     return Object.freeze({ kind: "terminal" as const, outcome: "not_applicable" as const });
 
-  const loaded = dreamer.loadPiConfig();
+  const loaded = dreamer.loadPiConfig({ cwd: root.runtimeCwd });
   const registrationOwner = {};
   dreamer.registerPiDreamerProject({
     db,
