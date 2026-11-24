@@ -60,6 +60,7 @@ async function runTest() {
 
 const original = await readFile(RUNNER, "utf8");
 let allCaught = true;
+let caught = 0;
 try {
   for (const mutation of MUTATIONS) {
     const mutated = mutation.apply(original);
@@ -75,6 +76,7 @@ try {
       allCaught = false;
     } else {
       const failed = (result.out.match(/^✖ (?!failing)/gm) ?? []).length;
+      caught += 1;
       console.log(`CAUGHT (${failed} failing)   ${mutation.name}`);
     }
     await writeFile(RUNNER, original);
@@ -82,6 +84,9 @@ try {
   const restored = await runTest();
   console.log(restored.green ? "restored -> GREEN (ok)" : "restored -> STILL RED (bad)");
   if (!restored.green) allCaught = false;
+  // The population, counted from the declaration above: a run that examined nothing and a run that caught nothing
+  // print the same "all mutations caught" without it (`gate_without_population` in gates/meta/check-gate-populations).
+  console.log(`mutations examined: ${MUTATIONS.length} · caught: ${caught} · survived: ${MUTATIONS.length - caught}`);
   console.log(allCaught ? "all mutations caught" : "SOME MUTATIONS SURVIVED");
   process.exitCode = allCaught ? 0 : 1;
 } finally {
