@@ -4,19 +4,11 @@
     "actionTraceFiles": 173,
     "timelineFiles": 173,
     "resultFiles": 297,
-    "timedInstances": 11484,
-    "examinedInstances": 4305
+    "timedInstances": 9950,
+    "examinedInstances": 4208
   },
   "tolerance": 0.5,
   "actions": {
-    "accept_daily_quest": {
-      "ratio": 2.76,
-      "oursMs": 46,
-      "floorMs": 16.67,
-      "walkTiles": null,
-      "walkSource": "lattice",
-      "instances": 1
-    },
     "break_rock": {
       "ratio": 0.36,
       "oursMs": 536,
@@ -34,20 +26,20 @@
       "instances": 291
     },
     "chest_retrieve": {
-      "ratio": 23.82,
-      "oursMs": 397,
+      "ratio": 30,
+      "oursMs": 500,
       "floorMs": 16.67,
       "walkTiles": null,
       "walkSource": "lattice",
-      "instances": 2
+      "instances": 1
     },
     "chest_store": {
-      "ratio": 1.74,
-      "oursMs": 29,
+      "ratio": 1.32,
+      "oursMs": 22,
       "floorMs": 16.67,
       "walkTiles": null,
       "walkSource": "lattice",
-      "instances": 24
+      "instances": 15
     },
     "chop_stump": {
       "ratio": 0.34,
@@ -95,7 +87,7 @@
       "floorMs": 1490.1,
       "walkTiles": 2,
       "walkSource": "lattice",
-      "instances": 16
+      "instances": 15
     },
     "collect_animal_product": {
       "ratio": 0.92,
@@ -138,12 +130,12 @@
       "instances": 84
     },
     "equip_wearable": {
-      "ratio": 0.84,
-      "oursMs": 14,
+      "ratio": 0.66,
+      "oursMs": 11,
       "floorMs": 16.67,
       "walkTiles": null,
       "walkSource": "lattice",
-      "instances": 5
+      "instances": 2
     },
     "express_emote": {
       "ratio": 4.32,
@@ -179,11 +171,11 @@
     },
     "move_placed_furniture": {
       "ratio": 0.12,
-      "oursMs": 63,
+      "oursMs": 60,
       "floorMs": 521.72,
       "walkTiles": 1,
       "walkSource": "lattice",
-      "instances": 8
+      "instances": 6
     },
     "move_to_tile": {
       "ratio": 0.45,
@@ -193,21 +185,13 @@
       "walkSource": "tile_advanced",
       "instances": 695
     },
-    "pet_farm_animal": {
-      "ratio": 33.48,
-      "oursMs": 558,
-      "floorMs": 16.67,
-      "walkTiles": null,
-      "walkSource": "lattice",
-      "instances": 4
-    },
     "pickup_forage": {
-      "ratio": 0.26,
-      "oursMs": 802,
+      "ratio": 0.17,
+      "oursMs": 529,
       "floorMs": 3046.97,
       "walkTiles": 6,
       "walkSource": "lattice",
-      "instances": 8
+      "instances": 1
     },
     "pickup_item": {
       "ratio": 31.98,
@@ -250,36 +234,28 @@
       "instances": 35
     },
     "rotate_furniture": {
-      "ratio": 0.69,
-      "oursMs": 362,
+      "ratio": 0.13,
+      "oursMs": 69,
       "floorMs": 521.72,
       "walkTiles": 1,
       "walkSource": "lattice",
-      "instances": 4
-    },
-    "shake_tree": {
-      "ratio": 16.62,
-      "oursMs": 277,
-      "floorMs": 16.67,
-      "walkTiles": null,
-      "walkSource": "lattice",
-      "instances": 2
+      "instances": 1
     },
     "sweep_scythe": {
-      "ratio": 0.89,
-      "oursMs": 464,
+      "ratio": 0.16,
+      "oursMs": 85,
       "floorMs": 521.72,
       "walkTiles": 1,
       "walkSource": "lattice",
-      "instances": 8
+      "instances": 3
     },
     "talk_to_npc": {
-      "ratio": 0.13,
-      "oursMs": 2169,
+      "ratio": 0.29,
+      "oursMs": 4631,
       "floorMs": 16178.28,
       "walkTiles": 32,
       "walkSource": "lattice",
-      "instances": 7
+      "instances": 3
     },
     "till_soil": {
       "ratio": 0.41,
