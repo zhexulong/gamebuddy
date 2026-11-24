@@ -2706,7 +2706,7 @@ test("an empty plan says whether the script never asked for a step or asked and 
     refusalOf(compile("const rows = snapshot.cropTargets ?? [];\nconst count = rows.length;")),
     "plan_script_empty_no_builder_call",
   );
-  // The other shape: the builder WAS called and added no node (`equipFor` asked for a tool already in hand). The
+  // The other shape: the builder WAS called and added no node (`equipFor` answered a slot). The
   // count is the point - `no_builder_call` and `no_node_added:1` are different mistakes with different repairs.
   assert.equal(
     refusalOf(
@@ -3089,94 +3089,89 @@ for (const chest of snapshot.chests ?? []) {
   );
 });
 
-test("equipFor writes the equip step the target declares, then the action, and answers the slot to name", () => {
-  const nodes = nodesOf(
-    compile(
-      `
+test("equipFor answers the slot the target declares and writes no step before the action", () => {
+  const result = compile(
+    `
 for (const clump of snapshot.debrisTargets ?? []) {
   const slot = builder.equipFor('clear_debris', clump);
   builder.clear_debris({ slot, x: clump.x, y: clump.y, expectedTargetId: clump.targetId });
 }
 `,
-      {
-        currentTool: "(T)Axe",
-        currentToolSlot: 0,
-        toolSlots: TOOL_PACK,
-        debrisTargets: [debris("debris_01", 3, "pickaxe")],
-      },
-    ),
+    {
+      currentTool: "(T)Axe",
+      currentToolSlot: 0,
+      toolSlots: TOOL_PACK,
+      debrisTargets: [debris("debris_01", 3, "pickaxe")],
+    },
   );
+  // NO PRELUDE: the action takes the pickaxe its own claim declares when it runs and puts the axe back afterwards, so a
+  // step written before it would be undone by it. The plan is the action alone.
   assert.deepEqual(
-    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
-    [
-      ["n01", "equip_tool", []],
-      // Equipping is a tool in hand, not state at a tile (`equip_tool` declares `toolSlots` and takes no coordinates),
-      // so the step that needs the tool is ordered after it and not made its dependent: a tool the pack does not hold is
-      // refused by name at the step that wanted it.
-      ["n02", "clear_debris", []],
-    ],
+    nodesOf(result).map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    [["n01", "clear_debris", []]],
   );
-  assert.deepEqual(
-    nodes.map((node) => node.orderedAfter ?? []),
-    [[], ["n01"]],
-  );
-  // The equip step carries a semantic category from equip_tool's own closed set, never the slot: the Mod resolves the
-  // slot itself, so an index here would be a slot masquerading as a tool.
-  assert.deepEqual(nodes[0]!.arguments, { tool: { type: "string", canonicalValue: "pickaxe" } });
   // The action names the target's OWN slot, which is the value equipFor answered.
-  assert.deepEqual(nodes[1]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.deepEqual(nodesOf(result)[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.deepEqual(
+    accountOf(result).noStepNeeded,
+    ["n01:equip_for:answered_the_slot"],
+    "the call is named as one that answered a slot rather than dropped",
+  );
   assert.equal(
-    validateBodyProgramCandidateRequest({ programId: planProgramId("session_a", 11, nodes), nodes }),
+    validateBodyProgramCandidateRequest({
+      programId: planProgramId("session_a", 11, nodesOf(result)),
+      nodes: nodesOf(result),
+    }),
     null,
     "the compiled plan must be one the Mod accepts",
   );
 });
 
-test("equipFor emits nothing when the tool the target declares is already the held one", () => {
-  const nodes = nodesOf(
-    compile(
-      `
+test("equipFor answers a slot a surface claim cannot resolve, and still writes no step", () => {
+  const result = compile(
+    `
 for (const animal of snapshot.animalProductTargets ?? []) {
   const slot = builder.equipFor('collect_animal_product', animal);
   builder.collect_animal_product({ slot, x: animal.x, y: animal.y, expectedTargetId: animal.targetId });
 }
 `,
-      {
-        currentTool: "(T)MilkPail",
-        currentToolSlot: 3,
-        toolSlots: TOOL_PACK,
-        animalProductTargets: [
-          {
-            targetId: "animal_product_01",
-            slot: 3,
-            x: 12,
-            y: 9,
-            animalType: "White Cow",
-            qualifiedProduceItemId: "(O)184",
-            displayName: "Cow Milk",
-            toolKind: "milk_pail",
-            produceStack: 1,
-          },
-        ],
-      },
-    ),
+    {
+      currentTool: "(T)MilkPail",
+      currentToolSlot: 3,
+      toolSlots: TOOL_PACK,
+      animalProductTargets: [
+        {
+          targetId: "animal_product_01",
+          slot: 3,
+          x: 12,
+          y: 9,
+          animalType: "White Cow",
+          qualifiedProduceItemId: "(O)184",
+          displayName: "Cow Milk",
+          toolKind: "milk_pail",
+          produceStack: 1,
+        },
+      ],
+    },
   );
-  // No equip step: the tool is in hand, so the plan is the action alone and its slot is the held one.
+  // The family that publishes its tool on the TARGET rather than in a claim answers through the target's own slot, and
+  // the action is still the only node.
   assert.deepEqual(
-    nodes.map((node) => [node.nodeId, node.actionId, node.dependsOn]),
+    nodesOf(result).map((node) => [node.nodeId, node.actionId, node.dependsOn]),
     [["n01", "collect_animal_product", []]],
   );
-  assert.deepEqual(nodes[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.deepEqual(nodesOf(result)[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.deepEqual(accountOf(result).noStepNeeded, ["n01:equip_for:answered_the_slot"]);
 });
 
 /**
- * A CALL THAT HAD NOTHING TO DO IS NAMED, NOT COUNTED AS A STEP.
+ * A CALL THAT ANSWERED A SLOT IS NAMED, NOT COUNTED AS A STEP.
  *
- * `equipFor` answers the slot the action must name, and when the surface says that slot is already the held tool it writes
- * no equip step. That is the compiler thinking about her call and finding it already true - which is a different fact from
- * "the compiler ignored my step", and the only way she can tell them apart is being told which one happened.
+ * `equipFor` answers the slot the action must name and writes nothing, because the action equips its own declared tool
+ * when it runs. That is the compiler thinking about her call - which is a different fact from "the compiler ignored my
+ * step", and the only way she can tell them apart is being told which one happened.
  */
-test("a call that needed no step is named as such, and the step beside it is not", () => {
+test("a call that answered a slot is named as such, and the step beside it is not", () => {
   const result = compile(
     "const slot = builder.equipFor('cut_weeds');\nbuilder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
     { currentToolSlot: 3, toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }] },
@@ -3184,26 +3179,24 @@ test("a call that needed no step is named as such, and the step beside it is not
   assert.deepEqual(
     nodesOf(result).map((node) => node.actionId),
     ["cut_weeds"],
-    "the scythe is in hand, so no equip step is written",
+    "the plan is the cut alone: an equip step written before it would be undone by it",
   );
-  assert.deepEqual(accountOf(result).noStepNeeded, ["n01:equip_for:already_held"]);
+  assert.deepEqual(accountOf(result).noStepNeeded, ["n01:equip_for:answered_the_slot"]);
   assert.deepEqual(accountOf(result).acceptedSteps, ["n02"], "the cut itself is the step that compiled");
   assert.deepEqual(accountOf(result).dropped, []);
 });
 
 /**
- * ONE EQUIP PER PROGRAMME.
+ * NO EQUIP STEP, HOWEVER MANY TIMES THE PROGRAMME ASKS.
  *
  * Measured 2026-11-20 (`round83`): a 32-node weed programme carried 12 `equip_tool` nodes and every one of them answered
  * `already_equipped` - the scythe went into the hand at the programme's first equip and stayed there, because each work
- * node restores the selection it found. Across `round82`'s 16 accepted programmes 28 of 43 equip nodes were that same
- * no-op, and no programme's tool sequence ever changed: one hand, one change, repeated until the work ran out.
+ * node restores the selection it found. `round99` spent sixteen of them in one plan, each a dispatched turn the world
+ * advanced through, and not one of them changed which tool any following step used.
  *
- * A FROZEN SNAPSHOT CANNOT BE ASKED WHAT THE PROGRAMME ITSELF DID. `currentToolSlot` answers "what was in hand when the
- * plan was written" for the whole compile, so a helper that reads it re-establishes the same hand once per unit of work.
- * The property is the count: N calls for one tool, ONE step.
+ * The count is the property: N calls for one tool, ZERO steps and N named slot answers.
  */
-test("one equip per programme: asking for the same tool at every work node writes one equip step", () => {
+test("no equip step per programme: asking for the same tool at every work node writes no equip step at all", () => {
   const result = compile(
     `
 for (const weed of snapshot.weedTargets ?? []) {
@@ -3212,7 +3205,6 @@ for (const weed of snapshot.weedTargets ?? []) {
 }
 `,
     {
-      // The axe is in hand, so the FIRST call has real work to do and the three after it do not.
       currentToolSlot: 0,
       toolSlots: [
         { slot: 0, label: "(T)Axe", upgradeLevel: 0, category: "axe" },
@@ -3228,26 +3220,26 @@ for (const weed of snapshot.weedTargets ?? []) {
   );
   assert.deepEqual(
     nodesOf(result).map((node) => node.actionId),
-    ["equip_tool", "cut_weeds", "cut_weeds", "cut_weeds", "cut_weeds"],
-    "four cuts need the scythe in hand once, so the programme carries one equip step and four cuts",
+    ["cut_weeds", "cut_weeds", "cut_weeds", "cut_weeds"],
+    "four cuts and not one equip step, even though the axe was in hand when the plan was written",
   );
-  assert.deepEqual(
-    accountOf(result).noStepNeeded,
-    ["n03:equip_for:already_held", "n05:equip_for:already_held", "n07:equip_for:already_held"],
-    "the three repeats are named as calls that had nothing to do, not dropped silently",
-  );
-  // Every cut still names the slot `equipFor` answered: collapsing the repeats must not lose the half the plan uses.
-  for (const node of nodesOf(result).filter((candidate) => candidate.actionId === "cut_weeds"))
-    assert.deepEqual(node.arguments.slot, { type: "integer", canonicalValue: "3" });
+  assert.deepEqual(accountOf(result).noStepNeeded, [
+    "n01:equip_for:answered_the_slot",
+    "n03:equip_for:answered_the_slot",
+    "n05:equip_for:answered_the_slot",
+    "n07:equip_for:answered_the_slot",
+  ]);
+  // Every cut still names the slot its own call answered: writing no step must not lose the half the plan uses.
+  for (const node of nodesOf(result)) assert.deepEqual(node.arguments.slot, { type: "integer", canonicalValue: "3" });
 });
 
 /**
- * The other side of the same rule: the hand the programme establishes MOVES.
+ * Two tools in one programme are still two slot answers and no steps.
  *
- * A guard that collapsed every equip after the first would be as wrong as the one that never collapsed anything - the
- * second tool is not in hand until its own step runs, so it owes a step of its own.
+ * The half that USED to matter - a second tool owed a second equip - is gone with the step itself: each action takes its
+ * own declared tool at execution, so the programme never has to move her hand at all.
  */
-test("one equip per programme: a second tool still owes its own equip step", () => {
+test("two tools in one programme are two slot answers, and neither writes a step", () => {
   const result = compile(
     `const scythe = builder.equipFor('cut_weeds');
 builder.cut_weeds({ x: 5, y: 6, slot: scythe, expectedTargetId: 'weed_01' });
@@ -3263,28 +3255,26 @@ builder.dig_artifact_spot({ x: 7, y: 6, slot: hoe, expectedTargetId: 'artifact_s
     },
   );
   assert.deepEqual(
-    nodesOf(result).map((node) => {
-      const declared = node.arguments.tool;
-      return [node.actionId, declared?.type === "string" ? declared.canonicalValue : null];
-    }),
+    nodesOf(result).map((node) => [node.actionId, (node.arguments.slot as unknown as { canonicalValue?: string } | undefined)?.canonicalValue ?? null]),
     [
-      ["equip_tool", "scythe"],
-      ["cut_weeds", null],
-      ["equip_tool", "hoe"],
-      ["dig_artifact_spot", null],
+      ["cut_weeds", "3"],
+      ["dig_artifact_spot", "5"],
     ],
+    "each action names the slot its own tool sits in, and no step precedes either",
   );
-  assert.deepEqual(accountOf(result).noStepNeeded, [], "neither call found its tool already in hand");
+  assert.deepEqual(accountOf(result).noStepNeeded, [
+    "n01:equip_for:answered_the_slot",
+    "n03:equip_for:answered_the_slot",
+  ]);
 });
 
 /**
- * `cut_weeds` declares `tool:scythe` on the surface, so the helper must honour that claim. When the pack publishes the
- * category the slot is resolved and no equip step is written (the tool is in hand); when the pack publishes no
- * categories the refusal names the CATEGORY it could not resolve - never "requirement undeclared", which would be a
- * false statement about a claim the surface makes.
+ * `cut_weeds` declares `tool:scythe` on the surface, so the helper must honour that claim: the slot it answers is the
+ * scythe's, and when the pack publishes no categories the refusal names the CATEGORY it could not resolve - never
+ * "requirement undeclared", which would be a false statement about a claim the surface makes.
  */
 test("equipFor resolves the declared category from the pack, and names the category when no slot publishes it", () => {
-  // The scythe is already the held tool, so the call writes the action it was asked about and no equip step.
+  // The scythe is in slot 3 whichever tool is in her hand, and the plan is the action alone either way.
   const declared = compile(
     "const slot = builder.equipFor('cut_weeds'); builder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
     {
@@ -3300,7 +3290,7 @@ test("equipFor resolves the declared category from the pack, and names the categ
     ["cut_weeds"],
   );
 
-  // The axe is held instead, so the same call writes one equip step naming the category, then the action.
+  // The axe is held instead: the answer is the scythe's slot, and still no step is written before the cut.
   const notHeld = compile(
     "const slot = builder.equipFor('cut_weeds'); builder.cut_weeds({ x: 5, y: 6, slot, expectedTargetId: 'weed_01' });",
     {
@@ -3313,8 +3303,9 @@ test("equipFor resolves the declared category from the pack, and names the categ
   );
   assert.deepEqual(
     nodesOf(notHeld).map((node) => node.actionId),
-    ["equip_tool", "cut_weeds"],
+    ["cut_weeds"],
   );
+  assert.deepEqual(nodesOf(notHeld)[0]!.arguments.slot, { type: "integer", canonicalValue: "3" });
 
   // The pack is older than the claim: no slot says `scythe`, so the refusal names that, not the requirement.
   const packWithoutCategories = compile("builder.equipFor('cut_weeds');", {
@@ -3334,6 +3325,36 @@ test("equipFor resolves the declared category from the pack, and names the categ
   );
   // An id the vocabulary does not have answers with that name, and the host adds the ids it DOES have.
   assert.equal(refusalOf(compile("builder.equipFor('brew_potion');")), "plan_script_unknown_action:brew_potion");
+});
+
+/**
+ * THE VOCABULARY HAS NO `equip_tool` STEP, AND REFUSES IT BY NAME.
+ *
+ * A step that equips is undone by the step it precedes: every tool handler selects the tool its own `tool:<category>`
+ * claim declares when it runs and puts the previous hand back in its `finally`, so an equip node written before
+ * `cut_weeds`, `break_rock`, `chop_tree`, `till_soil` or `water_crop` changes nothing about it while spending a dispatched
+ * turn (`round99`: sixteen of them in one plan). The action is still mounted - the surface below still publishes it, a
+ * gesture the player can ask for on its own - and what is gone is only the step.
+ */
+test("a plan cannot write an equip_tool step, and the refusal names the reason", () => {
+  assert.equal(
+    refusalOf(compile("builder.equip_tool({ tool: 'scythe' });")),
+    "plan_script_equip_undone_by_the_step_it_precedes:equip_tool",
+  );
+  // Refused as ONE CALL, not as the whole script: the steps beside it are still enumerated, so the correction is one
+  // deletion and one resubmission rather than a plan she has to rewrite blind.
+  const besideIt = compile(
+    "builder.equip_tool({ tool: 'scythe' });\nbuilder.cut_weeds({ x: 5, y: 6, expectedTargetId: 'weed_01' });",
+    { toolSlots: [{ slot: 3, label: "(W)47", upgradeLevel: 0, category: "scythe" }] },
+  );
+  assert.equal(besideIt.status, "partial");
+  assert.deepEqual(nodesOf(besideIt).map((node) => node.actionId), ["cut_weeds"]);
+  assert.deepEqual(accountOf(besideIt).dropped, ["n01:plan_script_equip_undone_by_the_step_it_precedes:equip_tool"]);
+  // The action itself is not withdrawn: it is still a published action of the Mod, reachable outside a plan.
+  assert.ok(
+    SURFACE.some((action) => action.actionId === "equip_tool"),
+    "equip_tool stays a mounted gesture: the plan vocabulary is what refuses it, not the surface",
+  );
 });
 
 test("a published argument description reaches the plan shape, because the Mod owns the meaning", () => {

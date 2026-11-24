@@ -311,7 +311,7 @@ type PlanCallAccount = Readonly<{
   /** Her calls whose own step is a node of the program. */
   acceptedSteps: readonly string[];
   acceptedStepsCount: number;
-  /** Her calls that had nothing to do: `n04:equip_for:already_held`, the tool the action needs was already in hand. */
+  /** Her calls that had nothing to do: `n04:equip_for:answered_the_slot`, a slot answer rather than a step. */
   noStepNeeded: readonly string[];
   noStepNeededCount: number;
   /** Her calls that were refused: `n03:plan_script_...`, so that step of hers is not going to run. */
@@ -574,7 +574,20 @@ export const MAX_PLAN_NODES = 256;
  */
 export const PLAN_FORM_ACTION_IDS: readonly string[] = Object.freeze([]);
 
-/** The published action whose one job is putting a tool in hand; the `equipFor` helper writes it. */
+/**
+ * The published action whose one job is putting a tool in hand - and NOT a node of a plan.
+ *
+ * WHY IT IS NOT A STEP: A STEP THAT EQUIPS IS UNDONE BY THE STEP IT PRECEDES. Every tool handler selects the tool its
+ * own `tool:<category>` claim declares when it runs and puts the previous hand back in its `finally`
+ * (`farmhandexecutioncontroller.resourcetoolactions.cs`, `TrySelectDeclaredTool` / `RestoreToolSelection`), and that
+ * selection belongs to the BODY, which runs after the walk. So `cut_weeds`, `break_rock`, `chop_tree`, `till_soil` and
+ * `water_crop` equip their own declared tool at execution whatever the hand held, and an `equip_tool` node written before
+ * one of them changes nothing about it while spending a turn of game time (measured `round99`: sixteen of them in one
+ * plan, each one a dispatched turn the world advanced through).
+ *
+ * IT IS STILL MOUNTED. The action stays published - a gesture the player can ask for on its own ("take out your axe") -
+ * and it is reachable outside a plan; what it is not is a step a plan can contain.
+ */
 const EQUIP_TOOL_ACTION_ID = "equip_tool";
 
 /** The published action whose one job is putting the body on (or beside) a tile; a transition's approach step uses it. */
@@ -1022,6 +1035,11 @@ const ABSENT_PLAN_GLOBALS: readonly string[] = Object.freeze([
  * action. Measured `round47` (2026-11-12, 64 assistant turns, 188 planned nodes): every emote the run did not make was a
  * plan step it never wrote.
  * </p>
+ * <p>
+ * AND MINUS THE ACTION A STEP WOULD UNDO (`EQUIP_TOOL_ACTION_ID`). It is published and mounted, and its effect lasts
+ * exactly until the next step runs, so a plan has no use for it: excluded here rather than refused later, because the
+ * builder, the description and `plan_shape` all read this one list and an action left in it would be taught as a step.
+ * </p>
  */
 export function planActionsFromRegistrations(
   registrations: readonly ActionRegistration[],
@@ -1030,6 +1048,7 @@ export function planActionsFromRegistrations(
   for (const registration of registrations) {
     if (!PLAN_ACTION_LIFECYCLES.includes(registration.lifecycle) || registration.kind !== "execution") continue;
     if (isExpressionOnlyAction(registration.actionId)) continue;
+    if (registration.actionId === EQUIP_TOOL_ACTION_ID) continue;
     const declared = declaredArgumentsOf(registration);
     if (declared === undefined || !declared.every((argument) => PLAN_ARGUMENT_TYPES.includes(argument.type))) continue;
     actions.push(
@@ -2363,18 +2382,8 @@ type PlanScriptState = {
    * actions the builder was generated from.
    */
   tileRead: StardewTileRead | null;
-  /** The calls that had nothing to do, `n04:equip_for:already_held`. */
+  /** The calls that had nothing to do, `n04:equip_for:answered_the_slot`. */
   noStepNeeded: string[];
-  /**
-   * The slot the PROGRAMME has put in hand, or `undefined` until the first `equipFor` asks.
-   *
-   * The snapshot is frozen for the whole compile, so it answers "what was in hand when the plan was written" and never
-   * changes. An equip step written ten nodes up is state the snapshot cannot see, and a helper that re-read the snapshot
-   * re-established the same hand once per unit of work: measured 2026-11-20 (`round82`), 28 of the 43 `equip_tool` nodes
-   * in 16 accepted programmes answered `already_equipped`, and no programme's tool sequence ever changed - one hand, one
-   * change, repeated until the work ran out.
-   */
-  heldSlot?: number | null;
   /**
    * The nodes the compiler inserted, in program order, each one `<actionId>` beside the id it was minted with.
    *
@@ -2489,6 +2498,16 @@ function createPlanBuilder(
         if (property === "nodeCount") return state.nodes.length;
         if (property === "isFull") return () => state.nodes.length >= MAX_PLAN_NODES;
         if (property === "equipFor") return equipFor;
+        // A STEP THAT IS UNDONE BY THE STEP IT PRECEDES IS NOT A STEP (see `EQUIP_TOOL_ACTION_ID`). Refused by name,
+        // and refused as one call rather than as the whole script, so the plan's other steps are still enumerated beside
+        // the one that has to go.
+        if (property === EQUIP_TOOL_ACTION_ID)
+          return () => {
+            state.builderCalls += 1;
+            atPlanCall(state, EQUIP_TOOL_ACTION_ID, () =>
+              rejectPlanCall(`plan_script_equip_undone_by_the_step_it_precedes:${EQUIP_TOOL_ACTION_ID}`, state),
+            );
+          };
         const method = methods.get(property);
         if (method !== undefined) return method;
         return refusePlan(`plan_script_unknown_action:${property}`, state);
@@ -2498,8 +2517,12 @@ function createPlanBuilder(
 }
 
 /**
- * Writes the equip step the action's own declared tool needs, immediately before that action, and answers the tool slot
- * the action must name.
+ * Answers the slot the action's own declared tool occupies in the pack, so the action can name it, and writes NO step.
+ *
+ * WHY NO STEP: the action equips that tool itself when it runs and puts the previous hand back afterwards, so a step
+ * written here would be undone by the step it precedes (`EQUIP_TOOL_ACTION_ID`). What is left is the other half - the
+ * slot the call has to NAME - which the snapshot's frozen `currentToolSlot` cannot answer, because the tool an action
+ * needs is rarely the one in her hand.
  *
  * The tool an action needs is published at two grains. The action-wide `tool:<category>` claim (read into
  * `toolRequirement`, and selected by the Mod at dispatch) names the CATEGORY; the pack's own tool slots publish that same
@@ -2510,8 +2533,7 @@ function createPlanBuilder(
  *
  * An action whose surface truly declares nothing is refused BY NAME, together with the arguments and claims the surface
  * does declare for it, because a guessed tool is a guaranteed failed hit.
- */
-function equipForAction(
+ */function equipForAction(
   actions: readonly PublishedPlanAction[],
   snapshot: Snapshot,
   actionId: unknown,
@@ -2536,24 +2558,11 @@ function equipForAction(
       state,
       requirementOf(action),
     );
-  // The hand this PROGRAMME will have by the time the action runs, not the one the snapshot froze: an equip step written
-  // ten nodes up has already put the tool in hand, and answering from the compile-time snapshot put it there again. The
-  // snapshot seeds this once, and every equip step written below moves it on.
-  if (state.heldSlot === undefined) state.heldSlot = publishedToolSlot(snapshot);
-  // The tool the action must name is already in hand, so the plan is the action alone - which is a call that had nothing
-  // to do, not a call that was ignored: an author who cannot tell those apart cannot tell whether the compiler saw her
-  // `equipFor` at all.
-  if (state.heldSlot === slot) {
-    state.noStepNeeded.push(`${planStepName(state.builderCalls)}:equip_for:already_held`);
-    return slot;
-  }
-  const equip = actions.find((candidate) => candidate.actionId === EQUIP_TOOL_ACTION_ID);
-  if (equip === undefined)
-    rejectPlanCall(`plan_script_equip_unavailable:${EQUIP_TOOL_ACTION_ID}`, state, requirementOf(action));
-  // Written through the same emitter as every other node, so the equip step is validated against `equip_tool`'s own
-  // declared argument (a semantic tool category, never a slot) exactly as a hand-written call would be.
-  emitPlanNode(equip, { tool: category }, snapshot, actions, state);
-  state.heldSlot = slot;
+  // A SLOT ANSWER, NOT A STEP. The call resolves which slot holds the tool the action needs, and writes nothing: the
+  // action takes its own declared tool when it runs and would undo an equip written before it (`EQUIP_TOOL_ACTION_ID`).
+  // It is reported as a call that had nothing to do rather than dropped, so an author can tell "the compiler saw my call"
+  // from "the compiler ignored my step".
+  state.noStepNeeded.push(`${planStepName(state.builderCalls)}:equip_for:answered_the_slot`);
   return slot;
 }
 
@@ -2615,12 +2624,6 @@ function declaredToolOf(target: unknown): Readonly<{ toolKind: string; slot: num
   if (typeof declared.toolKind !== "string") return undefined;
   if (typeof declared.slot !== "number" || !isNonNegativeSafeInteger(declared.slot)) return undefined;
   return Object.freeze({ toolKind: declared.toolKind, slot: declared.slot });
-}
-
-/** The slot the farmer is holding, exactly as the Mod's snapshot publishes it. */
-function publishedToolSlot(snapshot: Snapshot): number | null {
-  const held = snapshot.currentToolSlot;
-  return typeof held === "number" && isNonNegativeSafeInteger(held) ? held : null;
 }
 
 /** The shape this action demands, carried by every refusal a call can produce: the model that guessed a name or a kind
