@@ -87,6 +87,13 @@
         "tools/run-windows-voice-output-gate.mjs", // read by tools/lib/voice-gateway-probe-client.test.mjs:53
         "tools/lib/voice-final-gate-server.mjs", // spawned by tools/run-windows-sensevoice-final-transcript-gate.mjs:29
 
+        // A consumer that is not an import: a path built at run time, or a JSON artifact one file writes and another
+        // verifies. `round-verdict.mjs` is spawned by joining a path in two suites (`test:tools-lib`) and is itself the
+        // file that makes `lib/standstill-partition.mjs` and `analysis/self-record.mjs` reachable, so three rows leave the
+        // report at once and the next reader of a smaller report can tell why.
+        "tools/create-stardew-navigation-p4-fixture.mjs", // artifact: the fixture-manifest.json verified by tools/run-stardew-navigation-p4-runtime-probe.mjs:55
+        "tools/live-run/round-verdict.mjs", // spawned by tools/live-run/round-verdict.test.mjs:24 (and round-verdict.standstill.test.mjs:33); admits lib/standstill-partition.mjs and analysis/self-record.mjs
+
         // The memory live-loop's manifests: the test reads the directory, not a list of names
         // (tools/live-run/memory/run-memory-live-loop.test.mjs:16), so the pattern is the population.
         "tools/fixtures/chat-run-audit/memory-probes/*.manifest.mjs",
@@ -97,7 +104,11 @@
         "tools/live-run/analysis/round3-verdict.mjs", // tools/live-run/analysis/README.md:25
         "tools/run-stardew-native-local-path-predicate-probe.mjs", // fixtures/stardew/RUNBOOK.md:1269
         "tools/sandbox/sandbox-bus.mjs", // tools/sandbox/FINDINGS.md:77
-        "tools/verify-phase0b-host.mjs" // host/README.md:139
+        "tools/verify-phase0b-host.mjs", // host/README.md:139
+        // `runbook:` rows are weaker evidence than an import edge and say so: nothing loads these two, a person runs
+        // them by hand after reading the line.
+        "tools/diagnose-chat-turn-abort.mjs", // runbook: design/architecture/historian-prompt-rubric.md:215
+        "tools/grade-historian-voice.mjs" // runbook: design/architecture/historian-prompt-rubric.md:322
       ],
       "project": [
         "tools/**/*.mjs"
