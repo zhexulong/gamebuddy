@@ -14,7 +14,7 @@ namespace GameBuddy.Stardew.Integration.Tests;
 /// <summary>
 /// Two real locations, a real farmer, and a content-free <c>Crop</c> - the <c>TargetFamilyWorld</c> construction,
 /// reduced to what the two whereabouts discovery methods read (<c>Game1.locations</c>, the actor's tile and current
-/// location, and each location's <c>terrainFeatures</c>).
+/// location, each location's <c>terrainFeatures</c>, and the map bounds the harvest family's own admission asks about).
 ///
 /// <para>
 /// Shared by the suites that drive <c>DiscoverWateringWhereabouts</c> / <c>DiscoverHarvestWhereabouts</c> through the
@@ -132,6 +132,16 @@ internal sealed class WhereaboutsWorld : IDisposable
         (IReadOnlyList<BridgeHarvestWhereabouts>)Discover("DiscoverHarvestWhereabouts");
 
     /// <summary>
+    /// Whether the SHIPPED harvest family would publish this tile as a row - asked of the one predicate the family and the
+    /// whole-map row share, so a case asserts one spelling rather than a re-derivation of it.
+    /// </summary>
+    internal bool HarvestTargetTileIsPublished(int x, int y) =>
+        FarmhandTargetDiscovery.IsPublishedHarvestTile(
+            this.Actor,
+            new Vector2(x, y),
+            (StardewValley.TerrainFeatures.HoeDirt)this.Actor.currentLocation.terrainFeatures[new Vector2(x, y)]);
+
+    /// <summary>
     /// What the same walk told the recorder it WITHHELD, in the wire order the snapshot publishes. Read from the one
     /// recorder the shipped discovery writes into, so the rows are the Mod's own answer rather than a re-derivation.
     /// </summary>
@@ -147,6 +157,14 @@ internal sealed class WhereaboutsWorld : IDisposable
     {
         var location = new GameLocation();
         SetInstanceField(location, "name", new NetString(name));
+        // A MAP, because `DiscoverHarvestWhereabouts` publishes an address only for a tile `harvestTargets` would publish
+        // and that admission reads the map: `isTileOnMap` indexes `map.Layers[0]` (GameLocation.cs:2946-2953) and
+        // `isTilePassable` reads the Back and Buildings layers (GameLocation.cs:2898-2911). 24x24, so a tile can stand
+        // FAR (sixteen away) and still be on this map - the distance under test is the family's window, not the map edge.
+        var map = new xTile.Map();
+        map.AddLayer(new xTile.Layers.Layer("Back", map, new xTile.Dimensions.Size(24, 24), new xTile.Dimensions.Size(64, 64)));
+        map.AddLayer(new xTile.Layers.Layer("Buildings", map, new xTile.Dimensions.Size(24, 24), new xTile.Dimensions.Size(64, 64)));
+        location.map = map;
         return location;
     }
 

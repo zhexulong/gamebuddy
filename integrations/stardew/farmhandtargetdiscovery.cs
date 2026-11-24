@@ -1187,10 +1187,11 @@ internal sealed class FarmhandTargetDiscovery
             int readyCount = 0;
             Vector2? nearest = null;
             float nearestDistance = float.MaxValue;
-            Vector2 playerTile = Game1.player?.Tile ?? Vector2.Zero;
+            Farmer? actor = Game1.player;
+            Vector2 playerTile = actor?.Tile ?? Vector2.Zero;
             bool sameMap = string.Equals(
                 location.NameOrUniqueName,
-                Game1.player?.currentLocation?.NameOrUniqueName,
+                actor?.currentLocation?.NameOrUniqueName,
                 StringComparison.Ordinal);
             foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in location.terrainFeatures.Pairs)
             {
@@ -1209,7 +1210,12 @@ internal sealed class FarmhandTargetDiscovery
                     continue;
                 }
                 readyCount++;
-                if (!sameMap) continue;
+                if (!sameMap || actor is null) continue;
+                // THE ADDRESS BELONGS TO THE FAMILY. `nearestX`/`nearestY` is published only for a tile
+                // `harvestTargets` would itself publish, because a tile this row names and that family refuses is a
+                // crop the companion can see and cannot name - the count stays the whole map's (that is the fact this
+                // row exists for), and the address is only offered when it is one an action can take (`round99`).
+                if (!IsPublishedHarvestTile(actor, pair.Key, dirt)) continue;
                 float distance = Math.Abs(pair.Key.X - playerTile.X) + Math.Abs(pair.Key.Y - playerTile.Y);
                 if (distance < nearestDistance)
                 {
@@ -2133,18 +2139,43 @@ internal sealed class FarmhandTargetDiscovery
             row => new TargetCandidate(row.X, row.Y, row.Slot));
     }
 
+    /// <summary>
+    /// Whether this hoed tile is a <c>harvestTargets</c> ROW: a living non-forage crop that names an item to pick, on
+    /// the actor's own map, inside the family's window and with a neighbour the body can stand on.
+    ///
+    /// <para>
+    /// ONE SPELLING, TWO READERS. The family publishes these rows, and <see cref="DiscoverHarvestWhereabouts"/> names
+    /// the nearest of them as the whole-map row's ADDRESS. The two are two readings of one crop population, so a tile
+    /// only one of them accepts is a tile the companion can see and cannot name: measured `round99`
+    /// (`game-1795514126213`), her block read `可收作物: 3（最近: 33,16）` on the Farm while `harvestTargets` was `[]`,
+    /// because the family's window is six tiles and (33,16) stood thirty-one from her - the count was true, the address
+    /// was a real tile, and there was no target id to hand `harvest_crop` anywhere she could read. She spent four
+    /// observations and three game hours looking for one.
+    /// </para>
+    ///
+    /// <para>
+    /// The readiness and harvest-method clauses are NOT here: each reader reports those two as exclusions under its own
+    /// family name (<see cref="DiscoveryExclusionReasons.NotReady"/>,
+    /// <see cref="DiscoveryExclusionReasons.WrongHarvestMethod"/>), and a boolean answering both questions at once would
+    /// take their reason away.
+    /// </para>
+    /// </summary>
+    internal static bool IsPublishedHarvestTile(
+        Farmer player, Vector2 tile, StardewValley.TerrainFeatures.HoeDirt dirt) =>
+        dirt.crop is not null
+        && !dirt.crop.forageCrop.Value
+        && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
+        && IsPublishedTargetTileInRadius(player, (int)tile.X, (int)tile.Y, ExecutionManager.TargetDiscoveryRadius);
+
     internal static IReadOnlyList<BridgeHarvestTarget> DiscoverHarvestTargets(Farmer player, DiscoveryExclusionRecorder exclusions, GroundSurface? surfaces = null)
     {
         StardewValley.GameLocation? location = player.currentLocation;
         if (location is null) return Array.Empty<BridgeHarvestTarget>();
         surfaces ??= GroundSurface.Of(location);
         List<BridgeHarvestTarget> result = new();
-        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in ExecutionManager.NearestFirst(location.terrainFeatures.Pairs
-            .Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt
-                && dirt.crop is not null
-                && !dirt.crop.forageCrop.Value
-                && !string.IsNullOrWhiteSpace(dirt.crop.indexOfHarvest.Value)
-                && IsPublishedTargetTileInRadius(player, (int)pair.Key.X, (int)pair.Key.Y, ExecutionManager.TargetDiscoveryRadius)), player))
+        foreach (KeyValuePair<Vector2, StardewValley.TerrainFeatures.TerrainFeature> pair in ExecutionManager.NearestFirst(
+            location.terrainFeatures.Pairs.Where(pair => pair.Value is StardewValley.TerrainFeatures.HoeDirt dirt && IsPublishedHarvestTile(player, pair.Key, dirt)),
+            player))
         {
             if (result.Count >= 64) break;
             StardewValley.TerrainFeatures.HoeDirt dirt = (StardewValley.TerrainFeatures.HoeDirt)pair.Value;
