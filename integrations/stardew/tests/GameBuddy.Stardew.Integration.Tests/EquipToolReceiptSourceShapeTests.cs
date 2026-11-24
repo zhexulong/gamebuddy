@@ -124,9 +124,14 @@ public sealed class EquipToolReceiptSourceShapeTests
     private static string NoOpBranch() =>
         Branch("if (ReferenceEquals(Game1.player.CurrentTool, selectedTool))", "string? expectedTool = DescribeTool(selectedTool);");
 
-    /// <summary>The branch that reads the hand back after moving it, up to the prose that explains the withholding.</summary>
-    private static string SwitchBranch() =>
-        Branch("string? expectedTool = DescribeTool(selectedTool);", "// `publish: false` above is `design/fact-authority.md`");
+    /// <summary>
+    /// The rest of the handler from the first read taken after the no-op: the switch, the failure it can end on, and its
+    /// success. It ends where the METHOD ends rather than at a comment, so prose that moves or is shortened cannot move the
+    /// boundary of what this file reads.
+    /// </summary>
+    private static string SwitchBranch() => After(
+        MethodBody(Source(), "public LocalExecutionReceipt RequestLocalEquipTool("),
+        "string? expectedTool = DescribeTool(selectedTool);");
 
     /// <summary>Whether one branch's `before` and `expected` name the same tool - the relation the Host's rule reads.</summary>
     private static bool SameTool(string branch)
@@ -154,6 +159,14 @@ public sealed class EquipToolReceiptSourceShapeTests
         int to = body.IndexOf(end, from, StringComparison.Ordinal);
         to.Should().BeGreaterThan(from, $"`{end}` must still follow it");
         return body[from..to];
+    }
+
+    /// <summary>The text from a marker inside <c>RequestLocalEquipTool</c> to the end of the method, the marker asserted.</summary>
+    private static string After(string body, string marker)
+    {
+        int from = body.IndexOf(marker, StringComparison.Ordinal);
+        from.Should().BeGreaterThanOrEqualTo(0, $"`{marker}` must still be how this handler states that case");
+        return body[from..];
     }
 
     /// <summary>
