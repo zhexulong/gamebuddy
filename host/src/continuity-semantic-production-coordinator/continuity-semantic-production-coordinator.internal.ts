@@ -5131,8 +5131,8 @@ export type StartupChatTurnRecoverySettlement = Readonly<{
  *
  * It owes a caller this because nothing else can close the turn: `acceptMounted` refuses every new turn
  * while the current ledger is non-terminal, and the only process that could have terminalized it exited.
- * The player's consequence is stated where the settlement is recorded: the next message is admitted, and
- * the abandoned turn reads as failed/`interrupted` instead of vanishing.
+ * The player's consequence is stated where the settlement is recorded: the next message is admitted, and the
+ * abandoned turn reads as failed/`interrupted` (a claimed cancel as `cancelled`) instead of vanishing.
  *
  * The owner outcomes are kept apart on purpose. `proven_dead` is the one verdict that permits a
  * settlement. `alive` says a process with that exact pid and start identity still runs, which is either
