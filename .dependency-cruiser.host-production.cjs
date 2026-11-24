@@ -85,26 +85,38 @@ module.exports = {
     // is parsed, so `import type` edges are erased before the graph exists. The rule
     // that matters here is `games-must-not-import-unapproved-generic-layers`: a
     // `games/**` type-only import of `containment/auth` is not in this graph at all --
-    // `containment/auth/desktop-guardian-session.internal.ts` never appears in the 243
-    // modules -- and the rule reports passed over it. That is how the edge fixed in
-    // 1634c8cc survived until the seam checker caught it.
+    // `containment/auth/desktop-guardian-session.internal.ts` never appears among the
+    // modules the graph reads -- and the rule reports passed over it. That is how the
+    // edge fixed in 1634c8cc survived until the seam checker caught it.
     //
-    // The authority for type-only edges is tools/check-host-game-physical-seam.mjs,
+    // The authority for type-only edges is gates/product/check-host-game-physical-seam.mjs,
     // which reads source text (`import type`, `import("path").Type`, `require`,
-    // import-equals) and does see them. tools/check-host-game-physical-seam.test.mjs
-    // holds the two gates to the same policy and fails when this option changes
-    // without the reconciliation below.
+    // import-equals). Its scope is the architecture question and nothing else: it judges
+    // WHICH LAYER may reach which (games -> bootstrap/containment/composition, the
+    // containment runtime's own vocabulary, the registration facade, raw desktop/native
+    // modules), including the spellings this graph erases, and it fails closed on a computed
+    // `import()` or `require()` it cannot resolve; but it builds no graph, so it cannot see a
+    // cycle between any two modules that are not directly importing each other, and it judges
+    // import paths rather than resolution, so a barrel, an alias or a bare specifier it does
+    // not name is outside it -- those two gaps are this file's, by construction.
     //
-    // Enabling it IS the eventual fix, and not a free switch: 254 modules (+11) and
-    // 1018 edges (+59%) also surface 29 pre-existing
-    // `no-host-production-circular-dependencies` violations, every one a cycle that only
-    // closes through a type-only edge and therefore never happens at run time (this
-    // graph has no run-time cycle today). Restricting that rule to non-type-only edges
-    // still leaves 22, because depcruise reports the run-time edge of a mixed cycle.
-    // So the blocker is 29 type-only cycles that need adjudication -- either the cycles
-    // are removed or the circular rule is rewritten to judge the run-time graph -- and
-    // never a baseline entry. Until that is done, this option stays off and the seam
-    // checker above owns the edges it cannot see.
+    // Enabling it IS the eventual fix, and not a free switch. Measured 2026-11-25 with
+    //   pnpm exec depcruise --config .dependency-cruiser.host-production.cjs \
+    //     host/src/main.ts host/src/stardew-attachment.ts \
+    //     host/src/farmhand-companion-preview.ts \
+    //     host/src/composition/desktop-host-composition.ts --output-type json
+    // and with the same command against a copy of this file whose only change is this
+    // option flipped, on the same worktree minutes apart - so the delta is the durable
+    // reading, not the absolute count: 261 modules / 683 edges / 2 circular violations
+    // become 272 modules (+11) / 1082 edges (+58%) / 31 circular violations (+29). Every
+    // one of the 29 added cycles closes through at least one type-only edge and therefore
+    // never happens at run time. Restricting that rule to non-type-only edges still leaves
+    // 24, because depcruise reports the run-time edge of a mixed cycle. So the blocker is
+    // the type-only cycles that need adjudication -- either the cycles are removed or the
+    // circular rule is rewritten to judge the run-time graph -- and never a baseline entry.
+    // Until that is done this option stays off and the seam checker above owns the edges it
+    // cannot see; gates/product/check-host-game-physical-seam.test.mjs fails when this
+    // option changes without that reconciliation.
     tsPreCompilationDeps: false,
     combinedDependencies: false,
     enhancedResolveOptions: {

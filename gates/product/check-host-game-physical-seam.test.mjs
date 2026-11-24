@@ -1,12 +1,12 @@
 // red-proof: inject  removing containment from the game-free generic layer set -> `✖ reports exact generic-to-game and
-//   Stardew raw-module violations` (tools/check-host-game-physical-seam.test.mjs)
+//   Stardew raw-module violations` (gates/product/check-host-game-physical-seam.test.mjs)
 // red-proof: history the tree before this rule's own unit, where
 //   `host/src/containment/runtime/contract/game-runtime.ts` declared
 //   `FarmhandBridgeConnectionNotAvailableError` -> `generic_runtime_names_game` naming that
 //   file, its line and the identifier, token `farmhand` (re-run of the checker on that tree)
 // red-proof: inject  `tsPreCompilationDeps: true` written into .dependency-cruiser.host-production.cjs ->
-//   `✖ the module graph declares the type-only edges it cannot see` names the option and the 29
-//   circular violations turning it on costs (tools/check-host-game-physical-seam.test.mjs)
+//   `✖ the module graph declares the type-only edges it cannot see` names the option and the
+//   circular violations turning it on costs (gates/product/check-host-game-physical-seam.test.mjs)
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -32,11 +32,11 @@ async function withFixture(files, run) {
 }
 
 const roots = {
-  "host/src/bootstrap/entry.ts": "export { value } from '../../games/stardew/value.js';\n",
+  "host/src/bootstrap/entry.ts": "export { value } from '../games/stardew/value.js';\n",
   "host/src/containment/reverse.ts": "import '../games/stardew/value.js';\n",
   // composition is the composition root: ADR-0007 allows it to import one
   // selected game adapter, so this edge is legal and must not be reported.
-  "host/src/composition/selected-adapter.ts": "export * from '../../games/stardew/value.js';\n",
+  "host/src/composition/selected-adapter.ts": "export * from '../games/stardew/value.js';\n",
   "host/src/games/stardew/value.ts": "export const value = 1;\n",
 };
 
@@ -64,7 +64,7 @@ test("allows the Stardew lifecycle process owner and approved provenance contrac
       // with the retired desktop-session guardian seam, so this fixture asserts the
       // live graph rather than an inert permission.
       "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts": [
-        "import { createProductionStagingDependencies } from '../../../../bootstrap/roots/stardew-private-mod-profile-staging.js';",
+        "import { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';",
         "export const owner = { createProductionStagingDependencies };\n",
       ].join("\n"),
       "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts":
@@ -84,7 +84,7 @@ test("blocks a game-layer import of the containment auth transport", async () =>
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.internal.ts": [
-        "import type { DesktopGuardianSession } from '../../../../containment/auth/desktop-guardian-session.internal.js';",
+        "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
         "export const owner = {} as unknown as DesktopGuardianSession;\n",
       ].join("\n"),
       "host/src/containment/auth/desktop-guardian-session.internal.ts":
@@ -103,7 +103,7 @@ test("allows Stardew installation registration mutation only from its lifecycle 
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/stardew-private-bootstrap-composer.core.internal.ts":
-        "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../../stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
+        "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
     },
@@ -117,7 +117,7 @@ test("allows read-only Stardew installation registration from the production lif
   await withFixture(
     {
       "host/src/stardew-production-lifecycle-coordinator.internal.ts":
-        "import { readStardewInstallationRegistration } from '../../tools/stardew-installation-registration.internal.js';\nexport const coordinator = readStardewInstallationRegistration;\n",
+        "import { readStardewInstallationRegistration } from './stardew-installation-registration.internal.js';\nexport const coordinator = readStardewInstallationRegistration;\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function readStardewInstallationRegistration() {}\nexport function withStardewLifecycleInstallationRegistrationOwner() {}\n",
     },
@@ -129,7 +129,7 @@ test("rejects Stardew installation registration mutation outside its lifecycle c
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/other.ts":
-        "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../../stardew-installation-registration.internal.js';\n",
+        "import { withStardewLifecycleInstallationRegistrationOwner } from '../../../stardew-installation-registration.internal.js';\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
     },
@@ -145,9 +145,9 @@ test("rejects detectable aliases and re-exports of the Stardew registration muta
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/alias.ts":
-        "import { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../../stardew-installation-registration.internal.js';\n",
+        "import { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../stardew-installation-registration.internal.js';\n",
       "host/src/games/stardew/lifecycle/reexport.ts":
-        "export { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../../stardew-installation-registration.internal.js';\n",
+        "export { withStardewLifecycleInstallationRegistrationOwner as mutation } from '../../../stardew-installation-registration.internal.js';\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
     },
@@ -163,7 +163,7 @@ test("rejects raw builtins and staging provenance from non-owner Stardew lifecyc
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/other.ts":
-        "import 'node:child_process';\nimport { createProductionStagingDependencies } from '../../../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
+        "import 'node:child_process';\nimport { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
       "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts":
         "export function createProductionStagingDependencies() {}\n",
     },
@@ -180,7 +180,7 @@ test("rejects the approved provenance exception outside the Stardew lifecycle", 
   await withFixture(
     {
       "host/src/games/game2/owner.ts":
-        "import { createProductionStagingDependencies } from '../../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
+        "import { createProductionStagingDependencies } from '../../bootstrap/roots/stardew-private-mod-profile-staging.js';\n",
       "host/src/bootstrap/roots/stardew-private-mod-profile-staging.ts":
         "export function createProductionStagingDependencies() {}\n",
     },
@@ -341,9 +341,9 @@ test("resolves supported source extensions, index modules, require and import-eq
   await withFixture(
     {
       "host/src/games/stardew/entry.ts": [
-        "import value from '../../tools/folder/index.mjs';",
+        "import value from './folder/index.mjs';",
         "import alias = require('./alias.cjs');",
-        "export { value as other } from '../../tools/other.jsx';",
+        "export { value as other } from './other.jsx';",
         "const loaded = require('./loaded.mts');",
       ].join("\n"),
       "host/src/games/stardew/folder/index.mjs": "export default 1;\n",
@@ -414,8 +414,8 @@ test("blocks a game-layer type-only import() of a generic layer", async () => {
   await withFixture(
     {
       "host/src/games/stardew/lifecycle/probe.ts": [
-        "export type X = import('../../../../containment/runtime/core/contained-game-runtime.js').ContainedGameRuntime;",
-        "export type Y = import('../../../../containment/auth/desktop-guardian-session.internal.js').DesktopGuardianSession;",
+        "export type X = import('../../../containment/runtime/core/contained-game-runtime.js').ContainedGameRuntime;",
+        "export type Y = import('../../../containment/auth/desktop-guardian-session.internal.js').DesktopGuardianSession;",
       ].join("\n"),
       "host/src/containment/runtime/core/contained-game-runtime.ts": "export type ContainedGameRuntime = unknown;\n",
       "host/src/containment/auth/desktop-guardian-session.internal.ts":
@@ -443,7 +443,7 @@ test("inspects flat host/src producers and rejects a non-owner registration impo
   await withFixture(
     {
       "host/src/run-manifest.ts":
-        "import { withStardewLifecycleInstallationRegistrationOwner } from '../../tools/stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
+        "import { withStardewLifecycleInstallationRegistrationOwner } from './stardew-installation-registration.internal.js';\nexport const owner = withStardewLifecycleInstallationRegistrationOwner;\n",
       "host/src/stardew-installation-registration.internal.ts":
         "export function withStardewLifecycleInstallationRegistrationOwner() {}\n",
     },
@@ -572,12 +572,14 @@ test("a comment that names the game to say the layer does not own the fact is no
 // `games-must-not-import-unapproved-generic-layers` is the same rule, but its graph is
 // built by transpiling TypeScript to JavaScript, so `import type` edges are erased before
 // the graph exists: it reported `passed` over the games -> containment/auth edge that this
-// file caught (1634c8cc). Enabling `tsPreCompilationDeps` is not free -- measured 254
-// modules and 29 pre-existing circular violations -- so the split is declared instead of
-// flipped, and the three tests below hold the two gates to one policy so neither can drift
-// away from the other in silence.
+// file caught (1634c8cc). Enabling `tsPreCompilationDeps` is not free -- measured 2026-11-25
+// it reads 272 modules against 261 and finds 31 circular violations against 2, and 24 of
+// them survive restricting that rule to non-type-only edges -- so the split is declared
+// instead of flipped, and the three tests below hold the two gates to one policy so neither
+// can drift away from the other in silence.
 const requireFromRepository = createRequire(import.meta.url);
-const moduleGraphConfig = requireFromRepository("../.dependency-cruiser.host-production.cjs");
+// From `gates/product/`, two levels up: the config lives at the repository root.
+const moduleGraphConfig = requireFromRepository("../../.dependency-cruiser.host-production.cjs");
 const moduleGraphBoundaryRule = moduleGraphConfig.forbidden.find(
   (rule) => rule.name === "games-must-not-import-unapproved-generic-layers",
 );
@@ -622,11 +624,10 @@ test("the module graph declares the type-only edges it cannot see", () => {
     [
       "check:host-module-graph builds its graph by transpiling TypeScript to JavaScript, so `import type`",
       "edges are erased before any rule sees them: `games-must-not-import-unapproved-generic-layers` is",
-      "blind to them and tools/check-host-game-physical-seam.mjs is their authority. Turning",
-      "tsPreCompilationDeps on adds 11 modules and 378 edges and makes 29 pre-existing",
-      "`no-host-production-circular-dependencies` violations red (22 of them survive restricting that",
-      "rule to non-type-only edges), so it may only be flipped together with that rule's reconciliation,",
-      "never with a baseline entry.",
+      "blind to them and gates/product/check-host-game-physical-seam.mjs is their authority. Turning",
+      "tsPreCompilationDeps on adds 11 modules and 399 edges and makes 31 circular violations red (24 of",
+      "them survive restricting that rule to non-type-only edges; measured 2026-11-25), so it may only be",
+      "flipped together with that rule's reconciliation, never with a baseline entry.",
     ].join(" "),
   );
   assert.ok(moduleGraphBoundaryRule, "the module graph no longer carries the game-boundary rule at all");
@@ -699,7 +700,7 @@ test("names the type-only game import the module graph cannot see, which its own
   await withFixture(
     {
       [importer]: [
-        "import type { DesktopGuardianSession } from '../../../../containment/auth/desktop-guardian-session.internal.js';",
+        "import type { DesktopGuardianSession } from '../../../containment/auth/desktop-guardian-session.internal.js';",
         "export const owner = {} as unknown as DesktopGuardianSession;\n",
       ].join("\n"),
       [target]: "export type DesktopGuardianSession = unknown;\n",
@@ -732,7 +733,7 @@ test("blocks a wire that names the game, the installation or the Mod in an impor
   await withFixture(
     {
       [WIRE]: [
-        "import { deployCompanionGameMod } from '../../../composition/desktop-host-composition.js';",
+        "import { deployCompanionGameMod } from '../../composition/desktop-host-composition.js';",
         "export async function run(): Promise<string> { return await deployCompanionGameMod('/artifact'); }",
       ].join("\n"),
       [COMPOSITION_ROOT]: [
@@ -764,7 +765,7 @@ test("blocks a renamed wire call whose declared type is still the game's, so a r
   await withFixture(
     {
       [WIRE]: [
-        "import { installCompanionContent } from '../../../composition/desktop-host-composition.js';",
+        "import { installCompanionContent } from '../../composition/desktop-host-composition.js';",
         "export async function run(): Promise<string> { return await installCompanionContent('/artifact'); }",
       ].join("\n"),
       [COMPOSITION_ROOT]: [
@@ -792,7 +793,7 @@ test("allows a wire that publishes a preparation the composition root named", as
   await withFixture(
     {
       [WIRE]: [
-        "import { prepareDesktopHostLaunch } from '../../../composition/desktop-host-composition.js';",
+        "import { prepareDesktopHostLaunch } from '../../composition/desktop-host-composition.js';",
         "export async function run(artifactRoot: string): Promise<readonly string[]> {",
         "  const preparation = await prepareDesktopHostLaunch(artifactRoot);",
         "  return [preparation.stage, preparation.outcome];",
