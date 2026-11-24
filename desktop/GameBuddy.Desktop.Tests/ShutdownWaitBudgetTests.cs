@@ -70,6 +70,17 @@ public sealed class ShutdownWaitBudgetTests
         Assert.Contains("DesktopHostTeardownRecord.Write(operationalRoot, pid, budget.ConsumedMs, budget.DeclaredMs)", supervisor, StringComparison.Ordinal);
         // No close path may wait for the Guardian with a bound of its own.
         Assert.DoesNotContain("CloseControlAndWaitForExitAsync(CancellationToken.None)", broker, StringComparison.Ordinal);
+        // And the broker goes AFTER the child's own wait, never before it: closing the broker's
+        // Host-facing pipe is what takes away the session the child's `drain_game_lifecycle` step
+        // contains its AI role through, and closing it first is a drain recorded as failed on the quit
+        // path (measured 2026-11-24, `.tmp/lane-teardownpair.md`). The behavioural half of this is
+        // `HostDrainBrokerTests`.
+        var controllerEof = supervisor.IndexOf("Interlocked.Exchange(ref controller, null)?.Dispose();", StringComparison.Ordinal);
+        var childWait = supervisor.IndexOf("WaitForExitWithinAsync(child, budget.RemainingMs)", StringComparison.Ordinal);
+        var brokerClose = supervisor.IndexOf("await closingBroker.CloseAsync(budget, cancellationToken)", StringComparison.Ordinal);
+        Assert.True(
+            controllerEof >= 0 && childWait > controllerEof && brokerClose > childWait,
+            $"the quit's order is controller EOF ({controllerEof}) -> child wait ({childWait}) -> broker close ({brokerClose}), and the broker close must come last");
     }
 
     /// <summary>

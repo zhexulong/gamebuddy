@@ -129,17 +129,19 @@ public sealed class HostBootstrapSupervisorTests
         var source = File.ReadAllText(SupervisorSource());
         var lease = source.IndexOf("internal sealed class RuntimeSupervisorLease", StringComparison.Ordinal);
         var close = source.IndexOf("internal async Task CloseAsync", lease, StringComparison.Ordinal);
-        // Closing the authenticated broker is what gives the child its controller EOF. Running the
-        // broker close first - before the wait and before any termination - is the whole point of the
-        // order: with the termination first, the child was already dead when that EOF would arrive and
-        // its own reclamation never ran.
-        var arm = source.IndexOf("await closingBroker.CloseAsync(budget, cancellationToken)", close, StringComparison.Ordinal);
+        // The CONTROLLER channel is what gives the child its EOF and starts its eight named steps;
+        // running the termination first made that EOF unobservable on every clean quit. The
+        // authenticated broker close is not that EOF - it is the native Guardian's control EOF, and it
+        // goes last, after the child's own drain, because that drain reaches back through the broker to
+        // contain the AI role it launched (`contain_role ai_client`). A broker closed first left the
+        // drain's step 3 of 8 with no peer (measured 2026-11-24, `.tmp/lane-teardownpair.md`).
         var wait = source.IndexOf("await WaitForExitWithinAsync(child, budget.RemainingMs)", close, StringComparison.Ordinal);
         var terminate = source.IndexOf("WindowsNative.TerminateProcess(child, 1)", close, StringComparison.Ordinal);
         // And the kill is never anonymous: it is followed by the launcher's own named fact.
         var fact = source.IndexOf("DesktopHostTeardownRecord.Write(operationalRoot", close, StringComparison.Ordinal);
+        var brokerClose = source.IndexOf("await closingBroker.CloseAsync(budget, cancellationToken)", close, StringComparison.Ordinal);
 
-        Assert.True(arm > close && wait > arm && terminate > wait && fact > terminate);
+        Assert.True(wait > close && terminate > wait && fact > terminate && brokerClose > fact);
         // The wait is bounded by the deadline the CHILD published, never by a number of the launcher's own.
         Assert.Contains("Result.DrainDeadlineMs", source[lease..], StringComparison.Ordinal);
     }

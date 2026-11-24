@@ -1027,28 +1027,35 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
     /// <summary>
     /// Ends the exact admitted child in the order a quit requires, under ONE declared budget.
     ///
-    /// Opening the ARMs is not the epilogue, and there are two of them because the child has two
-    /// channels on which an owner can leave:
+    /// The child has two channels on which an owner can leave, and a quit uses both - but at two
+    /// different moments:
     /// <list type="bullet">
     /// <item>the controller channel - this launcher's write end of the child's standard input - which
     /// exists for the whole run and is therefore the one that reaches a Host with no attempt session
-    /// open (ADR-0015 §3 makes the authenticated session attempt-scoped);</item>
+    /// open (ADR-0015 §3 makes the authenticated session attempt-scoped). It goes FIRST, and it is what
+    /// starts the child's eight named steps;</item>
     /// <item>the authenticated broker, which carries the same EOF to a Host that is serving an attempt
     /// and is also the only guardian signal this launcher owns: closing it drives the native Guardian's
-    /// control EOF so the native exits by itself.</item>
+    /// control EOF so the native exits by itself. It goes LAST, and only because the child's own drain
+    /// reaches back through it: `drain_game_lifecycle` contains the AI role it launched with a
+    /// `contain_role ai_client` exchange on that same session, and the Guardian's control EOF takes the
+    /// Guardian away from a step that is still relaying to it. A broker closed at the start of the quit
+    /// left step 3 of 8 with no peer at all (measured 2026-11-24, `.tmp/lane-teardownpair.md`), which is
+    /// a drain recorded as failed on the path where the player is leaving.</item>
     /// </list>
     /// The child's own exit reclamation waits for the EOF (`host/src/bootstrap/wire/desktop-runtime-bootstrap.internal.ts`:
     /// the loss of either channel requests the same termination a signal would). Running the
     /// termination first made that EOF unobservable on every clean quit - the child was already dead
     /// when it would have arrived - so the child's eight named steps never ran and its own drain
-    /// budget was dead code on this path.
+    /// budget was dead code on this path. A child that never leaves is the watchdog's: it is terminated
+    /// at the deadline the child itself published, and the broker then goes with what is left of the
+    /// same budget - so a hung child can never keep a Guardian, or a role it created, alive past the
+    /// quit.
     ///
-    /// The arms are also where the quit's budget starts, because they are the frames that tell BOTH
-    /// processes to leave: the child gets its controller EOF, and the native Guardian gets the control
-    /// EOF that makes it contain the roles it created. Every wait below draws on that budget, so the
-    /// player waits at most the deadline the child itself published - not the Guardian's exit and then
-    /// the child's deadline, counted separately as they were - and <see cref="ShutdownBudget.ConsumedMs"/>
-    /// is what the teardown record carries.
+    /// The budget starts at the controller EOF, the frame that tells the child to leave. Every wait
+    /// below draws on it, so the player waits at most the deadline the child published - not the
+    /// Guardian's exit and then the child's deadline, counted separately as they were - and
+    /// <see cref="ShutdownBudget.ConsumedMs"/> is what the teardown record carries.
     ///
     /// The wait's expiry is a named fact of this launcher's own (`host_teardown_timeout`, written
     /// beside the child's exit records) because killing a child that was still reclaiming must never
@@ -1070,22 +1077,8 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
         var child = Interlocked.Exchange(ref process, null);
         // The controller channel goes first, and it goes on EVERY quit and not only the one that finds
         // an authenticated session: it is the only owner-liveness signal this launcher holds for the
-        // whole run. The broker below is the other half - it carries the same EOF to a Host that is
-        // serving an attempt, and it is what drives the native Guardian's control EOF - so a quit that
-        // closed only the broker reached no Host at all once the attempt's session had ended.
+        // whole run, and the child's drain is what it starts.
         Interlocked.Exchange(ref controller, null)?.Dispose();
-        await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-        try
-        {
-            // The authenticated broker closure is the child's controller EOF and the only guardian
-            // signal we own: closing it drives the guardian's control EOF so the native guardian
-            // exits by itself. The resident guardian lease belongs to its caller (the
-            // composition/test scope that created and attached it); the host lease must not dispose
-            // it, or the caller observes a nulled handle.
-            var closingBroker = Interlocked.Exchange(ref broker, null);
-            if (closingBroker is not null) await closingBroker.CloseAsync(budget, cancellationToken).ConfigureAwait(false);
-        }
-        finally { guardianGate.Release(); }
         if (child is not null)
         {
             if (shouldTerminate && !await WaitForExitWithinAsync(child, budget.RemainingMs).ConfigureAwait(false))
@@ -1098,8 +1091,21 @@ internal sealed class RuntimeSupervisorLease : IAsyncDisposable
                 // to a deadline that already ran out.
                 _ = await WaitForExitWithinAsync(child, budget.RemainingMs).ConfigureAwait(false);
             }
-            child.Dispose();
         }
+        await guardianGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            // Only now, with the child's own drain finished or ended by the watchdog, does the broker
+            // go: closing it is the native Guardian's control EOF, so it is what contains the roles that
+            // drain could not reach, and it may not be spent before that drain has had its chance. The
+            // resident guardian lease belongs to its caller (the composition/test scope that created and
+            // attached it); the host lease must not dispose it, or the caller observes a nulled handle.
+            var closingBroker = Interlocked.Exchange(ref broker, null);
+            if (closingBroker is not null) await closingBroker.CloseAsync(budget, cancellationToken).ConfigureAwait(false);
+        }
+        finally { guardianGate.Release(); }
+        // The broker borrows the child handle for the sessions it authenticates, so the handle outlives it.
+        child?.Dispose();
         Interlocked.Exchange(ref bootstrap, null)?.Dispose();
         Interlocked.Exchange(ref runtime, null)?.Dispose();
         Interlocked.Exchange(ref controller, null)?.Dispose();
