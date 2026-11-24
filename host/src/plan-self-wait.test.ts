@@ -9,6 +9,7 @@ import {
   planSelfWaitDecision,
 } from "./continuity-semantic-game-runtime-materializer/continuity-semantic-game-runtime-materializer.js";
 import { MAX_PROGRAM_STATUS_WAIT_MS, waitForTerminalProgramStatus } from "./program-status-wait.js";
+import { readSourceShape } from "./test-support/source-shape.test-support.js";
 import { ROOT } from "./wire-declaration.test-support.js";
 
 /**
@@ -171,14 +172,14 @@ test("a hold is renewed by a finished step and bounded by a total of its own, wh
     "and a renewal must be able to buy more than one window, or the total is the window under another name",
   );
   // THE RULE CANNOT SEE THE PLAN. A one-parameter decision has no node count to divide by, so the per-node allowance
-  // cannot come back without changing the signature this line reads.
-  const source = readFileSync(
+  // cannot come back without changing the signature this line reads. Read through the shape reader: these are claims
+  // about the decision's SOURCE, and a reformat is not a change to it.
+  const { shape: source } = readSourceShape(
     join(
       ROOT,
       "host/src/continuity-semantic-game-runtime-materializer",
       "continuity-semantic-game-runtime-materializer.ts",
     ),
-    "utf8",
   );
   assert.match(
     source,
