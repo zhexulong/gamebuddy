@@ -29,6 +29,7 @@ export type OptimisticSend = Readonly<{
 export function submitAvailable(view: ViewState): boolean {
   return (
     view.kind === "ready" &&
+    view.session !== null &&
     view.session.pending === null &&
     view.session.snapshot.operations.some((op) => op.operationId === "chat.submit" && op.availability === "available")
   );
@@ -38,6 +39,7 @@ export function submitAvailable(view: ViewState): boolean {
 export function stopAvailable(view: ViewState): boolean {
   return (
     view.kind === "ready" &&
+    view.session !== null &&
     view.session.snapshot.chat?.turn?.canCancel === true &&
     view.session.snapshot.operations.some((op) => op.operationId === "chat.cancel" && op.availability === "available")
   );
@@ -54,6 +56,7 @@ export function stopAvailable(view: ViewState): boolean {
  */
 export function pendingOptimisticMessage(view: ViewState, optimistic: OptimisticSend | null): OptimisticSend | null {
   return view.kind === "ready" &&
+    view.session !== null &&
     optimistic !== null &&
     view.session.pending?.idempotencyKey === optimistic.idempotencyKey &&
     (view.session.snapshot.chat?.transcript.length ?? 0) <= optimistic.submittedAfterRows
@@ -69,7 +72,7 @@ export function pendingOptimisticMessage(view: ViewState, optimistic: Optimistic
  * preview and the Stop control are that fact already.
  */
 export function terminalTurnNotice(view: ViewState, labels: Messages): string | null {
-  if (view.kind !== "ready") return null;
+  if (view.kind !== "ready" || view.session === null) return null;
   const turn = view.session.snapshot.chat?.turn;
   if (turn?.state === "cancelled") return labels.chatStopped;
   if (turn?.state === "failed") return turnFailureText(turn.problemCode, labels, turn.providerFailure);
@@ -162,7 +165,7 @@ export function appBarGameStatus(
  * one answer.
  */
 export function liveTurn(view: ViewState): BrowserTurnV1 | null {
-  if (view.kind !== "ready") return null;
+  if (view.kind !== "ready" || view.session === null) return null;
   const turn = view.session.snapshot.chat?.turn ?? null;
   return turn !== null && !isTerminalTurnState(turn.state) ? turn : null;
 }

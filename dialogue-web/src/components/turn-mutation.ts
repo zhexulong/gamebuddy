@@ -68,6 +68,7 @@ export function createTurnMutation(input: TurnMutationInput): TurnMutation {
    * `chat.submit` - and the caller must then send nothing.
    */
   const begin = (idempotencyKey: string, current: ReadyView): PendingSubmission | null => {
+    if (current.session === null) return null;
     const operation = current.session.snapshot.operations.find((op) => op.operationId === "chat.submit");
     if (operation?.availability !== "available") return null;
     try {
@@ -123,7 +124,7 @@ export function createTurnMutation(input: TurnMutationInput): TurnMutation {
     // at the one seam every turn-starting mutation settles through.
     input.turnKeyRef.current = null;
     const latest = input.viewRef.current;
-    if (latest.kind === "ready" && latest.session.pending !== null)
+    if (latest.kind === "ready" && latest.session !== null && latest.session.pending !== null)
       input.commit({ ...latest, session: latest.session.withPending(null) });
   };
 

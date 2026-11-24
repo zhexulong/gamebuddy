@@ -130,7 +130,8 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
     commit,
     commitChatProblem,
   } = input;
-  if (view.kind !== "ready" || view.session.snapshot.eventStream === null) return () => undefined;
+  if (view.kind !== "ready" || view.session === null || view.session.snapshot.eventStream === null)
+    return () => undefined;
   let disposed = false;
   let recovering = false;
   // The frame queue (`../serial-drain`): one slot, in order, and a link that rejects does not stop the
@@ -176,7 +177,7 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
       const draft = pair.draft;
       if (disposed) return;
       const current = viewRef.current;
-      if (current.kind !== "ready" || root.chat.chat === null) return;
+      if (current.kind !== "ready" || current.session === null || root.chat.chat === null) return;
       const epochChanged = root.chat.eventStream?.epoch !== current.session.snapshot.eventStream?.epoch;
       let session: ReturnType<typeof createReferencePipelineSession>;
       let rebuilt = false;
@@ -330,7 +331,8 @@ export function startChatEventStream(input: ChatEventStreamLifecycle): () => voi
           const latest = viewRef.current;
           // A recovery that started under these reads is reading the same
           // authority with a cursor of its own; its answer supersedes this one.
-          if (disposed || recovering || latest.kind !== "ready" || root.chat.chat === null) return;
+          if (disposed || recovering || latest.kind !== "ready" || latest.session === null || root.chat.chat === null)
+            return;
           const session = checkpoint.applySnapshot(root.chat);
           settlePreview(root.chat.chat.turn);
           // The authoritative turn is settled, so a pending record for it is spent

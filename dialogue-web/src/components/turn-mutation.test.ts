@@ -143,7 +143,7 @@ test("an admitted press publishes its record before the wire call and spends the
   assert.equal(h.committed.length, 1);
   const published = h.committed[0];
   assert.equal(published.kind, "ready");
-  assert.equal(published.kind === "ready" ? published.session.pending?.idempotencyKey : null, KEY);
+  assert.equal(published.kind === "ready" ? (published.session?.pending?.idempotencyKey ?? null) : null, KEY);
   // The sentence about the attempt this one answers, and the poll failure that described it too.
   assert.deepEqual(h.sentences, [null]);
   assert.deepEqual(h.pollFailures, [null]);
@@ -192,7 +192,7 @@ test("an answered refusal spends the record it published and forgets the turn it
   // the key stops naming a turn no one will finish.
   assert.equal(h.committed.length, 2);
   const settled = h.committed[1];
-  assert.equal(settled.kind === "ready" ? settled.session.pending : "not-ready", null);
+  assert.equal(settled.kind === "ready" ? (settled.session?.pending ?? null) : "not-ready", null);
   assert.equal(h.turnKeyRef.current, null);
 });
 

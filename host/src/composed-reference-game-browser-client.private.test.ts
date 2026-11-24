@@ -94,11 +94,11 @@ test("composed client bootstraps and returns a validated composed root with chat
       assert.equal(root.apiVersion, 1);
       assert.equal(root.build.browserContract, "composed_reference_game_browser_api/v1");
       assert.equal(root.game, null);
-      assert.notEqual(root.chat, null);
-      assert.equal(root.chat.build.profileId, tavernProfile.profileId);
-      assert.equal(typeof root.chat.csrfToken, "string");
-      assert.equal(typeof root.chat.browserSession.expiresAtMs, "number");
-      assert.equal(root.chat.apiVersion, 1);
+      assert.equal(typeof root.chat, "object");
+      assert.equal(root.chat?.build.profileId, tavernProfile.profileId);
+      assert.equal(typeof root.chat?.csrfToken, "string");
+      assert.equal(typeof root.chat?.browserSession.expiresAtMs, "number");
+      assert.equal(root.chat?.apiVersion, 1);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -123,14 +123,14 @@ test("composed client readState returns the composed root with chat snapshot", a
       globalThis.fetch = testFetch(server.origin);
       // Bootstrap first to establish session.
       const bootRoot = await client.bootstrap(bootstrapToken);
-      assert.notEqual(bootRoot.chat, null);
+      assert.equal(typeof bootRoot.chat, "object");
       // Read state with the established session cookie.
       const stateRoot = await client.readState();
       assert.equal(stateRoot.apiVersion, 1);
       assert.equal(stateRoot.build.browserContract, "composed_reference_game_browser_api/v1");
       assert.equal(stateRoot.game, null);
-      assert.notEqual(stateRoot.chat, null);
-      assert.equal(stateRoot.chat.build.profileId, tavernProfile.profileId);
+      assert.equal(typeof stateRoot.chat, "object");
+      assert.equal(stateRoot.chat?.build.profileId, tavernProfile.profileId);
     } finally {
       globalThis.fetch = originalFetch;
     }

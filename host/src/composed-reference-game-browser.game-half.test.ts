@@ -10,18 +10,20 @@ import { composeGameProfile, GameBrowserFixtureV1 } from "./game-browser-contrac
 import { composeTavernProfile, TavernBrowserFixtureV1 } from "./tavern/browser-contract/index.js";
 
 /**
- * The two halves of a composed root are two producer seams, and a fault in the Game one must not take the
+ * The two halves of a composed root are two producer seams, and a fault in either one must not take the
  * document - or the session that reads it - down with it.
  *
  * Measured before this held: `/bootstrap` refused the whole request for a Game-half fault
  * (`409 {code: "state_unavailable", cause: "game_projection_failed"}`) AND retired the session it had just
  * minted (`if (session === activeSession) session = undefined`, `handleBootstrap`), so a completely healthy
  * Chat domain went down with a native game fault - no conversation, no settings, no memory, and no session
- * for the Chat half's own route to answer on.
+ * for the Chat half's own route to answer on. The Chat half had the mirror image of the same defect: it owned
+ * the whole document, so a Chat fault took the Game surface - and the running game behind it - down with it.
  *
- * The readings below are the four directions of that rule: a Game half that throws, a Game half that answers
- * something this Host cannot publish, a Chat half that throws (still fatal), and both halves healthy (still
- * one root with its game member).
+ * The readings below are the six directions of one rule, one per half: a half that throws, a half that answers
+ * something this Host cannot publish, and both halves healthy. Each of the first four answers a root WITHOUT
+ * that half's member (never `null`, which is a profile that mounts none), keeps the cookie, and leaves the
+ * other half's own route answering exactly as it did.
  */
 
 const bootstrapToken = "QWxhZGRpbjpvcGVuIHNlc2FtZQ";
@@ -179,29 +181,62 @@ test("a Game half this Host cannot publish degrades the same way the throwing on
   }
 });
 
-test("a Chat half that throws is still the whole document's refusal, and it retires the session", async () => {
+test("a Chat half that throws answers a root with no chat member, and the Game half beside it survives", async () => {
   const server = await start(
     handlerWith(
       () => {
         throw new Error("the chat store is not answering");
       },
-      () => undefined,
+      (context) => gameFor(context),
     ),
   );
   try {
     const opened = await bootstrap(server.origin);
-    assert.equal(opened.status, 409, "a conversation that could not be read is not a page this Host can draw");
-    assert.equal(opened.headers.get("x-gamebuddy-bootstrap-cause"), "chat_projection_failed");
-    assert.deepEqual(await opened.json(), { code: "state_unavailable", cause: "chat_projection_failed" });
-    assert.equal(sessionCookie(opened), undefined, "a refused root leaves no authenticated browser context behind");
-    const state = await readState(server.origin, undefined);
-    assert.equal(state.status, 401, "and there is no session for a later read to answer on");
+    assert.equal(opened.status, 200, "a conversation that could not be read is not the whole document's");
+    const root = (await opened.json()) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(root, "chat"), false, "the Chat half is absent, never a `null` chat");
+    assert.equal(typeof root.game, "object", "the Game half is the document's own, and it is here");
+
+    const cookie = sessionCookie(opened);
+    assert.ok(cookie !== undefined, "the session is minted and published");
+    const state = await readState(server.origin, cookie);
+    assert.equal(state.status, 200, "the session's own read answers");
+    assert.equal(Object.hasOwn((await state.json()) as Record<string, unknown>, "chat"), false);
+
+    // The Game half's own route is still the authority for the Game half, and it still answers: what was
+    // degraded is the composed root's Chat member, never the game's own read.
+    const gameRead = await readGame(server.origin, cookie);
+    assert.equal(gameRead.status, 200);
+    assert.equal(((await gameRead.json()) as { game: { connectionStatus: string } }).game.connectionStatus, "none");
   } finally {
     await server.close();
   }
 });
 
-test("both halves healthy still answer one root that carries its game member", async () => {
+test("a Chat half this Host cannot publish degrades the same way the throwing one does", async () => {
+  const server = await start(
+    handlerWith(
+      // A legal Chat projection of a DIFFERENT profile: the root would carry a conversation this Host does
+      // not publish, so there is no Chat half to publish either.
+      (context) => ({
+        ...chatFor(context),
+        build: { ...chatFor(context).build, profileId: "gamebuddy.chat-core.other" },
+      }),
+      (context) => gameFor(context),
+    ),
+  );
+  try {
+    const opened = await bootstrap(server.origin);
+    assert.equal(opened.status, 200);
+    const root = (await opened.json()) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(root, "chat"), false);
+    assert.equal(typeof root.game, "object");
+  } finally {
+    await server.close();
+  }
+});
+
+test("both halves healthy still answer one root that carries both members", async () => {
   const server = await start(
     handlerWith(
       (context) => chatFor(context),
@@ -218,6 +253,8 @@ test("both halves healthy still answer one root that carries its game member", a
     const root = (await state.json()) as Record<string, unknown>;
     assert.equal(Object.hasOwn(root, "game"), true, "a Game half that reads is still published");
     assert.equal(typeof root.game, "object");
+    assert.equal(Object.hasOwn(root, "chat"), true, "and the Chat half beside it");
+    assert.equal(typeof root.chat, "object");
   } finally {
     await server.close();
   }

@@ -64,7 +64,8 @@ export function createDraftMutation(input: DraftMutationInput): DraftMutation {
    */
   return async (kind) => {
     const current = input.viewRef.current;
-    if (current.kind !== "ready" || current.session.snapshot.selection === null) return;
+    if (current.kind !== "ready" || current.session === null || current.draft === null) return;
+    if (current.session.snapshot.selection === null) return;
     try {
       const selectionGeneration = current.session.snapshot.selection.generation;
       const expectedRevision = current.draft.revision;

@@ -166,9 +166,18 @@ export const GAME_PROBLEM_CODES = [
 ] as const;
 export type GameProblemCode = (typeof GAME_PROBLEM_CODES)[number];
 
-const ROOT_KEYS = ["apiVersion", "build", "chat", "game"] as const;
-/** The same root on a Host that could not read its Game half: the member is absent, not `null`. */
-const ROOT_KEYS_WITHOUT_GAME = ["apiVersion", "build", "chat"] as const;
+/**
+ * The composed root's members, as the two facts a reader has to hold separately: which are always here, and
+ * which a degraded Host may leave out.
+ *
+ * `chat` and `game` are the two surface halves, and each answers three ways - a projection, `null` for a Host
+ * whose profile mounts none, and ABSENT for a Host that mounts one and could not read it. Enumerating one key
+ * list per combination is what the installation candidate above already had to stop doing: two optional members
+ * are four lists, and the forgotten one is silent.
+ */
+const ROOT_REQUIRED_KEYS = ["apiVersion", "build"] as const;
+const ROOT_OPTIONAL_KEYS = ["chat", "game"] as const;
+const ROOT_ALLOWED_KEYS: ReadonlySet<string> = new Set([...ROOT_REQUIRED_KEYS, ...ROOT_OPTIONAL_KEYS]);
 const ROOT_BUILD_KEYS = ["browserContract", "profileId"] as const;
 const GAME_KEYS = [
   "prerequisites",
@@ -369,7 +378,15 @@ export type ComposedReferenceGameBrowserRootV1 = Readonly<{
     browserContract: typeof COMPOSED_REFERENCE_GAME_BROWSER_API_V1;
     profileId: typeof COMPOSED_REFERENCE_GAME_PROFILE_ID;
   }>;
-  chat: TavernStateSnapshotV1;
+  /**
+   * The Chat half: a projection, `null` for a Host whose profile mounts no Chat at all, and ABSENT when this
+   * Host mounts one and could not read it.
+   *
+   * The same three answers `game` below gives, and for the same reason: the member's presence is the
+   * distinction. A shell that treats `null` and absence alike is right about what it can draw - neither is a
+   * conversation - so what it owes in exchange is that its Game surface is not drawn from a Chat answer.
+   */
+  chat?: TavernStateSnapshotV1 | null;
   /**
    * The Game half: a projection, `null` for a Host whose profile mounts no Game at all, and ABSENT when this
    * Host could not read the Game half it does mount.
@@ -1308,15 +1325,19 @@ function validateGameState(value: unknown, csrfToken: string | undefined): GameB
 }
 
 /**
- * Validates the exact composed root and both nested redacted projections.
+ * Validates the composed root and every nested redacted projection it carries.
  * Validation is closed at every object boundary: additive fields are not
- * silently ignored, and a foreign profile is never rendered as Game state.
+ * silently ignored, and a foreign profile is never rendered as Game state. A surface
+ * half this Host could not read is absent from the answer it is given and absent from
+ * the answer this returns; a half its profile does not mount is `null`.
  */
 export function validateComposedReferenceGameRoot(value: unknown): ComposedReferenceGameBrowserRootV1 {
+  const chatPresent = isRecord(value) && value.chat !== undefined;
   const gamePresent = isRecord(value) && value.game !== undefined;
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, gamePresent ? ROOT_KEYS : ROOT_KEYS_WITHOUT_GAME) ||
+    !ROOT_REQUIRED_KEYS.every((key) => Object.hasOwn(value, key)) ||
+    !Object.keys(value).every((key) => ROOT_ALLOWED_KEYS.has(key)) ||
     value.apiVersion !== 1 ||
     !isRecord(value.build) ||
     !hasExactKeys(value.build, ROOT_BUILD_KEYS) ||
@@ -1326,23 +1347,30 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
     throw new ComposedReferenceGameProtocolError("invalid_composed_root");
   }
 
-  let chat: TavernStateSnapshotV1;
-  try {
-    chat = validateSnapshot(value.chat);
-  } catch {
-    throw new ComposedReferenceGameProtocolError("invalid_composed_chat");
-  }
-  if (chat.build.profileId !== COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID) {
-    throw new ComposedReferenceGameProtocolError("invalid_composed_chat_profile");
+  let chat: TavernStateSnapshotV1 | null = null;
+  if (chatPresent && value.chat !== null) {
+    try {
+      chat = validateSnapshot(value.chat);
+    } catch {
+      throw new ComposedReferenceGameProtocolError("invalid_composed_chat");
+    }
+    if (chat.build.profileId !== COMPOSED_REFERENCE_GAME_TAVERN_PROFILE_ID) {
+      throw new ComposedReferenceGameProtocolError("invalid_composed_chat_profile");
+    }
   }
   let game: GameBrowserStateV1 | null = null;
   if (gamePresent && value.game !== null) {
     if (!isGameProjection(value.game)) {
       throw new ComposedReferenceGameProtocolError("invalid_composed_game");
     }
+    // The one check that needs BOTH halves: two projections on one root are two reads of one browser session,
+    // and a root that pairs them across sessions is a page that would act as one session with another's token.
+    // With a half absent there is no pair to compare, and that half's own route is where its session is bound
+    // (`readGameState` compares against the token this client holds).
     if (
-      value.game.csrfToken !== chat.csrfToken ||
-      value.game.browserSession.expiresAtMs !== chat.browserSession.expiresAtMs
+      chat !== null &&
+      (value.game.csrfToken !== chat.csrfToken ||
+        value.game.browserSession.expiresAtMs !== chat.browserSession.expiresAtMs)
     ) {
       throw new ComposedReferenceGameProtocolError("mismatched_composed_session");
     }
@@ -1354,10 +1382,10 @@ export function validateComposedReferenceGameRoot(value: unknown): ComposedRefer
       browserContract: value.build.browserContract,
       profileId: value.build.profileId,
     }),
-    chat,
-    // A Game half that could not be read is answered with no member at all, so the absence this client was
-    // handed survives the validation instead of being flattened into `null`: the two are different facts, and
-    // a shell that lost the difference here could not tell its Game surface why it has nothing to draw.
+    // A half that could not be read is answered with no member at all, so the absence this client was handed
+    // survives the validation instead of being flattened into `null`: the two are different facts, and a shell
+    // that lost the difference here could not tell its surface why it has nothing to draw.
+    ...(chatPresent ? { chat } : {}),
     ...(gamePresent ? { game } : {}),
   });
 }
@@ -1464,7 +1492,10 @@ export function createComposedReferenceGameBrowserApi(
         },
         validateComposedReferenceGameRoot,
       );
-      csrfToken = root.chat.csrfToken;
+      // The composed broker's own session token, for the routes that need one. Both halves publish the same
+      // value when both are here (`validateComposedReferenceGameRoot` refuses a pair that disagrees), so a root
+      // whose Chat half could not be read still hands this client the session the Game route is bound to.
+      csrfToken = root.chat?.csrfToken ?? root.game?.csrfToken;
       return root;
     },
     async readState(): Promise<ComposedReferenceGameBrowserRootV1> {
@@ -1474,7 +1505,7 @@ export function createComposedReferenceGameBrowserApi(
         { method: "GET" },
         validateComposedReferenceGameRoot,
       );
-      csrfToken = root.chat.csrfToken;
+      csrfToken = root.chat?.csrfToken ?? root.game?.csrfToken;
       return root;
     },
     async readGameState(): Promise<GameBrowserStateV1> {

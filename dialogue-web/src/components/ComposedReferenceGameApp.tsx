@@ -267,7 +267,9 @@ export function ComposedReferenceGameApp() {
   };
 
   const eventStreamEpoch =
-    view.kind === "ready" ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}` : undefined;
+    view.kind === "ready" && view.session !== null
+      ? `${view.session.snapshot.eventStream?.epoch ?? ""}#${mountedChatRevision}`
+      : undefined;
 
   /**
    * The paragraph an unanswered submission still owed the player.
@@ -300,7 +302,8 @@ export function ComposedReferenceGameApp() {
    * repeated at each of those writers: a terminal turn in the committed snapshot is a turn that no
    * longer owns a key, whoever noticed it first.
    */
-  const settledTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
+  const settledTurn =
+    view.kind === "ready" && view.session !== null ? (view.session.snapshot.chat?.turn ?? null) : null;
   useEffect(() => {
     if (settledTurn !== null && terminalTurn(settledTurn)) turnKeyRef.current = null;
   }, [settledTurn]);
@@ -343,7 +346,8 @@ export function ComposedReferenceGameApp() {
 
   const handleSend = async (): Promise<void> => {
     const current = viewRef.current;
-    if (current.kind !== "ready" || current.session.pending !== null) return;
+    if (current.kind !== "ready" || current.session === null || current.draft === null) return;
+    if (current.session.pending !== null) return;
     // The latch every message mutation takes (`beginMessageMutation`): a rewind, an edit, a delete or a
     // regenerate is rewriting the transcript, and the reread that follows it is the only thing that
     // says what the conversation then is. The gate the press came through reads the same fact
@@ -478,14 +482,17 @@ export function ComposedReferenceGameApp() {
         : chatSnapshotPairFromRoot(await readShellRoot(composedApiRef.current));
     const root = pair.root;
     const current = viewRef.current;
-    if (current.kind !== "ready") {
+    // The conversation this read publishes, adopted whole: either the shell never had a ready view (the mount's
+    // card is the page, and this read replaces it) or it had a root with no readable Chat half, whose Chat
+    // region held the card this read just answered.
+    if (current.kind !== "ready" || current.session === null) {
       setPreview(null);
       commit({
         kind: "ready",
         root,
         session: createReferencePipelineSession(root.chat),
         draft: pair.draft,
-        locale: localeRef.current,
+        locale: current.kind === "ready" ? current.locale : localeRef.current,
         chatProblem: null,
       });
       return;
@@ -547,7 +554,7 @@ export function ComposedReferenceGameApp() {
    * player just left must never keep its text standing in the new chat's box.
    */
   useEffect(() => {
-    if (view.kind !== "ready") return;
+    if (view.kind !== "ready" || view.session === null || view.draft === null) return;
     const chat = view.session.snapshot.selection?.chatHandle ?? null;
     const durable = view.draft.text ?? "";
     const seeded = seededDraftRef.current;
@@ -571,7 +578,10 @@ export function ComposedReferenceGameApp() {
    */
   const seedDraft = (draft: BrowserDraftV1): void => {
     const current = viewRef.current;
-    const chat = current.kind === "ready" ? (current.session.snapshot.selection?.chatHandle ?? null) : null;
+    const chat =
+      current.kind === "ready" && current.session !== null
+        ? (current.session.snapshot.selection?.chatHandle ?? null)
+        : null;
     const text = draft.text ?? "";
     seededDraftRef.current = Object.freeze({ chat, revision: draft.revision, text });
     writeInput(text);
@@ -711,7 +721,8 @@ export function ComposedReferenceGameApp() {
    * the player is no longer looking at. The Host re-checks the same pairing anyway: this only keeps the
    * surface honest.
    */
-  const mountedTranscript = view.kind === "ready" ? (view.session.snapshot.chat?.transcript ?? null) : null;
+  const mountedTranscript =
+    view.kind === "ready" && view.session !== null ? (view.session.snapshot.chat?.transcript ?? null) : null;
   useEffect(() => {
     if (arm === null) return;
     const positional = arm.action === "delete" || arm.action === "from_here";
@@ -852,8 +863,8 @@ export function ComposedReferenceGameApp() {
   const adoptMountedChat = (root: ComposedReferenceGameBrowserRootV1, draft: BrowserDraftV1): boolean => {
     const current = viewRef.current;
     if (current.kind !== "ready") return false;
-    const chat = root.chat;
-    if (cancelledRef.current || chat.chat === null) return false;
+    const chat = root.chat ?? null;
+    if (cancelledRef.current || chat === null || chat.chat === null) return false;
     setPreview(null);
     // The key named a turn in the conversation this mount is leaving, and the conversation it adopts
     // is not that one's successor: its own turn, if any, was started elsewhere and has its own
@@ -961,7 +972,7 @@ export function ComposedReferenceGameApp() {
    */
   const switchToForkedChat = async (forkedHandle: string): Promise<void> => {
     const current = viewRef.current;
-    if (current.kind !== "ready") return;
+    if (current.kind !== "ready" || current.session === null) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     try {
@@ -1062,7 +1073,7 @@ export function ComposedReferenceGameApp() {
    */
   const handleCurrentChatRemoved = (removedHandle: string): void => {
     const current = viewRef.current;
-    if (current.kind !== "ready") return;
+    if (current.kind !== "ready" || current.session === null) return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     const csrfToken = current.session.snapshot.csrfToken;
@@ -1116,7 +1127,8 @@ export function ComposedReferenceGameApp() {
    */
   const readProductWorldInfo = useCallback(async (): Promise<WorldInfoBindingSource> => {
     const current = viewRef.current;
-    if (current.kind !== "ready") throw new ReferencePipelineSessionError("state_reconciliation_required");
+    if (current.kind !== "ready" || current.session === null)
+      throw new ReferencePipelineSessionError("state_reconciliation_required");
     // The Chat half's own route, never the aggregate. `/state` composes a Game projection into the
     // same document and refuses the whole document when that half cannot be produced
     // (`state_unavailable`/`game_projection_failed`, `readComposedRoot` in
@@ -1149,12 +1161,19 @@ export function ComposedReferenceGameApp() {
 
   const handleStop = async (): Promise<void> => {
     const current = viewRef.current;
-    const turn = current.kind === "ready" ? current.session.snapshot.chat?.turn : null;
+    const turn = current.kind === "ready" && current.session !== null ? current.session.snapshot.chat?.turn : null;
     const operation =
-      current.kind === "ready"
+      current.kind === "ready" && current.session !== null
         ? current.session.snapshot.operations.find((op) => op.operationId === "chat.cancel")
         : undefined;
-    if (current.kind !== "ready" || turn == null || operation?.availability !== "available" || !turn.canCancel) return;
+    if (
+      current.kind !== "ready" ||
+      current.session === null ||
+      turn == null ||
+      operation?.availability !== "available" ||
+      !turn.canCancel
+    )
+      return;
     const selection = current.session.snapshot.selection;
     if (selection === null) return;
     try {
@@ -1177,7 +1196,8 @@ export function ComposedReferenceGameApp() {
     }
   };
 
-  const managementPanelsAvailable = view.kind === "ready" && view.session.snapshot.chat !== null;
+  const managementPanelsAvailable =
+    view.kind === "ready" && view.session !== null && view.session.snapshot.chat !== null;
 
   /**
    * The mounted turn as the shell has committed it: which turn, and where it is.
@@ -1188,7 +1208,8 @@ export function ComposedReferenceGameApp() {
    * whose change is the event (see `MemorySurfacePanel`). It is the snapshot's own frozen
    * turn, so its identity moves exactly when the committed turn does.
    */
-  const mountedTurn = view.kind === "ready" ? (view.session.snapshot.chat?.turn ?? null) : null;
+  const mountedTurn =
+    view.kind === "ready" && view.session !== null ? (view.session.snapshot.chat?.turn ?? null) : null;
 
   const arrivalReads = useArrivalReread(shownSurface, bootstrap, localeRef, rereadChat, managementPipelineApiRef);
 
@@ -1201,7 +1222,7 @@ export function ComposedReferenceGameApp() {
    * move together instead of from three locals that could disagree.
    */
   const chatUIState = deriveChatUIState({
-    submissionInFlight: view.kind === "ready" && view.session.pending !== null,
+    submissionInFlight: view.kind === "ready" && view.session !== null && view.session.pending !== null,
     turn: liveTurn(view),
     pendingLine: pendingOptimisticMessage(view, optimistic),
     stopAvailable: stopAvailable(view),
@@ -1263,6 +1284,14 @@ export function ComposedReferenceGameApp() {
   const chatProblem = view.kind === "ready" ? view.chatProblem : null;
   const chatProblemCard = chatProblem === null ? null : problemStepPresentation(chatProblem.step, labels());
 
+  // The conversation's own facts, read once. A root with no readable Chat half has no session, so everything
+  // derived from the conversation is absent with it - and everything the Game region owns, including the session
+  // token both halves publish, is not.
+  const chatSession = view.kind === "ready" ? view.session : null;
+  const mountedChat = chatSession?.snapshot.chat ?? null;
+  const shellCsrfToken =
+    chatSession?.snapshot.csrfToken ?? (view.kind === "ready" ? (view.root.game?.csrfToken ?? null) : null);
+
   return (
     // One draft store for every surface: the shell is the only thing that outlives them.
     <SurfaceDrafts>
@@ -1284,15 +1313,15 @@ export function ComposedReferenceGameApp() {
             action={problemCard.drawsOwnRead ? { label: labels().problemRetryRead, run: retryProblemView } : null}
           />
         )}
-        {view.kind === "ready" && view.session.snapshot.chat !== null && (
+        {view.kind === "ready" && shellCsrfToken !== null && (
           <>
             <AppBar
               brandMark={labels().appMark}
               brandLabel={labels().appName}
-              companionName={view.session.snapshot.chat.companion.name}
+              companionName={mountedChat?.companion.name ?? ""}
               surfaceName={shownSurfaceName}
-              companionHandle={view.session.snapshot.chat.companion.handle}
-              companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
+              companionHandle={mountedChat?.companion.handle ?? null}
+              companionDigest={mountedChat === null ? undefined : avatarDigests[mountedChat.companion.handle]}
               statusLabel={status.label}
               statusTone={status.tone}
               {...(gameStatus === undefined ? {} : { gameStatus })}
@@ -1304,21 +1333,29 @@ export function ComposedReferenceGameApp() {
                 covers another, and the conversation is simply the default one
                 (design/104 §2). The URL names the selected surface, so Back
                 returns to the previous one and a reload restores it. */}
-              {shownSurface === CHAT_PANEL && chatProblem !== null && chatProblemCard !== null && (
-                // The conversation's own failure, drawn where the conversation is drawn. Two existing
-                // classes and no new rule: `.state-placeholder` is the region's centred container (the
-                // loading state uses it) and `.problem-card` is the card's. `.problem-view` is NOT
-                // reused here - it is the whole-window card (`height: 100dvh`, `id="main-content"`).
-                <div className="state-placeholder" data-testid="chat-problem">
-                  <ProblemView
-                    region="chat"
-                    title={chatProblem.title}
-                    detail={chatProblem.detail}
-                    stepLine={chatProblemCard.stepLine}
-                    action={
-                      chatProblemCard.drawsOwnRead ? { label: labels().problemRetryRead, run: retryProblemView } : null
-                    }
-                  />
+              {/* The conversation's own failure, drawn where the conversation is drawn, and in the
+                  conversation's slot: the card IS this region's state, so it parks with the region rather
+                  than disappearing when the player looks at another surface, and exactly one of the two
+                  below is ever mounted (`chatProblem` and the conversation are the two states of one
+                  region). Two existing classes and no new rule: `.state-placeholder` is the region's
+                  centred container (the loading state uses it) and `.problem-card` is the card's.
+                  `.problem-view` is NOT reused here - it is the whole-window card (`height: 100dvh`,
+                  `id="main-content"`). */}
+              {chatProblem !== null && chatProblemCard !== null && (
+                <div className={shownSurface === CHAT_PANEL ? "surface-slot" : "surface-slot surface-slot-parked"}>
+                  <div className="state-placeholder" data-testid="chat-problem">
+                    <ProblemView
+                      region="chat"
+                      title={chatProblem.title}
+                      detail={chatProblem.detail}
+                      stepLine={chatProblemCard.stepLine}
+                      action={
+                        chatProblemCard.drawsOwnRead
+                          ? { label: labels().problemRetryRead, run: retryProblemView }
+                          : null
+                      }
+                    />
+                  </div>
                 </div>
               )}
               {/* The conversation is the one surface that stays mounted while another one is
@@ -1335,15 +1372,15 @@ export function ComposedReferenceGameApp() {
                   has no live scroll box to lose loses nothing by unmounting. The Game surface is the
                   one peer that does lose something, and it has a slot of its own below for that
                   reason. */}
-              {chatProblem === null && (
+              {chatProblem === null && chatSession !== null && mountedChat !== null && (
                 <div className={shownSurface === CHAT_PANEL ? "surface-slot" : "surface-slot surface-slot-parked"}>
                   <ChatSurface
-                    transcript={view.session.snapshot.chat.transcript}
+                    transcript={mountedChat.transcript}
                     preview={preview}
-                    companionName={view.session.snapshot.chat.companion.name}
-                    companionHandle={view.session.snapshot.chat.companion.handle}
-                    companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
-                    chatTitle={view.session.snapshot.chat.title}
+                    companionName={mountedChat.companion.name}
+                    companionHandle={mountedChat.companion.handle}
+                    companionDigest={avatarDigests[mountedChat.companion.handle]}
+                    chatTitle={mountedChat.title}
                     labels={labels()}
                     pending={chatMutation}
                     uiState={chatUIState}
@@ -1357,7 +1394,7 @@ export function ComposedReferenceGameApp() {
                           openingNotice)
                     }
                     arrivalNotice={arrivalReads.chatArrivalNotice}
-                    replyTruncated={view.session.snapshot.chat.turn?.truncated === true}
+                    replyTruncated={mountedChat.turn?.truncated === true}
                     onSwipe={(messageHandle, direction) => void handleSwipe(messageHandle, direction)}
                     onSwipeRemove={handleSwipeRemoveArm}
                     onSwipeRemoveConfirm={(messageHandle, targetIndex) =>
@@ -1381,7 +1418,7 @@ export function ComposedReferenceGameApp() {
                     onSend={() => void handleSend()}
                     onStop={() => void handleStop()}
                     onOpenSettings={openSettings}
-                    voice={view.session.snapshot.voice}
+                    voice={chatSession.snapshot.voice}
                     settingsAction={{
                       label: labels().chatModelSettings,
                       expanded: modelPopoutOpen,
@@ -1399,7 +1436,7 @@ export function ComposedReferenceGameApp() {
                       // report it. `durable` is what keeps Discard (and the "saved"
                       // wording) honest - the first draft is saved through this
                       // same command, under the same revision CAS.
-                      durable: view.draft.text !== null,
+                      durable: view.draft?.text != null,
                       notice: draftNotice,
                     }}
                   />
@@ -1419,11 +1456,11 @@ export function ComposedReferenceGameApp() {
                   selected={shownSurface === GAME_PANEL}
                   ready={view.kind === "ready"}
                   game={view.root.game ?? null}
-                  csrfToken={view.session.snapshot.csrfToken}
+                  csrfToken={shellCsrfToken}
                   labels={labels()}
-                  companionHandle={view.session.snapshot.chat.companion.handle}
-                  companionName={view.session.snapshot.chat.companion.name}
-                  companionDigest={avatarDigests[view.session.snapshot.chat.companion.handle]}
+                  companionHandle={mountedChat?.companion.handle ?? null}
+                  companionName={mountedChat?.companion.name ?? ""}
+                  companionDigest={mountedChat === null ? undefined : avatarDigests[mountedChat.companion.handle]}
                   readView={() => viewRef.current}
                   commit={commit}
                   isCancelled={() => cancelledRef.current}
@@ -1433,61 +1470,68 @@ export function ComposedReferenceGameApp() {
                   restoreFocusTo={gameEntryRef}
                 />
               </div>
-              {shownSurface === CHATS_PANEL && (
-                <ChatsSurface
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  selectionGeneration={view.session.snapshot.selection?.generation ?? 0}
-                  currentChatHandle={view.session.snapshot.selection?.chatHandle ?? ""}
-                  onRenamedTitle={handleRenamedTitle}
-                  onChatSwitched={handleChatSwitched}
-                  onMountedChatChosen={openChat}
-                  onCurrentChatRemoved={handleCurrentChatRemoved}
-                  restoreFocusTo={chatsEntryRef}
-                />
-              )}
-              {shownSurface === CHARACTERS_PANEL && (
-                <CharactersSurface
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  locale={view.locale}
-                  read={readProductWorldInfo}
-                  avatarDigests={avatarDigests}
-                  onAvatarUpdated={handleAvatarUpdated}
-                  restoreFocusTo={charactersEntryRef}
-                />
-              )}
-              {shownSurface === SETTINGS_PANEL && (
-                <SettingsSurface
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  uiLocale={view.locale}
-                  onSelectUiLocale={adoptUiLocale}
-                  onSelectAppearance={appearance.choose}
-                  presets={{ open: openPresets, ref: presetsOpenRef }}
-                  restoreFocusTo={settingsEntryRef}
-                />
-              )}
-              {shownSurface === MEMORY_PANEL && (
-                <MemorySurface
-                  api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
-                  labels={labels()}
-                  locale={view.locale}
-                  conversationTurn={mountedTurn}
-                  mutationAvailable={view.session.snapshot.memory.mutationAvailable}
-                  restoreFocusTo={memoryEntryRef}
-                />
-              )}
-              {shownSurface === PRESETS_PANEL && (
-                <PresetAssemblySurface
-                  labels={labels()}
-                  onBack={() => leaveSurface(PRESETS_PANEL)}
-                  restoreFocusTo={presetsOpenRef}
-                />
+              {/* The Chat-owned peers, behind one guard: Chats, Characters, Settings, Memory and the preset readout
+                  are all read through the Chat half, and a root with no readable Chat half offers none of them - the
+                  bar already drops their entries for the same fact (`surfaceBarEntries`). */}
+              {chatSession !== null && (
+                <>
+                  {shownSurface === CHATS_PANEL && (
+                    <ChatsSurface
+                      api={managementPipelineApiRef.current}
+                      csrfToken={chatSession.snapshot.csrfToken}
+                      labels={labels()}
+                      selectionGeneration={chatSession.snapshot.selection?.generation ?? 0}
+                      currentChatHandle={chatSession.snapshot.selection?.chatHandle ?? ""}
+                      onRenamedTitle={handleRenamedTitle}
+                      onChatSwitched={handleChatSwitched}
+                      onMountedChatChosen={openChat}
+                      onCurrentChatRemoved={handleCurrentChatRemoved}
+                      restoreFocusTo={chatsEntryRef}
+                    />
+                  )}
+                  {shownSurface === CHARACTERS_PANEL && (
+                    <CharactersSurface
+                      api={managementPipelineApiRef.current}
+                      csrfToken={chatSession.snapshot.csrfToken}
+                      labels={labels()}
+                      locale={view.locale}
+                      read={readProductWorldInfo}
+                      avatarDigests={avatarDigests}
+                      onAvatarUpdated={handleAvatarUpdated}
+                      restoreFocusTo={charactersEntryRef}
+                    />
+                  )}
+                  {shownSurface === SETTINGS_PANEL && (
+                    <SettingsSurface
+                      api={managementPipelineApiRef.current}
+                      csrfToken={chatSession.snapshot.csrfToken}
+                      labels={labels()}
+                      uiLocale={view.locale}
+                      onSelectUiLocale={adoptUiLocale}
+                      onSelectAppearance={appearance.choose}
+                      presets={{ open: openPresets, ref: presetsOpenRef }}
+                      restoreFocusTo={settingsEntryRef}
+                    />
+                  )}
+                  {shownSurface === MEMORY_PANEL && (
+                    <MemorySurface
+                      api={managementPipelineApiRef.current}
+                      csrfToken={chatSession.snapshot.csrfToken}
+                      labels={labels()}
+                      locale={view.locale}
+                      conversationTurn={mountedTurn}
+                      mutationAvailable={chatSession.snapshot.memory.mutationAvailable}
+                      restoreFocusTo={memoryEntryRef}
+                    />
+                  )}
+                  {shownSurface === PRESETS_PANEL && (
+                    <PresetAssemblySurface
+                      labels={labels()}
+                      onBack={() => leaveSurface(PRESETS_PANEL)}
+                      restoreFocusTo={presetsOpenRef}
+                    />
+                  )}
+                </>
               )}
             </main>
             {/* This surface's own model settings, over the conversation rather than
@@ -1495,7 +1539,7 @@ export function ComposedReferenceGameApp() {
               it under the chat half of settings/profiles). The popout is not a
               peer surface: it replaces no region, Escape or the backdrop closes
               it, and focus returns to the composer's own button. */}
-            {modelPopoutOpen && (
+            {chatSession !== null && modelPopoutOpen && (
               <ContextDrawer
                 title={labels().chatModelSettings}
                 closeLabel={labels().close}
@@ -1507,7 +1551,7 @@ export function ComposedReferenceGameApp() {
                 <SurfaceModelSettings
                   surface="chat"
                   api={managementPipelineApiRef.current}
-                  csrfToken={view.session.snapshot.csrfToken}
+                  csrfToken={chatSession.snapshot.csrfToken}
                   labels={labels()}
                 />
               </ContextDrawer>

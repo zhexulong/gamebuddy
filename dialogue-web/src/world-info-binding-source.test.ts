@@ -26,12 +26,12 @@ const COMPOSED_PROFILE_ID = "gamebuddy.composed.reference-game";
 function chatSnapshot(
   generation: number,
   revision: string,
-  selection: ComposedReferenceGameBrowserRootV1["chat"]["selection"] | null = {
+  selection: NonNullable<ComposedReferenceGameBrowserRootV1["chat"]>["selection"] | null = {
     chatHandle: `chat-${generation}`,
     generation,
     stateRevision: `state-${generation}`,
   },
-): ComposedReferenceGameBrowserRootV1["chat"] {
+): NonNullable<ComposedReferenceGameBrowserRootV1["chat"]> {
   return {
     apiVersion: 1,
     build: {

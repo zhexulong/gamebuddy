@@ -92,7 +92,7 @@ export function useArrivalReread(
    */
   const [chatArrivalNotice, setChatArrivalNotice] = useState<string | null>(null);
   const [chatModelRoute, setChatModelRoute] = useState<ChatModelRoute>({ kind: "unknown" });
-  const conversationShown = view.kind === "ready" && view.session.snapshot.chat !== null;
+  const conversationShown = view.kind === "ready" && view.session !== null && view.session.snapshot.chat !== null;
   useEffect(() => {
     if (lastArrivedSurfaceRef.current === shownSurface) return;
     lastArrivedSurfaceRef.current = shownSurface;

@@ -223,14 +223,14 @@ export function createComposedReferenceGameBrowserClient(): ComposedReferenceGam
         body,
       });
       const root = validateComposedRoot(raw);
-      csrfToken = root.chat.csrfToken;
+      csrfToken = root.chat?.csrfToken ?? root.game?.csrfToken;
       return root;
     },
 
     async readState(): Promise<ComposedReferenceGameBrowserRootV1> {
       const raw = await fetchJson(statePath, { method: "GET" });
       const root = validateComposedRoot(raw);
-      csrfToken = root.chat.csrfToken;
+      csrfToken = root.chat?.csrfToken ?? root.game?.csrfToken;
       return root;
     },
 

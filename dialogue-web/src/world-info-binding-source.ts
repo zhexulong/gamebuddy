@@ -40,14 +40,17 @@ export type WorldInfoBindingSource =
  * `mountedSelectionGeneration` is the shell's own - `session.snapshot.selection.generation`, the selection the
  * player is looking at and the one `applySnapshot` holds the session to (`identityFingerprint` includes it).
  * `null` means the shell has no session to bind against, which is a reconciliation failure rather than a
- * generation to guess at; zero is never guessed either, because a live generation is a positive integer.
+ * generation to guess at; zero is never guessed either, because a live generation is a positive integer. A root
+ * with no Chat half is the same answer for the same reason: there is no selection on it to bind the library to.
  */
 export function worldInfoBindingSource(
   root: ComposedReferenceGameBrowserRootV1,
   mountedSelectionGeneration: number | null,
 ): WorldInfoBindingSource {
-  if (mountedSelectionGeneration === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
-  const liveSelectionGeneration = root.chat.selection?.generation ?? 0;
+  const chat = root.chat ?? null;
+  if (mountedSelectionGeneration === null || chat === null)
+    throw new ReferencePipelineSessionError("state_reconciliation_required");
+  const liveSelectionGeneration = chat.selection?.generation ?? 0;
   if (liveSelectionGeneration !== mountedSelectionGeneration) {
     return {
       kind: "selection_generation_conflict",
@@ -57,7 +60,7 @@ export function worldInfoBindingSource(
   }
   return {
     kind: "mounted",
-    worldInfo: root.chat.chat?.worldInfo ?? null,
+    worldInfo: chat.chat?.worldInfo ?? null,
     selectionGeneration: liveSelectionGeneration,
   };
 }

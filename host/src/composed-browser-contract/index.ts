@@ -157,7 +157,17 @@ export const ComposedReferenceGameBrowserRootV1Schema = strictObject({
     browserContract: Type.Literal(COMPOSED_REFERENCE_GAME_BROWSER_API_V1),
     profileId: Type.String({ minLength: 1, maxLength: 128 }),
   }),
-  chat: TavernStateSnapshotV1Schema,
+  /**
+   * The Chat half, and the same two answers that are not a projection: `null` is a mount whose profile carries
+   * no Chat at all - there was never a conversation to read - and an ABSENT member is a mount that carries one
+   * and could not read it this time (`readChatHalf` in `composed-reference-game-browser.ts`). The member's own
+   * presence is the distinction, as it is for `game` below.
+   *
+   * Neither answer refuses the root, and this one is what keeps the two surfaces peers: a Chat producer that
+   * cannot answer costs the conversation, the settings and the memory - the producer that failed - and no part
+   * of the Game half, whose surface, session and running game are not that failure's subject.
+   */
+  chat: Type.Optional(Type.Union([TavernStateSnapshotV1Schema, Type.Null()])),
   /**
    * The Game half, and the two answers that are not one: `null` is a mount whose profile carries no Game at
    * all - there was never a projection to read - and an ABSENT member is a mount that carries one and could not

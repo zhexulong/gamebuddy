@@ -173,7 +173,7 @@ test("ComposedReferenceGameBrowserRootV1 accepts the Chat-only fixture with game
   assert.equal(root.build.browserContract, COMPOSED_REFERENCE_GAME_BROWSER_API_V1);
   assert.equal(root.build.profileId, COMPOSED_REFERENCE_PROFILE_ID);
   // The nested chat is a valid TavernStateSnapshotV1 (owning fixture).
-  assert.equal(TavernBrowserFixtureV1.snapshot().apiVersion, root.chat.apiVersion);
+  assert.equal(TavernBrowserFixtureV1.snapshot().apiVersion, root.chat?.apiVersion);
 });
 
 test("ComposedReferenceGameBrowserRootV1 accepts the full fixture with a Game nested snapshot", () => {
@@ -227,9 +227,32 @@ test("ComposedReferenceGameBrowserRootV1 rejects unknown root fields", () => {
 test("ComposedReferenceGameBrowserRootV1 rejects invalid nested Chat output", () => {
   const validator = Compile(ComposedReferenceGameBrowserRootV1Schema);
   const root = ComposedReferenceGameBrowserFixtureV1.chatOnly();
-  assert.equal(validator.Check({ ...root, chat: { ...root.chat, apiVersion: 2 } }), false);
-  assert.equal(validator.Check({ ...root, chat: { ...root.chat, csrfToken: "too-short" } }), false);
-  assert.equal(validator.Check({ ...root, chat: { ...root.chat, rawPrompt: "secret" } }), false);
+  assert.equal(validator.Check({ ...root, chat: { ...root.chat!, apiVersion: 2 } }), false);
+  assert.equal(validator.Check({ ...root, chat: { ...root.chat!, csrfToken: "too-short" } }), false);
+  assert.equal(validator.Check({ ...root, chat: { ...root.chat!, rawPrompt: "secret" } }), false);
+});
+
+/**
+ * The two answers that are not a projection, for the Chat half - the same pair `game` has had since a Game fault
+ * stopped refusing the document (`composed-reference-game-browser.game-half.test.ts`).
+ *
+ * An ABSENT `chat` is a mount that carries a conversation and could not read it this time (`readChatHalf`); a
+ * `null` one is a mount whose profile carries no Chat at all. Both are well-formed roots, and neither may borrow
+ * the other's meaning: a validator that refused either would put the whole page back under one producer's fault.
+ */
+test("ComposedReferenceGameBrowserRootV1 accepts a Chat half that is absent, and one that is null", () => {
+  const validator = Compile(ComposedReferenceGameBrowserRootV1Schema);
+  const { chat: _chat, ...withoutChat } = ComposedReferenceGameBrowserFixtureV1.withGame();
+  assert.equal(Object.hasOwn(withoutChat, "chat"), false);
+  assert.equal(validator.Check(withoutChat), true, "a Host that could not read its Chat half still answers a root");
+  assert.equal(
+    validator.Check({ ...ComposedReferenceGameBrowserFixtureV1.withGame(), chat: null }),
+    true,
+    "and a Host whose profile mounts no Chat says so with null",
+  );
+  // Neither half, and no invented member standing in for one.
+  assert.equal(validator.Check({ apiVersion: 1, build: withoutChat.build }), true);
+  assert.equal(validator.Check({ apiVersion: 1, build: withoutChat.build, chatProblem: "unread" }), false);
 });
 
 test("ComposedReferenceGameBrowserRootV1 rejects invalid nested Game output", () => {

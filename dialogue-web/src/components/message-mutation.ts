@@ -120,7 +120,7 @@ export type MessageMutationInput = Readonly<{
 export function createMessageMutation(input: MessageMutationInput): MessageMutation {
   return async (request) => {
     const current = input.viewRef.current;
-    if (current.kind !== "ready") return { kind: "refused" };
+    if (current.kind !== "ready" || current.session === null) return { kind: "refused" };
     if (input.chatMutationRef.current) return { kind: "refused" };
     const selection = current.session.snapshot.selection;
     if (selection === null) return { kind: "refused" };

@@ -368,22 +368,15 @@ function sendBootstrapProblem(response: ServerResponse, statusCode: number, code
 }
 
 /**
- * The one body the composed root answers when its own projection cannot be read.
+ * The one body the composed root answers when it could not be assembled at all.
  *
  * Two routes read that root - the bootstrap that mints the session, and the
  * authenticated `/state` a page asks without one - and both answered a bare `409
- * state_unavailable` when the read threw, dropping the bounded producer code the read
- * had already computed. A chat this GameBuddy can never open and a projection that
- * failed this once therefore read alike, and the card drawn on this refusal could only
- * say the one sentence for both.
- *
- * So the code travels in the problem DTO's existing optional `cause` field: the field
- * the browser client already validates (`PROBLEM_CAUSE_PATTERN`) and words per cause.
- * It is always a bounded producer code - the projection check that failed
- * (`chat_snapshot_mismatch`), the producer's own bounded code
- * (`composed_reference_game_chat_snapshot_invalid`, `semantic_chat_*`), or the fact
- * that the producer named nothing this broker can project
- * (`composed_root_projection_failed`).
+ * state_unavailable` when the read threw. Neither half's own producer reaches this
+ * body any more: a half that cannot be read is answered by leaving its member out
+ * (`readChatHalf`/`readGameHalf`), which is what keeps one surface's fault from
+ * refusing the other's document. What is left here is this Host failing to assemble a
+ * document it just validated both halves of, so the cause is the broker's own name.
  */
 function composedRootProblem(error: unknown): Readonly<{ code: "state_unavailable"; cause: string }> {
   return {
@@ -442,25 +435,7 @@ function boundedLifecycleCause(error: unknown): string | undefined {
   return firstBoundedCode(error, (message) => BOUNDED_LIFECYCLE_CODE_PATTERN.test(message));
 }
 
-/**
- * The bounded producer code a broken projection names, when it names one. A producer
- * reports its own fault as its exception message - a composed projection code such as
- * `composed_reference_game_chat_snapshot_invalid`, or a coordinator `stardew_*`
- * wrapper whose own bounded cause names the fault underneath. Those are exactly the
- * facts that tell two projection failures apart. Anything that is not a bounded code
- * (OS text, a path, a token, a raw message) yields `undefined` and is never projected,
- * and the caller then gets the closed-set code of the check that failed.
- */
 const BOUNDED_PRODUCER_CODE_PATTERN = /^[a-z][a-z0-9_]{0,95}$/;
-
-function boundedProducerCode(error: unknown): string | undefined {
-  const nested = boundedLifecycleCause(error);
-  if (nested !== undefined) {
-    return nested;
-  }
-  const message = error instanceof Error ? error.message : undefined;
-  return message !== undefined && BOUNDED_PRODUCER_CODE_PATTERN.test(message) ? message : undefined;
-}
 
 /**
  * The bounded coordinator causes that name a fault more precisely than the generic
@@ -1651,20 +1626,21 @@ export function createComposedReferenceGameBrowserRequestHandler(
   };
 
   /**
-   * One read of the composed root: the Chat half, which this Host cannot answer the page without, and the Game
-   * half beside it, whose own failure costs the Game surface and nothing else.
+   * The Chat half, or `undefined` when this Host could not produce one.
    *
-   * A Chat half that cannot be read is still the whole document's failure - the page has no conversation to
-   * draw and no honest way to draw one - while a Game half that cannot be read answers a root with no `game`
-   * member at all. That is what keeps the one-time bootstrap credential usable, and the conversation, the
-   * settings and the memory reachable, on a Host whose native game side is the broken one.
+   * The same two checks the Game half makes, on the same seam: the producer threw, or what it answered is not
+   * the projection this Host publishes on this session. `undefined` is the answer a Chat-half fault gets, and it
+   * costs the conversation, the settings and the memory - the producers that read through this one - and no part
+   * of the Game half.
    */
-  const readComposedRoot = async (context: ComposedReferenceGameBrowserReadContext): Promise<unknown> => {
+  const readChatHalf = async (
+    context: ComposedReferenceGameBrowserReadContext,
+  ): Promise<TavernStateSnapshotV1 | undefined> => {
     let chat: TavernStateSnapshotV1;
     try {
       chat = await options.readChat(context);
-    } catch (error) {
-      throw new ControlledStateError(boundedProducerCode(error) ?? "chat_projection_failed");
+    } catch {
+      return undefined;
     }
 
     if (
@@ -1673,9 +1649,22 @@ export function createComposedReferenceGameBrowserRequestHandler(
       chat.csrfToken !== context.csrfToken ||
       chat.browserSession.expiresAtMs !== context.browserSessionExpiresAtMs
     ) {
-      throw new ControlledStateError("chat_snapshot_mismatch");
+      return undefined;
     }
 
+    return chat;
+  };
+
+  /**
+   * One read of the composed root: each half from its own producer, and each half's failure costing that half.
+   *
+   * A Chat half that cannot be read answers a root with no `chat` member at all, exactly as a Game half that
+   * cannot be read answers one with no `game` - the two surfaces are peers, and neither producer is the other's
+   * document. That is what keeps the one-time bootstrap credential usable, and the session it minted readable,
+   * on a Host whose Chat side is the broken one: the Game surface still mounts and still runs the game.
+   */
+  const readComposedRoot = async (context: ComposedReferenceGameBrowserReadContext): Promise<unknown> => {
+    const chat = await readChatHalf(context);
     const game = options.readGame === undefined ? null : await readGameHalf(options.readGame, context);
 
     const composed = {
@@ -1684,7 +1673,7 @@ export function createComposedReferenceGameBrowserRequestHandler(
         browserContract: "composed_reference_game_browser_api/v1",
         profileId: "gamebuddy.composed.reference-game",
       },
-      chat,
+      ...(chat === undefined ? {} : { chat }),
       ...(game === undefined ? {} : { game }),
     };
 

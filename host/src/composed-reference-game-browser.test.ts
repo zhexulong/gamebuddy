@@ -1343,7 +1343,14 @@ test("broker fail-closes invalid origin, cookie, producer output, and close", as
   });
   const badServer = await start(invalidProducer);
   try {
-    assert.equal((await bootstrap(badServer.origin)).status, 409);
+    // An unpublishable Chat projection is a root without that half, not a refusal of the document: the
+    // half's own producer is what failed, and the session it was read on is still the page's
+    // (`readChatHalf`). The Game half's equivalent reading is the same shape.
+    const opened = await bootstrap(badServer.origin);
+    assert.equal(opened.status, 200);
+    const root = (await opened.json()) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(root, "chat"), false);
+    assert.ok(opened.headers.get("set-cookie") !== null);
   } finally {
     await badServer.close();
   }
@@ -3859,78 +3866,70 @@ test("the bootstrap route names the malformed-request branches without changing 
   }
 });
 
-test("a bootstrap whose root projection breaks names the projection, not just state_unavailable", async () => {
-  // Failure caught: the launch whose one-shot token was spent by a root projection
-  // that then threw. Every later request answered `unauthorized` because the token was
-  // consumed, so the projection fault was invisible and the page looked like an expired
-  // session. The refusal now names the check that failed, and the producer's own
-  // bounded code when the producer named one - in the body the page classifies and on
-  // the branch header the launcher's diagnostics read.
-  const mismatchedChat = chatOnlyHandler(async (context) => ({
-    ...stateForChat(context),
-    build: { ...stateForChat(context).build, profileId: "gamebuddy.chat-core.other" },
-  }));
-  const mismatchServer = await start(mismatchedChat);
-  try {
-    const response = await bootstrap(mismatchServer.origin);
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), { code: "state_unavailable", cause: "chat_snapshot_mismatch" });
-    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_snapshot_mismatch");
-  } finally {
-    await mismatchServer.close();
+test("a Chat half this Host cannot read answers a root without it, and the session it minted survives", async () => {
+  // Failure caught: the launch whose one-shot token was spent by a root projection that then threw,
+  // AND whose session was retired with it - so the page had no conversation, no game surface and no
+  // session for the Chat half's own route to answer on. The two halves of a composed root are two
+  // producer seams, so a Chat fault costs the Chat half's member and nothing else: the Game half, the
+  // session and the Game surface keep their places (`composed-reference-game-browser.game-half.test.ts`
+  // holds the same rule from the Game side, and the pair is what makes the two surfaces peers).
+  const cases: readonly Readonly<{
+    name: string;
+    readChat: (context: ComposedReferenceGameBrowserReadContext) => ReturnType<typeof stateForChat>;
+  }>[] = [
+    {
+      name: "a projection of another profile",
+      readChat: (context) => ({
+        ...stateForChat(context),
+        build: { ...stateForChat(context).build, profileId: "gamebuddy.chat-core.other" },
+      }),
+    },
+    {
+      name: "a producer that names its own check",
+      readChat: () => {
+        throw new Error("composed_reference_game_chat_snapshot_invalid");
+      },
+    },
+    {
+      name: "a producer that names nothing projectable",
+      readChat: () => {
+        throw new Error("C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked");
+      },
+    },
+  ];
+  for (const testCase of cases) {
+    const server = await start(chatOnlyHandler(async (context) => testCase.readChat(context)));
+    try {
+      const opened = await bootstrap(server.origin);
+      assert.equal(opened.status, 200, `${testCase.name}: a Chat fault is not the document's`);
+      const root = (await opened.json()) as Record<string, unknown>;
+      assert.equal(Object.hasOwn(root, "chat"), false, `${testCase.name}: the Chat half is absent`);
+      const cookie = opened.headers.get("set-cookie");
+      assert.ok(cookie !== null, `${testCase.name}: the session is minted and published`);
+      const state = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+        headers: { origin: server.origin, cookie: cookie.split(";", 1)[0]! },
+      });
+      assert.equal(state.status, 200, `${testCase.name}: the root read answers on that session`);
+      assert.equal(Object.hasOwn((await state.json()) as Record<string, unknown>, "chat"), false);
+    } finally {
+      await server.close();
+    }
   }
 
-  const failingChat = chatOnlyHandler(async () => {
-    throw new Error("composed_reference_game_chat_snapshot_invalid");
-  });
-  const failingServer = await start(failingChat);
-  try {
-    const response = await bootstrap(failingServer.origin);
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), {
-      code: "state_unavailable",
-      cause: "composed_reference_game_chat_snapshot_invalid",
-    });
-    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "composed_reference_game_chat_snapshot_invalid");
-  } finally {
-    await failingServer.close();
-  }
-
-  // An unbounded producer message (a path, OS text) is never projected: the closed-set
-  // code of the check that failed stands in for it. That code travels too, and it is the
-  // one a reader needs to tell "this failed once" from "this can never work".
-  const unboundedChat = chatOnlyHandler(async () => {
-    throw new Error("C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked");
-  });
-  const unboundedServer = await start(unboundedChat);
-  try {
-    const response = await bootstrap(unboundedServer.origin);
-    assert.equal(response.status, 409);
-    assert.deepEqual(await response.json(), { code: "state_unavailable", cause: "chat_projection_failed" });
-    assert.equal(response.headers.get(BOOTSTRAP_CAUSE_HEADER), "chat_projection_failed");
-  } finally {
-    await unboundedServer.close();
-  }
-
-  // The GAME half no longer reaches this header: a Game projection that breaks answers a root with no
+  // The GAME half never reaches this body: a Game projection that breaks answers a root with no
   // `game` member and a session that stays alive, so there is no refusal for a game fault to name
-  // (`composed-reference-game-browser.game-half.test.ts` holds that direction, both for a producer that
-  // throws and for one whose answer this Host cannot publish).
+  // (`composed-reference-game-browser.game-half.test.ts` holds that direction).
 });
 
-test("the composed root's two 409s carry the bounded producer code in the body, and no other refusal body gained a field", async () => {
-  // Failure caught: the 409 that says the root could not be read. Both writers of it - the
-  // bootstrap that mints the session and the authenticated `/state` - answered a bare
-  // `state_unavailable`, so the page could not tell a chat this GameBuddy can never open
-  // from a projection that failed this once.
-  //
-  // The rule this asserts: EXACTLY those two refusals carry `cause`, its value is a bounded
-  // producer code (lower case, snake_case, the shape the broker's own `boundedProducerCode`
-  // admits - never free text, never a path), and every other refusal on every route still
-  // answers the body it always did.
-  let projectionFailure: string | null = null;
+test("a Chat half that cannot be read is answered on /state too, and no other refusal body gained a field", async () => {
+  // Failure caught: a page that could not tell which half broke. Both root routes - the bootstrap that
+  // mints the session and the authenticated `/state` - used to refuse the WHOLE document for a Chat
+  // fault, so the game surface beside it was refused as well. Now each half's fault costs that half's
+  // member (`readChatHalf`), on both routes, and every other refusal on this surface keeps exactly the
+  // body it had: no cause, no second spelling.
+  let chatFails = false;
   const handler = chatOnlyHandler(async (context) => {
-    if (projectionFailure !== null) throw new Error(projectionFailure);
+    if (chatFails) throw new Error("composed_reference_game_chat_snapshot_invalid");
     return stateForChat(context);
   });
   const server = await start(handler);
@@ -3938,30 +3937,19 @@ test("the composed root's two 409s carry the bounded producer code in the body, 
     const session = await bootstrap(server.origin);
     assert.equal(session.status, 200);
     const cookie = session.headers.get("set-cookie")!.split(";", 1)[0]!;
+    const healthy = (await session.json()) as Record<string, unknown>;
+    assert.equal(Object.hasOwn(healthy, "chat"), true, "a Chat half that reads is published");
 
-    // The producer named a check of its own: the code is the check, not the wrapper.
-    projectionFailure = "composed_reference_game_chat_snapshot_invalid";
-    const named = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
+    // The same session, still alive, asking again while the Chat producer is broken: the answer is the
+    // root without its Chat half - not a refusal the page has to classify.
+    chatFails = true;
+    const broken = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
       headers: { origin: server.origin, cookie },
     });
-    assert.equal(named.status, 409);
-    assert.deepEqual(await named.json(), {
-      code: "state_unavailable",
-      cause: "composed_reference_game_chat_snapshot_invalid",
-    });
-    // The header stays the bootstrap's own channel: a `/state` refusal reports its branch in the
-    // body only, which is what keeps one fact from acquiring a second spelling on every route.
-    assert.equal(named.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
-
-    // The producer named nothing projectable (OS text, a path): the broker's own bounded code for
-    // that fact travels too, because it is the one that says the read failed this time.
-    projectionFailure = "C:\\Users\\player\\AppData\\Local\\GameBuddy\\chat.db is locked";
-    const unnamed = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {
-      headers: { origin: server.origin, cookie },
-    });
-    assert.equal(unnamed.status, 409);
-    assert.deepEqual(await unnamed.json(), { code: "state_unavailable", cause: "chat_projection_failed" });
-    assert.equal(unnamed.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.equal(broken.status, 200);
+    assert.equal(broken.headers.get(BOOTSTRAP_CAUSE_HEADER), null);
+    assert.equal(Object.hasOwn((await broken.json()) as Record<string, unknown>, "chat"), false);
+    chatFails = false;
 
     // A session that is not there is still the closed body it always was, on the same route.
     const unauthorized = await fetch(`${server.origin}/api/composed-reference-game/v1/state`, {

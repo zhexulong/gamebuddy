@@ -17,8 +17,20 @@ import type { ProblemViewState } from "../composed-problem-view";
 export type ReadyView = Readonly<{
   kind: "ready";
   root: ComposedReferenceGameBrowserRootV1;
-  session: ReferencePipelineSession;
-  draft: BrowserDraftV1;
+  /**
+   * The conversation's session, or `null` when this Host answered a root with no readable Chat half.
+   *
+   * `kind: "ready"` means one thing - the root is here - and every peer surface is readable from it. The
+   * conversation is one of those peers rather than the frame, so a root that carries the Game half and no Chat
+   * half is still a ready shell: the Game surface, its session and the game it runs are not the Chat producer's
+   * subject, and unmounting them for its fault is what `chat-problem-keeps-the-game-mounted.spec.ts` exists
+   * against. `null` is therefore not "loading" and not "failed": it is the shell with no conversation, whose
+   * Chat region holds `chatProblem` and whose management peers - Chats, Characters, Settings, Memory, all of
+   * them read through the Chat half - are absent because their producer is.
+   */
+  session: ReferencePipelineSession | null;
+  /** The mounted conversation's durable draft, absent for the same reason the session is. */
+  draft: BrowserDraftV1 | null;
   locale: Locale;
   /**
    * The Chat read that failed while this shell stood, or null.

@@ -172,7 +172,7 @@ function harness(view: ViewState) {
   // own two shapes, so a test reads exactly what the player would be watching.
   const previewCell: { current: ComposedPreviewV1 | null } = { current: null };
   let answer: () => Promise<TavernStateSnapshotV1> = () =>
-    Promise.resolve(view.kind === "ready" ? view.root.chat : snapshot());
+    Promise.resolve((view.kind === "ready" ? view.root.chat : null) ?? snapshot());
 
   Object.defineProperty(globalThis, "window", {
     configurable: true,

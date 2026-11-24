@@ -1136,3 +1136,21 @@ function bootstrapSentence(error: unknown): ProblemSentence | null {
 export function composedBootstrapProblemView(error: unknown, labels: Messages): ProblemViewState {
   return bootstrapSentence(error)?.(labels) ?? composedProblemView(error, labels);
 }
+
+/**
+ * The card a root with no conversation earns INSIDE the Chat region.
+ *
+ * The mount's five causes above are the whole-window card, and they are worded from a page that has no session
+ * behind it. This is the other case: the Host answered, the root is here and one of its two surfaces was not read
+ * - so these are the same facts worded for a region, and the one step the card can still perform is the Chat
+ * half's own route (`GET /api/tavern/v1/state`, on the broker session the mount minted).
+ *
+ * Two absences, because they are two facts a reader acts on differently: a Chat half this Host could not read
+ * (`chat_half_unreadable`, the game may be perfectly healthy beside it) and a Chat half that really holds no
+ * conversation (`no_conversation`, which no read taken again will change).
+ */
+export type ChatHalfAbsence = "chat_half_unreadable" | "no_conversation";
+
+export function chatHalfProblemView(absence: ChatHalfAbsence, labels: Messages): ProblemViewState {
+  return absence === "chat_half_unreadable" ? bootChatsUnreadableForNow(labels) : bootNoChat(labels);
+}

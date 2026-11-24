@@ -1,7 +1,13 @@
 import { type Dispatch, type RefObject, type SetStateAction, useCallback, useEffect, useRef, useState } from "react";
-import { chatSnapshotPairFromRoot, readChatSnapshotPair, withChatHalf } from "../chat-snapshot-pair";
+import {
+  type ChatSnapshotPair,
+  chatSnapshotPairFromRoot,
+  readChatSnapshotPair,
+  withChatHalf,
+} from "../chat-snapshot-pair";
 import { type ChatTurnTerminalState, TERMINAL_TURN_STATES } from "../chat-turn-terminal-states.generated";
 import {
+  chatHalfProblemView,
   composedBootstrapProblemView as bootstrapProblemView,
   composedProblemView as problemView,
 } from "../composed-problem-view";
@@ -165,7 +171,18 @@ export function useComposedBootstrap(
               : `profile=composed-reference-game&${PANEL_PARAM}=${encodeURIComponent(restoredPanel)}`;
           window.history.replaceState(null, "", url.toString());
         }
-        const pair = chatSnapshotPairFromRoot(root);
+        // The conversation this mount can draw, or the fact that this root carries none. The read it is built
+        // from is the one the mount already took (`chatSnapshotPairFromRoot`).
+        let pair: ChatSnapshotPair | null;
+        try {
+          pair = chatSnapshotPairFromRoot(root);
+        } catch (error) {
+          // A root with no readable Chat half is still a page when it carries the other surface: the Game
+          // surface, its own session and the game it runs are not the Chat producer's subject. Which absence
+          // this is decides the card the Chat region draws.
+          if (root.game == null) throw error;
+          pair = null;
+        }
         if (!active) return;
         // The interface language the player CHOSE, from the one record that outlives the launch.
         //
@@ -186,17 +203,32 @@ export function useComposedBootstrap(
         } catch {
           // The first-paint cache stands in; nothing about the conversation depends on this read.
         }
-        const session = createReferencePipelineSession(pair.root.chat);
         setPreview(null);
-        commit({
-          kind: "ready",
-          root: pair.root,
-          session,
-          draft: pair.draft,
-          locale: localeRef.current,
-          // The mount's own read succeeded, so the conversation it publishes has no problem.
-          chatProblem: null,
-        });
+        commit(
+          pair === null
+            ? {
+                kind: "ready",
+                root,
+                // No conversation, and the shell says so where the conversation is drawn: the Game region
+                // keeps the surface, the session and the running game it owns.
+                session: null,
+                draft: null,
+                locale: localeRef.current,
+                chatProblem: chatHalfProblemView(
+                  root.chat == null ? "chat_half_unreadable" : "no_conversation",
+                  messages(localeRef.current),
+                ),
+              }
+            : {
+                kind: "ready",
+                root: pair.root,
+                session: createReferencePipelineSession(pair.root.chat),
+                draft: pair.draft,
+                locale: localeRef.current,
+                // The mount's own read succeeded, so the conversation it publishes has no problem.
+                chatProblem: null,
+              },
+        );
       } catch (error) {
         // Nothing was committed yet: there is no session, and no region to draw a card in. The card is
         // then the whole window, so it is worded from the mount's own causes (`composedBootstrapProblemView`)
@@ -238,7 +270,7 @@ export function useComposedBootstrap(
         return;
       }
       const current = viewRef.current;
-      if (current.kind !== "ready" || current.session.pending === null) {
+      if (current.kind !== "ready" || current.session === null || current.session.pending === null) {
         pollActiveRef.current = false;
         return;
       }

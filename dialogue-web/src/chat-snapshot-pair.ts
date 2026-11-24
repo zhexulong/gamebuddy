@@ -25,7 +25,9 @@ import { ReferencePipelineSessionError } from "./reference-pipeline-session";
 export type ChatSnapshotPair = Readonly<{
   /** The composed root, with its Chat half narrowed: the pair is only produced when one exists. */
   root: ComposedReferenceGameBrowserRootV1 & {
-    chat: { chat: NonNullable<ComposedReferenceGameBrowserRootV1["chat"]["chat"]> };
+    chat: NonNullable<ComposedReferenceGameBrowserRootV1["chat"]> & {
+      chat: NonNullable<NonNullable<ComposedReferenceGameBrowserRootV1["chat"]>["chat"]>;
+    };
   };
   draft: BrowserDraftV1;
 }>;
@@ -72,7 +74,7 @@ function committedDraft(chat: ChatSnapshotPair["root"]["chat"]["chat"]): Browser
  * depend on (`game-projection-failure-is-not-the-chats.spec.ts` measures it).
  */
 export function chatSnapshotPairFromRoot(root: ComposedReferenceGameBrowserRootV1): ChatSnapshotPair {
-  const chat = root.chat.chat;
+  const chat = root.chat?.chat ?? null;
   if (chat === null) throw new ReferencePipelineSessionError("state_reconciliation_required");
   return { root: root as ChatSnapshotPair["root"], draft: committedDraft(chat) };
 }
