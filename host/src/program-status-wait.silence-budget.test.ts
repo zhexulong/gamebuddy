@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { PLAN_SELF_WAIT_BUDGET_MS } from "./body-program-script.js";
+import { PLAN_SELF_WAIT_BUDGET_MS, PLAN_SELF_WAIT_HOLD_MS } from "./body-program-script.js";
 import { waitForTerminalProgramStatus } from "./program-status-wait.js";
 
 /**
@@ -76,7 +76,7 @@ test("a plan that settles a node a second keeps its turn for forty seconds; the 
   const held = await waitForTerminalProgramStatus(
     async () => fortyNodePlan(clock.now()),
     fortyNodePlan(0),
-    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS },
+    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS },
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
@@ -151,7 +151,7 @@ test("a plan that settles nothing for the window is handed back with the node it
   const outcome = await waitForTerminalProgramStatus(
     async () => quiet(),
     quiet(),
-    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS },
+    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS },
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
@@ -205,7 +205,7 @@ test("a plan that republishes without settling a node buys itself no further win
   const outcome = await waitForTerminalProgramStatus(
     async () => churning(clock.now()),
     churning(0),
-    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS },
+    { silenceMs: PLAN_SELF_WAIT_BUDGET_MS, holdMs: PLAN_SELF_WAIT_HOLD_MS },
     clock.now,
     async (milliseconds) => clock.advance(milliseconds),
   );
