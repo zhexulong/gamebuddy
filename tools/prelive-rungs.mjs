@@ -244,6 +244,11 @@ export const L0_GATES = Object.freeze([
   // (one TypeScript parse of `host/src/game-tools.ts`), and red on both injected shapes - the walk-target constant on a
   // warp source, and a bound the declaration does not state.
   "gates/stardew/check-action-argument-bound-parity.mjs",
+  // The artifact is not the wire, and nothing ran the reader the package already owns: measured 2026-11-25, the Mod
+  // published a 595-character argument sentence, the Host refused that ONE descriptor and with it the WHOLE hello_ack
+  // registration list, and the artifact reader had been refusing that artifact all along (`invalid_action`) - no rung
+  // ran it, so nothing noticed until a live run died at the attach.
+  "gates/stardew/check-action-surface-artifact.mjs",
   // NOT listed again here: `tools/check-armed-destructive-actions.mjs` is already three members up, with the
   // measurement that put it in this rung. A second entry is a gate that runs twice - `rung_member_duplicated`.
   // One declaration for the Mod bundle: the project's own outputs (`<AssemblyName>`, each `<ProjectReference>`'s

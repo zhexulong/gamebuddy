@@ -113,7 +113,16 @@ public sealed record FarmhandActionArgument(
     /// `(location, tile, the item the request names)` - a value that does not need the caller at all.
     /// </para>
     /// </summary>
-    bool ResolvedAtExecution = false);
+    bool ResolvedAtExecution = false)
+{
+    /// <summary>
+    /// The longest sentence <see cref="Description"/> may carry: the HOST'S number, and the frame is what bounds it.
+    /// `hello_ack` carries every registration inside `MAX_MESSAGE_BYTES` (128 KiB) so 2,048 was a ceiling no frame could
+    /// carry - 71 argument sentences at 2,048 is 145,408 characters, against an artifact already at 120,907 bytes. At 595
+    /// the Host refused `use_mine_ladder.expectedTargetId` and with it the WHOLE registration list; the refusal below and the agreement test hold this constant to the wire's.
+    /// </summary>
+    public const int MaximumDescriptionLength = 512;
+}
 /// <summary>Mod-owned symbolic resource claim; ScopePlayer materializes embodied_actor to the current scoped player.
 /// A `tool:&lt;category&gt;` key is the SAME shape with a different subject: the tool that category names, which the
 /// handler requires the actor to OWN and takes as the current tool by selecting it, and whose value half is the
@@ -1540,7 +1549,26 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     public static bool ChangesTheWorld(string? actionId) =>
         actionId is null || !ActionsThatChangeNothing.ContainsKey(actionId);
 
-    static FarmhandActionCatalog() { if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs."); }
+    static FarmhandActionCatalog()
+    {
+        if (Registrations.Select(x => x.ActionId).Distinct(StringComparer.Ordinal).Count() != Registrations.Count) throw new InvalidOperationException("Farmhand action registrations must have unique action IDs.");
+        ValidateArgumentDescriptions(Registrations);
+    }
+
+    /// <summary>Refuse an argument sentence the Host's `hello_ack` validator refuses, where it is AUTHORED: one over-long descriptor refuses the whole registration list at attach, so this names the action, the argument and both numbers.</summary>
+    public static void ValidateArgumentDescriptions(IReadOnlyList<FarmhandActionRegistration> registrations)
+    {
+        foreach (FarmhandActionRegistration registration in registrations)
+        {
+            if (registration.Descriptor is not { } descriptor) continue;
+            foreach (FarmhandActionArgument argument in descriptor.Arguments)
+            {
+                if (argument.Description is not { } description) continue;
+                if (description.Trim().Length == 0) throw new InvalidOperationException($"farmhand action '{registration.ActionId}' argument '{argument.Name}' publishes an empty description: the Host refuses a present-but-empty one, and an ABSENT description is how an argument says its name is the whole story");
+                if (description.Length > FarmhandActionArgument.MaximumDescriptionLength) throw new InvalidOperationException($"farmhand action '{registration.ActionId}' argument '{argument.Name}' description is {description.Length} characters, over the {FarmhandActionArgument.MaximumDescriptionLength} the Host's hello_ack validator admits: one such descriptor refuses the WHOLE registration list at attach (invalid_hello_ack)");
+            }
+        }
+    }
     private static FarmhandActionRegistration E(string id, string family, FarmhandActionHandlerGroup group, FarmhandActionDescriptor descriptor, FarmhandActionLifecycle lifecycle = FarmhandActionLifecycle.Published, string? targetFamily = null) => new(id, family, 1, lifecycle, FarmhandOperationKind.Execution, group, (targetFamily is null ? descriptor : descriptor with { TargetFamily = targetFamily }) with { Effects = DeclaredEffectsOf(id) });
 
     /// <summary>
@@ -1668,7 +1696,7 @@ E("enter_exit", "movement_navigation", FarmhandActionHandlerGroup.Movement, Tran
     /// </para>
     /// </summary>
     private const string ResolvedMineExitLadderMeaning =
-        "The way out of this mine floor. OMIT IT: the body resolves the level's own exit ladder on the game thread (`resolvedAtExecution`) - the floor the actor stands on carries one, and the receipt states `targetId_source=resolved_at_execution` with the ladder it used. Refused `facility_absent:mine_exit_ladder:<location>` when the floor carries none and `facility_ambiguous:mine_exit_ladder:<location>:count=<n>` when it carries several, because then only the caller can say which. Sent anyway, it is compared against the live ladder and a different one answers `mine_exit_ladder_target_unavailable`.";
+        "The way out of this mine floor. OMIT IT: the body resolves the level's own exit ladder on the game thread (`resolvedAtExecution`); the receipt states `targetId_source=resolved_at_execution` with the ladder it used. Refused `facility_absent:mine_exit_ladder:<location>` when the floor carries none and `facility_ambiguous:mine_exit_ladder:<location>:count=<n>` when it carries several. Sent anyway, it is compared against the live ladder and a different one answers `mine_exit_ladder_target_unavailable`.";
 
     /// <summary>The argument name every target-carrying action uses, so the wrapper above cannot misspell what it marks.</summary>
     private const string ExpectedTargetIdArgument = "expectedTargetId";

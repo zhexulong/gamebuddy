@@ -119,6 +119,8 @@ const PROTOCOL_VERSION = 1;
 // Not a security boundary — the frame travels over a local, authenticated,
 // owner-scoped named pipe. Its job is to bound one allocation per frame.
 export const MAX_MESSAGE_BYTES = 128 * 1024;
+/** An argument's own sentence, on the wire and in the artifact: 512 is what hello_ack carries once 106 registrations are in the frame (71 sentences at 2,048 would be 145,408 characters of prose), and the Mod's FarmhandActionArgument.MaximumDescriptionLength is held to it by rgument-description-bound-agreement.test.ts. */
+export const MAX_ARGUMENT_DESCRIPTION_LENGTH = 512;
 /** World-fact JSON is bounded below the frame limit so conversion never accepts an unbounded raw blob. */
 export const MAX_WORLD_FACT_PAYLOAD_JSON_BYTES = 8 * 1024;
 
@@ -6859,11 +6861,11 @@ export function isValidActionDescriptor(value: unknown): value is ActionRegistra
       if (typeof arg.type !== "string" || arg.type.length === 0 || arg.type.length > 64) return false;
       if (!isDeclaredArgumentRange(arg)) return false;
       if ("description" in arg && arg.description !== undefined) {
-        // Bounded like every other published string: an unbounded one would be a way for a future Mod build to spend
-        // the agent's context by accident. Empty is refused because a present-but-empty description is a label that
-        // says nothing, and an ABSENT one is how the surface says "the name is the whole story".
-        if (typeof arg.description !== "string" || arg.description.length === 0 || arg.description.length > 512)
-          return false;
+        // Bounded like every other published string; empty is refused because a present-but-empty description is a
+        // label that says nothing, and an ABSENT one is how the surface says "the name is the whole story".
+        if (typeof arg.description !== "string" || arg.description.length === 0) return false;
+        if (arg.description.length > MAX_ARGUMENT_DESCRIPTION_LENGTH) return false;
+        return false;
       }
       if ("enum" in arg && arg.enum !== undefined) {
         if (!Array.isArray(arg.enum) || arg.enum.length === 0 || arg.enum.length > 128) return false;
