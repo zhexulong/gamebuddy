@@ -12,7 +12,7 @@ import { repositoryRoot } from "../../tools/lib/repository-root.mjs";
 import { auditSourceShapeReaders, patternTokens, statusOf } from "./check-source-shape-readers.mjs";
 
 const REPOSITORY_ROOT = repositoryRoot(import.meta.url);
-const GATE = join(REPOSITORY_ROOT, "tools", "check-source-shape-readers.mjs");
+const GATE = join(REPOSITORY_ROOT, "gates", "arch", "check-source-shape-readers.mjs");
 
 /** The revision the failing assertion shipped at: its raw-text signature match went red on a reformat, not on a change. */
 const PRE_FIX_REVISION = "1c38ab9d";
